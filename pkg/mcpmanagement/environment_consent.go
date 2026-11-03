@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-func discoverEnvironments(ctx context.Context, client *api.Client) ([]EnvironmentGrant, error) {
+func discoverEnvironments(ctx context.Context, client *api.Client, org string) ([]EnvironmentGrant, error) {
 	projects, err := client.ListProjects(ctx)
 	var apiErr *api.APIError
 	// Older APIs and app-only credentials can still connect with default access.
@@ -21,7 +21,7 @@ func discoverEnvironments(ctx context.Context, client *api.Client) ([]Environmen
 	if len(projects) > maxOAuthEntries {
 		return nil, invalid("response_too_large", "too many projects to review in one connection")
 	}
-	apps, err := client.ListApps(ctx)
+	apps, err := listApps(ctx, client, org)
 	if err != nil {
 		return nil, err
 	}

@@ -92,6 +92,8 @@ type Account struct {
 	DeploymentMailRevision          int64
 	MfaTotpLastStep                 pgtype.Int8
 	DeletionIncludesManagedPostgres bool
+	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
+	PlanChangedAt pgtype.Timestamptz
 }
 
 type AccountAsyncQuotum struct {
@@ -1804,6 +1806,8 @@ type AppWebhook struct {
 	ReceiverRecoveryProbeDeliveryID pgtype.UUID
 	ReceiverCooldownUntil           pgtype.Timestamptz
 	CreatedByAccountID              pgtype.UUID
+	PreviousSecretSealed            []byte
+	PreviousSecretExpiresAt         pgtype.Timestamptz
 }
 
 type AppWebhookDelivery struct {
@@ -2786,6 +2790,7 @@ type CliAuthCode struct {
 	ConsumedAt pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	DeviceHash []byte
+	OrgID      pgtype.UUID
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -4574,6 +4579,7 @@ type EdgeRuleList struct {
 	Items       []string
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+	OrgID       pgtype.UUID
 }
 
 type EdgeRuleSetVersion struct {
@@ -6507,17 +6513,19 @@ type IdempotencyKey struct {
 }
 
 type InboundWebhookEndpoint struct {
-	ID                  pgtype.UUID
-	AppID               pgtype.UUID
-	AccountID           pgtype.UUID
-	Name                string
-	Provider            string
-	TokenHash           []byte
-	SigningSecretSealed []byte
-	DeliveryPath        string
-	Enabled             bool
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                             pgtype.UUID
+	AppID                          pgtype.UUID
+	AccountID                      pgtype.UUID
+	Name                           string
+	Provider                       string
+	TokenHash                      []byte
+	SigningSecretSealed            []byte
+	DeliveryPath                   string
+	Enabled                        bool
+	CreatedAt                      pgtype.Timestamptz
+	UpdatedAt                      pgtype.Timestamptz
+	PreviousSigningSecretSealed    []byte
+	PreviousSigningSecretExpiresAt pgtype.Timestamptz
 }
 
 type IncidentNote struct {
@@ -10500,6 +10508,8 @@ type Org struct {
 	OverageCapCents pgtype.Int8
 	// When the organization was marked for deletion; meterd delivers usage from before it (ADR-20261101143527).
 	DeletionRequestedAt pgtype.Timestamptz
+	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
+	PlanChangedAt pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only
@@ -10538,6 +10548,15 @@ type OrgActivityOutbox struct {
 	DeliveredAt pgtype.Timestamptz
 	LastError   pgtype.Text
 	CreatedAt   pgtype.Timestamptz
+}
+
+// ADR-20261101225122 whether agents may act in an organization and with which capabilities; apid is the only writer.
+type OrgAgentPolicy struct {
+	OrgID         pgtype.UUID
+	AgentsAllowed bool
+	AllowedScopes []string
+	UpdatedAt     pgtype.Timestamptz
+	UpdatedBy     pgtype.UUID
 }
 
 type OrgAppQuotaFence struct {
@@ -13676,6 +13695,30 @@ type ReleaseSecretRekeyDocument struct {
 	Payload []byte
 }
 
+// Per-minute request analytics rollups; added to only by apid, swept only by meterd (ADR-20261103113952).
+type RequestAnalyticsMinute struct {
+	AppID         pgtype.UUID
+	BucketStart   pgtype.Timestamptz
+	DimensionKind string
+	Dimension     string
+	Method        string
+	Status        int16
+	DeploymentID  pgtype.UUID
+	AccountID     pgtype.UUID
+	Requests      int64
+	ErrorRequests int64
+	ColdBoots     int64
+	RequestTimeMs int64
+	LatencyMaxMs  int32
+	LatencyHist   []int64
+}
+
+// First minute held in request_analytics_minutes per app; written only by apid (ADR-20261103113952).
+type RequestAnalyticsRollupCoverage struct {
+	AppID        pgtype.UUID
+	CoveredSince pgtype.Timestamptz
+}
+
 type RequestAuditEvent struct {
 	EventID          pgtype.UUID
 	AccountID        pgtype.UUID
@@ -15427,6 +15470,15 @@ type WorkflowDispatchCursor struct {
 type WorkflowEvent struct {
 	ID         pgtype.UUID
 	RunID      pgtype.UUID
+	EventName  string
+	Payload    []byte
+	ReceivedAt pgtype.Timestamptz
+}
+
+type WorkflowEventArchive struct {
+	ID         pgtype.UUID
+	RunID      pgtype.UUID
+	AppID      pgtype.UUID
 	EventName  string
 	Payload    []byte
 	ReceivedAt pgtype.Timestamptz

@@ -76,6 +76,11 @@ type Querier interface {
 	ActiveServiceProjectReleaseTargets(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error)
 	AddDatabaseEgress(ctx context.Context, db DBTX, arg AddDatabaseEgressParams) error
+	// ADR-20261103113952: add one apid flush of per-minute rollups. Row i of
+	// the parallel arrays takes latency_hist from latency_hists[i*45+1 : i*45+45];
+	// the CHECK on latency_hist rejects a flattened array of another width. The
+	// update is additive, so apid replicas flushing the same key add up.
+	AddRequestAnalyticsMinutes(ctx context.Context, db DBTX, arg AddRequestAnalyticsMinutesParams) error
 	AdmitMigrationContract(ctx context.Context, db DBTX, arg AdmitMigrationContractParams) (int64, error)
 	AdmitScenarioRecorderRequest(ctx context.Context, db DBTX, arg AdmitScenarioRecorderRequestParams) (int64, error)
 	AdmitTrafficRetry(ctx context.Context, db DBTX, arg AdmitTrafficRetryParams) (int64, error)
@@ -692,7 +697,10 @@ type Querier interface {
 	CountManagedPostgresCutoverSourceBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresCutoverTargetBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresHealth(ctx context.Context, db DBTX, arg CountManagedPostgresHealthParams) (CountManagedPostgresHealthRow, error)
+	// A delete that can no longer be undone frees the database, including a source
+	// kept for its restore copies (ADR-20261103091657).
 	CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	// Counts as CountManagedPostgresLifecycleDatabases does.
 	CountManagedPostgresOrgDatabases(ctx context.Context, db DBTX, orgID pgtype.UUID) (int64, error)
 	CountMigrationCutovers(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	// Per-(account_id, app_slug) open-session cap check at the top of
@@ -2025,6 +2033,7 @@ type Querier interface {
 	GetBaseImageScanPointer(ctx context.Context, db DBTX, storageKey string) (pgtype.UUID, error)
 	GetBuildExportPublicationByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildExportPublication, error)
 	GetBuildRuntimeBaseRef(ctx context.Context, db DBTX, buildID pgtype.UUID) (string, error)
+	GetCliAuthCodeOrg(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error)
 	// A sender reads only the dispatch just retained in its admission transaction.
 	// This is original ownership, not a re-read of current instance metadata.
 	GetCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, instanceID pgtype.UUID) (ProjectEnvironmentCloneWakeDispatch, error)
@@ -2182,6 +2191,8 @@ type Querier interface {
 	GetOperatorIntentAttempt(ctx context.Context, db DBTX, id pgtype.UUID) (OperatorIntent, error)
 	GetOperatorPark(ctx context.Context, db DBTX, intentID pgtype.UUID) (OperatorParkExecution, error)
 	GetOperatorRestart(ctx context.Context, db DBTX, intentID pgtype.UUID) (OperatorRestartExecution, error)
+	// ADR-20261101225122: a shared organization's agent policy.
+	GetOrgAgentPolicy(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgAgentPolicy, error)
 	GetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg GetOutboundBindingProbePolicyParams) (GetOutboundBindingProbePolicyRow, error)
 	// ADR-652: no row/advisory locks or state transitions in diagnostic snapshots.
 	GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, arg GetOwnedWorkflowDiagnosticsRunParams) (WorkflowRun, error)
@@ -2193,6 +2204,7 @@ type Querier interface {
 	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
 	GetReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg GetReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error)
 	GetReleaseDatabaseSwitchForApp(ctx context.Context, db DBTX, arg GetReleaseDatabaseSwitchForAppParams) (ReleaseDatabaseSwitch, error)
+	GetRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
 	// Exact app/account-scoped lookup, latest first when callers reuse an ID.
 	// expires_at is checked as well as received_at so plan downgrades do not
 	// extend the original request-time retention window.
@@ -3270,16 +3282,17 @@ type Querier interface {
 	// Reads the live events table (NOT audit_log — distinct source of
 	// truth per ADR-091 §3.7.4). Optional filters:
 	//   * $1 actor    — exact match (handler passes "" to skip)
-	//   * $2 kind_prefix — LIKE 'prefix%' (handler passes "" to skip)
+	//   * $2 kind_prefix — literal prefix (handler passes "" to skip)
 	//   * $3 subject  — exact match (handler passes "" to skip)
 	//   * $4 since    — RFC 3339 timestamptz (handler passes zero time to skip)
 	//   * $5 limit    — top-N rows (handler default 200, cap 500;
 	//                   cast to int8 so sqlc emits int64 Params and the
 	//                   handler's int→int64 widening is safe)
-	// Order: at DESC, id DESC — the id tiebreaker keeps the planner on
-	// the (kind, at DESC) index added by 00190_admin_obs_index.sql for
-	// kind-prefix queries and avoids an unstable sort on the
-	// over-read window.
+	//   kind_prefix is matched literally (starts_with), so '_' and '%' in
+	//   a kind are not wildcards.
+	// Order: at DESC, id DESC — a backward scan of events_at_id_idx
+	// (ADR-20261103094121) returns the newest rows first under any mix
+	// of filters, stopping at the limit instead of sorting the table.
 	// Subject is uuid (nullable in the schema); the cast is left to
 	// the handler so the handler can pass an empty string for "no
 	// subject filter" without a NULL literal.
@@ -3877,10 +3890,6 @@ type Querier interface {
 	// composite cursor prevents large tenants from being starved by the page cap.
 	ListTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListTenantWorkflowScheduleCandidatesParams) ([]ListTenantWorkflowScheduleCandidatesRow, error)
 	ListTenantWorkflowScheduleCursors(ctx context.Context, db DBTX, arg ListTenantWorkflowScheduleCursorsParams) ([]PlatformTenantWorkflowScheduleCursor, error)
-	// A broker may redeliver after Gregale commits a terminal receipt but before
-	// the broker acknowledges it. The current delivery handle can be Acked
-	// without dispatching the application again.
-	ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error)
 	// aborted_canary is the H5-62 candidate: aborted before its rollout completed.
 	// never_served is a live 0% release that has not served since it went live
 	// (a release staged with no traffic): serving_ended_at is stamped by trigger
@@ -5375,7 +5384,8 @@ type Querier interface {
 	PruneRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneRuntimeUpgradeGatewayReceiptsParams) error
 	PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error)
 	PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64, error)
-	PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, retentionSeconds int64) (int64, error)
+	PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, arg PruneUnownedWorkflowRunsParams) (int64, error)
+	PruneWorkflowEventArchive(ctx context.Context, db DBTX, arg PruneWorkflowEventArchiveParams) (int64, error)
 	PruneWorkflowScheduleCursors(ctx context.Context, db DBTX, arg PruneWorkflowScheduleCursorsParams) error
 	PruneWorkflowScheduleOccurrences(ctx context.Context, db DBTX, arg PruneWorkflowScheduleOccurrencesParams) (int64, error)
 	PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPatchTriggerParams) (Trigger, error)
@@ -6281,6 +6291,10 @@ type Querier interface {
 	RecordQuietPauses(ctx context.Context, db DBTX, arg RecordQuietPausesParams) error
 	// Adds one round's probe counts for a gate and revision.
 	RecordReleaseGateProbeResult(ctx context.Context, db DBTX, arg RecordReleaseGateProbeResultParams) error
+	// The first flush that holds an app's rows records its minute. A later,
+	// earlier minute (a replica's late flush) moves it back; an app that is
+	// gone is skipped.
+	RecordRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupCoverageParams) error
 	// The request-ID journal is independent from sampled request telemetry. Only
 	// insert when the app is still owned by the authenticated account. The
 	// caller-generated record UUID makes an RPC retry idempotent without
@@ -6411,6 +6425,12 @@ type Querier interface {
 	// evaluated before waiting for a row lock must not resurrect an expired lease.
 	RenewNotificationClaim(ctx context.Context, db DBTX, arg RenewNotificationClaimParams) (int64, error)
 	RenewProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg RenewProjectEnvironmentCloneWorkerLeaseParams) (RenewProjectEnvironmentCloneWorkerLeaseRow, error)
+	// Keeps the claims of a batch whose dispatch is still running. A claim lasts
+	// ten minutes, but a long-timeout app's batch may wait 16.5; an expired claim
+	// could be taken and run again, and its outcome could not be recorded. Only
+	// the claim generation the dispatcher holds is renewed, and never one that
+	// has already lapsed.
+	RenewTriggerRecordClaims(ctx context.Context, db DBTX, arg RenewTriggerRecordClaimsParams) (int64, error)
 	ReopenSkippedWorkflowStepsForRetry(ctx context.Context, db DBTX, arg ReopenSkippedWorkflowStepsForRetryParams) (int64, error)
 	ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg ReplaceDatabaseStandbyParams) (int64, error)
 	ReplaceProductionAppWorkloadSettings(ctx context.Context, db DBTX, arg ReplaceProductionAppWorkloadSettingsParams) error
@@ -6420,6 +6440,15 @@ type Querier interface {
 	// Lock the node before its epoch, matching registration and FK deletion order.
 	ReportGatewayPolicyProgress(ctx context.Context, db DBTX, arg ReportGatewayPolicyProgressParams) (int64, error)
 	ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg ReportGatewayTrafficRuntimeParams) (int64, error)
+	// ADR-20261103113952: analytics totals from the rollups. Groups are
+	// (dimension, method) over the window, top sqlc.arg(group_limit) by
+	// requests, the rest folded into one __other__ group; with hourly they are
+	// also split by UTC hour (callers zero-fill). group_by 'status' groups the
+	// route rows by HTTP status. The route/method filter applies to route
+	// rows only, so callers pass group_by 'route' or 'status' with it. A
+	// minute counts when it starts inside the window. latency_hist is the
+	// groups' merged histogram; callers turn it into percentiles.
+	RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg RequestAnalyticsRollupGroupsParams) ([]RequestAnalyticsRollupGroupsRow, error)
 	RequestEnvironmentGitOpsRuntimeRefresh(ctx context.Context, db DBTX, arg RequestEnvironmentGitOpsRuntimeRefreshParams) error
 	RequestEventExecutionReconciliation(ctx context.Context, db DBTX, arg RequestEventExecutionReconciliationParams) error
 	// gatewayd-internal, after a serving instance answered 5xx. Succeeds only
@@ -6972,6 +7001,8 @@ type Querier interface {
 	SetBindingVerificationRunStatus(ctx context.Context, db DBTX, arg SetBindingVerificationRunStatusParams) error
 	// Runtime-base generation identity (ADR-736).
 	SetBuildRuntimeBaseRef(ctx context.Context, db DBTX, arg SetBuildRuntimeBaseRefParams) error
+	// Binds a code still waiting for approval to the organization chosen for it.
+	SetCliAuthCodeOrg(ctx context.Context, db DBTX, arg SetCliAuthCodeOrgParams) (int64, error)
 	SetCommitSourceConnection(ctx context.Context, db DBTX, arg SetCommitSourceConnectionParams) (int64, error)
 	SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCommitSourceEnabledParams) error
 	// vmmd restart adoption ADR §3: a vmmd stopping for a planned restart tells
@@ -7281,6 +7312,16 @@ type Querier interface {
 	// answers "no such record". A record's trigger and a trigger's app never
 	// change, so the check needs no row lock and keeps the replay lock order.
 	TriggerRecordInScope(ctx context.Context, db DBTX, arg TriggerRecordInScopeParams) (bool, error)
+	// The stored state of the records one broker poll handed back. A broker may
+	// redeliver after Gregale commits a terminal receipt (succeeded, ended by a
+	// work policy, or dead-lettered) but before the broker settles it; the
+	// dispatcher settles that delivery without dispatching the application
+	// again. dead_letter_reason lets a Kafka seek-to-offset trigger keep holding
+	// a poison record while an exhausted one commits; next_fire_at and
+	// claim_expires_at tell a broker that redelivers on its own when a cooling
+	// retry, or a record another dispatcher holds, can run; topic maps a record
+	// stored under an earlier release's item identifier (ADR-20261101093512).
+	TriggerRecordStatesByItems(ctx context.Context, db DBTX, arg TriggerRecordStatesByItemsParams) ([]TriggerRecordStatesByItemsRow, error)
 	TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	TryLockApplicationStandardApprovalArtifactChildren(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) (bool, error)
@@ -7443,6 +7484,7 @@ type Querier interface {
 	// updated_at, audit_login) and preserves created_at. Returns the
 	// full row as stored.
 	UpsertOIDCTrustPolicy(ctx context.Context, db DBTX, arg UpsertOIDCTrustPolicyParams) (UpsertOIDCTrustPolicyRow, error)
+	UpsertOrgAgentPolicy(ctx context.Context, db DBTX, arg UpsertOrgAgentPolicyParams) (OrgAgentPolicy, error)
 	UpsertProjectEnvironmentSecret(ctx context.Context, db DBTX, arg UpsertProjectEnvironmentSecretParams) (UpsertProjectEnvironmentSecretRow, error)
 	UpsertQueueLeaseReceipt(ctx context.Context, db DBTX, arg UpsertQueueLeaseReceiptParams) error
 	// Persist a regression observation. PRIMARY KEY (app_id, deployment_id,

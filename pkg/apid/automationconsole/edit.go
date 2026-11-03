@@ -170,6 +170,12 @@ func (s *Service) run(w http.ResponseWriter, r *http.Request, scope Scope, data 
 		s.fail(w, r, scope, data, response)
 		return
 	}
+	if saved.Version != data.Version {
+		problem := api.ErrValidation("The automation changed since this page was loaded. Reload and review it before starting a run.")
+		raw, _ := json.Marshal(problem)
+		s.fail(w, r, scope, data, Response{Status: http.StatusConflict, Body: raw})
+		return
+	}
 	if saved.Published == nil {
 		s.invalid(w, r, scope, data, "Publish the automation before starting a run.")
 		return

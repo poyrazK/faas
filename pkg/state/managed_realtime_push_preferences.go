@@ -248,7 +248,7 @@ func (s *PgStore) PutManagedRealtimeNotificationPreferences(ctx context.Context,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var locked string
-	err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for update`, ep).Scan(&locked)
+	err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 for no key update`, ep).Scan(&locked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

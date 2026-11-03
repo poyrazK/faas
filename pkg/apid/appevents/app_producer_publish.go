@@ -76,7 +76,11 @@ func (s *Service) PublishAppProducerEvent(ctx context.Context, acct state.Accoun
 	if !okLookup || !okStore {
 		return batchPublishFailure("rejected", true, api.ErrInternal("event acceptance store"))
 	}
+	fits := api.WorkflowEventEnvelopeFits(payload)
 	accepted, err := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
+	if !fits && err != nil && !errors.Is(err, state.ErrConflict) {
+		return batchPublishFailure("rejected", false, api.ErrWorkflowEventEnvelopeTooLarge())
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, api.PublishEventRequest{Source: source, Type: event.Type, Data: event.Data}); problem != nil {
 			return batchPublishFailure("rejected", retryable, problem)

@@ -205,6 +205,8 @@ func orgActivitySummary(row state.OrgActivity) string {
 		return fmt.Sprintf("%s rotated API key %s", row.ActorLabel, row.ResourceLabel)
 	case "api_key.revoked":
 		return fmt.Sprintf("%s revoked API key %s", row.ActorLabel, row.ResourceLabel)
+	case "org.agent_policy.updated":
+		return fmt.Sprintf("%s changed the agent policy", row.ActorLabel)
 	case "org.invitation.created":
 		return orgActivitySummaryWithRole(fmt.Sprintf("%s invited %s", row.ActorLabel, row.ResourceLabel), role)
 	case "org.invitation.accepted":

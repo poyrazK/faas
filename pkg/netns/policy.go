@@ -97,6 +97,16 @@ type HostPolicy struct {
 	// (ADR-20261102081618 §2).
 	PublicInputSourceCIDRs []netip.Prefix
 
+	// PublicEntryAddrs, when set, are a compute edge's public entry
+	// addresses with no proxy in front (ADR-20261103163954 §2): 443 is
+	// admitted from anywhere to them only, everything else sent to them is
+	// dropped, and sshd stays on the node's other addresses behind the
+	// provider firewall, never on an address that public DNS names. It
+	// replaces the open web ports and takes precedence over
+	// PublicInputSourceCIDRs, which the vmmd drop-in sends beside it so that
+	// a vmmd without this field stays Cloudflare-only rather than open.
+	PublicEntryAddrs []netip.Addr
+
 	// MasqueradeCIDR is the source-address set the postrouting nat chain
 	// MASQUERADEs to the host's public IP on its way out PublicIface. Must be
 	// the NETWORK form of HostBridgeCIDR (e.g. "10.100.0.0/16", not the host
@@ -627,6 +637,11 @@ func (h HostPolicy) Render() string {
 			panic("netns: HostPolicy.Render: PublicInputSourceCIDRs has invalid source prefix")
 		}
 	}
+	for _, a := range h.PublicEntryAddrs {
+		if !a.IsValid() || a.Zone() != "" || a.Is4In6() {
+			panic("netns: HostPolicy.Render: PublicEntryAddrs has an invalid, zoned or IPv4-mapped address")
+		}
+	}
 	for _, r := range h.PrivateInputAllowRules {
 		if !r.Source.IsValid() {
 			panic("netns: HostPolicy.Render: PrivateInputAllowRules has invalid source prefix")
@@ -686,7 +701,18 @@ func (h HostPolicy) Render() string {
 	fmt.Fprintf(&b, "    iifname %q tcp dport { %s } accept\n", h.BridgeName, joinInts(tenantHairpinTCPPorts, ","))
 	fmt.Fprintf(&b, "    iifname %q meta l4proto { icmp, ipv6-icmp } accept\n", h.BridgeName)
 	fmt.Fprintf(&b, "    iifname %q drop\n", h.BridgeName)
-	if len(h.PublicInputSourceCIDRs) > 0 {
+	switch {
+	case len(h.PublicEntryAddrs) > 0:
+		// The drops come before sshd's accept, so the entry addresses carry
+		// 443 and nothing else.
+		for _, a := range h.PublicEntryAddrs {
+			fmt.Fprintf(&b, "    %s daddr %s tcp dport 443 accept comment %q\n", addrFamily(a), a, "public entry")
+		}
+		for _, a := range h.PublicEntryAddrs {
+			fmt.Fprintf(&b, "    %s daddr %s drop comment %q\n", addrFamily(a), a, "public entry carries 443 only")
+		}
+		b.WriteString("    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary\n")
+	case len(h.PublicInputSourceCIDRs) > 0:
 		b.WriteString("    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary\n")
 		for _, p := range h.PublicInputSourceCIDRs {
 			family := "ip"
@@ -695,7 +721,7 @@ func (h HostPolicy) Render() string {
 			}
 			fmt.Fprintf(&b, "    %s saddr %s tcp dport { 80,443 } accept comment %q\n", family, p, "gateway via Cloudflare")
 		}
-	} else {
+	default:
 		fmt.Fprintf(&b, "    tcp dport { %s } accept     # sshd + gatewayd-public public listener\n", allowPorts)
 	}
 	for _, r := range h.PrivateInputAllowRules {
@@ -882,6 +908,14 @@ func (h HostPolicy) Render() string {
 
 // joinInts renders a port slice as comma-joined digits: "25,465,587". The
 // nftables tcp-dport set syntax is `{ 25,465,587 } drop`.
+// addrFamily is the nftables address family keyword for a.
+func addrFamily(a netip.Addr) string {
+	if a.Is4() {
+		return "ip"
+	}
+	return "ip6"
+}
+
 func joinInts(in []int, sep string) string {
 	parts := make([]string, len(in))
 	for i, n := range in {

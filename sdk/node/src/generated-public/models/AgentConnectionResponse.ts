@@ -34,5 +34,13 @@ export type AgentConnectionResponse = {
   created_at: string;
   last_used_at?: string;
   expires_at?: string;
+  /**
+   * The organization the agent acts in.
+   */
+  org_id?: string;
+  /**
+   * Email of the member who connected the agent, in an organization's list.
+   */
+  member?: string;
 };
 

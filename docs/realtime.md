@@ -178,6 +178,10 @@ at least once, so deduplicate by `message_id` or `sequence`.
   open.
 - Code 1008 closes a connection whose token expired or changed: reconnect with
   a fresh token. Code 1013 means try again: reconnect from the saved cursor.
+  Code 1012 means the realtime node restarted: reconnect after a random delay
+  of up to a few seconds (the Node SDK waits up to 5 s), so clients do not all
+  return at once. A handshake answered 503 with `Retry-After` means the node is
+  accepting connections more slowly for a moment; retry after that delay.
 
 ## Declare endpoints in gregale.yaml
 
@@ -522,7 +526,9 @@ you do not operate always-on workers. It consumes an existing consumer
 group: create the group with `lease_seconds` of at least 120, then create a
 trigger with `kind: realtime` and `{"endpoint_id", "channel", "group"}` config.
 The group's ordering, filters, retry policy and dead-letter queue apply, and a
-parked app wakes for the first message.
+parked app wakes for the first message. A trigger whose group has been idle
+checks it every few seconds, so the first message after a quiet spell starts
+its function within about 5 seconds; later messages follow at once.
 
 Each message is one invocation. A 2xx response completes it; a failed or
 timed-out handler retries under the group's retry policy; a platform failure

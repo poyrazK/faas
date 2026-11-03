@@ -93,7 +93,7 @@ func List(d Deps) httpkit.AccountHandler {
 }
 
 func response(k state.APIKey, client state.AgentClient, prefix string) api.AgentConnectionResponse {
-	out := api.AgentConnectionResponse{ID: k.ID, Kind: Kind(k), ClientName: client.Name, ClientSite: client.Site, Label: k.Label, Prefix: prefix, Scopes: k.Scopes, CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339)}
+	out := api.AgentConnectionResponse{ID: k.ID, Kind: Kind(k), ClientName: client.Name, ClientSite: client.Site, Label: k.Label, Prefix: prefix, Scopes: k.Scopes, CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339), OrgID: k.OrgID}
 	if k.LastUsedAt != nil {
 		out.LastUsedAt = k.LastUsedAt.UTC().Format(time.RFC3339)
 	}

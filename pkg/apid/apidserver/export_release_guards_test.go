@@ -60,6 +60,18 @@ func (s *server) RollbackTargetProblemForTest(ctx context.Context, app state.App
 	return s.rollbackTargetApprovalProblem(ctx, app, target)
 }
 
+// ApprovalTrafficProblemForTest holds giving d traffic to the release
+// guards (`traffic`, promote, a rollback to it, graph activation).
+func (s *server) ApprovalTrafficProblemForTest(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
+	return s.approvalTrafficProblem(ctx, app, d)
+}
+
+// ReleaseSetMembersGuardProblemForTest holds publishing members as a release
+// set in environment to the release guards (ADR-20261019071733 amendment 10).
+func (s *server) ReleaseSetMembersGuardProblemForTest(ctx context.Context, environment string, members []state.ProjectReleaseMember) *api.Problem {
+	return s.releaseSetMembersGuardProblem(ctx, environment, false, members)
+}
+
 // RenderReleaseSafetyForTest renders the release safety dashboard page for
 // acct's app slug.
 func (s *server) RenderReleaseSafetyForTest(acct state.Account, slug string) *httptest.ResponseRecorder {

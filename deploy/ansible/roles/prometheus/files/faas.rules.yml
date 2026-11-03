@@ -3450,6 +3450,48 @@ groups:
           description: "At least one provider batch settled as unknown in the last 6h: it never ended within 72h or outboundd could not read its status, so it was charged at its reservation. Check the batch worker's logs and the provider's batch status."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
 
+      # ADR 20261027132936: online evaluations that keep failing leave quality
+      # scores and drift alerts without data.
+      - alert: FaasAIGatewayOnlineEvaluationsFailing
+        expr: (sum(rate(outbound_ai_online_evaluations_total{result="judge_error"}[30m])) / sum(rate(outbound_ai_online_evaluations_total[30m])) > 0.5) and sum(rate(outbound_ai_online_evaluations_total[30m])) > 0.005
+        for: 30m
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "Most AI gateway online evaluations are failing"
+          description: "More than half of online evaluations got no score from their judge model for 30m, so quality scores and drift alerts lack data. Check whether one account's judge integration carries the traffic before suspecting outboundd."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+      # ADR 20261027132936: callers outside Gregale get 503s when access
+      # token lookups fail or the bounded lookups are saturated.
+      - alert: FaasAIGatewayAccessTokenLookupsFailing
+        expr: (sum(rate(outbound_ai_access_token_lookups_total{result=~"error|busy"}[10m])) / sum(rate(outbound_ai_access_token_lookups_total[10m])) > 0.2) and sum(rate(outbound_ai_access_token_lookups_total[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "AI gateway access-token lookups are failing"
+          description: "More than a fifth of public listener access-token lookups failed or found the lookups saturated for 10m; those callers get 503 outbound_access_token_unavailable. A flood of unknown tokens shows as busy; database trouble shows as error."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+      # ADR 20261027132936: calls priced at zero for want of a price mean the
+      # built-in catalog is missing models customers use.
+      - alert: FaasAIGatewayUnpricedCalls
+        expr: (sum(rate(outbound_ai_unpriced_calls_total[1h])) / sum(rate(outbound_ai_requests_total[1h])) > 0.1) and sum(rate(outbound_ai_unpriced_calls_total[1h])) > 0.001
+        for: 1h
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "Many AI gateway calls have no price"
+          description: "More than a tenth of settled AI calls cost zero for 1h because their model has no price, so usage reports undercount and cost caps refuse those models. Refresh the built-in price catalog, or check whether one account calls an unlisted model."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
       # A rollout should converge to one daemon release. This catches a
       # partial deploy where systemd is healthy and readiness is green, but
       # different hosts (or different daemons on one host) are serving
@@ -4209,6 +4251,32 @@ groups:
         annotations:
           summary: "meterd holds back usage older than 30 minutes"
           description: "The oldest closed minute of meterd's 72 h catch-up window that is not recorded compute-complete is {{ $value | humanizeDuration }} old. The provider pusher delivers usage only for hours before that minute, so every account's usage waits and cost reports lose coverage (ADR-1162, ADR-20261029180000). A new environment shows this until its first catch-up finishes, about five hours."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      # ADR-20261103121407: the ledger dual run (ADR-20261019193600) and
+      # held usage were exported but nothing watched them.
+      - alert: FaasMeterdLedgerDrift
+        expr: max by (month, result) (meterd_financial_ledger_reconcile_accounts{result=~"drift|failed"}) > 0
+        for: 2h
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "{{ $value }} accounts' {{ $labels.month }} month reconcile as {{ $labels.result }}"
+          description: "The financial ledger's net compute and the compute receipts meterd delivered disagree (drift) or could not be compared (failed) for the {{ $labels.month }} UTC month, for two hours (ADR-20261019193600). Customers may be billed differently from the ledger the cost reports use. meterd_financial_ledger_drift_mb_seconds is the summed difference."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdHeldUsageExpiring
+        expr: sum by (meter, reason) (meterd_billing_usage_held_expiring_windows) > 0
+        for: 1h
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "{{ $value }} held {{ $labels.meter }} usage hours leave the billing lookback within 72 h ({{ $labels.reason }})"
+          description: "meterd holds usage back while its subject is suspended, being deleted, has no complete billing identity or is unknown, and retries it every pass, but only within the billing lookback. These hours fall out of it within 72 hours and are then never billed (ADR-20261103121407). Clear the reason (reactivate, finish checkout) or accept the loss."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
       - alert: FaasMeterdSampleFailing
         expr: increase(meterd_ops_total{op="sample",code="err"}[15m]) >= 5
@@ -7514,6 +7582,33 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "Object storage inventory scans are failing"
           description: "More than 20% of apid's bucket inventory attempts failed over 15m. A bucket whose inventory is older than 900 s, and whose listing is not advancing, refuses its own uploads and reads until a listing completes."
+      # Hunt 14 H14-14: a provider that refuses the credentials (here a closed
+      # billing account) withdraws object storage; every bucket create failed
+      # for three weeks with nothing paging.
+      - alert: FaasObjectStorageProviderRefusingCredentials
+        expr: max(faas_object_storage_provider_refusing_credentials) == 1
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "A storage provider is refusing Gregale's credentials"
+          description: "A provider answered 401/403 to a bucket operation, so apid withdrew object storage: capabilities report it off and bucket creates answer 503 object_storage_unavailable. Check the provider account (credentials, billing, project) before the next retry."
+      - alert: FaasObjectStorageBucketOperationsStalled
+        expr: |
+          sum(increase(faas_object_storage_recovery_attempts_total{operation=~"provisioning|deleting",outcome="deferred"}[2h])) > 0
+          unless sum(increase(faas_object_storage_recovery_attempts_total{operation=~"provisioning|deleting",outcome="success"}[2h])) > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Bucket creates and deletes keep failing"
+          description: "apid retried bucket creates or deletes over the last 2h and none succeeded. Customers see buckets stuck in provisioning or deleting. apid logs each attempt as 'object storage operation deferred' with its error_code."
       - alert: FaasS3GatewayErrorRateHigh
         expr: |
           sum(rate(s3_gateway_ops_total{op="s3_request",code="5xx"}[10m]))

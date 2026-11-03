@@ -1818,3 +1818,39 @@ func TestSimulateAccessGateMatchesOriginalPathAfterRewrite(t *testing.T) {
 		t.Fatalf("simulation = %#v, want the /api/** ip rule applied after the rewrite to /users", result.Simulation)
 	}
 }
+
+// adr: 091 — when both the client's path and the rewritten path have an
+// access-gate rule, the trace applies both, client path first (amendment
+// 2026-11-03, review round 9): the rewritten path's deny still blocks after
+// the client path's allow passes.
+func TestSimulateAccessGateAppliesBothPathsRulesAfterRewrite(t *testing.T) {
+	rewrite := api.EdgeRuleResponse{
+		ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/legacy/**", Priority: 10,
+		Action: json.RawMessage(`{"rewrite":{"from":"/legacy","to":"/internal"}}`),
+	}
+	legacy := api.EdgeRuleResponse{
+		ID: "legacy-ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/legacy/**", Priority: 20,
+		Action: json.RawMessage(`{"ip":{"allow":["203.0.113.0/24"]}}`),
+	}
+	internal := api.EdgeRuleResponse{
+		ID: "internal-ip", Enabled: true, Kind: "ip", MatchHost: "*", MatchPath: "/internal/**", Priority: 30,
+		Action: json.RawMessage(`{"ip":{"deny":["203.0.113.0/24"]}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/legacy/users", Method: http.MethodGet,
+		AppMaintenanceLoaded: true, ClientIP: "203.0.113.9",
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rewrite, legacy, internal})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	var ipRules []string
+	for _, step := range result.Simulation.Steps {
+		if step.Phase == "ip" {
+			ipRules = append(ipRules, step.RuleID+":"+step.Outcome)
+		}
+	}
+	if len(ipRules) != 2 || ipRules[0] != "legacy-ip:allow" || ipRules[1] != "internal-ip:block" || result.Simulation.Outcome != "blocked" {
+		t.Fatalf("ip steps = %v, outcome %q; want legacy-ip allowed then internal-ip blocking", ipRules, result.Simulation.Outcome)
+	}
+}

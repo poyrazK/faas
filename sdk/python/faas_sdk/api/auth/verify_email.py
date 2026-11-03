@@ -65,9 +65,11 @@ def sync_detailed(
 ) -> Response[Any | Problem | str]:
     """Verify a password-signup email address.
 
-     Consumes a 24-hour, single-use verification token and marks the
-    account email verified. This endpoint does not create a session;
-    the returned HTML page prompts the customer to sign in again.
+     A browser (Accept text/html) gets an HTML page whose button posts the
+    token back, and nothing is consumed, so a mail scanner that prefetches
+    the link cannot use up the token. Any other client consumes the
+    24-hour, single-use token here and the account email is marked
+    verified. No session is created.
 
     Args:
         token (str):
@@ -98,9 +100,11 @@ def sync(
 ) -> Any | Problem | str | None:
     """Verify a password-signup email address.
 
-     Consumes a 24-hour, single-use verification token and marks the
-    account email verified. This endpoint does not create a session;
-    the returned HTML page prompts the customer to sign in again.
+     A browser (Accept text/html) gets an HTML page whose button posts the
+    token back, and nothing is consumed, so a mail scanner that prefetches
+    the link cannot use up the token. Any other client consumes the
+    24-hour, single-use token here and the account email is marked
+    verified. No session is created.
 
     Args:
         token (str):
@@ -126,9 +130,11 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | str]:
     """Verify a password-signup email address.
 
-     Consumes a 24-hour, single-use verification token and marks the
-    account email verified. This endpoint does not create a session;
-    the returned HTML page prompts the customer to sign in again.
+     A browser (Accept text/html) gets an HTML page whose button posts the
+    token back, and nothing is consumed, so a mail scanner that prefetches
+    the link cannot use up the token. Any other client consumes the
+    24-hour, single-use token here and the account email is marked
+    verified. No session is created.
 
     Args:
         token (str):
@@ -157,9 +163,11 @@ async def asyncio(
 ) -> Any | Problem | str | None:
     """Verify a password-signup email address.
 
-     Consumes a 24-hour, single-use verification token and marks the
-    account email verified. This endpoint does not create a session;
-    the returned HTML page prompts the customer to sign in again.
+     A browser (Accept text/html) gets an HTML page whose button posts the
+    token back, and nothing is consumed, so a mail scanner that prefetches
+    the link cannot use up the token. Any other client consumes the
+    24-hour, single-use token here and the account email is marked
+    verified. No session is created.
 
     Args:
         token (str):
