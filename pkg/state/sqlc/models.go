@@ -8407,6 +8407,14 @@ type ManagedPostgresOverageDelivery struct {
 	BilledStorageByteSeconds int64
 }
 
+// Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
+type ManagedPostgresPlanExcessNotice struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	MailIntentID pgtype.UUID
+}
+
 type ManagedPostgresResize struct {
 	ID                      pgtype.UUID
 	AccountID               pgtype.UUID

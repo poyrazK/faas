@@ -116,7 +116,9 @@ func (h *Handler) authenticateMCPResource(w http.ResponseWriter, r *http.Request
 		verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, rule.PlatformTenantExternalRefClaim)
 	}
 	if h.edgeRules != nil {
-		if throttle := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method); throttle != nil && throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
+		if throttle := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
+			return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
+		}); throttle != nil && throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
 			verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, throttle.JWTClaimName)
 		}
 	}

@@ -4,7 +4,7 @@ import "net/http"
 
 // withholdPreviewGateCredential removes the Authorization header a platform
 // gate verified before a preview's request goes upstream
-// (ADR-20261102100000). A preview runs unreviewed code behind its production
+// (ADR-20261102100001). A preview runs unreviewed code behind its production
 // app's gates: the credential such a gate reads is the platform's — the
 // production app's password, or a Gregale API key of the owning account —
 // and handing it on let the pull request's code read it. The request stays
