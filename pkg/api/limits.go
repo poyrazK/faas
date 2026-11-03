@@ -3983,6 +3983,14 @@ type Limits struct {
 
 	// Networking (spec §7).
 	EgressMbit int // per-instance egress bandwidth cap via tc
+	// MonthlyEgressGiB is the application egress a month includes: the
+	// host-interface bytes the subject's instances send (state.Usage
+	// NetTxBytes, the egress meter's source). While egress is not billed for
+	// the plan, meterd stops the subject's apps at it until the month ends or
+	// the plan grows; once the egress meter bills live it is the included
+	// allowance and usage above it is overage under the spend cap
+	// (ADR-20261103131742). It matches the plan's object storage egress.
+	MonthlyEgressGiB int64
 	// EgressNewConnPerSecond / EgressNewConnBurst cap the rate at which a
 	// guest may open new outbound flows (ADR-361). Excess new flows are
 	// dropped in the per-instance forward chain and counted in
@@ -5473,6 +5481,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
 		EgressMbit:                     10,
+		MonthlyEgressGiB:               10,
 		EgressNewConnPerSecond:         10,
 		EgressNewConnBurst:             40,
 		EgressNewDestinationsPerMinute: 120,
@@ -5891,6 +5900,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:                   20,
 		RateLimitBurst:                 100,
 		EgressMbit:                     25,
+		MonthlyEgressGiB:               100,
 		EgressNewConnPerSecond:         20,
 		EgressNewConnBurst:             80,
 		EgressNewDestinationsPerMinute: 240,
@@ -6338,6 +6348,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:                   100,
 		RateLimitBurst:                 500,
 		EgressMbit:                     100,
+		MonthlyEgressGiB:               500,
 		EgressNewConnPerSecond:         50,
 		EgressNewConnBurst:             200,
 		EgressNewDestinationsPerMinute: 1200,
@@ -6750,6 +6761,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:                   500,
 		RateLimitBurst:                 2000,
 		EgressMbit:                     250,
+		MonthlyEgressGiB:               2000,
 		EgressNewConnPerSecond:         100,
 		EgressNewConnBurst:             400,
 		EgressNewDestinationsPerMinute: 3000,
@@ -13105,6 +13117,27 @@ const (
 	// for an app whose invocations run longer may take one whole record
 	// instead (ADR-1180).
 	TriggerBatchTimeout = 5 * time.Minute
+	// TriggerRecordClaimLease is how long a trigger record claim lasts
+	// without renewal. The claim queries in pkg/state set the same ten
+	// minutes; schedd renews the claims of a batch whose dispatch is still
+	// running, because a long-timeout app's batch may wait 16.5 minutes
+	// (ADR-20261101093512).
+	TriggerRecordClaimLease = 10 * time.Minute
+	// TriggerRecordClaimRenewInterval is how often schedd renews the claims
+	// of a running trigger batch. It is well inside the lease, so one missed
+	// renewal does not let another dispatcher take the records.
+	TriggerRecordClaimRenewInterval = 2 * time.Minute
+	// TriggerClaimSettleAttempts bounds how often schedd writes a claimed
+	// record's outcome (succeeded, retry, dead letter) through transient
+	// store errors before it hands the broker delivery back unsettled.
+	TriggerClaimSettleAttempts = 5
+	// TriggerClaimSettleBackoff is the first wait between those attempts;
+	// each later wait doubles it (3 s in all).
+	TriggerClaimSettleBackoff = 200 * time.Millisecond
+	// TriggerBrokerEarlyRedeliveryDelay is how long NATS waits before
+	// redelivering a record that came back while its retry was still
+	// cooling and schedd does not know when the retry is due.
+	TriggerBrokerEarlyRedeliveryDelay = 2 * time.Second
 )
 
 // AsyncInvocationTimeout is how long one async, queue, cron or replay
