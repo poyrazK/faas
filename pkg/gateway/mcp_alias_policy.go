@@ -9,12 +9,18 @@ func (h *Handler) applyMCPAliasPolicy(w http.ResponseWriter, r *http.Request, ap
 	if app.CanonicalHost == "" || app.CanonicalHost == hostname(r.Host) {
 		return false
 	}
-	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleJWTResolved {
+	rules := matchEdgeGates(r, func(ctx context.Context, path string) *EdgeRuleJWTResolved {
 		return h.edgeRules.MatchJWT(ctx, app.CanonicalHost, path, r.Method)
 	})
-	if rule == nil {
-		return false
+	for _, rule := range rules {
+		if h.applyMCPAliasRule(w, r, app, rule) {
+			return true
+		}
 	}
+	return false
+}
+
+func (h *Handler) applyMCPAliasRule(w http.ResponseWriter, r *http.Request, app App, rule *EdgeRuleJWTResolved) bool {
 	if rule.Unavailable {
 		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_policy_unavailable")
 		return true

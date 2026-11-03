@@ -5673,6 +5673,7 @@
       "items",
       "kind",
       "name",
+      "org_id",
       "updated_at"
     ],
     "kind": "configuration",

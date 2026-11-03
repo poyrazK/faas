@@ -48,13 +48,24 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 	if m == nil || deploymentSmoke || !h.edgeFeatureReleased(platformflags.EdgeChallenge, app) {
 		return false
 	}
-	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleChallengeResolved {
+	rules := matchEdgeGates(r, func(ctx context.Context, path string) *EdgeRuleChallengeResolved {
 		return m.MatchChallenge(ctx, hostname(r.Host), path, r.Method)
 	})
-	if rule == nil {
+	if len(rules) == 0 {
 		h.metrics.ObserveEdgeRuleMatch("challenge", "miss")
 		return false
 	}
+	for _, rule := range rules {
+		if h.applyEdgeRuleChallengeRule(w, r, app, rule) {
+			return true
+		}
+	}
+	return false
+}
+
+// applyEdgeRuleChallengeRule enforces one matched challenge rule; it reports
+// true when it answered the request.
+func (h *Handler) applyEdgeRuleChallengeRule(w http.ResponseWriter, r *http.Request, app App, rule *EdgeRuleChallengeResolved) bool {
 	if rule.AccountID != app.AccountID {
 		h.metrics.ObserveEdgeRuleMatch("challenge", "blocked")
 		return false

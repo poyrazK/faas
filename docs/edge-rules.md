@@ -43,9 +43,13 @@ and `gregale edge rule create` warns when it does.
 
 In an organization, members who can read an app read its rules, history,
 events and traces; owners and admins create, change and delete them, roll
-them back and switch attack mode, whoever created the app. Lists and CORS
-presets stay with the account that holds the app's rules; an organization
-app's dashboard page manages the lists its rules use.
+them back and switch attack mode, whoever created the app. The organization
+also has its own lists and CORS presets: name one of its apps with `?app=<slug>`
+on `/v1/edge-rule-lists` and `/v1/cors-presets` (`--app` on `gregale edge
+rule-list`), or use the app's dashboard page. Members who can read the app
+read them, and owners and admins change them. They are separate from each
+member's personal lists and presets, which the organization never sees, and
+the organization's plan sets their limits.
 
 A rule only ever applies to hosts your account owns: another account's rule
 never runs on your traffic, even with `match_host` `*`. A host pattern other
@@ -138,8 +142,9 @@ described under [AI crawlers](security#ai-crawlers).
 
 ### Lists
 
-`in_list` names a reusable list on your account, so one list of office IPs or
-blocked countries can serve many rules. A list has a kind (`ip`, `country`,
+`in_list` names a reusable list on your account (or your organization's, for a
+rule on one of its apps), so one list of office IPs or blocked countries can
+serve many rules. A list has a kind (`ip`, `country`,
 `host`, `string` or `asn`) that must fit the field it is used with. Editing a
 list is applied like a rule change (see [Changing rules](#changing-rules)),
 and a list cannot be deleted while a rule uses it. A rule that names a list
@@ -149,6 +154,7 @@ requests to the rule's hosts get 503 rather than skipping the rule.
 ```sh
 gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
 gregale edge rule-list update office-ips --add 198.51.100.7
+gregale edge rule-list create team-ips --app company-api --kind ip --item 203.0.113.0/24
 ```
 
 Lists are available on Hobby and above; see [Limits](#limits).
@@ -200,8 +206,9 @@ ends it, and later kinds do not run.
 `ip`, `geo`, `jwt`, `throttle`, `waf` and `challenge` match the path the
 client sent, and the rewritten path when a `rewrite` changed it: a gate on
 `/api/**` keeps applying after a rewrite takes `/api` away, and a gate written
-for the rewritten path still applies. The kinds after them (`limit`,
-`validate`, `respond`, `cache`, `async`) see the rewritten path.
+for the rewritten path still applies. When the two paths match different
+rules of a kind, both apply, the client path's first. The kinds after them
+(`limit`, `validate`, `respond`, `cache`, `async`) see the rewritten path.
 
 Refusals are ordered from cheapest to most expensive, so a request blocked by
 IP or country never costs a token check or a body read, and a request
@@ -723,6 +730,7 @@ refused until the plan allows them again. Delete the ones you no longer need.
 | 429 `rate_limited` | `throttle` |
 | 503 `edge_rule_maintenance` | `maintenance` |
 | 503 `capacity_unavailable` | a rule change being applied, rules the gateway cannot load, an unreachable JWKS |
+| 503 `traffic_policy_unavailable` | a rule on the host the gateway cannot enforce; the detail names it, and `gregale edge rule list` warns about it |
 | 503 `request_budget_exceeded` | `budget` |
 
 Errors use the [problem format](errors); `gregale edge rule events
