@@ -328,6 +328,10 @@ func boot() error {
 	}
 	if manifest.AfterRestore != nil {
 		afterRestore.Store(&afterRestoreRuntime{hook: *manifest.AfterRestore, port: manifest.EffectivePort()})
+		if manifest.AfterRestore.ReloadsIdentity() {
+			reload := newRestoreIdentityReload(*manifest.AfterRestore, manifest.EffectivePort(), lookupUID(manifest.EffectiveUser())).run
+			restoreIdentityReloader.Store(&reload)
+		}
 	}
 	if manifest.BeforeCheckpoint != nil {
 		beforeCheckpoint.Store(&beforeCheckpointRuntime{hook: *manifest.BeforeCheckpoint, port: manifest.EffectivePort()})

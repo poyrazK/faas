@@ -51,6 +51,11 @@ type Timings struct {
 	AfterRestoreUs int64 `json:"after_restore_us"`
 	// TotalUs is from the request header arriving to the ack being written.
 	TotalUs int64 `json:"total_us"`
+	// IdentityDigest (ADR-20261031193635) is the restore identity the
+	// after_restore hook acknowledged, set only when vmmd asked for an
+	// identity reload. vmmd requires it to match the digest it served; a
+	// guest that predates the field omits it, so the restore fails closed.
+	IdentityDigest string `json:"identity_digest,omitempty"`
 }
 
 // AppendFrame appends the frame for t: a 4-byte big-endian length and the
