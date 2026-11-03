@@ -36451,6 +36451,44 @@ CREATE TABLE public.environment_binding_release_receipts (
 
 
 --
+-- Name: environment_branch_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_branch_captures (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    deployment_id uuid NOT NULL,
+    state text DEFAULT 'requested'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    failure text DEFAULT ''::text NOT NULL,
+    fc_version text DEFAULT ''::text NOT NULL,
+    storage_key text DEFAULT ''::text NOT NULL,
+    base_image_version text DEFAULT ''::text NOT NULL,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
+    mem_bytes bigint DEFAULT 0 NOT NULL,
+    disk_bytes bigint DEFAULT 0 NOT NULL,
+    stored_bytes bigint DEFAULT 0 NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    ready_at timestamp with time zone,
+    CONSTRAINT environment_branch_captures_attempts CHECK ((attempts >= 0)),
+    CONSTRAINT environment_branch_captures_bytes CHECK (((mem_bytes >= 0) AND (disk_bytes >= 0) AND (stored_bytes >= 0))),
+    CONSTRAINT environment_branch_captures_failure CHECK ((octet_length(failure) <= 512)),
+    CONSTRAINT environment_branch_captures_lease CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT environment_branch_captures_ready CHECK (((state = 'ready'::text) = ((storage_key <> ''::text) AND (fc_version <> ''::text) AND (ready_at IS NOT NULL)))),
+    CONSTRAINT environment_branch_captures_state CHECK ((state = ANY (ARRAY['requested'::text, 'ready'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: TABLE environment_branch_captures; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.environment_branch_captures IS 'ADR-20261031193635 credential-free captures of parent deployments; only environment branches restore them, production never does.';
+
+
+--
 -- Name: environment_build_artifact_pins; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -60583,6 +60621,22 @@ ALTER TABLE ONLY public.environment_binding_retirement_receipts
 
 
 --
+-- Name: environment_branch_captures environment_branch_captures_one_per_deployment; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_branch_captures
+    ADD CONSTRAINT environment_branch_captures_one_per_deployment UNIQUE (deployment_id);
+
+
+--
+-- Name: environment_branch_captures environment_branch_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_branch_captures
+    ADD CONSTRAINT environment_branch_captures_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: environment_build_artifact_pins environment_build_artifact_pins_candidate_id_artifact_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72731,6 +72785,13 @@ CREATE INDEX egress_flow_log_remote_ip_idx ON public.egress_flow_log USING gist 
 --
 
 CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_tokens USING btree (account_id, expires_at);
+
+
+--
+-- Name: environment_branch_captures_requested_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_branch_captures_requested_idx ON public.environment_branch_captures USING btree (requested_at) WHERE (state = 'requested'::text);
 
 
 --
@@ -91731,6 +91792,14 @@ ALTER TABLE ONLY public.environment_binding_retirement_receipts
 
 ALTER TABLE ONLY public.environment_binding_retirement_receipts
     ADD CONSTRAINT environment_binding_retirement_receipts_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_branch_captures environment_branch_captures_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_branch_captures
+    ADD CONSTRAINT environment_branch_captures_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

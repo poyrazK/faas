@@ -5728,6 +5728,29 @@
     "kind": "operational"
   },
   {
+    "table": "environment_branch_captures",
+    "columns": [
+      "attempts",
+      "base_image_version",
+      "cpu_model",
+      "cpu_template",
+      "deployment_id",
+      "disk_bytes",
+      "failure",
+      "fc_version",
+      "id",
+      "lease_token",
+      "lease_until",
+      "mem_bytes",
+      "ready_at",
+      "requested_at",
+      "state",
+      "storage_key",
+      "stored_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_build_artifact_pins",
     "columns": [
       "artifact_id",

@@ -13,3 +13,8 @@ func TestPgProjectEnvironmentBranchPrivateNetworks(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	projectEnvironmentBranchPrivateNetworks(t, s)
 }
+
+func TestPgEnvironmentBranchCaptures(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	environmentBranchCaptures(t, s)
+}

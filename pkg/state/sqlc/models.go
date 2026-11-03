@@ -4491,6 +4491,27 @@ type EnvironmentBindingRetirementReceipt struct {
 	RecordedAt    pgtype.Timestamptz
 }
 
+// ADR-20261031193635 credential-free captures of parent deployments; only environment branches restore them, production never does.
+type EnvironmentBranchCapture struct {
+	ID               pgtype.UUID
+	DeploymentID     pgtype.UUID
+	State            string
+	Attempts         int32
+	LeaseToken       pgtype.UUID
+	LeaseUntil       pgtype.Timestamptz
+	Failure          string
+	FcVersion        string
+	StorageKey       string
+	BaseImageVersion string
+	CpuTemplate      string
+	CpuModel         string
+	MemBytes         int64
+	DiskBytes        int64
+	StoredBytes      int64
+	RequestedAt      pgtype.Timestamptz
+	ReadyAt          pgtype.Timestamptz
+}
+
 type EnvironmentBuildArtifactPin struct {
 	SourceID    pgtype.UUID
 	CandidateID pgtype.UUID

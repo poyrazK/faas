@@ -161,10 +161,14 @@ booting. Rules:
     non-production workload environment (`branch-capture`), so any identity token it
     holds is refused by production-only integrations (#6044). Customer secrets keep
     their values; a branch copies them anyway (section 6).
-  - The capture is a snapshot row of the parent deployment marked
-    `identity = credential_free`. **Production never restores it:** every non-branch
-    snapshot lookup and restore check excludes it, so a production wake cannot come up
-    with placeholder credentials. A branch restores from no other capture.
+  - The capture is a row of its own table, `environment_branch_captures`, one per
+    parent deployment (`requested`, `ready` or `failed`, leased while it is made), not a
+    `snapshots` row. **Production never restores it**, by construction: about thirty
+    queries, restore checks and replica paths read `snapshots`, and none can select a row
+    that is not there, so a production wake cannot come up with placeholder credentials.
+    A branch restores from no other capture. A managed secret's placeholder keeps a URL's
+    scheme and points it at `credential-free.invalid`; any other value becomes a fixed
+    placeholder (`state.CredentialFreeValue`).
   - **Made lazily** (decided 2026-11-03). The first branch wake of an opted-in app
     cold-boots as on the default path and queues the credential-free capture of the
     lineage parent. Later wakes, in any branch of that parent deployment, restore from
@@ -364,7 +368,7 @@ or `production` (refused for branches).
 | 2 | PostgreSQL branches: branch data reconciler (restore at T, bind into the branch, data-gated activation), orphaned-copy deletion. A separate database allowance is a follow-up. | The copy is restored at T and bound with new credentials. Workloads stay dark until it exists. The copy and its binding are gone after delete. |
 | 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and read-through copy are follow-ups. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
 | 4 | Network and identity scoping. Service calls, egress and identity come from #6034 and #6044, which key on the deployment scope. Built here: branches and private networks refuse each other per project. Branch instances without the parent's attachments are a follow-up. | A branch caller never reaches a production service or private network. |
-| 5 | Restore with a new identity (opt-in) from a lazily made credential-free capture of the parent deployment (section 3). Splits into 5a, the capture (placeholder managed secrets, `branch-capture` identity, `identity = credential_free` rows that production lookups exclude), and 5b, the restore (tmpfs identity file, digest acknowledgement, lineage checks). Both need `test-metal`. | No real parent credential in any memory a branch restores. Production never restores a credential-free capture. Identity digest acknowledged; a wrong or missing digest cold-boots. |
+| 5 | Restore with a new identity (opt-in) from a lazily made credential-free capture of the parent deployment (section 3). Splits into 5a, the capture (placeholder managed secrets, `branch-capture` identity, its own `environment_branch_captures` table that production lookups cannot read), and 5b, the restore (tmpfs identity file, digest acknowledgement, lineage checks). Both need `test-metal`. | No real parent credential in any memory a branch restores. Production never restores a credential-free capture. Identity digest acknowledged; a wrong or missing digest cold-boots. |
 | 6 | `contained` and `simulated` egress. | Rehearsal conformance against a branch. |
 
 ## Consequences

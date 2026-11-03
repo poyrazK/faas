@@ -131,6 +131,7 @@ type contractTestStore interface {
 	state.ProjectEnvironmentBranchBucketStore
 	state.ObjectBucketOverlayStore
 	state.EnvironmentBranchDeploymentReader
+	state.EnvironmentBranchCaptureStore
 	state.ProjectEnvironmentPromotionFeatureFlagStore
 	state.ProjectEnvironmentPromotionReleaseSetStore
 	state.ProjectEnvironmentPromotionWorkloadSpecStore
