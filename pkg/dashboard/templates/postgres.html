@@ -65,6 +65,7 @@
             <tr><th>Compute</th><td>{{if .ScaleToZero}}scales to zero when idle{{else}}always on{{end}}</td></tr>
             <tr><th>Storage / restore</th><td>{{.StorageLimitLabel}} · {{.RestoreWindowSeconds}} seconds</td></tr>
             {{if .RestoreFrom}}<tr><th>Restorable points</th><td>From {{.RestoreFrom}} to now: <code>gregale postgres restore {{.Name}} --name NEW_NAME --point-in-time TIMESTAMP</code></td></tr>{{end}}
+            {{if eq .PlanExcess "database_limit"}}<tr><th>Suspended</th><td>Your plan allows fewer databases than you have, so this one, among your newest, is suspended. Its data is kept. Upgrade or delete a database to resume it.</td></tr>{{else if eq .PlanExcess "service_class"}}<tr><th>Suspended</th><td>Your plan does not include the {{.ServiceClass}} class, so this database is suspended. Its data is kept. Upgrade, or resize it to a class your plan includes with <code>gregale postgres resize</code>, to resume it.</td></tr>{{end}}
             {{if .RestoreSlotUntil}}<tr><th>Temporary copy</th><td>This restored copy is past your plan's database limit. Purge a database or upgrade before {{.RestoreSlotUntil}} to keep it; otherwise its delete is scheduled then.</td></tr>{{end}}
           </tbody>
         </table>

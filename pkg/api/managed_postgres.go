@@ -87,6 +87,12 @@ type ManagedPostgresDatabase struct {
 	// database once the account has room; otherwise its delete is scheduled
 	// at this time.
 	RestoreSlotUntil string `json:"restore_slot_until,omitempty"`
+	// PlanExcess is set while the plan no longer includes the database and
+	// it is suspended (ADR-20261102125208): database_limit when it ranks
+	// past the plan's database limit, oldest first, or service_class when
+	// the plan does not include its class. Upgrading, deleting a database
+	// or resizing to an included class resumes it.
+	PlanExcess string `json:"plan_excess,omitempty"`
 	// RestoreRange is the span a point-in-time restore from this database
 	// can target now; absent while it cannot be restored from.
 	RestoreRange *ManagedPostgresRestoreRange `json:"restore_range,omitempty"`

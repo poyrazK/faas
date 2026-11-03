@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,6 +17,11 @@ import (
 // overage ceiling. apid delivers the month's charge in steps after each cap
 // sweep and keeps delivering a closed month for
 // api.ManagedPostgresOverageCloseWindow while late usage windows arrive.
+//
+// Amendment 2: storage a subject with overage on holds past its plan's pool,
+// averaged over the UTC month, is charged on the same step at
+// api.ManagedPostgresStorageOverageMillicentsPerGiBMonth, never past one pool
+// for the month.
 
 const unitSecondsPerHour = 3600
 
@@ -32,6 +38,31 @@ func OverageCharge(usedUnitSeconds, allowanceUnitSeconds int64) (billedUnitSecon
 	return billedUnitSeconds, billedUnitSeconds * api.ManagedPostgresOverageMillicentsPerComputeUnitHour / unitSecondsPerHour
 }
 
+// StorageOverageCharge is the storage a subject is charged for in a month and
+// its price. The month's pool is poolBytes held for every second of the
+// month, so only the month's average past the pool is charged, and a step
+// never shrinks as the month goes on. At most one more pool is charged, as
+// the doubled pool allows.
+func StorageOverageCharge(usedByteSeconds, poolBytes int64, month time.Time) (billedByteSeconds, millicents int64) {
+	monthSeconds := int64(month.AddDate(0, 1, 0).Sub(month) / time.Second)
+	if usedByteSeconds <= 0 || poolBytes <= 0 || monthSeconds <= 0 {
+		return 0, 0
+	}
+	allowance := new(big.Int).Mul(big.NewInt(poolBytes), big.NewInt(monthSeconds))
+	room := new(big.Int).Mul(allowance, big.NewInt(api.ManagedPostgresOverageCeilingMultiplier-1))
+	over := new(big.Int).Sub(big.NewInt(usedByteSeconds), allowance)
+	if over.Sign() <= 0 {
+		return 0, 0
+	}
+	if over.Cmp(room) > 0 {
+		over = room
+	}
+	// Floor: a fraction of a millicent is never charged.
+	price := new(big.Int).Mul(over, big.NewInt(api.ManagedPostgresStorageOverageMillicentsPerGiBMonth))
+	price.Quo(price, new(big.Int).Mul(big.NewInt(1<<30), big.NewInt(monthSeconds)))
+	return over.Int64(), price.Int64()
+}
+
 // OverageDelivery is the cumulative charge delivered to one billing provider
 // for a subject's month.
 type OverageDelivery struct {
@@ -42,6 +73,10 @@ type OverageDelivery struct {
 	BilledUnitSeconds int64
 	Millicents        int64
 	UpdatedAt         time.Time
+
+	// BilledStorageByteSeconds is the storage past the pool the cumulative
+	// charge includes (ADR-20261031110037 amendment 2).
+	BilledStorageByteSeconds int64
 }
 
 // OverageSubject is a subject that reached its allowance in a month, as the
@@ -58,7 +93,11 @@ type OverageSubject struct {
 type OverageBillingStore interface {
 	OverageSubjects(ctx context.Context, periodStart time.Time) ([]OverageSubject, error)
 	OverageDelivered(ctx context.Context, provider, subjectID string, periodStart time.Time) (OverageDelivery, error)
-	RecordOverageDelivery(ctx context.Context, delivery OverageDelivery, previousMillicents int64) (bool, error)
+	// RecordOverageDelivery advances the month's delivery from previous, the
+	// row as read (zero when none). A live delivery may replace a shadow
+	// row, which charged nothing; a shadow delivery never replaces a live
+	// one. It reports false when another writer moved the row first.
+	RecordOverageDelivery(ctx context.Context, delivery OverageDelivery, previous OverageDelivery) (bool, error)
 }
 
 // OverageChargeStep raises a subject's month charge from Delivered to Target.
@@ -72,6 +111,11 @@ type OverageChargeStep struct {
 	BilledUnitSeconds   int64
 	DeliveredMillicents int64
 	TargetMillicents    int64
+
+	// Storage held past the plan's pool (ADR-20261031110037 amendment 2).
+	UsedStorageByteSeconds   int64
+	StoragePoolBytes         int64
+	BilledStorageByteSeconds int64
 }
 
 // OverageBillerOptions configures delivery. Publish is nil in shadow mode:
@@ -169,9 +213,21 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	if err != nil {
 		return err
 	}
+	live := b.options.Publish != nil
+	// The step starts from what this mode has delivered. A shadow row
+	// charged nothing, so a live step starts from zero over it; a shadow
+	// step never rewrites a live row, whose charge it would hide (bug hunt
+	// 33).
+	baseline := delivered.Millicents
+	if delivered.Millicents > 0 && delivered.Live != live {
+		if !live {
+			return nil
+		}
+		baseline = 0
+	}
 	// Overage counts when the subject reached its allowance with it on, has it
 	// on now, or was already charged this month.
-	if !subject.Overage && !limits.Overage && delivered.Millicents == 0 {
+	if !subject.Overage && !limits.Overage && baseline == 0 {
 		return nil
 	}
 	snapshot, err := b.usage.UsageSnapshot(ctx, subject.SubjectID, at)
@@ -179,26 +235,39 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 		return err
 	}
 	billed, target := OverageCharge(snapshot.ComputeUnitSeconds, max(limits.Allowance, subject.Allowance))
-	if target <= delivered.Millicents {
+	// Storage past the pool is charged while overage is on, and for the rest
+	// of a month that already charged it, so turning overage off never
+	// lowers the month's cumulative charge.
+	var storageBilled int64
+	if limits.Overage || delivered.BilledStorageByteSeconds > 0 {
+		var storage int64
+		storageBilled, storage = StorageOverageCharge(snapshot.StorageByteSeconds, limits.StorageAllowance, month)
+		target += storage
+	}
+	if target <= baseline {
 		return nil
 	}
+	// The provider de-duplicates on the step's starting point, not its
+	// target: after an ambiguous publish (a timeout, apid restarting) the
+	// next sweep starts from the same point, so its step is a duplicate of
+	// the one the provider may hold, never a second charge.
 	step := OverageChargeStep{SubjectID: subject.SubjectID, PeriodStart: month, At: now,
 		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: max(limits.Allowance, subject.Allowance),
-		BilledUnitSeconds: billed, DeliveredMillicents: delivered.Millicents, TargetMillicents: target}
-	live := b.options.Publish != nil
+		BilledUnitSeconds: billed, DeliveredMillicents: baseline, TargetMillicents: target,
+		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: limits.StorageAllowance, BilledStorageByteSeconds: storageBilled}
 	if live {
 		if err := b.options.Publish(ctx, step); err != nil {
 			return err
 		}
 	}
 	recorded, err := b.billing.RecordOverageDelivery(ctx, OverageDelivery{Provider: b.options.Provider, SubjectID: subject.SubjectID,
-		PeriodStart: month, Live: live, BilledUnitSeconds: billed, Millicents: target, UpdatedAt: now}, delivered.Millicents)
+		PeriodStart: month, Live: live, BilledUnitSeconds: billed, Millicents: target, UpdatedAt: now, BilledStorageByteSeconds: storageBilled}, delivered)
 	if err != nil || !recorded {
 		// Another replica recorded first. A published step is idempotent on
 		// its target, so the provider keeps one copy.
 		return err
 	}
-	summary.Millicents += target - delivered.Millicents
+	summary.Millicents += target - baseline
 	if live {
 		summary.Delivered++
 	} else {
@@ -206,6 +275,6 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	}
 	b.options.Logger.Info("managed postgres overage charged", "subject_id", subject.SubjectID, "period", month.Format("2006-01"),
 		"live", live, "used_unit_seconds", snapshot.ComputeUnitSeconds, "billed_unit_seconds", billed,
-		"previous_millicents", delivered.Millicents, "target_millicents", target)
+		"billed_storage_byte_seconds", storageBilled, "previous_millicents", baseline, "target_millicents", target)
 	return nil
 }

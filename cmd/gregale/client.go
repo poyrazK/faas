@@ -40,14 +40,22 @@ import (
 // are free functions declared below with a *Client parameter.
 type Client = api.Client
 
-// NewClient wraps api.NewClient.
+// NewClient wraps api.NewClient. Its requests name the CLI release in
+// User-Agent and relay the server's deprecation warnings (client_transport.go).
+// A client for a plain-HTTP base on another host refuses every request
+// (guardAPIClient) unless the user opted in.
 func NewClient(baseURL, token string) *Client {
-	return bindProfileCompletionCache(api.NewClient(baseURL, token))
+	return guardAPIClient(bindProfileCompletionCache(api.NewClient(baseURL, token).WrapTransport(wrapCLITransport)))
 }
 
-// NewClientWithDeployTimeout wraps api.NewClientWithDeployTimeout.
+// NewClientWithDeployTimeout wraps api.NewClientWithDeployTimeout like
+// NewClient. A refused base gets no separate upload client, so uploads use
+// the guarded one.
 func NewClientWithDeployTimeout(baseURL, token string, d time.Duration) *Client {
-	return bindProfileCompletionCache(api.NewClientWithDeployTimeout(baseURL, token, d))
+	if apiClientRefused(baseURL) {
+		d = 0
+	}
+	return guardAPIClient(bindProfileCompletionCache(api.NewClientWithDeployTimeout(baseURL, token, d).WrapTransport(wrapCLITransport)))
 }
 
 // APIError aliases the SDK's error type. CLI callers type-switch on

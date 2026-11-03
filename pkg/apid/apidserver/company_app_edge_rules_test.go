@@ -3,6 +3,7 @@ package apidserver_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -59,6 +60,27 @@ func TestCompanyAppEdgeRulesFollowOrganizationRoles(t *testing.T) {
 				t.Fatalf("status = %d %s; want %d", r.Code, r.Body, tc.want)
 			}
 		})
+	}
+
+	// The other surfaces that write the app's rules follow the same roles
+	// (ADR-091 amendment 2026-11-02, review round 8); unreviewed, they were
+	// refused to every member but the creator.
+	const unreviewed = "without a reviewed organization permission"
+	for _, tc := range []struct {
+		name, method, path string
+		body               any
+		headers            map[string]string
+	}{
+		{"viewer reads the OpenAPI contract", http.MethodGet, "/v1/apps/edge-team-api/openapi", nil, asViewer},
+		{"viewer reads throttle suggestions", http.MethodGet, "/v1/apps/edge-team-api/throttle-suggestions", nil, asViewer},
+		{"admin plans a route policy", http.MethodPost, "/v1/apps/edge-team-api/route-policy/plan", map[string]any{}, asAdmin},
+	} {
+		if r := e.Do(t, tc.method, tc.path, tc.body, tc.headers); r.Code == http.StatusForbidden || strings.Contains(r.Body.String(), unreviewed) {
+			t.Errorf("%s = %d %s; want the organization role to decide", tc.name, r.Code, r.Body)
+		}
+	}
+	if r := e.Do(t, http.MethodPost, "/v1/apps/edge-team-api/openapi/apply", map[string]any{}, asDeveloper); r.Code != http.StatusForbidden || strings.Contains(r.Body.String(), unreviewed) {
+		t.Errorf("developer applying an OpenAPI policy = %d %s; want the role refusal", r.Code, r.Body)
 	}
 
 	// The creator leaves; the company still manages the app's rules.

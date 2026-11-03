@@ -839,6 +839,19 @@ func inferFunctionRuntime(srcDir string) (runtime, handler string, ok bool) {
 // plan is unknown.
 const defaultZeroConfigSourceCapMB = 100
 
+// largestSourceTarballMB is the largest source upload any plan accepts. A
+// deploy credential that may not read its account's plan packs up to it and
+// leaves the account's own cap to apid.
+func largestSourceTarballMB() int {
+	largest := defaultZeroConfigSourceCapMB
+	for _, plan := range api.Plans {
+		if limits, ok := api.LimitsFor(plan); ok && limits.SourceTarballMaxMB > largest {
+			largest = limits.SourceTarballMaxMB
+		}
+	}
+	return largest
+}
+
 // packDirToTarGz walks srcDir and writes a gzipped tar archive to destPath. The
 // archive's single top-level directory is filepath.Base(srcDir), preserving the
 // invariant apid's validateTarballShape depends on (one project root). Symlinks,

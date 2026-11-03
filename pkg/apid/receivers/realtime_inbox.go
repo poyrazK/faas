@@ -23,15 +23,18 @@ type realtimeInboxRequest struct {
 	Consumer   string          `json:"consumer,omitempty"`
 	Sequence   int64           `json:"sequence"`
 	Limit      int             `json:"limit,omitempty"`
+	// Epoch is the access change feed epoch a node has seen (access_changes).
+	Epoch string `json:"epoch,omitempty"`
 }
 
 type realtimeInboxResponse struct {
-	Ticket       *state.RealtimeSubscriptionTicket    `json:"ticket,omitempty"`
-	Access       *state.ManagedRealtimeAccess         `json:"access,omitempty"`
-	Preferences  *api.RealtimeNotificationPreferences `json:"preferences,omitempty"`
-	ReadProgress *state.ManagedRealtimeReadProgress   `json:"read_progress,omitempty"`
-	History      state.ManagedRealtimeChannelHistory  `json:"history"`
-	Sequence     int64                                `json:"sequence"`
+	AccessChanges *state.ManagedRealtimeAccessChanges  `json:"access_changes,omitempty"`
+	Ticket        *state.RealtimeSubscriptionTicket    `json:"ticket,omitempty"`
+	Access        *state.ManagedRealtimeAccess         `json:"access,omitempty"`
+	Preferences   *api.RealtimeNotificationPreferences `json:"preferences,omitempty"`
+	ReadProgress  *state.ManagedRealtimeReadProgress   `json:"read_progress,omitempty"`
+	History       state.ManagedRealtimeChannelHistory  `json:"history"`
+	Sequence      int64                                `json:"sequence"`
 }
 
 // Inbox reads are separate from channel reads. The realtime node supplies the
@@ -44,7 +47,13 @@ func (r *realtimeFleetReceiver) InboxOperation(ctx context.Context, envelope *wr
 		return nil, status.Error(codes.InvalidArgument, "invalid realtime inbox request")
 	}
 	var req realtimeInboxRequest
-	if decodeRealtimeFleetJSON(envelope.GetValue(), &req) != nil || (req.Action != "channel_read" && req.Action != "ticket_read" && api.ValidateRealtimePrincipal(req.Principal) != nil) || req.Sequence < 0 {
+	if decodeRealtimeFleetJSON(envelope.GetValue(), &req) != nil || req.Sequence < 0 {
+		return nil, status.Error(codes.InvalidArgument, "invalid realtime inbox request")
+	}
+	if req.Action == "access_changes" {
+		return r.accessChanges(ctx, req)
+	}
+	if req.Action != "channel_read" && req.Action != "ticket_read" && api.ValidateRealtimePrincipal(req.Principal) != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid realtime inbox request")
 	}
 	if err := r.requireEnabledEndpoint(ctx, req.EndpointID); err != nil {
@@ -167,4 +176,26 @@ func (r *realtimeFleetReceiver) InboxOperation(ctx context.Context, envelope *wr
 		return nil, status.Error(codes.Internal, "encode realtime inbox result")
 	}
 	return wrapperspb.Bytes(encoded), nil
+}
+
+// accessChanges answers a realtime node's poll of the access change feed. It
+// reads no endpoint: one call a second per node replaces a read per
+// connection.
+func (r *realtimeFleetReceiver) accessChanges(ctx context.Context, req realtimeInboxRequest) (*wrapperspb.BytesValue, error) {
+	node, err := r.lookupNode(ctx, req.NodeName)
+	if err != nil {
+		return nil, err
+	}
+	if !node.Active {
+		return nil, status.Error(codes.FailedPrecondition, "realtime node inactive")
+	}
+	page, ok := r.accessFeed.since(req.Epoch, req.Sequence)
+	if !ok {
+		return nil, status.Error(codes.Unavailable, "realtime access change feed unavailable")
+	}
+	data, err := json.Marshal(realtimeInboxResponse{AccessChanges: &page})
+	if err != nil {
+		return nil, status.Error(codes.Internal, "encode realtime access changes")
+	}
+	return wrapperspb.Bytes(data), nil
 }

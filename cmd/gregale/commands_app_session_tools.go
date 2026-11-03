@@ -155,9 +155,16 @@ func cmdAppCopy(slug string, args []string) int {
 	defer stop()
 	session, closeSession, err := openAppTaskStreamSession(ctx, client, slug, []string{api.AppTaskCopyOutCommand, remote}, *waitTimeout)
 	if err != nil {
+		if ctx.Err() != nil {
+			return appCopyInterrupted()
+		}
 		return printErr("Could not start the copy", err)
 	}
 	defer closeSession()
+	// Nothing below reads ctx, so Ctrl-C closes the connection instead: that
+	// fails the copy at its next read and ends the remote session.
+	stopClosing := context.AfterFunc(ctx, closeSession)
+	defer stopClosing()
 	_ = session.CloseStdin()
 	var copyErr error
 	if local == "-" {
@@ -165,15 +172,28 @@ func cmdAppCopy(slug string, args []string) int {
 	} else {
 		copyErr = extractAppTaskTar(session.stdout, local)
 	}
+	if ctx.Err() != nil {
+		return appCopyInterrupted()
+	}
 	if copyErr != nil {
 		closeSession()
 		return printErr("Copy failed", copyErr)
 	}
 	terminal, err := session.Wait(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return appCopyInterrupted()
+		}
 		return printErr("Copy session ended unexpectedly", err)
 	}
 	return appSessionExitCode(terminal)
+}
+
+// appCopyInterrupted reports a copy stopped by Ctrl-C with the conventional
+// 130. What was already written stays, incomplete.
+func appCopyInterrupted() int {
+	PrintWarn(osStderr, "Copy interrupted; anything already written is incomplete")
+	return 130
 }
 
 func appSessionExitCode(terminal api.AppTaskAttachTerminalMessage) int {

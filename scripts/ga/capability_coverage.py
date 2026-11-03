@@ -150,7 +150,8 @@ RULES = [
     (r"app-config-(guard|revision)", "`gregale.yaml` deploy overrides"),
     (r"actioncompare|behaviorcompare|rehearsal", "Scenario tests"),
     (r"apptask", "App tasks"),
-    (r"apphealth", "App health assessment"),
+    # app_memory_pressure is app health's memory-pressure rollup (ADR-20261102124306).
+    (r"apphealth|^app-memory-pressure$", "App health assessment"),
     (r"appstandards", "Org application standards"),
     (r"authsettings", "Application Auth"),
     (r"^authz$", "Orgs:"),
@@ -344,7 +345,7 @@ RULES = [
     (r"oci|image|container", "Container / OCI image"),
     (r"build|railpack|buildkit", "Builds in builder"),
     (r"upload|tarball|source|deploy", "Source deploys:"),
-    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|apps-list|apps-new|app-detail", "Apps: create"),
+    (r"^/v1/apps$|^apps?$|rename|restore|deleted-app|^app-slug-holds$|apps-list|apps-new|app-detail", "Apps: create"),
 ]
 
 # Checked before everything else, for every source: names a broad rule or the

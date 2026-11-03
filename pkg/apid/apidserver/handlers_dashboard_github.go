@@ -80,6 +80,9 @@ func projectDashboardGitHubActivity(activity *githubActivityResponse, repoFullNa
 			out.CanRetry = true
 		}
 		status, class, guidance := dashboardGitHubWebhookStatus(item.Status)
+		if reason := api.GitHubSkipReasonDescription(item.SkipReason); item.Status == "succeeded" && reason != "" {
+			status, class, guidance = "skipped", "dim", reason
+		}
 		_, commitURL, _, _, commitShort := githubDeploymentLinks(
 			"github://"+repoFullName+"@"+item.CommitSHA, item.CommitSHA)
 		out.WebhookDeliveries = append(out.WebhookDeliveries, dashboard.GitHubWebhookActivityView{
