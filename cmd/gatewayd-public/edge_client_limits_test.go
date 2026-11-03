@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -138,5 +139,58 @@ func TestEdgeClientLimitsWrapOnlyAListenerWithNoFront(t *testing.T) {
 				t.Fatalf("listener %T, want the handshake gate = %v", ln, tc.wantGate)
 			}
 		})
+	}
+}
+
+func TestEdgeClientLimitsCapForwardsAndExemptGRPC(t *testing.T) {
+	refused := newEdgeMetrics().refused
+	release := make(chan struct{})
+	var entered sync.WaitGroup
+	blocking := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		entered.Done()
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if got := (edgeClientLimits{}).forwards(blocking); fmt.Sprintf("%p", got) != fmt.Sprintf("%p", blocking) {
+		t.Fatal("the forward cap wrapped the forwarder with the limits off")
+	}
+	if (edgeClientLimits{on: true, refused: refused}).forwards(nil) != nil {
+		t.Fatal("a missing forwarder became a handler")
+	}
+
+	capped := edgeClientLimits{on: true, refused: refused}.forwards(blocking)
+	entered.Add(api.EdgeControlPlaneForwardsInFlightMax)
+	var done sync.WaitGroup
+	for range api.EdgeControlPlaneForwardsInFlightMax {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			capped.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "https://shop.gregale.dev/upload", nil))
+		}()
+	}
+	entered.Wait()
+	rec := httptest.NewRecorder()
+	capped.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "https://shop.gregale.dev/upload", nil))
+	close(release)
+	done.Wait()
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a forward past the cap = %d, want 503", rec.Code)
+	}
+	if got := testutil.ToFloat64(refused.WithLabelValues(clientlimit.ReasonForwardInFlight)); got != 1 {
+		t.Fatalf("forward_in_flight refusals = %v, want 1", got)
+	}
+
+	for contentType, want := range map[string]bool{
+		"application/grpc":       true,
+		"application/grpc+proto": true,
+		"application/json":       false,
+		"":                       false,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "https://shop.gregale.dev/", nil)
+		req.Header.Set("Content-Type", contentType)
+		if got := isGRPC(req); got != want {
+			t.Errorf("isGRPC(%q) = %v, want %v", contentType, got, want)
+		}
 	}
 }

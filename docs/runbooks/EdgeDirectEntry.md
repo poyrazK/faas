@@ -150,8 +150,16 @@ injected failure as soon as it is measured.
   is reset before TLS; a handshake slot is held at most
   `EdgeTLSHandshakeTimeout`.
 
+- **A minimum request-body rate**, on any front: a body must bring
+  `EdgeClientBodyMinBytesPerWindow` bytes every `EdgeClientBodyRateWindow`,
+  or its read fails. gRPC client streams are exempt.
+- **A cap on requests forwarded to the control plane** (uploads, public
+  reads, OTLP), `EdgeControlPlaneForwardsInFlightMax` at once per edge; past
+  it the edge answers `503 control_plane_busy` with `Retry-After: 1`.
+
 `gatewayd_public_edge_refused_total{reason}` counts refusals by
-`open_connections`, `connection_rate`, `handshakes` and `request_rate`. A
+`open_connections`, `connection_rate`, `handshakes`, `request_rate`,
+`body_rate` and `forward_in_flight`. A
 burst on one reason from many addresses is a flood; a steady stream from one
 address may be carrier-grade NAT, where the starting values need raising.
 An edge with no front and the limits off logs a warning at start.

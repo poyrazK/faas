@@ -5,7 +5,9 @@ package main
 // With no proxy in front, what Cloudflare absorbed reaches the node, so the
 // edge bounds what one client address may take: open connections, new
 // connections a second, TLS handshakes in progress and requests a second.
-// The values are in pkg/api/limits.go. Off unless FAAS_EDGE_CLIENT_LIMITS=1.
+// It also holds a request body to a minimum rate and caps the requests the
+// edge forwards to the control plane. The values are in pkg/api/limits.go.
+// Off unless FAAS_EDGE_CLIENT_LIMITS=1.
 
 import (
 	"context"
@@ -69,6 +71,28 @@ func (l edgeClientLimits) requests(h http.Handler, trusted []netip.Prefix) http.
 		return addr, err == nil
 	}
 	return clientlimit.Requests(h, limits, clientAddr, l.count, nil)
+}
+
+// body ends a request whose body arrives slower than the minimum rate. gRPC
+// client streams may idle, so they are exempt.
+func (l edgeClientLimits) body(h http.Handler) http.Handler {
+	if !l.on {
+		return h
+	}
+	return clientlimit.BodyRate(h, api.EdgeClientBodyMinBytesPerWindow, api.EdgeClientBodyRateWindow, isGRPC, l.count)
+}
+
+// forwards caps the requests this edge forwards to the control plane at once.
+func (l edgeClientLimits) forwards(h http.Handler) http.Handler {
+	if !l.on || h == nil {
+		return h
+	}
+	return clientlimit.InFlight(h, api.EdgeControlPlaneForwardsInFlightMax, l.count)
+}
+
+// isGRPC reports whether r is a gRPC call, whose client stream may idle.
+func isGRPC(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc")
 }
 
 // tlsListener serves TLS on raw. With the limits on and no front, raw's

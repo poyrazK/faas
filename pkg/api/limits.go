@@ -17212,6 +17212,17 @@ const (
 	EdgeClientTrackedAddrsMax          = 200_000
 	EdgeTLSHandshakesInFlightPerCPU    = 128
 	EdgeTLSHandshakeTimeout            = 10 * time.Second
+	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
+	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
+	// the public server's read timeout is the whole request envelope.
+	// gRPC client streams are exempt.
+	EdgeClientBodyMinBytesPerWindow = 4096
+	EdgeClientBodyRateWindow        = 10 * time.Second
+	// EdgeControlPlaneForwardsInFlightMax bounds the requests one compute
+	// edge forwards to the control plane's private listener at once
+	// (uploads, public reads, OTLP), so direct clients cannot push more at
+	// the control plane than Cloudflare let through.
+	EdgeControlPlaneForwardsInFlightMax = 256
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one

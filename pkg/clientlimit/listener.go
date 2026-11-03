@@ -16,10 +16,12 @@ const (
 	ReasonConnectionRate  = "connection_rate"
 	ReasonHandshakes      = "handshakes"
 	ReasonRequestRate     = "request_rate"
+	ReasonBodyRate        = "body_rate"
+	ReasonForwardInFlight = "forward_in_flight"
 )
 
 // Reasons lists every refusal reason, so a counter can start each at zero.
-var Reasons = []string{ReasonOpenConnections, ReasonConnectionRate, ReasonHandshakes, ReasonRequestRate}
+var Reasons = []string{ReasonOpenConnections, ReasonConnectionRate, ReasonHandshakes, ReasonRequestRate, ReasonBodyRate, ReasonForwardInFlight}
 
 // ConnLimits bound one client address's connections to a listener.
 type ConnLimits struct {
