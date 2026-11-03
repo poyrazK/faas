@@ -53,6 +53,40 @@ coverage.
 4. A minute older than 72 h leaves the window and is delivered as it stands.
    Compare the stalled hours with `BillingDrift` once the alert clears.
 
+## FaasMeterdLedgerDrift
+
+The ledger dual run (ADR-20261019193600) compares, per account and UTC month,
+the financial ledger's net compute with the compute receipts meterd recorded
+as delivered. `drift` means they disagree; `failed` means one account could
+not be compared.
+
+1. `meterd_financial_ledger_drift_mb_seconds{month}` is the summed absolute
+   difference. Search meterd logs for `ledger reconciliation` to find the
+   accounts.
+2. A difference right after a plan change, a cap change or a meterd catch-up
+   usually means receipts were recorded under different terms than the ledger
+   priced; compare the account's `financial_price_snapshots` for the month
+   with its `billing_usage_deliveries`.
+3. `failed` is a read error: check Postgres, then wait one pass.
+
+## FaasMeterdHeldUsageExpiring
+
+meterd holds a pending usage hour back, without settling it, while its billing
+subject is `suspended`, `deleting` (hours after the deletion request), has an
+incomplete billing identity (`identity_incomplete`, checkout or the
+subscription webhook never finished) or is no longer listed
+(`unknown_subject`). It retries every pass but only within the billing
+lookback (30 days by default); these hours leave it within 72 hours and are
+then never billed (ADR-20261103121407).
+
+1. `meterd_billing_usage_held_windows{meter,reason}` is the total held;
+   meterd logs `held usage leaves the billing lookback soon` with the counts.
+2. `identity_incomplete`: finish or repair the subject's checkout so its
+   billing identity has a customer and subscription.
+3. `suspended` or `deleting`: decide whether the usage should be billed. To
+   bill it, lift the suspension before the hours expire; otherwise the loss is
+   accepted and the alert clears when they leave the lookback.
+
 ## FaasMeterdSampleFailing
 
 Five or more sample ticks failed in 15 minutes. The tick error names the step:

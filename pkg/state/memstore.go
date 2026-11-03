@@ -149,6 +149,9 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	trafficAppsSuffix string
+	// planChangedAt is when each account's or org's plan last changed
+	// (PlanChangedAt, ADR-20261103121407).
+	planChangedAt map[string]time.Time
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                              map[string]int64
@@ -398,11 +401,10 @@ type MemStore struct {
 	// databaseSwitches mirrors release_database_switches
 	// (ADR-20261023181931).
 	databaseSwitches map[string]DatabaseSwitch
-	// Snapshot restore reservations are separate from mu so the coordinator
-	// can serialize only its short lease/count critical section.
-	snapshotRestorePressureMu sync.Mutex
-	snapshotRestoreLeaseMu    sync.Mutex
-	snapshotRestoreLeases     map[string]snapshotRestorePressureLease
+	// Snapshot restore leases are separate from mu: wake placement reads and
+	// writes them on every snapshot restore (ADR 20261103195512).
+	snapshotRestoreLeaseMu sync.Mutex
+	snapshotRestoreLeases  map[string]snapshotRestorePressureLease
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
 	runtimeConfigChangedAt            map[string]time.Time
 	environmentRuntimeConfigChangedAt map[environmentRuntimeKey]time.Time
@@ -2593,11 +2595,13 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	} else {
 		m.overageCapCents[id] = *next
 	}
+	m.notePlanChangeLocked(id, a.Plan, plan)
 	a.Plan = plan
 	m.storeRouteCheckAccountLocked(id, a)
 	now := time.Now().UTC()
 	for orgID, org := range m.orgs {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			m.notePlanChangeLocked(orgID, org.Plan, plan)
 			org.Plan = plan
 			org.UpdatedAt = now
 			m.orgs[orgID] = org
@@ -27203,6 +27207,7 @@ func (m *MemStore) UpdateOrgPlan(ctx context.Context, id string, plan api.Plan) 
 	if !ok {
 		return ErrNotFound
 	}
+	m.notePlanChangeLocked(id, o.Plan, plan)
 	o.Plan = plan
 	o.UpdatedAt = time.Now().UTC()
 	m.orgs[id] = o

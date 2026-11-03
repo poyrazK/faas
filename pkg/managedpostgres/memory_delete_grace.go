@@ -27,14 +27,10 @@ func (s *MemoryStore) ClaimScheduledDelete(ctx context.Context, accountID, datab
 	if s.databaseCutoverPinned(databaseID) || database.State != StateReady || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
-	for _, candidate := range s.databases {
-		if candidate.RestoreSourceDatabaseID == database.ID && candidate.State != StateDeleted {
-			return Database{}, ErrConflict
-		}
-	}
+	// Restore copies do not refuse a delete (ADR-20261103091657).
 	for _, binding := range s.bindings {
 		if binding.DatabaseID == database.ID && binding.State != BindingStateDeleted {
-			return Database{}, ErrConflict
+			return Database{}, errDatabaseHasBindings
 		}
 	}
 	before := database
@@ -116,6 +112,13 @@ type usageWaiver struct {
 func (s *MemoryStore) trackUsageWaiverLocked(before, after Database) {
 	switch {
 	case before.PurgeAfter.IsZero() && !after.PurgeAfter.IsZero():
+		// A source's usage includes its restore copies', so it is not
+		// waived (ADR-20261103091657), as the PostgreSQL trigger decides.
+		for _, candidate := range s.databases {
+			if candidate.RestoreSourceDatabaseID == after.ID && candidate.State != StateDeleted {
+				return
+			}
+		}
 		s.usageWaivers[after.ID] = append(s.usageWaivers[after.ID], usageWaiver{from: after.UpdatedAt})
 	case !before.PurgeAfter.IsZero() && after.PurgeAfter.IsZero():
 		for i, waiver := range s.usageWaivers[after.ID] {

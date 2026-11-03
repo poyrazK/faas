@@ -54,6 +54,14 @@ func TestConfigFromEnv(t *testing.T) {
 				t.Fatal("only 0 turns dry run off")
 			}
 		}},
+		{name: "modes", env: with("FAAS_EDGEDNS_NAMES", "zone-1:*.gregale.dev:proxied,zone-1:pilot.gregale.dev:dns-only"), check: func(t *testing.T, c config) {
+			want := []edgedns.Name{{ZoneID: "zone-1", Host: "*.gregale.dev"}, {ZoneID: "zone-1", Host: "pilot.gregale.dev", DNSOnly: true}}
+			if len(c.names) != 2 || c.names[0] != want[0] || c.names[1] != want[1] {
+				t.Fatalf("names = %+v, want %+v", c.names, want)
+			}
+		}},
+		{name: "an unknown mode", env: with("FAAS_EDGEDNS_NAMES", "zone-1:pilot.gregale.dev:direct"), wantErr: "is not proxied or dns-only"},
+		{name: "a name twice", env: with("FAAS_EDGEDNS_NAMES", "zone-1:pilot.gregale.dev,zone-1:Pilot.gregale.dev:dns-only"), wantErr: "twice"},
 		{name: "no names", env: with("FAAS_EDGEDNS_NAMES", " "), wantErr: "no host"},
 		{name: "a name without a zone", env: with("FAAS_EDGEDNS_NAMES", "*.gregale.dev"), wantErr: "<zone id>:<host>"},
 		{name: "a bad address", env: with("FAAS_EDGEDNS_NODE_ADDRESSES", "gregale-compute-1=not-an-ip"), wantErr: "<node>=<address>"},

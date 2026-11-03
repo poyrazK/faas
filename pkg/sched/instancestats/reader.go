@@ -238,6 +238,13 @@ type Reader struct {
 	rateMu       sync.Mutex
 	previousRate map[string]requestRateSample
 	requestRates map[string]requestRate
+
+	// departed keeps the last row of each instance that left the snapshot,
+	// for api.MeterFinalNetworkReadingRetention (departed.go).
+	departedMu sync.Mutex
+	departed   map[string]departedStat
+	// now is the departure clock; nil means time.Now.
+	now func() time.Time
 }
 
 type requestRateSample struct {
@@ -276,6 +283,7 @@ func (r *Reader) Replace(next []InstanceStat) {
 	cp := make([]InstanceStat, len(next))
 	copy(cp, next)
 	r.updateRequestRates(cp)
+	r.trackDeparted(r.snap.Load(), cp)
 	r.snap.Store(&cp)
 }
 

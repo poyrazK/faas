@@ -450,6 +450,11 @@ type ComputeNodeConfig struct {
 	// faas_cloudflare_origin_only. The vmmd egress drop-in supplies
 	// Cloudflare's pinned ranges (ADR-20261102081618 §2).
 	PublicIngressCIDRs []string `toml:"public_ingress_cidrs"`
+	// PublicEntryAddrs, when set, are this compute edge's public entry
+	// addresses with no proxy in front, as the nftables role renders for
+	// faas_public_entry_addrs (ADR-20261103163954 §2): 443 from every source
+	// to them only, nothing else to them. Exclusive with PublicIngressCIDRs.
+	PublicEntryAddrs []string `toml:"public_entry_addrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
 	// `tailscale ip -4` (Mega-PR-B Commit 3). Defaults to
@@ -836,6 +841,9 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_PUBLIC_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PublicIngressCIDRs = splitNonEmpty(v)
 	}
+	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
+		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
+	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_TCP_PORTS"); v != "" {
 		ports, perr := parseTCPPorts(v)
 		if perr != nil {
@@ -1196,7 +1204,29 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.PublicIngressCIDRs[i] = prefix.Masked().String()
 	}
+	if err := validatePublicEntryAddrs(c.ComputeNode); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// validatePublicEntryAddrs holds each entry address to the form the nftables
+// role writes verbatim, so the boot policy and vmmd's runtime policy stay
+// byte-identical.
+func validatePublicEntryAddrs(cfg ComputeNodeConfig) error {
+	if len(cfg.PublicEntryAddrs) > 0 && len(cfg.PublicIngressCIDRs) > 0 {
+		return fmt.Errorf("vmmd: public_entry_addrs and public_ingress_cidrs are exclusive: an edge either has Cloudflare in front or takes 443 from everyone on its entry addresses")
+	}
+	for i, raw := range cfg.PublicEntryAddrs {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			return fmt.Errorf("vmmd: public_entry_addrs[%d] %q invalid: %w", i, raw, err)
+		}
+		if addr.Zone() != "" || addr.Is4In6() || addr.String() != raw {
+			return fmt.Errorf("vmmd: public_entry_addrs[%d] %q must be a plain address in canonical form (%s)", i, raw, addr.Unmap().WithZone(""))
+		}
+	}
+	return nil
 }
 
 func validateAdoptionConfig(record, adopt, nativeRecovery bool) error {
@@ -1318,6 +1348,11 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	for _, raw := range cfg.PublicIngressCIDRs {
 		if prefix, err := netip.ParsePrefix(raw); err == nil {
 			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())
+		}
+	}
+	for _, raw := range cfg.PublicEntryAddrs {
+		if addr, err := netip.ParseAddr(raw); err == nil {
+			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
 		}
 	}
 	if cfg.ServiceTCPEnabled {
