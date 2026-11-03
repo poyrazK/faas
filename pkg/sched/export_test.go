@@ -314,6 +314,7 @@ var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+var SeedForkTarget = seedForkTarget
 var ReadWakeRPC = readWakeRPC
 
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
