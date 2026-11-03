@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -26,9 +27,13 @@ var errKeyLookupThrottled = errors.New("gateway: key lookup throttled")
 //
 // Verified keys are kept for api.GatewayKeyAuthCacheTTL and, while the store
 // is failing, served for up to api.GatewayKeyAuthOutageGrace. Definite misses
-// (unknown, expired, revoked) are kept for the same TTL. Invalidate, wired to
-// the key_changed notification, drops everything, so a revocation takes
-// effect at once on a connected gateway and within the TTL otherwise.
+// (unknown, expired, revoked) are kept for the same TTL. ApplyKeyChange, wired
+// to the key_changed notification, drops the entries of the account or
+// organization whose keys were revoked or rotated, so a revocation takes
+// effect at once on a connected gateway and within the TTL otherwise. Key
+// creation drops nothing (bug hunt H93): a new key cannot be cached yet, and
+// flushing every account's keys on each `gregale login` kept the hit rate low
+// and removed the outage fallback.
 type KeyAuthCache struct {
 	next RequireAuthnAuthenticator
 	now  func() time.Time
@@ -43,6 +48,31 @@ type keyAuthHit struct {
 	acct       RequireAuthnAccount
 	key        RequireAuthnKey
 	verifiedAt time.Time
+	// stale marks a hit that must be revalidated before it is served
+	// fresh: notifications may have been missed (a LISTEN resync). It
+	// still serves as the outage fallback.
+	stale bool
+}
+
+// KeyChange is one key_changed notification: what happened and whose keys.
+type KeyChange struct {
+	Kind    string `json:"kind"`
+	Account string `json:"account"`
+	Org     string `json:"org"`
+}
+
+// ParseKeyChange decodes a key_changed payload. ok is false when the payload
+// names no account or organization, which callers treat as "anything may
+// have changed".
+func ParseKeyChange(payload string) (KeyChange, bool) {
+	var ch KeyChange
+	if json.Unmarshal([]byte(payload), &ch) != nil {
+		return KeyChange{}, false
+	}
+	if ch.Account == "" && ch.Org == "" {
+		return KeyChange{}, false
+	}
+	return ch, true
 }
 
 type keyAuthMiss struct {
@@ -70,7 +100,7 @@ func (c *KeyAuthCache) AuthenticateKey(ctx context.Context, hash []byte) (Requir
 	now := c.now()
 	c.mu.Lock()
 	hit, hasHit := c.hits[id]
-	if hasHit && now.Sub(hit.verifiedAt) < api.GatewayKeyAuthCacheTTL {
+	if hasHit && !hit.stale && now.Sub(hit.verifiedAt) < api.GatewayKeyAuthCacheTTL {
 		c.mu.Unlock()
 		return hit.acct, copyKeyAuth(hit.key), nil
 	}
@@ -82,8 +112,7 @@ func (c *KeyAuthCache) AuthenticateKey(ctx context.Context, hash []byte) (Requir
 	c.mu.Unlock()
 
 	acct, key, err := c.next.AuthenticateKey(ctx, hash)
-	definite := err == nil || errors.Is(err, ErrAPIKeyUnknown) || errors.Is(err, ErrAPIKeyExpired) || errors.Is(err, ErrAPIKeyRevoked)
-	if !definite {
+	if err != nil && !isDefiniteKeyMiss(err) {
 		// The store failed. A key verified shortly before keeps working
 		// through the outage; anything else fails as before.
 		if hasHit && now.Sub(hit.verifiedAt) < api.GatewayKeyAuthOutageGrace {
@@ -118,8 +147,8 @@ func (c *KeyAuthCache) AuthenticateKey(ctx context.Context, hash []byte) (Requir
 	return acct, key, err
 }
 
-// Invalidate drops every cached answer. Wired to the key_changed
-// notification, which apid sends on every key create, revoke and rotation.
+// Invalidate drops every cached answer: the response to a key_changed
+// notification that names no owner.
 func (c *KeyAuthCache) Invalidate() {
 	if c == nil {
 		return
@@ -129,6 +158,44 @@ func (c *KeyAuthCache) Invalidate() {
 	c.epoch++
 	clear(c.hits)
 	clear(c.miss)
+}
+
+// ApplyKeyChange applies one key_changed notification. A created key changes
+// no cached answer. A revocation or rotation drops the verified keys of the
+// named account (its own keys and the organization keys it created, which
+// resolve to it) or of the named organization; an in-flight lookup started
+// before it is not kept. Definite misses stay: a revoked or unknown key does
+// not come back.
+func (c *KeyAuthCache) ApplyKeyChange(ch KeyChange) {
+	if c == nil || ch.Kind == "created" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.epoch++
+	for id, h := range c.hits {
+		if (ch.Account != "" && h.acct.ID == ch.Account) || (ch.Org != "" && h.key.OrgID == ch.Org) {
+			delete(c.hits, id)
+		}
+	}
+}
+
+// Expire marks every verified key for revalidation without dropping it, so
+// each is checked against the store on its next use but still serves as the
+// outage fallback. The response to a LISTEN resync, when revocations may
+// have been missed: flushing then would remove the fallback just as a
+// recovering control plane takes the full lookup load.
+func (c *KeyAuthCache) Expire() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.epoch++
+	for id, h := range c.hits {
+		h.stale = true
+		c.hits[id] = h
+	}
 }
 
 func (c *KeyAuthCache) sweepLocked(now time.Time) {
@@ -150,6 +217,7 @@ func keyAuthID(hash []byte) [sha256.Size]byte {
 	return id
 }
 
+// copyKeyAuth returns k with its own Scopes slice.
 func copyKeyAuth(k RequireAuthnKey) RequireAuthnKey {
 	k.Scopes = append([]string(nil), k.Scopes...)
 	return k
@@ -213,10 +281,18 @@ func (h *Handler) authenticateBearer(r *http.Request, tok string) (RequireAuthnA
 		return RequireAuthnAccount{}, RequireAuthnKey{}, errKeyLookupThrottled
 	}
 	acct, key, err := h.requireAuthnAuthn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
-	if err != nil {
+	if isDefiniteKeyMiss(err) {
 		h.keyLookups.fail(source)
 	}
 	return acct, key, err
+}
+
+// isDefiniteKeyMiss reports a lookup the store answered with "no such usable
+// key". Only these count against a client's failed-lookup budget: a store
+// error says nothing about the client, and counting it locked busy backend
+// clients out with 429 for up to a minute after a control-plane blip (H93).
+func isDefiniteKeyMiss(err error) bool {
+	return errors.Is(err, ErrAPIKeyUnknown) || errors.Is(err, ErrAPIKeyExpired) || errors.Is(err, ErrAPIKeyRevoked)
 }
 
 // keyLookupSource is the failed-lookup budget key: the trusted client

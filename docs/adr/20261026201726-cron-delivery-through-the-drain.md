@@ -159,3 +159,21 @@ stopping scheduler, and at start and on each safety tick schedd fails its
 node's running requests older than two minutes that never linked a run, with a
 reason that says the run may already have been queued.
 
+
+## Amendment 2026-11-03: company members, staged crons, dashboard runs
+
+`GET /v1/crons?slug=` found only an app the caller created, so a company
+app's other members got 404 from `gregale crons list --app` and from the
+`gregale.yaml` deploy, which lists the app's crons first. The slug now
+resolves through the same app authorization as the cron writes.
+
+Deployment cron staging (`POST /v1/apps/{slug}/deployment-cron-staging`)
+checked only a leading `/` and a loadable timezone. A `stage` or `prepare`
+now applies the cron API's path rules (`api.ValidateCronPath`) and refuses the
+host-dependent `Local` zone for every cron it adds or changes. A cron carried
+with its stored path and zone, and a `restore` or `cancel` of an intent
+already staged, keep the rules they were written under.
+
+The dashboard's manual run refuses a disabled cron before queuing a request,
+as the scheduler refuses its run, and names each refusal (disabled, too many
+manual runs waiting, suspended, over the plan) instead of a generic failure.

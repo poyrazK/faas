@@ -111,9 +111,9 @@ type Loop struct {
 	// seal-domain identity first, then the fleet and host identities
 	// (current and previous during a rotation).
 	triggerSecretIdentities []*age.X25519Identity
-	// rateLimiter is the per-app wake rate limiter (shared with
-	// cron dispatch via pkg/sched/rate_limit.go).
-	rateLimiter *WakeRateLimiter
+	// recordRate caps the records each app's broker triggers take per
+	// second (ADR-20261101093015); nil leaves broker polls uncapped.
+	recordRate *TriggerRecordRateLimiter
 	// triggerWakeup is the channel-side wakeup signal the schedd's
 	// pg_notify subscriber delivers on every NotifyTriggerReady +
 	// NotifyTriggerChanged payload (commit #16). The Loop's run
@@ -145,8 +145,12 @@ type Loop struct {
 	flowCounts            FlowCounter
 	flowReaderUnavailable sync.Once
 	ops                   *wire.OpsMetrics // issue #171 shared registry; nil safe
-	primeMetrics          *snapshotPrimeMetrics
-	cronMetrics           *commandCronMetrics
+	// ownedApps is the previous reaper tick's owned app set, for
+	// forgetDepartedApps (ADR 20261103131546).
+	ownedAppsMu  sync.Mutex
+	ownedApps    map[string]struct{}
+	primeMetrics *snapshotPrimeMetrics
+	cronMetrics  *commandCronMetrics
 	// cronResume asks the main loop to continue a cron sweep that used its
 	// slice; cronSweepTried holds the crons the minute's sweep already
 	// dispatched (runCronSweep).
@@ -254,6 +258,7 @@ type Loop struct {
 	tenantWorkflowScheduleMinute      int64
 	tenantWorkflowScheduleAfterApp    string
 	tenantWorkflowScheduleAfterTenant string
+	tenantWorkflowScheduleFairAfter   *state.FairTenantScheduleCursor
 	tenantWorkflowScheduleComplete    bool
 	tenantWorkflowScheduleFailed      bool
 	workflowOrch                      *WorkflowOrchestrator
@@ -1359,11 +1364,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-scaleupTick(scaleupT):
 			l.runScaleUp(ctx)
 		case <-targetsTick(targetsT):
-			l.runTargets(ctx)
+			l.submitWork(workTargets, "tick", func() { l.runTargets(ctx) })
 		case <-floorTick(floorT):
-			l.runFloor(ctx)
+			l.submitWork(workFloor, "tick", func() { l.runFloor(ctx) })
 		case <-prewarmTick(prewarmT):
-			l.runPrewarm(ctx)
+			l.submitWork(workPrewarm, "tick", func() { l.runPrewarm(ctx) })
 		case <-recentLoadTick(recentLoadT):
 			l.runRecentLoad(ctx)
 		case <-migratingWatchdogTick(migratingWatchdogT):
@@ -1381,28 +1386,24 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-jobsTick(workflowsDispatchT):
 			l.runWorkflowsDispatchTick(ctx)
 		case <-workflowRetentionFirst:
-			l.runWorkflowRetention(ctx)
+			l.submitWork(workWorkflowRetention, "tick", func() { l.runWorkflowRetention(ctx) })
 			workflowRetentionFirst = nil
 		case <-workerRecoveryT.C:
 			l.dispatchWorkerRecovery(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
-			l.runWorkflowRetention(ctx)
+			l.submitWork(workWorkflowRetention, "tick", func() { l.runWorkflowRetention(ctx) })
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
 			// exclusively come from retentionT (the 1h ticker).
-			l.runRetention(ctx)
-			l.runDeadLetterRetention(ctx)
-			l.runCronHistoryRetention(ctx)
+			l.dispatchRetention(ctx)
 			retentionFirst = nil
 		case <-retentionTick(retentionT):
-			l.runRetention(ctx)
-			l.runDeadLetterRetention(ctx)
-			l.runCronHistoryRetention(ctx)
+			l.dispatchRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
 			l.submitWork(workInvocationsRetention, "tick", func() { l.runInvocationsRetention(ctx) })
 		case <-triggersRetentionTick(triggersRetentionT):
-			l.runTriggersRetention(ctx)
+			l.submitWork(workTriggersRetention, "tick", func() { l.runTriggersRetention(ctx) })
 		case <-fireNowT.C:
 			// PR-D / issue #791: safety sweep. Picks up rows that
 			// missed a NotifyCronRunNow delivery (Postgres bounce,
@@ -1794,6 +1795,41 @@ func (l *Loop) runRetention(ctx context.Context) {
 
 // runDeadLetterRetention dispatches one unified Failed Events projection
 // retention sweep. Errors are logged and retried on the next hourly tick.
+// forgetDepartedApps deletes the metric series of every app that was in the
+// previous reaper tick's owned list and is not in apps: deleted, or now owned
+// by another scheduler (ADR 20261103131546). Series an app still emits come
+// back on its next observation.
+func (l *Loop) forgetDepartedApps(apps []state.App) {
+	if l.ops == nil {
+		return
+	}
+	current := make(map[string]struct{}, len(apps))
+	for _, app := range apps {
+		current[app.ID] = struct{}{}
+	}
+	l.ownedAppsMu.Lock()
+	previous := l.ownedApps
+	l.ownedApps = current
+	l.ownedAppsMu.Unlock()
+	for id := range previous {
+		if _, ok := current[id]; !ok {
+			l.ops.ForgetApp(id)
+		}
+	}
+}
+
+// dispatchRetention runs the hourly instance, dead-letter and cron-history
+// retention off the loop (ADR 20261103131546). They delete in repeated
+// batches; inline, a large backlog held the stats tick, cron and the
+// triggers behind them.
+func (l *Loop) dispatchRetention(ctx context.Context) {
+	l.submitWork(workRetention, "tick", func() {
+		l.runRetention(ctx)
+		l.runDeadLetterRetention(ctx)
+		l.runCronHistoryRetention(ctx)
+	})
+}
+
 func (l *Loop) runDeadLetterRetention(ctx context.Context) {
 	if l.deadLetterRetention == nil {
 		return
@@ -1967,6 +2003,21 @@ func (l *Loop) runScalingPolicyObservation(ctx context.Context) {
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			l.log.Warn("scaling policy observation: list apps", "err", err)
+		}
+		return
+	}
+	// ADR 20261103094355: one statement for the pass, rewriting only the
+	// rows that changed or are due a refresh. One statement per app ran on
+	// this loop and held the one-second triggers for a round trip per app.
+	if batch, ok := store.(state.AppScalingPolicyObservationBatchStore); ok {
+		observations := make([]state.AppScalingPolicyObservation, 0, len(apps))
+		for _, app := range apps {
+			if app.ScalingPolicyRevision > 0 && l.engine.ownsAppDecision(app) {
+				observations = append(observations, state.AppScalingPolicyObservation{AppID: app.ID, Revision: app.ScalingPolicyRevision})
+			}
+		}
+		if _, err := batch.RecordAppScalingPolicyObservations(ctx, ownerNodeID, observations); err != nil && !errors.Is(err, context.Canceled) {
+			l.log.Warn("scaling policy observation: record apps", "apps", len(observations), "err", err)
 		}
 		return
 	}
@@ -2588,6 +2639,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	apps = owned
+	l.forgetDepartedApps(apps)
 	accounts := newReaperAccounts(store)
 	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps,
 	// suspended accounts and accounts at their spend cap (ADR-1162) from the
@@ -2888,7 +2940,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		// ADR-1151: an eligible instance freezes in place instead of
 		// parking; anything else parks as before.
 		if !l.freezeFromReaper(ctx, id, activityByInstance[id].ResidentMB) {
-			if err := l.reaperShutdown(ctx, snapshot, id, false); err != nil {
+			if err := l.reaperShutdown(ctx, instanceInfoByID, id, false); err != nil {
 				if !errors.Is(err, ErrParkActivity) {
 					l.log.Warn("reaper: idle park", "instance", id, "err", err)
 				}
@@ -2906,12 +2958,12 @@ func (l *Loop) runReaper(ctx context.Context) {
 		// fallback here would never produce a real label value —
 		// ResolvePriority falls back to 'best_effort' to match the
 		// pre-#475 default).
-		if tier, ok := resolvePriority(snapshot, id); ok {
+		if tier, ok := resolvePriority(instanceInfoByID, id); ok {
 			if counter := l.ops.EvictedPriority(tier, "idle"); counter != nil {
 				counter.Inc()
 			}
 		}
-		if tier, ok := resolveTenantTier(snapshot, id); ok {
+		if tier, ok := resolveTenantTier(instanceInfoByID, id); ok {
 			if counter := l.ops.EvictionFired(tier, "idle"); counter != nil {
 				counter.Inc()
 			}
@@ -2988,12 +3040,12 @@ func (l *Loop) runReaper(ctx context.Context) {
 		// exhausted every best_effort candidate and had to fall
 		// through to the reserved tier; the alert is on a
 		// non-zero rate over a 5-minute window.
-		if tier, ok := resolvePriority(snapshot, id); ok {
+		if tier, ok := resolvePriority(instanceInfoByID, id); ok {
 			if counter := l.ops.EvictedPriority(tier, "eviction_ram"); counter != nil {
 				counter.Inc()
 			}
 		}
-		if tier, ok := resolveTenantTier(snapshot, id); ok {
+		if tier, ok := resolveTenantTier(instanceInfoByID, id); ok {
 			if counter := l.ops.EvictionFired(tier, "ram_pressure"); counter != nil {
 				counter.Inc()
 			}
@@ -3087,8 +3139,8 @@ func (l *Loop) freshGuestActivity(instance string) func(context.Context) (GuestA
 // dispatcher parks instead of stops (or vice versa), and both
 // paths converge on STOPPED. ReaperParkTimeout bounds the
 // synchronous call regardless of which engine path runs.
-func (l *Loop) reaperShutdown(ctx context.Context, snapshot []InstanceInfo, instanceID string, allowNewRequests bool) error {
-	info := l.infoForShutdown(snapshot, instanceID)
+func (l *Loop) reaperShutdown(ctx context.Context, infos map[string]InstanceInfo, instanceID string, allowNewRequests bool) error {
+	info := l.infoForShutdown(infos, instanceID)
 	switch state.InstanceMode(info.Mode) {
 	case state.InstanceModeWorker, state.InstanceModeJob:
 		return l.stopInstanceFromReaper(ctx, instanceID)
@@ -3103,13 +3155,23 @@ func (l *Loop) reaperShutdown(ctx context.Context, snapshot []InstanceInfo, inst
 // entry for id — a benign race covered in reaperShutdown's doc comment.
 // A bare entry has no activity to compare, so any newer request keeps the
 // instance unless allowNewRequests.
-func (l *Loop) infoForShutdown(snapshot []InstanceInfo, instanceID string) InstanceInfo {
-	for _, info := range snapshot {
-		if info.Instance == instanceID {
-			return info
-		}
+func (l *Loop) infoForShutdown(infos map[string]InstanceInfo, instanceID string) InstanceInfo {
+	if info, ok := infos[instanceID]; ok {
+		return info
 	}
 	return InstanceInfo{Instance: instanceID}
+}
+
+// indexInstanceInfos keys a reaper snapshot by instance ID. The reaper looks
+// up each instance it parks or evicts; scanning the snapshot for each made a
+// mass park quadratic in the node's instances (ADR 20261103094355). A
+// snapshot holds each instance once.
+func indexInstanceInfos(snapshot []InstanceInfo) map[string]InstanceInfo {
+	infos := make(map[string]InstanceInfo, len(snapshot))
+	for _, info := range snapshot {
+		infos[info.Instance] = info
+	}
+	return infos
 }
 
 // stopInstanceFromReaper is the reaper-side wrapper around
@@ -3192,32 +3254,28 @@ func reaperInstanceState(s state.State) bool {
 // been backfilled) flows through state.EvictionPriorityOrBestEffort
 // so the metric observation matches the same bucket the INSERT
 // path stamps on a fresh row.
-func resolvePriority(snapshot []InstanceInfo, instanceID string) (string, bool) {
-	for _, s := range snapshot {
-		if s.Instance != instanceID {
-			continue
-		}
-		return state.EvictionPriorityOrBestEffort(s.EvictionPriority), true
+func resolvePriority(infos map[string]InstanceInfo, instanceID string) (string, bool) {
+	s, ok := infos[instanceID]
+	if !ok {
+		return "", false
 	}
-	return "", false
+	return state.EvictionPriorityOrBestEffort(s.EvictionPriority), true
 }
 
 // resolveTenantTier returns the plan label carried by an instance snapshot.
 // The boolean is false when the instance disappeared between snapshot and
 // park, which keeps metric counts tied to successful, identifiable operations.
-func resolveTenantTier(snapshot []InstanceInfo, instanceID string) (string, bool) {
-	for _, s := range snapshot {
-		if s.Instance != instanceID {
-			continue
-		}
-		switch s.Plan {
-		case api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale:
-			return string(s.Plan), true
-		default:
-			return "unknown", true
-		}
+func resolveTenantTier(infos map[string]InstanceInfo, instanceID string) (string, bool) {
+	s, ok := infos[instanceID]
+	if !ok {
+		return "", false
 	}
-	return "", false
+	switch s.Plan {
+	case api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale:
+		return string(s.Plan), true
+	default:
+		return "unknown", true
+	}
 }
 
 // runReaperAggressive (issue #171) is the per-tick body of the
@@ -3229,6 +3287,7 @@ func resolveTenantTier(snapshot []InstanceInfo, instanceID string) (string, bool
 // behaviour is unit-testable without a clock / DB round-trip on
 // the full reaper body.
 func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapshot []InstanceInfo, instanceToApp map[string]string, cooldownHeldByApp map[string]struct{}, now time.Time) {
+	infos := indexInstanceInfos(snapshot)
 	// The existing load feed is app-wide production telemetry. A stage needs
 	// an explicit environment load signal before aggressive scale-in can use
 	// it; idle reaping still uses the stage's own floor and pinned policy.
@@ -3398,7 +3457,7 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		// post-enrichment app-wide max floor.
 		aggressiveParkByEnvironment := map[string]InstanceInfo{}
 		for _, id := range ids {
-			if err := l.reaperShutdown(ctx, snapshot, id, true); err != nil {
+			if err := l.reaperShutdown(ctx, infos, id, true); err != nil {
 				if !errors.Is(err, ErrParkActivity) {
 					l.log.Warn("reaper: aggressive park", "instance", id, "err", err)
 				}
@@ -3410,12 +3469,12 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 			// instances get parked when the rolling-window RPS
 			// signal says the customer is over-provisioned, so
 			// the metric increments once per parked instance.
-			if tier, ok := resolvePriority(snapshot, id); ok {
+			if tier, ok := resolvePriority(infos, id); ok {
 				if counter := l.ops.EvictedPriority(tier, "eviction_aggressive"); counter != nil {
 					counter.Inc()
 				}
 			}
-			if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if tier, ok := resolveTenantTier(infos, id); ok {
 				if counter := l.ops.EvictionFired(tier, "eviction_aggressive"); counter != nil {
 					counter.Inc()
 				}
@@ -5525,13 +5584,14 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 	for id, a := range activity {
 		resident[id] = a.ResidentMB
 	}
+	infos := indexInstanceInfos(snapshot)
 	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
 		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
 			continue
 		}
 		l.log.Info("reaper: evicted under measured memory pressure", "instance", id)
-		if tier, ok := resolveTenantTier(snapshot, id); ok {
+		if tier, ok := resolveTenantTier(infos, id); ok {
 			if counter := l.ops.EvictionFired(tier, "measured_memory"); counter != nil {
 				counter.Inc()
 			}

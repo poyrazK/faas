@@ -21,6 +21,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -373,15 +374,43 @@ func TestDeployManifestTriggers_UnknownPlanFallsThroughToServer(t *testing.T) {
 	}
 }
 
-func TestDeployManifestTriggers_KnownZeroLimitStopsBeforeCreate(t *testing.T) {
+// The deployer's own plan does not gate a deploy's crons: a company app
+// follows the company's plan, which apid applies to each create (crons
+// audit 2026-11-03). A Free member deploying to a Pro company app used to be
+// refused before any cron was sent.
+func TestDeployManifestTriggers_CallerPlanDoesNotGateCrons(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir, `triggers:
   - {kind: cron, app: my-api, schedule: "0 3 * * *", path: /a}
 `)
 	fc := &fakeCronClient{whoami: api.AccountResponse{Plan: "free"}}
+	if err := deployManifestTriggers(context.Background(), fc, "my-api", dir); err != nil {
+		t.Fatalf("a Free caller's deploy was refused: %v", err)
+	}
+	if len(fc.createdCalls) != 1 {
+		t.Fatalf("CreateCron calls = %d, want 1", len(fc.createdCalls))
+	}
+}
+
+// A count no plan allows on one app stops before any cron is sent.
+func TestDeployManifestTriggers_AboveEveryPlanStopsBeforeCreate(t *testing.T) {
+	limit := 0
+	for _, plan := range api.Plans {
+		if l, ok := api.LimitsFor(plan); ok && l.CronLimitPerApp > limit {
+			limit = l.CronLimitPerApp
+		}
+	}
+	var manifest strings.Builder
+	manifest.WriteString("triggers:\n")
+	for i := 0; i <= limit; i++ {
+		fmt.Fprintf(&manifest, "  - {kind: cron, app: my-api, schedule: \"%d %d * * *\", path: /a}\n", i%60, i/60)
+	}
+	dir := t.TempDir()
+	writeManifest(t, dir, manifest.String())
+	fc := &fakeCronClient{whoami: api.AccountResponse{Plan: "scale"}}
 	err := deployManifestTriggers(context.Background(), fc, "my-api", dir)
-	if err == nil || !strings.Contains(err.Error(), "plan allows 0") {
-		t.Fatalf("known zero-limit error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("no plan allows more than %d per app", limit)) {
+		t.Fatalf("over-every-plan error = %v", err)
 	}
 	if len(fc.createdCalls) != 0 {
 		t.Fatalf("CreateCron calls = %d, want 0", len(fc.createdCalls))

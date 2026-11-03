@@ -58,7 +58,7 @@ func (s *server) renderAppProfiles(w http.ResponseWriter, r *http.Request, log *
 	data.RouteView = dashboard.BuildProfileRoutes(app.Slug, data.Query, data.Baseline, data.Profile, data.Compare)
 	data.Automatic = s.profileDeploymentChecksView(w, r, acct, app)
 	data.Captures = s.profileCapturesView(w, r, acct, app)
-	if s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled && data.Query.DeploymentID != "" {
+	if s.profileBackend != nil && api.MustLimitsFor(s.profilePlan(ctx, acct.Plan, app)).Profiling.Enabled && data.Query.DeploymentID != "" {
 		if _, problem := s.profileQueryScope(ctx, acct, app, data.Query); problem == nil {
 			data.CPUChart = s.profileCPUChart(savedRequest, acct, app, data.Query)
 		}
@@ -83,7 +83,7 @@ func (s *server) profileCPUChart(r *http.Request, acct state.Account, app state.
 			return &dashboard.ProfileCPUChart{Error: "Enter valid CPU chart timestamps."}
 		}
 	}
-	if err := profiling.ValidateQuery(q, time.Now(), api.MustLimitsFor(acct.Plan).Profiling.RetentionDays); err != nil {
+	if err := profiling.ValidateQuery(q, time.Now(), api.MustLimitsFor(s.profilePlan(r.Context(), acct.Plan, app)).Profiling.RetentionDays); err != nil {
 		return &dashboard.ProfileCPUChart{Error: "Select a CPU chart window within your plan's profile history."}
 	}
 	step := dashboard.ProfileChartStep(q.End.Sub(q.Start))

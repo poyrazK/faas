@@ -401,10 +401,10 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		for _, warning := range exposeWarnings {
 			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 		}
-		ports := parsePorts(s.Ports)
-		if image != "" {
-			ports = parseImagePorts(s.Ports)
-		}
+		// The container side of each mapping is the port the service listens
+		// on, for a built service as for an image (ADR-20261103112845);
+		// reconcile makes the first one the serving port.
+		ports := parseImagePorts(s.Ports)
 		// Docker publishes a loopback-bound port only to the machine running
 		// Compose, so the service stays internal (ADR-20261102192943).
 		portsLoopback := len(ports) > 0 && composePortsLoopbackOnly(s.Ports)

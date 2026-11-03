@@ -182,8 +182,12 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
 			continue
 		}
-		if l.eventsHeld(ctx, recipient, work.Payload) {
+		workflowHeld := l.workflowEventHeld(ctx, recipient)
+		if l.eventsHeld(ctx, recipient, work.Payload) || workflowHeld {
 			wait := state.EventCapabilityWaitProgress(previous, previous.Attempts+1, now.Add(capabilityDeferral))
+			if workflowHeld {
+				wait = state.EventWorkflowWaitProgress(previous, previous.Attempts+1, state.EventWorkflowCapabilityWaitReason, now.Add(capabilityDeferral))
+			}
 			if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
 				return err
 			}
@@ -217,6 +221,15 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		var routeErr error
 		if len(recipient.Workflow) != 0 {
 			matched, routeErr = l.routeWorkflowEvent(ctx, work, envelope, recipient)
+			if errors.Is(routeErr, state.ErrWorkflowEventPlanIneligible) {
+				wait := state.EventWorkflowWaitProgress(previous, previous.Attempts+1, state.EventWorkflowPlanWaitReason, now.Add(capabilityDeferral))
+				if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
+					return err
+				}
+				work.RecipientProgress[recipient.ID] = wait
+				routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+				continue
+			}
 			if errors.Is(routeErr, state.ErrWorkflowRunQuotaExceeded) {
 				// The app's run limit is capacity: wait without spending a
 				// routing attempt, as the recipient-claim path does.
@@ -807,9 +820,13 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 		}
 		return
 	}
-	if l.eventsHeld(ctx, work.Recipient, work.Payload) {
+	workflowHeld := l.workflowEventHeld(ctx, work.Recipient)
+	if l.eventsHeld(ctx, work.Recipient, work.Payload) || workflowHeld {
 		next := now.Add(capabilityDeferral)
 		wait := state.EventCapabilityWaitProgress(work.PreviousProgress, work.TotalAttempts, next)
+		if workflowHeld {
+			wait = state.EventWorkflowWaitProgress(work.PreviousProgress, work.TotalAttempts, state.EventWorkflowCapabilityWaitReason, next)
+		}
 		if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
 			l.log.Error("sched: hold event recipient while events is off", "err", err)
 		}
@@ -875,6 +892,14 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 		} else {
 			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true, work.OutboxID)
 		}
+	}
+	if errors.Is(routeErr, state.ErrWorkflowEventPlanIneligible) {
+		next := now.Add(capabilityDeferral)
+		wait := state.EventWorkflowWaitProgress(work.PreviousProgress, work.TotalAttempts, state.EventWorkflowPlanWaitReason, next)
+		if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
+			l.log.Error("sched: hold workflow recipient for plan", "err", err)
+		}
+		return
 	}
 	finishedAt := l.eventFanoutNow()
 	progress, next := eventRoutingRetryOutcome(work.Recipient, work.PreviousProgress, work.TotalAttempts, work.Attempts-work.GenerationCapacityDeferrals, work.CapacityDeferrals, work.Generation, matched, routeErr, finishedAt, time.Since(startedAt), eventRoutingRetrySeed(work.OutboxID, work.Recipient.ID, work.Generation, work.Attempts-work.GenerationCapacityDeferrals))
@@ -1001,6 +1026,18 @@ func (l *Loop) eventsHeld(ctx context.Context, recipient state.PublishedEventRec
 		return false
 	}
 	return !l.engine.appEventsAllowed(ctx, recipient.AppID)
+}
+
+// workflowEventHeld applies the workflows switch only to workflow recipients;
+// ordinary event subscriptions remain independently routable.
+func (l *Loop) workflowEventHeld(ctx context.Context, recipient state.PublishedEventRecipient) bool {
+	if len(recipient.Workflow) == 0 || l == nil || l.engine == nil {
+		return false
+	}
+	if l.engine.capabilities != nil && !l.engine.capabilities.Released("workflows") {
+		return true
+	}
+	return !l.workflowCapabilityAllowed(ctx, recipient.AppID)
 }
 
 // observeEventRoutingPause logs when the platform-wide events switch stops or
