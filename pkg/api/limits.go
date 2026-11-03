@@ -62,8 +62,9 @@ const (
 )
 
 // Request bodies one gateway holds at once. Uploads spooled to disk share
-// RequestBodySpoolNodeBytes and one client IP (an IPv6 /64) holds at most
-// RequestBodySpoolPerClient of them; validate-rule bodies read into the heap
+// RequestBodySpoolNodeBytes, one app owner holds at most a quarter of it, and
+// one client IP (an IPv6 /56) holds at most RequestBodySpoolPerClient of
+// them; validate-rule bodies read into the heap
 // share RequestBodyMemoryNodeBytes. A request that would pass a budget gets
 // 503 with Retry-After RequestBodyBudgetRetryAfter.
 // gatewayd-internal keeps verified and definitely-invalid API key lookups for
@@ -133,6 +134,15 @@ const InboundWebhookFailuresPerIPPerMinute = 30
 // one process computes at once; the rest wait for a slot.
 const PasswordHashConcurrency = 3
 
+// PasswordHashQueueMax caps the callers waiting for a hash slot: about half
+// a second of work at ~60 hashes a second. Past it a password attempt gets
+// 429 with Retry-After PasswordHashBusyRetryAfter instead of joining an
+// unbounded queue (H96).
+const (
+	PasswordHashQueueMax       = 32
+	PasswordHashBusyRetryAfter = 2 * time.Second
+)
+
 // GatewayRouteRecheckInterval is how long a warm custom-domain route trusts
 // its last registry recheck (domain verified, tenant surface binding) before
 // asking again; domain_changed and app_changed drop it sooner.
@@ -148,10 +158,16 @@ const (
 )
 
 const (
-	RequestBodySpoolNodeBytes   int64 = 2 << 30
-	RequestBodySpoolPerClient         = 4
-	RequestBodyMemoryNodeBytes  int64 = 96 << 20
-	RequestBodyBudgetRetryAfter       = 5 * time.Second
+	RequestBodySpoolNodeBytes int64 = 4 << 30
+	RequestBodySpoolPerClient       = 4
+	// One app owner holds at most 1/RequestBodySpoolOwnerShareDivisor of
+	// the node spool (1 GiB: four of Scale's 250 MiB bodies), and the
+	// per-client cap keys IPv6 clients by /RequestBodySpoolClientIPv6Prefix
+	// (H94).
+	RequestBodySpoolOwnerShareDivisor       = 4
+	RequestBodySpoolClientIPv6Prefix        = 56
+	RequestBodyMemoryNodeBytes        int64 = 96 << 20
+	RequestBodyBudgetRetryAfter             = 5 * time.Second
 )
 
 // The project scan reads Kubernetes manifests under k8s/, kubernetes/,
@@ -933,6 +949,10 @@ const (
 	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
 	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
 	ProfileCaptureMaxConcurrentPerScheduler = 4
+	// ProfileCaptureMaxRunningPerPool bounds the captures of one pool (an
+	// account, or an organization's apps) running at once, so one customer
+	// cannot hold every scheduler's capture workers; the rest stay queued.
+	ProfileCaptureMaxRunningPerPool = 2
 	// ProfileCaptureMaxListed bounds GET /profiles/captures.
 	ProfileCaptureMaxListed = 50
 	// ProfileCaptureRetention is how long stored capture results remain.
@@ -1560,7 +1580,10 @@ const QueuePushDispatchSlotsPerNode = 32
 
 // BrokerTriggerDispatchSlotsPerNode bounds the external broker triggers
 // (Kafka, NATS, Redis Streams, SQS-compatible) one schedd polls and delivers
-// at once, one batch per trigger (ADR-20261027162741).
+// at once, one batch per trigger (ADR-20261027162741). Each account with
+// broker triggers on the node is owed an even share, at least one and no more
+// than its triggers; idle lanes are lent but never re-lent while an account
+// waits for its share (ADR-20261101093015).
 const BrokerTriggerDispatchSlotsPerNode = 16
 
 // Trigger ledger retention: terminal trigger_records rows without an explicit
@@ -1574,6 +1597,11 @@ const (
 	TriggerRetentionBatchMax  = 1000
 	TriggerRetentionPassesMax = 10
 )
+
+// TriggerMetricsCountLimit is where GET /v1/triggers/{id}/metrics stops
+// counting each state's records, so a trigger with millions of settled
+// records answers from a bounded index read (ADR-20261101104512).
+const TriggerMetricsCountLimit = 100000
 
 // RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
 // realtime trigger may bind (ADR-1322): one GatewaySynthDispatchTimeout
@@ -4089,7 +4117,10 @@ type Limits struct {
 	// bounds what a backlog costs the control-plane database.
 	// QueueMessageRetentionSeconds is how long a pending queue message
 	// waits for a worker before schedd moves it to the dead letter,
-	// counted from its enqueue. A message a worker holds does not expire.
+	// counted from its enqueue or, once replayed from the dead letter, from
+	// its last replay (ADR-20261101093812). A message a worker holds does
+	// not expire. A replay meets MaxQueueDepth and
+	// MaxQueueBacklogBytesPerAccount as a send does.
 	MaxQueueBacklogBytesPerAccount int64
 	QueueMessageRetentionSeconds   int
 
@@ -4179,7 +4210,7 @@ type Limits struct {
 	// publish is matched against each enabled subscription of its account,
 	// so the count bounds the routing work one event can cause. Enforced
 	// after every manifest apply that adds or re-enables a subscription, by
-	// checkSourceRefEventSubscriptionLimits in pkg/apid/apidserver.
+	// checkSourceRefEventSubscriptionQuota in pkg/apid/apidserver.
 	EventSubscriptionsPerApp     int
 	EventSubscriptionsPerAccount int
 
@@ -4704,14 +4735,15 @@ type Limits struct {
 	// pkg/state/pgstore.go). The SQL CHECK [1, 25] is the hard
 	// ceiling. 0 with TriggersAllowed=false (Free).
 	TriggerMaxAttemptsMax int
-	// TriggerRecordsPerSecondPerApp caps the per-app steady-state
-	// dispatch rate schedd permits to a single trigger. The cap is
-	// enforced by WakeRateLimiter (pkg/sched/rate_limit.go) — the
-	// same bucket the wake path drains. Hobby 100 / Pro 1000 /
-	// Scale 10000. Above the cap, records transition to dead_letter
-	// with reason='rate_limited' rather than back-pressuring the
-	// broker (back-pressure on Kafka consumer groups breaks the
-	// group-rebalance contract). 0 with TriggersAllowed=false (Free).
+	// TriggerRecordsPerSecondPerApp caps the records per second an
+	// app's external broker triggers (Kafka, NATS, Redis Streams,
+	// SQS-compatible) take from their brokers, enforced by
+	// TriggerRecordRateLimiter (pkg/sched/trigger_record_rate.go): a
+	// bucket per app on each schedd holding one second of the rate.
+	// Hobby 100 / Pro 1000 / Scale 10000. A poll asks the broker for
+	// at most the app's budget, so records over the cap stay on the
+	// broker for a later poll; none is dead-lettered or acknowledged
+	// (ADR-20261101093015). 0 with TriggersAllowed=false (Free).
 	TriggerRecordsPerSecondPerApp int
 	// TriggerPayloadMaxBytes (migration 00274 / audit #7) caps the
 	// per-trigger `payload_max_bytes` the customer may set. SQL
@@ -11884,13 +11916,11 @@ func (p Plan) TriggerMaxAttemptsMax() int {
 	return l.TriggerMaxAttemptsMax
 }
 
-// TriggerRecordsPerSecondPerApp returns the per-app
-// steady-state dispatch rate schedd permits to a single trigger.
-// The cap is enforced by WakeRateLimiter (pkg/sched/rate_limit.go)
-// — the same bucket the wake path drains. Hobby 100 / Pro 1000
-// / Scale 10 000. Above the cap, records transition to
-// dead_letter with reason='rate_limited' rather than
-// back-pressuring the broker. Unknown plans fail closed
+// TriggerRecordsPerSecondPerApp returns the records per second an
+// app's external broker triggers may take from their brokers,
+// enforced by pkg/sched's TriggerRecordRateLimiter. Hobby 100 / Pro
+// 1000 / Scale 10 000. Records over the cap stay on the broker for a
+// later poll (ADR-20261101093015). Unknown plans fail closed
 // (return 0).
 func (p Plan) TriggerRecordsPerSecondPerApp() int {
 	l, ok := LimitsFor(p)

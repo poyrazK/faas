@@ -23,10 +23,16 @@ type memProfileCapture struct {
 // inPool reports whether the capture counts in pool; one stored without a
 // pool counts in its account's.
 func (r *memProfileCapture) inPool(pool string) bool {
+	return r.poolID() == pool
+}
+
+// poolID is the pool the capture counts in; rows from before pools count in
+// their account's.
+func (r *memProfileCapture) poolID() string {
 	if r.pool == "" {
-		return r.accountID == pool
+		return r.accountID
 	}
-	return r.pool == pool
+	return r.pool
 }
 
 func copyProfileCapture(c api.ProfileCapture) api.ProfileCapture {
@@ -222,9 +228,15 @@ func (m *MemStore) ProfileCaptureBlobs(_ context.Context, accountID, appID, id s
 func (m *MemStore) ClaimProfileCapture(_ context.Context, now time.Time) (ClaimedProfileCapture, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	running := map[string]int{}
+	for _, row := range m.profileCaptures {
+		if row.capture.Status == api.ProfileCaptureCapturing {
+			running[row.poolID()]++
+		}
+	}
 	var next *memProfileCapture
 	for _, row := range m.profileCaptures {
-		if row.capture.Status != api.ProfileCaptureQueued {
+		if row.capture.Status != api.ProfileCaptureQueued || running[row.poolID()] >= api.ProfileCaptureMaxRunningPerPool {
 			continue
 		}
 		if next == nil || profileCaptureClaimsBefore(row.capture, next.capture) {
@@ -388,7 +400,7 @@ func (m *MemStore) ExpireProfileCaptures(_ context.Context, now time.Time) (int6
 			c.Status, c.Reason, c.CompletedAt = api.ProfileCaptureFailed, profileCaptureInterruptedReason, &completed
 			n++
 		}
-		if c.ExpiresAt.Before(now) {
+		if app, ok := m.apps[c.AppID]; c.ExpiresAt.Before(now) || ok && app.Status == AppDeleted {
 			delete(m.profileCaptures, id)
 			n++
 		}

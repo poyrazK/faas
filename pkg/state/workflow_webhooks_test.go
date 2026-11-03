@@ -210,6 +210,31 @@ func TestWebhookAutomationMigrationRollbackAndReapply(t *testing.T) {
 func webhookTestBody(id string) json.RawMessage {
 	return json.RawMessage(`{"id":"` + id + `","type":"invoice.paid","data":{"object":{"id":"in_1","amount_paid":150}}}`)
 }
+
+func TestWebhookAutomationEnvelopeSizeAndIgnoredEvents(t *testing.T) {
+	endpoint := InboundWebhookEndpoint{ID: uuid.NewString(), AccountID: uuid.NewString(), Provider: InboundWebhookProviderStripe}
+	binding := WebhookAutomationBinding{WorkflowName: "paid", EventType: "invoice.*"}
+	body := json.RawMessage(`{"value":"` + strings.Repeat("x", int(api.WebhookMaxBodyBytes)-100) + `"}`)
+	spec := &api.WorkflowSpec{Name: "paid"}
+	_, _, _, err := prepareWebhookAutomation(endpoint, binding, spec, "", "evt_large", "invoice.paid", body, time.Now())
+	if !errors.Is(err, ErrWorkflowEventInputTooLarge) {
+		t.Fatalf("large matching webhook: %v", err)
+	}
+	expanding := json.RawMessage(`{"values":[` + strings.Repeat(`1e10000,`, 105) + `1e10000]}`)
+	_, _, _, err = prepareWebhookAutomation(endpoint, binding, spec, "", "evt_expanding", "invoice.paid", expanding, time.Now())
+	if !errors.Is(err, ErrWorkflowEventInputTooLarge) {
+		t.Fatalf("expanding matching webhook: %v", err)
+	}
+	for _, tc := range []struct{ reason, eventType, want string }{
+		{"automation_paused", "invoice.paid", "automation_paused"},
+		{"", "customer.created", "event_filtered"},
+	} {
+		receipt, _, recipients, err := prepareWebhookAutomation(endpoint, binding, spec, tc.reason, "evt_large", tc.eventType, body, time.Now())
+		if err != nil || receipt.Status != "ignored" || receipt.IgnoredReason != tc.want || len(recipients) != 0 {
+			t.Fatalf("ignored webhook receipt=%+v recipients=%d err=%v", receipt, len(recipients), err)
+		}
+	}
+}
 func TestWebhookAutomationPlanDowngradeIsRetryable(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, store Store) {
 		app, endpoint, _ := seedWebhookAutomation(t, store)

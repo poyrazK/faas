@@ -832,6 +832,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// pool; the loops below start staggered so they do not tick together.
 		ctx = state.WithBackgroundWork(ctx)
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runCronActivationWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runEventSubscriptionActivationWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runSafeProjectReleaseWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPromotionHealthWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runMailOutbox(ctx) })

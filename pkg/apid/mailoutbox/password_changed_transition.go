@@ -60,7 +60,11 @@ func (s *Service) PreparePasswordChange(ctx context.Context, id, email, currentP
 	case account.MfaEnrolledAt.Valid:
 		return nil, ErrPasswordChangeStepUp
 	case account.HasPassword:
-		matched, err := auth.Verify(account.Hash, currentPassword)
+		matched, err := auth.VerifyContext(ctx, account.Hash, currentPassword)
+		if errors.Is(err, auth.ErrPasswordHashBusy) || ctx.Err() != nil {
+			// Not checked (H96): the caller answers 429, not "invalid".
+			return nil, errors.Join(err, ctx.Err())
+		}
 		if err != nil || !matched {
 			return nil, ErrPasswordChangeInvalid
 		}

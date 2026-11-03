@@ -27,6 +27,12 @@ func (l *Loop) runWorkflowSchedulesTick(ctx context.Context) error {
 	if !l.workflowsDispatched {
 		return nil
 	}
+	// Stop admitting new scheduled work while the platform-wide workflow kill
+	// switch holds dispatch. Leave schedule cursors untouched so each schedule's
+	// normal missed-fire policy applies when the capability is restored.
+	if l.engine.capabilities != nil && !l.engine.capabilities.Released("workflows") {
+		return nil
+	}
 	if err := l.runWorkflowFailurePoliciesTick(ctx); err != nil {
 		return err
 	}
@@ -73,6 +79,12 @@ func (l *Loop) runApplicationWorkflowSchedulesTick(ctx context.Context) error {
 	}
 	var failures []error
 	for _, candidate := range candidates {
+		// A denied account must not consume its quota with runs that dispatch
+		// cannot execute. The app cursor still advances past this candidate;
+		// the schedule cursor is left intact for its missed-fire policy.
+		if l.engine.capabilities != nil && !l.engine.capabilities.EveryAccount("workflows") && !l.workflowCapabilityAllowed(ctx, candidate.AppID) {
+			continue
+		}
 		var definitions []api.WorkflowSpec
 		if err := json.Unmarshal(candidate.Workflows, &definitions); err != nil {
 			failures = append(failures, fmt.Errorf("workflow schedules: decode app %s: %w", candidate.AppID, err))
@@ -113,6 +125,7 @@ func (l *Loop) runTenantWorkflowSchedulesTick(ctx context.Context) error {
 	if minute != l.tenantWorkflowScheduleMinute {
 		l.tenantWorkflowScheduleMinute = minute
 		l.tenantWorkflowScheduleAfterApp, l.tenantWorkflowScheduleAfterTenant = "", ""
+		l.tenantWorkflowScheduleFairAfter = nil
 		l.tenantWorkflowScheduleComplete, l.tenantWorkflowScheduleFailed = false, false
 	}
 	if l.tenantWorkflowScheduleComplete {
@@ -121,7 +134,10 @@ func (l *Loop) runTenantWorkflowSchedulesTick(ctx context.Context) error {
 	var candidates []state.WorkflowScheduleCandidate
 	var err error
 	fair, fairScan := store.(state.FairTenantWorkflowScheduleStore)
-	if fairScan {
+	paged, pagedScan := store.(state.FairTenantWorkflowSchedulePageStore)
+	if pagedScan {
+		candidates, err = paged.ListFairTenantWorkflowScheduleCandidatesAfter(ctx, l.engine.OwnerNodeID(), now.UTC().Truncate(time.Minute), workflowScheduleBatch, l.tenantWorkflowScheduleFairAfter)
+	} else if fairScan {
 		candidates, err = fair.ListFairTenantWorkflowScheduleCandidates(ctx, l.engine.OwnerNodeID(), now.UTC().Truncate(time.Minute), workflowScheduleBatch)
 	} else {
 		candidates, err = store.ListTenantWorkflowScheduleCandidates(ctx, l.engine.OwnerNodeID(),
@@ -131,7 +147,20 @@ func (l *Loop) runTenantWorkflowSchedulesTick(ctx context.Context) error {
 		return err
 	}
 	var failures []error
+	allowedByApp := make(map[string]bool)
 	for _, candidate := range candidates {
+		// Only the cursor-based scan can skip a denied candidate without
+		// repeatedly selecting it ahead of other accounts.
+		if pagedScan && l.engine.capabilities != nil && !l.engine.capabilities.EveryAccount("workflows") {
+			allowed, seen := allowedByApp[candidate.AppID]
+			if !seen {
+				allowed = l.workflowCapabilityAllowed(ctx, candidate.AppID)
+				allowedByApp[candidate.AppID] = allowed
+			}
+			if !allowed {
+				continue
+			}
+		}
 		var definitions []api.WorkflowSpec
 		if err := json.Unmarshal(candidate.Workflows, &definitions); err != nil {
 			failures = append(failures, fmt.Errorf("tenant workflow schedules: decode app %s: %w", candidate.AppID, err))
@@ -158,12 +187,16 @@ func (l *Loop) runTenantWorkflowSchedulesTick(ctx context.Context) error {
 	l.tenantWorkflowScheduleFailed = l.tenantWorkflowScheduleFailed || len(failures) > 0
 	if len(candidates) < workflowScheduleBatch {
 		l.tenantWorkflowScheduleComplete = !l.tenantWorkflowScheduleFailed
+		l.tenantWorkflowScheduleFairAfter = nil
 		if l.tenantWorkflowScheduleComplete {
 			l.tenantWorkflowScheduleAfterApp, l.tenantWorkflowScheduleAfterTenant = "", ""
 		} else {
 			l.tenantWorkflowScheduleAfterApp, l.tenantWorkflowScheduleAfterTenant = "", ""
 			l.tenantWorkflowScheduleFailed = false
 		}
+	} else if pagedScan {
+		last := candidates[len(candidates)-1]
+		l.tenantWorkflowScheduleFairAfter = &state.FairTenantScheduleCursor{AppID: last.AppID, TenantID: last.PlatformTenantID, WorkflowName: last.FairWorkflowName, LastAdmittedAt: last.FairLastAdmittedAt}
 	} else if !fairScan {
 		last := candidates[len(candidates)-1]
 		l.tenantWorkflowScheduleAfterApp, l.tenantWorkflowScheduleAfterTenant = last.AppID, last.PlatformTenantID

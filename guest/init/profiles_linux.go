@@ -85,11 +85,15 @@ type profileBridge struct {
 	control profileControl
 	capture *profileCapture
 	// finished is the last capture whose reply may still be in flight.
-	finished  *profileCapture
-	processes map[string]time.Time
-	acks      map[string]string
-	slots     chan struct{}
-	send      func(context.Context, profileproto.Upload) error
+	finished *profileCapture
+	// flushEpoch is the continuous epoch a running capture replaced. Its
+	// collectors send their cut-short window under it, so it is accepted
+	// until the capture ends.
+	flushEpoch string
+	processes  map[string]time.Time
+	acks       map[string]string
+	slots      chan struct{}
+	send       func(context.Context, profileproto.Upload) error
 	// pprofSeen and pprofAck are the pprof scraper's poll and suspend
 	// acknowledgement; it registers here rather than in processes so a
 	// collector of the application's own can be told apart from it.
@@ -224,13 +228,11 @@ func (b *profileBridge) ingestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	match := profileEpochLabel.FindStringSubmatch(r.URL.Query().Get("name"))
-	b.mu.Lock()
-	epoch := b.control.Epoch
-	b.mu.Unlock()
-	if len(match) != 2 || match[1] != epoch {
+	if len(match) != 2 || !b.acceptsEpoch(match[1]) {
 		http.Error(w, "profile belongs to an earlier collection epoch", http.StatusConflict)
 		return
 	}
+	epoch := match[1]
 	r.Body = http.MaxBytesReader(w, r.Body, api.ProfileMaxFrameBytes)
 	body, err := profileUploadBody(r)
 	if err != nil || len(body) == 0 || len(body) > api.ProfileMaxCompressedBytes {
@@ -263,6 +265,14 @@ func (b *profileBridge) ingestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// acceptsEpoch reports whether uploads labelled epoch are still collected:
+// the current epoch, or the continuous one a running capture replaced.
+func (b *profileBridge) acceptsEpoch(epoch string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return epoch != "" && (epoch == b.control.Epoch || epoch == b.flushEpoch)
 }
 
 // acceptCheckpoint keeps the latest interim heap profile per process for the
@@ -409,6 +419,7 @@ func resumeGuestProfiles() {
 		b.capture.aborted = "instance restored during capture"
 	}
 	b.capture = nil
+	b.flushEpoch = ""
 	b.control = b.base
 	b.control.Epoch = newProfileEpoch()
 	b.processes = map[string]time.Time{}
@@ -471,7 +482,9 @@ func profileEnvAtPaths(env []string, cfg *api.ProfilingConfig, onDemand bool, no
 		values["NODE_OPTIONS"] = strings.TrimSpace(values["NODE_OPTIONS"] + " --require=" + nodePath)
 	}
 	if exists(pythonPath) {
-		values["PYTHONPATH"] = pythonPath + ":" + values["PYTHONPATH"]
+		// An empty PYTHONPATH entry means the working directory: never append
+		// one the image did not have.
+		values["PYTHONPATH"] = strings.TrimSuffix(pythonPath+":"+values["PYTHONPATH"], ":")
 	}
 	out := make([]string, 0, len(values))
 	for key, value := range values {
@@ -500,11 +513,8 @@ func (b *profileBridge) pushHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid profile push", http.StatusBadRequest)
 		return
 	}
-	b.mu.Lock()
-	epoch := b.control.Epoch
-	b.mu.Unlock()
 	for _, item := range uploads {
-		if item.Epoch != epoch || epoch == "" {
+		if !b.acceptsEpoch(item.Epoch) {
 			http.Error(w, "profile belongs to an earlier collection epoch", http.StatusConflict)
 			return
 		}

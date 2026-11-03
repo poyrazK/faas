@@ -72,11 +72,21 @@ func auditRepeatKey(kind string, data map[string]any) (string, bool) {
 	switch {
 	case kind == "vm.inflight_threshold_reached":
 		return kind + "|" + fmt.Sprint(data["instance_id"]), true
-	case strings.HasPrefix(kind, "edge_rule.") && strings.HasSuffix(kind, "_matched"):
+	case IsInformationalAudit(kind):
 		return kind + "|" + fmt.Sprint(data["rule_id"]) + "|" + fmt.Sprint(data["preflight"]), true
 	default:
 		return "", false
 	}
+}
+
+// IsInformationalAudit reports a request-path audit kind that records that
+// something matched, not evidence of a refusal: edge_rule.*_matched and
+// vm.inflight_threshold_reached. Such rows are throttled here and queued
+// behind evidence rows (authn failures, denials) by gatewayd-internal's
+// audit writer, so a flood of matches cannot displace them (O22).
+func IsInformationalAudit(kind string) bool {
+	return kind == "vm.inflight_threshold_reached" ||
+		(strings.HasPrefix(kind, "edge_rule.") && strings.HasSuffix(kind, "_matched"))
 }
 
 func (t *repeatThrottledAuditor) admit(key string) (suppressed int64, emit bool) {

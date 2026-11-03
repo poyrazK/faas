@@ -163,3 +163,17 @@ func ApplyDefaultToEnqueue(ctx context.Context, store any, log *slog.Logger, app
 	p.CanaryStepStartedAt = &now
 	return outcome
 }
+
+// DefaultRollbackOn5xx reports whether a release into scope that names no
+// rollback policy gets first-wake 5xx rollback and the post-release watch by
+// default: what ApplyDefault fills in, without the canary. A project
+// environment promotion uses it (ADR-1446 amendment 2): the promotion's
+// protected approval already stands in for the apps' approval policies, and
+// a canary would hold the release for them a second time.
+func DefaultRollbackOn5xx(ctx context.Context, store any, log *slog.Logger, app state.App, plan api.Plan, scope string) bool {
+	req := &api.CreateDeploymentRequest{Scope: scope, Canary: &api.CanaryPresetSpec{Preset: "none"}}
+	if ApplyDefault(ctx, store, log, app, plan, req) == PolicyNotApplied {
+		return false
+	}
+	return req.RollbackOn5xx != nil && *req.RollbackOn5xx
+}

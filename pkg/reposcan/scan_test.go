@@ -153,8 +153,9 @@ func TestScan_ComposeK8sFixture(t *testing.T) {
 			if w.Class != ClassHTTP {
 				t.Errorf("api Class = %q, want http (compose publishes a port)", w.Class)
 			}
-			if len(w.Ports) != 1 || w.Ports[0] != 8080 {
-				t.Errorf("api Ports = %v, want [8080]", w.Ports)
+			// The container side of the mapping (ADR-20261103112845).
+			if len(w.Ports) != 1 || w.Ports[0] != 80 {
+				t.Errorf("api Ports = %v, want [80]", w.Ports)
 			}
 			if !equalSet(w.EnvKeys, []string{"RAILS_ENV", "DATABASE_URL"}) {
 				t.Errorf("api EnvKeys = %v, want {RAILS_ENV, DATABASE_URL}", w.EnvKeys)

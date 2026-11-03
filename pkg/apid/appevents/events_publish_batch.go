@@ -91,6 +91,18 @@ func (s *Service) publishEventBatchItem(ctx context.Context, store state.Publish
 	if err != nil {
 		return batchPublishFailure("rejected", false, api.ErrValidation("invalid event data"))
 	}
+	if !api.WorkflowEventEnvelopeFits(payload) {
+		if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
+			accepted, lookupErr := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
+			if lookupErr == nil {
+				return api.PublishEventBatchResult{Status: "duplicate", Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
+			}
+			if errors.Is(lookupErr, state.ErrConflict) {
+				return batchEventAcceptanceFailure(lookupErr)
+			}
+		}
+		return batchPublishFailure("rejected", false, api.ErrWorkflowEventEnvelopeTooLarge())
+	}
 	accepted, err := store.AcceptPublishedEvent(ctx, "apid", acct.ID, payload)
 	if err != nil {
 		return batchEventAcceptanceFailure(err)

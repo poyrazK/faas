@@ -98,7 +98,9 @@ func resolveProfilePrincipal(ctx context.Context, mgr *fcvm.Manager, store state
 	if err != nil || dep.AppID != app.ID {
 		return profiling.Principal{}, fmt.Errorf("profile deployment unavailable")
 	}
-	acct, err := store.AccountByID(ctx, identity.AccountID)
+	// An organization's app is judged by the organization's plan and counts
+	// in its upload quota, whoever created the app (ADR-819, ADR-1155).
+	owner, err := state.AppResourceAccount(ctx, store, app)
 	if err != nil {
 		return profiling.Principal{}, fmt.Errorf("profile account unavailable")
 	}
@@ -112,8 +114,9 @@ func resolveProfilePrincipal(ctx context.Context, mgr *fcvm.Manager, store state
 	if identity.Runtime == "" {
 		identity.Runtime = "custom"
 	}
-	labels := profileDeclaredRouteLabels(ctx, store, acct.ID, app, scope)
-	return profiling.Principal{Routes: labels, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID, InstanceID: id, Generation: identity.Generation, StartedAt: identity.StartedAt, Scope: scope, Runtime: identity.Runtime, Plan: acct.Plan}, nil
+	labels := profileDeclaredRouteLabels(ctx, store, app.AccountID, app, scope)
+	return profiling.Principal{Routes: labels, AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID, InstanceID: id, Generation: identity.Generation, StartedAt: identity.StartedAt, Scope: scope, Runtime: identity.Runtime,
+		Plan: owner.Plan, Pool: owner.ResourceOwnerID()}, nil
 }
 
 func profileDeclaredRouteLabels(ctx context.Context, store state.Store, accountID string, app state.App, scope string) []string {

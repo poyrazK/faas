@@ -8,33 +8,45 @@ import (
 	"strings"
 )
 
-// Where the challenge signing secret came from (gateway_edge_challenge_key_info).
+// Where the gateway fleet key came from (gateway_edge_challenge_key_info).
 const (
-	edgeChallengeKeyFleet   = "fleet"
-	edgeChallengeKeySession = "session"
+	gatewayFleetKeyFleet = "fleet"
 )
 
-// edgeChallengeSecret returns the secret kind=challenge tokens and passes are
-// signed with (ADR-831 amendment 17). Every gateway of a fleet must sign with
-// one secret: gatewayd-public spreads a visitor's requests across them, and a
-// pass one gateway issued is refused by a gateway with another key.
+// gatewayFleetKeyEnv names the gateway fleet key file (ADR-20261102191500).
+// gatewayFleetKeyLegacyEnv is its name before then (ADR-831 amendment 17),
+// read for one release so an older drop-in still boots the gateway.
+const (
+	gatewayFleetKeyEnv       = "FAAS_GATEWAY_FLEET_KEY_FILE"
+	gatewayFleetKeyLegacyEnv = "FAAS_EDGE_CHALLENGE_KEY_FILE"
+)
+
+// loadGatewayFleetKey returns the secret every gatewayd-internal of a fleet
+// shares (ADR-20261102191500): edge challenge tokens and passes, and managed
+// deadline tokens, are derived from it under separate labels. A pass or a
+// deadline one gateway signs is checked by another, so a per-host key does
+// not work, and the gateway no longer holds the session key to fall back on.
+// Without the file the gateway refuses to start.
 //
-// FAAS_EDGE_CHALLENGE_KEY_FILE names the root-only credential Ansible installs
-// from the fleet vault: 32 bytes as 64 hex digits. Without it the gateway
-// signs with its session key, which `gregalectl secrets init` makes per host,
-// so that only serves a fleet of one gateway.
-func edgeChallengeSecret(getenv func(string) string, sessionKey []byte) (secret []byte, source string, err error) {
-	path := strings.TrimSpace(getenv("FAAS_EDGE_CHALLENGE_KEY_FILE"))
+// The file is the root-only credential Ansible installs from CD's
+// GATEWAYD_EDGE_CHALLENGE_KEY secret: 32 bytes as 64 hex digits.
+func loadGatewayFleetKey(getenv func(string) string) ([]byte, error) {
+	name := gatewayFleetKeyEnv
+	path := strings.TrimSpace(getenv(name))
 	if path == "" {
-		return sessionKey, edgeChallengeKeySession, nil
+		name = gatewayFleetKeyLegacyEnv
+		path = strings.TrimSpace(getenv(name))
+	}
+	if path == "" {
+		return nil, fmt.Errorf("%s is unset: gatewayd-internal needs the gateway fleet key to sign edge challenges and traffic deadlines (ADR-20261102191500)", gatewayFleetKeyEnv)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("read edge challenge key file: %w", err)
+		return nil, fmt.Errorf("read %s: %w", name, err)
 	}
 	key, err := hex.DecodeString(strings.TrimSpace(string(raw)))
 	if err != nil || len(key) != 32 {
-		return nil, "", errors.New("edge challenge key file must hold 32 bytes as 64 hex digits")
+		return nil, errors.New("gateway fleet key file must hold 32 bytes as 64 hex digits")
 	}
-	return key, edgeChallengeKeyFleet, nil
+	return key, nil
 }
