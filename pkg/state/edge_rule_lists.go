@@ -20,8 +20,11 @@ import (
 // EdgeRuleList is one account-scoped list. Items are stored canonicalized
 // (api.NormalizeEdgeRuleListItems) by apid.
 type EdgeRuleList struct {
-	ID          string
-	AccountID   string
+	ID        string
+	AccountID string
+	// OrgID is the organization a list created through a company app
+	// belongs to (ADR-091 amendment 2026-11-03); "" is a personal list.
+	OrgID       string
 	Name        string
 	Kind        string
 	Description string
@@ -39,6 +42,7 @@ type EdgeRuleListRef struct {
 // CreateEdgeRuleListParams is the insert shape.
 type CreateEdgeRuleListParams struct {
 	AccountID   string
+	OrgID       string
 	Name        string
 	Kind        string
 	Description string
@@ -154,11 +158,11 @@ var (
 	_ EdgeRuleListStore = (*MemStore)(nil)
 )
 
-const edgeRuleListCols = `id::text, account_id::text, name, kind, description, items, created_at, updated_at`
+const edgeRuleListCols = `id::text, account_id::text, coalesce(org_id::text, ''), name, kind, description, items, created_at, updated_at`
 
 func scanEdgeRuleList(row pgx.Row) (EdgeRuleList, error) {
 	var l EdgeRuleList
-	err := row.Scan(&l.ID, &l.AccountID, &l.Name, &l.Kind, &l.Description, &l.Items, &l.CreatedAt, &l.UpdatedAt)
+	err := row.Scan(&l.ID, &l.AccountID, &l.OrgID, &l.Name, &l.Kind, &l.Description, &l.Items, &l.CreatedAt, &l.UpdatedAt)
 	return l, err
 }
 
@@ -253,9 +257,9 @@ func (s *PgStore) CreateEdgeRuleList(ctx context.Context, p CreateEdgeRuleListPa
 			return ErrEdgeRuleListQuota
 		}
 		l, err := scanEdgeRuleList(tx.QueryRow(ctx, `
-			insert into edge_rule_lists (account_id, name, kind, description, items)
-			values ($1, $2, $3, $4, $5)
-			returning `+edgeRuleListCols, p.AccountID, p.Name, p.Kind, p.Description, nonNilStrings(p.Items)))
+			insert into edge_rule_lists (account_id, org_id, name, kind, description, items)
+			values ($1, nullif($2, '')::uuid, $3, $4, $5, $6)
+			returning `+edgeRuleListCols, p.AccountID, p.OrgID, p.Name, p.Kind, p.Description, nonNilStrings(p.Items)))
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}
@@ -435,7 +439,7 @@ func (m *MemStore) CreateEdgeRuleList(_ context.Context, p CreateEdgeRuleListPar
 	}
 	now := time.Now().UTC()
 	l := EdgeRuleList{
-		ID: uuid.NewString(), AccountID: p.AccountID, Name: p.Name, Kind: p.Kind,
+		ID: uuid.NewString(), AccountID: p.AccountID, OrgID: p.OrgID, Name: p.Name, Kind: p.Kind,
 		Description: p.Description, Items: append([]string{}, p.Items...),
 		CreatedAt: now, UpdatedAt: now,
 	}

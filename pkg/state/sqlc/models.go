@@ -4578,6 +4578,7 @@ type EdgeRuleList struct {
 	Items       []string
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+	OrgID       pgtype.UUID
 }
 
 type EdgeRuleSetVersion struct {
