@@ -63,6 +63,9 @@ type realtimeFleetReceiver struct {
 	// occupancy reads the fleet for live channel occupancy (ADR-1324).
 	occupancy      RealtimeOccupancyReader
 	occupancyCache *realtimeOccupancyCache
+	// accessFeed relays access changes to realtime nodes; nil answers
+	// Unavailable, and nodes read access directly.
+	accessFeed *RealtimeAccessFeed
 }
 
 type realtimeFleetPresenceRequest struct {
@@ -443,7 +446,10 @@ var realtimeFleetServiceDesc = grpc.ServiceDesc{
 	},
 }
 
-func RegisterRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner any, registerPush PushRegistrar) {
+// RegisterRealtimeFleetReceiver serves the realtime fleet RPCs. accessFeed is
+// the process's one access change feed (StartRealtimeAccessFeed), shared by
+// every listener; nil leaves nodes reading access directly.
+func RegisterRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner any, registerPush PushRegistrar, accessFeed ...*RealtimeAccessFeed) {
 	if server == nil {
 		return
 	}
@@ -456,6 +462,10 @@ func RegisterRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner
 	usage, _ := store.(state.RealtimeUsageStore)
 	connections, _ := store.(state.RealtimeConnectionSyncStore)
 	occupancy, _ := owner.(RealtimeOccupancyReader)
+	var feed *RealtimeAccessFeed
+	if len(accessFeed) > 0 {
+		feed = accessFeed[0]
+	}
 	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush, usage: usage, connections: connections,
-		occupancy: occupancy, occupancyCache: newRealtimeOccupancyCache()})
+		occupancy: occupancy, occupancyCache: newRealtimeOccupancyCache(), accessFeed: feed})
 }

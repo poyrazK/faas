@@ -935,6 +935,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// TABLE source of truth — the LISTEN is just a wakeup — so we
 	// sweep once on startup to bound the post-restart latency at ~1
 	// round-trip rather than waiting for the 60s safety tick.
+	l.failInterruptedFireNowRequests(ctx)
 	l.drainPendingFireNowRequests(ctx)
 
 	// PR #1099 P2 redesign: drain any operator_intents rows that
@@ -1408,6 +1409,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			// network blip). Same dispatcher as the notify arm —
 			// drainPendingFireNowRequests is the single owner of the
 			// claim + dispatch loop.
+			l.failInterruptedFireNowRequests(ctx)
 			l.drainPendingFireNowRequests(ctx)
 		case <-operatorIntentT.C:
 			// PR #1099 P2 redesign: safety sweep. Picks up rows
@@ -4520,6 +4522,17 @@ func (l *Loop) runCronTick(ctx context.Context) {
 	l.runCronSweep(ctx)
 }
 
+// cronAppBudgetHeld reports an app a compute budget holds. The drain defers
+// its runs without spending them, so a cron firing through the hold queued a
+// run every scheduled time and all of them were delivered at once when the
+// hold lifted (crons audit 2026-11-02). The sweep leaves such a cron due
+// instead: it runs once after the hold, as after any time Gregale could not
+// reach. A read error is no hold; the drain still defers the run.
+func (l *Loop) cronAppBudgetHeld(ctx context.Context, app state.App) bool {
+	err := state.CheckFinancialBudgetAdmissionForScope(ctx, l.engine.Store(), app, "", "", l.engine.financialBudgetNow())
+	return errors.Is(err, state.ErrFinancialBudgetHeld)
+}
+
 // resumeCronSweep asks the main loop to run another pass of the sweep.
 func (l *Loop) resumeCronSweep() {
 	select {
@@ -4564,6 +4577,7 @@ func (l *Loop) runCronSweep(ctx context.Context) {
 	now := l.now()
 	plans := newCronPlanGate(store)
 	apps := map[string]state.App{}
+	budgetHeld := map[string]bool{}
 	for _, c := range crons {
 		if _, tried := l.cronSweepTried[c.ID]; tried {
 			continue
@@ -4604,6 +4618,14 @@ func (l *Loop) runCronSweep(ctx context.Context) {
 		// Crons switched off for the account do not fire (dispatchCronLocked);
 		// checking before the claim skips its rollback write every minute.
 		if !l.engine.appCapabilityAllowed(ctx, app, "crons") {
+			continue
+		}
+		held, checked := budgetHeld[app.ID]
+		if !checked {
+			held = l.cronAppBudgetHeld(ctx, app)
+			budgetHeld[app.ID] = held
+		}
+		if held {
 			continue
 		}
 		l.cronSweepTried[c.ID] = struct{}{}

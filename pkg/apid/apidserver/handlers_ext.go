@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
@@ -2027,6 +2028,8 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
 			return
 		}
+		// The 503 alone left no trace of why a delete failed (Hunt 31 H31-13).
+		s.log.Warn("apid: delete app failed", "app_id", app.ID, "account_id", acct.ID, "err", err)
 		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not delete app")))
 		return
 	}
@@ -2450,7 +2453,20 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	response := s.deploymentResponse(r.Context(), target, app)
 	response.RollbackOperation = operation
+	s.warnRollbackCrons(r.Context(), w, app, target)
 	writeJSON(w, http.StatusAccepted, response)
+}
+
+// warnRollbackCrons tells the caller which crons outlive a rollback
+// (cronrun.RollbackNotice); the CLI prints a Warning header as a notice.
+func (s *server) warnRollbackCrons(ctx context.Context, w http.ResponseWriter, app state.App, target state.Deployment) {
+	crons, err := s.store.ListCronsForApp(ctx, app.ID)
+	if err != nil {
+		return
+	}
+	if notice := cronrun.RollbackNotice(crons, target.CreatedAt); notice != "" {
+		w.Header().Add("Warning", `299 - "`+notice+`"`)
+	}
 }
 
 // zeroTrafficRollbackCandidates lists, newest first, the app's live
@@ -3269,10 +3285,11 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
 		return
 	}
-	// Route rules name their target by slug: fence their hosts, rename, and
-	// point them at the new slug before the fence lifts (ADR-091 amendment
-	// 2026-10-30).
-	routeEdit := s.edgeRules.RouteTargetRenameEdit(acct.ID, oldSlug)
+	// Route rules name their target by slug, and host rules may name the
+	// app's platform hostname: fence their hosts, rename, and point them at
+	// the new slug and hostname before the fence lifts (ADR-091 amendments
+	// 2026-10-30 and 2026-11-02).
+	routeEdit := s.edgeRules.RenameEdit(acct.ID, oldSlug, req.NewSlug)
 	convergences, release, prob := s.edgeRules.PrepareReferencedEdit(r.Context(), routeEdit)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -3287,6 +3304,9 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if retargeted, err := s.edgeRules.RetargetRouteRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
 		s.log.Error("app renamed but its route rules still name the old slug", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "retargeted", retargeted, "err", err)
+	}
+	if moved, err := s.edgeRules.RetargetPlatformHostRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
+		s.log.Error("app renamed but rules on its old hostname did not move", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "moved", moved, "err", err)
 	}
 	if prob := s.edgeRules.ApplyReferencedEdit(r.Context(), w, routeEdit, updated.ID, convergences); prob != nil {
 		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)

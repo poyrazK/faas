@@ -187,3 +187,144 @@ func TestNewCapEnforcerRefusesAnUnknownPlanExcessMode(t *testing.T) {
 		t.Fatalf("NewCapEnforcer = %v; want ErrInvalid", err)
 	}
 }
+
+// planExcessNoticeTestStore keeps the sweep's notices beside the two reads
+// capTestStore serves.
+type planExcessNoticeTestStore struct {
+	*capTestStore
+	notices map[string]PlanExcessNotice
+	mailed  map[string]bool
+}
+
+func (s *planExcessNoticeTestStore) SyncPlanExcessNotices(_ context.Context, databaseIDs []string, suspended map[string]string, at time.Time) (int, error) {
+	for _, id := range databaseIDs {
+		if _, ok := suspended[id]; !ok {
+			delete(s.notices, id)
+			delete(s.mailed, id)
+		}
+	}
+	recorded := 0
+	for id, reason := range suspended {
+		if _, ok := s.notices[id]; !ok {
+			s.notices[id] = PlanExcessNotice{DatabaseID: id, AccountID: "acct", DatabaseName: id, Reason: reason, RecordedAt: at}
+			recorded++
+		}
+	}
+	return recorded, nil
+}
+
+func (s *planExcessNoticeTestStore) UnmailedPlanExcessNotices(_ context.Context, since time.Time, _ int) ([]PlanExcessNotice, error) {
+	var out []PlanExcessNotice
+	for id, n := range s.notices {
+		if !s.mailed[id] && n.RecordedAt.After(since) {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+// ADR-20261102125208 step 3: the sweep records a notice for each database it
+// suspends, mails it once, and drops it once the subject fits again, so a
+// later suspension is mailed again.
+func TestCapEnforcerNoticesDatabasesPastThePlan(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	free, _ := api.ManagedPostgresLimitsFor(api.PlanFree)
+	pro, _ := api.ManagedPostgresLimitsFor(api.PlanPro)
+	provider := &capTestProvider{
+		fakeProvider: &fakeProvider{capabilities: testCapabilities()},
+		observed: map[string]ComputeCapObservation{
+			"proj-1": {Scope: "1", PeriodStart: month, UsedUnitSeconds: 100},
+			"proj-2": {Scope: "2", PeriodStart: month, UsedUnitSeconds: 50},
+		},
+		set: map[string]int64{},
+	}
+	registry := testRegistry(t, provider, func(config *Config) {
+		config.Usage = UsageConfig{Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
+			StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 1 << 40,
+			MaxMonthlyComputeUnitSeconds: 1 << 40, MaxMonthlyStorageByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 40}
+	})
+	backend, err := registry.Default("us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	database := func(id, resource string, age int) Database {
+		return Database{ID: id, AccountID: "acct", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+			ProviderResourceID: resource, State: StateReady, Spec: Spec{Class: ClassDevelopment},
+			CreatedAt: month.Add(time.Duration(age) * time.Hour)}
+	}
+	store := &planExcessNoticeTestStore{capTestStore: &capTestStore{databases: []Database{database("db-1", "proj-1", 1), database("db-2", "proj-2", 2)}},
+		notices: map[string]PlanExcessNotice{}, mailed: map[string]bool{}}
+	plan := free
+	var mailed []PlanExcessNotice
+	notify := func(_ context.Context, n PlanExcessNotice) error {
+		mailed = append(mailed, n)
+		store.mailed[n.DatabaseID] = true
+		return nil
+	}
+	sweep := func(mode CapEnforcementMode) CapSweepSummary {
+		t.Helper()
+		enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
+			Mode: CapEnforcementOn, PlanExcessMode: mode, NotifyPlanExcess: notify, Now: func() time.Time { return now },
+			Qualification: testCapQualification(backend),
+			Ceiling: func(context.Context, string) (CapLimits, error) {
+				return CapLimits{Allowance: 18000, Ceiling: 18000, Entitlement: plan}, nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		summary, err := enforcer.Enforce(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return summary
+	}
+
+	if summary := sweep(CapEnforcementShadow); summary.PlanExcessNoticed != 0 || len(store.notices) != 0 || len(mailed) != 0 {
+		t.Fatalf("shadow noticed %+v, mailed %v; want nothing", store.notices, mailed)
+	}
+	summary := sweep(CapEnforcementOn)
+	if summary.PlanExcessNoticed != 1 || len(mailed) != 1 || mailed[0].DatabaseID != "db-2" || mailed[0].Reason != PlanExcessDatabaseLimit {
+		t.Fatalf("first suspension: summary %+v, mailed %+v; want db-2 noticed and mailed once", summary, mailed)
+	}
+	if summary := sweep(CapEnforcementOn); summary.PlanExcessNoticed != 0 || len(mailed) != 1 {
+		t.Fatalf("second sweep: summary %+v, mailed %d; want nothing new", summary, len(mailed))
+	}
+	plan = pro
+	if sweep(CapEnforcementOn); len(store.notices) != 0 {
+		t.Fatalf("after the upgrade notices = %+v; want none", store.notices)
+	}
+	plan = free
+	if sweep(CapEnforcementOn); len(mailed) != 2 {
+		t.Fatalf("a second suspension mailed %d times in all; want 2", len(mailed))
+	}
+}
+
+func TestMemoryStorePlanExcessNotices(t *testing.T) {
+	ctx := context.Background()
+	at := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	store := NewMemoryStore()
+	store.databases["db-1"] = Database{ID: "db-1", AccountID: "acct", Name: "orders", State: StateReady, Spec: Spec{Class: ClassDevelopment}}
+	store.databases["db-2"] = Database{ID: "db-2", AccountID: "acct", Name: "events", State: StateReady, Spec: Spec{Class: ClassProduction}}
+	ids := []string{"db-1", "db-2"}
+	for i, want := range []int{1, 0} {
+		if n, err := store.SyncPlanExcessNotices(ctx, ids, map[string]string{"db-2": PlanExcessServiceClass}, at); err != nil || n != want {
+			t.Fatalf("sync %d = %d, %v; want %d", i, n, err, want)
+		}
+	}
+	if _, err := store.SyncPlanExcessNotices(ctx, ids, map[string]string{"db-2": "storage"}, at); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown reason = %v; want ErrInvalid", err)
+	}
+	notices, err := store.UnmailedPlanExcessNotices(ctx, at.Add(-time.Hour), 10)
+	if err != nil || len(notices) != 1 || notices[0].DatabaseName != "events" || notices[0].ServiceClass != ClassProduction || notices[0].AccountID != "acct" {
+		t.Fatalf("unmailed = %+v, %v", notices, err)
+	}
+	store.markPlanExcessNoticeMailed("db-2")
+	if notices, _ := store.UnmailedPlanExcessNotices(ctx, at.Add(-time.Hour), 10); len(notices) != 0 {
+		t.Fatalf("a mailed notice is listed: %+v", notices)
+	}
+	if n, err := store.SyncPlanExcessNotices(ctx, ids, nil, at); err != nil || n != 0 || len(store.planExcessNotices) != 0 {
+		t.Fatalf("lifting kept %+v, %v", store.planExcessNotices, err)
+	}
+}

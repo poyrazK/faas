@@ -239,7 +239,7 @@ func (h *Handler) metricsIncCacheOutcome(appID, outcome string) {
 // bypass. Header.Get cannot detect an empty first Authorization field followed
 // by a credential in another field, and even an empty field must bypass. A
 // preview request whose gate credential was withheld from the app still
-// carried one (ADR-20261102100000).
+// carried one (ADR-20261102100001).
 func hasCacheCredentials(r *http.Request) bool {
 	return r != nil && (len(r.Header.Values("Authorization")) != 0 || hasSessionCookie(r) ||
 		authenticatedFrom(r.Context()).CredentialWithheld)

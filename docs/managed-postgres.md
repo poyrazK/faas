@@ -1197,9 +1197,11 @@ sweep. The same sweep suspends the databases the plan no longer includes
 
 While it is `on`, `GET /v1/postgres/databases` and the read show
 `plan_excess` (`database_limit` or `service_class`) on each such database, as do
-`gregale postgres list` and `get` and the dashboard. Turn it `on` in the
-release that publishes this; the owner's email is still to come (the ADR's
-step 3). Metrics:
+`gregale postgres list` and `get` and the dashboard. With
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1` on apid and
+maild, the account that owns each suspended database is mailed once per
+suspension ([internal mail](ops/internal-mail.md#managed-postgresql-plan-excess-notices)).
+Turn both on in the release that publishes this. Metrics:
 
 - `apid_managed_postgres_plan_excess_databases`
 - `apid_managed_postgres_plan_excess_scopes{state}`, where `state` is

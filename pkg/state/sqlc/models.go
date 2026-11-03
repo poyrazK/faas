@@ -7831,6 +7831,7 @@ type JobRun struct {
 	ExclusiveGeneration         pgtype.Int8
 	ProcessUser                 pgtype.Text
 	ProcessWorkdir              pgtype.Text
+	LogsClearedFinishedAt       pgtype.Timestamptz
 }
 
 type JobRunAttachSession struct {
@@ -8420,6 +8421,14 @@ type ManagedPostgresOveragePending struct {
 	BilledStorageByteSeconds int64
 	PreviousMillicents       int64
 	PreviousLive             bool
+}
+
+// Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
+type ManagedPostgresPlanExcessNotice struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	MailIntentID pgtype.UUID
 }
 
 type ManagedPostgresResize struct {

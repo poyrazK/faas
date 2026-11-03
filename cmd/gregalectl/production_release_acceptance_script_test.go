@@ -148,7 +148,10 @@ if [[ -n "${TEST_CONTINUITY:-}" && "$*" == *"ra-"* && "$*" != *"--write-out"* ]]
   count=0
   if [[ -f "${TEST_CURL_LOG}.continuity" ]]; then read -r count <"${TEST_CURL_LOG}.continuity"; fi
   count=$((count + 1))
-  printf '%s\n' "$count" >"${TEST_CURL_LOG}.continuity"
+  # Replace the count atomically: the fake deployment wait reads it under
+  # set -e, and a truncated file in between ends that read with EOF.
+  printf '%s\n' "$count" >"${TEST_CURL_LOG}.continuity.tmp"
+  mv "${TEST_CURL_LOG}.continuity.tmp" "${TEST_CURL_LOG}.continuity"
   IFS=, read -ra pattern <<<"$TEST_CONTINUITY"
   index=$((count - 1))
   if ((index >= ${#pattern[@]})); then index=$((${#pattern[@]} - 1)); fi

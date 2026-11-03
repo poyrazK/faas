@@ -96,6 +96,12 @@ func replacingRelease(releases []state.Deployment, d state.Deployment) *releaset
 			other.RolloutAbortedAt != nil || (other.Status != state.DeployLive && other.Status != state.DeploySuperseded) {
 			continue
 		}
+		// A release staged with no traffic, parked for its schedule or
+		// superseded before it went live replaced nothing (ADR-1445
+		// amendment 5).
+		if other.RolloutCompletedAt == nil && (other.Status != state.DeployLive || other.TrafficPercent <= 0) {
+			continue
+		}
 		if best == nil || other.CreatedAt.Before(best.CreatedAt) {
 			best = &releases[i]
 		}

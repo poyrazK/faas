@@ -905,7 +905,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -2320,7 +2326,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -3754,7 +3766,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -8895,7 +8913,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "deployment"
+      "owner": "deployment",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -9476,6 +9500,7 @@
       "input_manifest_version",
       "job_id",
       "latest_start_at",
+      "logs_cleared_finished_at",
       "occurrence_id",
       "operation_id",
       "parallelism",
@@ -9821,7 +9846,21 @@
       "materialize"
     ],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "state",
+          "not": "deleted"
+        },
+        {
+          "column": "deleted_at",
+          "null": true
+        },
+        {
+          "column": "scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -10213,6 +10252,16 @@
       "provider_resource_id",
       "source_resource_id",
       "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_plan_excess_notices",
+    "columns": [
+      "database_id",
+      "mail_intent_id",
+      "reason",
+      "recorded_at"
     ],
     "kind": "operational"
   },
@@ -11112,6 +11161,12 @@
           "managed_realtime_endpoints",
           "id"
         ]
+      ],
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
       ]
     }
   },
@@ -11411,6 +11466,12 @@
           "managed_realtime_endpoints",
           "id"
         ]
+      ],
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
       ]
     }
   },
@@ -12269,7 +12330,17 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "data_checkpoint_unavailable"
+      "unavailable": "data_checkpoint_unavailable",
+      "live": [
+        {
+          "column": "state",
+          "not": "deleted"
+        },
+        {
+          "column": "scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -16909,7 +16980,13 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "work_activation_unavailable"
+      "unavailable": "work_activation_unavailable",
+      "live": [
+        {
+          "column": "retired_at",
+          "null": true
+        }
+      ]
     }
   },
   {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -236,5 +237,36 @@ func TestFullProjectEnvironmentCloneRefusesSharedOrganizationAccess(t *testing.T
 	}
 	if _, err := store.ProjectEnvironmentCloneOperationByIdempotencyKey(ctx, org.ID, project.ID, "org-clone"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("shared organization access admitted a clone: %v", err)
+	}
+}
+
+// Refusals that last until the customer changes the source are 409s naming the
+// cause, never a 404 for an environment that exists or a 503 that never clears.
+func TestFullProjectEnvironmentCloneAdmissionMapsSourceRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+		field  string
+	}{
+		{"idempotency key", state.ErrInvalidProjectEnvironmentCloneOperation, http.StatusBadRequest, api.CodeValidation, ""},
+		{"undeployed workload", state.ErrProjectEnvironmentCloneSourceNotDeployed, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.workloads"},
+		{"release pinned", state.ErrReleaseConfigurationTransferUnsupported, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.release_configuration"},
+		{"project secrets", state.ErrProjectSecretCloneTransferUnsupported, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.project_secrets"},
+		{"legacy stage queues", state.ErrProjectEnvironmentQueueCollectionUnavailable, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.queue_bindings"},
+		{"work policies", state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.work_policies"},
+		{"missing source", state.ErrNotFound, http.StatusNotFound, "", ""},
+		{"transient", errors.New("connection reset"), http.StatusServiceUnavailable, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := apidserver.FullProjectEnvironmentCloneAdmissionProblem("shop", "production", fmt.Errorf("capture: %w", tc.err))
+			if problem.Status != tc.status || (tc.code != "" && problem.Code != tc.code) {
+				t.Fatalf("problem = %d %s, want %d %s", problem.Status, problem.Code, tc.status, tc.code)
+			}
+			if tc.field != "" && (len(problem.Errors) != 1 || problem.Errors[0].Field != tc.field) {
+				t.Fatalf("errors = %+v, want one naming %s", problem.Errors, tc.field)
+			}
+		})
 	}
 }
