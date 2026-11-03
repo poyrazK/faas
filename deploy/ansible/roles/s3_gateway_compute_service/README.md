@@ -82,6 +82,24 @@ gateway on compute nodes; `FaasComputeObjectGatewayDown`,
    the gateway's 512 MB and one CPU out of tenant admission (`gregalectl
    compute-nodes sizing --edge --object-gateway`).
 
+## Public reads on the node
+
+With `object_storage.compute_public_reads: true` in the manifest (ADR step
+7), the role also writes
+`faas-gatewayd-public-edge.service.d/50-faas-object-public-reads.conf`. The
+node's app edge then serves public bucket reads itself, with this node's
+registry and the gateway-only credential:
+
+- the manifest gives the edge `api.ObjectGatewayPublicReadSharePercent` of
+  the node's share (`faas_object_public_read_max_bytes_per_second`);
+- it lowers `faas_object_gateway_max_bytes_per_second` by the same amount,
+  so the node stays within its 30%.
+
+Uploads keep going to the control plane. Turning the switch off removes the
+drop-in and restarts the edge, which goes back to forwarding public reads.
+The edge reads the drop-in, registry and credential only at start, so a
+change to any of them restarts it while public reads are on.
+
 ## Load test pilot
 
 For the one-node load test (ADR step 5,

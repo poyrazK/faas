@@ -49,12 +49,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
@@ -106,7 +106,7 @@ func (e *ResponseTruncatedError) Error() string {
 	return fmt.Sprintf("API response was truncated: expected %d bytes, received %d", e.Expected, e.Received)
 }
 
-var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
+var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
@@ -231,6 +231,23 @@ func NewClientWithDeployTimeout(baseURL, token string, deployTimeout time.Durati
 // callers can swap transport-level knobs (TLS, retries) without
 // depending on a private field.
 func (c *Client) HTTPClient() *http.Client { return c.http }
+
+// WrapTransport replaces the transport of every HTTP client c sends with
+// (JSON, streams and uploads) by wrap(current), so a caller can stamp
+// headers or watch responses on all of them. It returns c.
+func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) *Client {
+	for _, cli := range []*http.Client{c.http, c.deployHTTP} {
+		if cli == nil {
+			continue
+		}
+		base := cli.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		cli.Transport = wrap(base)
+	}
+	return c
+}
 
 // BaseURL returns the URL prefix the client was constructed with.
 func (c *Client) BaseURL() string { return c.baseURL }

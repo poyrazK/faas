@@ -435,3 +435,40 @@ The run found that an apid started without `apid.toml` ignored
 off. `LoadConfig` now applies it on that path too, as it already did the role
 and the listener's TLS paths. Production apid reads a TOML file and was not
 affected.
+
+## Amendment (2026-11-01): vmmd bounds trace streams per VM
+
+### Context
+
+§4 says vmmd "bounds concurrency". It did so with one node-wide limit of
+`TraceMaxConcurrentUploads` (4) slots, taken when a stream was accepted and
+held while vmmd read the frame, for up to `TraceTransportTimeout` (2 s). A
+guest that opened four streams to port 1041 and sent nothing held every slot,
+so every other VM on the node had its exports refused as `limited` for as long
+as it kept doing so (2026-10-31 logs/traces audit, T7). Each frame also read
+the app row from Postgres.
+
+### Decision
+
+- A VM holds at most `TraceMaxConcurrentUploads` streams, counted from accept,
+  the same bound guest-init's bridge applies. A stalled guest stalls only its
+  own exports.
+- vmmd reads the frame, within the unchanged size and time bounds, before it
+  takes one of the node's `TraceMaxConcurrentForwards` (16) forward slots. The
+  forward slot covers only the app check and the apid RPC. A refusal at either
+  bound acks `limited`, as before.
+- The app check (account and `tracing.enabled`) is cached per app for 10 s;
+  lookup errors are not cached. Turning tracing off reaches the broker within
+  that window.
+
+Frames being read are not bounded node-wide: a VM can pin at most
+4 × 512 KiB for 2 s, less than the 10 MiB log ring vmmd already keeps per
+live instance. A node-wide read cap would bring back the cross-tenant stall at
+a higher VM count.
+
+### Validation
+
+Unit (`cmd/vmmd`, `TestTraceBroker`): four stalled streams from one VM refuse
+that VM's fifth while another VM's frame is forwarded; a full node refuses a
+complete frame as `limited` without forwarding it; the app lookup is reused
+until its entry expires and a failed lookup is retried.

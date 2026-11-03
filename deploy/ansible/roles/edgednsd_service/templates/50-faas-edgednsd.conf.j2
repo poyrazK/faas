@@ -1,0 +1,9 @@
+# Managed by the edgednsd_service role (ADR-20261102081618). The token is a
+# credential, so it never sits in the environment.
+[Service]
+LoadCredential=cf_token:/etc/faas/secrets/edgednsd/cf-token
+Environment=FAAS_EDGEDNS_CF_TOKEN_FILE=%d/cf_token
+Environment=FAAS_EDGEDNS_NAMES={{ faas_edgednsd_names | join(',') }}
+Environment=FAAS_EDGEDNS_NODE_ADDRESSES={{ faas_edgednsd_node_addresses | join(',') }}
+Environment=FAAS_EDGEDNS_DRY_RUN={{ '1' if (faas_edgednsd_dry_run | string | lower) in ['true', 'yes', 'on', '1'] else '0' }}
+Environment=FAAS_EDGEDNS_METRICS_ADDR={{ faas_edgednsd_metrics_listen }}

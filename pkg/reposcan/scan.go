@@ -143,6 +143,12 @@ type Workload struct {
 	// multi-process project does not run the same migration more than once.
 	ReleaseCommand      []string
 	ReleaseCommandShell bool
+	// ReleaseService names the Compose service whose command is
+	// ReleaseCommand: a service this one waits for with
+	// service_completed_successfully, which is not deployed as an app
+	// (ADR-20261102192943). Empty for a Procfile release command. Reconcile
+	// keeps such a command on the app, so every deploy path runs it.
+	ReleaseService string `json:",omitempty"`
 	// SourceSHA256 identifies the selected workload subtree. It is internal
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
@@ -481,7 +487,11 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		highestTier = TierSingle
 	}
 
-	workloads := mergeByKey(dropShadowedGoCommands(seeds))
+	workloads, releaseWarnings, err := foldComposeReleaseServices(mergeByKey(dropShadowedGoCommands(seeds)))
+	if err != nil {
+		return Result{}, err
+	}
+	warnings = append(warnings, releaseWarnings...)
 	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
 		return Result{}, err
 	}
@@ -537,6 +547,12 @@ func attachProcfileReleaseCommand(fsys fs.FS, workloads []Workload) error {
 		}
 		if !strings.EqualFold(workloads[owner].Name, keyWeb) && strings.ToLower(workloads[i].Name) < strings.ToLower(workloads[owner].Name) {
 			owner = i
+		}
+	}
+	// Two declarations of the migration would run it twice.
+	for _, w := range workloads {
+		if w.ReleaseService != "" {
+			return fmt.Errorf("reposcan: %s: release: %s already runs Compose service %s as its release command; keep one of them", src, w.Name, w.ReleaseService)
 		}
 	}
 	workloads[owner].ReleaseCommand = []string{command}

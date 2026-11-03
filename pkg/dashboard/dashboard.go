@@ -780,10 +780,13 @@ type AppLogDrainsData struct {
 }
 
 type LogDrainPageItem struct {
-	ID                      string
-	Kind                    string
-	TargetURL               string
-	Enabled                 bool
+	ID        string
+	Kind      string
+	TargetURL string
+	Enabled   bool
+	// PlanPaused marks an enabled drain the app owner's plan does not cover,
+	// which delivery leaves out until the plan covers it again.
+	PlanPaused              bool
 	Status                  string
 	Active                  bool
 	QueueDepth              int
@@ -2452,6 +2455,9 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+	// TelemetryGaps lists why the window may be missing requests; empty
+	// when every gateway delivered it or when it could not be judged.
+	TelemetryGaps []string
 }
 
 type RequestAnalyticsComputeCostView struct {
@@ -3643,6 +3649,9 @@ type ManagedPostgresDatabaseItem struct {
 	// RestoreSlotUntil is set while a restored copy is past the plan's
 	// database limit (ADR-20261031123259).
 	RestoreSlotUntil string
+	// PlanExcess is database_limit or service_class while the plan no
+	// longer includes the database and it is suspended (ADR-20261102125208).
+	PlanExcess string
 	// Labels are the database's labels (ADR-20261031100025); nil while the
 	// account does not have resource labels.
 	Labels map[string]string

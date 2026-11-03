@@ -438,6 +438,13 @@ func (s *PgStore) ClaimNextPendingRun(ctx context.Context) (*WorkflowRun, error)
 	return r, nil
 }
 
+// WorkflowRunsDue is the check ClaimNextDueWorkflowRun makes before its
+// transaction: a run is pending or awaiting an event past its schedule, or
+// running past its lease.
+func (s *PgStore) WorkflowRunsDue(ctx context.Context) (bool, error) {
+	return sqlc.New().WorkflowRunDueExists(ctx, s.pool, int64(WorkflowRunStaleAfter/time.Millisecond))
+}
+
 // ClaimNextDueWorkflowRun fairly selects an eligible app and tenant scope,
 // reserving capacity and recording service order in the same transaction.
 func (s *PgStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error) {

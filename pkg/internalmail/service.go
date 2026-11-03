@@ -82,6 +82,7 @@ type Service struct {
 	OnTick                            func()
 
 	ManagedPostgresRestoreSlotOutboxEnabled func() bool
+	ManagedPostgresPlanExcessOutboxEnabled  func() bool
 }
 
 func (s *Service) enabled() bool { return s != nil && s.Enabled != nil && s.Enabled() }
@@ -607,6 +608,13 @@ func (s *Service) prepareAndSubmit(ctx context.Context, r Recipient) (string, st
 		}
 		return "deferred", "submission_not_started"
 	}
+	submissionCtx, err = s.managedPostgresPlanExcessSubmissionContext(submissionCtx, m.Message)
+	if err != nil {
+		if errors.Is(err, ErrDisabled) {
+			return "queued", "producer_unavailable"
+		}
+		return "deferred", "submission_not_started"
+	}
 	submissionCtx, err = s.accountRestoredSubmissionContext(submissionCtx, m.Message)
 	if err != nil {
 		if errors.Is(err, ErrDisabled) {
@@ -634,6 +642,9 @@ func (s *Service) prepareAndSubmit(ctx context.Context, r Recipient) (string, st
 			return "cancelled", "account_changed"
 		}
 		if errors.Is(err, errManagedPostgresRestoreSlotObsolete) {
+			return "cancelled", "account_changed"
+		}
+		if errors.Is(err, errManagedPostgresPlanExcessObsolete) {
 			return "cancelled", "account_changed"
 		}
 		if errors.Is(err, errAccountRestorationObsolete) {

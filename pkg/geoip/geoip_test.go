@@ -151,8 +151,8 @@ func TestMkdirAllForPath_CreatesTree(t *testing.T) {
 
 // TestBootAt_ZeroReader: a zero Reader's BootAt is the zero
 // time, signalling "DB never loaded". The dashboard's
-// "geoip_db_age_seconds" gauge handles this distinctly: a
-// missing DB shows 0 rather than e.g. wall-clock seconds.
+// geoip_db_build_timestamp_seconds gauge reads BuildTime, which is
+// zero too, and reports NaN for a missing DB.
 func TestBootAt_ZeroReader(t *testing.T) {
 	var r *Reader
 	if got := r.BootAt(); !got.IsZero() {

@@ -42,14 +42,12 @@ func admitHTTPForward[Req, Resp any](s *Server, stream grpc.BidiStreamingServer[
 	if err != nil {
 		switch {
 		case errors.Is(err, fcvm.ErrHTTPForwardCapacity):
-			p := api.NewProblem(http.StatusTooManyRequests, api.CodeConcurrencyThrottled,
-				"App busy", "The instance has no free request capacity.")
+			limit, observed := 0, 0
 			var capacity *fcvm.HTTPForwardCapacityError
 			if errors.As(err, &capacity) {
-				p = p.WithLimit(int64(capacity.Limit), int64(capacity.Observed))
+				limit, observed = capacity.Limit, capacity.Observed
 			}
-			p.DocsURL = "https://gregale.dev/docs/plans#what-each-limit-means"
-			err = grpcerr.ToStatus(p)
+			err = instanceBusy(limit, observed)
 		case errors.Is(err, fcvm.ErrHTTPForwardNotLive):
 			err = status.Error(codes.NotFound, "instance is unavailable for HTTP forwarding")
 		case errors.Is(err, fcvm.ErrHTTPForwardUntrusted):
@@ -60,6 +58,18 @@ func admitHTTPForward[Req, Resp any](s *Server, stream grpc.BidiStreamingServer[
 		return nil, nil, err
 	}
 	return &admittedHTTPStream[Req, Resp]{BidiStreamingServer: stream, ctx: ctx}, release, nil
+}
+
+// instanceBusy refuses a request the instance has no capacity for before it
+// reaches the guest. A zero limit leaves the limit out of the problem.
+func instanceBusy(limit, observed int) error {
+	p := api.NewProblem(http.StatusTooManyRequests, api.CodeConcurrencyThrottled,
+		"App busy", "The instance has no free request capacity.")
+	if limit > 0 {
+		p = p.WithLimit(int64(limit), int64(observed))
+	}
+	p.DocsURL = "https://gregale.dev/docs/plans#what-each-limit-means"
+	return grpcerr.ToStatus(p)
 }
 
 func httpAdmissionUnavailable() error {

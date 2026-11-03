@@ -191,7 +191,19 @@ type Drain struct {
 	// "everyone suspends at once" worst case.
 	accts              *acctCache
 	trafficRevocations *trafficrevocation.Registry
+	// tickInterval is Run's safety tick; leaseRecoveryInterval spaces the
+	// lease recovery sweeps (DefaultDrainLeaseRecoveryInterval).
+	tickInterval          time.Duration
+	leaseRecoveryInterval time.Duration
 }
+
+// DefaultDrainLeaseRecoveryInterval spaces the drain's lease recovery: the
+// event acknowledgment expiry (with its retention prunes) and the requeue of
+// rows whose dispatch lease expired. Those leases run 30 s and longer, so a
+// few seconds' delay changes nothing visible. Run used to recover on every
+// tick and on every invocation_due notification: about a dozen statements a
+// second per schedd while idle, and a dozen more per enqueued invocation.
+const DefaultDrainLeaseRecoveryInterval = 5 * time.Second
 
 // DefaultDrainDispatchConcurrency is deliberately small: it removes the
 // serial scheduler bottleneck without allowing one noisy account to consume
@@ -257,7 +269,20 @@ func WithDrainRetryAfter(s int) DrainOption { return func(d *Drain) { d.retryAft
 func WithDrainDispatchConcurrency(n int) DrainOption {
 	return func(d *Drain) { d.dispatchConcurrency = n }
 }
-func WithDrainNow(now func() time.Time) DrainOption    { return func(d *Drain) { d.now = now } }
+func WithDrainNow(now func() time.Time) DrainOption { return func(d *Drain) { d.now = now } }
+
+// WithDrainCadence sets Run's safety tick and lease recovery spacing; a
+// non-positive value keeps the default.
+func WithDrainCadence(tick, leaseRecovery time.Duration) DrainOption {
+	return func(d *Drain) {
+		if tick > 0 {
+			d.tickInterval = tick
+		}
+		if leaseRecovery > 0 {
+			d.leaseRecoveryInterval = leaseRecovery
+		}
+	}
+}
 func WithDrainLogger(l *slog.Logger) DrainOption       { return func(d *Drain) { d.log = l } }
 func WithDrainGatewaySynth(g GatewaySynth) DrainOption { return func(d *Drain) { d.gateway = g } }
 func WithDrainNotifier(n Notifier) DrainOption         { return func(d *Drain) { d.notifier = n } }
@@ -273,17 +298,19 @@ func WithDrainAppTaskCoordinator(c *AppTaskCoordinator) DrainOption {
 // per tick, 60s wake lease, 5s retry-after, real clock.
 func NewDrain(store state.Store, engine *Engine, opts ...DrainOption) *Drain {
 	d := &Drain{
-		store:               store,
-		engine:              engine,
-		now:                 time.Now,
-		batchSize:           64,
-		wakeLeaseSeconds:    60,
-		retryAfterSeconds:   5,
-		dispatchConcurrency: DefaultDrainDispatchConcurrency,
-		longSlots:           make(chan struct{}, DefaultDrainLongDispatches),
-		longQueueApps:       map[string]bool{},
-		log:                 slog.Default(),
-		financialAdmission:  state.CheckFinancialBudgetAdmissionForScope,
+		store:                 store,
+		engine:                engine,
+		now:                   time.Now,
+		batchSize:             64,
+		wakeLeaseSeconds:      60,
+		retryAfterSeconds:     5,
+		dispatchConcurrency:   DefaultDrainDispatchConcurrency,
+		longSlots:             make(chan struct{}, DefaultDrainLongDispatches),
+		longQueueApps:         map[string]bool{},
+		log:                   slog.Default(),
+		financialAdmission:    state.CheckFinancialBudgetAdmissionForScope,
+		tickInterval:          time.Second,
+		leaseRecoveryInterval: DefaultDrainLeaseRecoveryInterval,
 	}
 	for _, o := range opts {
 		o(d)
@@ -322,11 +349,16 @@ func (d *Drain) emitDeadLetter(ctx context.Context, inv state.Invocation, reason
 // (in case a notify is dropped or the LISTEN connection hiccups — pg_notify
 // is fire-and-forget over a single LISTEN session).
 //
-// Both paths call tick(). tick() drains the due queue in 64-row batches
-// until either the slice is shorter than the batch or no rows remain.
+// Both paths call tickDue, which drains the due queue in 64-row batches
+// until either the slice is shorter than the batch or no rows remain. The
+// notifications already queued behind the one handled are dropped first:
+// every enqueued invocation sends one, and a single walk lists them all.
+// Lease recovery runs on the safety tick, at most every
+// leaseRecoveryInterval.
 func (d *Drain) Run(ctx context.Context, notif <-chan db.Notification) error {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(d.tickInterval)
 	defer ticker.Stop()
+	recovery := drainLeaseRecovery{every: d.leaseRecoveryInterval}
 	for {
 		select {
 		case <-ctx.Done():
@@ -342,16 +374,67 @@ func (d *Drain) Run(ctx context.Context, notif <-chan db.Notification) error {
 			if n.Channel != db.NotifyInvocationDue {
 				continue
 			}
-			d.Tick(ctx)
-		case <-ticker.C:
-			d.Tick(ctx)
+			coalesceInvocationDue(notif)
+			d.tickDue(ctx)
+		case now := <-ticker.C:
+			if recovery.due(now) {
+				d.Tick(ctx)
+			} else {
+				d.tickDue(ctx)
+			}
 		}
 	}
 }
 
-// Tick is the per-cycle drain walk. Public so tests can drive it
-// without spinning Run().
+// drainLeaseRecovery spaces Run's lease recovery sweeps.
+type drainLeaseRecovery struct {
+	every time.Duration
+	last  time.Time
+}
+
+// due reports whether a recovery sweep should run at now, and if so records
+// it. The first call is always due.
+func (r *drainLeaseRecovery) due(now time.Time) bool {
+	if !r.last.IsZero() && now.Sub(r.last) < r.every {
+		return false
+	}
+	r.last = now
+	return true
+}
+
+// coalesceInvocationDue drops the notifications already queued on notif.
+func coalesceInvocationDue(notif <-chan db.Notification) {
+	for {
+		select {
+		case _, ok := <-notif:
+			if !ok {
+				return
+			}
+		default:
+			return
+		}
+	}
+}
+
+// Tick is one full drain cycle: start-deadline expiry, lease recovery, then
+// the due walk. Public so tests can drive it without spinning Run().
 func (d *Drain) Tick(ctx context.Context) {
+	d.expireDue(ctx)
+	d.recoverExpiredLeases(ctx)
+	d.walkDue(ctx)
+}
+
+// tickDue is Tick without lease recovery: what an invocation_due
+// notification, or a safety tick between recoveries, needs.
+func (d *Drain) tickDue(ctx context.Context) {
+	d.expireDue(ctx)
+	d.walkDue(ctx)
+}
+
+// expireDue retires work past its start deadline and dispatches due
+// exclusive operations. It runs before every walk: claiming does not
+// re-check these deadlines.
+func (d *Drain) expireDue(ctx context.Context) {
 	if expirer, ok := d.store.(state.ScheduledInvocationDeadlineStore); ok {
 		if count, err := expirer.ExpireUnstartedScheduledCronInvocations(ctx, d.now(), d.batchSize); err != nil {
 			d.log.Warn("drain: expire scheduled cron invocations", "err", err)
@@ -367,6 +450,11 @@ func (d *Drain) Tick(ctx context.Context) {
 			d.log.Warn("drain: expire pending keyed work", "err", err)
 		}
 	}
+}
+
+// recoverExpiredLeases expires event acknowledgments past their lease and
+// requeues rows whose dispatch lease ran out.
+func (d *Drain) recoverExpiredLeases(ctx context.Context) {
 	// A crashed schedd/gateway can leave a row in dispatching after its
 	// wake/invoke lease expires. Requeue those rows before reading pending
 	// work so the next scheduler tick can make progress. The store update is
@@ -385,6 +473,10 @@ func (d *Drain) Tick(ctx context.Context) {
 			d.log.Warn("drain: reclaimed expired invocations", "count", reclaimed)
 		}
 	}
+}
+
+// walkDue lists and dispatches the due invocations this node may claim.
+func (d *Drain) walkDue(ctx context.Context) {
 	// Page through the due backlog with a (due_at, id) cursor. Rows this
 	// scheduler cannot claim — another node's app, an account at its async
 	// cap — stay pending with an unchanged due_at. Re-listing from the head
@@ -813,6 +905,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	if !d.engine.ownsApp(app) {
+		return
+	}
+	if d.cronRunOrphaned(ctx, inv) {
+		if _, err := d.store.CancelPendingInvocation(ctx, inv.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			d.log.Warn("drain: cancel a deleted cron's run", "inv", inv.ID, "err", err)
+		}
 		return
 	}
 	if err := d.financialAdmission(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
@@ -1538,6 +1636,23 @@ func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryP
 	}
 	return dispatch.RetryPolicy{BaseSeconds: api.EventDeliveryRetryBaseSeconds,
 		MaxSeconds: maxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
+}
+
+// cronRunOrphaned reports a queued cron run whose cron is gone. Every cron run
+// is queued with its cron's id; deleting the cron sets it to NULL
+// (invocations_cron_id_fkey), and a soft-deleted app's crons read as missing.
+// DeleteCron cancels its own runs, but a cron removed by a deploy's
+// gregale.yaml, a project apply or an app's deletion left its queued and
+// retrying runs to reach the app (crons audit 2026-11-02).
+func (d *Drain) cronRunOrphaned(ctx context.Context, inv state.Invocation) bool {
+	if inv.Source != state.InvocationCron {
+		return false
+	}
+	if inv.CronID == nil {
+		return true
+	}
+	_, err := d.store.CronByID(ctx, *inv.CronID)
+	return errors.Is(err, state.ErrNotFound)
 }
 
 // financialHoldDeferral is how far a row of an app held by its compute

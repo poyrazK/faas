@@ -126,7 +126,12 @@ func collectMCPAccessAudit(ctx context.Context, client *Client, slug string, cfg
 		return report
 	}
 	report.Checks = append(report.Checks, mcphosting.Check{Name: "canonical_resource", Status: "passed", Detail: "Reviewed resource matches the app's canonical endpoint."})
-	rules, err := client.ListEdgeRules(ctx)
+	// The app's rules and the covering rules of its account's other apps in
+	// the same owner scope: the rules the gateway applies to its hosts, which
+	// the server fingerprints too. The account-wide list is the caller's own
+	// account, so an organization member other than a company app's creator
+	// saw none of its rules (ADR-091 amendment 2026-11-02, review round 8).
+	rules, err := client.ListCoveringEdgeRulesForApp(ctx, slug)
 	if err != nil {
 		report.Checks = append(report.Checks, mcphosting.Check{Name: "account_gateway_rules", Status: "unknown", Detail: "Could not inspect account-wide gateway rules; check read permissions and connectivity."})
 		return report

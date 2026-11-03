@@ -46,6 +46,7 @@ const (
 	Githubd_MintInstallationToken_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
 	Githubd_StreamSourceRef_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
 	Githubd_GetBranchHead_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/GetBranchHead"
+	Githubd_GetInstallationRepository_FullMethodName  = "/onebox.faas.githubd.v1.Githubd/GetInstallationRepository"
 	Githubd_GetCIPullRequest_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/GetCIPullRequest"
 	Githubd_GetCIChangedFiles_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/GetCIChangedFiles"
 	Githubd_GetProtectedBranchEvidence_FullMethodName = "/onebox.faas.githubd.v1.Githubd/GetProtectedBranchEvidence"
@@ -192,6 +193,12 @@ type GithubdClient interface {
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
 	GetBranchHead(ctx context.Context, in *GetBranchHeadRequest, opts ...grpc.CallOption) (*GetBranchHeadResponse, error)
+	// GetInstallationRepository returns the repository an account's
+	// installation sees under a name, with its immutable IDs. NOT_FOUND means
+	// the installation sees no repository of that name. apid confirms a
+	// project's repository with it before a GitHub Actions OIDC exchange
+	// (ADR-20261101160300, amendment 2).
+	GetInstallationRepository(ctx context.Context, in *GetInstallationRepositoryRequest, opts ...grpc.CallOption) (*GetInstallationRepositoryResponse, error)
 	// Fresh PR identity for internal CI admission. Account installation authority
 	// is verified by githubd. This read is served only on the local socket.
 	GetCIPullRequest(ctx context.Context, in *GetCIPullRequestRequest, opts ...grpc.CallOption) (*GetCIPullRequestResponse, error)
@@ -399,6 +406,16 @@ func (c *githubdClient) GetBranchHead(ctx context.Context, in *GetBranchHeadRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetBranchHeadResponse)
 	err := c.cc.Invoke(ctx, Githubd_GetBranchHead_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) GetInstallationRepository(ctx context.Context, in *GetInstallationRepositoryRequest, opts ...grpc.CallOption) (*GetInstallationRepositoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetInstallationRepositoryResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetInstallationRepository_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -639,6 +656,12 @@ type GithubdServer interface {
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
 	GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error)
+	// GetInstallationRepository returns the repository an account's
+	// installation sees under a name, with its immutable IDs. NOT_FOUND means
+	// the installation sees no repository of that name. apid confirms a
+	// project's repository with it before a GitHub Actions OIDC exchange
+	// (ADR-20261101160300, amendment 2).
+	GetInstallationRepository(context.Context, *GetInstallationRepositoryRequest) (*GetInstallationRepositoryResponse, error)
 	// Fresh PR identity for internal CI admission. Account installation authority
 	// is verified by githubd. This read is served only on the local socket.
 	GetCIPullRequest(context.Context, *GetCIPullRequestRequest) (*GetCIPullRequestResponse, error)
@@ -744,6 +767,9 @@ func (UnimplementedGithubdServer) StreamSourceRef(*StreamSourceRefRequest, grpc.
 }
 func (UnimplementedGithubdServer) GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBranchHead not implemented")
+}
+func (UnimplementedGithubdServer) GetInstallationRepository(context.Context, *GetInstallationRepositoryRequest) (*GetInstallationRepositoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetInstallationRepository not implemented")
 }
 func (UnimplementedGithubdServer) GetCIPullRequest(context.Context, *GetCIPullRequestRequest) (*GetCIPullRequestResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetCIPullRequest not implemented")
@@ -1041,6 +1067,24 @@ func _Githubd_GetBranchHead_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_GetInstallationRepository_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetInstallationRepositoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetInstallationRepository(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetInstallationRepository_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetInstallationRepository(ctx, req.(*GetInstallationRepositoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Githubd_GetCIPullRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetCIPullRequestRequest)
 	if err := dec(in); err != nil {
@@ -1279,6 +1323,10 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBranchHead",
 			Handler:    _Githubd_GetBranchHead_Handler,
+		},
+		{
+			MethodName: "GetInstallationRepository",
+			Handler:    _Githubd_GetInstallationRepository_Handler,
 		},
 		{
 			MethodName: "GetCIPullRequest",

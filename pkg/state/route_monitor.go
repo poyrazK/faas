@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/routemonitor"
 )
 
@@ -160,11 +160,13 @@ type RouteMonitorRollbackStore interface {
 // reports what to roll back when claimed and whether the incident changed.
 // A deployment that no longer serves all traffic leaves the incident
 // undecided: a rollout or rollback already owns it.
-func decideRouteMonitorRollback(c api.RouteMonitorConfig, i *api.RouteMonitorIncident, d Deployment, now time.Time) (RouteMonitorRollbackClaim, bool, bool) {
+// promotedAt is when a traffic change last took d to 100%
+// (deployments.promoted_at, ADR-20261028110044 amendment 4).
+func decideRouteMonitorRollback(c api.RouteMonitorConfig, i *api.RouteMonitorIncident, d Deployment, promotedAt *time.Time, now time.Time) (RouteMonitorRollbackClaim, bool, bool) {
 	if d.ID != i.DeploymentID || d.Status != DeployLive || d.TrafficPercent != 100 || d.CanaryTotalSteps > 0 && d.CanaryStep < d.CanaryTotalSteps {
 		return RouteMonitorRollbackClaim{}, false, false
 	}
-	decision := routemonitor.DecideRollback(c, *i, routemonitor.ReleasedAt(d.CreatedAt, d.CanaryStepStartedAt, d.RolloutCompletedAt))
+	decision := routemonitor.DecideRollback(c, *i, routemonitor.ReleasedAt(d.CreatedAt, d.CanaryStepStartedAt, d.RolloutCompletedAt, promotedAt))
 	if decision.Eligible && d.Scope == "production" {
 		decision = routemonitor.RollbackDecision{Skip: routemonitor.RollbackSkipProjectRelease, Route: decision.Route}
 	}
@@ -180,7 +182,7 @@ func decideRouteMonitorRollback(c api.RouteMonitorConfig, i *api.RouteMonitorInc
 }
 
 // routeMonitorRefusalCode is the shape of an API problem code.
-var routeMonitorRefusalCode = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+var routeMonitorRefusalCode = lazyregexp.New(`^[a-z0-9_]{1,64}$`)
 
 // recordRouteMonitorRollback replaces a claim with its final outcome.
 func recordRouteMonitorRollback(i *api.RouteMonitorIncident, outcome api.RouteMonitorIncidentRollback) error {

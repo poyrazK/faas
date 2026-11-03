@@ -112,3 +112,26 @@ func TestEdgeRuleHostMatchesAndKindPath(t *testing.T) {
 		t.Error("non-protective kind widened to a case variant")
 	}
 }
+
+// adr: 091 — amendment 2026-11-02 (later): servlet containers and Spring
+// drop a segment's ";" parameters before routing, so a protective rule must
+// cover the path they route.
+func TestMatchProtectiveEdgeRulePathDropsPathParameters(t *testing.T) {
+	for _, tc := range []struct {
+		glob, path string
+		want       bool
+	}{
+		{"/admin/**", "/admin;x/users", true},
+		{"/admin/**", "/admin;jsessionid=ABC/users;v=2", true},
+		{"/admin/*", "/ADMIN;x/users", true},
+		{"/admin", "/admin;", true},
+		{"/admin/**", "/public;admin/users", false},
+	} {
+		if got, _ := MatchProtectiveEdgeRulePath(tc.glob, tc.path); got != tc.want {
+			t.Errorf("MatchProtectiveEdgeRulePath(%q, %q) = %v, want %v", tc.glob, tc.path, got, tc.want)
+		}
+	}
+	if ok, _ := MatchEdgeRuleKindPath("headers", "/admin/**", "/admin;x/users"); ok {
+		t.Error("non-protective kind widened to a path with parameters")
+	}
+}

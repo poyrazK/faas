@@ -14,6 +14,15 @@ faas_object_storage_gateway_provider_env_src: ''
 # the node's registry as transfer.max_bytes_per_second.
 faas_object_gateway_max_bytes_per_second: 0
 
+# ADR-20261031122757 step 7: the manifest's object_storage.compute_public_reads
+# has the node's app edge serve public bucket reads itself, with this node's
+# registry, the gateway-only credential and its part of the port share
+# (api.ObjectGatewayPublicReadSharePercent), which the manifest takes out of
+# faas_object_gateway_max_bytes_per_second. Off, the edge forwards them to the
+# control plane.
+faas_object_public_reads_on_compute_nodes: false
+faas_object_public_read_max_bytes_per_second: 0
+
 # The node's s3 tunnel connector, faas-cloudflared-s3 (ADR-20261031122757 §2):
 # a replica of the cell's second remotely managed tunnel, whose ingress rule
 # (configured in Cloudflare) sends s3.<domain> to http://127.0.0.1:8084. It

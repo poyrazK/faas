@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // DockerfileBuildOptions are a source-built Compose service's build arguments
@@ -29,11 +30,11 @@ type DockerfileBuildSecret struct {
 }
 
 var (
-	dockerfileBuildArgName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	dockerfileBuildArgName = lazyregexp.New(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	// BuildKit lowercases stage names; the grammar matches its stage parser.
-	dockerfileBuildStageName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
+	dockerfileBuildStageName = lazyregexp.New(`^[A-Za-z][A-Za-z0-9_.-]*$`)
 	// BuildKit secret ids travel in a comma-separated --secret flag.
-	dockerfileBuildSecretID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+	dockerfileBuildSecretID = lazyregexp.New(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 )
 
 func (o *DockerfileBuildOptions) Clone() *DockerfileBuildOptions {

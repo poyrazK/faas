@@ -207,7 +207,7 @@
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
-  <main hx-trigger="sse:app_changed, sse:deployment_changed, sse:instance_changed, sse:invocation_done, sse:stateless_advisory, sse:cron_fired, sse:domain_changed, sse:api_route_discovered" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RefreshQuery}}?{{.Data.RefreshQuery}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
+  <main hx-trigger="sse:app_changed throttle:3s, sse:deployment_changed throttle:3s, sse:instance_changed throttle:3s, sse:invocation_done throttle:3s, sse:stateless_advisory throttle:3s, sse:cron_fired throttle:3s, sse:domain_changed throttle:3s, sse:api_route_discovered throttle:3s" hx-get="/dashboard/apps/{{.Data.App.Slug}}{{if .Data.RefreshQuery}}?{{.Data.RefreshQuery}}{{end}}" hx-swap="innerHTML" hx-select="main" hx-push-url="false">
     {{template "email-verification-banner" .}}
     {{/* Issue #791 PR-E / ADR-090 closure — flash banner shown
          after a dashboard fire-now POST. The handler redirects
@@ -792,6 +792,7 @@
             · {{if eq .Data.RequestAnalytics.GroupBy "consumer_id"}}<strong>consumer</strong>{{else}}<a href="?analytics_by=consumer_id">consumer</a>{{end}}
           </p>
           {{if .Data.RequestAnalytics.WindowClamped}}<p class="muted">The requested window was reduced to your plan's telemetry retention.</p>{{end}}
+          {{if .Data.RequestAnalytics.TelemetryGaps}}<p class="muted" role="status">Some requests in this window may be missing from these totals ({{range $i, $gap := .Data.RequestAnalytics.TelemetryGaps}}{{if $i}}, {{end}}<code>{{$gap}}</code>{{end}}).</p>{{end}}
           <p class="muted">Cold-request p95 includes both wake and handler time. Wake boot p95 is schedd boot-start to instance-running time. Guest runtime percentiles are platform-runner wall time, not CPU time, and are unavailable for arbitrary HTTP containers.</p>
           <p class="muted">Dependency timings use retained, classified span samples. Exclusive p95 estimates time outside nested child spans; it is not a full request-call count or additive latency total.</p>
           {{if .Data.RequestAnalytics.DependenciesTruncated}}<p class="muted">Dependency evidence is bounded; some rows or dependency groups were omitted from this view.</p>{{end}}
@@ -824,10 +825,11 @@
           {{else}}
             <dl>
               <dt>Requests</dt><dd>{{.Data.RequestAnalytics.Requests}}</dd>
-              <dt>Errors</dt><dd>{{.Data.RequestAnalytics.ErrorRequests}} ({{printf "%.2f" .Data.RequestAnalytics.ErrorRatePct}}%)</dd>
+              <dt>4xx and 5xx responses</dt><dd>{{.Data.RequestAnalytics.ErrorRequests}} ({{printf "%.2f" .Data.RequestAnalytics.ErrorRatePct}}% of requests)</dd>
               <dt>Cold boots</dt><dd>{{.Data.RequestAnalytics.ColdBoots}}</dd>
               <dt>Latency p50 / p95 / p99</dt><dd>{{.Data.RequestAnalytics.P50MS}} / {{.Data.RequestAnalytics.P95MS}} / {{.Data.RequestAnalytics.P99MS}} ms</dd>
             </dl>
+            <p class="muted">Analytics counts every 4xx and 5xx response, including client errors such as 404 and 429. The error rate in Metrics above counts only 5xx, out of 2xx and 5xx responses.</p>
             {{if eq .Data.RequestAnalytics.GroupBy "route"}}
               {{if .Data.RequestAnalytics.Routes}}
               <h3>Top routes</h3>

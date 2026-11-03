@@ -31,7 +31,6 @@ AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
 AppendDeploymentLog
 AppendDeploymentStage
-AppendEventWithTrace
 AppendSnapshotStorage
 AppendUploadBytes
 ApplyProjectPlan
@@ -39,7 +38,6 @@ ApplyRegressionAction
 AppsForProject
 AuthDefaultFlippedAt
 AuthenticateOIDCBearer
-AutoRollbackDeploymentsTx
 BeginCrashCapturePurge
 BeginCrashCaptureStage
 BeginServiceRolloutCutover
@@ -563,7 +561,6 @@ UpdateAccountProviderCustomerID
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus
 UpdateAlertRule
-UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
 UpdateCorsPreset

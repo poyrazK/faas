@@ -33,10 +33,13 @@ type CallbackInbox interface {
 }
 
 // CallbackRevocations records a thread's latest revocation (ADR-20261030125501
-// §3); *agentstore.Store implements it.
+// §3); *agentstore.Store implements it. CallbackClock reads the clock a
+// revocation is recorded on: a token's issue time comes from it, so the two
+// compare on one clock, not apid's against the database's.
 type CallbackRevocations interface {
 	RevokeCallbacks(ctx context.Context, accountID, endpointID, threadID string) (time.Time, error)
 	CallbacksRevokedAt(ctx context.Context, endpointID, threadID string) (time.Time, bool, error)
+	CallbackClock(ctx context.Context) (time.Time, error)
 }
 
 // callbackRequestMaxBytes bounds an issue request; a post is bounded by its
@@ -93,10 +96,24 @@ func (h *Handler) callbackGrant(ctx context.Context, caller CallbackCaller, req 
 	if problem != nil {
 		return CallbackToken{}, problem
 	}
-	// Not truncated: a token issued just after a revocation must compare later.
-	now := h.now().UTC()
+	var issuer CallbackIssuer
+	if caller.Issuer != nil {
+		if issuer, problem = caller.Issuer(endpoint); problem != nil {
+			return CallbackToken{}, problem
+		}
+	}
+	// The revocation clock, not apid's: with apid behind the database a URL
+	// issued after a revocation compared earlier and never worked, and ahead
+	// of it a URL issued before one compared later and outlived it. Not
+	// truncated: a token issued just after a revocation must compare later.
+	now, err := h.Revocations.CallbackClock(ctx)
+	if err != nil {
+		return CallbackToken{}, h.problem(caller.Account, "read callback clock", err)
+	}
+	now = now.UTC()
 	return CallbackToken{AccountID: caller.Account.ID, EndpointID: endpoint.ID, ThreadID: req.ThreadID, Kinds: kinds, IssuedAt: now,
-		ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, nil
+		ExpiresAt: now.Add(time.Duration(ttl) * time.Second), IssuerOrgID: issuer.OrgID, IssuerAccountID: issuer.AccountID,
+		IssuerOrgVersion: issuer.Revision}, nil
 }
 
 // ReceiveCallback handles POST /v1/agent-callbacks/{token}. A token that is
@@ -140,8 +157,60 @@ func (h *Handler) admit(ctx context.Context, grant CallbackToken) *api.Problem {
 	if err != nil || endpoint.AccountID != grant.AccountID {
 		return errCallbackGone
 	}
+	if problem := h.admitIssuer(ctx, grant, endpoint); problem != nil {
+		return problem
+	}
 	if count, ok := h.callbackLimits.allow(grant.EndpointID+"\x00"+grant.ThreadID, h.now()); !ok {
 		return api.ErrAgentCallbackRateLimited(api.AgentCallbacksPerMinutePerThread, count)
+	}
+	return nil
+}
+
+// CallbackAccess is the state a callback re-checks when it is used: the
+// issuer's organization membership and the app owner's standing.
+// *state.PgStore implements it.
+type CallbackAccess interface {
+	state.AppOwnerReader
+	AppByID(ctx context.Context, id string) (state.App, error)
+	OrgAccessSnapshot(ctx context.Context, orgID, accountID string) (state.OrgAccessSnapshot, error)
+}
+
+// The production store must keep satisfying CallbackAccess: wiring uses a
+// type assertion, and a missing method would skip the checks silently.
+var _ CallbackAccess = (*state.PgStore)(nil)
+
+// admitIssuer re-checks, each time a URL is used, what issuing it required:
+// the issuer's membership in the company app's organization at the version
+// it had then, and an app owner in good standing. Without it a URL kept
+// publishing into a company agent's inbox for its whole lifetime after its
+// issuer was removed or demoted, or the organization was suspended (bug
+// hunt 34). Each refusal answers like an unknown route.
+func (h *Handler) admitIssuer(ctx context.Context, grant CallbackToken, endpoint state.ManagedRealtimeEndpoint) *api.Problem {
+	if h.Access == nil {
+		return nil
+	}
+	if grant.IssuerOrgID != "" {
+		snapshot, err := h.Access.OrgAccessSnapshot(ctx, grant.IssuerOrgID, grant.IssuerAccountID)
+		if errors.Is(err, state.ErrNotFound) || err == nil && snapshot.Revision != grant.IssuerOrgVersion {
+			return errCallbackGone
+		}
+		if err != nil {
+			return h.problem(state.Account{ID: grant.AccountID}, "check callback issuer", err)
+		}
+	}
+	app, err := h.Access.AppByID(ctx, endpoint.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return errCallbackGone
+	}
+	if err != nil {
+		return h.problem(state.Account{ID: grant.AccountID}, "load callback app", err)
+	}
+	owner, err := state.AppResourceAccount(ctx, h.Access, app)
+	if err != nil {
+		return h.problem(state.Account{ID: grant.AccountID}, "load callback app owner", err)
+	}
+	if app.Status == state.AppDeleted || !owner.Active() {
+		return errCallbackGone
 	}
 	return nil
 }

@@ -520,6 +520,9 @@ func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult,
 	if h == nil || h.backend == nil || h.vmConcurrency == nil || perVM <= 0 || !pick.OK || pick.Target.InstanceID == "" {
 		return pick, func() {}, false, nil
 	}
+	if local, release, ok := h.acquireLocalTarget(ctx, app, pick, perVM); ok {
+		return local, release, false, nil
+	}
 	if release, ok := h.vmConcurrency.tryAcquire(pick.Target.InstanceID, string(app.Plan), perVM); ok {
 		return pick, release, false, nil
 	}

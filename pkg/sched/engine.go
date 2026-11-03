@@ -661,7 +661,7 @@ type Engine struct {
 	brokerLag BrokerLagReader
 
 	mu    sync.Mutex
-	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	appMu map[string]*appLock // app_id -> serialisation lock, while held or awaited
 	// frozenTier (ADR-1151, schedd `frozen_tier`) freezes idle eligible
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
@@ -1031,7 +1031,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		fcVer:                    fcVer,
 		log:                      log,
 		jobContext:               ctx,
-		appMu:                    map[string]*sync.Mutex{},
+		appMu:                    map[string]*appLock{},
 		restorePlacementInFlight: map[string]int{},
 		restartInFlight:          map[string]*restartCall{},
 		restartCompleted:         map[string]string{},
@@ -7281,14 +7281,18 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 }
 
 // appMustPark reports whether no instance of app may stay live: the app is
-// evicted_cold, its account is suspended or abuse-held, or the account has
-// reached its monthly spend cap. The cap check is cached and fails open
-// (OverageChecker), so a transient read error never parks an app.
+// evicted_cold, its account is suspended or abuse-held, or its billing
+// subject has reached its monthly spend cap. account is the app's resource
+// account (state.AppResourceAccount); for a company app whose organization
+// owns its resources, its ID is the creator's and the organization's cap
+// governs (ADR-20261030093512, as spendCapSubject). The cap check is cached
+// and fails open (OverageChecker), so a transient read error never parks an
+// app.
 func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.Account) bool {
 	if app.Status == state.AppEvictedCold || account.Status == state.AccountSuspended || account.AbuseHeld() {
 		return true
 	}
-	return e.spendCapReached(ctx, account.ID)
+	return e.spendCapReached(ctx, account.ResourceOwnerID())
 }
 
 // ParkApp tears down every live instance of an app whose lifecycle has already
@@ -10890,26 +10894,68 @@ func cooldownSRemaining(app *state.App, now time.Time) int {
 	return int(remaining.Seconds())
 }
 
+// appLock is one app's serialisation lock. refs counts its holder and its
+// waiters, under Engine.mu; the entry leaves Engine.appMu when it reaches
+// zero, so the map holds only apps someone is working on (ADR
+// 20261102160622). Every lock and unlock goes through lockApp, tryLockApp
+// and unlockApp: a caller that kept the *appLock past its unlock could lock
+// a mutex another caller no longer shares.
+type appLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
 func (e *Engine) lockApp(appID string) func() {
-	e.appMutex(appID).Lock()
+	e.appLockRef(appID).mu.Lock()
 	return func() { e.unlockApp(appID) }
 }
 
-func (e *Engine) unlockApp(appID string) {
-	e.appMutex(appID).Unlock()
+// tryLockApp locks appID's lock when it is free and reports whether it did.
+func (e *Engine) tryLockApp(appID string) (func(), bool) {
+	l := e.appLockRef(appID)
+	if l.mu.TryLock() {
+		return func() { e.unlockApp(appID) }, true
+	}
+	e.mu.Lock()
+	e.dropAppLockRefLocked(appID, l)
+	e.mu.Unlock()
+	return nil, false
 }
 
-// appMutex returns the stable per-app serialisation mutex, creating it on first
-// use. Never GC'd (one-box scale, single-digit apps).
-func (e *Engine) appMutex(appID string) *sync.Mutex {
+func (e *Engine) unlockApp(appID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	mu, ok := e.appMu[appID]
-	if !ok {
-		mu = &sync.Mutex{}
-		e.appMu[appID] = mu
+	l := e.appMu[appID]
+	if l == nil {
+		panic("sched: unlock of an app lock nobody holds: " + appID)
 	}
-	return mu
+	l.mu.Unlock()
+	e.dropAppLockRefLocked(appID, l)
+}
+
+// appLockRef returns appID's lock with a reference taken for the caller,
+// creating it on first use.
+func (e *Engine) appLockRef(appID string) *appLock {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.appMu == nil {
+		e.appMu = map[string]*appLock{}
+	}
+	l := e.appMu[appID]
+	if l == nil {
+		l = &appLock{}
+		e.appMu[appID] = l
+	}
+	l.refs++
+	return l
+}
+
+// dropAppLockRefLocked releases a reference; the caller holds e.mu.
+func (e *Engine) dropAppLockRefLocked(appID string, l *appLock) {
+	l.refs--
+	if l.refs <= 0 && e.appMu[appID] == l {
+		delete(e.appMu, appID)
+	}
 }
 
 // Ledger exposes the engine's admission ledger for the reaper's resident-RAM

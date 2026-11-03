@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // DeploymentRoutePolicySnapshotSchemaVersion versions the persisted rule
@@ -107,8 +107,8 @@ func validateDeploymentRoutePolicySnapshot(snap DeploymentRoutePolicySnapshot) e
 	return nil
 }
 
-var regexpDeploymentScope = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
-var regexpDeploymentRoutePolicySHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var regexpDeploymentScope = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+var regexpDeploymentRoutePolicySHA256 = lazyregexp.New(`^[0-9a-f]{64}$`)
 
 func cloneStringMap(in map[string]string) map[string]string {
 	if in == nil {

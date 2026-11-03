@@ -14,41 +14,43 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (s *Service) authenticateRealtimePublisher(r *http.Request) (string, error) {
+// authenticateRealtimePublisher returns the request's publisher credential
+// and the account of the endpoint it is bound to.
+func (s *Service) authenticateRealtimePublisher(r *http.Request) (string, string, error) {
 	if !s.HistoryPreviewEnabled {
-		return "", state.ErrRealtimePublisherCredentialDenied
+		return "", "", state.ErrRealtimePublisherCredentialDenied
 	}
 	if _, err := uuid.Parse(r.PathValue("endpoint_id")); err != nil {
-		return "", state.ErrRealtimePublisherCredentialDenied
+		return "", "", state.ErrRealtimePublisherCredentialDenied
 	}
 	parts := strings.Fields(r.Header.Get("Authorization"))
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || !strings.HasPrefix(parts[1], "grp_") {
-		return "", state.ErrRealtimePublisherCredentialDenied
+		return "", "", state.ErrRealtimePublisherCredentialDenied
 	}
 	store, ok := s.Host.Store().(state.RealtimePublisherCredentialStore)
 	if !ok {
-		return "", state.ErrRealtimePublisherCredentialDenied
+		return "", "", state.ErrRealtimePublisherCredentialDenied
 	}
 	if _, err := store.AuthenticateRealtimePublisherCredential(r.Context(), r.PathValue("endpoint_id"), parts[1]); err != nil {
-		return parts[1], err
+		return parts[1], "", err
 	}
 	endpoints, ok := realtimeEndpointStore(s)
 	if !ok {
-		return "", state.ErrRealtimePublisherCredentialDenied
+		return "", "", state.ErrRealtimePublisherCredentialDenied
 	}
 	ep, err := endpoints.ManagedRealtimeEndpointByID(r.Context(), r.PathValue("endpoint_id"))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if !s.PreviewVisible(ep.AccountID) {
-		return "", state.ErrRealtimePublisherCredentialDenied
+		return "", "", state.ErrRealtimePublisherCredentialDenied
 	}
-	return parts[1], nil
+	return parts[1], ep.AccountID, nil
 }
 func (s *Service) RealtimePublisherLimited(next http.HandlerFunc) http.HandlerFunc {
 	cfg := middleware.AuthLimitConfig{CountStatuses: []int{http.StatusUnauthorized}, Log: s.Host.Logger()}
 	cfg.OnLimited = func(w http.ResponseWriter, r *http.Request) {
-		_, err := s.authenticateRealtimePublisher(r)
+		_, _, err := s.authenticateRealtimePublisher(r)
 		if err == nil {
 			next(w, r)
 			return
@@ -62,7 +64,7 @@ func (s *Service) RealtimePublisherLimited(next http.HandlerFunc) http.HandlerFu
 	return middleware.AuthLimitWithLimiter(cfg, s.AuthLimiter)(next).ServeHTTP
 }
 func (s *Service) PublishWithRealtimePublisherCredential(w http.ResponseWriter, r *http.Request) {
-	token, err := s.authenticateRealtimePublisher(r)
+	token, accountID, err := s.authenticateRealtimePublisher(r)
 	if err != nil {
 		s.writeRealtimePublisherError(w, r, err)
 		return
@@ -79,6 +81,15 @@ func (s *Service) PublishWithRealtimePublisherCredential(w http.ResponseWriter, 
 	var req state.RealtimePublisherMessageRequest
 	if httpkit.DecodeJSONSized(r, &req, api.RealtimePublisherBodyMaxBytes) != nil {
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid publish payload"))
+		return
+	}
+	// A publisher credential does not pass the account API budget; it shares
+	// the account's realtime write rate with every other write path.
+	if limits, wait, ok, err := s.takeAccountWrites(r.Context(), accountID, 1); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("publisher rate check unavailable"))
+		return
+	} else if !ok {
+		api.WriteProblem(w, api.ErrRealtimeWriteRateLimited(limits.RetainedWritesPerSecond, 1, wait))
 		return
 	}
 	store := s.Host.Store().(state.RealtimePublisherCredentialStore)

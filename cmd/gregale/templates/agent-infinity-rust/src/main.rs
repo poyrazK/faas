@@ -46,8 +46,8 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// serving every request; the handshake keeps them referenced.
 const PERSISTENT_PROTOCOL: &str = "FAAS_PERSISTENT_PROTOCOL_V1";
 
-const PROMPT: &str =
-    "You answer questions. Use the lookup tool for facts, and answer from its result.";
+const PROMPT: &str = "You answer questions. Use the lookup tool for facts, and answer from its result. \
+     To wait, call gregale_sleep: the thread wakes with its result.";
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -161,6 +161,17 @@ async fn slice(
         tool_url: std::env::var("TOOL_URL").ok().filter(|u| !u.is_empty()),
         http: SimpleHttpClient::new(),
     };
+    let mut agent_tools: Vec<Box<dyn Tool<GregaleSender>>> = vec![Box::new(lookup)];
+    // Without Gregale's toolset the agent still runs, with lookup alone.
+    match platform.toolset().await {
+        Ok(toolset) => {
+            agent_tools.extend(tools::platform_tools(toolset, platform, &rec.endpoint_id))
+        }
+        Err(e) => eprintln!(
+            "{}",
+            serde_json::json!({ "msg": "platform tools unavailable", "error": e.to_string() })
+        ),
+    }
     let conversations = PgConversationStore(db.clone());
     let states = PgStateStore(db.clone());
     let mut system = AgentSystemBuilder::new(
@@ -169,7 +180,7 @@ async fn slice(
         model::scripted(),
         sender,
     )
-    .tools([Box::new(lookup) as Box<dyn Tool<GregaleSender>>])
+    .tools(agent_tools)
     .extra_system_prompt(PROMPT)
     .build();
     let collector = EventCollector::new();

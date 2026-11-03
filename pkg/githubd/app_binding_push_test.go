@@ -132,8 +132,8 @@ func TestPushToAppsBoundWithoutProjectHonorsActionsTrigger(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec.calls = nil
-	if _, err := svc.HandlePushRequest(ctx, []byte(appBoundPush)); !errors.Is(err, ErrIgnored) {
-		t.Fatalf("every app on Actions: err = %v, want ErrIgnored", err)
+	if _, err := svc.HandlePushRequest(ctx, []byte(appBoundPush)); !errors.Is(err, ErrIgnored) || SkipReason(err) != SkipReasonActionsTrigger {
+		t.Fatalf("every app on Actions: err = %v (reason %q), want ErrIgnored for %s", err, SkipReason(err), SkipReasonActionsTrigger)
 	}
 	if len(rec.calls) != 0 {
 		t.Fatalf("enqueued %d builds although GitHub Actions deploys every bound app", len(rec.calls))
@@ -243,6 +243,21 @@ func TestReleaseTagDeploysAppsBoundToTaggedBranch(t *testing.T) {
 		}
 		if got := enqueuedApps(rec); len(got) != 1 || got[0] != release.ID {
 			t.Fatalf("enqueued %v, want the app bound to release", got)
+		}
+	})
+	t.Run("an annotated tag", func(t *testing.T) {
+		// The push names the tag object; head_commit is the commit it tags,
+		// the branch head the tag deploys.
+		const tagObject, commit = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
+		svc, rec, rig := appBoundRig(t)
+		web := rig.bindApp(t, "web", "", "octo/api", "main")
+		svc.BranchHeads = branchHeadsByName{"main": commit}
+		tag := strings.Replace(appBoundTag, `"after":"head456"`, `"after":"`+tagObject+`","head_commit":{"id":"`+commit+`"}`, 1)
+		if _, err := svc.HandlePushRequest(context.Background(), []byte(tag)); err != nil {
+			t.Fatalf("HandlePushRequest: %v", err)
+		}
+		if len(rec.calls) != 1 || rec.calls[0].appID != web.ID || rec.calls[0].commitSHA != commit {
+			t.Fatalf("enqueued %+v, want %s at the tagged commit %s", rec.calls, web.ID, commit)
 		}
 	})
 	t.Run("a commit at no bound branch head", func(t *testing.T) {

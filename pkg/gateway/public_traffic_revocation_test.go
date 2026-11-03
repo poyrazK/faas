@@ -216,7 +216,7 @@ func securityTestMetadata(t *testing.T) string {
 func TestPublicTrafficSecurityManagedRealtimeRetainsSeparateOwner(t *testing.T) {
 	registry := trafficrevocation.New(&gatewaySecurityStore{})
 	defer registry.Close()
-	h := NewHandlerWith(nil, NewMetrics(), nil)
+	h := NewHandlerWith(&fakeBackend{host: "app.test", app: App{ID: securityTestApp, AccountID: securityTestAccount}}, NewMetrics(), nil)
 	h.WithManagedRealtime(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	compute := httptest.NewServer(h)
 	defer compute.Close()
