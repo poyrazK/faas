@@ -2483,9 +2483,11 @@ func (b *PublicAuthBlock) Validate() *Problem {
 		return NewProblem(422, CodeValidation, "Invalid public_auth.basic_user",
 			fmt.Sprintf("public_auth.basic_user must be 1..%d bytes when mode='basic'", AppPublicAuthBasicUserMaxBytes))
 	}
-	if p := strings.TrimSpace(b.BasicPass); p == "" || len(p) > AppPublicAuthBasicPassMaxBytes {
+	// A short password fell quickly to guessing at the gateway (H76); a
+	// newly set one must be at least PublicAuthBasicPassMinBytes long.
+	if p := strings.TrimSpace(b.BasicPass); len(p) < PublicAuthBasicPassMinBytes || len(p) > AppPublicAuthBasicPassMaxBytes {
 		return NewProblem(422, CodeValidation, "Invalid public_auth.basic_pass",
-			fmt.Sprintf("public_auth.basic_pass must be 1..%d bytes when mode='basic'", AppPublicAuthBasicPassMaxBytes))
+			fmt.Sprintf("public_auth.basic_pass must be %d..%d bytes when mode='basic'", PublicAuthBasicPassMinBytes, AppPublicAuthBasicPassMaxBytes))
 	}
 	return nil
 }

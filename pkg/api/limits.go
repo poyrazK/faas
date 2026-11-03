@@ -108,6 +108,38 @@ const (
 	LoginFailureEvictionSample   = 32
 )
 
+// An app's basic-auth gate (public_auth mode basic) refuses guesses from one
+// client prefix (IPv4 /24, IPv6 /64) for one app with 429 once it has
+// PublicAuthBasicFailuresPerWindow wrong passwords inside
+// PublicAuthBasicFailureWindow (H76). One gateway tracks at most
+// PublicAuthGuessKeysMax app/prefix pairs. A newly set basic-auth password
+// must be at least PublicAuthBasicPassMinBytes long.
+const (
+	PublicAuthBasicFailuresPerWindow = 10
+	PublicAuthBasicFailureWindow     = time.Minute
+	PublicAuthGuessIPv4Prefix        = 24
+	PublicAuthGuessIPv6Prefix        = 64
+	PublicAuthGuessKeysMax           = 100_000
+	PublicAuthGuessEvictionSample    = 32
+	PublicAuthBasicPassMinBytes      = 12
+)
+
+// One client prefix (IPv4 /24, IPv6 /64) may wake at most
+// GatewayColdWakeAppsPerClient different parked apps through one gateway per
+// GatewayColdWakeClientWindow (H75); more answer 429. Loopback and private
+// callers are platform traffic and are not counted. In the gateway's wake
+// admission queue one account may hold at most
+// GatewayWakeAdmissionQueuedPerAccount waiting and
+// GatewayWakeAdmissionRunningPerAccount running admissions, so one account's
+// burst cannot take every slot.
+const (
+	GatewayColdWakeAppsPerClient          = 20
+	GatewayColdWakeClientWindow           = time.Minute
+	GatewayColdWakeClientsTrackedMax      = 100_000
+	GatewayWakeAdmissionQueuedPerAccount  = 8
+	GatewayWakeAdmissionRunningPerAccount = 2
+)
+
 // PasswordResetMailInFlightMax caps the forgot-password requests one apid
 // handles off the request path at once (H86). The account lookup, token and
 // mail run in the background so the response time is the same whether or not
