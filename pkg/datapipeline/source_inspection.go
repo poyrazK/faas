@@ -24,15 +24,17 @@ func inspectSourceSettings(ctx context.Context, source *pgxpool.Pool) ([]api.Dat
 	var version int
 	var level string
 	var retention int64
-	var publish, replicate bool
+	var publish, replicate, writable bool
 	err := source.QueryRow(ctx, `SELECT current_setting('server_version_num')::integer,current_setting('wal_level'),
  pg_size_bytes(current_setting('max_slot_wal_keep_size')),has_database_privilege(current_database(),'CREATE'),
- (SELECT rolreplication OR rolsuper FROM pg_roles WHERE rolname=current_user)`).Scan(&version, &level, &retention, &publish, &replicate)
+ (SELECT rolreplication OR rolsuper FROM pg_roles WHERE rolname=current_user),
+ NOT pg_is_in_recovery() AND NOT current_setting('transaction_read_only')::boolean`).Scan(&version, &level, &retention, &publish, &replicate, &writable)
 	if err != nil {
 		return nil, err
 	}
 	return []api.DataConnectionIssue{
 		inspectionIssue("source_postgres_16_required", "PostgreSQL version", "Use a PostgreSQL 16 source.", version >= 160000 && version < 170000),
+		inspectionIssue("source_writable_required", "Writable source", "Use a writable primary and a source role with read-write sessions so Gregale can manage publications and replication slots.", writable),
 		inspectionIssue("source_logical_replication_required", "Logical replication", "Set wal_level=logical and restart the source if required by its provider.", level == "logical"),
 		inspectionIssue("source_wal_retention_limit_required", "Finite replication retention", "Set max_slot_wal_keep_size to a positive value no greater than 1GB.", retention > 0 && retention <= api.DataPipelineRetainedWALMaxBytes),
 		inspectionIssue("source_publication_permission_required", "Publication permission", "Grant the source role CREATE on this database.", publish),
@@ -40,9 +42,14 @@ func inspectSourceSettings(ctx context.Context, source *pgxpool.Pool) ([]api.Dat
 	}, nil
 }
 
+type sourceMetadata interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 // Catalog inspection never reads customer rows. This exact inspector also
 // constructs the schema used by replication; discovery cannot invent support.
-func inspectSourceTable(ctx context.Context, source *pgxpool.Pool, name string) (relation, api.DataSourceTable, error) {
+func inspectSourceTable(ctx context.Context, source sourceMetadata, name string) (relation, api.DataSourceTable, error) {
 	r := relation{Name: name}
 	table := api.DataSourceTable{Name: name, Supported: true, Columns: []api.DataSourceColumn{}, Issues: []api.DataConnectionIssue{}}
 	add := func(code, message, remediation, column string) {
@@ -55,7 +62,8 @@ func inspectSourceTable(ctx context.Context, source *pgxpool.Pool, name string) 
 		add("source_table_unsupported", "Table name is unsupported", "Use a lowercase SQL identifier beginning with a letter, outside the gregale_ namespace.", "")
 	}
 	var ordinary, readable, owner bool
-	err := source.QueryRow(ctx, `SELECT c.oid,c.relkind='r' AND NOT c.relispartition AND NOT c.relrowsecurity AND c.relreplident='d',
+	err := source.QueryRow(ctx, `SELECT c.oid,c.relkind='r' AND c.relpersistence='p' AND NOT c.relispartition AND NOT c.relrowsecurity AND c.relreplident='d'
+ AND NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=c.oid OR inhparent=c.oid),
  has_table_privilege(c.oid,'SELECT'),pg_has_role(c.relowner,'USAGE')
  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=$1`, name).Scan(&r.OID, &ordinary, &readable, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -66,7 +74,7 @@ func inspectSourceTable(ctx context.Context, source *pgxpool.Pool, name string) 
 		return r, table, err
 	}
 	if !ordinary {
-		add("source_table_unsupported", "Table structure is unsupported", "Use an ordinary, nonpartitioned table without source RLS and with default replica identity.", "")
+		add("source_table_unsupported", "Table structure is unsupported", "Use a permanent, logged, nonpartitioned table without inheritance or source RLS and with default replica identity.", "")
 	}
 	if !readable {
 		add("source_table_unsupported", "Table cannot be read", "Grant the source role SELECT on this table.", "")
@@ -75,7 +83,9 @@ func inspectSourceTable(ctx context.Context, source *pgxpool.Pool, name string) 
 		add("source_table_unsupported", "Publication cannot include this table", "Use a source role with ownership rights on this table.", "")
 	}
 	rows, err := source.Query(ctx, `SELECT a.attname,a.atttypmod,a.attnotnull,
- EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=a.attrelid AND i.indisprimary AND a.attnum=ANY(i.indkey)),
+	 EXISTS(SELECT 1 FROM pg_index i,unnest(i.indkey) WITH ORDINALITY AS k(attnum,position)
+ WHERE i.indrelid=a.attrelid AND i.indisprimary AND i.indisvalid AND i.indimmediate
+ AND k.position<=i.indnkeyatts AND a.attnum=k.attnum),
  t.typname,nt.nspname,a.attgenerated::text,a.attnum,a.atthasdef,a.atthasmissing,a.attidentity<>''
  FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
  JOIN pg_type t ON t.oid=a.atttypid JOIN pg_namespace nt ON nt.oid=t.typnamespace
@@ -118,7 +128,7 @@ func inspectSourceTable(ctx context.Context, source *pgxpool.Pool, name string) 
 		return r, table, err
 	}
 	if !hasKey {
-		add("source_primary_key_required", "Primary key is missing", "Add a primary key before selecting this table.", "")
+		add("source_primary_key_required", "A usable primary key is missing", "Add a valid, nondeferrable primary key before selecting this table.", "")
 	}
 	if len(r.Columns) > api.DataPipelineColumnsMax {
 		add("source_column_unsupported", "Table exceeds the column limit", "Select a table with at most 128 columns.", "")

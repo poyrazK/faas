@@ -17089,7 +17089,7 @@ const (
 	DataPipelineGenerationsMax             = 1000
 	DataPipelineHistoryMax                 = 100
 	DataPipelineSchemaRefreshAppsMax       = 100
-	DataPipelineSchemaRetriesMax           = 10
+	DataPipelineSchemaRetriesMax           = 10 // Independent budgets for schema attempts and retirement API refreshes.
 	DataPipelineSetupsMax                  = 3
 	DataPipelineSetupsPerConnection        = 1
 	DataPipelineSetupHistoryMax            = 100
@@ -17106,6 +17106,10 @@ const (
 	DataPipelineLease                      = 60 * time.Second
 	DataPipelineOperationTimeout           = 20 * time.Second
 	DataPipelinePollInterval               = 15 * time.Second
+	DataPipelineReconcileConcurrency       = 8
+	DataPipelineCheckConcurrency           = 2
+	DataPipelineSetupConcurrency           = 2
+	DataPipelineWorkerIdleInterval         = time.Second
 	DataPipelineVerificationChunkRows      = 2000
 	DataPipelineVerificationChunkBytes     = 4 << 20
 	DataPipelineVerificationRangesMax      = 4096
@@ -17116,6 +17120,7 @@ const (
 	DataPipelineVerificationQueryTimeout   = 2 * time.Second
 	DataPipelineVerificationPoll           = 25 * time.Millisecond
 	DataPipelineVerificationBytesMax       = 16 << 20
+	DataPipelineVerificationKeyBytesMax    = 1 << 20
 	DataPipelineRetainedWALMaxBytes        = int64(1 << 30)
 	DataPipelineDiscoveryTablesMax         = 128
 	DataPipelineCheckMaxBytes              = 4 << 20

@@ -279,11 +279,11 @@ func (s *DataAPISetup) State(ctx context.Context, job datapipeline.Setup) (strin
 	if d.Status != state.DeployLive {
 		return string(d.Status), "", nil
 	}
-	latest, err := s.Store.LatestDeployment(ctx, app.ID)
+	serving, err := s.Store.LiveDeploymentForScope(ctx, app.ID, api.DefaultEnvScope)
 	if err != nil {
 		return "", "", dataAPIError(err)
 	}
-	if latest.ID != d.ID {
+	if serving.ID != d.ID {
 		return "", "", datapipeline.ErrConflict
 	}
 	b, err := s.Bindings.Get(ctx, job.AccountID, job.DataAPIPlan.BindingID)
