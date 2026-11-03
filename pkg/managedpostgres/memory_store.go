@@ -38,6 +38,7 @@ type MemoryStore struct {
 	restoreSlotNoticesMailed  map[memoryRestoreSlotNoticeKey]bool
 	planExcessNotices         map[string]memoryPlanExcessNotice
 	overageDeliveries         map[memoryOverageKey]OverageDelivery
+	overagePending            map[memoryOverageKey]OveragePendingStep
 	usageWaivers              map[string][]usageWaiver
 }
 
@@ -67,6 +68,7 @@ func NewMemoryStore() *MemoryStore {
 		restoreSlotNoticesMailed:  map[memoryRestoreSlotNoticeKey]bool{},
 		planExcessNotices:         map[string]memoryPlanExcessNotice{},
 		overageDeliveries:         map[memoryOverageKey]OverageDelivery{},
+		overagePending:            map[memoryOverageKey]OveragePendingStep{},
 		usageWaivers:              map[string][]usageWaiver{},
 	}
 }

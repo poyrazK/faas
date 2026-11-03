@@ -6,6 +6,7 @@ import type { RequestAnalyticsComputeCost } from './RequestAnalyticsComputeCost.
 import type { RequestAnalyticsDeploymentCostBreakdown } from './RequestAnalyticsDeploymentCostBreakdown.js';
 import type { RequestAnalyticsGroup } from './RequestAnalyticsGroup.js';
 import type { RequestAnalyticsRoute } from './RequestAnalyticsRoute.js';
+import type { RequestAnalyticsTelemetryGap } from './RequestAnalyticsTelemetryGap.js';
 /**
  * Bounded historical request analytics for
  * `GET /v1/apps/{slug}/analytics?since=`. The window is half-open
@@ -66,5 +67,15 @@ export type RequestAnalyticsResponse = {
    * RFC3339Nano UTC assembly timestamp.
    */
   as_of: string;
+  /**
+   * True when every gateway delivered this window's request telemetry, so the totals include every request.
+   * Judged up to two minutes before `as_of`, because the newest minutes are still arriving. Absent when it could not be judged.
+   *
+   */
+  telemetry_complete?: boolean;
+  /**
+   * Why requests in this window may be missing from the totals. Empty or absent when the window is complete.
+   */
+  telemetry_gaps?: Array<RequestAnalyticsTelemetryGap>;
 };
 

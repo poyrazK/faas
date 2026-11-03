@@ -2432,10 +2432,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				"err", gerr)
 		} else {
 			deps.geoReader = reader
+			deps.metrics.TrackGeoIPDatabase(reader.BuildTime)
 			log.Info("geoip: loaded",
 				"path", geoipDBPath,
 				"source", string(geoip.SourceDBIP),
 				"attribution", geoip.DBIPAttribution,
+				"built", reader.BuildTime().UTC().Format(time.DateOnly),
 			)
 			if geoipAutoRefresh == "1" {
 				// 168h = 7 days. DB-IP publishes a monthly
