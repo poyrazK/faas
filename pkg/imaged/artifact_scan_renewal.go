@@ -35,7 +35,7 @@ func (l *Loop) reconcileProducedSecurityScans(ctx context.Context, now time.Time
 	if !ok {
 		return
 	}
-	deployments, err := l.store.ListAllDeployments(ctx)
+	deployments, err := l.deploymentsWithStatus(ctx, state.DeployLive, state.DeploySnapshotting)
 	if err != nil {
 		l.log.Warn("imaged: list deployments for composed scan renewal")
 		return
