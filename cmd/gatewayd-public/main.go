@@ -629,6 +629,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: %w", err)
 		}
+		// ADR-20261103163954 §4: bounded however many clients send them.
+		edgeForward = edgeLimits.forwards(edgeForward)
 	}
 	traceMux := http.NewServeMux()
 	var tenantRoot http.Handler
@@ -800,6 +802,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if edgeMode == edgeModeCompute {
 		// ADR-20261103163954 §4: inside cloudflareClientIP, so behind
 		// Cloudflare the request rate counts against CF-Connecting-IP.
+		publicHandler = edgeLimits.body(publicHandler)
 		publicHandler = edgeLimits.requests(publicHandler, trustedIngressCIDRs)
 		// Outermost, so every layer below sees the canonical client address.
 		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)
