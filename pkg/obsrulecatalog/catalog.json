@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b9ddf0d6a83fe95b34c885983608a1b524b0235fcacd10864c31a87214e27edc",
+      "revision": "615aec3af7b1a44a4442f15f99d3b53deed0bb2b3f94afc540d779158a518fa2",
       "files": [
         "faas.rules.yml"
       ],
@@ -1515,6 +1515,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "5273084d7388490908038ab4eee82bcd1fce6eade0c2c4efbb84d1f08b038ae5"
+          }
+        },
+        {
+          "id": "355ba9fd8246059f272c4c8bd69c242c4ff29d7f7963ab9e08d47191166b20b7",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageBucketOperationsStalled",
+          "definition": {
+            "expression_hash": "4eb1950f0bb0dce22b41f0cef5782d6bf1b2757c8b717c05b313b6380759ca13",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "0ef93f470a1068b73f929cc36b4898cafd80de87d9753df8f14d0bd27cb9e7c1"
           }
         },
         {
@@ -4391,6 +4404,19 @@
           }
         },
         {
+          "id": "a5b55a8699250a33a487e60c36d111b76915ef6b2114bc409c32ad93e2103b65",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageProviderRefusingCredentials",
+          "definition": {
+            "expression_hash": "8e3f91b7e8f358d0dcc8e6db09190a7e3afb810c3d653ca5c5e5960567f9b4f3",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c1a6bd8d4288dc550f21d555d7ebfaa0fc9a762c9b24b67f6b7444e173760a53"
+          }
+        },
+        {
           "id": "a65863c263f85c62723d58ebea4874351b2744a898ff11a6428e6b9c7601f601",
           "file_name": "faas.rules.yml",
           "group_name": "faas_event_routing",
@@ -6695,7 +6721,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "f86c579f2272dae74801eb6fd31ba8346cb5f364c768d9a92d2e555a80d781ee",
+      "revision": "a5b52095cd7f186d102cddc1a428fb90eb6aed936c8f6b9f9052f8c77bcd6faf",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8288,6 +8314,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "5273084d7388490908038ab4eee82bcd1fce6eade0c2c4efbb84d1f08b038ae5"
+          }
+        },
+        {
+          "id": "355ba9fd8246059f272c4c8bd69c242c4ff29d7f7963ab9e08d47191166b20b7",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageBucketOperationsStalled",
+          "definition": {
+            "expression_hash": "4eb1950f0bb0dce22b41f0cef5782d6bf1b2757c8b717c05b313b6380759ca13",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "0ef93f470a1068b73f929cc36b4898cafd80de87d9753df8f14d0bd27cb9e7c1"
           }
         },
         {
@@ -11278,6 +11317,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "53b0e7aebdbc003bc25160b98e548b51f17b47cc31adb0e80eec5b3763c2351f"
+          }
+        },
+        {
+          "id": "a5b55a8699250a33a487e60c36d111b76915ef6b2114bc409c32ad93e2103b65",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageProviderRefusingCredentials",
+          "definition": {
+            "expression_hash": "8e3f91b7e8f358d0dcc8e6db09190a7e3afb810c3d653ca5c5e5960567f9b4f3",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c1a6bd8d4288dc550f21d555d7ebfaa0fc9a762c9b24b67f6b7444e173760a53"
           }
         },
         {
