@@ -3644,6 +3644,20 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
+// ObjectStoragePlanLimitsMax is the largest storage ceiling and monthly egress
+// any plan sells. An installation's safety policy (ObjectStoragePolicy) must
+// allow at least these, because apid enforces the tighter of the two and a
+// smaller policy value silently sells every plan less.
+func ObjectStoragePlanLimitsMax() ObjectStoragePlanLimits {
+	var most ObjectStoragePlanLimits
+	for _, p := range Plans {
+		l := MustLimitsFor(p).ObjectStorage
+		most.MaxAccountBytes = max(most.MaxAccountBytes, l.MaxAccountBytes)
+		most.MaxMonthlyEgressBytes = max(most.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
+	}
+	return most
+}
+
 // ObjectStorageLimitsFor returns a billing subject's object-storage limits on
 // plan (ADR-20261101214152): the plan's, with the ceiling support granted the
 // subject (grantBytes, nil for none) in place of a paid plan's, tightened by
