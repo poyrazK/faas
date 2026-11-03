@@ -2,8 +2,8 @@ package promotion
 
 import (
 	"context"
-	"errors"
 	"fmt"
+
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -43,11 +43,21 @@ func FallbackMatches(ctx context.Context, store state.Store, appsBySlug map[stri
 }
 
 func RollbackWorkload(ctx context.Context, store state.Store, promotion state.ProjectEnvironmentPromotion, workload state.ProjectEnvironmentPromotionWorkload, appID string) (string, string, error) {
-	current, currentErr := store.LiveDeploymentForScope(ctx, appID, promotion.ToEnvironment)
-	if currentErr != nil && !errors.Is(currentErr, state.ErrNotFound) {
-		return "", "", fmt.Errorf("could not inspect current target deployment: %w", currentErr)
+	deployments, currentErr := store.LiveDeployments(ctx, appID)
+	if currentErr != nil {
+		return "", "", fmt.Errorf("could not inspect current target deployments: %w", currentErr)
 	}
-	hasCurrent := currentErr == nil
+	var current state.Deployment
+	for _, deployment := range deployments {
+		if deployment.Scope != promotion.ToEnvironment || deployment.TrafficPercent <= 0 {
+			continue
+		}
+		if current.ID != "" || deployment.TrafficPercent != 100 {
+			return "", "", fmt.Errorf("%w: target traffic is split; refusing to overwrite it", state.ErrConflict)
+		}
+		current = deployment
+	}
+	hasCurrent := current.ID != ""
 	previousID := workload.PreviousTargetDeploymentID
 	marker := "environment promotion/" + promotion.ID
 
@@ -81,16 +91,38 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 		if err := durable.TransferPromotionValidator(ctx, previous, previous.ID); err != nil {
 			return "", "", err
 		}
-		if err := store.MarkDeploymentLive(ctx, previous.ID); err != nil {
-			return "", "", fmt.Errorf("could not restore previous target deployment: %w", err)
+		if previous.Status == state.DeployLive {
+			// Retained live revisions can carry zero traffic. Marking them
+			// live again is a no-op, so restore weights with an atomic guard
+			// against a newer serving deployment or split.
+			if _, err := store.UpdateDeploymentTraffic(ctx, previous.ID, 100, candidate.ID); err != nil {
+				return "", "", fmt.Errorf("could not restore previous target traffic: %w", err)
+			}
+		} else {
+			guarded, ok := store.(state.DeploymentActivationGuardStore)
+			if !ok {
+				return "", "", fmt.Errorf("%w: guarded deployment activation is unavailable", state.ErrConflict)
+			}
+			if err := guarded.MarkDeploymentLiveIfServing(ctx, previous.ID, candidate.ID); err != nil {
+				return "", "", fmt.Errorf("could not restore previous target deployment: %w", err)
+			}
 		}
 		return "restored", previous.ID, nil
 	}
 
-	if !hasCurrent {
+	if !hasCurrent && candidate.Status != state.DeployLive {
 		return "cleared", "", nil
 	}
-	if candidate.ID == "" || current.ID != candidate.ID || candidate.Status != state.DeployLive {
+	if !hasCurrent {
+		for _, deployment := range deployments {
+			if deployment.Scope == promotion.ToEnvironment && deployment.ID != candidate.ID {
+				// Failing the candidate can rebalance traffic onto another
+				// dark revision. Leave an operator's staged release alone.
+				return "", "", fmt.Errorf("%w: target changed after promotion; refusing to clear it", state.ErrConflict)
+			}
+		}
+	}
+	if candidate.ID == "" || hasCurrent && current.ID != candidate.ID || candidate.Status != state.DeployLive {
 		return "", "", fmt.Errorf("%w: target changed after promotion; refusing to clear it", state.ErrConflict)
 	}
 	if err := store.UpdateDeploymentStatus(ctx, candidate.ID, state.DeployFailed, "environment promotion rollback"); err != nil {

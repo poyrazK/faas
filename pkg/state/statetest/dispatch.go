@@ -27,6 +27,7 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"DeleteProjectIfNoStages":                true,
 	"DefaultCustomDomain":                    true,
 	"DefaultCustomDomains":                   true,
 	"DeploymentWorkerDrainStatus":            true,
@@ -289,6 +290,13 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) DeleteProjectIfNoStages(ctx context.Context, accountID, projectID string) error {
+	if o, ok := s.over.(state.CheckedProjectDeleteStore); ok {
+		return o.DeleteProjectIfNoStages(ctx, accountID, projectID)
+	}
+	return s.MemStore.DeleteProjectIfNoStages(ctx, accountID, projectID)
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -1873,6 +1881,7 @@ func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]st
 
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
+	"DeploymentByID":                                                     true,
 	"MigrateInstanceOwnerWithRuntimeConfig":                              true,
 	"ResolveInstanceMigrationCommit":                                     true,
 	"ScenarioWebhookDeliveryBlocked":                                     true,
@@ -2013,6 +2022,15 @@ var pgDispatched = map[string]bool{
 
 	"WithPublicHostPolicySnapshot":  true,
 	"WithInvocationVersionSnapshot": true,
+}
+
+func (s *Pg) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		DeploymentByID(context.Context, string) (state.Deployment, error)
+	}); ok {
+		return o.DeploymentByID(ctx, id)
+	}
+	return s.PgStore.DeploymentByID(ctx, id)
 }
 
 func (s *Pg) AbandonProjectEnvironmentCloneConfigurationFence(p0 context.Context, p1 state.ProjectEnvironmentCloneLease) error {
