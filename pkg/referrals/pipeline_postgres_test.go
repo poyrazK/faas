@@ -26,6 +26,14 @@ func pipelineFixture(t *testing.T) (*pgxpool.Pool, *referrals.PostgresStore, str
 	if _, err = pool.Exec(t.Context(), up); err != nil {
 		t.Fatal(err)
 	}
+	raw, err = migrations.FS.ReadFile("20261103225000000_sales_qualification.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, _, _ = strings.Cut(string(raw), "-- +goose Down")
+	if _, err = pool.Exec(t.Context(), up); err != nil {
+		t.Fatal(err)
+	}
 	return pool, store, owner, other
 }
 func prospect(owner, email string) referrals.ProspectInput {
@@ -205,6 +213,7 @@ func TestSalesPipelineMatchingDoesNotRewriteReferralCredit(t *testing.T) {
 	}
 	matched.OwnerID = other
 	matched.Stage = "won"
+	matched.CloseReason = "product_fit"
 	if _, err = store.SaveProspect(ctx, referrals.Scope{OwnerID: owner, All: true}, owner, matched.ID, matched.ProspectInput); err != nil {
 		t.Fatal(err)
 	}

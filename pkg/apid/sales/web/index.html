@@ -5,7 +5,7 @@
   <meta name="robots" content="noindex,nofollow"><title>{{if .Staff}}Sales workspace{{else}}Your referrals{{end}} · Gregale</title>
   <link rel="stylesheet" href="/dashboard/referral-assets/portal.css">
   <script nonce="{{.Nonce}}" src="/dashboard/referral-assets/portal.js" defer></script>
-  {{if .Staff}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/pipeline.js" defer></script><script nonce="{{.Nonce}}" src="/dashboard/referral-assets/inquiries.js" defer></script><script nonce="{{.Nonce}}" src="/dashboard/referral-assets/activity.js" defer></script>{{end}}
+  {{if .Staff}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/pipeline.js" defer></script><script nonce="{{.Nonce}}" src="/dashboard/referral-assets/inquiries.js" defer></script><script nonce="{{.Nonce}}" src="/dashboard/referral-assets/activity.js" defer></script><script nonce="{{.Nonce}}" src="/dashboard/referral-assets/qualification.js" defer></script>{{end}}
   {{if .Manager}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/reports.js" defer></script>{{end}}
 </head>
 <body data-staff="{{.Staff}}" data-manager="{{.Manager}}">
@@ -15,7 +15,7 @@
     <span class="eyebrow rail-label">{{if .Staff}}SALES WORKSPACE{{else}}REFERRAL PROGRAM{{end}}</span>
     <nav aria-label="Workspace">
       <a href="#overview" class="nav-item active" aria-current="page"><span>◈</span> Overview</a>
-      {{if .Manager}}<a href="#reports" class="nav-item"><span>▥</span> Manager reports</a>{{end}}
+      {{if .Manager}}<a href="#qualification-overview" class="nav-item"><span>◎</span> Qualification</a><a href="#reports" class="nav-item"><span>▥</span> Manager reports</a>{{end}}
       {{if .Staff}}<a href="#attention" class="nav-item"><span>!</span> Needs attention</a><a href="#inquiries" class="nav-item"><span>↘</span> Website inquiries</a><a href="#pipeline" class="nav-item"><span>◇</span> Lead pipeline</a><a href="#tasks" class="nav-item"><span>✓</span> Task inbox <span id="task-nav-count" class="task-nav-count" hidden></span></a>{{end}}
       <a href="#referrals" class="nav-item"><span>↗</span> {{if .Staff}}Customers & referrals{{else}}Your referrals{{end}}</a>
       {{if .Staff}}<a href="#kit" class="nav-item"><span>▤</span> Sales kit</a>{{end}}
@@ -36,6 +36,14 @@
       </div>
     </section>
     {{if .Manager}}
+    <section id="qualification-overview" class="page-section">
+      <div class="section-heading"><div><p class="eyebrow">BETTER QUESTIONS, CLEARER DECISIONS</p><h2>Qualification & outcomes</h2><p class="muted">Find missing context in open leads and see why current deals were won or lost.</p></div><button id="qualification-overview-refresh" class="button secondary">Refresh overview</button></div>
+      <div class="filters"><label>Salesperson<select id="qualification-owner-filter"><option value="">All salespeople</option></select></label></div><p id="qualification-overview-error" class="error" role="alert" hidden></p><div id="qualification-metrics" class="metrics" aria-live="polite"></div>
+      <p id="qualification-missing-summary" class="muted"></p><p id="qualification-overview-status" class="muted" role="status">Loading qualification details…</p>
+      <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Open lead</th><th>Owner</th><th>Details to capture</th><th>Action</th></tr></thead><tbody id="qualification-gap-rows"><tr><td colspan="4" class="empty">Loading open leads…</td></tr></tbody></table></div><div class="table-footer"><span>25 leads per page · newest first</span><div><button id="qualification-gap-first" class="button secondary small" hidden>First page</button><button id="qualification-gap-next" class="button secondary small" disabled>Next page →</button></div></div></div>
+      <h3 class="qualification-reasons-title">Current win/loss reasons</h3><p class="muted">Each currently closed lead counts once, using its latest recorded outcome and current owner. Reopened leads are excluded. These are sales outcomes, separate from payments.</p><p id="qualification-unclassified" class="muted"></p>
+      <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Outcome</th><th>Reason</th><th>Leads</th></tr></thead><tbody id="qualification-reason-rows"><tr><td colspan="3" class="empty">Loading reasons…</td></tr></tbody></table></div></div>
+    </section>
     <section id="reports" class="page-section">
       <div class="section-heading"><div><p class="eyebrow">A CLEAR VIEW OF THE TEAM</p><h2>Sales performance</h2><p class="muted">Compare current lead ownership and original referral credit.</p></div><button id="report-export" class="button secondary" disabled>Export comparison</button></div>
       <form id="report-filters" class="report-controls">
@@ -102,9 +110,17 @@
         <p class="muted">Times use your local time zone. Text limits use UTF-8 bytes. Calls, emails and demos update last contact; notes do not. Entries are kept as recorded; add a correction note when needed.</p><p id="activity-form-error" class="form-error" role="alert"></p><button id="activity-save" type="submit" class="button primary" disabled>Record activity</button>
       </form></div>
   </dialog>
+  <dialog id="qualification-dialog" aria-labelledby="qualification-title"><div class="dialog-heading"><div><p class="eyebrow">UNDERSTAND THE OPPORTUNITY</p><h2 id="qualification-title">Lead qualification</h2></div><button id="qualification-close" type="button" class="text-button" aria-label="Close qualification">✕</button></div><p id="qualification-lead" class="activity-lead"></p><p id="qualification-owner" class="muted"></p><p id="qualification-error" class="error" role="alert" hidden></p><p id="qualification-completeness" class="muted" role="status"></p>
+    <form id="qualification-form"><label>Customer need / use case<textarea id="qualification-use-case" rows="3" maxlength="1000" placeholder="What problem is the customer trying to solve?"></textarea></label><label>Expected workload<textarea id="qualification-workload" rows="3" maxlength="1000" placeholder="Application, runtimes, traffic and resource needs"></textarea></label><label>Decision-maker<input id="qualification-decision-maker" maxlength="200" placeholder="Name or role, when confirmed"></label>
+      <div class="form-pair"><label>Buying timeline<select id="qualification-timeline"><option value="unknown">Not confirmed</option><option value="exploring">Exploring options</option><option value="30_days">Within 30 days</option><option value="90_days">Within 90 days</option><option value="later">Later</option><option value="date">Specific decision date</option></select></label><label id="qualification-date-label" hidden>Decision date<input id="qualification-decision-on" type="date" min="2000-01-01" max="2100-12-31"></label></div>
+      <div class="form-pair"><label>Priority<select id="qualification-priority"><option value="unknown">Not assessed</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Product fit<select id="qualification-fit"><option value="unknown">Not assessed</option><option value="strong">Strong fit</option><option value="partial">Partial fit</option><option value="poor">Poor fit</option></select></label></div>
+      <label>Main blocker<textarea id="qualification-blocker" rows="2" maxlength="1000" placeholder="What is preventing the next step?"></textarea></label><p class="muted">Capture details progressively. Priority and fit are set by the team; no score is inferred. Summaries and blockers allow 1000 UTF-8 bytes each; decision-maker allows 200.</p><div id="qualification-latest" class="qualification-outcome" hidden></div><p id="qualification-form-error" class="form-error" role="alert"></p><div class="dialog-actions"><button id="qualification-save" type="submit" class="button primary" disabled>Save qualification</button><button id="qualification-refresh" type="button" class="text-button">Refresh details</button></div>
+    </form><div id="qualification-outcome" class="qualification-outcome"></div><button id="qualification-edit-lead" type="button" class="button secondary" disabled>Update lead stage</button>
+  </dialog>
   <dialog id="prospect-dialog" aria-labelledby="prospect-dialog-title"><form id="prospect-form"><div class="dialog-heading"><h2 id="prospect-dialog-title">Add lead</h2><button type="button" id="prospect-close" class="text-button" aria-label="Close lead">✕</button></div>
     <label>Name<input id="prospect-name" required maxlength="120" autocomplete="name"></label><label>Email<input id="prospect-email" required type="email" maxlength="254" autocomplete="email"></label><label>Company<input id="prospect-company" maxlength="200" autocomplete="organization"></label>
     <div class="form-pair"><label>Stage<select id="prospect-edit-stage"></select></label><label>Assigned salesperson<select id="prospect-edit-owner" required></select></label></div>
+    <label id="prospect-update-reason-label" hidden><input id="prospect-update-reason" type="checkbox"> Record or update the closing reason</label><div id="prospect-outcome-fields" hidden><label>Closing reason<select id="prospect-outcome-reason"><option value="">Choose a reason</option></select></label><label>Closing details<textarea id="prospect-outcome-note" rows="2" maxlength="1000" placeholder="Explain the decision; required for Other"></textarea></label></div>
     <label>Notes<textarea id="prospect-note" rows="3" maxlength="2000"></textarea></label><p class="muted">Reassignment moves this lead and its tasks. Historical referral credit stays with the original referrer. Won/lost stages do not change invoices or rewards.</p>
     <p id="prospect-form-error" role="alert" class="form-error"></p><div class="dialog-actions"><button id="prospect-save" type="submit" class="button primary">Save lead</button><button id="prospect-delete" type="button" class="text-button" hidden>Delete lead</button></div>
   </form></dialog>

@@ -319,3 +319,49 @@ Visible pages refresh alerts every minute, and dates follow the same local
 calendar as the task inbox. Alerts are computed in the portal and send no email,
 calendar event or external notification. These staff-entered records do not
 establish referral attribution, account access, rewards or commission.
+
+## Lead qualification and closing reasons
+
+Apply `20261103225000000_sales_qualification.sql` before deploying the new apid.
+The embedded sales portal ships in the same binary; no `faas-web` release or new
+flag is required. Existing sales access, email verification, session MFA and
+origin checks apply. Drain the old apid writer when rolling out mandatory closing
+reasons: older binaries do not enforce this rule. Older tabs must refresh if a
+close request is rejected for lacking a reason.
+
+Use **Qualify** in the lead pipeline, or **Qualify lead** in the manager's
+**Qualification** overview. Capture customer need/use case, expected workload,
+decision-maker and buying timeline progressively. Timeline choices include
+unknown, exploring, 30 days, 90 days, later and a specific date; only the last
+option takes a decision date. Use case, workload and blocker allow 1000 UTF-8
+bytes each; decision-maker allows 200. Priority and product fit are assessed
+manually. Saving does not change stage or reset stalled-lead age.
+
+The dialog shows how many of the four basic fields are captured. This measures
+recorded context, not verified buying authority or a qualification score. On a
+conflict, the draft remains, current saved values appear for comparison, and
+**Save draft over latest** explicitly replaces them. **Refresh details** restores
+the saved version. Qualification follows the lead when ownership changes.
+
+Use **Edit lead** or **Update lead stage** to close a deal. A new won/lost lead or
+transition into won/lost requires a reason, with details required for **Other**.
+Won reasons cover product fit, capabilities, value, pilot/demo experience,
+trusted introduction and other. Lost reasons cover capability gaps, budget,
+timing, competitor, no response, no current need and other. Closing details allow
+1000 UTF-8 bytes. Stage changes and reasons commit together; stale versions or
+failed writes cannot leave half a closure. Reopening and closing again requires
+a new reason. To classify an existing closed lead or correct its reason, select
+**Record or update the closing reason**. Corrections preserve earlier records.
+
+Managers can filter the overview by current salesperson. Open-lead gap counts
+and the paginated list cover the four basic fields. Current win/loss reasons
+count each presently closed lead once using its latest matching reason and
+current owner; reopened leads are excluded. Old closed leads without recorded
+reasons remain explicitly unclassified. These are current-state summaries;
+use the existing manager reports for date cohorts and payment signals.
+
+Deleting a lead removes its qualification and outcome records while retaining
+independent referral records. A salesperson's won/lost assessment does not create
+an invoice, payment, referral conversion, reward or commission. Payouts remain
+disabled. Qualification and closing notes stay inside the existing restricted
+staff data and backup controls, outside application clones.

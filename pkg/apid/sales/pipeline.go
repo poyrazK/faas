@@ -46,7 +46,7 @@ func (s *Service) Team(w http.ResponseWriter, r *http.Request, acct state.Accoun
 		pipelineError(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"actor_id": acct.ID, "manager": scope.All, "members": team, "stages": referrals.ProspectStages(), "refresh_seconds": api.SalesTaskRefreshSeconds})
+	writeJSON(w, map[string]any{"actor_id": acct.ID, "manager": scope.All, "members": team, "stages": referrals.ProspectStages(), "close_reasons": referrals.OutcomeReasons(), "refresh_seconds": api.SalesTaskRefreshSeconds})
 }
 func validID(id string) bool {
 	v, err := uuid.Parse(id)
@@ -108,11 +108,22 @@ func normalizeProspect(in *referrals.ProspectInput) {
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 	in.Company = strings.TrimSpace(in.Company)
 	in.Note = strings.TrimSpace(in.Note)
+	in.CloseReason = strings.TrimSpace(in.CloseReason)
+	in.CloseNote = strings.TrimSpace(in.CloseNote)
 }
 func validProspect(in referrals.ProspectInput) bool {
 	parsed, err := mail.ParseAddress(in.Email)
 	return err == nil && parsed.Address == in.Email && len(in.Email) <= api.SalesEmailMaxBytes && validID(in.OwnerID) && validStage(in.Stage) &&
-		boundedText(in.Name, api.SalesNameMaxBytes, false) && boundedText(in.Company, api.SalesFieldMaxBytes, true) && boundedText(in.Note, api.ReferralNoteMaxBytes, true)
+		boundedText(in.Name, api.SalesNameMaxBytes, false) && boundedText(in.Company, api.SalesFieldMaxBytes, true) && boundedText(in.Note, api.ReferralNoteMaxBytes, true) && validClosingFields(in)
+}
+func validClosingFields(in referrals.ProspectInput) bool {
+	if !boundedText(in.CloseNote, api.SalesOutcomeNoteMaxBytes, true) {
+		return false
+	}
+	if in.CloseReason == "" {
+		return in.CloseNote == ""
+	}
+	return referrals.ValidOutcomeReason(in.Stage, in.CloseReason) && (in.CloseReason != "other" || in.CloseNote != "")
 }
 func boundedText(value string, max int, empty bool) bool {
 	return utf8.ValidString(value) && !strings.ContainsRune(value, 0) && len(value) <= max && (empty || value != "")
@@ -159,8 +170,8 @@ func (s *Service) SaveProspect(w http.ResponseWriter, r *http.Request, acct stat
 			in.Stage = "new"
 		}
 	}
-	if !validVersion(id, in.Version) || !validProspect(in) {
-		invalid(w, "Provide a name, valid email, owner, stage and current version; keep notes within 2000 bytes.")
+	if !validVersion(id, in.Version) || !validProspect(in) || (id == "" && referrals.ClosedStage(in.Stage) && in.CloseReason == "") {
+		invalid(w, "Provide a name, valid email, owner, stage and current version; notes allow 2000 bytes. New won/lost leads need a valid closing reason; explain Other within 1000 bytes.")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.ReferralReadTimeout)
@@ -211,6 +222,8 @@ func pipelineAudience(kind string, scope referrals.Scope, filters ...string) str
 }
 func pipelineError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, referrals.ErrOutcomeRequired), errors.Is(err, referrals.ErrInvalidOutcome):
+		api.WriteProblem(w, api.NewProblem(400, "sales_outcome_required", "Closing reason required", "Choose a reason for won/lost and explain Other. Refresh the lead if its stage changed."))
 	case errors.Is(err, referrals.ErrDuplicateLead):
 		api.WriteProblem(w, api.NewProblem(409, "sales_lead_exists", "Lead already exists", "This salesperson already has a lead with that email. Search for the existing lead."))
 	case errors.Is(err, referrals.ErrConflict):

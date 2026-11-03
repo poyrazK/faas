@@ -15,13 +15,15 @@ type Rep struct {
 	Email string `json:"email"`
 }
 type ProspectInput struct {
-	Name    string `json:"name"`
-	Email   string `json:"email"`
-	Company string `json:"company"`
-	Stage   string `json:"stage"`
-	Note    string `json:"note"`
-	OwnerID string `json:"owner_id"`
-	Version int64  `json:"version"`
+	CloseReason string `json:"close_reason,omitempty"`
+	CloseNote   string `json:"close_note,omitempty"`
+	Name        string `json:"name"`
+	Email       string `json:"email"`
+	Company     string `json:"company"`
+	Stage       string `json:"stage"`
+	Note        string `json:"note"`
+	OwnerID     string `json:"owner_id"`
+	Version     int64  `json:"version"`
 }
 type Prospect struct {
 	ProspectInput

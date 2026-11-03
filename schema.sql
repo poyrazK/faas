@@ -55274,6 +55274,61 @@ CREATE TABLE public.sales_leads (
 
 
 --
+-- Name: sales_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_outcomes (
+    id uuid NOT NULL,
+    lead_id uuid NOT NULL,
+    lead_version bigint NOT NULL,
+    stage text NOT NULL,
+    reason text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    actor_id uuid,
+    owner_id uuid,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_outcomes_check CHECK ((((stage = 'won'::text) AND (reason = ANY (ARRAY['product_fit'::text, 'capabilities'::text, 'value'::text, 'experience'::text, 'referral'::text, 'other'::text]))) OR ((stage = 'lost'::text) AND (reason = ANY (ARRAY['product_gap'::text, 'budget'::text, 'timing'::text, 'competitor'::text, 'no_response'::text, 'no_need'::text, 'other'::text]))))),
+    CONSTRAINT sales_outcomes_check1 CHECK (((reason <> 'other'::text) OR (btrim(note) <> ''::text))),
+    CONSTRAINT sales_outcomes_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_outcomes_lead_version_check CHECK ((lead_version > 0)),
+    CONSTRAINT sales_outcomes_note_check CHECK ((octet_length(note) <= 1000)),
+    CONSTRAINT sales_outcomes_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT sales_outcomes_stage_check CHECK ((stage = ANY (ARRAY['won'::text, 'lost'::text])))
+);
+
+
+--
+-- Name: sales_qualifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_qualifications (
+    lead_id uuid NOT NULL,
+    use_case text DEFAULT ''::text NOT NULL,
+    workload text DEFAULT ''::text NOT NULL,
+    decision_maker text DEFAULT ''::text NOT NULL,
+    buying_timeline text DEFAULT 'unknown'::text NOT NULL,
+    decision_on date,
+    priority text DEFAULT 'unknown'::text NOT NULL,
+    product_fit text DEFAULT 'unknown'::text NOT NULL,
+    blocker text DEFAULT ''::text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    updated_by uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_qualifications_blocker_check CHECK ((octet_length(blocker) <= 1000)),
+    CONSTRAINT sales_qualifications_buying_timeline_check CHECK ((buying_timeline = ANY (ARRAY['unknown'::text, 'exploring'::text, '30_days'::text, '90_days'::text, 'later'::text, 'date'::text]))),
+    CONSTRAINT sales_qualifications_check CHECK (((buying_timeline = 'date'::text) = (decision_on IS NOT NULL))),
+    CONSTRAINT sales_qualifications_decision_maker_check CHECK ((octet_length(decision_maker) <= 200)),
+    CONSTRAINT sales_qualifications_decision_on_check CHECK (((decision_on IS NULL) OR (isfinite(decision_on) AND ((decision_on >= '2000-01-01'::date) AND (decision_on <= '2100-12-31'::date))))),
+    CONSTRAINT sales_qualifications_priority_check CHECK ((priority = ANY (ARRAY['unknown'::text, 'low'::text, 'medium'::text, 'high'::text]))),
+    CONSTRAINT sales_qualifications_product_fit_check CHECK ((product_fit = ANY (ARRAY['unknown'::text, 'strong'::text, 'partial'::text, 'poor'::text]))),
+    CONSTRAINT sales_qualifications_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_qualifications_use_case_check CHECK ((octet_length(use_case) <= 1000)),
+    CONSTRAINT sales_qualifications_version_check CHECK ((version > 0)),
+    CONSTRAINT sales_qualifications_workload_check CHECK ((octet_length(workload) <= 1000))
+);
+
+
+--
 -- Name: sales_referral_overview; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -69264,6 +69319,30 @@ ALTER TABLE ONLY public.sales_leads
 
 
 --
+-- Name: sales_outcomes sales_outcomes_lead_id_lead_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_lead_id_lead_version_key UNIQUE (lead_id, lead_version);
+
+
+--
+-- Name: sales_outcomes sales_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_qualifications sales_qualifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_qualifications
+    ADD CONSTRAINT sales_qualifications_pkey PRIMARY KEY (lead_id);
+
+
+--
 -- Name: sales_tasks sales_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79731,6 +79810,13 @@ CREATE INDEX sales_intake_receipts_expiry ON public.sales_intake_receipts USING 
 --
 
 CREATE INDEX sales_leads_owner_page ON public.sales_leads USING btree (owner_id, id);
+
+
+--
+-- Name: sales_outcomes_latest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_outcomes_latest ON public.sales_outcomes USING btree (lead_id, lead_version DESC);
 
 
 --
@@ -102509,6 +102595,46 @@ ALTER TABLE ONLY public.sales_leads
 
 ALTER TABLE ONLY public.sales_leads
     ADD CONSTRAINT sales_leads_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_outcomes sales_outcomes_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_outcomes sales_outcomes_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.sales_leads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_outcomes sales_outcomes_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_qualifications sales_qualifications_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_qualifications
+    ADD CONSTRAINT sales_qualifications_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.sales_leads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_qualifications sales_qualifications_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_qualifications
+    ADD CONSTRAINT sales_qualifications_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

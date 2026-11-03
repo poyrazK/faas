@@ -285,3 +285,73 @@ SELECT count(*) FILTER(WHERE stale OR overdue_tasks>0)::bigint AS leads,
  count(*) FILTER(WHERE stale)::bigint AS stale,
  count(*) FILTER(WHERE overdue_tasks>0)::bigint AS overdue_leads,
  COALESCE(sum(overdue_tasks),0)::bigint AS overdue_tasks FROM attention;
+
+-- name: LockProspectOutcome :one
+SELECT id,stage,version FROM sales_leads
+WHERE id=sqlc.arg(lead_id) AND (owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean) FOR UPDATE;
+-- name: InsertSalesOutcome :exec
+INSERT INTO sales_outcomes(id,lead_id,lead_version,stage,reason,note,actor_id,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8);
+-- name: GetQualification :one
+SELECT * FROM sales_qualifications WHERE lead_id=$1;
+-- name: LatestSalesOutcome :one
+SELECT * FROM sales_outcomes WHERE lead_id=$1 ORDER BY lead_version DESC LIMIT 1;
+-- name: InsertQualification :exec
+INSERT INTO sales_qualifications(lead_id,use_case,workload,decision_maker,buying_timeline,decision_on,priority,product_fit,blocker,updated_by)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
+-- name: UpdateQualification :execrows
+UPDATE sales_qualifications SET use_case=$2,workload=$3,decision_maker=$4,buying_timeline=$5,decision_on=$6,priority=$7,product_fit=$8,blocker=$9,updated_by=$10,updated_at=now(),version=version+1
+WHERE lead_id=$1 AND version=$11;
+
+-- name: QualificationGaps :many
+WITH pipeline AS (
+ SELECT l.*,a.email AS owner_email,COALESCE(q.use_case,'')::text AS use_case,COALESCE(q.workload,'')::text AS workload,
+ COALESCE(q.decision_maker,'')::text AS decision_maker,COALESCE(q.buying_timeline,'unknown')::text AS buying_timeline,
+ (CASE WHEN COALESCE(q.use_case,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.workload,'')<>'' THEN 1 ELSE 0 END+
+ CASE WHEN COALESCE(q.decision_maker,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.buying_timeline,'unknown')<>'unknown' THEN 1 ELSE 0 END)::integer AS captured,
+ o.reason AS close_reason,o.stage AS close_stage
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id LEFT JOIN sales_qualifications q ON q.lead_id=l.id
+ LEFT JOIN LATERAL (SELECT stage,reason FROM sales_outcomes WHERE lead_id=l.id ORDER BY lead_version DESC LIMIT 1) o ON true
+ WHERE (sqlc.arg(all_owners)::boolean OR l.owner_id=sqlc.arg(actor_id)::uuid)
+ AND (sqlc.arg(owner_filter)::text='' OR l.owner_id::text=sqlc.arg(owner_filter)::text)
+)
+SELECT id,name,email,stage,owner_id,owner_email,captured,use_case,workload,decision_maker,buying_timeline FROM pipeline
+WHERE stage IN ('new','contacted','qualified','demo') AND captured<4
+ AND (sqlc.arg(after_id)::uuid='00000000-0000-0000-0000-000000000000' OR id<sqlc.arg(after_id)::uuid)
+ORDER BY id DESC LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: QualificationCounts :one
+WITH pipeline AS (
+ SELECT l.*,a.email AS owner_email,COALESCE(q.use_case,'')::text AS use_case,COALESCE(q.workload,'')::text AS workload,
+ COALESCE(q.decision_maker,'')::text AS decision_maker,COALESCE(q.buying_timeline,'unknown')::text AS buying_timeline,
+ (CASE WHEN COALESCE(q.use_case,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.workload,'')<>'' THEN 1 ELSE 0 END+
+ CASE WHEN COALESCE(q.decision_maker,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.buying_timeline,'unknown')<>'unknown' THEN 1 ELSE 0 END)::integer AS captured,
+ o.reason AS close_reason,o.stage AS close_stage
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id LEFT JOIN sales_qualifications q ON q.lead_id=l.id
+ LEFT JOIN LATERAL (SELECT stage,reason FROM sales_outcomes WHERE lead_id=l.id ORDER BY lead_version DESC LIMIT 1) o ON true
+ WHERE (sqlc.arg(all_owners)::boolean OR l.owner_id=sqlc.arg(actor_id)::uuid)
+ AND (sqlc.arg(owner_filter)::text='' OR l.owner_id::text=sqlc.arg(owner_filter)::text)
+)
+SELECT count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo'))::bigint AS open,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND captured=4)::bigint AS complete,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND use_case='')::bigint AS missing_use_case,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND workload='')::bigint AS missing_workload,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND decision_maker='')::bigint AS missing_decision_maker,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND buying_timeline='unknown')::bigint AS missing_timeline,
+ count(*) FILTER(WHERE stage='won' AND (close_reason IS NULL OR close_stage<>stage))::bigint AS unclassified_won,
+ count(*) FILTER(WHERE stage='lost' AND (close_reason IS NULL OR close_stage<>stage))::bigint AS unclassified_lost FROM pipeline;
+
+-- name: QualificationOutcomeCounts :many
+WITH pipeline AS (
+ SELECT l.*,a.email AS owner_email,COALESCE(q.use_case,'')::text AS use_case,COALESCE(q.workload,'')::text AS workload,
+ COALESCE(q.decision_maker,'')::text AS decision_maker,COALESCE(q.buying_timeline,'unknown')::text AS buying_timeline,
+ (CASE WHEN COALESCE(q.use_case,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.workload,'')<>'' THEN 1 ELSE 0 END+
+ CASE WHEN COALESCE(q.decision_maker,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.buying_timeline,'unknown')<>'unknown' THEN 1 ELSE 0 END)::integer AS captured,
+ o.reason AS close_reason,o.stage AS close_stage
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id LEFT JOIN sales_qualifications q ON q.lead_id=l.id
+ LEFT JOIN LATERAL (SELECT stage,reason FROM sales_outcomes WHERE lead_id=l.id ORDER BY lead_version DESC LIMIT 1) o ON true
+ WHERE (sqlc.arg(all_owners)::boolean OR l.owner_id=sqlc.arg(actor_id)::uuid)
+ AND (sqlc.arg(owner_filter)::text='' OR l.owner_id::text=sqlc.arg(owner_filter)::text)
+)
+SELECT stage,close_reason::text AS reason,count(*)::bigint AS count FROM pipeline
+WHERE stage IN ('won','lost') AND close_stage=stage AND close_reason IS NOT NULL
+GROUP BY stage,close_reason ORDER BY stage,count(*) DESC,close_reason;

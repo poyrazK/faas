@@ -120,6 +120,10 @@ var previewFields = map[string]map[string]bool{
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"GET /v1/sales/qualification":              true, // private qualification and closing analysis
+	"GET /v1/sales/leads/{lead}/qualification": true,
+	"PUT /v1/sales/leads/{lead}/qualification": true,
+
 	"GET /v1/sales/alerts":                   true, // private sales attention and history
 	"GET /v1/sales/leads/{lead}/activities":  true,
 	"POST /v1/sales/leads/{lead}/activities": true,

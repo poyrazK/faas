@@ -48,6 +48,10 @@ const (
 // intentionally absent from OpenAPI also belong in
 // scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 var routeExclude = map[string]bool{
+	"GET /v1/sales/qualification":              true, // private qualification and closing analysis
+	"GET /v1/sales/leads/{lead}/qualification": true,
+	"PUT /v1/sales/leads/{lead}/qualification": true,
+
 	"GET /v1/sales/alerts":                   true, // private sales attention and history
 	"GET /v1/sales/leads/{lead}/activities":  true,
 	"POST /v1/sales/leads/{lead}/activities": true,

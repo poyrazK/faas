@@ -17072,3 +17072,9 @@ const (
 	SalesStaleDefaultDays        = 14
 	SalesStaleMaxDays            = 365
 )
+
+// Staff qualification text and closing rationale.
+const (
+	SalesQualificationTextMaxBytes = 1000
+	SalesOutcomeNoteMaxBytes       = 1000
+)

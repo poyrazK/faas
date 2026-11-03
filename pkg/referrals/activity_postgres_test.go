@@ -242,6 +242,7 @@ func TestSalesAttentionUsesContactTimeAndTaskState(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.Stage = "won"
+	p.CloseReason = "product_fit"
 	if _, err = s.SaveProspect(ctx, manager, owner, lead, p.ProspectInput); err != nil {
 		t.Fatal(err)
 	}

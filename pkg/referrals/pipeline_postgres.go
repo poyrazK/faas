@@ -77,11 +77,60 @@ func (s *PostgresStore) SaveProspect(ctx context.Context, scope Scope, actor, id
 	if actor != scope.OwnerID {
 		return "", ErrNotFound
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	previous := ""
+	version := int64(1)
+	if id != "" {
+		current, e := s.q.LockProspectOutcome(ctx, tx, sqlc.LockProspectOutcomeParams{LeadID: pgID(id), ActorID: pgID(actor), AllOwners: scope.All})
+		if errors.Is(e, pgx.ErrNoRows) {
+			return "", ErrConflict
+		}
+		if e != nil {
+			return "", e
+		}
+		if current.Version != in.Version {
+			return "", ErrConflict
+		}
+		previous = current.Stage
+		version = current.Version + 1
+	}
+	if err = validateClosing(previous, in); err != nil {
+		return "", err
+	}
+	saved, err := s.saveProspectRow(ctx, tx, scope, actor, id, in)
+	if err != nil {
+		return "", err
+	}
+	if in.CloseReason != "" {
+		err = s.q.InsertSalesOutcome(ctx, tx, sqlc.InsertSalesOutcomeParams{ID: pgID(uuid.Must(uuid.NewV7()).String()), LeadID: pgID(saved), LeadVersion: version, Stage: in.Stage, Reason: in.CloseReason, Note: in.CloseNote, ActorID: pgID(actor), OwnerID: pgID(in.OwnerID)})
+		if err != nil {
+			return "", fmt.Errorf("record closing reason: %w", err)
+		}
+	}
+	return saved, tx.Commit(ctx)
+}
+func validateClosing(previous string, in ProspectInput) error {
+	if in.CloseReason != "" && (!ValidOutcomeReason(in.Stage, in.CloseReason) || (in.CloseReason == "other" && in.CloseNote == "")) {
+		return ErrInvalidOutcome
+	}
+	if in.CloseReason == "" && in.CloseNote != "" {
+		return ErrInvalidOutcome
+	}
+	if ClosedStage(in.Stage) && previous != in.Stage && in.CloseReason == "" {
+		return ErrOutcomeRequired
+	}
+	return nil
+}
+func (s *PostgresStore) saveProspectRow(ctx context.Context, tx pgx.Tx, scope Scope, actor, id string, in ProspectInput) (string, error) {
 	if id == "" {
-		result, err := s.q.CreateProspect(ctx, s.pool, sqlc.CreateProspectParams{AllOwners: scope.All, ID: pgID(uuid.Must(uuid.NewV7()).String()), OwnerID: pgID(in.OwnerID), Name: in.Name, Email: in.Email, Company: in.Company, Stage: in.Stage, Note: in.Note, ActorID: pgID(actor)})
+		result, err := s.q.CreateProspect(ctx, tx, sqlc.CreateProspectParams{AllOwners: scope.All, ID: pgID(uuid.Must(uuid.NewV7()).String()), OwnerID: pgID(in.OwnerID), Name: in.Name, Email: in.Email, Company: in.Company, Stage: in.Stage, Note: in.Note, ActorID: pgID(actor)})
 		return pipelineResult(result, err, false)
 	}
-	result, err := s.q.UpdateProspect(ctx, s.pool, sqlc.UpdateProspectParams{ID: pgID(id), OwnerID: pgID(in.OwnerID), Name: in.Name, Email: in.Email, Company: in.Company, Stage: in.Stage, Note: in.Note, ActorID: pgID(actor), AllOwners: scope.All, Version: in.Version})
+	result, err := s.q.UpdateProspect(ctx, tx, sqlc.UpdateProspectParams{ID: pgID(id), OwnerID: pgID(in.OwnerID), Name: in.Name, Email: in.Email, Company: in.Company, Stage: in.Stage, Note: in.Note, ActorID: pgID(actor), AllOwners: scope.All, Version: in.Version})
 	return pipelineResult(result, err, true)
 }
 

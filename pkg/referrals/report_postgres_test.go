@@ -40,6 +40,7 @@ func TestManagerReportCountsCollectionsAndCredit(t *testing.T) {
 	}
 	won := prospect(owner, "won@example.com")
 	won.Stage = "won"
+	won.CloseReason = "product_fit"
 	wonID, err := store.SaveProspect(ctx, scope, owner, "", won)
 	if err != nil {
 		t.Fatal(err)

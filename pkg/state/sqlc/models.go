@@ -14567,6 +14567,33 @@ type SalesLead struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type SalesOutcome struct {
+	ID          pgtype.UUID
+	LeadID      pgtype.UUID
+	LeadVersion int64
+	Stage       string
+	Reason      string
+	Note        string
+	ActorID     pgtype.UUID
+	OwnerID     pgtype.UUID
+	RecordedAt  pgtype.Timestamptz
+}
+
+type SalesQualification struct {
+	LeadID         pgtype.UUID
+	UseCase        string
+	Workload       string
+	DecisionMaker  string
+	BuyingTimeline string
+	DecisionOn     pgtype.Date
+	Priority       string
+	ProductFit     string
+	Blocker        string
+	Version        int64
+	UpdatedBy      pgtype.UUID
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type SalesReferralOverview struct {
 	AccountID           pgtype.UUID
 	OwnerID             pgtype.UUID

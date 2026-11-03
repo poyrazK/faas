@@ -397,6 +397,64 @@ func (q *Queries) GetLink(ctx context.Context, db DBTX, shareCode pgtype.Text) (
 	return i, err
 }
 
+const getQualification = `-- name: GetQualification :one
+SELECT lead_id, use_case, workload, decision_maker, buying_timeline, decision_on, priority, product_fit, blocker, version, updated_by, updated_at FROM sales_qualifications WHERE lead_id=$1
+`
+
+func (q *Queries) GetQualification(ctx context.Context, db DBTX, leadID pgtype.UUID) (SalesQualification, error) {
+	row := db.QueryRow(ctx, getQualification, leadID)
+	var i SalesQualification
+	err := row.Scan(
+		&i.LeadID,
+		&i.UseCase,
+		&i.Workload,
+		&i.DecisionMaker,
+		&i.BuyingTimeline,
+		&i.DecisionOn,
+		&i.Priority,
+		&i.ProductFit,
+		&i.Blocker,
+		&i.Version,
+		&i.UpdatedBy,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertQualification = `-- name: InsertQualification :exec
+INSERT INTO sales_qualifications(lead_id,use_case,workload,decision_maker,buying_timeline,decision_on,priority,product_fit,blocker,updated_by)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+`
+
+type InsertQualificationParams struct {
+	LeadID         pgtype.UUID
+	UseCase        string
+	Workload       string
+	DecisionMaker  string
+	BuyingTimeline string
+	DecisionOn     pgtype.Date
+	Priority       string
+	ProductFit     string
+	Blocker        string
+	UpdatedBy      pgtype.UUID
+}
+
+func (q *Queries) InsertQualification(ctx context.Context, db DBTX, arg InsertQualificationParams) error {
+	_, err := db.Exec(ctx, insertQualification,
+		arg.LeadID,
+		arg.UseCase,
+		arg.Workload,
+		arg.DecisionMaker,
+		arg.BuyingTimeline,
+		arg.DecisionOn,
+		arg.Priority,
+		arg.ProductFit,
+		arg.Blocker,
+		arg.UpdatedBy,
+	)
+	return err
+}
+
 const insertSalesActivity = `-- name: InsertSalesActivity :exec
 INSERT INTO sales_activities(id,lead_id,actor_id,kind,summary,outcome,next_step,occurred_at,follow_up_title,follow_up_on,task_id)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -469,6 +527,35 @@ func (q *Queries) InsertSalesInquiry(ctx context.Context, db DBTX, arg InsertSal
 	return err
 }
 
+const insertSalesOutcome = `-- name: InsertSalesOutcome :exec
+INSERT INTO sales_outcomes(id,lead_id,lead_version,stage,reason,note,actor_id,owner_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+`
+
+type InsertSalesOutcomeParams struct {
+	ID          pgtype.UUID
+	LeadID      pgtype.UUID
+	LeadVersion int64
+	Stage       string
+	Reason      string
+	Note        string
+	ActorID     pgtype.UUID
+	OwnerID     pgtype.UUID
+}
+
+func (q *Queries) InsertSalesOutcome(ctx context.Context, db DBTX, arg InsertSalesOutcomeParams) error {
+	_, err := db.Exec(ctx, insertSalesOutcome,
+		arg.ID,
+		arg.LeadID,
+		arg.LeadVersion,
+		arg.Stage,
+		arg.Reason,
+		arg.Note,
+		arg.ActorID,
+		arg.OwnerID,
+	)
+	return err
+}
+
 const intakeLead = `-- name: IntakeLead :one
 SELECT id,owner_id,email FROM sales_leads WHERE id=$1 FOR UPDATE
 `
@@ -495,6 +582,27 @@ func (q *Queries) IntakeTaskOpen(ctx context.Context, db DBTX, id pgtype.UUID) (
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const latestSalesOutcome = `-- name: LatestSalesOutcome :one
+SELECT id, lead_id, lead_version, stage, reason, note, actor_id, owner_id, recorded_at FROM sales_outcomes WHERE lead_id=$1 ORDER BY lead_version DESC LIMIT 1
+`
+
+func (q *Queries) LatestSalesOutcome(ctx context.Context, db DBTX, leadID pgtype.UUID) (SalesOutcome, error) {
+	row := db.QueryRow(ctx, latestSalesOutcome, leadID)
+	var i SalesOutcome
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.LeadVersion,
+		&i.Stage,
+		&i.Reason,
+		&i.Note,
+		&i.ActorID,
+		&i.OwnerID,
+		&i.RecordedAt,
+	)
+	return i, err
 }
 
 const leadAlertCounts = `-- name: LeadAlertCounts :one
@@ -1048,6 +1156,30 @@ func (q *Queries) LockActivityLead(ctx context.Context, db DBTX, arg LockActivit
 	return i, err
 }
 
+const lockProspectOutcome = `-- name: LockProspectOutcome :one
+SELECT id,stage,version FROM sales_leads
+WHERE id=$1 AND (owner_id=$2::uuid OR $3::boolean) FOR UPDATE
+`
+
+type LockProspectOutcomeParams struct {
+	LeadID    pgtype.UUID
+	ActorID   pgtype.UUID
+	AllOwners bool
+}
+
+type LockProspectOutcomeRow struct {
+	ID      pgtype.UUID
+	Stage   string
+	Version int64
+}
+
+func (q *Queries) LockProspectOutcome(ctx context.Context, db DBTX, arg LockProspectOutcomeParams) (LockProspectOutcomeRow, error) {
+	row := db.QueryRow(ctx, lockProspectOutcome, arg.LeadID, arg.ActorID, arg.AllOwners)
+	var i LockProspectOutcomeRow
+	err := row.Scan(&i.ID, &i.Stage, &i.Version)
+	return i, err
+}
+
 const lockSalesIntake = `-- name: LockSalesIntake :one
 INSERT INTO sales_intake_routing(id) VALUES(1)
 ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING last_owner_id
@@ -1135,6 +1267,188 @@ DELETE FROM sales_intake_receipts WHERE nonce IN (SELECT nonce FROM sales_intake
 func (q *Queries) PurgeIntakeReceipts(ctx context.Context, db DBTX, purgeLimit int32) error {
 	_, err := db.Exec(ctx, purgeIntakeReceipts, purgeLimit)
 	return err
+}
+
+const qualificationCounts = `-- name: QualificationCounts :one
+WITH pipeline AS (
+ SELECT l.id, l.owner_id, l.name, l.email, l.company, l.stage, l.note, l.version, l.created_by, l.updated_by, l.created_at, l.updated_at,a.email AS owner_email,COALESCE(q.use_case,'')::text AS use_case,COALESCE(q.workload,'')::text AS workload,
+ COALESCE(q.decision_maker,'')::text AS decision_maker,COALESCE(q.buying_timeline,'unknown')::text AS buying_timeline,
+ (CASE WHEN COALESCE(q.use_case,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.workload,'')<>'' THEN 1 ELSE 0 END+
+ CASE WHEN COALESCE(q.decision_maker,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.buying_timeline,'unknown')<>'unknown' THEN 1 ELSE 0 END)::integer AS captured,
+ o.reason AS close_reason,o.stage AS close_stage
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id LEFT JOIN sales_qualifications q ON q.lead_id=l.id
+ LEFT JOIN LATERAL (SELECT stage,reason FROM sales_outcomes WHERE lead_id=l.id ORDER BY lead_version DESC LIMIT 1) o ON true
+ WHERE ($1::boolean OR l.owner_id=$2::uuid)
+ AND ($3::text='' OR l.owner_id::text=$3::text)
+)
+SELECT count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo'))::bigint AS open,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND captured=4)::bigint AS complete,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND use_case='')::bigint AS missing_use_case,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND workload='')::bigint AS missing_workload,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND decision_maker='')::bigint AS missing_decision_maker,
+ count(*) FILTER(WHERE stage IN ('new','contacted','qualified','demo') AND buying_timeline='unknown')::bigint AS missing_timeline,
+ count(*) FILTER(WHERE stage='won' AND (close_reason IS NULL OR close_stage<>stage))::bigint AS unclassified_won,
+ count(*) FILTER(WHERE stage='lost' AND (close_reason IS NULL OR close_stage<>stage))::bigint AS unclassified_lost FROM pipeline
+`
+
+type QualificationCountsParams struct {
+	AllOwners   bool
+	ActorID     pgtype.UUID
+	OwnerFilter string
+}
+
+type QualificationCountsRow struct {
+	Open                 int64
+	Complete             int64
+	MissingUseCase       int64
+	MissingWorkload      int64
+	MissingDecisionMaker int64
+	MissingTimeline      int64
+	UnclassifiedWon      int64
+	UnclassifiedLost     int64
+}
+
+func (q *Queries) QualificationCounts(ctx context.Context, db DBTX, arg QualificationCountsParams) (QualificationCountsRow, error) {
+	row := db.QueryRow(ctx, qualificationCounts, arg.AllOwners, arg.ActorID, arg.OwnerFilter)
+	var i QualificationCountsRow
+	err := row.Scan(
+		&i.Open,
+		&i.Complete,
+		&i.MissingUseCase,
+		&i.MissingWorkload,
+		&i.MissingDecisionMaker,
+		&i.MissingTimeline,
+		&i.UnclassifiedWon,
+		&i.UnclassifiedLost,
+	)
+	return i, err
+}
+
+const qualificationGaps = `-- name: QualificationGaps :many
+WITH pipeline AS (
+ SELECT l.id, l.owner_id, l.name, l.email, l.company, l.stage, l.note, l.version, l.created_by, l.updated_by, l.created_at, l.updated_at,a.email AS owner_email,COALESCE(q.use_case,'')::text AS use_case,COALESCE(q.workload,'')::text AS workload,
+ COALESCE(q.decision_maker,'')::text AS decision_maker,COALESCE(q.buying_timeline,'unknown')::text AS buying_timeline,
+ (CASE WHEN COALESCE(q.use_case,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.workload,'')<>'' THEN 1 ELSE 0 END+
+ CASE WHEN COALESCE(q.decision_maker,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.buying_timeline,'unknown')<>'unknown' THEN 1 ELSE 0 END)::integer AS captured,
+ o.reason AS close_reason,o.stage AS close_stage
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id LEFT JOIN sales_qualifications q ON q.lead_id=l.id
+ LEFT JOIN LATERAL (SELECT stage,reason FROM sales_outcomes WHERE lead_id=l.id ORDER BY lead_version DESC LIMIT 1) o ON true
+ WHERE ($3::boolean OR l.owner_id=$4::uuid)
+ AND ($5::text='' OR l.owner_id::text=$5::text)
+)
+SELECT id,name,email,stage,owner_id,owner_email,captured,use_case,workload,decision_maker,buying_timeline FROM pipeline
+WHERE stage IN ('new','contacted','qualified','demo') AND captured<4
+ AND ($1::uuid='00000000-0000-0000-0000-000000000000' OR id<$1::uuid)
+ORDER BY id DESC LIMIT $2::integer
+`
+
+type QualificationGapsParams struct {
+	AfterID     pgtype.UUID
+	RowLimit    int32
+	AllOwners   bool
+	ActorID     pgtype.UUID
+	OwnerFilter string
+}
+
+type QualificationGapsRow struct {
+	ID             pgtype.UUID
+	Name           string
+	Email          string
+	Stage          string
+	OwnerID        pgtype.UUID
+	OwnerEmail     string
+	Captured       int32
+	UseCase        string
+	Workload       string
+	DecisionMaker  string
+	BuyingTimeline string
+}
+
+func (q *Queries) QualificationGaps(ctx context.Context, db DBTX, arg QualificationGapsParams) ([]QualificationGapsRow, error) {
+	rows, err := db.Query(ctx, qualificationGaps,
+		arg.AfterID,
+		arg.RowLimit,
+		arg.AllOwners,
+		arg.ActorID,
+		arg.OwnerFilter,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []QualificationGapsRow{}
+	for rows.Next() {
+		var i QualificationGapsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.Stage,
+			&i.OwnerID,
+			&i.OwnerEmail,
+			&i.Captured,
+			&i.UseCase,
+			&i.Workload,
+			&i.DecisionMaker,
+			&i.BuyingTimeline,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const qualificationOutcomeCounts = `-- name: QualificationOutcomeCounts :many
+WITH pipeline AS (
+ SELECT l.id, l.owner_id, l.name, l.email, l.company, l.stage, l.note, l.version, l.created_by, l.updated_by, l.created_at, l.updated_at,a.email AS owner_email,COALESCE(q.use_case,'')::text AS use_case,COALESCE(q.workload,'')::text AS workload,
+ COALESCE(q.decision_maker,'')::text AS decision_maker,COALESCE(q.buying_timeline,'unknown')::text AS buying_timeline,
+ (CASE WHEN COALESCE(q.use_case,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.workload,'')<>'' THEN 1 ELSE 0 END+
+ CASE WHEN COALESCE(q.decision_maker,'')<>'' THEN 1 ELSE 0 END+CASE WHEN COALESCE(q.buying_timeline,'unknown')<>'unknown' THEN 1 ELSE 0 END)::integer AS captured,
+ o.reason AS close_reason,o.stage AS close_stage
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id LEFT JOIN sales_qualifications q ON q.lead_id=l.id
+ LEFT JOIN LATERAL (SELECT stage,reason FROM sales_outcomes WHERE lead_id=l.id ORDER BY lead_version DESC LIMIT 1) o ON true
+ WHERE ($1::boolean OR l.owner_id=$2::uuid)
+ AND ($3::text='' OR l.owner_id::text=$3::text)
+)
+SELECT stage,close_reason::text AS reason,count(*)::bigint AS count FROM pipeline
+WHERE stage IN ('won','lost') AND close_stage=stage AND close_reason IS NOT NULL
+GROUP BY stage,close_reason ORDER BY stage,count(*) DESC,close_reason
+`
+
+type QualificationOutcomeCountsParams struct {
+	AllOwners   bool
+	ActorID     pgtype.UUID
+	OwnerFilter string
+}
+
+type QualificationOutcomeCountsRow struct {
+	Stage  string
+	Reason string
+	Count  int64
+}
+
+func (q *Queries) QualificationOutcomeCounts(ctx context.Context, db DBTX, arg QualificationOutcomeCountsParams) ([]QualificationOutcomeCountsRow, error) {
+	rows, err := db.Query(ctx, qualificationOutcomeCounts, arg.AllOwners, arg.ActorID, arg.OwnerFilter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []QualificationOutcomeCountsRow{}
+	for rows.Next() {
+		var i QualificationOutcomeCountsRow
+		if err := rows.Scan(&i.Stage, &i.Reason, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const recordReferralPayment = `-- name: RecordReferralPayment :exec
@@ -1647,6 +1961,45 @@ func (q *Queries) UpdateProspect(ctx context.Context, db DBTX, arg UpdateProspec
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const updateQualification = `-- name: UpdateQualification :execrows
+UPDATE sales_qualifications SET use_case=$2,workload=$3,decision_maker=$4,buying_timeline=$5,decision_on=$6,priority=$7,product_fit=$8,blocker=$9,updated_by=$10,updated_at=now(),version=version+1
+WHERE lead_id=$1 AND version=$11
+`
+
+type UpdateQualificationParams struct {
+	LeadID         pgtype.UUID
+	UseCase        string
+	Workload       string
+	DecisionMaker  string
+	BuyingTimeline string
+	DecisionOn     pgtype.Date
+	Priority       string
+	ProductFit     string
+	Blocker        string
+	UpdatedBy      pgtype.UUID
+	Version        int64
+}
+
+func (q *Queries) UpdateQualification(ctx context.Context, db DBTX, arg UpdateQualificationParams) (int64, error) {
+	result, err := db.Exec(ctx, updateQualification,
+		arg.LeadID,
+		arg.UseCase,
+		arg.Workload,
+		arg.DecisionMaker,
+		arg.BuyingTimeline,
+		arg.DecisionOn,
+		arg.Priority,
+		arg.ProductFit,
+		arg.Blocker,
+		arg.UpdatedBy,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateSalesTask = `-- name: UpdateSalesTask :one

@@ -20084,5 +20084,38 @@
       "task_id"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "sales_qualifications",
+    "columns": [
+      "blocker",
+      "buying_timeline",
+      "decision_maker",
+      "decision_on",
+      "lead_id",
+      "priority",
+      "product_fit",
+      "updated_at",
+      "updated_by",
+      "use_case",
+      "version",
+      "workload"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_outcomes",
+    "columns": [
+      "actor_id",
+      "id",
+      "lead_id",
+      "lead_version",
+      "note",
+      "owner_id",
+      "reason",
+      "recorded_at",
+      "stage"
+    ],
+    "kind": "account_identity"
   }
 ]

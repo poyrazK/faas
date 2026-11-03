@@ -31,7 +31,7 @@
       const row=node('tr');const name=node('td');name.append(node('strong',lead.name));if(lead.company)name.append(node('small',lead.company));
       const stage=node('td');stage.append(node('span',label(lead.stage),'status'));
       const match=node('td');match.append(node('span',lead.paid?'Paid invoice recorded':lead.registered?'Signed up via owner’s code':'Awaiting matching signup','status'));
-      const actions=node('td');const group=node('div',undefined,'row-actions');group.append(button('Activity',()=>document.dispatchEvent(new CustomEvent('sales-open-activity',{detail:{leadId:lead.id}}))),button('Edit lead',()=>openLead(lead)),button('Add task',()=>openTask(null,lead)));actions.append(group);
+      const actions=node('td');const group=node('div',undefined,'row-actions');group.append(button('Qualify',()=>document.dispatchEvent(new CustomEvent('sales-open-qualification',{detail:{leadId:lead.id}}))),button('Activity',()=>document.dispatchEvent(new CustomEvent('sales-open-activity',{detail:{leadId:lead.id}}))),button('Edit lead',()=>openLead(lead)),button('Add task',()=>openTask(null,lead)));actions.append(group);
       row.append(name,node('td',lead.email),node('td',lead.owner_email),stage,match,actions);$('prospect-rows').append(row);
     }
     if(!leads.length)empty('prospect-rows','No leads match these filters. Add a lead to start the next conversation.',6);
@@ -76,8 +76,18 @@
     options('prospect-edit-stage',team.stages.map(stage=>[stage,label(stage)]),lead?.stage||'new');
     const owners=ownerOptions();if(lead&&!owners.some(([id])=>id===lead.owner_id))owners.push([lead.owner_id,`${lead.owner_email} (unavailable — reassign)`]);
     options('prospect-edit-owner',owners,lead?.owner_id||team.actor_id);$('prospect-edit-owner').disabled=!team.manager;
+    $('prospect-update-reason').checked=false;$('prospect-outcome-reason').replaceChildren(new Option('Choose a reason',''));$('prospect-outcome-note').value='';closingControls();
     $('prospect-delete').hidden=!lead;$('prospect-form-error').textContent='';$('prospect-dialog').showModal();
   }
+  function closingControls(){
+    const stage=$('prospect-edit-stage').value,closed=stage==='won'||stage==='lost',same=selectedLead&&selectedLead.stage===stage;
+    $('prospect-update-reason-label').hidden=!closed||!same;
+    const show=closed&&(!same||$('prospect-update-reason').checked);$('prospect-outcome-fields').hidden=!show;
+    const previous=$('prospect-outcome-reason').value;$('prospect-outcome-reason').replaceChildren(new Option('Choose a reason',''),...(team?.close_reasons?.[stage]||[]).map(item=>new Option(item.label,item.code)));
+    $('prospect-outcome-reason').value=show?previous:'';$('prospect-outcome-reason').required=show;$('prospect-outcome-note').required=show&&$('prospect-outcome-reason').value==='other';if(!show)$('prospect-outcome-note').value='';
+  }
+  $('prospect-edit-stage').addEventListener('change',()=>{$('prospect-outcome-reason').value='';$('prospect-outcome-note').value='';closingControls();});$('prospect-update-reason').addEventListener('change',closingControls);$('prospect-outcome-reason').addEventListener('change',()=>{$('prospect-outcome-note').required=$('prospect-outcome-reason').value==='other';});
+  document.addEventListener('sales-edit-prospect',event=>{if(event.detail?.lead)openLead(event.detail.lead);});
   function openTask(task,lead){
     if(saving||!team)return;selectedTask=task;taskLead=lead;$('task-dialog-title').textContent=task?'Edit follow-up task':'Add follow-up task';
     $('task-lead-name').textContent=task?`${task.lead_name} · ${task.lead_email}`:`${lead.name} · ${lead.email}`;
@@ -94,7 +104,7 @@
   }
   $('prospect-form').addEventListener('submit',event=>{
     event.preventDefault();const lead=selectedLead;
-    const input={name:$('prospect-name').value,email:$('prospect-email').value,company:$('prospect-company').value,note:$('prospect-note').value,stage:$('prospect-edit-stage').value,owner_id:$('prospect-edit-owner').value,version:lead?.version||0};
+    const input={name:$('prospect-name').value,email:$('prospect-email').value,company:$('prospect-company').value,note:$('prospect-note').value,stage:$('prospect-edit-stage').value,owner_id:$('prospect-edit-owner').value,version:lead?.version||0};if(!$('prospect-outcome-fields').hidden){input.close_reason=$('prospect-outcome-reason').value;input.close_note=$('prospect-outcome-note').value;}
     mutate('prospect-form-error',async()=>{await request(lead?`leads/${lead.id}`:'leads',{method:lead?'PUT':'POST',body:JSON.stringify(input)});$('prospect-dialog').close();$('pipeline-status').textContent='Lead saved.';await reload();});
   });
   $('prospect-delete').addEventListener('click',()=>{
