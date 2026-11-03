@@ -12,8 +12,9 @@ faas_edgednsd_cf_token_src: ""
 # Without it edgednsd logs in like the other control-plane daemons, by peer
 # authentication as faas over the local socket.
 faas_edgednsd_env_src: ""
-# "<zone id>:<host>" per managed name, e.g. a pilot host, later the app
-# wildcard.
+# "<zone id>:<host>[:proxied|:dns-only]" per managed name, e.g. a pilot host,
+# later the app wildcard. Proxied unless the entry says dns-only
+# (ADR-20261103163954 §1).
 faas_edgednsd_names: []
 # "<registry node name>=<public address>" per compute node.
 faas_edgednsd_node_addresses: []
