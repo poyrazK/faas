@@ -322,6 +322,7 @@ var cliTreeAliases = []cliTreeAlias{
 	// Account.
 	{"account mfa", "mfa"},
 	{"account", "account"},
+	{"org agent policy", "orgs agent-policy"},
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},
@@ -552,6 +553,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"ai tag-limit set", "ai tag-limits"},
 	{"ai app-limit get", "ai app-limit"},
 	{"ai app-limit set", "ai app-limit"},
+	{"ai request-policy get", "ai request-policy"},
+	{"ai request-policy set", "ai request-policy"},
 	{"api tenant activation get", "platform-tenants activation"},
 	{"api tenant activation wait", "platform-tenants activation"},
 	{"automation recovery-policy get", "automations recovery-policy"},

@@ -1211,6 +1211,7 @@ export type { KafkaSASLConfig } from './KafkaSASLConfig.js';
 export type { KafkaSASLMechanism } from './KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './KafkaTLSConfig.js';
 export type { KafkaTriggerConfig } from './KafkaTriggerConfig.js';
+export type { KeyOrg } from './KeyOrg.js';
 export type { LabelChange } from './LabelChange.js';
 export type { LabelsResponse } from './LabelsResponse.js';
 export type { LatestDeploymentsByAppResponse } from './LatestDeploymentsByAppResponse.js';
@@ -2052,6 +2053,8 @@ export type { OperatorRuntimeConfigOperation } from './OperatorRuntimeConfigOper
 export type { OperatorRuntimeConfigRevision } from './OperatorRuntimeConfigRevision.js';
 export type { OrgAccountID } from './OrgAccountID.js';
 export type { OrgActivityResponse } from './OrgActivityResponse.js';
+export type { OrgAgentPolicyRequest } from './OrgAgentPolicyRequest.js';
+export type { OrgAgentPolicyResponse } from './OrgAgentPolicyResponse.js';
 export type { OrgAppListResponse } from './OrgAppListResponse.js';
 export type { OrgAppSummary } from './OrgAppSummary.js';
 export type { OrgBillingEmailRequest } from './OrgBillingEmailRequest.js';
