@@ -519,8 +519,29 @@ func TestPGCloneCoordinatorCapturesBucketsAtTheDatabasePoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Without fresh object usage the pinned copy cannot be sized against the
+	// account's limits: the clone keeps its manifests and waits.
+	if err := f.srv.processNextProjectEnvironmentClone(ctx, f.store); !errors.Is(err, state.ErrObjectUsageStale) {
+		t.Fatalf("capture without fresh usage: %v", err)
+	}
+	waiting, err := f.store.ProjectEnvironmentCloneOperationByID(ctx, op.AccountID, op.ProjectID, pending.ID)
+	if err != nil || waiting.Status != state.CloneOperationCapturing {
+		t.Fatalf("clone left capturing without a capacity check: %+v, %v", waiting, err)
+	}
+	lists := f.objects.listCalls
+	var sized int64
+	f.srv.cloneObjectCapacity = func(_ context.Context, _ state.Account, bytes, keys int64) error {
+		sized = bytes
+		return nil
+	}
+	if _, err := f.pool.Exec(ctx, "update project_environment_clone_operations set next_attempt_at=clock_timestamp() where id=$1", pending.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.srv.processNextProjectEnvironmentClone(ctx, f.store); err != nil {
 		t.Fatalf("capture with a bucket: %v", err)
+	}
+	if f.objects.listCalls != lists || sized != 3 {
+		t.Fatalf("retry relisted (%d -> %d lists) or sized %d bytes", lists, f.objects.listCalls, sized)
 	}
 	current, err := f.store.ProjectEnvironmentCloneOperationByID(ctx, op.AccountID, op.ProjectID, pending.ID)
 	if err != nil || current.Status != state.CloneOperationCopying {

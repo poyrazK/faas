@@ -29,6 +29,9 @@ func (s *server) cloneObjectCapacityCheck(acct state.Account) func(context.Conte
 // cloneObjectCapacityCheckBytes is the worker's check: the exact bytes and
 // keys of the manifests it is about to copy.
 func (s *server) cloneObjectCapacityCheckBytes(ctx context.Context, acct state.Account, bytes, keys int64) error {
+	if s.cloneObjectCapacity != nil {
+		return s.cloneObjectCapacity(ctx, acct, bytes, keys)
+	}
 	return s.checkCloneObjectCapacity(ctx, acct, func(state.ObjectUsageSnapshot) (int64, int64, error) { return bytes, keys, nil })
 }
 

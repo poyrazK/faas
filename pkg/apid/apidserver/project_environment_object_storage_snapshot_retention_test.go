@@ -71,7 +71,7 @@ func TestLeasedObjectSnapshotNeedsNoRetentionAndFailsOnLostVersion(t *testing.T)
 	if copied, err := copyProjectEnvironmentObjectStorageSnapshotForLease(ctx, store, provider, lease, source, target, "source", "target"); err != nil || copied != 2 || provider.copyCalls != 3 {
 		t.Fatalf("resume after restored version: copied %d, calls %d, error %v", copied, provider.copyCalls, err)
 	}
-	if cloneObjectCopyFailure(objectstorage.ErrUnavailable) != objectstorage.ErrUnavailable {
+	if transient := cloneObjectCopyFailure(objectstorage.ErrUnavailable); errors.Is(transient, state.ErrProjectEnvironmentCloneSourceChanged) || !errors.Is(transient, objectstorage.ErrUnavailable) {
 		t.Fatal("a transient provider failure must stay retryable")
 	}
 }
