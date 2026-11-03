@@ -134,6 +134,7 @@ func TestPasswordChangedAlertPublicPathsAndAtomicFailures(t *testing.T) {
 				defer clear(raw)
 				if method == "durable_reset" {
 					issued := resetFormPost(handler, "/login/forgot", url.Values{"email": {email}})
+					server.WaitPasswordResetMail()
 					if issued.Code != http.StatusOK {
 						t.Fatal("reset issue failed", issued.Code)
 					}

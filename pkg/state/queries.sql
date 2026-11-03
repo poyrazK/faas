@@ -1705,23 +1705,24 @@ LIMIT sqlc.arg(row_limit)::int;
 -- Reads the live events table (NOT audit_log — distinct source of
 -- truth per ADR-091 §3.7.4). Optional filters:
 --   * $1 actor    — exact match (handler passes "" to skip)
---   * $2 kind_prefix — LIKE 'prefix%' (handler passes "" to skip)
+--   * $2 kind_prefix — literal prefix (handler passes "" to skip)
 --   * $3 subject  — exact match (handler passes "" to skip)
 --   * $4 since    — RFC 3339 timestamptz (handler passes zero time to skip)
 --   * $5 limit    — top-N rows (handler default 200, cap 500;
 --                   cast to int8 so sqlc emits int64 Params and the
 --                   handler's int→int64 widening is safe)
--- Order: at DESC, id DESC — the id tiebreaker keeps the planner on
--- the (kind, at DESC) index added by 00190_admin_obs_index.sql for
--- kind-prefix queries and avoids an unstable sort on the
--- over-read window.
+--   kind_prefix is matched literally (starts_with), so '_' and '%' in
+--   a kind are not wildcards.
+-- Order: at DESC, id DESC — a backward scan of events_at_id_idx
+-- (ADR-20261103094121) returns the newest rows first under any mix
+-- of filters, stopping at the limit instead of sorting the table.
 -- Subject is uuid (nullable in the schema); the cast is left to
 -- the handler so the handler can pass an empty string for "no
 -- subject filter" without a NULL literal.
 select id, at, actor, kind, subject, data
 from events
 where ($1 = '' or actor = $1)
-  and ($2 = '' or kind like $2 || '%')
+  and ($2 = '' or starts_with(kind, $2))
   and ($3 = '' or subject = $3::uuid)
   and ($4 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $4)
 order by at desc, id desc
@@ -3073,14 +3074,41 @@ WITH due AS MATERIALIZED (
 )
 SELECT * FROM claimed ORDER BY next_fire_at, id;
 
--- name: ListTerminalTriggerRecordItems :many
--- A broker may redeliver after Gregale commits a terminal receipt but before
--- the broker acknowledges it. The current delivery handle can be Acked
--- without dispatching the application again.
-SELECT item_identifier FROM trigger_records
-WHERE trigger_id = $1
-  AND item_identifier = ANY(sqlc.arg(item_identifiers)::text[])
-  AND state IN ('succeeded', 'superseded', 'cancelled', 'expired');
+-- name: TriggerRecordStatesByItems :many
+-- The stored state of the records one broker poll handed back. A broker may
+-- redeliver after Gregale commits a terminal receipt (succeeded, ended by a
+-- work policy, or dead-lettered) but before the broker settles it; the
+-- dispatcher settles that delivery without dispatching the application
+-- again. dead_letter_reason lets a Kafka seek-to-offset trigger keep holding
+-- a poison record while an exhausted one commits; next_fire_at and
+-- claim_expires_at tell a broker that redelivers on its own when a cooling
+-- retry, or a record another dispatcher holds, can run; topic maps a record
+-- stored under an earlier release's item identifier (ADR-20261101093512).
+SELECT r.item_identifier, r.state, r.next_fire_at, r.claim_expires_at,
+       coalesce(r.metadata->>'topic', '')::text AS topic,
+       coalesce(d.reason, '')::text AS dead_letter_reason
+FROM trigger_records r
+LEFT JOIN trigger_dead_letter d ON d.record_id = r.id
+WHERE r.trigger_id = sqlc.arg(trigger_id)::uuid
+  AND r.item_identifier = ANY(sqlc.arg(item_identifiers)::text[]);
+
+-- name: RenewTriggerRecordClaims :execrows
+-- Keeps the claims of a batch whose dispatch is still running. A claim lasts
+-- ten minutes, but a long-timeout app's batch may wait 16.5; an expired claim
+-- could be taken and run again, and its outcome could not be recorded. Only
+-- the claim generation the dispatcher holds is renewed, and never one that
+-- has already lapsed.
+WITH claims AS (
+    SELECT unnest(sqlc.arg(ids)::uuid[]) AS id,
+           unnest(sqlc.arg(claim_generations)::bigint[]) AS claim_generation
+)
+UPDATE trigger_records r
+   SET claim_expires_at = greatest(r.claim_expires_at,
+       now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision))
+  FROM claims
+ WHERE r.id = claims.id AND r.claim_generation = claims.claim_generation
+   AND r.trigger_id = sqlc.arg(trigger_id)::uuid
+   AND r.state = 'claimed' AND r.claim_expires_at > now();
 
 -- name: MarkClaimedTriggerRecordSucceeded :execrows
 UPDATE trigger_records
@@ -7077,6 +7105,11 @@ SELECT jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
+    'versioning_enabled', coalesce((
+        SELECT v.state = 'ready' AND v.observed_status = 'Enabled' AND v.propagation_until IS NOT NULL
+            AND v.propagation_until <= clock_timestamp()
+        FROM object_bucket_versioning v WHERE v.bucket_id = b.id
+    ), false),
     'credentials', coalesce((
         SELECT jsonb_agg(jsonb_build_object('id', c.id::text, 'label', c.label, 'permission', c.permission,
             'managed_app_id', coalesce(c.managed_app_id::text, ''), 'managed_scope', coalesce(c.managed_scope, ''),
@@ -14643,7 +14676,7 @@ FOR UPDATE;
 -- name: RequeueFailedWorkflowStepForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,
-    finished_at=NULL,error=NULL
+    finished_at=NULL,error=NULL,retry_base=sqlc.arg(retry_base)::integer
 WHERE run_id=sqlc.arg(run_id)::text::uuid
   AND step_name=sqlc.arg(step_name)::text
   AND status IN ('failed','dead');
@@ -14872,8 +14905,10 @@ WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR (sql
 ORDER BY retry_at,id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: CountManagedPostgresLifecycleDatabases :one
+-- A delete that can no longer be undone frees the database, including a source
+-- kept for its restore copies (ADR-20261103091657).
 SELECT ((SELECT count(*) FROM managed_postgres_databases d
- WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted')
+ WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
  JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=sqlc.arg(account_id)::uuid
@@ -19729,11 +19764,21 @@ ORDER BY deadline_at,id LIMIT sqlc.arg(page_limit)::integer;
 UPDATE workflow_steps SET status='skipped',skip_reason='dependency_failed',finished_at=clock_timestamp()
 WHERE run_id=sqlc.arg(run_id)::uuid AND status IN ('pending','awaiting_event');
 
+-- name: PruneWorkflowEventArchive :execrows
+DELETE FROM workflow_event_archive WHERE id IN (
+ SELECT id FROM workflow_event_archive
+ WHERE received_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
+ ORDER BY received_at,id LIMIT sqlc.arg(batch_size)::integer FOR UPDATE SKIP LOCKED
+);
+
 -- name: PruneUnownedWorkflowRuns :execrows
-DELETE FROM workflow_runs r WHERE r.finished_at IS NOT NULL
-AND r.finished_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
-AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
-AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id);
+DELETE FROM workflow_runs WHERE id IN (
+ SELECT r.id FROM workflow_runs r WHERE r.finished_at IS NOT NULL
+ AND r.finished_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
+ AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+ ORDER BY r.finished_at,r.id LIMIT sqlc.arg(batch_size)::integer FOR UPDATE OF r SKIP LOCKED
+);
 
 -- name: LockCustomerOperationArtifactQuota :exec
 SELECT pg_advisory_xact_lock(hashtextextended('operation-artifact-quota/' || sqlc.arg(account_id)::text, 0));
@@ -27320,7 +27365,8 @@ SELECT * FROM managed_postgres_databases WHERE id=$1;
 SELECT * FROM managed_postgres_bindings WHERE id=$1;
 
 -- name: CountManagedPostgresOrgDatabases :one
-SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted')
+-- Counts as CountManagedPostgresLifecycleDatabases does.
+SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE p.org_id=sqlc.arg(org_id)::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
 
@@ -27353,7 +27399,9 @@ AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.ar
 -- ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
 -- waived. The fleet spend breaker (ManagedPostgresFleetTotals) still counts it.
 AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
- AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until));
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until)
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers p WHERE p.database_id=w.database_id
+  AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'));
 
 -- name: ManagedPostgresFleetTotals :one
 -- ADR-20261028103115: the fleet database cap counts what reservation limits

@@ -110,7 +110,7 @@ func (m *management) listApps(ctx context.Context, args appsArgs) (any, error) {
 // returned labels are matched again: an apid without labels ignores it.
 func (m *management) selectedApps(ctx context.Context, selector string) ([]api.AppResponse, error) {
 	if selector == "" {
-		return m.client.ListApps(ctx)
+		return listApps(ctx, m.client, m.opts.Org)
 	}
 	sel, err := labels.Parse(selector)
 	if err != nil {

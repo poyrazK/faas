@@ -391,6 +391,7 @@
       "password_reset_revision",
       "past_due_at",
       "plan",
+      "plan_changed_at",
       "provider_customer_id",
       "quota_mail_revision",
       "status",
@@ -3556,6 +3557,7 @@
       "created_at",
       "device_hash",
       "expires_at",
+      "org_id",
       "status",
       "token_hash"
     ],
@@ -12161,7 +12163,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12183,7 +12186,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12205,7 +12209,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12242,7 +12247,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12268,7 +12274,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12299,7 +12306,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "strategy": "derived"
     }
   },
   {
@@ -12348,7 +12356,6 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "data_checkpoint_unavailable",
       "live": [
         {
           "column": "state",
@@ -12704,7 +12711,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "strategy": "derived"
     }
   },
   {
@@ -12985,7 +12993,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -13012,7 +13021,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -13035,7 +13045,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "strategy": "derived"
     }
   },
   {
@@ -13283,6 +13294,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "org_agent_policies",
+    "columns": [
+      "agents_allowed",
+      "allowed_scopes",
+      "org_id",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "org_memberships",
     "columns": [
       "access_revision",
@@ -13316,6 +13338,7 @@
       "personal_org",
       "personal_owner_account_id",
       "plan",
+      "plan_changed_at",
       "provider_customer_id",
       "resource_ownership_enabled",
       "slug",
@@ -17152,6 +17175,34 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_start",
+      "cold_boots",
+      "deployment_id",
+      "dimension",
+      "dimension_kind",
+      "error_requests",
+      "latency_hist",
+      "latency_max_ms",
+      "method",
+      "request_time_ms",
+      "requests",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_coverage",
+    "columns": [
+      "app_id",
+      "covered_since"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_id_journal",
     "columns": [
       "account_id",
@@ -19115,6 +19166,18 @@
       "last_claimed_at",
       "platform_tenant_id",
       "scope_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_event_archive",
+    "columns": [
+      "app_id",
+      "event_name",
+      "id",
+      "payload",
+      "received_at",
+      "run_id"
     ],
     "kind": "operational"
   },

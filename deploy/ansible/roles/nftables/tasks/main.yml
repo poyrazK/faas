@@ -206,6 +206,19 @@
     fail_msg: Cloudflare-only origin ingress requires non-empty pinned IPv4 and IPv6 ranges.
   when: faas_cloudflare_origin_only | bool
 
+# ADR-20261103163954: vmmd renders the same entry rules at runtime and refuses
+# to start on an address that is not written in canonical form, so catch a
+# bad one here, before the drop-in reaches it.
+- name: nftables — public entry addresses are plain addresses in canonical form
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - >-
+        item is match('^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$')
+        or (item is match('^[0-9a-f:]+$') and item.count('::') <= 1 and not item.startswith('::ffff:'))
+    fail_msg: "faas_public_entry_addrs entry {{ item }} must be a plain IPv4 or lowercase IPv6 address in canonical form"
+  loop: "{{ faas_public_entry_addrs }}"
+
 # The input chain's br-tenants rules let guests reach only the bridge
 # services (the per-netns chain narrows the ports), the public edge for
 # hairpin calls, and ICMP; the drop keeps bridge traffic from the rules below

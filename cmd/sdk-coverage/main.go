@@ -407,6 +407,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/auth/github":          true, // 302 to GitHub consent (browser-only)
 	"GET /v1/auth/github/callback": true, // 302 to dashboard (browser-only)
 	"GET /v1/auth/verify-email":    true, // HTML email-confirmation landing page (browser-only)
+	"POST /v1/auth/verify-email":   true, // the landing page's confirmation form post (browser-only)
 	"GET /auth/reset":              true, // HTML form render (browser-only)
 	"POST /logout":                 true, // dashboard form post (browser-only); SDK's Logout wraps the same handler as a convenience
 
@@ -1231,6 +1232,11 @@ var methodRouteMap = map[string]string{
 	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
 	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
 	"DELETE /v1/agent-connections/self":                                                          "DisconnectAgent",
+	"GET /v1/orgs/{slug}/agent-connections":                                                      "ListOrgAgentConnections",
+	"DELETE /v1/orgs/{slug}/agent-connections/{id}":                                              "RevokeOrgAgentConnection",
+	"POST /v1/orgs/{slug}/agent-connections/revoke_all":                                          "RevokeAllOrgAgentConnections",
+	"GET /v1/orgs/{slug}/agent-policy":                                                           "GetOrgAgentPolicy",
+	"PUT /v1/orgs/{slug}/agent-policy":                                                           "SetOrgAgentPolicy",
 	"POST /v1/keys/{id}/rotate":                                                                  "RotateKey",
 	"PATCH /v1/account/keys/grace_window_days":                                                   "SetGraceWindow",
 	"GET /v1/account/keys/grace_window_days":                                                     "GetGraceWindow",

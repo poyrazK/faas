@@ -4500,6 +4500,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.ClearSchedulePolicy && req.SchedulePolicy != nil || req.ClearFailureRules && req.FailureRules != nil {
+		api.WriteProblem(w, api.ErrValidation("clear_schedule_policy and clear_failure_rules cannot be sent with the field they clear"))
+		return
+	}
 	if req.Schedule != nil {
 		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
 			api.WriteProblem(w, problem)
@@ -4553,9 +4557,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 			return
 		}
 	}
-	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil || req.ClearSchedulePolicy || req.ClearFailureRules {
 		opts := state.CronOptions{RetryMax: c.RetryMax, RetryBackoffSeconds: c.RetryBackoffSeconds,
-			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules}
+			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
+			ClearSchedulePolicy: req.ClearSchedulePolicy, ClearFailureRules: req.ClearFailureRules}
 		if req.RetryMax != nil {
 			opts.RetryMax = *req.RetryMax
 		}
@@ -4608,6 +4613,14 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.RetryMax != nil {
 		oldCron["retry_max"] = c.RetryMax
 		newCron["retry_max"] = updated.RetryMax
+	}
+	if req.ClearSchedulePolicy {
+		oldCron["schedule_policy"] = c.SchedulePolicy != nil
+		newCron["schedule_policy"] = updated.SchedulePolicy != nil
+	}
+	if req.ClearFailureRules {
+		oldCron["failure_rules"] = c.FailureRules != nil
+		newCron["failure_rules"] = updated.FailureRules != nil
 	}
 	if req.RetryBackoffSeconds != nil {
 		oldCron["retry_backoff_seconds"] = c.RetryBackoffSeconds
@@ -7705,8 +7718,9 @@ func cronScheduleProblem(s string) *api.Problem {
 //     returns DESC, the SSE client expects chronological).
 //  2. Live tail — subscribe to the in-process broadcaster, write
 //     every published log line until the context cancels or the
-//     deployment transitions to `live`/`failed` (an `end` event is
-//     emitted).
+//     deployment reaches `live` or a terminal status (`status` then
+//     `end` events are emitted). A deployment already there skips
+//     the tail and ends straight after the initial page.
 //
 // ?before_seq=0 (default) opens with the oldest 50; pass ?before_seq=N
 // to resume from seq N. ?limit= caps the initial page (default 50,
@@ -7769,6 +7783,23 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 
+	// ADR-117 §3: per-connection set of stages already announced so
+	// the diff on each tick emits `event: stage` exactly once. The
+	// closed 6-stage vocabulary is encoded in pkg/state.StageName
+	// consts; `announced` is keyed by StageName so the jsonb row's
+	// `current` field maps straight through without a string copy.
+	announced := make(map[state.StageName]string)
+	var lastStageStateRaw []byte
+
+	// A deployment that already finished has nothing to tail. End now
+	// rather than at the first status poll: the dashboard's release
+	// dialog follows the build log of finished deployments too, and
+	// each visit used to hold the connection for that 2 s poll.
+	if deploymentLogTailDone(d.Status) {
+		endDeploymentLogStream(w, flusher, d, announced, &lastStageStateRaw)
+		return
+	}
+
 	// Live tail: subscribe to the broadcaster until deploy is done
 	// or the client disconnects.
 	sub, cancel := s.events.Subscribe(events.TopicDeploymentLog)
@@ -7786,14 +7817,6 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	// poll tick — negligible load compared to the build itself.
 	statusTicker := time.NewTicker(2 * time.Second)
 	defer statusTicker.Stop()
-
-	// ADR-117 §3: per-connection set of stages already announced so
-	// the diff on each tick emits `event: stage` exactly once. The
-	// closed 6-stage vocabulary is encoded in pkg/state.StageName
-	// consts; `announced` is keyed by StageName so the jsonb row's
-	// `current` field maps straight through without a string copy.
-	announced := make(map[state.StageName]string)
-	var lastStageStateRaw []byte
 
 	// Move 3: one-shot backstop timer (replaces per-iteration
 	// time.After(10*time.Minute), which was never reaping the timer
@@ -7848,12 +7871,8 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// backstop, so a waiting `gregale deploy` sat on a
 			// cancelled build for minutes (H10-48).
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
-				if d2.Status == state.DeployLive || d2.Status.IsTerminal() {
-					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
-					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)
-					if flusher != nil {
-						flusher.Flush()
-					}
+				if deploymentLogTailDone(d2.Status) {
+					endDeploymentLogStream(w, flusher, d2, announced, &lastStageStateRaw)
 					return
 				}
 				emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
@@ -7993,6 +8012,27 @@ func writeLogEvent(w http.ResponseWriter, flusher http.Flusher, e state.LogEntry
 		"written_at": e.WrittenAt.UTC().Format(time.RFC3339Nano),
 	})
 	_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", payload)
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+// deploymentLogTailDone reports whether a deployment's build log has
+// stopped growing, so a follow stream has nothing left to wait for.
+func deploymentLogTailDone(status state.DeploymentStatus) bool {
+	return status == state.DeployLive || status.IsTerminal()
+}
+
+// endDeploymentLogStream closes a follow stream on a finished deployment:
+// any stage frames not yet announced, the `status` frame the CLI's deploy
+// wait reads, then `end`. EventSource clients (the dashboard) know only
+// `end` as a clean close; without it they took the closed connection for
+// a dropped one and reconnected every few seconds, replaying the log each
+// time.
+func endDeploymentLogStream(w http.ResponseWriter, flusher http.Flusher, d state.Deployment, announced map[state.StageName]string, lastStageStateRaw *[]byte) {
+	emitStageDiff(w, flusher, d.StageState, announced, lastStageStateRaw)
+	_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d.Status)
+	_, _ = fmt.Fprint(w, "event: end\ndata: {}\n\n")
 	if flusher != nil {
 		flusher.Flush()
 	}

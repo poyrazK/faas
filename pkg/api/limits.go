@@ -97,11 +97,57 @@ const (
 // a botnet guessing one account's password; past this budget every password
 // sign-in for the address answers 429 until failures age out or a password
 // reset succeeds, and a bound account's owner is emailed once. One apid
-// tracks at most LoginFailureEmailsTrackedMax addresses at a time.
+// tracks at most LoginFailureEmailsTrackedMax addresses at a time; when full
+// it forgets the address with the fewest failures among
+// LoginFailureEvictionSample random entries, so filling the table with random
+// addresses does not stop a targeted one from being counted.
 const (
 	LoginFailuresPerEmail        = 20
 	LoginFailureEmailWindow      = time.Hour
 	LoginFailureEmailsTrackedMax = 100_000
+	LoginFailureEvictionSample   = 32
+)
+
+// An app's basic-auth gate (public_auth mode basic) refuses guesses from one
+// client prefix (IPv4 /24, IPv6 /64) for one app with 429 once it has
+// PublicAuthBasicFailuresPerWindow wrong passwords inside
+// PublicAuthBasicFailureWindow (H76). One gateway tracks at most
+// PublicAuthGuessKeysMax app/prefix pairs. A newly set basic-auth password
+// must be at least PublicAuthBasicPassMinBytes long.
+const (
+	PublicAuthBasicFailuresPerWindow = 10
+	PublicAuthBasicFailureWindow     = time.Minute
+	PublicAuthGuessIPv4Prefix        = 24
+	PublicAuthGuessIPv6Prefix        = 64
+	PublicAuthGuessKeysMax           = 100_000
+	PublicAuthGuessEvictionSample    = 32
+	PublicAuthBasicPassMinBytes      = 12
+)
+
+// One client prefix (IPv4 /24, IPv6 /64) may wake at most
+// GatewayColdWakeAppsPerClient different parked apps through one gateway per
+// GatewayColdWakeClientWindow (H75); more answer 429. Loopback and private
+// callers are platform traffic and are not counted. In the gateway's wake
+// admission queue one account may hold at most
+// GatewayWakeAdmissionQueuedPerAccount waiting and
+// GatewayWakeAdmissionRunningPerAccount running admissions, so one account's
+// burst cannot take every slot.
+const (
+	GatewayColdWakeAppsPerClient          = 20
+	GatewayColdWakeClientWindow           = time.Minute
+	GatewayColdWakeClientsTrackedMax      = 100_000
+	GatewayWakeAdmissionQueuedPerAccount  = 8
+	GatewayWakeAdmissionRunningPerAccount = 2
+)
+
+// PasswordResetMailInFlightMax caps the forgot-password requests one apid
+// handles off the request path at once (H86). The account lookup, token and
+// mail run in the background so the response time is the same whether or not
+// the address has an account; past the cap a request is dropped and logged,
+// answering the same 200.
+const (
+	PasswordResetMailInFlightMax = 64
+	PasswordResetMailTimeout     = 30 * time.Second
 )
 
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
@@ -686,6 +732,14 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
 
+// ManagedPostgresUsageWaiverPeriod bounds the usage waiver of a scheduled
+// delete (ADR-20261029174950 decision 6, amendment 1): a database's waiver
+// counts only when no earlier one for it began within this period. Deleting
+// and undeleting in a loop used to park a database's storage for free, billed
+// only for the short ready gaps (H106). ManagedPostgresUsageForSubject
+// spells the same 30 days in SQL.
+const ManagedPostgresUsageWaiverPeriod = 30 * 24 * time.Hour
+
 // ManagedPostgresRestoreSlots is how many databases a point-in-time restore
 // may hold past the plan's database limit, and ManagedPostgresRestoreSlotWindow
 // how long such a copy lasts before its delete is scheduled when the account
@@ -1237,6 +1291,7 @@ const (
 	WorkflowScheduleHistoryPageDefault   = 100
 	WorkflowScheduleHistoryPageMax       = 200
 	WorkflowScheduleHistoryPruneBatch    = 1000
+	WorkflowRetentionPruneBatch          = 1000
 	WorkflowScheduleReplayBatchMax       = 20
 	WorkflowQueuedRunCancelBatchMax      = 20
 )
@@ -2377,6 +2432,18 @@ const (
 	OutboundAIRealtimeMaxMessageBytes     int64 = 4 << 20
 	OutboundAIRealtimeInputReserveTokens  int64 = 4096
 	OutboundAIRealtimeOutputReserveTokens int64 = 4096
+	// AI call bounds (ADR 20261027132936): a billable AI call's request
+	// timeout bounds the wait for its response headers; the call then runs
+	// at most OutboundAICallMaxSeconds from its start, and a streamed answer
+	// at most OutboundAIStreamIdleSeconds without a byte. Its admission
+	// lease is renewed every third of max(request timeout,
+	// OutboundAILeaseRenewMinSeconds) while it runs.
+	OutboundAICallMaxSeconds       = 1800
+	OutboundAIStreamIdleSeconds    = 600
+	OutboundAILeaseRenewMinSeconds = 15
+	// OutboundAIAccessTokenLookupsMax bounds the database lookups of
+	// uncached access tokens that run at once (ADR 20261027132936).
+	OutboundAIAccessTokenLookupsMax = 8
 	// Batches (ADR-1431): the share of the list price a batch costs; the
 	// largest OpenAI input file read at creation, Anthropic batch body and
 	// JSONL line the gateway parses; how often open batches are polled and
@@ -7519,6 +7586,10 @@ const (
 	// (DeploymentQueuedBuildTimeoutSeconds, anchored on enqueued_at) still
 	// fails a build that never finds capacity.
 	BuildDiskCapacityRetryDelay = 30 * time.Second
+	// BuildDiskCapacityMaxWait is how long after it was enqueued a build may
+	// keep waiting for build disk before it fails with the disk-full error
+	// instead of being requeued (H83).
+	BuildDiskCapacityMaxWait = 15 * time.Minute
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
@@ -9576,6 +9647,12 @@ const (
 	GatewayFailoverRetryBudgetBurst     = 10
 	GatewayFailoverMaxExtraNodes        = 2
 	GatewayFailoverMaxRefusalBodyBytes  = 64 << 10 // 64 KiB
+
+	// EdgeDNSOnlyAddrsPerNameMax bounds the DNS-only address records
+	// edgednsd keeps behind one app host name (ADR-20261103163954 §1): an
+	// answer with that many A and AAAA records stays well under the
+	// 1,232-byte EDNS size resolvers use. A larger cell needs pools.
+	EdgeDNSOnlyAddrsPerNameMax = 16
 )
 
 // EdgeWAFInlineSlots is the number of in-path WAF check slots for a
@@ -9919,6 +9996,8 @@ const (
 	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
 	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10
 	AutomationLiveSuiteStartWindow                 = 10 * time.Minute
+	AutomationLiveSuiteFutureClockSkew             = 30 * time.Second
+	AutomationLiveSuiteProtectedWindow             = AutomationLiveSuiteStartWindow + AutomationLiveSuiteFutureClockSkew
 	AutomationLiveSuiteHistoryLimit                = AutomationLiveHistoryLimit
 	AutomationLiveSuiteRetainedLimit               = 100
 	AutomationTestCaseNameMaxBytes                 = 128
@@ -12443,6 +12522,15 @@ const MeterCatchUpMinutesPerTick = 15
 // reaches back, which drains no live counter.
 const MeterTelemetryDrainWindow = 24 * time.Hour
 
+// MeterFinalNetworkReadingRetention is how long schedd keeps serving an
+// instance's last host-interface byte counters after the instance leaves its
+// stats snapshot (it parked, froze off the node or was destroyed). vmmd
+// forgets the counters at teardown, and meterd checkpoints them only once a
+// minute, so without the retained reading the bytes sent since meterd's last
+// read were never metered (ADR-20261103121407). It spans meterd's stats
+// refresh TTL, one roll and the roll settle with margin.
+const MeterFinalNetworkReadingRetention = 5 * time.Minute
+
 // MeterRollSettle is how long after a minute closes meterd waits before
 // rolling it. Residency intervals are stamped inside their writer's
 // transaction and become visible at commit; a roll right at the boundary
@@ -13117,6 +13205,27 @@ const (
 	// for an app whose invocations run longer may take one whole record
 	// instead (ADR-1180).
 	TriggerBatchTimeout = 5 * time.Minute
+	// TriggerRecordClaimLease is how long a trigger record claim lasts
+	// without renewal. The claim queries in pkg/state set the same ten
+	// minutes; schedd renews the claims of a batch whose dispatch is still
+	// running, because a long-timeout app's batch may wait 16.5 minutes
+	// (ADR-20261101093512).
+	TriggerRecordClaimLease = 10 * time.Minute
+	// TriggerRecordClaimRenewInterval is how often schedd renews the claims
+	// of a running trigger batch. It is well inside the lease, so one missed
+	// renewal does not let another dispatcher take the records.
+	TriggerRecordClaimRenewInterval = 2 * time.Minute
+	// TriggerClaimSettleAttempts bounds how often schedd writes a claimed
+	// record's outcome (succeeded, retry, dead letter) through transient
+	// store errors before it hands the broker delivery back unsettled.
+	TriggerClaimSettleAttempts = 5
+	// TriggerClaimSettleBackoff is the first wait between those attempts;
+	// each later wait doubles it (3 s in all).
+	TriggerClaimSettleBackoff = 200 * time.Millisecond
+	// TriggerBrokerEarlyRedeliveryDelay is how long NATS waits before
+	// redelivering a record that came back while its retry was still
+	// cooling and schedd does not know when the retry is due.
+	TriggerBrokerEarlyRedeliveryDelay = 2 * time.Second
 )
 
 // AsyncInvocationTimeout is how long one async, queue, cron or replay
@@ -14023,8 +14132,11 @@ const (
 	RouteHealthProbeChallengeTTL      = 2 * time.Minute
 	RouteHealthProbePollInterval      = 15 * time.Second
 	RouteHealthProbeRoundTimeout      = 55 * time.Second
-	RouteHealthProbePruneInterval     = time.Minute
-	RouteHealthProbeRetention         = 24 * time.Hour
+	// RouteHealthProbeWorkers is how many accounts one apid probes at once;
+	// each account's targets run in turn (H79).
+	RouteHealthProbeWorkers       = 8
+	RouteHealthProbePruneInterval = time.Minute
+	RouteHealthProbeRetention     = 24 * time.Hour
 	// A probe window is unknown when at least this share of responses were
 	// 401/403: customer auth gates stay in force for probes.
 	RouteHealthProbeUnauthenticatedShare = 0.5
@@ -14204,6 +14316,48 @@ const DashboardRequestAnalyticsTimeout = 5 * time.Second
 // closes and flush every few seconds, so the newest minutes are always still
 // arriving. Route removal excludes the same two minutes.
 const RequestAnalyticsSettleLag = 2 * time.Minute
+
+// Request analytics rollups (ADR-20261103113952). apid adds every telemetry
+// row a plan keeps, before the debugger ingest cap, to per-minute rollups
+// and writes them every RequestAnalyticsRollupFlushInterval in statements of
+// at most RequestAnalyticsRollupFlushRowsMax rows. For each app, minute and
+// non-route dimension a flush keeps RequestAnalyticsRollupDimensionsMax
+// distinct values and folds the rest into "__other__". The aggregator counts
+// a replayed event ID once among the last RequestAnalyticsRollupSeenEventsMax
+// rows; a gateway replays a batch within seconds of the original. Past
+// RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
+// Postgres is failing, new rows are dropped and counted.
+const (
+	RequestAnalyticsRollupFlushInterval  = 10 * time.Second
+	RequestAnalyticsRollupFlushRowsMax   = 1000
+	RequestAnalyticsRollupDimensionsMax  = 50
+	RequestAnalyticsRollupSeenEventsMax  = 200_000
+	RequestAnalyticsRollupPendingRowsMax = 200_000
+)
+
+// RequestAnalyticsSampledMeasuresTimeout bounds the raw telemetry read that
+// adds sampled measures (guest execution, CPU, RSS, cold request and wake
+// boot p95) to analytics answered from rollups; past it they are left out
+// and the response still carries its counts and latencies.
+const RequestAnalyticsSampledMeasuresTimeout = 3 * time.Second
+
+// RequestAnalyticsLatencyBoundsMS are the upper bounds of the rollup latency
+// histogram (ADR-20261103113952); latency_hist has one bucket per bound plus
+// an overflow bucket, whose percentile is the rollup's latency_max_ms. Up to
+// 100 ms buckets are 10 ms wide, as the gateway's latency representatives
+// are; from 100 ms to 10 s an upper bound is at most 25% above the bucket's
+// lower bound. Changing the
+// bounds changes the meaning of stored rows: add a new column instead.
+var RequestAnalyticsLatencyBoundsMS = [...]int{
+	10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+	125, 150, 175, 200, 250, 300, 350, 400, 450, 500,
+	600, 700, 800, 900, 1000, 1250, 1500, 1750, 2000, 2500,
+	3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 9000, 10000,
+	15000, 20000, 30000, 60000,
+}
+
+// RequestAnalyticsLatencyBuckets is latency_hist's fixed width.
+const RequestAnalyticsLatencyBuckets = len(RequestAnalyticsLatencyBoundsMS) + 1
 
 // RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
@@ -17093,6 +17247,17 @@ const (
 	DataRepairPurgeLockTimeoutMS       = 2000
 )
 
+// HTTP/2 on a compute edge that serves clients directly (ADR-20261103163954
+// §2) gets explicit limits rather than library defaults: concurrent streams
+// per connection, the largest frame it reads (16 KiB, the protocol's
+// minimum) and the HPACK table in each direction. The header list is capped
+// by the server's MaxHeaderBytes, as an HTTP/1.1 header is.
+const (
+	EdgeHTTP2MaxConcurrentStreams = 100
+	EdgeHTTP2MaxReadFrameSize     = 16 << 10
+	EdgeHTTP2MaxHeaderTableSize   = 4096
+)
+
 // Resource labels (ADR-20261031100025) use Kubernetes label syntax and are the
 // same on every plan: labels hold no resources. A resource carries at most
 // LabelsPerResourceMax labels. A key is an optional DNS-subdomain prefix of at
@@ -17105,6 +17270,35 @@ const (
 	LabelKeyPrefixMax     = 253
 	LabelValueMax         = 63
 	LabelSelectorMaxBytes = 4096
+)
+
+// A compute edge that serves clients directly (ADR-20261103163954 §4) bounds
+// what one client address may take from a node: open connections, new
+// connections a second, requests a second, and TLS handshakes in progress per
+// CPU. An address is an IPv4 address or an IPv6 /64. The state is per node and
+// in memory; at most EdgeClientTrackedAddrsMax addresses are tracked, and the
+// rest share one bucket. These are starting values for the pilot to tune; they
+// must allow carrier-grade NAT, where thousands of users share one address.
+const (
+	EdgeClientOpenConnsPerAddrMax      = 512
+	EdgeClientNewConnsPerSecondPerAddr = 100
+	EdgeClientNewConnsBurstPerAddr     = 400
+	EdgeClientRequestsPerSecondPerAddr = 500
+	EdgeClientRequestsBurstPerAddr     = 1000
+	EdgeClientTrackedAddrsMax          = 200_000
+	EdgeTLSHandshakesInFlightPerCPU    = 128
+	EdgeTLSHandshakeTimeout            = 10 * time.Second
+	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
+	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
+	// the public server's read timeout is the whole request envelope.
+	// gRPC client streams are exempt.
+	EdgeClientBodyMinBytesPerWindow = 4096
+	EdgeClientBodyRateWindow        = 10 * time.Second
+	// EdgeControlPlaneForwardsInFlightMax bounds the requests one compute
+	// edge forwards to the control plane's private listener at once
+	// (uploads, public reads, OTLP), so direct clients cannot push more at
+	// the control plane than Cloudflare let through.
+	EdgeControlPlaneForwardsInFlightMax = 256
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one

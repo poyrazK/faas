@@ -68,7 +68,7 @@ func WriteOperationError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_limit_exceeded", "Operation limit exceeded", "the operation's deadline has passed or its execution budget is spent; record an outcome instead of retrying"))
 	case errors.Is(err, state.ErrPlatformTenantSuspended):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Customer suspended", "resume this customer before accepting new execution"))
-	case errors.Is(err, state.ErrInvalidArgument):
+	case errors.Is(err, state.ErrInvalidArgument), errors.Is(err, state.ErrWorkflowInvalidInput):
 		api.WriteProblem(w, api.ErrValidation("operation input or contract is invalid"))
 	default:
 		api.WriteProblem(w, api.ErrInternal("operation request failed"))

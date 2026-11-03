@@ -150,7 +150,7 @@ func (m *MemStore) AcceptVerifiedWebhookAutomation(_ context.Context, verified I
 		}
 		return WebhookAutomationReceipt{}, true, err
 	}
-	if m.automationFailureGuards[endpoint.AppID+"/"+binding.WorkflowName].PausedAt != nil {
+	if m.automationFailureBlocksAdmissionLocked(endpoint.AppID, binding.WorkflowName, time.Now().UTC()) {
 		reason = "automation_failure_paused"
 	}
 	receipt, envelope, recipients, err := prepareWebhookAutomation(endpoint, binding, spec, reason, eventID, eventType, body, time.Now().UTC())

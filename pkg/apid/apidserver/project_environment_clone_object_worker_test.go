@@ -19,12 +19,25 @@ import (
 
 type capturedObjectWorkerProvider struct {
 	*environmentSnapshotProvider
-	created, copiedSources, copiedTargets []string
+	created, deleted, copiedSources, copiedTargets []string
+}
+
+// The fixture's target buckets hold no listed objects; owned cleanup then
+// deletes the bucket itself.
+func (*capturedObjectWorkerProvider) ListObjects(context.Context, string, string, string, int32) (objectstorage.ObjectPage, error) {
+	return objectstorage.ObjectPage{}, nil
+}
+
+func (p *capturedObjectWorkerProvider) DeleteBucket(_ context.Context, name string) error {
+	p.deleted = append(p.deleted, name)
+	return nil
 }
 
 func (*capturedObjectWorkerProvider) ObserveObjectVersionRetention(_ context.Context, _ string, item objectstorage.ObjectVersion) (objectstorage.ObjectVersionRetention, error) {
 	return objectstorage.ObjectVersionRetention{VersionID: item.VersionID, MetadataVersion: item.MetadataVersion, RetainedUntil: time.Now().Add(time.Hour)}, nil
 }
+
+func (*capturedObjectWorkerProvider) QualifiedForEnvironmentClones() bool { return true }
 
 func (p *capturedObjectWorkerProvider) CreateBucket(_ context.Context, name string) error {
 	p.created = append(p.created, name)
@@ -88,6 +101,7 @@ func capturedCloneObjectWorkerContract(t *testing.T, srv *server, base cloneObje
 	defer teardown()
 	store := &cloneObjectCheckpointFailureStore{cloneObjectWorkerTestStore: base}
 	srv.store = store
+	srv.cloneTargetVersioning = func(context.Context, state.ObjectBucket) (bool, error) { return true, nil }
 	if err := srv.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}

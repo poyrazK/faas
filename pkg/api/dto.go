@@ -2483,9 +2483,11 @@ func (b *PublicAuthBlock) Validate() *Problem {
 		return NewProblem(422, CodeValidation, "Invalid public_auth.basic_user",
 			fmt.Sprintf("public_auth.basic_user must be 1..%d bytes when mode='basic'", AppPublicAuthBasicUserMaxBytes))
 	}
-	if p := strings.TrimSpace(b.BasicPass); p == "" || len(p) > AppPublicAuthBasicPassMaxBytes {
+	// A short password fell quickly to guessing at the gateway (H76); a
+	// newly set one must be at least PublicAuthBasicPassMinBytes long.
+	if p := strings.TrimSpace(b.BasicPass); len(p) < PublicAuthBasicPassMinBytes || len(p) > AppPublicAuthBasicPassMaxBytes {
 		return NewProblem(422, CodeValidation, "Invalid public_auth.basic_pass",
-			fmt.Sprintf("public_auth.basic_pass must be 1..%d bytes when mode='basic'", AppPublicAuthBasicPassMaxBytes))
+			fmt.Sprintf("public_auth.basic_pass must be %d..%d bytes when mode='basic'", PublicAuthBasicPassMinBytes, AppPublicAuthBasicPassMaxBytes))
 	}
 	return nil
 }
@@ -4256,6 +4258,16 @@ type AccountResponse struct {
 	// KeyScopes are the scopes of the API key that authenticated GET
 	// /v1/account; absent for a dashboard session (ADR-20261029085359).
 	KeyScopes []string `json:"key_scopes,omitempty"`
+	// KeyOrg is the shared organization that key acts in; absent for a
+	// personal key or a session (ADR-20261101225122).
+	KeyOrg *KeyOrg `json:"key_org,omitempty"`
+}
+
+// KeyOrg names the shared organization an API key acts in.
+type KeyOrg struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+	Name string `json:"name"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
@@ -4742,6 +4754,12 @@ type UpdateCronRequest struct {
 	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
 	RetryMax            *int                       `json:"retry_max,omitempty"`
 	RetryBackoffSeconds *int                       `json:"retry_backoff_seconds,omitempty"`
+	// ClearSchedulePolicy and ClearFailureRules remove the cron's schedule
+	// policy or failure rules; an omitted schedule_policy or failure_rules
+	// leaves them as they are. Each refuses the matching field in the same
+	// request.
+	ClearSchedulePolicy bool `json:"clear_schedule_policy,omitempty"`
+	ClearFailureRules   bool `json:"clear_failure_rules,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).

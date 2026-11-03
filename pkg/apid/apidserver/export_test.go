@@ -2108,3 +2108,17 @@ func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
 	return resolved.command, resolved.shell, problem
 }
+
+// WaitPasswordResetMail waits for forgot-password work started off the
+// request path (H86).
+func (r *server) WaitPasswordResetMail() { r.resetMail.wait() }
+
+// Login failure limiter internals (bug hunt round 8: eviction when full).
+func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
+func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key) }
+func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
+	return l.retryAfter(key)
+}
+
+// RouteProbeAccountQueues exposes the per-account probe ordering (H79).
+var RouteProbeAccountQueues = routeProbeAccountQueues

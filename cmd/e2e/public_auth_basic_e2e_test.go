@@ -87,7 +87,7 @@ func TestE2E_NormalPath_PublicBasicAuthOpensSealedCredentials(t *testing.T) {
 	waitForNormalPathResponse(t, f.h, f.host, "normal-path:v1\n", 10*time.Second)
 
 	runPublicAuthCLI(t, bin, f.h.APIDURL, f.key, f.app.Slug,
-		"--public-auth", api.AppPublicAuthModeBasic, "--basic-user", "editor", "--basic-pass", "first-pass")
+		"--public-auth", api.AppPublicAuthModeBasic, "--basic-user", "editor", "--basic-pass", "first-pass-1234")
 	header, _ := waitForBasicAuthStatus(t, f, "anonymous after mode=basic", nil, http.StatusUnauthorized)
 	if got := header.Get("WWW-Authenticate"); got != `Basic realm="apps"` {
 		t.Errorf("anonymous WWW-Authenticate = %q, want a Basic challenge", got)
@@ -95,16 +95,16 @@ func TestE2E_NormalPath_PublicBasicAuthOpensSealedCredentials(t *testing.T) {
 	if _, body, status := doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil, basicAuthHeader("editor", "wrong")); status != http.StatusUnauthorized {
 		t.Fatalf("wrong password: status=%d body=%q, want 401", status, body)
 	}
-	if _, body := waitForBasicAuthStatus(t, f, "exact credentials", basicAuthHeader("editor", "first-pass"), http.StatusOK); string(body) != "normal-path:v1\n" {
+	if _, body := waitForBasicAuthStatus(t, f, "exact credentials", basicAuthHeader("editor", "first-pass-1234"), http.StatusOK); string(body) != "normal-path:v1\n" {
 		t.Fatalf("exact credentials body = %q, want the app's response", body)
 	}
 
 	// Rotation takes effect without restarting the gateway: the new password
 	// opens the app and the old one stops working.
 	runPublicAuthCLI(t, bin, f.h.APIDURL, f.key, f.app.Slug,
-		"--public-auth", api.AppPublicAuthModeBasic, "--basic-user", "editor", "--basic-pass", "second-pass")
-	waitForBasicAuthStatus(t, f, "rotated password", basicAuthHeader("editor", "second-pass"), http.StatusOK)
-	if _, body, status := doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil, basicAuthHeader("editor", "first-pass")); status != http.StatusUnauthorized {
+		"--public-auth", api.AppPublicAuthModeBasic, "--basic-user", "editor", "--basic-pass", "second-pass-1234")
+	waitForBasicAuthStatus(t, f, "rotated password", basicAuthHeader("editor", "second-pass-1234"), http.StatusOK)
+	if _, body, status := doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil, basicAuthHeader("editor", "first-pass-1234")); status != http.StatusUnauthorized {
 		t.Fatalf("old password after rotation: status=%d body=%q, want 401", status, body)
 	}
 

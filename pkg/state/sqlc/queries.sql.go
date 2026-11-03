@@ -10979,13 +10979,15 @@ func (q *Queries) CountManagedPostgresHealth(ctx context.Context, db DBTX, arg C
 
 const countManagedPostgresLifecycleDatabases = `-- name: CountManagedPostgresLifecycleDatabases :one
 SELECT ((SELECT count(*) FROM managed_postgres_databases d
- WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid AND d.state<>'deleted')
+ WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
  JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=$1::uuid
  AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count
 `
 
+// A delete that can no longer be undone frees the database, including a source
+// kept for its restore copies (ADR-20261103091657).
 func (q *Queries) CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countManagedPostgresLifecycleDatabases, accountID)
 	var count int64
@@ -10994,11 +10996,12 @@ func (q *Queries) CountManagedPostgresLifecycleDatabases(ctx context.Context, db
 }
 
 const countManagedPostgresOrgDatabases = `-- name: CountManagedPostgresOrgDatabases :one
-SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=$1::uuid AND state<>'deleted')
+SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=$1::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE p.org_id=$1::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count
 `
 
+// Counts as CountManagedPostgresLifecycleDatabases does.
 func (q *Queries) CountManagedPostgresOrgDatabases(ctx context.Context, db DBTX, orgID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countManagedPostgresOrgDatabases, orgID)
 	var count int64
@@ -42307,7 +42310,7 @@ const listAllEventsPaged = `-- name: ListAllEventsPaged :many
 select id, at, actor, kind, subject, data
 from events
 where ($1 = '' or actor = $1)
-  and ($2 = '' or kind like $2 || '%')
+  and ($2 = '' or starts_with(kind, $2))
   and ($3 = '' or subject = $3::uuid)
   and ($4 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $4)
 order by at desc, id desc
@@ -42335,17 +42338,18 @@ type ListAllEventsPagedRow struct {
 // Reads the live events table (NOT audit_log — distinct source of
 // truth per ADR-091 §3.7.4). Optional filters:
 //   - $1 actor    — exact match (handler passes "" to skip)
-//   - $2 kind_prefix — LIKE 'prefix%' (handler passes "" to skip)
+//   - $2 kind_prefix — literal prefix (handler passes "" to skip)
 //   - $3 subject  — exact match (handler passes "" to skip)
 //   - $4 since    — RFC 3339 timestamptz (handler passes zero time to skip)
 //   - $5 limit    — top-N rows (handler default 200, cap 500;
 //     cast to int8 so sqlc emits int64 Params and the
 //     handler's int→int64 widening is safe)
+//     kind_prefix is matched literally (starts_with), so '_' and '%' in
+//     a kind are not wildcards.
 //
-// Order: at DESC, id DESC — the id tiebreaker keeps the planner on
-// the (kind, at DESC) index added by 00190_admin_obs_index.sql for
-// kind-prefix queries and avoids an unstable sort on the
-// over-read window.
+// Order: at DESC, id DESC — a backward scan of events_at_id_idx
+// (ADR-20261103094121) returns the newest rows first under any mix
+// of filters, stopping at the limit instead of sorting the table.
 // Subject is uuid (nullable in the schema); the cast is left to
 // the handler so the handler can pass an empty string for "no
 // subject filter" without a NULL literal.
@@ -53839,41 +53843,6 @@ func (q *Queries) ListTenantWorkflowScheduleCursors(ctx context.Context, db DBTX
 	return items, nil
 }
 
-const listTerminalTriggerRecordItems = `-- name: ListTerminalTriggerRecordItems :many
-SELECT item_identifier FROM trigger_records
-WHERE trigger_id = $1
-  AND item_identifier = ANY($2::text[])
-  AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
-`
-
-type ListTerminalTriggerRecordItemsParams struct {
-	TriggerID       pgtype.UUID
-	ItemIdentifiers []string
-}
-
-// A broker may redeliver after Gregale commits a terminal receipt but before
-// the broker acknowledges it. The current delivery handle can be Acked
-// without dispatching the application again.
-func (q *Queries) ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error) {
-	rows, err := db.Query(ctx, listTerminalTriggerRecordItems, arg.TriggerID, arg.ItemIdentifiers)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var item_identifier string
-		if err := rows.Scan(&item_identifier); err != nil {
-			return nil, err
-		}
-		items = append(items, item_identifier)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listTriggerDeadLetter = `-- name: ListTriggerDeadLetter :many
 select record_id, trigger_id, reason, routed_to, detail, created_at, failure_history
 from trigger_dead_letter
@@ -61505,7 +61474,9 @@ FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.databa
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid
 AND u.window_from>=$2::timestamptz AND u.window_from<$3::timestamptz
 AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
- AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until))
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until)
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers p WHERE p.database_id=w.database_id
+  AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'))
 `
 
 type ManagedPostgresUsageForSubjectParams struct {
@@ -74464,14 +74435,43 @@ func (q *Queries) PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64
 }
 
 const pruneUnownedWorkflowRuns = `-- name: PruneUnownedWorkflowRuns :execrows
-DELETE FROM workflow_runs r WHERE r.finished_at IS NOT NULL
-AND r.finished_at < clock_timestamp()-$1::bigint*interval '1 second'
-AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
-AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+DELETE FROM workflow_runs WHERE id IN (
+ SELECT r.id FROM workflow_runs r WHERE r.finished_at IS NOT NULL
+ AND r.finished_at < clock_timestamp()-$1::bigint*interval '1 second'
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
+ AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+ ORDER BY r.finished_at,r.id LIMIT $2::integer FOR UPDATE OF r SKIP LOCKED
+)
 `
 
-func (q *Queries) PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, retentionSeconds int64) (int64, error) {
-	result, err := db.Exec(ctx, pruneUnownedWorkflowRuns, retentionSeconds)
+type PruneUnownedWorkflowRunsParams struct {
+	RetentionSeconds int64
+	BatchSize        int32
+}
+
+func (q *Queries) PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, arg PruneUnownedWorkflowRunsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneUnownedWorkflowRuns, arg.RetentionSeconds, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneWorkflowEventArchive = `-- name: PruneWorkflowEventArchive :execrows
+DELETE FROM workflow_event_archive WHERE id IN (
+ SELECT id FROM workflow_event_archive
+ WHERE received_at < clock_timestamp()-$1::bigint*interval '1 second'
+ ORDER BY received_at,id LIMIT $2::integer FOR UPDATE SKIP LOCKED
+)
+`
+
+type PruneWorkflowEventArchiveParams struct {
+	RetentionSeconds int64
+	BatchSize        int32
+}
+
+func (q *Queries) PruneWorkflowEventArchive(ctx context.Context, db DBTX, arg PruneWorkflowEventArchiveParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneWorkflowEventArchive, arg.RetentionSeconds, arg.BatchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -83160,6 +83160,11 @@ SELECT jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
+    'versioning_enabled', coalesce((
+        SELECT v.state = 'ready' AND v.observed_status = 'Enabled' AND v.propagation_until IS NOT NULL
+            AND v.propagation_until <= clock_timestamp()
+        FROM object_bucket_versioning v WHERE v.bucket_id = b.id
+    ), false),
     'credentials', coalesce((
         SELECT jsonb_agg(jsonb_build_object('id', c.id::text, 'label', c.label, 'permission', c.permission,
             'managed_app_id', coalesce(c.managed_app_id::text, ''), 'managed_scope', coalesce(c.managed_scope, ''),
@@ -93764,6 +93769,45 @@ func (q *Queries) RenewProjectEnvironmentCloneWorkerLease(ctx context.Context, d
 	return i, err
 }
 
+const renewTriggerRecordClaims = `-- name: RenewTriggerRecordClaims :execrows
+WITH claims AS (
+    SELECT unnest($3::uuid[]) AS id,
+           unnest($4::bigint[]) AS claim_generation
+)
+UPDATE trigger_records r
+   SET claim_expires_at = greatest(r.claim_expires_at,
+       now() + make_interval(secs => $1::double precision))
+  FROM claims
+ WHERE r.id = claims.id AND r.claim_generation = claims.claim_generation
+   AND r.trigger_id = $2::uuid
+   AND r.state = 'claimed' AND r.claim_expires_at > now()
+`
+
+type RenewTriggerRecordClaimsParams struct {
+	LeaseSeconds     float64
+	TriggerID        pgtype.UUID
+	Ids              []pgtype.UUID
+	ClaimGenerations []int64
+}
+
+// Keeps the claims of a batch whose dispatch is still running. A claim lasts
+// ten minutes, but a long-timeout app's batch may wait 16.5; an expired claim
+// could be taken and run again, and its outcome could not be recorded. Only
+// the claim generation the dispatcher holds is renewed, and never one that
+// has already lapsed.
+func (q *Queries) RenewTriggerRecordClaims(ctx context.Context, db DBTX, arg RenewTriggerRecordClaimsParams) (int64, error) {
+	result, err := db.Exec(ctx, renewTriggerRecordClaims,
+		arg.LeaseSeconds,
+		arg.TriggerID,
+		arg.Ids,
+		arg.ClaimGenerations,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const reopenSkippedWorkflowStepsForRetry = `-- name: ReopenSkippedWorkflowStepsForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',input=NULL,output=NULL,next_check_at=NULL,next_retry_at=NULL,
@@ -95919,19 +95963,20 @@ func (q *Queries) RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, a
 const requeueFailedWorkflowStepForRetry = `-- name: RequeueFailedWorkflowStepForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,
-    finished_at=NULL,error=NULL
-WHERE run_id=$1::text::uuid
-  AND step_name=$2::text
+    finished_at=NULL,error=NULL,retry_base=$1::integer
+WHERE run_id=$2::text::uuid
+  AND step_name=$3::text
   AND status IN ('failed','dead')
 `
 
 type RequeueFailedWorkflowStepForRetryParams struct {
-	RunID    string
-	StepName string
+	RetryBase int32
+	RunID     string
+	StepName  string
 }
 
 func (q *Queries) RequeueFailedWorkflowStepForRetry(ctx context.Context, db DBTX, arg RequeueFailedWorkflowStepForRetryParams) (int64, error) {
-	result, err := db.Exec(ctx, requeueFailedWorkflowStepForRetry, arg.RunID, arg.StepName)
+	result, err := db.Exec(ctx, requeueFailedWorkflowStepForRetry, arg.RetryBase, arg.RunID, arg.StepName)
 	if err != nil {
 		return 0, err
 	}
@@ -103969,6 +104014,66 @@ func (q *Queries) TriggerRecordInScope(ctx context.Context, db DBTX, arg Trigger
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const triggerRecordStatesByItems = `-- name: TriggerRecordStatesByItems :many
+SELECT r.item_identifier, r.state, r.next_fire_at, r.claim_expires_at,
+       coalesce(r.metadata->>'topic', '')::text AS topic,
+       coalesce(d.reason, '')::text AS dead_letter_reason
+FROM trigger_records r
+LEFT JOIN trigger_dead_letter d ON d.record_id = r.id
+WHERE r.trigger_id = $1::uuid
+  AND r.item_identifier = ANY($2::text[])
+`
+
+type TriggerRecordStatesByItemsParams struct {
+	TriggerID       pgtype.UUID
+	ItemIdentifiers []string
+}
+
+type TriggerRecordStatesByItemsRow struct {
+	ItemIdentifier   string
+	State            string
+	NextFireAt       pgtype.Timestamptz
+	ClaimExpiresAt   pgtype.Timestamptz
+	Topic            string
+	DeadLetterReason string
+}
+
+// The stored state of the records one broker poll handed back. A broker may
+// redeliver after Gregale commits a terminal receipt (succeeded, ended by a
+// work policy, or dead-lettered) but before the broker settles it; the
+// dispatcher settles that delivery without dispatching the application
+// again. dead_letter_reason lets a Kafka seek-to-offset trigger keep holding
+// a poison record while an exhausted one commits; next_fire_at and
+// claim_expires_at tell a broker that redelivers on its own when a cooling
+// retry, or a record another dispatcher holds, can run; topic maps a record
+// stored under an earlier release's item identifier (ADR-20261101093512).
+func (q *Queries) TriggerRecordStatesByItems(ctx context.Context, db DBTX, arg TriggerRecordStatesByItemsParams) ([]TriggerRecordStatesByItemsRow, error) {
+	rows, err := db.Query(ctx, triggerRecordStatesByItems, arg.TriggerID, arg.ItemIdentifiers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TriggerRecordStatesByItemsRow{}
+	for rows.Next() {
+		var i TriggerRecordStatesByItemsRow
+		if err := rows.Scan(
+			&i.ItemIdentifier,
+			&i.State,
+			&i.NextFireAt,
+			&i.ClaimExpiresAt,
+			&i.Topic,
+			&i.DeadLetterReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const tryEdgeRuleAccountMutationLock = `-- name: TryEdgeRuleAccountMutationLock :one
