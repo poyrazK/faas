@@ -233,6 +233,12 @@ gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
 
+HTTP and CLI publication require the complete event envelope, including
+server-added metadata, to fit within the 1 MiB workflow input limit. The check
+also conservatively accounts for exponent-form JSON numbers expanding when
+stored. Oversized events are rejected before acceptance with
+`event_envelope_too_large`; batch publication reports that error on the item.
+
 ### Subscription limits and removal
 
 On a production deploy, the `event_triggers` in `gregale.yaml` are the app's
@@ -455,6 +461,7 @@ decision on that event
 |---|---|---|
 | `202` | | Accepted and stored; it will be routed. |
 | `400` | `invalid_event` | The envelope is malformed or uses a reserved source. Fix it; do not retry as is. |
+| `413` | `event_envelope_too_large` | The normalized event envelope exceeds the workflow input limit. Reduce the data before retrying. |
 | `422` | `validation_failed` | The data does not match the event's registered schema. |
 | `429` | `event_publish_rate_limited` | Over your plan's [publish rate](#publish-rate). Retry the same event after `Retry-After`. |
 | `503` | `events_paused` | Events are [paused](#pausing-events). Retry the same event after `Retry-After`. |

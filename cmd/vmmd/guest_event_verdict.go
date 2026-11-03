@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,23 @@ const guestEventsPausedRetrySeconds = 30
 // errGuestEventPublishUnavailable: this vmmd has nowhere to persist the event.
 var errGuestEventPublishUnavailable = errors.New("in-guest event publish is unavailable")
 
+var errGuestEventEnvelopeTooLarge = errors.New("in-guest event envelope exceeds workflow input limit")
+
+func checkGuestEventEnvelope(ctx context.Context, store any, accountID string, payload []byte) error {
+	if api.WorkflowEventEnvelopeFits(payload) {
+		return nil
+	}
+	// Keep retries of events accepted before this limit idempotent.
+	if lookup, ok := store.(state.PublishedEventLookupStore); ok {
+		if _, err := lookup.LookupPublishedEventAcceptance(ctx, accountID, payload); err == nil {
+			return nil
+		} else if errors.Is(err, state.ErrConflict) {
+			return err
+		}
+	}
+	return errGuestEventEnvelopeTooLarge
+}
+
 // guestEventRateLimitedError refuses a publish over the account's rate.
 type guestEventRateLimitedError struct {
 	perSecond int
@@ -48,6 +66,8 @@ func guestEventPublishVerdict(err error) api.EventPublishVerdict {
 	switch {
 	case err == nil:
 		return api.EventPublishVerdict{Status: http.StatusAccepted}
+	case errors.Is(err, errGuestEventEnvelopeTooLarge):
+		return api.EventPublishVerdict{Status: http.StatusRequestEntityTooLarge, Code: "event_envelope_too_large"}
 	case errors.As(err, &storage):
 		// As POST /v1/events:publish: stored events must be pruned or the
 		// plan upgraded before this one fits, so wait the storage back-off.

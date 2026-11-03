@@ -241,6 +241,10 @@ func workflowRunIsActive(status string) bool {
 }
 
 func (m *MemStore) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, owner string, minute time.Time, limit int) ([]WorkflowScheduleCandidate, error) {
+	return m.ListFairTenantWorkflowScheduleCandidatesAfter(ctx, owner, minute, limit, nil)
+}
+
+func (m *MemStore) ListFairTenantWorkflowScheduleCandidatesAfter(ctx context.Context, owner string, minute time.Time, limit int, after *FairTenantScheduleCursor) ([]WorkflowScheduleCandidate, error) {
 	if limit <= 0 || limit > api.WorkflowScheduleBatch {
 		return nil, ErrInvalidArgument
 	}
@@ -280,9 +284,22 @@ func (m *MemStore) ListFairTenantWorkflowScheduleCandidates(ctx context.Context,
 			}
 			value := candidate
 			value.Workflows = raw
+			value.FairWorkflowName = definition.Name
+			value.FairLastAdmittedAt = cloneTimePtr(cursor.LastAdmittedAt)
 			row := entry{candidate: value, name: definition.Name}
 			if cursor.LastAdmittedAt != nil {
 				row.admitted = *cursor.LastAdmittedAt
+			}
+			if after != nil {
+				var prior time.Time
+				if after.LastAdmittedAt != nil {
+					prior = *after.LastAdmittedAt
+				}
+				if row.admitted.Before(prior) || row.admitted.Equal(prior) &&
+					(candidate.AppID < after.AppID || candidate.AppID == after.AppID &&
+						(candidate.PlatformTenantID < after.TenantID || candidate.PlatformTenantID == after.TenantID && definition.Name <= after.WorkflowName)) {
+					continue
+				}
 			}
 			entries = append(entries, row)
 		}
