@@ -6,14 +6,16 @@
   <link rel="stylesheet" href="/dashboard/referral-assets/portal.css">
   <script nonce="{{.Nonce}}" src="/dashboard/referral-assets/portal.js" defer></script>
   {{if .Staff}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/pipeline.js" defer></script>{{end}}
+  {{if .Manager}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/reports.js" defer></script>{{end}}
 </head>
-<body data-staff="{{.Staff}}">
+<body data-staff="{{.Staff}}" data-manager="{{.Manager}}">
   <a class="skip" href="#main">Skip to content</a>
   <aside class="rail">
     <a class="brand" href="/dashboard/"><span class="brand-mark">g</span> gregale<span class="brand-dot">●</span></a>
     <span class="eyebrow rail-label">{{if .Staff}}SALES WORKSPACE{{else}}REFERRAL PROGRAM{{end}}</span>
     <nav aria-label="Workspace">
       <a href="#overview" class="nav-item active" aria-current="page"><span>◈</span> Overview</a>
+      {{if .Manager}}<a href="#reports" class="nav-item"><span>▥</span> Manager reports</a>{{end}}
       {{if .Staff}}<a href="#pipeline" class="nav-item"><span>◇</span> Lead pipeline</a><a href="#tasks" class="nav-item"><span>✓</span> Task inbox <span id="task-nav-count" class="task-nav-count" hidden></span></a>{{end}}
       <a href="#referrals" class="nav-item"><span>↗</span> {{if .Staff}}Customers & referrals{{else}}Your referrals{{end}}</a>
       {{if .Staff}}<a href="#kit" class="nav-item"><span>▤</span> Sales kit</a>{{end}}
@@ -33,6 +35,25 @@
         <article class="panel terms-panel"><span class="eyebrow">PROGRAM TERMS</span><h2>A clear path to a reward.</h2><ol class="steps"><li><span>01</span><div><strong>A new customer enters your code</strong><p>Existing accounts and self-referrals do not qualify.</p></div></li><li><span>02</span><div><strong>The first invoice is paid</strong><p id="conversion-terms">Loading program terms…</p></div></li><li><span>03</span><div><strong>The reward passes its hold</strong><p id="reward-terms">Loading reward terms…</p></div></li></ol></article>
       </div>
     </section>
+    {{if .Manager}}
+    <section id="reports" class="page-section">
+      <div class="section-heading"><div><p class="eyebrow">A CLEAR VIEW OF THE TEAM</p><h2>Sales performance</h2><p class="muted">Compare current lead ownership and original referral credit.</p></div><button id="report-export" class="button secondary" disabled>Export comparison</button></div>
+      <form id="report-filters" class="report-controls">
+        <label>Period<select id="report-preset"><option value="month">This month</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="custom">Custom dates</option></select></label>
+        <label>From<input id="report-from" type="date" min="2000-01-01" max="2100-12-31" required></label><label>Through<input id="report-to" type="date" min="2000-01-01" max="2100-12-31" required></label>
+        <label>Salesperson<select id="report-owner"><option value="">All salespeople</option></select></label><label class="report-zone"><input id="report-utc" type="checkbox"> Use UTC dates</label><button id="report-apply" class="button primary" type="submit">Apply filters</button>
+      </form>
+      <p id="report-period" class="muted" role="status">Loading the team report…</p><p class="report-definition muted">Dates select when leads and referral accounts were created. Stages, owners and payment outcomes show their latest known status. Win rate uses currently won/lost leads; signup-to-payment uses first recorded payments.</p>
+      <p id="report-error" class="error" role="alert" hidden></p><div id="report-metrics" class="metrics" aria-live="polite"></div>
+      <div class="panel report-stage-panel"><h3>Current lead stage distribution</h3><div id="report-stages" class="report-stages"></div></div>
+      <div class="report-table-heading"><h3>Salesperson comparison</h3><label>Sort by<select id="report-sort"><option value="first_payments">First payments</option><option value="leads">Leads created</option><option value="won">Won leads</option><option value="conversion">Signup-to-payment rate</option><option value="email">Salesperson</option></select></label></div>
+      <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Salesperson</th><th>Leads</th><th>Open</th><th>Won</th><th>Lost</th><th>Win rate</th><th>Referred signups</th><th>First payments</th><th>Signup → payment</th><th>Avg. to first payment</th></tr></thead><tbody id="report-rows"><tr><td colspan="10" class="empty">Loading comparisons…</td></tr></tbody></table></div></div>
+      <div class="report-table-heading"><div><h3>First-invoice collections</h3><p class="muted">Captured first-invoice payments, less recorded and pending refunds, including tax. Each currency is shown separately.</p></div><button id="report-money-export" class="button secondary" disabled>Export collections</button></div>
+      <p id="report-payment-gap" class="error" role="status" hidden></p><div id="report-collections" class="report-collections"></div>
+      <div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Salesperson</th><th>Currency</th><th>First invoices</th><th>Recorded payments</th><th>Refunded</th><th>Pending refunds</th><th>Net collections</th></tr></thead><tbody id="report-money-rows"><tr><td colspan="7" class="empty">Loading collections…</td></tr></tbody></table></div></div>
+      <p class="muted report-footnote">CRM reassignment moves lead counts to the current owner. Referral conversions and collections stay with the original referrer. Active team members with no activity remain visible.</p>
+    </section>
+    {{end}}
     {{if .Staff}}
     <section id="pipeline" class="page-section">
       <div class="section-heading"><div><p class="eyebrow">BEFORE THE FIRST SIGNUP</p><h2>Lead pipeline</h2><p class="muted">Keep each prospect, owner, and next conversation in one place.</p></div><button id="new-prospect" class="button primary" disabled>+ Add lead</button></div>

@@ -37,6 +37,7 @@ const (
 
 // Sales workspace input and pagination bounds.
 const (
+	SalesReportMaxDays      = 366
 	SalesPageSize           = ReferralPageSize
 	SalesNameMaxBytes       = 120
 	SalesFieldMaxBytes      = 200

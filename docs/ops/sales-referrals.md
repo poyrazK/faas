@@ -190,3 +190,46 @@ that the old rep loses both and the new owner gains both, complete and reopen a
 task, attempt a stale update, and create a matching sales referral signup. Check
 that another rep's code cannot expose signup status, and that customer referral
 pages do not include the lead pipeline, task scripts or staff contact data.
+
+## Manager reports
+
+The sales portal's **Manager reports** section is available only to configured
+sales managers with verified email and completed MFA. Ordinary reps and customer
+pages do not load the report script, and the API rejects non-manager sessions
+and API keys. No new migration or customer-console release is needed.
+
+`GET /v1/sales/reports?from=YYYY-MM-DD&to=YYYY-MM-DD&tz=Europe/Istanbul&owner=UUID`
+returns a creation-cohort report. `from` and `to` are inclusive calendar dates,
+within 2000–2100 and span at most 366 calendar days, including both endpoints. Without
+explicit dates, the API uses the current month through today in the selected
+time zone; the API default zone is UTC. The portal uses the browser's zone by
+default and offers UTC. `owner` is optional. The portal includes month, seven-day
+and thirty-day presets, custom dates, per-rep filtering, sorting and CSV exports.
+
+The dates select when CRM leads and sales referral accounts were created, not
+when their outcome happened. Lead counts/stages use the current CRM owner.
+Signup and first-payment counts use the original sales referrer. Customer-program
+referrals are excluded. Current won/lost stages define win rate; an empty
+won/lost or signup denominator displays no percentage. The elapsed-payment
+average uses recorded signup and first-payment timestamps. First payments remain
+recorded conversions after a refund, with the refund shown in collections.
+
+Collections include only the referred account's captured first invoice. Recorded
+payments, refunds, pending refunds and net collections are grouped by actual
+invoice currency. Net collections subtract recorded and pending refunds per
+invoice, with a minimum of zero; amounts include tax. Missing or wrong-account
+invoice snapshots are counted and excluded from monetary totals. New team members
+with no activity remain visible; past/unavailable source owners retain their
+surviving history. Reports reflect the current retained records at `observed_at`.
+
+The response contains `window`, `reps`, `rows`, `collections` and `observed_at`.
+Collection `*_cents` fields are decimal strings for exact browser arithmetic.
+The comparison and collection exports are separate CSVs. Every exported row
+includes the creation-date range, reporting zone and observation timestamp;
+collection exports keep integer cents and currency in separate columns.
+
+Verify with data around a reporting-zone midnight and a daylight-saving change,
+an empty period, multiple currencies, a refund, a pending refund, and a salesperson
+with no activity. Reassign a CRM lead and confirm that lead counts move while
+referral credit does not. Check that a rep receives 403 from the report endpoint,
+and that comparison/collection CSVs preserve the selected period and scope.

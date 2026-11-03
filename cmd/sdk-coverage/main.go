@@ -318,6 +318,7 @@ var routeExclude = map[string]bool{
 	// + FAAS_ADMIN_EMAILS allowlist. Mirror the exclusion across
 	// BOTH this list AND cmd/apid/spec_compliance_test.go::routeExclude;
 	// the two lists must move together.
+	"GET /v1/sales/reports":                     true, // private manager report
 	"GET /v1/sales/team":                        true, // private sales CRM
 	"GET /v1/sales/leads":                       true, // private sales CRM
 	"POST /v1/sales/leads":                      true, // private sales CRM

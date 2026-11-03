@@ -36,14 +36,16 @@ func (s *Service) CustomerPage(w http.ResponseWriter, r *http.Request, acct stat
 }
 
 func (s *Service) page(w http.ResponseWriter, r *http.Request, acct state.Account, staff bool) {
-	if _, ok := s.scope(w, r, acct, staff); !ok {
+	scope, ok := s.scope(w, r, acct, staff)
+	if !ok {
 		return
 	}
 	var buf bytes.Buffer
 	if err := portal.Execute(&buf, struct {
-		Staff bool
-		Nonce string
-	}{staff, httpsec.NonceFromContext(r.Context())}); err != nil {
+		Staff   bool
+		Manager bool
+		Nonce   string
+	}{staff, scope.All, httpsec.NonceFromContext(r.Context())}); err != nil {
 		unavailable(w)
 		return
 	}
@@ -57,7 +59,7 @@ func (s *Service) Asset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("file")
-	if name != "portal.css" && name != "portal.js" && name != "pipeline.js" {
+	if name != "portal.css" && name != "portal.js" && name != "pipeline.js" && name != "reports.js" {
 		http.NotFound(w, r)
 		return
 	}

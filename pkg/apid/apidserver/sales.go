@@ -59,6 +59,7 @@ func (s *server) salesRoutes(mux *http.ServeMux) {
 		acct, _ := AccountFrom(r.Context())
 		s.sales.CustomerPage(w, r, acct)
 	})))
+	mux.HandleFunc("GET /v1/sales/reports", s.authLimited(s.requireSessionPrincipal(s.sales.Reports)))
 	mux.HandleFunc("GET /v1/sales/team", s.authLimited(s.requireSessionPrincipal(s.sales.Team)))
 	mux.HandleFunc("GET /v1/sales/leads", s.authLimited(s.requireSessionPrincipal(s.sales.Leads)))
 	mux.HandleFunc("POST /v1/sales/leads", s.authLimited(s.requireSessionPrincipal(s.sales.SaveProspect)))

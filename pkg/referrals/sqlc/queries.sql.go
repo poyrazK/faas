@@ -557,6 +557,187 @@ func (q *Queries) ReferralSummary(ctx context.Context, db DBTX, arg ReferralSumm
 	return items, nil
 }
 
+const salesReportClock = `-- name: SalesReportClock :one
+SELECT transaction_timestamp()::timestamptz AS observed_at
+`
+
+func (q *Queries) SalesReportClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, salesReportClock)
+	var observed_at pgtype.Timestamptz
+	err := row.Scan(&observed_at)
+	return observed_at, err
+}
+
+const salesReportCollections = `-- name: SalesReportCollections :many
+SELECT l.owner_id,i.currency,count(*)::bigint AS invoices,
+ sum(i.amount_paid_cents)::bigint AS paid_cents,
+ sum(i.amount_refunded_cents)::bigint AS refunded_cents,
+ sum(i.amount_refund_pending_cents)::bigint AS pending_refund_cents,
+ sum(GREATEST(i.amount_paid_cents-i.amount_refunded_cents-i.amount_refund_pending_cents,0))::bigint AS retained_cents
+FROM referral_attributions r JOIN referral_links l ON l.code=r.code
+JOIN invoices i ON i.id=r.first_paid_invoice_id AND i.account_id=r.account_id
+WHERE l.kind='sales' AND r.first_paid_at IS NOT NULL
+ AND (r.created_at AT TIME ZONE $1::text)::date BETWEEN $2::date AND $3::date
+ AND ($4::text='' OR l.owner_id::text=$4::text)
+GROUP BY l.owner_id,i.currency ORDER BY l.owner_id,i.currency
+`
+
+type SalesReportCollectionsParams struct {
+	ReportTimezone string
+	FromDate       pgtype.Date
+	ToDate         pgtype.Date
+	OwnerFilter    string
+}
+
+type SalesReportCollectionsRow struct {
+	OwnerID            pgtype.UUID
+	Currency           string
+	Invoices           int64
+	PaidCents          int64
+	RefundedCents      int64
+	PendingRefundCents int64
+	RetainedCents      int64
+}
+
+func (q *Queries) SalesReportCollections(ctx context.Context, db DBTX, arg SalesReportCollectionsParams) ([]SalesReportCollectionsRow, error) {
+	rows, err := db.Query(ctx, salesReportCollections,
+		arg.ReportTimezone,
+		arg.FromDate,
+		arg.ToDate,
+		arg.OwnerFilter,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SalesReportCollectionsRow{}
+	for rows.Next() {
+		var i SalesReportCollectionsRow
+		if err := rows.Scan(
+			&i.OwnerID,
+			&i.Currency,
+			&i.Invoices,
+			&i.PaidCents,
+			&i.RefundedCents,
+			&i.PendingRefundCents,
+			&i.RetainedCents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const salesReportComparison = `-- name: SalesReportComparison :many
+WITH owners AS (
+ SELECT id FROM accounts WHERE lower(email)=ANY($1::text[])
+  AND status='active' AND email_verified_at IS NOT NULL AND mfa_enrolled_at IS NOT NULL
+ UNION SELECT owner_id FROM sales_leads
+ UNION SELECT owner_id FROM referral_links WHERE kind='sales'
+), leads AS (
+ SELECT owner_id,count(*)::bigint AS total,
+ count(*) FILTER(WHERE stage='new')::bigint AS new,
+ count(*) FILTER(WHERE stage='contacted')::bigint AS contacted,
+ count(*) FILTER(WHERE stage='qualified')::bigint AS qualified,
+ count(*) FILTER(WHERE stage='demo')::bigint AS demo,
+ count(*) FILTER(WHERE stage='won')::bigint AS won,
+ count(*) FILTER(WHERE stage='lost')::bigint AS lost
+ FROM sales_leads
+ WHERE (created_at AT TIME ZONE $2::text)::date BETWEEN $3::date AND $4::date
+  AND ($5::text='' OR owner_id::text=$5::text)
+ GROUP BY owner_id
+), conversions AS (
+ SELECT l.owner_id,count(*)::bigint AS signups,
+ count(*) FILTER(WHERE r.first_paid_at IS NOT NULL)::bigint AS first_payments,
+ floor(avg(extract(epoch FROM (r.first_paid_at-r.created_at))) FILTER(WHERE r.first_paid_at>=r.created_at))::bigint AS avg_first_payment_seconds,
+ count(*) FILTER(WHERE r.first_paid_at IS NOT NULL AND i.id IS NULL)::bigint AS missing_invoices
+ FROM referral_attributions r JOIN referral_links l ON l.code=r.code
+ LEFT JOIN invoices i ON i.id=r.first_paid_invoice_id AND i.account_id=r.account_id
+ WHERE l.kind='sales' AND (r.created_at AT TIME ZONE $2::text)::date BETWEEN $3::date AND $4::date
+  AND ($5::text='' OR l.owner_id::text=$5::text)
+ GROUP BY l.owner_id
+)
+SELECT a.id,a.email,
+ COALESCE(lower(a.email)=ANY($1::text[]) AND a.status='active' AND a.email_verified_at IS NOT NULL AND a.mfa_enrolled_at IS NOT NULL,false)::boolean AS current_member,
+ COALESCE(l.total,0)::bigint AS total,COALESCE(l.new,0)::bigint AS new,COALESCE(l.contacted,0)::bigint AS contacted,
+ COALESCE(l.qualified,0)::bigint AS qualified,COALESCE(l.demo,0)::bigint AS demo,COALESCE(l.won,0)::bigint AS won,COALESCE(l.lost,0)::bigint AS lost,
+ COALESCE(c.signups,0)::bigint AS signups,COALESCE(c.first_payments,0)::bigint AS first_payments,
+ c.avg_first_payment_seconds,COALESCE(c.missing_invoices,0)::bigint AS missing_invoices
+FROM owners o JOIN accounts a ON a.id=o.id
+LEFT JOIN leads l ON l.owner_id=o.id LEFT JOIN conversions c ON c.owner_id=o.id
+ORDER BY lower(a.email),a.id
+`
+
+type SalesReportComparisonParams struct {
+	MemberEmails   []string
+	ReportTimezone string
+	FromDate       pgtype.Date
+	ToDate         pgtype.Date
+	OwnerFilter    string
+}
+
+type SalesReportComparisonRow struct {
+	ID                     pgtype.UUID
+	Email                  string
+	CurrentMember          bool
+	Total                  int64
+	New                    int64
+	Contacted              int64
+	Qualified              int64
+	Demo                   int64
+	Won                    int64
+	Lost                   int64
+	Signups                int64
+	FirstPayments          int64
+	AvgFirstPaymentSeconds pgtype.Int8
+	MissingInvoices        int64
+}
+
+func (q *Queries) SalesReportComparison(ctx context.Context, db DBTX, arg SalesReportComparisonParams) ([]SalesReportComparisonRow, error) {
+	rows, err := db.Query(ctx, salesReportComparison,
+		arg.MemberEmails,
+		arg.ReportTimezone,
+		arg.FromDate,
+		arg.ToDate,
+		arg.OwnerFilter,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SalesReportComparisonRow{}
+	for rows.Next() {
+		var i SalesReportComparisonRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.CurrentMember,
+			&i.Total,
+			&i.New,
+			&i.Contacted,
+			&i.Qualified,
+			&i.Demo,
+			&i.Won,
+			&i.Lost,
+			&i.Signups,
+			&i.FirstPayments,
+			&i.AvgFirstPaymentSeconds,
+			&i.MissingInvoices,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const salesTaskCounts = `-- name: SalesTaskCounts :one
 SELECT count(*)::bigint AS open,
  count(*) FILTER(WHERE t.due_on=$1::date)::bigint AS today,

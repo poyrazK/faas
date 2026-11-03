@@ -135,3 +135,58 @@ UPDATE sales_tasks t SET title=sqlc.arg(title),due_on=sqlc.arg(due_on),
 FROM sales_leads l WHERE l.id=t.lead_id AND t.id=sqlc.arg(id) AND t.version=sqlc.arg(version)
  AND (l.owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean)
 RETURNING t.id;
+
+-- name: SalesReportClock :one
+SELECT transaction_timestamp()::timestamptz AS observed_at;
+
+-- name: SalesReportComparison :many
+WITH owners AS (
+ SELECT id FROM accounts WHERE lower(email)=ANY(sqlc.arg(member_emails)::text[])
+  AND status='active' AND email_verified_at IS NOT NULL AND mfa_enrolled_at IS NOT NULL
+ UNION SELECT owner_id FROM sales_leads
+ UNION SELECT owner_id FROM referral_links WHERE kind='sales'
+), leads AS (
+ SELECT owner_id,count(*)::bigint AS total,
+ count(*) FILTER(WHERE stage='new')::bigint AS new,
+ count(*) FILTER(WHERE stage='contacted')::bigint AS contacted,
+ count(*) FILTER(WHERE stage='qualified')::bigint AS qualified,
+ count(*) FILTER(WHERE stage='demo')::bigint AS demo,
+ count(*) FILTER(WHERE stage='won')::bigint AS won,
+ count(*) FILTER(WHERE stage='lost')::bigint AS lost
+ FROM sales_leads
+ WHERE (created_at AT TIME ZONE sqlc.arg(report_timezone)::text)::date BETWEEN sqlc.arg(from_date)::date AND sqlc.arg(to_date)::date
+  AND (sqlc.arg(owner_filter)::text='' OR owner_id::text=sqlc.arg(owner_filter)::text)
+ GROUP BY owner_id
+), conversions AS (
+ SELECT l.owner_id,count(*)::bigint AS signups,
+ count(*) FILTER(WHERE r.first_paid_at IS NOT NULL)::bigint AS first_payments,
+ floor(avg(extract(epoch FROM (r.first_paid_at-r.created_at))) FILTER(WHERE r.first_paid_at>=r.created_at))::bigint AS avg_first_payment_seconds,
+ count(*) FILTER(WHERE r.first_paid_at IS NOT NULL AND i.id IS NULL)::bigint AS missing_invoices
+ FROM referral_attributions r JOIN referral_links l ON l.code=r.code
+ LEFT JOIN invoices i ON i.id=r.first_paid_invoice_id AND i.account_id=r.account_id
+ WHERE l.kind='sales' AND (r.created_at AT TIME ZONE sqlc.arg(report_timezone)::text)::date BETWEEN sqlc.arg(from_date)::date AND sqlc.arg(to_date)::date
+  AND (sqlc.arg(owner_filter)::text='' OR l.owner_id::text=sqlc.arg(owner_filter)::text)
+ GROUP BY l.owner_id
+)
+SELECT a.id,a.email,
+ COALESCE(lower(a.email)=ANY(sqlc.arg(member_emails)::text[]) AND a.status='active' AND a.email_verified_at IS NOT NULL AND a.mfa_enrolled_at IS NOT NULL,false)::boolean AS current_member,
+ COALESCE(l.total,0)::bigint AS total,COALESCE(l.new,0)::bigint AS new,COALESCE(l.contacted,0)::bigint AS contacted,
+ COALESCE(l.qualified,0)::bigint AS qualified,COALESCE(l.demo,0)::bigint AS demo,COALESCE(l.won,0)::bigint AS won,COALESCE(l.lost,0)::bigint AS lost,
+ COALESCE(c.signups,0)::bigint AS signups,COALESCE(c.first_payments,0)::bigint AS first_payments,
+ c.avg_first_payment_seconds,COALESCE(c.missing_invoices,0)::bigint AS missing_invoices
+FROM owners o JOIN accounts a ON a.id=o.id
+LEFT JOIN leads l ON l.owner_id=o.id LEFT JOIN conversions c ON c.owner_id=o.id
+ORDER BY lower(a.email),a.id;
+
+-- name: SalesReportCollections :many
+SELECT l.owner_id,i.currency,count(*)::bigint AS invoices,
+ sum(i.amount_paid_cents)::bigint AS paid_cents,
+ sum(i.amount_refunded_cents)::bigint AS refunded_cents,
+ sum(i.amount_refund_pending_cents)::bigint AS pending_refund_cents,
+ sum(GREATEST(i.amount_paid_cents-i.amount_refunded_cents-i.amount_refund_pending_cents,0))::bigint AS retained_cents
+FROM referral_attributions r JOIN referral_links l ON l.code=r.code
+JOIN invoices i ON i.id=r.first_paid_invoice_id AND i.account_id=r.account_id
+WHERE l.kind='sales' AND r.first_paid_at IS NOT NULL
+ AND (r.created_at AT TIME ZONE sqlc.arg(report_timezone)::text)::date BETWEEN sqlc.arg(from_date)::date AND sqlc.arg(to_date)::date
+ AND (sqlc.arg(owner_filter)::text='' OR l.owner_id::text=sqlc.arg(owner_filter)::text)
+GROUP BY l.owner_id,i.currency ORDER BY l.owner_id,i.currency;
