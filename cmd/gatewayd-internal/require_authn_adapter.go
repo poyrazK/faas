@@ -84,7 +84,7 @@ func (a *requireAuthnAdapter) AuthenticateKey(ctx context.Context, hash []byte) 
 		}
 		return gateway.RequireAuthnAccount{}, gateway.RequireAuthnKey{}, err
 	}
-	return gateway.RequireAuthnAccount{ID: acct.ID}, gateway.RequireAuthnKey{ID: key.ID, Scopes: append([]string(nil), key.Scopes...)}, nil
+	return gateway.RequireAuthnAccount{ID: acct.ID}, gateway.RequireAuthnKey{ID: key.ID, Scopes: append([]string(nil), key.Scopes...), OrgID: key.OrgID}, nil
 }
 
 // Compile-time check: requireAuthnAdapter satisfies the narrow
