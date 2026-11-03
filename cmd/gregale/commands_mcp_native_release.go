@@ -171,6 +171,14 @@ func mcpNativeFingerprint(p mcpNativeReleasePlan) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+
+func requireMCPNativeNodeWorker(workerPath string) error {
+	info, err := os.Lstat(filepath.Join(workerPath, "tasks-release.js"))
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("native MCP Task releases require a Node worker project with tasks-release.js; use a manual rollout for Go/Python workers as described in docs/mcp.md")
+	}
+	return nil
+}
 func loadMCPNativeState(path, fingerprint string) (mcpNativeReleaseState, error) {
 	s := mcpNativeReleaseState{Version: 1, Fingerprint: fingerprint, Stage: "prepared", PreviousDeployments: map[string]string{}, Parked: map[string]bool{}}
 	b, err := os.ReadFile(path)
@@ -208,6 +216,11 @@ func cmdMCPTaskRelease(args []string) int {
 	p, err := readMCPNativePlan(*planPath)
 	if err != nil {
 		return printErr("MCP release plan", err)
+	}
+	if action != "status" && (action != "recover" || *resume) {
+		if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
+			return printErr("MCP release runtime", err)
+		}
 	}
 	absoluteState, err := filepath.Abs(*statePath)
 	if err != nil {
@@ -295,6 +308,9 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 	if s.Stage == "complete" {
 		return jsonOut(writeJSON(s))
 	}
+	if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
+		return printErr("MCP release runtime", err)
+	}
 	if err := preflightMCPControlPlane(); err != nil {
 		return printErr("MCP control-plane compatibility", err)
 	}
@@ -377,6 +393,14 @@ func mcpNativeObserverHealthy(ctx context.Context, c *Client, p mcpNativeRelease
 	app, err := c.GetApp(ctx, p.ObserverApp)
 	if err != nil {
 		return err
+	}
+	expectedNamespace := strings.TrimSpace(os.Getenv(mcpTasksObserverNamespaceEnv))
+	_, sealedNamespace := app.Manifest.EnvSecrets[mcpTasksObserverNamespaceEnv]
+	if expectedNamespace == "" || sealedNamespace || strings.TrimSpace(app.Manifest.Env[mcpTasksObserverNamespaceEnv]) != expectedNamespace {
+		return errors.New("observer must use the release's explicit MCP_TASK_NAMESPACE as a non-secret setting")
+	}
+	if !mcpTasksObserverMetricsTargetMatches(app, p.ObserverMetricApp) {
+		return errors.New("observer metric destination must match observer_metric_app as a non-secret setting")
 	}
 	if !isWorkerApp(app) || app.Manifest.WorkerReplicas == nil || app.Manifest.WorkerReplicas.Min < 1 {
 		return errors.New("observer must be an always-on worker app")
@@ -666,9 +690,7 @@ func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleaseP
 	if cfg.Auth.Mode == "external-oauth" {
 		probe.ExpectedAuth = &cfg.Auth
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	report := mcphosting.Doctor(probeCtx, probe, cfg.Legacy, "", nil)
+	report := mcpReleaseDoctor(ctx, probe, cfg.Legacy)
 	if !report.OK {
 		return errors.New("candidate MCP endpoint failed verification")
 	}
@@ -676,19 +698,24 @@ func mcpNativeVerifyEndpoint(ctx context.Context, c *Client, p mcpNativeReleaseP
 	if err != nil {
 		return err
 	}
-	if mcpReleaseRequiresAuthorization(roles) {
-		fleet := qualifyMCPProtocolDeployment(probeCtx, c, p.WebApp, s.WebDeployment, candidate, cfg.Endpoint, roles, 2*time.Second)
-		if !fleet.Qualified {
-			return errors.New("candidate replicas failed reviewed MCP authorization qualification")
-		}
+	protocolRoles := roles
+	if len(protocolRoles) == 0 {
+		protocolRoles = []mcpReleaseRole{{Name: "default", token: token}}
 	}
-	_, err = verifyMCPRoles(probeCtx, candidate, roles)
+	fleet := qualifyMCPProtocolDeployment(ctx, c, p.WebApp, s.WebDeployment, candidate, cfg.Endpoint, protocolRoles, 2*time.Second)
+	if !fleet.Qualified {
+		return errors.New("candidate replicas failed MCP protocol or authorization qualification")
+	}
+	if _, ready := checkMCPReleaseReadiness(ctx, candidate, s.WebDeployment, protocolRoles); !ready {
+		return errors.New("candidate public MCP readiness failed")
+	}
+	_, err = verifyMCPRoles(ctx, candidate, roles)
 	if err != nil {
 		return err
 	}
 	s.AccessPolicyExpectation = nil
 	if p.AccessAudit != nil {
-		audit := collectMCPAccessAudit(probeCtx, c, p.WebApp, cfg, roles, *p.AccessAudit)
+		audit := collectMCPAccessAudit(ctx, c, p.WebApp, cfg, roles, *p.AccessAudit)
 		if !audit.OK {
 			return errors.New("reviewed MCP access policy drift or missing evidence blocks release verification")
 		}
