@@ -31,4 +31,6 @@ var queueActions = map[string]OrgAction{
 	"POST /v1/apps/{slug}/queues/{queue}/leases:nack":     OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/{queue}/leases:extend":   OrgActionOperateQueues,
 	"POST /v1/apps/{slug}/queues/dead_letter/{id}/replay": OrgActionReplayQueues,
+	// Reviewed in bug hunt 37: in no map, so every member was refused it.
+	"PUT /v1/apps/{slug}/queue-workload": OrgActionConfigureQueues,
 }

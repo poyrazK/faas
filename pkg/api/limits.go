@@ -2483,6 +2483,16 @@ const (
 	RealtimeEndpointEphemeralRelayBurst      = 400
 )
 
+// A realtime node accepts at most RealtimeNodeHandshakesPerSecond new
+// connections (bursts of RealtimeNodeHandshakeBurst); past that a handshake
+// gets 503 with a Retry-After of 1-5 seconds. A restarting node closes its
+// sockets with 1012, and clients spread their reconnects over a few seconds
+// (ADR-1323, amendment of 2026-11-03).
+const (
+	RealtimeNodeHandshakesPerSecond = 1_000
+	RealtimeNodeHandshakeBurst      = 5_000
+)
+
 // Live query frames live.subscribe and live.renew start or change a
 // subscription on the database's live hub. A connection may send
 // RealtimeLiveFramesPerSecond (bursts of RealtimeLiveFrameBurst) and a node
