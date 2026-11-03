@@ -491,6 +491,10 @@ type AppSpec struct {
 	// guest-originated flow, inbound only from the platform veth. Only
 	// the fork coordinator sets it.
 	Quarantine bool
+	// IdentityReload (ADR-20261031193635) restores an environment branch
+	// from its parent's credential-free capture: vmmd has the guest reload
+	// the branch's identity through after_restore and checks its digest.
+	IdentityReload bool
 	// PrivateNetworkCIDRs are provider-verified VPC destinations. They are
 	// additive to EgressAllowlist and only reach vmmd when the attachment is
 	// ready; vmmd validates them again before programming the netns.
@@ -1976,6 +1980,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		EgressAllowlist: a.EgressAllowlist,
 		EgressPorts:     egressPortsToWire(a.EgressPorts),
 		Quarantine:      a.Quarantine,
+		IdentityReload:  a.IdentityReload,
 		Port:            uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.

@@ -20,6 +20,13 @@ import (
 // pending.
 func seedEnvironmentBranch(t *testing.T, store *state.MemStore, mode string, managedPostgres bool) (state.App, state.Deployment) {
 	t.Helper()
+	return seedEnvironmentBranchWith(t, store, mode, managedPostgres, nil)
+}
+
+// seedEnvironmentBranchWith lets edit change the app manifest before the
+// parent and branch deployments pin it.
+func seedEnvironmentBranchWith(t *testing.T, store *state.MemStore, mode string, managedPostgres bool, edit func(*state.AppManifest)) (state.App, state.Deployment) {
+	t.Helper()
 	ctx := context.Background()
 	acct, err := store.CreateAccount(ctx, "branch@example.com", api.PlanPro)
 	if err != nil {
@@ -36,6 +43,9 @@ func seedEnvironmentBranch(t *testing.T, store *state.MemStore, mode string, man
 	}
 	manifest := app.Manifest
 	manifest.ExecutionMode = mode
+	if edit != nil {
+		edit(&manifest)
+	}
 	if app, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
 		t.Fatal(err)
 	}

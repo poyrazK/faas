@@ -24,3 +24,12 @@ func XSidecarsReceiveManagedSecrets(sidecars []fcvm.WorkloadSpec, rows []state.A
 func (e *Engine) XRequestEnvironmentBranchCapture(ctx context.Context, app state.App, dep state.Deployment) {
 	e.requestEnvironmentBranchCapture(ctx, app, dep)
 }
+
+// LastRestoreSpec is the AppSpec of the fake's last snapshot restore.
+func (r *fakeVMM) LastRestoreSpec() *AppSpec { return &r.lastRestoreSpec }
+
+// ForceColdFallback makes the fake's restores report a cold-boot fallback
+// with reason.
+func (r *fakeVMM) ForceColdFallback(reason string) {
+	r.forceColdFallback, r.restoreFallbackReason = true, reason
+}

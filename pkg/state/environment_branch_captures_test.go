@@ -131,4 +131,22 @@ func environmentBranchCaptures(t *testing.T, s contractTestStore) {
 	if ids, err := s.EnvironmentBranchCaptureDeploymentIDs(ctx); err != nil || len(ids) != 1 || ids[0] != parentID {
 		t.Fatalf("capture deployments = %v, %v", ids, err)
 	}
+
+	// A restore that fell back to cold boot retires the ready capture.
+	if err := s.RetireEnvironmentBranchCapture(ctx, failed.ID, "not ready"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("retired a failed capture: %v", err)
+	}
+	if err := s.RetireEnvironmentBranchCapture(ctx, uuid.NewString(), "missing"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("retired a missing capture: %v", err)
+	}
+	if err := s.RetireEnvironmentBranchCapture(ctx, ready.ID, "restore fell back to cold boot: after_restore_failed"); err != nil {
+		t.Fatal(err)
+	}
+	retired, err := s.EnvironmentBranchCapture(ctx, parentID)
+	if err != nil || retired.State != state.EnvironmentBranchCaptureFailed || !retired.ReadyAt.IsZero() || retired.Failure == "" {
+		t.Fatalf("retired = %+v, %v", retired, err)
+	}
+	if ids, err := s.EnvironmentBranchCaptureDeploymentIDs(ctx); err != nil || len(ids) != 0 {
+		t.Fatalf("capture deployments after retirement = %v, %v", ids, err)
+	}
 }

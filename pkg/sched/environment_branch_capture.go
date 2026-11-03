@@ -171,3 +171,66 @@ func (e *Engine) requestEnvironmentBranchCapture(ctx context.Context, app state.
 		e.log.Warn("sched: credential-free capture request failed; the branch keeps cold-booting", "deployment_id", dep.ID, "err", err)
 	}
 }
+
+// environmentBranchCaptureSnapshot returns the lineage parent's ready
+// credential-free capture as the snapshot an opted-in branch wake restores
+// (ADR-20261031193635 slice 5b). It never reads or marks a snapshots row: a
+// capture that does not fit this wake is simply not used, and the branch
+// cold-boots as on the default path.
+func (e *Engine) environmentBranchCaptureSnapshot(ctx context.Context, app state.App, dep state.Deployment, expectedRAMMB int) (state.Snapshot, bool) {
+	if !app.Manifest.AfterRestore.ReloadsIdentity() {
+		return state.Snapshot{}, false
+	}
+	store, ok := e.store.(state.EnvironmentBranchCaptureStore)
+	if !ok {
+		return state.Snapshot{}, false
+	}
+	parent, err := store.EnvironmentBranchLineageParent(ctx, dep.ID)
+	if err != nil {
+		return state.Snapshot{}, false
+	}
+	capture, err := store.EnvironmentBranchCapture(ctx, parent)
+	if err != nil || capture.State != state.EnvironmentBranchCaptureReady {
+		return state.Snapshot{}, false
+	}
+	snap := state.Snapshot{
+		ID: capture.ID, DeploymentID: parent, Tier: state.SnapshotTierInit,
+		FCVersion: capture.FCVersion, StorageKey: capture.StorageKey, BaseImageVersion: capture.BaseImageVersion,
+		CPUTemplate: capture.CPUTemplate, CPUModel: capture.CPUModel,
+		MemBytes: capture.MemBytes, DiskBytes: capture.DiskBytes, StoredBytes: capture.StoredBytes,
+	}
+	if !environmentBranchCaptureFits(snap, e.fcVer, expectedRAMMB, app.AppProtocol) || state.SnapshotDriveKey(snap) == "" ||
+		!e.snapshotRestorableSomewhere(ctx, snap) {
+		return state.Snapshot{}, false
+	}
+	return snap, true
+}
+
+// environmentBranchCaptureFits applies the restore rules a capture can fail
+// without any snapshots row: Firecracker version, guest RAM and, for
+// HTTP/2 and gRPC apps, the base image.
+func environmentBranchCaptureFits(snap state.Snapshot, fcVersion string, expectedRAMMB int, appProtocol string) bool {
+	if snap.StorageKey == "" || snap.FCVersion != fcVersion {
+		return false
+	}
+	if snap.MemBytes > 0 && expectedRAMMB > 0 && snap.MemBytes != int64(expectedRAMMB)<<20 {
+		return false
+	}
+	if (appProtocol == api.AppProtocolHTTP2 || appProtocol == api.AppProtocolGRPC) && snap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
+		return false
+	}
+	return true
+}
+
+// retireEnvironmentBranchCapture stops a capture serving restores once a
+// restore from it fell back to cold boot: the app did not acknowledge its
+// identity, and every later restore would pay for a second boot.
+func (e *Engine) retireEnvironmentBranchCapture(ctx context.Context, captureID, reason string) {
+	store, ok := e.store.(state.EnvironmentBranchCaptureStore)
+	if !ok {
+		return
+	}
+	if err := store.RetireEnvironmentBranchCapture(ctx, captureID, reason); err != nil && e.log != nil {
+		e.log.Warn("sched: retire credential-free capture", "capture_id", captureID, "err", err)
+	}
+}

@@ -214,16 +214,21 @@ booting. Rules:
     frame, and vmmd accepts the restore only on an exact match. Anything else, including
     a guest-init that predates the field and echoes nothing, is `after_restore_failed`
     and takes the existing cold-boot fallback under the branch's spec.
-  - **What schedd's wake path must handle (5b, not yet built).** Restoring a branch
-    from its parent's ready capture goes through the serving wake, which today treats
-    a restore as a `snapshots` row in several places. Each needs an explicit capture
-    case: the recovery lineage the instance insert binds (none for a capture); placement
-    hints and CPU-platform alternates looked up by snapshot ID (use the capture's own
-    CPU identity, with no alternates); the snapshot runtime-config receipt (replaced by
-    the identity acknowledgement); marking a snapshot stale after a restore fails (fail
-    or retry the capture instead); and the vmmd router's and vmmd's deployment ownership
-    checks, which must accept the lineage parent's capture key for a branch deployment
-    and nothing else.
+  - **How schedd's wake restores a branch from the capture (5b).** A wake with no
+    snapshot of its own, for an app whose deployed manifest opts in, looks up the
+    lineage parent's ready capture and uses it when it fits: same Firecracker version,
+    the branch's guest RAM, a CPU some active node can carry, a writable drive, and the
+    base image for HTTP/2 and gRPC apps. The restore then runs through the ordinary
+    serving wake (tier `init`), with the capture kept out of every step bound to a
+    `snapshots` row: no snapshot-recovery lineage on the instance, no placement hints or
+    CPU-platform alternates by snapshot ID, and no snapshot runtime-config receipt. The
+    instance publishes the branch's own runtime inputs, which the guest acknowledged.
+    The snapshot reference carries the branch's own deployment ID and the capture's
+    storage key, so the router's and vmmd's ownership checks need no lineage case:
+    schedd alone resolves the parent. A restore that falls back to cold boot for any
+    reason but the node's own fault retires the capture
+    (`RetireEnvironmentBranchCapture`), so later wakes pay for one boot, not two; the
+    branch keeps cold-booting from then on.
   - What this does not cover: a customer secret that itself holds a production
     credential reaches the branch by value, on either path. That is section 6's rule for
     every branch and stage.

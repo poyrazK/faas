@@ -83,6 +83,9 @@ type EnvironmentBranchCaptureStore interface {
 	// RecordEnvironmentBranchCaptureInstance notes the leased attempt's
 	// capture VM before it boots.
 	RecordEnvironmentBranchCaptureInstance(ctx context.Context, id, leaseToken, instanceID string) error
+	// RetireEnvironmentBranchCapture fails a ready capture for good: a restore
+	// from it fell back to cold boot. Its branches cold-boot from then on.
+	RetireEnvironmentBranchCapture(ctx context.Context, id, failure string) error
 	// EnvironmentBranchCaptureDeploymentIDs lists deployments whose capture is
 	// requested or ready, so imaged's orphan sweep keeps their directories.
 	EnvironmentBranchCaptureDeploymentIDs(ctx context.Context) ([]string, error)
@@ -230,6 +233,23 @@ func (m *MemStore) RecordEnvironmentBranchCaptureInstance(_ context.Context, id,
 	return nil
 }
 
+func (m *MemStore) RetireEnvironmentBranchCapture(_ context.Context, id, failure string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for deploymentID, capture := range m.environmentBranchCaptures {
+		if capture.ID != id {
+			continue
+		}
+		if capture.State != EnvironmentBranchCaptureReady {
+			return ErrConflict
+		}
+		capture.State, capture.Failure, capture.ReadyAt = EnvironmentBranchCaptureFailed, clipEnvironmentBranchCaptureFailure(failure), time.Time{}
+		m.environmentBranchCaptures[deploymentID] = capture
+		return nil
+	}
+	return ErrNotFound
+}
+
 func (m *MemStore) EnvironmentBranchCaptureDeploymentIDs(_ context.Context) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -366,6 +386,30 @@ func (s *PgStore) RecordEnvironmentBranchCaptureInstance(ctx context.Context, id
 	return s.finishEnvironmentBranchCapture(ctx, id, leaseToken, `
 		update environment_branch_captures set instance_id = $3
 		 where id = $1 and lease_token = $2 and state = 'requested'`, instanceID)
+}
+
+func (s *PgStore) RetireEnvironmentBranchCapture(ctx context.Context, id, failure string) error {
+	if !validUUID(id) {
+		return ErrNotFound
+	}
+	// The ready CHECK pairs state ready with ready_at, so a retired row
+	// clears it; the artifact columns stay as a record of what failed.
+	tag, err := s.pool.Exec(ctx, `update environment_branch_captures set state = 'failed', failure = $2, ready_at = null
+		where id = $1 and state = 'ready'`, id, clipEnvironmentBranchCaptureFailure(failure))
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `select exists (select 1 from environment_branch_captures where id = $1)`, id).Scan(&exists); err != nil {
+		return mapErr(err)
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return ErrConflict
 }
 
 func (s *PgStore) EnvironmentBranchCaptureDeploymentIDs(ctx context.Context) ([]string, error) {
