@@ -104,6 +104,8 @@ type Querier interface {
 	// minute. Only deployments that existed when the guard opened count: a
 	// release deployed during the guard is judged by its own rollout, not
 	// blamed on the config. Uses request_telemetry_app_dep_received_idx.
+	// A default-scope value overlays every environment, so its guard also judges
+	// the project production lane (ADR-1451 amendment 1).
 	AppConfigGuardTelemetry(ctx context.Context, db DBTX, arg AppConfigGuardTelemetryParams) (AppConfigGuardTelemetryRow, error)
 	AppConnectionBudgetDatabaseIDs(ctx context.Context, db DBTX, arg AppConnectionBudgetDatabaseIDsParams) ([]string, error)
 	AppHealthHistoryTarget(ctx context.Context, db DBTX, arg AppHealthHistoryTargetParams) (string, error)
@@ -1059,6 +1061,9 @@ type Querier interface {
 	// $1 = deployment id
 	// $2 = backoff_until timestamp
 	DeploymentRecordSnapshotMiss(ctx context.Context, db DBTX, arg DeploymentRecordSnapshotMissParams) error
+	// Whether a deployment ever took traffic: it serves now, or the
+	// deployment_serving_ended_at trigger stamped when it stopped.
+	DeploymentServedBefore(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	// The wake-side gate. Returns the row while a backoff timestamp is
 	// present; the store computes whether it is still active. Returning
 	// expired rows preserves the miss count for the next backoff stamp.
