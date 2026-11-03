@@ -43,6 +43,11 @@ When the month's overage reaches the cap:
 - new wakes are refused with HTTP 402 `admission_refused`; the problem body
   carries the observed overage and the cap;
 - queued job tasks wait in the queue; they are not failed;
+- pending invocations (crons, delayed tasks, webhooks, async invokes and event
+  deliveries) wait too, without spending their retry attempts;
+- crons and recurring jobs stay due instead of queueing a run for every
+  scheduled time: each runs once after the cap lifts, and its `missed_runs`
+  policy records the occurrences it missed;
 - object storage, which is billed once the month closes, is billed only up
   to what the cap still allows after the month's compute and egress overage.
   Object storage keeps serving within its plan limits.

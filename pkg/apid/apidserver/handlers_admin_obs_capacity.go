@@ -220,6 +220,12 @@ func projectObsTenantBilling(r *http.Request, st state.Store, provider billing.P
 		return api.ObsTenantBilling{}, err
 	}
 	billingView.CurrentMonthOverageCents = combinedOverageCents(provider, acct.Plan, eligibleEgressBytes, overage)
+	// The spend cap also counts the object-storage charge (ADR-20261027093220).
+	storageCents, err := meter.SpendCapObjectStorageCents(r.Context(), st, acct.ID, month)
+	if err != nil {
+		return api.ObsTenantBilling{}, err
+	}
+	billingView.CurrentMonthOverageCents = saturatingAddCents(billingView.CurrentMonthOverageCents, storageCents)
 	capCents, hasCap, err := st.GetAccountOverageCapCents(r.Context(), acct.ID)
 	if err != nil {
 		return api.ObsTenantBilling{}, err
