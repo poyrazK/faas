@@ -3553,8 +3553,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return fmt.Errorf("close request_telemetry stream: %w", err)
 			}
 			if err := acknowledgeTelemetryRows(stream, rows); err != nil {
-				_ = rtCli.Close()
-				rtCli = nil
+				if errors.Is(err, errTelemetryStream) {
+					_ = rtCli.Close()
+					rtCli = nil
+				}
 				return err
 			}
 

@@ -32,10 +32,17 @@ func TestDrain_ObservesCronLagAndOutcomes(t *testing.T) {
 	if err != nil || len(apps) == 0 {
 		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
 	}
+	// A cron run carries its cron's id; the drain cancels one whose cron is
+	// gone instead of delivering it.
+	cron, err := store.CreateCron(ctx, apps[0].ID, "0 * * * *", "/tick", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
+	cronID := cron.ID
 	enqueue := func(scheduledAt time.Time) {
 		t.Helper()
 		if _, err := store.EnqueueInvocation(ctx, state.Invocation{
-			AppID: apps[0].ID, AccountID: apps[0].AccountID,
+			AppID: apps[0].ID, AccountID: apps[0].AccountID, CronID: &cronID,
 			Source: state.InvocationCron, Method: http.MethodPost, Path: "/tick",
 			DueAt: scheduledAt, ScheduledAt: &scheduledAt,
 			RetryPolicyJSON: json.RawMessage(`{"max_attempts":1}`),
