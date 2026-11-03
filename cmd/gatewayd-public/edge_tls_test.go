@@ -180,7 +180,7 @@ func TestEdgeTLSListenerServesOnlyTheZone(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := edgeTLSConfig{addr: "127.0.0.1:0", certFile: certFile, keyFile: keyFile, clientCAFile: clientCAFile}
-	ln, err := openEdgeTLSListener(cfg, nil)
+	ln, err := openEdgeTLSListener(t.Context(), cfg, nil, edgeClientLimits{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestEdgeTLSListenerWithNoFront(t *testing.T) {
 	}
 	cfg := edgeTLSConfig{addr: "127.0.0.1:0", certFile: certFile, keyFile: keyFile, clientCAFile: clientCAFile, front: edgeFrontNone}
 	appHost := func(name string) bool { return strings.HasSuffix(name, ".gregale.dev") }
-	ln, err := openEdgeTLSListener(cfg, appHost)
+	ln, err := openEdgeTLSListener(t.Context(), cfg, appHost, edgeClientLimits{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
