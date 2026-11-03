@@ -21967,6 +21967,9 @@ WHERE kind = 'wake.boot_started'
 // fallback here keeps the param semantics identical to the sqlc
 // version (no string-built queries, all parameters bound).
 //
+// The kind prefix is literal, and events_at_id_idx returns rows newest
+// first, so the limit stops the scan (ADR-20261103094121).
+//
 // Bounded by the handler to api.ObsAdminEventsLimitMax (500). The
 // interface{} params for the discriminator columns (actor, kind_prefix,
 // subject, since) match the sqlc-emitted shape — the SQL uses the
@@ -21982,7 +21985,7 @@ func (s *PgStore) ListAllEventsPaged(ctx context.Context, actor, kindPrefix, sub
 	rows, err := s.pool.Query(ctx,
 		`select id, at, actor, kind, subject, data from events
 		 where ($1 = '' or actor = $1)
-		   and ($2 = '' or kind like $2 || '%')
+		   and ($2 = '' or starts_with(kind, $2))
 		   and ($3 = '' or subject = $3::uuid)
 		   and ($4 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $4)
 		 order by at desc, id desc
