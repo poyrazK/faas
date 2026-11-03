@@ -3176,6 +3176,22 @@ where trigger_id = $1
 order by received_at desc
 limit $2;
 
+-- name: TriggerRecordInScope :one
+-- The operator record verbs (POST /v1/triggers/{id}/records/{rid}/retry and
+-- /drop) address a record through its trigger's URL. The record must belong
+-- to that trigger and the trigger to the caller's app; any other record
+-- answers "no such record". A record's trigger and a trigger's app never
+-- change, so the check needs no row lock and keeps the replay lock order.
+select exists(select 1 from trigger_records r join triggers t on t.id=r.trigger_id
+  where r.id=sqlc.arg(id)::uuid and r.trigger_id=sqlc.arg(trigger_id)::uuid
+    and t.app_id=sqlc.arg(app_id)::uuid);
+
+-- name: DropTriggerRecordByOperator :execrows
+-- Deletes one record of the addressed trigger on the caller's app.
+delete from trigger_records r using triggers t
+where r.id=sqlc.arg(id)::uuid and r.trigger_id=sqlc.arg(trigger_id)::uuid
+  and t.id=r.trigger_id and t.app_id=sqlc.arg(app_id)::uuid;
+
 -- name: TriggerRecordIDByItemIdentifier :one
 -- Audit round 2 finding #1 (PR #910): deadLetterAll() is invoked
 -- with broker-side handles (kafka offset, NATS seq, SQS receipt
@@ -5423,11 +5439,27 @@ SELECT id FROM resource_namespaces WHERE id = $1 FOR UPDATE;
 SELECT a.plan FROM accounts a WHERE a.id=$1 UNION ALL SELECT o.plan FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
 
 -- name: ObjectUsageAccountPlanCap :one
--- The plan and spend cap that set an account's object-storage ceilings
--- (ADR-1320, ADR-20261101214152). A null cap is no cap.
-SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+-- The plan, spend cap and support grant that set an account's object-storage
+-- ceilings (ADR-1320, ADR-20261101214152). A null cap is no cap; a null grant
+-- keeps the plan's ceiling.
+SELECT a.plan, a.overage_cap_cents, g.max_bytes AS ceiling_grant_bytes FROM accounts a
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = a.id WHERE a.id=$1
 UNION ALL
-SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
+SELECT o.plan, o.overage_cap_cents, g.max_bytes FROM orgs o
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = o.id
+WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
+
+-- name: ObjectStorageCeilingGrant :one
+SELECT owner_id, max_bytes, reason, granted_by, granted_at FROM object_storage_ceiling_grants WHERE owner_id=$1;
+
+-- name: SetObjectStorageCeilingGrant :exec
+INSERT INTO object_storage_ceiling_grants (owner_id, max_bytes, reason, granted_by, granted_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (owner_id) DO UPDATE SET max_bytes = EXCLUDED.max_bytes, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at;
+
+-- name: ClearObjectStorageCeilingGrant :exec
+DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1;
 
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
@@ -8015,6 +8047,10 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
 -- ADR-20261022105723: a pending queue message past its plan's retention
 -- moves to the dead letter. A message a worker holds (dispatching) is not
 -- touched. The plan resolves as StampDefaultInvocationRetention's does.
+-- ADR-20261101093812: retention counts from the message's last replay, so a
+-- message replayed from the dead letter gets the whole retention again. A
+-- replay is never earlier than the send, so the created_at bound still
+-- narrows invocations_queue_pending_created_idx.
 WITH plan_retention AS (
     SELECT unnest(sqlc.arg(plans)::text[]) AS plan, unnest(sqlc.arg(retention_seconds)::bigint[]) AS seconds
 ), batch AS (
@@ -8025,7 +8061,7 @@ WITH plan_retention AS (
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
       AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => sqlc.arg(min_retention_seconds)::bigint)
-      AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
+      AND coalesce(i.last_replayed_at, i.created_at) < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
     ORDER BY i.created_at
     LIMIT sqlc.arg(batch_limit)::integer
     FOR UPDATE OF i SKIP LOCKED
@@ -8092,6 +8128,17 @@ SELECT i.* FROM invocations i JOIN production_invocation_work p ON p.id=i.id
 WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue' AND i.state='dead_letter'
     AND (sqlc.narg(cursor_id)::uuid IS NULL OR (i.created_at,i.id)<(SELECT created_at,id FROM anchor))
 ORDER BY i.created_at DESC,i.id DESC LIMIT sqlc.arg(page_limit)::bigint;
+
+-- name: ReadQueueReplayAdmission :one
+-- ADR-20261101093812: a production queue message replayed from the dead
+-- letter re-enters its app's queue under the caps a send meets. The plan
+-- resolves as ExpirePendingQueueMessages' does. Environment-owned messages
+-- are not production work and keep their own caps.
+SELECT p.app_id, p.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM production_invocation_work p
+LEFT JOIN accounts a ON a.id = p.account_id
+LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE p.id = sqlc.arg(id)::uuid AND p.source = 'queue' AND p.state = 'dead_letter';
 
 -- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
@@ -8903,15 +8950,21 @@ ORDER BY rs.created_at DESC LIMIT 2;
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid AND d.status = 'live'
+      AND d.scope = ANY(sqlc.arg(scopes)::text[])
       AND (d.traffic_percent > 0 OR d.traffic_percent_explicit
            OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
                AND EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())))
 )::boolean AS allowed;
 
 -- name: ReadServicePolicyDeploymentWeights :many
-SELECT id, traffic_percent FROM deployments
+SELECT id, traffic_percent, scope FROM deployments
 WHERE app_id = sqlc.arg(app_id)::uuid AND status = 'live' AND traffic_percent > 0
+  AND scope = ANY(sqlc.arg(scopes)::text[])
 ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadServicePolicyCallerScope :one
+SELECT scope FROM deployments
+WHERE id = sqlc.arg(deployment_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
 
 -- name: ReadPublicRoutingOwner :one
 SELECT EXISTS (

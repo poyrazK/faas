@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -72,13 +73,13 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		api.WriteProblem(w, problem)
 		return
 	}
+	reads := s.readAppDetail(r, acct, app, environment.Slug)
+	resp := reads.resp
+	resp.Labels = reads.labels
 	if environment.Slug != "" {
-		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 		resp.URL = projectEnvironmentWorkloadURL(environment.ID, app.ID)
 		resp.CanonicalURL = resp.URL
-		resp.Labels = s.singleAppLabels(r, acct, app)
-		_, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, environment.Slug)
-		switch {
+		switch err := reads.liveErr; {
 		case err == nil:
 			resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
 		case errors.Is(err, state.ErrNotFound):
@@ -90,9 +91,7 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
-	resp.Labels = s.singleAppLabels(r, acct, app)
-	if _, err := s.store.LiveDeployment(r.Context(), app.ID); err == nil {
+	if err := reads.liveErr; err == nil {
 		resp.DeploymentAvailability = api.AppDeploymentAvailabilityLive
 	} else if errors.Is(err, state.ErrNotFound) {
 		resp.DeploymentAvailability = api.AppDeploymentAvailabilityMissing
@@ -100,20 +99,61 @@ func (s *server) getApp(w http.ResponseWriter, r *http.Request, acct state.Accou
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
 		return
 	}
-	if _, err := s.store.LatestDeployment(r.Context(), app.ID); errors.Is(err, state.ErrNotFound) && resp.Status == string(state.AppActive) {
+	if err := reads.latestErr; errors.Is(err, state.ErrNotFound) && resp.Status == string(state.AppActive) {
 		resp.Status = api.AppStatusUndeployed
 	} else if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
 		return
 	}
+	if stats := reads.buildCache; stats.Eligible > 0 {
+		resp.BuildCacheHitRatePct = float64(stats.Hits) * 100 / float64(stats.Eligible)
+	}
+	writeJSON(w, http.StatusOK, withParkedDeployment(resp, reads.parked))
+}
+
+// appDetailReads are getApp's reads after authorization. Each needs only the
+// app, so they run at once: one after another they cost the app page six
+// round trips. An environment's view reads only the response, labels and its
+// live deployment.
+type appDetailReads struct {
+	resp       api.AppResponse
+	labels     map[string]string
+	liveErr    error
+	latestErr  error
+	buildCache state.BuildCacheStats
+	parked     state.Deployment
+}
+
+func (s *server) readAppDetail(r *http.Request, acct state.Account, app state.App, environment string) appDetailReads {
+	ctx := r.Context()
+	var out appDetailReads
+	var wg sync.WaitGroup
+	run := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+	run(func() { out.resp = s.appResponseWithContext(ctx, app, acct.Plan) })
+	run(func() { out.labels = s.singleAppLabels(r, acct, app) })
+	if environment != "" {
+		_, out.liveErr = s.store.LiveDeploymentForScope(ctx, app.ID, environment)
+		wg.Wait()
+		return out
+	}
+	run(func() { _, out.liveErr = s.store.LiveDeployment(ctx, app.ID) })
+	run(func() { _, out.latestErr = s.store.LatestDeployment(ctx, app.ID) })
+	run(func() { out.parked = s.latestParkedDeployment(ctx, app) })
 	if reader, ok := s.store.(interface {
 		BuildCacheStatsForApp(context.Context, string, time.Time) (state.BuildCacheStats, error)
 	}); ok {
-		if stats, statsErr := reader.BuildCacheStatsForApp(r.Context(), app.ID, time.Now().UTC().Add(-30*24*time.Hour)); statsErr == nil && stats.Eligible > 0 {
-			resp.BuildCacheHitRatePct = float64(stats.Hits) * 100 / float64(stats.Eligible)
+		if stats, err := reader.BuildCacheStatsForApp(ctx, app.ID, time.Now().UTC().Add(-30*24*time.Hour)); err == nil {
+			out.buildCache = stats
 		}
 	}
-	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
+	wg.Wait()
+	return out
 }
 
 // validateUpdateApp enforces the per-app cold-wake floor rules
@@ -6204,32 +6244,124 @@ func (s *server) lookupAccountByPaddleID(ctx context.Context, paddleID string) (
 
 // --- response helpers ------------------------------------------------------
 
-func (s *server) deploymentResponse(parent context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
-	var workerDrain *api.DeploymentWorkerDrainStatus
-	// Live worker deployments can also drain during scale-in. The audit
-	// summary survives instance deletion and scheduler restarts.
-	if s.store != nil && (d.Status == state.DeployLive || d.Status.IsTerminal()) {
-		ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+// deploymentDecorations are the per-deployment reads a deployment response
+// carries: the worker drain summary (live and terminal deployments) and the
+// MCP task promotion hold (deployments still on their way to live).
+type deploymentDecorations struct {
+	drain *state.DeploymentWorkerDrainStatus
+	hold  *state.MCPTaskPromotionHold
+}
+
+// drainDecorated reports whether d's response carries a worker drain summary.
+// Live worker deployments can also drain during scale-in. The audit summary
+// survives instance deletion and scheduler restarts.
+func drainDecorated(d state.Deployment) bool {
+	return d.Status == state.DeployLive || d.Status.IsTerminal()
+}
+
+// readDeploymentDecorations reads one deployment's decorations; a failed read
+// leaves its decoration out.
+func (s *server) readDeploymentDecorations(parent context.Context, d state.Deployment) deploymentDecorations {
+	var out deploymentDecorations
+	if s.store == nil {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	if drainDecorated(d) {
 		drain, err := s.store.DeploymentWorkerDrainStatus(ctx, d.ID)
-		cancel()
 		if err != nil {
 			s.log.Warn("load worker drain status", "deployment_id", d.ID, "err", err)
-		} else if drain != nil {
-			workerDrain = &api.DeploymentWorkerDrainStatus{Active: drain.Active, Completed: drain.Completed, TimedOut: drain.TimedOut, Failed: drain.Failed, Overdue: drain.Overdue, Deadline: drain.Deadline}
+		}
+		out.drain = drain
+		return out
+	}
+	hold, err := s.store.MCPTaskPromotionHold(ctx, d.ID)
+	if err != nil {
+		s.log.Warn("load MCP task promotion hold", "deployment_id", d.ID, "err", err)
+	}
+	out.hold = hold
+	return out
+}
+
+// readDeploymentListDecorations reads a list's decorations in one query of
+// each kind instead of one per row (up to 200 round trips for a full page).
+// ok is false when the store has no batch reads; callers then decorate row
+// by row.
+func (s *server) readDeploymentListDecorations(parent context.Context, rows []state.Deployment) (map[string]deploymentDecorations, bool) {
+	reader, ok := s.store.(state.DeploymentListDecorationReader)
+	if !ok {
+		return nil, false
+	}
+	var drainIDs, holdIDs []string
+	for _, d := range rows {
+		if drainDecorated(d) {
+			drainIDs = append(drainIDs, d.ID)
+		} else {
+			holdIDs = append(holdIDs, d.ID)
 		}
 	}
-	var promotionHold *api.DeploymentPromotionHold
-	if s.store != nil && !d.Status.IsTerminal() && d.Status != state.DeployLive {
-		ctx, cancel := context.WithTimeout(parent, 2*time.Second)
-		hold, err := s.store.MCPTaskPromotionHold(ctx, d.ID)
-		cancel()
-		if err != nil {
-			s.log.Warn("load MCP task promotion hold", "deployment_id", d.ID, "err", err)
-		} else if hold != nil {
-			promotionHold = &api.DeploymentPromotionHold{Code: api.CodeMCPTaskCompatibilityGate, Detail: hold.Detail, ObservedAt: hold.ObservedAt,
-				HeldAt: hold.HeldAt, RecoveryAttempts: hold.RecoveryAttempts, NextRetryAt: hold.NextRetryAt, RecoveryInProgress: hold.RecoveryInProgress,
-				LastRecoveryOutcome: hold.LastRecoveryOutcome, LastRecoveryAt: hold.LastRecoveryAt, LastRecoveryErrorCode: hold.LastRecoveryErrorCode}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
+	var (
+		drains            map[string]*state.DeploymentWorkerDrainStatus
+		holds             map[string]*state.MCPTaskPromotionHold
+		drainErr, holdErr error
+		wg                sync.WaitGroup
+	)
+	if len(drainIDs) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			drains, drainErr = reader.DeploymentWorkerDrainStatuses(ctx, drainIDs)
+		}()
+	}
+	if len(holdIDs) > 0 {
+		holds, holdErr = reader.MCPTaskPromotionHolds(ctx, holdIDs)
+	}
+	wg.Wait()
+	if drainErr != nil {
+		s.log.Warn("load worker drain statuses", "deployments", len(drainIDs), "err", drainErr)
+	}
+	if holdErr != nil {
+		s.log.Warn("load MCP task promotion holds", "deployments", len(holdIDs), "err", holdErr)
+	}
+	out := make(map[string]deploymentDecorations, len(rows))
+	for _, d := range rows {
+		out[d.ID] = deploymentDecorations{drain: drains[d.ID], hold: holds[d.ID]}
+	}
+	return out, true
+}
+
+// deploymentResponses renders a deployment list, reading its decorations in
+// batch when the store can.
+func (s *server) deploymentResponses(ctx context.Context, rows []state.Deployment, appFor func(state.Deployment) state.App) []api.DeploymentResponse {
+	out := make([]api.DeploymentResponse, 0, len(rows))
+	decorations, batched := s.readDeploymentListDecorations(ctx, rows)
+	for _, d := range rows {
+		if batched {
+			out = append(out, s.decoratedDeploymentResponse(ctx, d, appFor(d), decorations[d.ID]))
+			continue
 		}
+		out = append(out, s.deploymentResponse(ctx, d, appFor(d)))
+	}
+	return out
+}
+
+func (s *server) deploymentResponse(parent context.Context, d state.Deployment, app state.App) api.DeploymentResponse {
+	return s.decoratedDeploymentResponse(parent, d, app, s.readDeploymentDecorations(parent, d))
+}
+
+func (s *server) decoratedDeploymentResponse(parent context.Context, d state.Deployment, app state.App, decorations deploymentDecorations) api.DeploymentResponse {
+	var workerDrain *api.DeploymentWorkerDrainStatus
+	if drain := decorations.drain; drain != nil {
+		workerDrain = &api.DeploymentWorkerDrainStatus{Active: drain.Active, Completed: drain.Completed, TimedOut: drain.TimedOut, Failed: drain.Failed, Overdue: drain.Overdue, Deadline: drain.Deadline}
+	}
+	var promotionHold *api.DeploymentPromotionHold
+	if hold := decorations.hold; hold != nil {
+		promotionHold = &api.DeploymentPromotionHold{Code: api.CodeMCPTaskCompatibilityGate, Detail: hold.Detail, ObservedAt: hold.ObservedAt,
+			HeldAt: hold.HeldAt, RecoveryAttempts: hold.RecoveryAttempts, NextRetryAt: hold.NextRetryAt, RecoveryInProgress: hold.RecoveryInProgress,
+			LastRecoveryOutcome: hold.LastRecoveryOutcome, LastRecoveryAt: hold.LastRecoveryAt, LastRecoveryErrorCode: hold.LastRecoveryErrorCode}
 	}
 	// Issue #460 / ADR-053: echo the override_* columns on the
 	// response. Env values are NEVER echoed (override_env_keys
@@ -6777,13 +6909,14 @@ func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct st
 	for _, a := range apps {
 		appByID[a.ID] = a
 	}
-	resp := api.DeploymentListResponse{NextBefore: nextBefore, Items: make([]api.DeploymentResponse, 0, len(rows))}
+	visible := make([]state.Deployment, 0, len(rows))
 	for _, d := range rows {
-		if _, visible := appByID[d.AppID]; !visible {
-			continue
+		if _, ok := appByID[d.AppID]; ok {
+			visible = append(visible, d)
 		}
-		resp.Items = append(resp.Items, s.deploymentResponse(requestCtx, d, appByID[d.AppID]))
 	}
+	resp := api.DeploymentListResponse{NextBefore: nextBefore,
+		Items: s.deploymentResponses(requestCtx, visible, func(d state.Deployment) state.App { return appByID[d.AppID] })}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -7017,17 +7150,17 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	// .CPUHours() — keep them in lockstep by going through
 	// meter.CPUHours.
 	usedCPUHours := meter.CPUHours(cpuUsec)
-	limits := api.MustLimitsFor(acct.Plan)
-	included := int64(limits.IncludedGBHours)
-	overage := usedGB - float64(included)
-	if overage < 0 {
-		overage = 0
+	// The month's allowance and billed overage follow its plan history and
+	// match the billing page and the provider (ADR-20261101113742): usage
+	// above today's plan allowance overstated a month with an upgrade and
+	// understated one with a downgrade. Cents are integer (spec §Conventions).
+	compute, err := s.monthComputeView(ctx, acct, month, mbSec)
+	if err != nil {
+		return api.UsageSummaryResponse{}, err
 	}
-	// Spec §1 / financial model: $0.01/GB-h overage → 1 cent per
-	// GB-h. Plan's overage rate can vary in the model; constants here
-	// are the production default. Storing cents as int64 keeps
-	// floats away from money (spec §Conventions).
-	overageCents := int64(overage * 1.0)
+	included := compute.IncludedGBHours
+	overage := compute.OverageGBHours
+	overageCents := compute.OverageCents
 	eligibleEgressBytes, err := egressUsageBytesForPolicy(ctx, s.store, s.billingProvider, acct, month)
 	if err != nil {
 		return api.UsageSummaryResponse{}, err

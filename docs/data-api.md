@@ -1594,6 +1594,10 @@ An event's `data` holds the change:
 - **Isolation.** The change event table is the Data API's: the REST API
   answers 404 for it, generated types leave it out, and its row-level security
   admits only the Data API's own relay.
+- **Production only.** Events carry no environment, so only the Data API's
+  production deployment publishes them. A stage or preview deployment's
+  runtime is refused and its recorded changes stay in the table; a cloned
+  environment that copied the setting publishes nothing.
 - **Turning it off.** `gregale_hooks.disable('api.orders')` stops recording a
   table. `gregale data-api hooks disable shop-data` stops publishing; recorded
   changes wait in the table.

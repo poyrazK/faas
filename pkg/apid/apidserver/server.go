@@ -4563,6 +4563,10 @@ func (s *server) handler() http.Handler {
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRestore))))
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions))))
+	// ADR-20261101214152: support raises (or returns to the plan's) a paid
+	// billing subject's object-storage ceiling.
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/object-storage-ceiling",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsObjectStorageCeiling))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/drain",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/force-drain",
@@ -4816,6 +4820,16 @@ func (s *server) handler() http.Handler {
 	// ADR-20261030093512: an organization billing subject has its own spend cap.
 	mux.HandleFunc("GET /v1/orgs/{slug}/overage-cap", s.orgBillingRoute(authz.OrgActionView, s.getOverageCap))
 	mux.HandleFunc("POST /v1/orgs/{slug}/overage-cap", s.orgBillingRoute(authz.OrgActionChangePlan, s.raiseOverageCap))
+	// ADR-20261031211500: an organization that owns its resources pays for
+	// them, so it holds the costs and budgets for that usage.
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/costs", s.orgFinancialBudgetRoute(false, s.getFinancialCosts))
+	mux.HandleFunc("POST /v1/orgs/{slug}/billing/budgets/preview", s.orgFinancialBudgetRoute(false, s.previewFinancialBudget))
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/budgets", s.orgFinancialBudgetRoute(false, s.listFinancialBudgets))
+	mux.HandleFunc("POST /v1/orgs/{slug}/billing/budgets", s.orgFinancialBudgetRoute(true, s.createFinancialBudget))
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/budgets/{id}", s.orgFinancialBudgetRoute(false, s.getFinancialBudget))
+	mux.HandleFunc("PUT /v1/orgs/{slug}/billing/budgets/{id}", s.orgFinancialBudgetRoute(true, s.updateFinancialBudget))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}/billing/budgets/{id}", s.orgFinancialBudgetRoute(true, s.deleteFinancialBudget))
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/budgets/{id}/revisions", s.orgFinancialBudgetRoute(false, s.listFinancialBudgetRevisions))
 	mux.HandleFunc("GET /v1/billing/status", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.getBillingStatus)))
 
 	// Billing retry (issue #242). Closes the customer-trust lie in

@@ -165,6 +165,14 @@ at least once, so deduplicate by `message_id` or `sequence`.
   unsubscribe, reset, read state, inbox and preference frames. Acks, presence
   and signals have their own limits. A command past the budget gets
   `command_rate_limited` and is dropped.
+- Signals, presence updates and read receipts reach clients on every node, so
+  an endpoint may send at most 200 of them a second on one realtime node
+  (bursts of 400). Past that, the frame gets `signal_rate_limited`,
+  `presence_rate_limited` or `read_rate_limited` and nobody receives it;
+  retry after a moment.
+- A connection may send 10 `live.subscribe` or `live.renew` frames a second
+  (bursts of 40). Past that, the frame gets `live.error` with code
+  `live_query_limit`; subscribe again after a moment.
 - Refusals arrive as `{"type":"error","code":...}` frames with the channel,
   for example `not_authorized` or `subscription_limit`; the connection stays
   open.

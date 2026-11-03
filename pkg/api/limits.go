@@ -1560,7 +1560,10 @@ const QueuePushDispatchSlotsPerNode = 32
 
 // BrokerTriggerDispatchSlotsPerNode bounds the external broker triggers
 // (Kafka, NATS, Redis Streams, SQS-compatible) one schedd polls and delivers
-// at once, one batch per trigger (ADR-20261027162741).
+// at once, one batch per trigger (ADR-20261027162741). Each account with
+// broker triggers on the node is owed an even share, at least one and no more
+// than its triggers; idle lanes are lent but never re-lent while an account
+// waits for its share (ADR-20261101093015).
 const BrokerTriggerDispatchSlotsPerNode = 16
 
 // Trigger ledger retention: terminal trigger_records rows without an explicit
@@ -2417,6 +2420,33 @@ const (
 	RealtimeClientMessageBurst          = 40
 	RealtimeNodeClientMessagesPerSecond = 2_000
 	RealtimeNodeClientMessageBurst      = 4_000
+)
+
+// Signals, presence updates and read receipts reach the other realtime nodes
+// through apid, one control-plane call each. A node relays at most
+// RealtimeNodeEphemeralRelaysPerSecond (bursts of
+// RealtimeNodeEphemeralRelayBurst), and one endpoint at most
+// RealtimeEndpointEphemeralRelaysPerSecond of them on a node; past either,
+// the frame is refused with its rate-limited code and nothing is relayed
+// (ADR-1323, amendment of 2026-11-03).
+const (
+	RealtimeNodeEphemeralRelaysPerSecond     = 500
+	RealtimeNodeEphemeralRelayBurst          = 1_000
+	RealtimeEndpointEphemeralRelaysPerSecond = 200
+	RealtimeEndpointEphemeralRelayBurst      = 400
+)
+
+// Live query frames live.subscribe and live.renew start or change a
+// subscription on the database's live hub. A connection may send
+// RealtimeLiveFramesPerSecond (bursts of RealtimeLiveFrameBurst) and a node
+// RealtimeNodeLiveFramesPerSecond (bursts of RealtimeNodeLiveFrameBurst); past
+// either, the frame is answered with live.error code "live_query_limit"
+// (ADR-1323, amendment of 2026-11-03).
+const (
+	RealtimeLiveFramesPerSecond     = 10
+	RealtimeLiveFrameBurst          = 40
+	RealtimeNodeLiveFramesPerSecond = 1_000
+	RealtimeNodeLiveFrameBurst      = 2_000
 )
 
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
@@ -3500,6 +3530,10 @@ func EventSettledRetentionMax() time.Duration {
 // before month-close pricing. A zero field changes nothing: the operator
 // policy applies unchanged and no usage is included.
 type ObjectStoragePlanLimits struct {
+	// MaxAccountBytes is the plan's storage ceiling (ADR-20261101214152):
+	// Free 1 GiB, Hobby 2× its included storage, Pro and Scale 5×. Support can
+	// grant a paid account another (ObjectStorageLimitsFor), and the account's
+	// spend cap tightens it (WithSpendCap).
 	MaxAccountBytes       int64
 	MaxMonthlyRequests    int64
 	MaxMonthlyEgressBytes int64
@@ -3585,12 +3619,26 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
-// WithSpendCap returns the limits with the storage ceiling a paid account's
-// spend cap pays for: the plan's included storage plus the GiB-months the cap
-// buys at ObjectStorageMillicentsPerGiBMonth (ADR-20261101214152). Hobby's
-// default $2 cap gives 76 GiB, Pro's $10 383 GiB, Scale's $30 1,200 GiB. A nil
-// cap (none, or a cleared one) keeps the limits; a plan ceiling that is
-// already tighter, as Free's, stays.
+// ObjectStorageLimitsFor returns a billing subject's object-storage limits on
+// plan (ADR-20261101214152): the plan's, with the ceiling support granted the
+// subject (grantBytes, nil for none) in place of a paid plan's, tightened by
+// what the subject's spend cap pays for. Free ignores a grant: its storage is
+// never billed.
+func ObjectStorageLimitsFor(plan Plan, grantBytes, capCents *int64) ObjectStoragePlanLimits {
+	limits, _ := LimitsFor(plan)
+	l := limits.ObjectStorage
+	if grantBytes != nil && *grantBytes > 0 && plan.IsPaid() {
+		l.MaxAccountBytes = *grantBytes
+	}
+	return l.WithSpendCap(capCents)
+}
+
+// WithSpendCap returns the limits with the storage ceiling tightened to what
+// a paid account's spend cap pays for: the plan's included storage plus the
+// GiB-months the cap buys at ObjectStorageMillicentsPerGiBMonth
+// (ADR-20261101214152). The default caps pay for more than the plan
+// ceilings, so they only bind when the customer lowers them: a $0 cap stops at
+// the included storage. A nil cap (none, or a cleared one) keeps the limits.
 func (l ObjectStoragePlanLimits) WithSpendCap(capCents *int64) ObjectStoragePlanLimits {
 	if capCents == nil || *capCents < 0 || l.IncludedBytes <= 0 {
 		return l
@@ -4052,7 +4100,10 @@ type Limits struct {
 	// bounds what a backlog costs the control-plane database.
 	// QueueMessageRetentionSeconds is how long a pending queue message
 	// waits for a worker before schedd moves it to the dead letter,
-	// counted from its enqueue. A message a worker holds does not expire.
+	// counted from its enqueue or, once replayed from the dead letter, from
+	// its last replay (ADR-20261101093812). A message a worker holds does
+	// not expire. A replay meets MaxQueueDepth and
+	// MaxQueueBacklogBytesPerAccount as a send does.
 	MaxQueueBacklogBytesPerAccount int64
 	QueueMessageRetentionSeconds   int
 
@@ -4667,14 +4718,15 @@ type Limits struct {
 	// pkg/state/pgstore.go). The SQL CHECK [1, 25] is the hard
 	// ceiling. 0 with TriggersAllowed=false (Free).
 	TriggerMaxAttemptsMax int
-	// TriggerRecordsPerSecondPerApp caps the per-app steady-state
-	// dispatch rate schedd permits to a single trigger. The cap is
-	// enforced by WakeRateLimiter (pkg/sched/rate_limit.go) — the
-	// same bucket the wake path drains. Hobby 100 / Pro 1000 /
-	// Scale 10000. Above the cap, records transition to dead_letter
-	// with reason='rate_limited' rather than back-pressuring the
-	// broker (back-pressure on Kafka consumer groups breaks the
-	// group-rebalance contract). 0 with TriggersAllowed=false (Free).
+	// TriggerRecordsPerSecondPerApp caps the records per second an
+	// app's external broker triggers (Kafka, NATS, Redis Streams,
+	// SQS-compatible) take from their brokers, enforced by
+	// TriggerRecordRateLimiter (pkg/sched/trigger_record_rate.go): a
+	// bucket per app on each schedd holding one second of the rate.
+	// Hobby 100 / Pro 1000 / Scale 10000. A poll asks the broker for
+	// at most the app's budget, so records over the cap stay on the
+	// broker for a later poll; none is dead-lettered or acknowledged
+	// (ADR-20261101093015). 0 with TriggersAllowed=false (Free).
 	TriggerRecordsPerSecondPerApp int
 	// TriggerPayloadMaxBytes (migration 00274 / audit #7) caps the
 	// per-trigger `payload_max_bytes` the customer may set. SQL
@@ -5749,7 +5801,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6191,7 +6243,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -6598,7 +6650,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -11851,13 +11903,11 @@ func (p Plan) TriggerMaxAttemptsMax() int {
 	return l.TriggerMaxAttemptsMax
 }
 
-// TriggerRecordsPerSecondPerApp returns the per-app
-// steady-state dispatch rate schedd permits to a single trigger.
-// The cap is enforced by WakeRateLimiter (pkg/sched/rate_limit.go)
-// — the same bucket the wake path drains. Hobby 100 / Pro 1000
-// / Scale 10 000. Above the cap, records transition to
-// dead_letter with reason='rate_limited' rather than
-// back-pressuring the broker. Unknown plans fail closed
+// TriggerRecordsPerSecondPerApp returns the records per second an
+// app's external broker triggers may take from their brokers,
+// enforced by pkg/sched's TriggerRecordRateLimiter. Hobby 100 / Pro
+// 1000 / Scale 10 000. Records over the cap stay on the broker for a
+// later poll (ADR-20261101093015). Unknown plans fail closed
 // (return 0).
 func (p Plan) TriggerRecordsPerSecondPerApp() int {
 	l, ok := LimitsFor(p)

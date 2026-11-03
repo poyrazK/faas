@@ -502,6 +502,8 @@ type Stats struct {
 	CallbackOutboxFull                 uint64  `json:"callback_outbox_full"`
 	ClientMessagesPaced                uint64  `json:"client_messages_paced"`
 	ClientMessagesThrottled            uint64  `json:"client_messages_throttled"`
+	EphemeralRelaysThrottled           uint64  `json:"ephemeral_relays_throttled,omitempty"`
+	LiveFramesThrottled                uint64  `json:"live_frames_throttled,omitempty"`
 	CallbackOutboxAdmissionErrors      uint64  `json:"callback_outbox_admission_errors"`
 	CallbackUnpersistedFailures        uint64  `json:"callback_unpersisted_failures"`
 	CallbackPending                    uint64  `json:"callback_pending"`
@@ -530,6 +532,7 @@ type Stats struct {
 }
 
 type connection struct {
+	readerKey     readerKey // set before the connection is indexed
 	identity      *connectionIdentity
 	issuedAt      time.Time
 	ticketToken   string
@@ -591,6 +594,9 @@ type connection struct {
 	// clientMessages paces a plain connection's messages to its callback;
 	// only the connection's read loop uses it.
 	clientMessages *rate.Limiter
+	// liveFrames paces the connection's live query frames; only its read
+	// loop uses it.
+	liveFrames *rate.Limiter
 	// admission is the credential and origin the connection was admitted
 	// with; an endpoint update that no longer accepts them closes it.
 	admission connectionAdmission
@@ -616,6 +622,8 @@ type endpointState struct {
 	usage *usageCounters
 	// account counts the endpoint's account's connections on this node.
 	account *accountConnections
+	// relays is the endpoint's share of the node's ephemeral relays.
+	relays relayBudget
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -636,15 +644,22 @@ type Manager struct {
 	// clientMessages bounds the client messages the node writes to its
 	// callback spool (api.RealtimeNodeClientMessagesPerSecond).
 	clientMessages *rate.Limiter
+	// ephemeralRelays and liveFrames bound the node's relays through apid
+	// and its live hub frames (ADR-1323, amendment of 2026-11-03).
+	ephemeralRelays *rate.Limiter
+	liveFrames      *rate.Limiter
 
 	endpoints   sync.Map // map[string]*endpointState
 	endpointsMu sync.Mutex
 	// mu protects connection indexes, subscribers, and route revision.
 	// Subscription changes also take connection.mu after mu so snapshots see
 	// consistent channel membership.
-	mu                      sync.RWMutex
-	conns                   map[string]*connection
-	endpointConns           map[string]map[string]*connection
+	mu    sync.RWMutex
+	conns map[string]*connection
+	// readerConns indexes connections by endpoint and read principal key,
+	// so an inbox read receipt reaches its reader's connections without a
+	// scan of the node (ADR-1323, amendment of 2026-11-03).
+	readerConns             map[readerKey]map[*connection]struct{}
 	subscribers             map[channelKey]map[string]struct{}
 	resumeSubscribers       map[channelKey]map[string]struct{}
 	presenceMembers         map[channelKey]map[string]*presenceMember
@@ -700,6 +715,8 @@ type Manager struct {
 	callbackOutboxFull            atomic.Uint64
 	clientMessagesPaced           atomic.Uint64
 	clientMessagesThrottled       atomic.Uint64
+	ephemeralRelaysThrottled      atomic.Uint64
+	liveFramesThrottled           atomic.Uint64
 	callbackOutboxAdmissionErrors atomic.Uint64
 	callbackUnpersistedFailures   atomic.Uint64
 	authOutcomes                  authOutcomeCounters
@@ -720,8 +737,10 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		cancel:                  cancel,
 		accessCache:             newRealtimeAccessCache(),
 		clientMessages:          rate.NewLimiter(rate.Limit(api.RealtimeNodeClientMessagesPerSecond), api.RealtimeNodeClientMessageBurst),
+		ephemeralRelays:         rate.NewLimiter(rate.Limit(api.RealtimeNodeEphemeralRelaysPerSecond), api.RealtimeNodeEphemeralRelayBurst),
+		liveFrames:              rate.NewLimiter(rate.Limit(api.RealtimeNodeLiveFramesPerSecond), api.RealtimeNodeLiveFrameBurst),
 		conns:                   make(map[string]*connection),
-		endpointConns:           make(map[string]map[string]*connection),
+		readerConns:             make(map[readerKey]map[*connection]struct{}),
 		subscribers:             make(map[channelKey]map[string]struct{}),
 		resumeSubscribers:       make(map[channelKey]map[string]struct{}),
 		presenceMembers:         make(map[channelKey]map[string]*presenceMember),
@@ -1338,8 +1357,10 @@ func (m *Manager) addAuthenticatedConnection(state *endpointState, endpoint Endp
 	if current := state.config.Load(); current != nil {
 		conn.callbackAuth.Store(&callbackAuthSnapshot{token: current.CallbackAuthToken})
 	}
+	conn.readerKey = readerKeyFor(conn.info.EndpointID, conn.info.Principal)
 	m.mu.Lock()
 	m.conns[id] = conn
+	m.indexReaderLocked(conn)
 	m.mu.Unlock()
 	m.acceptedConnections.Add(1)
 	return conn
@@ -1622,6 +1643,7 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 		c.releaseChannelsLocked()
 		c.mu.Unlock()
 		delete(m.conns, c.info.ID)
+		m.unindexReaderLocked(c)
 	}
 	callbackAuthToken := c.currentCallbackAuthToken()
 	m.mu.Unlock()
@@ -2373,6 +2395,8 @@ func (m *Manager) Stats() Stats {
 		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
 		ClientMessagesPaced:           m.clientMessagesPaced.Load(),
 		ClientMessagesThrottled:       m.clientMessagesThrottled.Load(),
+		EphemeralRelaysThrottled:      m.ephemeralRelaysThrottled.Load(),
+		LiveFramesThrottled:           m.liveFramesThrottled.Load(),
 		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
 		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
 		UsageReports:                  m.usageReports.Load(),

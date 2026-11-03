@@ -8031,6 +8031,15 @@ func (q *Queries) ClearManagedPostgresRestoreSlot(ctx context.Context, db DBTX, 
 	return result.RowsAffected(), nil
 }
 
+const clearObjectStorageCeilingGrant = `-- name: ClearObjectStorageCeilingGrant :exec
+DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1
+`
+
+func (q *Queries) ClearObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearObjectStorageCeilingGrant, ownerID)
+	return err
+}
+
 const clearObsoleteDeploymentsRetainingRecovery = `-- name: ClearObsoleteDeploymentsRetainingRecovery :execrows
 UPDATE deployments SET deleted_at=$1::timestamptz,deleted_by_principal='system'
 WHERE app_id=$2::uuid AND status IN ('superseded','failed','cancelled')
@@ -15811,6 +15820,27 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 	return i, err
 }
 
+const dropTriggerRecordByOperator = `-- name: DropTriggerRecordByOperator :execrows
+delete from trigger_records r using triggers t
+where r.id=$1::uuid and r.trigger_id=$2::uuid
+  and t.id=r.trigger_id and t.app_id=$3::uuid
+`
+
+type DropTriggerRecordByOperatorParams struct {
+	ID        pgtype.UUID
+	TriggerID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// Deletes one record of the addressed trigger on the caller's app.
+func (q *Queries) DropTriggerRecordByOperator(ctx context.Context, db DBTX, arg DropTriggerRecordByOperatorParams) (int64, error) {
+	result, err := db.Exec(ctx, dropTriggerRecordByOperator, arg.ID, arg.TriggerID, arg.AppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const dueManagedPostgresLifecycleDatabases = `-- name: DueManagedPostgresLifecycleDatabases :many
 SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels FROM managed_postgres_databases
 WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR ($1::boolean AND state IN ('provisioning','failed')))
@@ -20879,7 +20909,7 @@ WITH plan_retention AS (
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
       AND i.created_at < $3::timestamptz - make_interval(secs => $4::bigint)
-      AND i.created_at < $3::timestamptz - make_interval(secs => r.seconds)
+      AND coalesce(i.last_replayed_at, i.created_at) < $3::timestamptz - make_interval(secs => r.seconds)
     ORDER BY i.created_at
     LIMIT $5::integer
     FOR UPDATE OF i SKIP LOCKED
@@ -20909,6 +20939,10 @@ type ExpirePendingQueueMessagesRow struct {
 // ADR-20261022105723: a pending queue message past its plan's retention
 // moves to the dead letter. A message a worker holds (dispatching) is not
 // touched. The plan resolves as StampDefaultInvocationRetention's does.
+// ADR-20261101093812: retention counts from the message's last replay, so a
+// message replayed from the dead letter gets the whole retention again. A
+// replay is never earlier than the send, so the created_at bound still
+// narrows invocations_queue_pending_created_idx.
 func (q *Queries) ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error) {
 	rows, err := db.Query(ctx, expirePendingQueueMessages,
 		arg.Plans,
@@ -69418,6 +69452,23 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 	return items, nil
 }
 
+const objectStorageCeilingGrant = `-- name: ObjectStorageCeilingGrant :one
+SELECT owner_id, max_bytes, reason, granted_by, granted_at FROM object_storage_ceiling_grants WHERE owner_id=$1
+`
+
+func (q *Queries) ObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ObjectStorageCeilingGrant, error) {
+	row := db.QueryRow(ctx, objectStorageCeilingGrant, ownerID)
+	var i ObjectStorageCeilingGrant
+	err := row.Scan(
+		&i.OwnerID,
+		&i.MaxBytes,
+		&i.Reason,
+		&i.GrantedBy,
+		&i.GrantedAt,
+	)
+	return i, err
+}
+
 const objectStorageGatewayStorageAdvance = `-- name: ObjectStorageGatewayStorageAdvance :execrows
 UPDATE object_storage_gateway_storage g
 SET stored_byte_hours = LEAST(1152921504606846976::numeric, g.stored_byte_hours
@@ -70844,22 +70895,27 @@ func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype
 }
 
 const objectUsageAccountPlanCap = `-- name: ObjectUsageAccountPlanCap :one
-SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+SELECT a.plan, a.overage_cap_cents, g.max_bytes AS ceiling_grant_bytes FROM accounts a
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = a.id WHERE a.id=$1
 UNION ALL
-SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
+SELECT o.plan, o.overage_cap_cents, g.max_bytes FROM orgs o
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = o.id
+WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
 `
 
 type ObjectUsageAccountPlanCapRow struct {
-	Plan            string
-	OverageCapCents pgtype.Int8
+	Plan              string
+	OverageCapCents   pgtype.Int8
+	CeilingGrantBytes pgtype.Int8
 }
 
-// The plan and spend cap that set an account's object-storage ceilings
-// (ADR-1320, ADR-20261101214152). A null cap is no cap.
+// The plan, spend cap and support grant that set an account's object-storage
+// ceilings (ADR-1320, ADR-20261101214152). A null cap is no cap; a null grant
+// keeps the plan's ceiling.
 func (q *Queries) ObjectUsageAccountPlanCap(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectUsageAccountPlanCapRow, error) {
 	row := db.QueryRow(ctx, objectUsageAccountPlanCap, id)
 	var i ObjectUsageAccountPlanCapRow
-	err := row.Scan(&i.Plan, &i.OverageCapCents)
+	err := row.Scan(&i.Plan, &i.OverageCapCents, &i.CeilingGrantBytes)
 	return i, err
 }
 
@@ -86244,6 +86300,31 @@ func (q *Queries) ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg Rea
 	return items, nil
 }
 
+const readQueueReplayAdmission = `-- name: ReadQueueReplayAdmission :one
+SELECT p.app_id, p.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM production_invocation_work p
+LEFT JOIN accounts a ON a.id = p.account_id
+LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE p.id = $1::uuid AND p.source = 'queue' AND p.state = 'dead_letter'
+`
+
+type ReadQueueReplayAdmissionRow struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Plan      string
+}
+
+// ADR-20261101093812: a production queue message replayed from the dead
+// letter re-enters its app's queue under the caps a send meets. The plan
+// resolves as ExpirePendingQueueMessages' does. Environment-owned messages
+// are not production work and keep their own caps.
+func (q *Queries) ReadQueueReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadQueueReplayAdmissionRow, error) {
+	row := db.QueryRow(ctx, readQueueReplayAdmission, id)
+	var i ReadQueueReplayAdmissionRow
+	err := row.Scan(&i.AppID, &i.AccountID, &i.Plan)
+	return i, err
+}
+
 const readReleaseWorkerRunningProof = `-- name: ReadReleaseWorkerRunningProof :many
 SELECT i.id::text AS id,p.secret_fingerprint,p.config_fingerprint,coalesce(p.environment_id::text,'')::text AS environment_id,p.scope
 FROM instances i JOIN deployments d ON d.id=i.deployment_id AND d.status='live'
@@ -87740,10 +87821,28 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 	return i, err
 }
 
+const readServicePolicyCallerScope = `-- name: ReadServicePolicyCallerScope :one
+SELECT scope FROM deployments
+WHERE id = $1::uuid AND app_id = $2::uuid
+`
+
+type ReadServicePolicyCallerScopeParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) ReadServicePolicyCallerScope(ctx context.Context, db DBTX, arg ReadServicePolicyCallerScopeParams) (string, error) {
+	row := db.QueryRow(ctx, readServicePolicyCallerScope, arg.DeploymentID, arg.AppID)
+	var scope string
+	err := row.Scan(&scope)
+	return scope, err
+}
+
 const readServicePolicyDeploymentOverride = `-- name: ReadServicePolicyDeploymentOverride :one
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.id = $1::uuid AND d.app_id = $2::uuid AND d.status = 'live'
+      AND d.scope = ANY($3::text[])
       AND (d.traffic_percent > 0 OR d.traffic_percent_explicit
            OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
                AND EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())))
@@ -87753,33 +87852,37 @@ SELECT EXISTS (
 type ReadServicePolicyDeploymentOverrideParams struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
+	Scopes       []string
 }
 
 func (q *Queries) ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error) {
-	row := db.QueryRow(ctx, readServicePolicyDeploymentOverride, arg.DeploymentID, arg.AppID)
+	row := db.QueryRow(ctx, readServicePolicyDeploymentOverride, arg.DeploymentID, arg.AppID, arg.Scopes)
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err
 }
 
 const readServicePolicyDeploymentWeights = `-- name: ReadServicePolicyDeploymentWeights :many
-SELECT id, traffic_percent FROM deployments
+SELECT id, traffic_percent, scope FROM deployments
 WHERE app_id = $1::uuid AND status = 'live' AND traffic_percent > 0
-ORDER BY id LIMIT $2::integer
+  AND scope = ANY($2::text[])
+ORDER BY id LIMIT $3::integer
 `
 
 type ReadServicePolicyDeploymentWeightsParams struct {
 	AppID    pgtype.UUID
+	Scopes   []string
 	RowLimit int32
 }
 
 type ReadServicePolicyDeploymentWeightsRow struct {
 	ID             pgtype.UUID
 	TrafficPercent int32
+	Scope          string
 }
 
 func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentWeightsParams) ([]ReadServicePolicyDeploymentWeightsRow, error) {
-	rows, err := db.Query(ctx, readServicePolicyDeploymentWeights, arg.AppID, arg.RowLimit)
+	rows, err := db.Query(ctx, readServicePolicyDeploymentWeights, arg.AppID, arg.Scopes, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -87787,7 +87890,7 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 	items := []ReadServicePolicyDeploymentWeightsRow{}
 	for rows.Next() {
 		var i ReadServicePolicyDeploymentWeightsRow
-		if err := rows.Scan(&i.ID, &i.TrafficPercent); err != nil {
+		if err := rows.Scan(&i.ID, &i.TrafficPercent, &i.Scope); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -100902,6 +101005,32 @@ func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvo
 	return err
 }
 
+const setObjectStorageCeilingGrant = `-- name: SetObjectStorageCeilingGrant :exec
+INSERT INTO object_storage_ceiling_grants (owner_id, max_bytes, reason, granted_by, granted_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (owner_id) DO UPDATE SET max_bytes = EXCLUDED.max_bytes, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at
+`
+
+type SetObjectStorageCeilingGrantParams struct {
+	OwnerID   pgtype.UUID
+	MaxBytes  int64
+	Reason    string
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+}
+
+func (q *Queries) SetObjectStorageCeilingGrant(ctx context.Context, db DBTX, arg SetObjectStorageCeilingGrantParams) error {
+	_, err := db.Exec(ctx, setObjectStorageCeilingGrant,
+		arg.OwnerID,
+		arg.MaxBytes,
+		arg.Reason,
+		arg.GrantedBy,
+		arg.GrantedAt,
+	)
+	return err
+}
+
 const setObservedAppWorkloadClass = `-- name: SetObservedAppWorkloadClass :execrows
 UPDATE apps SET workload_class=$1::text
 WHERE id=$2::uuid AND account_id=$3::uuid AND status<>'deleted'
@@ -103645,6 +103774,30 @@ func (q *Queries) TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const triggerRecordInScope = `-- name: TriggerRecordInScope :one
+select exists(select 1 from trigger_records r join triggers t on t.id=r.trigger_id
+  where r.id=$1::uuid and r.trigger_id=$2::uuid
+    and t.app_id=$3::uuid)
+`
+
+type TriggerRecordInScopeParams struct {
+	ID        pgtype.UUID
+	TriggerID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// The operator record verbs (POST /v1/triggers/{id}/records/{rid}/retry and
+// /drop) address a record through its trigger's URL. The record must belong
+// to that trigger and the trigger to the caller's app; any other record
+// answers "no such record". A record's trigger and a trigger's app never
+// change, so the check needs no row lock and keeps the replay lock order.
+func (q *Queries) TriggerRecordInScope(ctx context.Context, db DBTX, arg TriggerRecordInScopeParams) (bool, error) {
+	row := db.QueryRow(ctx, triggerRecordInScope, arg.ID, arg.TriggerID, arg.AppID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const tryEdgeRuleAccountMutationLock = `-- name: TryEdgeRuleAccountMutationLock :one

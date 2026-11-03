@@ -921,11 +921,14 @@ that already has buckets, and turn the mode on before the first customer
 bucket. Production has run this mode since `2026-10-12T08:41:00Z`, before its
 first bucket.
 
-A paid account's stored-bytes ceiling is its included storage plus what its
-spend cap buys (ADR-20261101214152); without a cap it is
-`max_account_bytes`. Paid plans set no request or authorization ceilings of
-their own, so size those values, and `max_account_bytes` for accounts that
-clear their cap, for the largest plan. `max_account_keys` is at most one
+Each plan has its own stored-bytes ceiling (ADR-20261101214152): Free 1 GiB,
+Hobby 20 GiB, Pro 250 GiB, Scale 1,000 GiB. A spend cap below what that
+storage costs lowers it. Support raises one paid account's ceiling with
+`gregalectl accounts object-storage-ceiling --account-id ID --gib N --reason
+R --yes`, and `--plan` returns it to the plan's; the cap still applies, and
+`max_account_bytes` still bounds every account. Paid plans set no request or
+authorization ceilings of their own, so size those values, and
+`max_account_bytes` for the largest grant support may give. `max_account_keys` is at most one
 million (`api.MaxObjectStorageAccountKeys`), because a bucket is metered by
 listing it whole.
 
@@ -1478,10 +1481,10 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   - **Pricing and budget cutoffs.** ADR-1430 prices storage. At the spend cap,
     storage keeps serving within plan limits and is billed only up to the cap
     ([ADR 20261020160000](../adr/20261020160000-object-storage-in-budgets.md));
-    budgets count the uncapped estimate. Free stops at 1 GiB. Paid plans have
-    no stored-bytes ceiling of their own, so the operator's
-    `max_account_bytes` bounds the storage above a customer's cap that nobody
-    pays for. Set it with that cost in mind.
+    budgets count the uncapped estimate. Each plan has a stored-bytes ceiling
+    (ADR-20261101214152), so the storage above a customer's cap that nobody
+    pays for is at most the plan's ceiling, or a support grant, less what the
+    cap covers.
   - **Account deletion.** Deleting an account, or 21 days of non-payment,
     starts the 30-day grace. Suspension, pending deletion and an abuse hold
     stop every data path at once: S3 credentials, signed URLs, upload grants
