@@ -190,3 +190,7 @@ Two paths gave a release traffic with none of the guards (release review 2026-11
 ## Amendment 10 (2026-11-03): publishing a release set meets the same guards
 
 Amendment 9 held `release-sets/activate` and `release-sets/rollback` to the release guards, but `POST .../release-sets` publishes a project release set too, active at once, and it still accepted members staged without traffic with no pause, freeze, approval or protected-environment check (release review 2026-11-03). Publishing a set now holds its members exactly as an activation does.
+
+## Amendment 11 (2026-11-03): configuration of protected environments
+
+A protected environment takes changes through an approved project plan or environment promotion, but env var, secret value and project environment configuration writes into one were not checked, and the runtime reads them on the next wake, so they took effect like a release (release review 2026-11-03). Setting or deleting an env var, setting a secret value, and replacing the project environment configuration in a protected environment other than production are now refused (`409 project_environment_approval_required`). Deleting or rotating a secret stays open for incident response, and production keeps direct config writes, which the config guard (ADR-1451) undoes, as amendment 9 left its releases.
