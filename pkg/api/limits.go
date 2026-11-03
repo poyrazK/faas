@@ -9576,6 +9576,12 @@ const (
 	GatewayFailoverRetryBudgetBurst     = 10
 	GatewayFailoverMaxExtraNodes        = 2
 	GatewayFailoverMaxRefusalBodyBytes  = 64 << 10 // 64 KiB
+
+	// EdgeDNSOnlyAddrsPerNameMax bounds the DNS-only address records
+	// edgednsd keeps behind one app host name (ADR-20261103163954 §1): an
+	// answer with that many A and AAAA records stays well under the
+	// 1,232-byte EDNS size resolvers use. A larger cell needs pools.
+	EdgeDNSOnlyAddrsPerNameMax = 16
 )
 
 // EdgeWAFInlineSlots is the number of in-path WAF check slots for a

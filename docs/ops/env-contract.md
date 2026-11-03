@@ -296,7 +296,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EDGEDNS_EDGE_CONTROL_PORT` | edgednsd | `default` |  | 9109 | `` | ADR-20261102081618: the compute edges' private control port edgednsd probes for /readyz |
 | `FAAS_EDGEDNS_INTERVAL` | edgednsd | `default` |  | 2s | `` | ADR-20261102081618: how often edgednsd reads the registry, probes the edges and reconciles; at least 1s |
 | `FAAS_EDGEDNS_METRICS_ADDR` | edgednsd | `dropin` |  | 127.0.0.1:9113 | `` | ADR-20261102081618: edgednsd's only listener, for Prometheus |
-| `FAAS_EDGEDNS_NAMES` | edgednsd | `dropin` |  |  | `` | ADR-20261102081618: the managed names, <zone id>:<host>,...; rendered from the manifest's public_edge.dns |
+| `FAAS_EDGEDNS_NAMES` | edgednsd | `dropin` |  |  | `` | ADR-20261102081618: the managed names, <zone id>:<host>[:proxied\|:dns-only],... (proxied by default; dns-only per ADR-20261103163954 §1); rendered from the manifest's public_edge.dns |
 | `FAAS_EDGEDNS_NODE_ADDRESSES` | edgednsd | `dropin` |  |  | `` | ADR-20261102081618: each compute node's public address under its registry name, <node>=<address>,...; rendered from the hosts' public_ipv4 |
 | `FAAS_EDGEDNS_ROLE` | edgednsd | `default` |  |  | `` | box role edgednsd checks it runs on (control-plane or single-box); unset is single-box |
 | `FAAS_EDGE_CHALLENGE_KEY_FILE` | gatewayd-internal | `dropin` |  |  | `path-exists` | deprecated name of FAAS_GATEWAY_FLEET_KEY_FILE (ADR-20261102191500), read when that is unset; the role sets both for one release |
