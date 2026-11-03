@@ -2104,15 +2104,6 @@ func hexPrefix(hash []byte) string {
 	return strconv.FormatUint(uint64(hash[0])<<40|uint64(hash[1])<<32|uint64(hash[2])<<24|uint64(hash[3])<<16|uint64(hash[4])<<8|uint64(hash[5]), 16)
 }
 
-// max returns the larger of two non-negative floats. Inline because
-// math.Max forces a non-int return type we don't use anywhere else.
-func max(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // renderAuditEvents renders /dashboard/audit-events — the
 // customer-facing drill-down on the audit log. Wave 0 PR-C /
 // ADR-047. The handler reuses the same store path as the public
