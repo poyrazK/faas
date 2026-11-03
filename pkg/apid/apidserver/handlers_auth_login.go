@@ -789,7 +789,9 @@ func (s *server) verifyPasswordOrPadWith(ctx context.Context, email, password st
 	}
 	if err != nil || !ok {
 		s.recordLoginFailure(ctx, email, &acct)
-		return state.Account{}, false, nil
+		// A malformed stored hash refuses the sign-in like a wrong password;
+		// only "not checked" (busy or cancelled) is reported as an error.
+		return state.Account{}, false, nil //nolint:nilerr // see above
 	}
 	return acct, true, nil
 }
