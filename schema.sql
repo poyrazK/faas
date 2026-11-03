@@ -78171,6 +78171,13 @@ CREATE INDEX profile_captures_expires_idx ON public.profile_captures USING btree
 
 
 --
+-- Name: profile_captures_pool_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_pool_created_idx ON public.profile_captures USING btree (COALESCE((capture ->> 'pool'::text), (account_id)::text), created_at DESC);
+
+
+--
 -- Name: profile_captures_status_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 

@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -38,6 +40,19 @@ type trackedRequest struct {
 	SlowRequestReport
 	started  time.Time
 	reported bool
+	progress requestProgress
+}
+
+// requestProgress tells the watcher whether a tracked request is still
+// waiting on the app. One whose response is under way (a slow download) or
+// whose body is still arriving (a slow upload) is not stuck in the app.
+type requestProgress struct {
+	responding func() bool
+	uploading  func() bool
+}
+
+func (p requestProgress) moving() bool {
+	return p.responding != nil && p.responding() || p.uploading != nil && p.uploading()
 }
 
 // NewSlowRequestWatcher reports through report, which should route to the
@@ -52,10 +67,16 @@ func NewSlowRequestWatcher(report func(context.Context, SlowRequestReport) error
 
 // begin tracks one request; the returned func ends tracking.
 func (w *SlowRequestWatcher) begin(r SlowRequestReport) func() {
+	return w.beginWithProgress(r, requestProgress{})
+}
+
+// beginWithProgress tracks one request whose response or upload may still be
+// moving; such a request is not reported until it stops moving.
+func (w *SlowRequestWatcher) beginWithProgress(r SlowRequestReport, progress requestProgress) func() {
 	w.mu.Lock()
 	id := w.next
 	w.next++
-	w.inflight[id] = &trackedRequest{SlowRequestReport: r, started: w.now()}
+	w.inflight[id] = &trackedRequest{SlowRequestReport: r, started: w.now(), progress: progress}
 	w.mu.Unlock()
 	return func() {
 		w.mu.Lock()
@@ -73,7 +94,7 @@ func (w *SlowRequestWatcher) due() []SlowRequestReport {
 	var out []SlowRequestReport
 	for _, t := range w.inflight {
 		age := now.Sub(t.started)
-		if t.reported || age < w.after {
+		if t.reported || age < w.after || t.progress.moving() {
 			continue
 		}
 		t.reported = true
@@ -121,12 +142,13 @@ func (h *Handler) WithSlowRequestWatcher(w *SlowRequestWatcher) {
 }
 
 // trackSlowRequest registers a proxied request with the slow-request watcher
-// and returns the func that ends tracking. Streaming responses are long-lived
-// by design, and plans without profiling cannot be captured, so neither is
-// tracked.
-func (h *Handler) trackSlowRequest(r *http.Request, app App, target Target, streaming bool) func() {
+// and returns the request to proxy and the func that ends tracking. Streaming
+// responses are long-lived by design, and plans without profiling cannot be
+// captured, so neither is tracked. A request whose response has started, or
+// whose body is still arriving, is moving, not stuck, and is not reported.
+func (h *Handler) trackSlowRequest(r *http.Request, app App, target Target, streaming bool) (*http.Request, func()) {
 	if h.slowRequests == nil || streaming || target.InstanceID == "" || !api.MustLimitsFor(app.Plan).Profiling.Enabled {
-		return func() {}
+		return r, func() {}
 	}
 	requestID := requestIDFrom(r)
 	traceID := traceIDForTelemetry(r.Context())
@@ -137,5 +159,32 @@ func (h *Handler) trackSlowRequest(r *http.Request, app App, target Target, stre
 	if route == "" {
 		route = r.Method + " request"
 	}
-	return h.slowRequests.begin(SlowRequestReport{AppID: app.ID, InstanceID: target.InstanceID, RequestID: requestID, TraceID: traceID, Route: route})
+	progress := requestProgress{responding: func() bool { _, ok := FirstByteFrom(r); return ok }}
+	if r.Body != nil && r.Body != http.NoBody {
+		body := &progressBody{ReadCloser: r.Body}
+		progress.uploading = func() bool { return !body.done.Load() }
+		r = r.WithContext(r.Context())
+		r.Body = body
+	}
+	return r, h.slowRequests.beginWithProgress(SlowRequestReport{AppID: app.ID, InstanceID: target.InstanceID, RequestID: requestID, TraceID: traceID, Route: route}, progress)
+}
+
+// progressBody marks a request body done once it is read to its end, fails
+// or is closed.
+type progressBody struct {
+	io.ReadCloser
+	done atomic.Bool
+}
+
+func (b *progressBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.done.Store(true)
+	}
+	return n, err
+}
+
+func (b *progressBody) Close() error {
+	b.done.Store(true)
+	return b.ReadCloser.Close()
 }
