@@ -380,8 +380,10 @@ func (s *server) restoreAccount(w http.ResponseWriter, r *http.Request, acct sta
 
 // restoreSubscriptionNotice tells a restored customer that the deletion
 // ended their subscription and restoring did not resume it
-// (ADR-20261026180850); without it they dropped to Free at period end.
-const restoreSubscriptionNotice = "Requesting deletion cancelled your paid subscription, and restoring the account does not resume it: it ends with the current billing period. Re-subscribe at " + wire.DashboardBillingURL + " to keep your plan."
+// (ADR-20261026180850); without it they dropped to Free at period end. Keeping
+// the subscription is one request (ADR-20261103131742 amendment 1): until the
+// period ends it cannot be replaced by a new one.
+const restoreSubscriptionNotice = "Requesting deletion cancelled your paid subscription, and restoring the account does not resume it: it ends with the current billing period. To keep your plan, choose Keep subscription at " + wire.DashboardBillingURL + " or send PATCH /v1/account/plan with your current plan."
 
 // cancelDeletion is the business-logic core reused by both the REST
 // handler (restoreAccount) and the dashboard form handler. Returns

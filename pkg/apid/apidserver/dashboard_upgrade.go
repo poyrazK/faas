@@ -98,6 +98,24 @@ func upgradeNoticeFor(flag string) string {
 		return "The billing provider could not charge the upgrade. Update your payment method in the billing portal and try again; your plan has not changed."
 	case "billing_email_in_use":
 		return "This email already pays for another Gregale account or organization. Give the organization its own billing email, then upgrade."
+	case "authentication_required":
+		return "Your bank asked to confirm the upgrade charge. Nothing was charged and your plan has not changed. Add your card again in the billing portal, where your bank can confirm it, then upgrade again."
+	case "subscription_ending":
+		return "Your subscription is cancelled and ends at the end of the billing period, so its plan cannot change. Keep the subscription first, then change plans."
+	case "subscription_ended":
+		return "Your subscription has already ended. Refresh this page and start a new subscription."
+	case "kept":
+		return "Your subscription renews on its current plan. The scheduled cancellation or plan change was undone."
+	case "nothing_scheduled":
+		return "Your subscription already renews on its current plan; nothing was scheduled."
+	case "keep_failed":
+		return "We could not reach the billing provider to keep your subscription; the scheduled change still applies. Please try again in a minute."
+	case "downgrade_scheduled":
+		return "Your plan change is scheduled for the end of the billing period. Until then your current plan stays active."
+	case "downgrade_blocked":
+		return "Your account uses more than the lower plan allows (apps, databases or storage). Reduce it, then change plans."
+	case "downgrade_failed":
+		return "We could not schedule the plan change with the billing provider. Nothing changed; please try again in a minute."
 	case "invalid_plan":
 		return "Choose one of the paid plans below."
 	default:
@@ -131,7 +149,8 @@ func (s *server) renderUpgrade(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := s.upgradePageData(r, acct)
-	if data.Available {
+	// Keep subscription posts the same form as an upgrade.
+	if data.Available || data.ScheduledChange != "" {
 		tok, err := middleware.IssueForAuthenticated(s.sessions, dashboardUpgradeAction, acct.ID)
 		if err != nil {
 			log.Error("dashboard renderUpgrade: csrf issue", "account_id", acct.ID, "err", err)
@@ -189,6 +208,14 @@ func (s *server) upgradePageData(r *http.Request, acct state.Account) dashboard.
 		if len(data.Options) == 0 {
 			data.Reason = "Your account is already on the highest plan."
 		}
+		// Amendment 1: a scheduled cancellation or downgrade is shown and
+		// can be undone here; a subscription that is ending changes no plan.
+		var ending bool
+		data.ScheduledChange, ending = s.scheduledChangeNotice(r.Context(), acct)
+		if ending {
+			data.Available = false
+			data.Reason = "A cancelled subscription cannot change plans. Keep the subscription first, then upgrade."
+		}
 	case s.billingProvider == nil || !s.billingProvider.Capabilities().Has(billing.CapHostedCheckout):
 		data.Reason = "Hosted checkout is not available on this deployment. Change plan via the CLI: gregale plan <plan>."
 	case len(data.Options) == 0:
@@ -224,6 +251,12 @@ func (s *server) dashboardUpgrade(w http.ResponseWriter, r *http.Request) {
 	plan := api.Plan(strings.ToLower(strings.TrimSpace(r.FormValue("plan"))))
 	if !plan.Valid() || !plan.IsPaid() {
 		http.Redirect(w, r, "/dashboard/upgrade?upgrade=invalid_plan", http.StatusSeeOther)
+		return
+	}
+	if plan == acct.Plan {
+		// Keep subscription: undo its scheduled cancellation or downgrade
+		// (ADR-20261103131742 amendment 1).
+		http.Redirect(w, r, "/dashboard/billing?upgrade="+s.dashboardKeepSubscription(r.Context(), acct), http.StatusSeeOther)
 		return
 	}
 	txID, checkoutURL, err := s.beginHostedCheckout(r.Context(), acct, plan)
@@ -263,7 +296,7 @@ func (s *server) dashboardUpgradeSubscription(ctx context.Context, acct state.Ac
 	if _, err := changer.ChangeSubscriptionPlan(ctx, billingAcct, plan); err != nil {
 		s.log.Error("dashboard upgrade: change subscription", "account", acct.ID,
 			"target_plan", logsanitize.Field(string(plan)), "err", logsanitize.FieldAny(err))
-		return "charge_failed"
+		return planChangeFlag(err, "charge_failed")
 	}
 	s.audit.Emit(ctx, "billing.plan_change_requested", &acct.ID, map[string]any{
 		"target_plan": string(plan), "via": "dashboard",

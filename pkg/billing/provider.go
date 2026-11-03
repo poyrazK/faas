@@ -345,6 +345,15 @@ type SubscriptionPlanChangeProvider interface {
 	ChangeSubscriptionPlan(ctx context.Context, acct state.Account, targetPlan api.Plan) (effectiveAt time.Time, err error)
 }
 
+// SubscriptionResumer is an optional provider surface that undoes a
+// subscription's scheduled cancellation and scheduled plan change, so it
+// renews on its current plan (ADR-20261103131742 amendment 1). undone reports
+// whether a scheduled change was undone; false means none was scheduled. A
+// subscription that has already ended is ErrSubscriptionGone.
+type SubscriptionResumer interface {
+	ResumeSubscription(ctx context.Context, acct state.Account) (undone bool, err error)
+}
+
 // SubscriptionStateProvider is an optional provider surface for reading a
 // subscription's current state. Webhook deliveries are neither ordered nor
 // prompt, so a delivery describes the subscription as it was; apid asks for
@@ -376,6 +385,23 @@ type Subscription struct {
 type SubscriptionState struct {
 	Status SubscriptionStatus
 	PlanID string
+	// CancelAtPeriodEnd is set when the subscription is scheduled to end at
+	// EndsAt instead of renewing.
+	CancelAtPeriodEnd bool
+	// EndsAt is when a scheduled cancellation ends the subscription; zero
+	// when none is scheduled.
+	EndsAt time.Time
+	// PendingPlanID is the plan a scheduled plan change moves the
+	// subscription to at PendingAt (Event.PlanID encoding); empty when no
+	// plan change is scheduled.
+	PendingPlanID string
+	PendingAt     time.Time
+}
+
+// ScheduledChange reports whether the subscription will end or change plan
+// at a later date instead of renewing as it is.
+func (s SubscriptionState) ScheduledChange() bool {
+	return s.CancelAtPeriodEnd || s.PendingPlanID != ""
 }
 
 // SubscriptionStatus is a provider subscription status, lowercased.
@@ -706,6 +732,20 @@ var ErrAlreadyCancelled = errors.New("billing: subscription already cancelled or
 // ErrSubscriptionGone is returned by SubscriptionState when the provider has
 // no such subscription, so it can never renew.
 var ErrSubscriptionGone = errors.New("billing: subscription not found at the provider")
+
+// ErrSubscriptionEnding is returned by a plan change the provider refuses
+// because the subscription is scheduled to end: a cancelled subscription
+// cannot change product until its cancellation is undone.
+var ErrSubscriptionEnding = errors.New("billing: subscription is scheduled to end; undo the cancellation first")
+
+// ErrPaymentAuthenticationRequired is returned when a charge made while the
+// customer is away from the card (an upgrade's prorated charge) needs the
+// bank's confirmation (3-D Secure). Nothing was charged or changed.
+var ErrPaymentAuthenticationRequired = errors.New("billing: the bank asked for the payment to be confirmed")
+
+// ErrPaymentDeclined is returned when such a charge was declined or there is
+// no card to charge. Nothing was charged or changed.
+var ErrPaymentDeclined = errors.New("billing: the payment was declined")
 
 // PaymentMethod is the provider-agnostic card-on-file summary
 // (issue #242). Lives in pkg/billing (NOT pkg/api) to avoid the
