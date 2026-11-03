@@ -1085,6 +1085,10 @@ func dashboardWorkflowError(err *string) string {
 //
 //	?fired=1       → "ok"     (green banner: "Fire-now enqueued…")
 //	?fired=error   → "error"  (red banner: "Fire-now failed…")
+//	?fired=disabled|busy|suspended|plan → the same value (red banner naming
+//	                 the refusal: a disabled cron, too many manual runs
+//	                 waiting, a suspended cron, or a plan that does not let
+//	                 it run)
 //	?fired= (any other) → ""  (no banner — future variants can grow here)
 //
 // Empty output is the conservative default: a stale "?fired="
@@ -1094,8 +1098,8 @@ func firedFlash(r *http.Request) string {
 	switch r.URL.Query().Get("fired") {
 	case "1":
 		return "ok"
-	case "error":
-		return "error"
+	case "error", "disabled", "busy", "suspended", "plan":
+		return r.URL.Query().Get("fired")
 	default:
 		return ""
 	}
