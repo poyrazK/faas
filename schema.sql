@@ -47065,6 +47065,29 @@ CREATE TABLE public.object_storage_capacity_reconciliations (
 
 
 --
+-- Name: object_storage_ceiling_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_ceiling_grants (
+    owner_id uuid NOT NULL,
+    max_bytes bigint NOT NULL,
+    reason text NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone NOT NULL,
+    CONSTRAINT object_storage_ceiling_grants_granted_at_check CHECK (isfinite(granted_at)),
+    CONSTRAINT object_storage_ceiling_grants_max_bytes_check CHECK (((max_bytes > 0) AND (max_bytes <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_ceiling_grants_reason_check CHECK ((reason ~ '^[a-z0-9_]{1,64}$'::text))
+);
+
+
+--
+-- Name: TABLE object_storage_ceiling_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.object_storage_ceiling_grants IS 'Object-storage ceilings support granted a billing subject in place of its paid plan''s; written only by apid (ADR-20261101214152).';
+
+
+--
 -- Name: object_storage_customer_usage_reports_v2; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -65397,6 +65420,14 @@ ALTER TABLE ONLY public.object_storage_bucket_usage
 
 ALTER TABLE ONLY public.object_storage_capacity_reconciliations
     ADD CONSTRAINT object_storage_capacity_reconciliations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_ceiling_grants object_storage_ceiling_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_ceiling_grants
+    ADD CONSTRAINT object_storage_ceiling_grants_pkey PRIMARY KEY (owner_id);
 
 
 --

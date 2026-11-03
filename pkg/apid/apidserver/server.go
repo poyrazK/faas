@@ -4563,6 +4563,10 @@ func (s *server) handler() http.Handler {
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRestore))))
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions))))
+	// ADR-20261101214152: support raises (or returns to the plan's) a paid
+	// billing subject's object-storage ceiling.
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/object-storage-ceiling",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsObjectStorageCeiling))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/drain",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/force-drain",
@@ -6154,6 +6158,8 @@ func idempotencyReplayable(status int) bool {
 
 // Binding refusals depend on fresh evidence and policy, and must not freeze a
 // worker's exact recovery key for 24 hours after the recipient is verified.
+// A full clone refusal clears once the source stops using a blocking resource
+// or admission opens, so a retry with the same key must be evaluated again.
 func idempotencyResponseReplayable(status int, body []byte) bool {
 	if !idempotencyReplayable(status) {
 		return false
@@ -6168,7 +6174,8 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 		return true
 	}
 	switch problem.Code {
-	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged:
+	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
+		api.CodeFullEnvironmentCloneUnavailable:
 		return false
 	default:
 		return true
