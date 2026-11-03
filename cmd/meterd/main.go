@@ -764,6 +764,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	requestTelemetryPartitions := newRequestTelemetryPartitionMetrics(ops.Registry(), deps.now)
 	logEventMaintenance := newLogEventMaintenanceMetrics(ops.Registry(), deps.now)
 	buildLogRetention := newBuildLogRetentionMetrics(ops.Registry(), deps.now)
+	jobLogRetention := newJobLogRetentionMetrics(ops.Registry(), deps.now)
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "meterd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("meterd: init tracing: %w", traceErr)
@@ -1357,6 +1358,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// meter.BuildLogRetentionDays after a build's last line, except for live
 	// deployments and each app's api.BuildLogRetainedDeployments newest.
 	go meter.BuildLogRetentionLoop(ctx, partitionDB, meter.BuildLogRetentionInterval, deps.now, log, buildLogRetention.observe)
+	// ADR-20261102183152: job task output follows the account plan's log
+	// retention too. job_tasks/job_task_attempts are written by apid and
+	// schedd; this sweep only empties the output of finished runs and keeps
+	// every row, status and exit code, as meterd ages out request_telemetry
+	// and deployment_audit rows other daemons write.
+	go meter.JobLogRetentionLoop(ctx, store, meter.JobLogRetentionInterval, log, jobLogRetention.observe)
 
 	// SAFE-RELEASES production-leveling Stream D (issue #976 /
 	// ADR-122 post-merge audit): deployment_audit GC cron.

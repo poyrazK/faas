@@ -104,6 +104,13 @@ keeping (tax invoices: 7 years).
   most recent deployments; those are kept until that no longer holds.
   Build logs are deleted with their deployment, application or account
   (section 11).
+- Job output: the last 1 MiB of what each attempt of a job task Controller
+  runs writes to standard output and standard error, which can contain any
+  personal data the job chooses to write. Stored in the platform database
+  with the run's history. Deleted when the run finished longer ago than the
+  plan's log retention (Free 1 day, Hobby 7, Pro 30, Scale 90), and with the
+  account (section 11); the run's status, exit codes and timings are kept
+  until the account is deleted.
 - Request traces: spans Controller's applications export when tracing is
   on — operation and dependency names, durations, status and failure
   class. Exception messages and stack traces are not retained. Spans are

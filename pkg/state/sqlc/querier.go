@@ -478,6 +478,19 @@ type Querier interface {
 	// memory, so it is emptied once the fork has been over for the retention
 	// window (api.AppForkExecOutputRetention). The command record stays.
 	ClearExpiredAppForkExecOutput(ctx context.Context, db DBTX, arg ClearExpiredAppForkExecOutputParams) (int64, error)
+	// ADR-20261102183152: clears the stored stdout/stderr of finished job runs
+	// whose finish is older than their account plan's log retention. Runs, tasks
+	// and attempts stay; only log_content is emptied, with log_truncated set so
+	// an empty, truncated log reads as "no longer retained" rather than "no
+	// output". plans and plan_days pair each plan with its window; an account
+	// whose plan is not listed gets floor_days, the shortest window.
+	//
+	// job_runs_log_retention_idx holds only finished runs not yet cleared, oldest
+	// first; the floor bound lets the scan stop at runs no plan can have expired.
+	// A batch takes whole runs, oldest first, until their declared task count
+	// reaches max_tasks, and always at least one. A run that a retry reopens before
+	// the update reaches it is left unmarked: its new finish makes it due again.
+	ClearExpiredJobRunLogs(ctx context.Context, db DBTX, arg ClearExpiredJobRunLogsParams) (ClearExpiredJobRunLogsRow, error)
 	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
 	ClearMFA(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	// ADR-20261102125208: a database back inside its plan loses its notice, so a
