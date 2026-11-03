@@ -171,11 +171,11 @@ func createEnvironmentBranch(t *testing.T, h *e2etest.Harness, key, projectSlug,
 	if status != http.StatusCreated && status != http.StatusAccepted {
 		t.Fatalf("create branch %s: status=%d body=%s", branch, status, raw)
 	}
-	var created api.ProjectEnvironmentBranchResponse
-	if err := json.Unmarshal(raw, &created); err != nil {
+	var created api.ProjectEnvironmentResponse
+	if err := json.Unmarshal(raw, &created); err != nil || created.Branch == nil {
 		t.Fatalf("decode branch %s: %v (%s)", branch, err, raw)
 	}
-	for _, workload := range created.Workloads {
+	for _, workload := range created.Branch.Workloads {
 		if workload.DeploymentID != "" {
 			return workload.DeploymentID
 		}
