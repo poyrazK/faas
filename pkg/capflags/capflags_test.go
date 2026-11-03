@@ -139,6 +139,21 @@ func TestReleasedByDefaultIgnoresAccountRules(t *testing.T) {
 	}
 }
 
+func TestEveryAccountRequiresAllAncestorsWithoutNarrowingRules(t *testing.T) {
+	if !load(t, nil).EveryAccount("workflows") || load(t, nil).EveryAccount("automations") {
+		t.Fatal("tier defaults should decide when no flag is configured")
+	}
+	id, parent := child(t)
+	deny := false
+	set := platformflags.NewSet(map[string]platformflags.Definition{
+		flagKey(t, id):     {Enabled: true, Default: true},
+		flagKey(t, parent): {Enabled: true, Default: true, Rules: []platformflags.Rule{{ID: "deny", Accounts: []string{"acct-1"}, Value: &deny}}},
+	})
+	if load(t, set).EveryAccount(id) {
+		t.Fatal("a parent rule can exclude an account even when the default is on")
+	}
+}
+
 func TestNilDeciderAllowsEverything(t *testing.T) {
 	var d *capflags.Decider
 	if !d.Enabled("queues", platformflags.Subject{}) || !d.Released("queues") || d.Known("queues") {

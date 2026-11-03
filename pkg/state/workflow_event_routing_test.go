@@ -260,6 +260,38 @@ func TestEventWorkflowRecipientAdmissionInvalidDefinitionIsTerminal(t *testing.T
 	})
 }
 
+func TestEventWorkflowRecipientPlanDowngradeAndRecovery(t *testing.T) {
+	workflowScheduleStores(t, func(t *testing.T, store Store) {
+		app, _, claim := seedOwnedWorkflowRouting(t, store, 150)
+		ctx := t.Context()
+		// Simulate a snapshot captured on Pro before a downgrade to Hobby.
+		definition := `{"name":"paid","trigger":{"type":"event","source":"billing.*","event_type":"invoice.paid","filter":{"data":{"amount":{"$gt":100}}}},"steps":[{"name":"main","path":"/paid","timeout":"20m"}]}`
+		switch s := store.(type) {
+		case *MemStore:
+			s.mu.Lock()
+			s.routingReceiptLocked(claim.OutboxID).RecipientSnapshot[0].Workflow = json.RawMessage(definition)
+			s.mu.Unlock()
+		case *PgStore:
+			if _, err := s.pool.Exec(ctx, `UPDATE event_fanout_outbox SET recipient_snapshot=jsonb_set(recipient_snapshot,'{0,workflow}',$2::jsonb) WHERE id=$1`, claim.OutboxID, definition); err != nil {
+				t.Fatal(err)
+			}
+		}
+		admission := store.(EventWorkflowRecipientAdmissionStore)
+		result, err := admission.AdmitEventWorkflowRecipient(ctx, claim)
+		var classified *EventRecipientAdmissionError
+		if !result.Matched || !errors.Is(err, ErrWorkflowEventPlanIneligible) || !errors.As(err, &classified) || !classified.Retryable {
+			t.Fatalf("downgrade result=%+v err=%v", result, err)
+		}
+		if err := store.UpdateAccountPlan(ctx, app.AccountID, api.PlanPro); err != nil {
+			t.Fatal(err)
+		}
+		result, err = admission.AdmitEventWorkflowRecipient(ctx, claim)
+		if err != nil || !result.RunCreated || result.RunID == "" {
+			t.Fatalf("upgrade result=%+v err=%v", result, err)
+		}
+	})
+}
+
 func TestEventWorkflowRecipientAdmissionWebhook(t *testing.T) {
 	for _, provider := range []InboundWebhookProvider{InboundWebhookProviderStripe, InboundWebhookProviderGeneric} {
 		t.Run(string(provider), func(t *testing.T) {

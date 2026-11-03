@@ -562,6 +562,14 @@ func (s *server) approvalTrafficProblem(ctx context.Context, app state.App, d st
 	if p := s.darkReleasePauseProblem(d); p != nil {
 		return p
 	}
+	// A release staged without traffic in a protected environment reaches
+	// traffic only through an approved plan or promotion (ADR-20261019071733
+	// amendment 9).
+	if neverServedDark(d) {
+		if p := protectedEnvironmentReleaseProblem(ctx, s.store, app, d.Scope); p != nil {
+			return p
+		}
+	}
 	// ADR-20261021152201: a release waiting for its scheduled start takes
 	// no traffic by hand.
 	if p := s.scheduledTrafficProblem(ctx, d); p != nil {

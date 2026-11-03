@@ -19,10 +19,19 @@ type WorkflowScheduleStore interface {
 }
 
 type WorkflowScheduleCandidate struct {
-	AppID            string
-	PlatformTenantID string
-	DeploymentID     string
-	Workflows        json.RawMessage
+	AppID              string
+	PlatformTenantID   string
+	DeploymentID       string
+	Workflows          json.RawMessage
+	FairWorkflowName   string
+	FairLastAdmittedAt *time.Time
+}
+
+// FairTenantScheduleCursor is the last candidate visited in a fair scan. A
+// failed candidate remains eligible and is retried after the scan wraps.
+type FairTenantScheduleCursor struct {
+	AppID, TenantID, WorkflowName string
+	LastAdmittedAt                *time.Time
 }
 
 type WorkflowScheduleCursor struct {
@@ -72,6 +81,10 @@ type TenantWorkflowScheduleStore interface {
 // a keyset cursor.
 type FairTenantWorkflowScheduleStore interface {
 	ListFairTenantWorkflowScheduleCandidates(context.Context, string, time.Time, int) ([]WorkflowScheduleCandidate, error)
+}
+
+type FairTenantWorkflowSchedulePageStore interface {
+	ListFairTenantWorkflowScheduleCandidatesAfter(context.Context, string, time.Time, int, *FairTenantScheduleCursor) ([]WorkflowScheduleCandidate, error)
 }
 
 const (

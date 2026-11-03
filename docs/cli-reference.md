@@ -10704,7 +10704,7 @@ Create a broker trigger
 | `--enabled` | enable the trigger |  |
 | `--disabled` | disable the trigger |  |
 | `--batch-size <N>` | maximum records per dispatch batch |  |
-| `--batch-window-ms <N>` | maximum batch dwell time in milliseconds |  |
+| `--batch-window-ms <N>` | accepted but not applied: a batch is what one poll returns |  |
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
@@ -10722,7 +10722,7 @@ Update one trigger
 | `--disabled` | disable the trigger |  |
 | `--config <JSON>` | replace JSON config (inline \| @file \| -) |  |
 | `--batch-size <N>` | maximum records per dispatch batch |  |
-| `--batch-window-ms <N>` | maximum batch dwell time in milliseconds |  |
+| `--batch-window-ms <N>` | accepted but not applied: a batch is what one poll returns |  |
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |

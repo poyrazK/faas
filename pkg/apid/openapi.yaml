@@ -105639,7 +105639,8 @@ components:
 
     TriggerMetricsResponse:
       description: |
-        Aggregated counters per state for one trigger. NOT a Prometheus
+        Aggregated counters per state for one trigger, and the scheduler's
+        last observation of its broker consumer. NOT a Prometheus
         scrape — /v1/metrics is the Prometheus surface.
       type: object
       required:
@@ -105652,6 +105653,40 @@ components:
         succeeded_count: { type: integer }
         retry_count: { type: integer }
         dead_letter_count: { type: integer }
+        count_limit:
+          type: integer
+          description: Where each count stops; a count equal to it means at least that many.
+        consumer: { $ref: '#/components/schemas/TriggerConsumerStatus' }
+
+    TriggerConsumerStatus:
+      description: |
+        The scheduler's last observation of a trigger's broker consumer.
+        Absent until the trigger's first poll.
+      type: object
+      required: [liveness]
+      properties:
+        liveness:
+          type: string
+          enum: [healthy, degraded, stale, not_observed, unknown]
+          description: |
+            `degraded`: the last poll failed (see last_error). `stale`: no
+            poll for 30 s (the trigger is disabled, its app cannot run, or
+            no scheduler polls it).
+        last_poll_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        last_error_at: { type: string, format: date-time }
+        last_error: { type: string }
+        lag_messages:
+          type: integer
+          format: int64
+          description: |
+            The broker's backlog for the consumer. Kafka: high watermark
+            less the group's committed offset, summed over partitions.
+            NATS JetStream: the consumer's pending messages. Redis Streams:
+            the group's lag.
+        lag_age_seconds:
+          type: number
+          description: Age of the oldest record the last poll returned.
 
     CreateTriggerBatchRequest:
       description: |

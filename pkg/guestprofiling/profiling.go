@@ -2,6 +2,10 @@
 // running on Gregale. Call Start once during application startup (ADR-819,
 // ADR-1155). Collection is driven by the deployment's continuous profiling
 // configuration and by on-demand captures; otherwise the collector is dormant.
+//
+// Customers import the public copy, github.com/poyrazK/faas/sdk/go/preview/profiling:
+// this module is not go-gettable. This copy serves the platform's own
+// fixtures; keep the two collectors' behavior the same.
 package guestprofiling
 
 import (
@@ -143,12 +147,14 @@ func run(ctx context.Context, endpoint string) {
 			continue
 		}
 		if active != nil && (cfg.Suspended || !cfg.Enabled || cfg.Epoch != active.epoch || time.Since(active.from) >= active.span) {
-			// A restored process discards its pre-snapshot buffer rather than
-			// relabelling old samples with the new deployment/instance epoch.
 			if cfg.Capture && cfg.Epoch == active.epoch {
 				finished = cfg.Epoch
 			}
-			stop(cfg.Epoch == active.epoch)
+			// A capture starting over a continuous window ends it, and its
+			// samples go out under their own epoch, which the bridge accepts
+			// during the capture. Any other new epoch is a checkpoint or
+			// restore: the pre-snapshot buffer is discarded, not relabelled.
+			stop(cfg.Epoch == active.epoch || cfg.Capture && !cfg.Suspended && !active.capture)
 		}
 		if !cfg.Suspended && cfg.Enabled && cfg.Capture && cfg.Epoch != stacksEpoch && cfg.wants(api.ProfileKindStacks) {
 			// An instant snapshot, taken as the capture starts: closest to

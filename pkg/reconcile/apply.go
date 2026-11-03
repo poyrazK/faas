@@ -486,6 +486,12 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	// A Compose service run to completion is this app's release command
 	// (ADR-20261102192943); every deploy path reads it from here.
 	manifest.ProjectReleaseCommand, manifest.ProjectReleaseCommandShell = composeReleaseCommand(w)
+	// The first Compose ports: target is the serving port of a built
+	// service too, so an app that listens on a fixed port without a
+	// Dockerfile EXPOSE is reached there (ADR-20261103112845).
+	if len(w.Ports) > 0 && (w.Image != "" || w.DetectedBy.Detector == detectorCompose) {
+		manifest.ProjectImagePort = w.Ports[0]
+	}
 	if w.Image == "" {
 		return
 	}
@@ -493,10 +499,10 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	if w.CommandShell && len(w.Command) > 0 {
 		manifest.ProjectImageCommand = []string{"/bin/sh", "-c", w.Command[0]}
 	}
-	if len(w.Ports) > 0 {
-		manifest.ProjectImagePort = w.Ports[0]
-	}
 }
+
+// detectorCompose is reposcan's Detection.Detector for a Compose service.
+const detectorCompose = "compose"
 
 // composeReleaseCommand is the release command an app keeps for w: the
 // command of the Compose service w waits for to complete. A Procfile release
