@@ -40,15 +40,15 @@ func guardLiveDeployment(t *testing.T, store *state.MemStore, appID, scope strin
 	return d
 }
 
-// guardFailedSourceDeployment makes a failed source release of appID that a
-// retry can rebuild.
-func guardFailedSourceDeployment(t *testing.T, store *state.MemStore, appID string) state.Deployment {
+// guardFailedSourceDeployment makes a failed source release of appID in scope
+// that a retry can rebuild; an empty scope is production.
+func guardFailedSourceDeployment(t *testing.T, store *state.MemStore, appID, scope string) state.Deployment {
 	t.Helper()
 	source := filepath.Join(t.TempDir(), "source.tar.gz")
 	if err := os.WriteFile(source, []byte("retained source"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	dep, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: appID, Kind: state.DeploymentKindTarball, SourcePath: source, SourceBytes: 15, Handler: "index.handler"})
+	dep, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: appID, Scope: scope, Kind: state.DeploymentKindTarball, SourcePath: source, SourceBytes: 15, Handler: "index.handler"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestRetryMeetsDeployFreezes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep := guardFailedSourceDeployment(t, store, app.ID)
+	dep := guardFailedSourceDeployment(t, store, app.ID, "")
 	now := time.Now().UTC()
 	frozen, err := store.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
 		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now)
@@ -94,12 +94,36 @@ func TestRetryMeetsDeployFreezes(t *testing.T) {
 	if latest, err := store.LatestDeployment(t.Context(), app.ID); err != nil || latest.ID != dep.ID {
 		t.Fatalf("a frozen retry created a deployment: %s %v", latest.ID, err)
 	}
-	if _, err := store.LiftReleaseFreeze(t.Context(), acct.ID, frozen.ID, "ops", now); err != nil {
+	if _, err := store.LiftReleaseFreeze(t.Context(), state.ReleaseFreezeOwner{AccountID: acct.ID}, frozen.ID, "ops", now); err != nil {
 		t.Fatal(err)
 	}
 	r = e.Do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
 	if r.Code != http.StatusAccepted {
 		t.Fatalf("retry after the freeze lifted = %d %s", r.Code, r.Body)
+	}
+}
+
+// A freeze withholds only production releases (ADR-20261019071733): a retry
+// of a release in another scope proceeds while the app is frozen.
+func TestRetryOutsideProductionProceedsDuringAFreeze(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	t.Setenv("FAAS_STORAGE_BACKEND", "local")
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	store := *e.Store()
+	acct := *e.Acct()
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "retry-staging-frozen", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := guardFailedSourceDeployment(t, store, app.ID, "staging")
+	now := time.Now().UTC()
+	if _, err := store.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
+		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now); err != nil {
+		t.Fatal(err)
+	}
+	r := e.Do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
+	if r.Code != http.StatusAccepted {
+		t.Fatalf("staging retry during a production freeze = %d %s, want 202", r.Code, r.Body)
 	}
 }
 
@@ -118,7 +142,7 @@ func TestRetryMeetsTheApprovalCanaryRequirement(t *testing.T) {
 		RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	dep := guardFailedSourceDeployment(t, store, app.ID)
+	dep := guardFailedSourceDeployment(t, store, app.ID, "")
 	r := e.Do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)
 	if r.Code != http.StatusConflict || guardProblemCode(t, r.Body.Bytes()) != api.CodeReleaseApprovalCanaryRequired {
 		t.Fatalf("immediate retry under an approval policy = %d %s, want 409 release_approval_canary_required", r.Code, r.Body)
@@ -190,6 +214,25 @@ func TestGitOpsActivationIntoProductionMeetsTheReleaseGuards(t *testing.T) {
 	if got := hold(lease("production", "manual")); got != "" {
 		t.Fatalf("a revision approved in Gregale stands in for the policy: %q", got)
 	}
+	// ADR-20261020085706 amendment 8: a key's approval of the revision does
+	// not stand in for the policy, nor does one approval where it asks for two.
+	keyApproved := lease("production", "manual")
+	keyApproved.Revision.ApprovedBy = state.EnvironmentRevisionKeyApproverPrefix + "ci-key"
+	if got := hold(keyApproved); !strings.Contains(got, "an API key approved the revision") {
+		t.Fatalf("a revision a CI key approved = %q, want an approvals hold", got)
+	}
+	setPolicy := func(required int) {
+		t.Helper()
+		if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+			RequiredApprovals: required, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setPolicy(2)
+	if got := hold(lease("production", "manual")); !strings.Contains(got, "requires 2 release approvals") {
+		t.Fatalf("a policy asking for two approvals = %q, want a hold naming them", got)
+	}
+	setPolicy(1)
 	now := time.Now().UTC()
 	if _, err := store.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
 		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now); err != nil {
@@ -241,14 +284,14 @@ func TestReleaseSafetyDashboardShowsTheAppsGuards(t *testing.T) {
 	}
 }
 
-func TestRollbackRestoreDatabasesIsHiddenWithoutPostgresRestore(t *testing.T) {
+func TestRollbackRestoreDatabasesIsHiddenWithoutDatabaseRollbacks(t *testing.T) {
 	f := newSwitchFixture(t)
 	if err := f.env.InstallCapabilityGate(); err != nil {
 		t.Fatal(err)
 	}
 	w := f.do(t, http.MethodPost, "/v1/apps/"+f.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true})
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `unknown field \"restore_databases\"`) {
-		t.Fatalf("restore_databases with postgres-restore off = %d %s, want the unknown-field answer", w.Code, w.Body)
+		t.Fatalf("restore_databases with database-rollbacks off = %d %s, want the unknown-field answer", w.Code, w.Body)
 	}
 }
 

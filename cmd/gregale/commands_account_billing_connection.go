@@ -78,7 +78,22 @@ func cmdAccountBillingConnection(args []string) int {
 	return 1
 }
 
+// readSecretLine reads the provider key from piped stdin, or from a hidden
+// prompt when stdin is a terminal so the key never echoes on screen.
 func readSecretLine(r io.Reader, provider string) (string, error) {
+	if readerIsTerminal(r) {
+		if nonInteractive {
+			return "", fmt.Errorf("pipe the key on stdin, e.g. gregale account billing-connection connect %s < key.txt", provider)
+		}
+		line, err := readInteractivePassword(bufio.NewReader(r), provider+" secret key (input hidden): ")
+		if err != nil {
+			return "", err
+		}
+		if line = strings.TrimSpace(line); line == "" {
+			return "", errors.New("no key entered")
+		}
+		return line, nil
+	}
 	line, err := bufio.NewReader(io.LimitReader(r, 4096)).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err

@@ -194,6 +194,20 @@ The table predates ADR-1430's USD plans. **Before acceptance:**
 2. Reconcile the result with `ex44_faas_financial_model.xlsx`. The code and
    docs must not contradict it.
 
+(Amended 2026-10-31: item 1 is done;
+[report](../ops/evidence/20261031-quiet-pause-economics/REPORT.md). On
+ADR-1430's plans G costs 0.23% of revenue per app-month for function apps
+($3.972 to $3.963) and at most 0.43% if every app opted into
+`between_requests`, with compute COGS unchanged, since a paused VM still holds
+its RAM. Billed GB-h falls 60–72%, and the share of Free function apps that
+reach Free's hard stop falls from 34% to 14%. The table above, and the
+ADR-906 and ADR-1151 ones, counted Free usage past its included GB-h as
+overage revenue, which Free never pays (meterd hard-stops it): about two
+thirds of the €0.11 above is Free overage. Item 2 is open: the spreadsheet is
+not in the repository, so the report reconciles against ADR-1430's COGS
+report figures (67% gross margin becomes 66.9%) and the owner still checks
+the model.)
+
 ## Rollout
 
 1. **Ledger, shadow only.** vmmd reports the pause record; schedd writes the
@@ -217,11 +231,26 @@ The table predates ADR-1430's USD plans. **Before acceptance:**
    to everyone.)
 3. **Customer surface.** Pricing page, usage views with paused seconds,
    `gregale usage`, the changelog: "billed while running requests, plus 2 s".
+   (Amended 2026-10-31: the record and the account summary are in. For each
+   rolled instance-minute meterd writes the MB-seconds it did not bill to
+   `usage_minutes.paused_mb_seconds`, in the plan RAM + 8 MB unit, first
+   value wins. It writes only what went unbilled: `on` mode and an account
+   the flag releases, net of what the app's capacity floor billed back that
+   minute. A failed write is logged and dropped rather than failing a minute
+   whose rows are written. `GET /v1/usage/summary`, the `compute` part of
+   `GET /v1/account/usage` and `gregale usage summary` show the month's total
+   as `quiet_paused_gb_hours`, absent while zero. The daily and per-app
+   views, the pricing page and the changelog are still to come.)
 
 The prerequisite is quiet pause itself in production (vmmd `quiet_pause`,
 schedd `quiet_pause_admission`), whose canaries ADR-1151 still lists as
-pending. Ledger retention is `api.QuietPauseLedgerRetentionDays` (45), run by
-meterd's retention loop.
+pending. Ledger retention is `api.QuietPauseLedgerRetentionDays`, run by
+meterd's retention loop. (Amended 2026-10-31: 3 days, was 45. With what each
+minute did not bill kept in `usage_minutes`, the ledger only has to outlive
+meterd's 24 h catch-up window. Retention deletes pauses that ended before the
+cutoff, and open ones only when their node's watermark is also older than
+it, because a floor-held VM with no traffic stays paused for days and its
+node reports the pause once.)
 
 ## Metrics (§12 additions)
 

@@ -47,12 +47,12 @@ func readTrafficBindingCapture(ctx context.Context, tx sqlc.DBTX, appsSuffix str
 		fields := strings.Split(line, "\t")
 		kind, added := strings.TrimSuffix(fields[0], "+"), strings.HasSuffix(fields[0], "+")
 		switch {
-		case len(fields) == 2 && (kind == "domain" || kind == "tenant"):
-			captured = append(captured, trafficCapturedHost(fields[1], added))
+		case len(fields) == 2 && (kind == TrafficBindingScopeKindDomain || kind == TrafficBindingScopeKindTenant):
+			captured = append(captured, trafficCapturedHost(kind, fields[1], added))
 		case len(fields) == 2 && kind == "slug" && appsSuffix != "":
-			captured = append(captured, trafficCapturedHost(fields[1]+appsSuffix, false))
-		case len(fields) == 3 && kind == "alias" && appsSuffix != "":
-			captured = append(captured, trafficCapturedHost("tag-"+fields[2]+"-"+strings.ReplaceAll(fields[1], "-", "")+appsSuffix, added))
+			captured = append(captured, trafficCapturedHost(TrafficBindingScopeKindPrimary, fields[1]+appsSuffix, false))
+		case len(fields) == 3 && kind == TrafficBindingScopeKindAlias && appsSuffix != "":
+			captured = append(captured, trafficCapturedHost(kind, "tag-"+fields[2]+"-"+strings.ReplaceAll(fields[1], "-", "")+appsSuffix, added))
 		case len(fields) == 2 && kind == "app" && added:
 			expand.AddedAppIds = append(expand.AddedAppIds, fields[1])
 		case len(fields) == 2 && kind == "app":
@@ -73,13 +73,13 @@ func readTrafficBindingCapture(ctx context.Context, tx sqlc.DBTX, appsSuffix str
 		return nil, fmt.Errorf("state: expand binding capture: %w", err)
 	}
 	for _, row := range rows {
-		captured = append(captured, trafficCapturedHost(row.Host, row.Added))
+		captured = append(captured, trafficCapturedHost(row.Kind, row.Host, row.Added))
 	}
 	return captured, nil
 }
 
-func trafficCapturedHost(host string, added bool) trafficBindingChange {
-	change := trafficBindingChange{host: normalizeTrafficLockName(host), added: added}
+func trafficCapturedHost(kind, host string, added bool) trafficBindingChange {
+	change := trafficBindingChange{host: normalizeTrafficLockName(host), kind: kind, added: added}
 	if suffix, wild := WildcardDomainSuffix(change.host); wild {
 		change.host, change.subtree = suffix, true
 	}

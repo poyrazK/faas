@@ -9,10 +9,12 @@ package main
 //	gatewayd-internal socket (the compute pool only while it is unhealthy)
 //
 // Platform hosts and custom domains stay on the control plane. Requests that
-// need control-plane credentials or sockets — public object-storage reads,
-// uploads and the customer OTLP endpoint — are forwarded to the control
-// plane's gatewayd-public, so a compute node holds no storage credentials and
-// no apid sockets. The mode is off by default.
+// need control-plane credentials or sockets — object uploads and the
+// customer OTLP endpoint — are forwarded to the control plane's
+// gatewayd-public, so a compute node holds no apid sockets. Public bucket
+// reads are forwarded too, unless the node holds the S3 gateway's provider
+// credential (ADR-20261031122757 step 7): then the edge serves them itself,
+// within its part of the node's port share. The mode is off by default.
 
 import (
 	"context"
@@ -24,6 +26,8 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -99,6 +103,12 @@ type edgeMetrics struct {
 	// dispatched, by reason and by what the edge did (ADR-20261022184531
 	// step 5).
 	wakeFailover *prometheus.CounterVec
+	// placement counts how each dial attempt used placement routing
+	// (ADR-20261031105055).
+	placement *prometheus.CounterVec
+	// tlsHandshakeFailures counts connections the public TLS listener
+	// refused during the handshake (ADR-20261102081618).
+	tlsHandshakeFailures prometheus.Counter
 }
 
 func newEdgeMetrics() *edgeMetrics {
@@ -106,7 +116,7 @@ func newEdgeMetrics() *edgeMetrics {
 		registry: prometheus.NewRegistry(),
 		fallbacks: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gatewayd_public_edge_local_fallback_total",
-			Help: "Upstream dials a compute-node edge sent to the compute pool because its own node's gatewayd-internal was unhealthy or refused the dial (ADR-1343).",
+			Help: "Requests a compute-node edge sent to the compute pool because its own node's gatewayd-internal was unhealthy or refused the dial (ADR-1343).",
 		}),
 		misdirected: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gatewayd_public_edge_misdirected_total",
@@ -124,13 +134,24 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gateway_wake_failover_total",
 			Help: "Responses gatewayd-internal marked not dispatched (no request byte reached a guest), by reason and outcome: retried on another compute node (succeeded, refused_again, failed) or not retried and why (ADR-20261022184531 step 5).",
 		}, []string{"reason", "outcome"}),
+		placement: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gatewayd_public_edge_placement_total",
+			Help: "Compute-edge dial attempts by placement result: remote (routed to the node that last served the host), self (that node is this one), miss (no node known), unusable (the node is not in the inventory, unready or excluded), failed (its dial failed) (ADR-20261031105055).",
+		}, []string{"result"}),
+		tlsHandshakeFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gatewayd_public_edge_tls_handshake_failures_total",
+			Help: "Connections a compute edge's public TLS listener refused during the handshake, such as a peer without the zone's Authenticated Origin Pulls certificate (ADR-20261102081618).",
+		}),
+	}
+	for _, result := range placementResults {
+		m.placement.WithLabelValues(result)
 	}
 	for _, reason := range gateway.NotDispatchedReasons {
 		for _, outcome := range gateway.FailoverOutcomes {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement, m.tlsHandshakeFailures)
 	return m
 }
 
@@ -161,6 +182,11 @@ type localFirstDialer struct {
 	// leaves routing to the health check alone.
 	nodeName  string
 	inventory nodeInventory
+
+	// placement and placementPool route a host to the node that last served
+	// it (ADR-20261031105055); nil keeps every request local first.
+	placement     *edgePlacement
+	placementPool *computeGatewayPool
 }
 
 // nodeInventory reports a compute node's registry state: whether it is
@@ -181,11 +207,68 @@ func (d *localFirstDialer) withDrainWatch(nodeName string, inventory nodeInvento
 	return d
 }
 
+// withPlacement routes each host to the node that last served it, from
+// pool's in-memory inventory (ADR-20261031105055).
+func (d *localFirstDialer) withPlacement(placement *edgePlacement, pool *computeGatewayPool) *localFirstDialer {
+	d.placement = placement
+	d.placementPool = pool
+	return d
+}
+
+// placementRoute returns the ready node a request's host was last served
+// from, when that is another node this attempt may use.
+func (d *localFirstDialer) placementRoute(ctx context.Context, rec *gateway.DialRecord) (computeGatewayEndpoint, gateway.PreferredNode, bool) {
+	if d.placement == nil || d.placementPool == nil {
+		return computeGatewayEndpoint{}, gateway.PreferredNode{}, false
+	}
+	pref, ok := gateway.PreferredNodeFrom(ctx)
+	if !ok {
+		// Health probes dial too; only a proxied request is a miss.
+		if gateway.PlacementAsked(ctx) {
+			d.metrics.placement.WithLabelValues(placementMiss).Inc()
+		}
+		return computeGatewayEndpoint{}, pref, false
+	}
+	endpoint, ok := d.placementPool.peekEndpoint(ctx, pref.NodeID)
+	switch {
+	case ok && d.nodeName != "" && endpoint.name == d.nodeName:
+		d.metrics.placement.WithLabelValues(placementSelf).Inc()
+		return computeGatewayEndpoint{}, pref, false
+	case !ok || rec.Excluded(endpoint.name):
+		d.metrics.placement.WithLabelValues(placementUnusable).Inc()
+		return computeGatewayEndpoint{}, pref, false
+	}
+	return endpoint, pref, true
+}
+
+// dialPlacement dials the node placement named; a failure forgets that node
+// for the host, so the host's next request goes to another of its nodes, or
+// locally until a response names a node again.
+func (d *localFirstDialer) dialPlacement(ctx context.Context, endpoint computeGatewayEndpoint, pref gateway.PreferredNode) (net.Conn, error) {
+	conn, err := d.placementPool.dial(ctx, endpoint)
+	if err != nil && ctx.Err() == nil {
+		d.placement.Forget(pref.Host, pref.NodeID)
+		d.metrics.placement.WithLabelValues(placementFailed).Inc()
+	}
+	return conn, err
+}
+
 func (d *localFirstDialer) DialContext(ctx context.Context, target string) (net.Conn, error) {
 	// A retry of a response this node's gateway refused goes to the other
 	// nodes: a planned route, like a drain, not a fallback
 	// (ADR-20261022184531 step 5).
 	rec := gateway.DialRecordFrom(ctx)
+	if endpoint, pref, ok := d.placementRoute(ctx, rec); ok {
+		conn, err := d.dialPlacement(ctx, endpoint, pref)
+		if err == nil {
+			rec.RecordDialed(endpoint.name)
+			d.metrics.placement.WithLabelValues(placementRemote).Inc()
+			return conn, nil
+		}
+		if ctx.Err() != nil {
+			return nil, err
+		}
+	}
 	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
 	if d.healthy.Load() && !localExcluded {
 		conn, err := d.local.DialContext(ctx, target)
@@ -211,6 +294,52 @@ func (d *localFirstDialer) DialContext(ctx context.Context, target string) (net.
 		return nil, fmt.Errorf("compute edge: local gateway unavailable and compute pool failed: %w", err)
 	}
 	return conn, nil
+}
+
+// localUpstreamKey keys the pooled connections to this node's own
+// gatewayd-internal socket.
+const localUpstreamKey = "local"
+
+// PickUpstream follows DialContext's routing for one attempt
+// (gateway.UpstreamPicker): this node's gatewayd-internal while it is healthy
+// and its dial has not failed, otherwise the compute pool. Only then is the
+// pool consulted, so a healthy local path never reads the registry. The pool
+// counts a fallback for each request it carries unless the route is planned
+// (a drain or a retry that excludes this node).
+func (d *localFirstDialer) PickUpstream(ctx context.Context, rec *gateway.DialRecord, failed []string) (gateway.Upstream, error) {
+	if endpoint, pref, ok := d.placementRoute(ctx, rec); ok {
+		if key := computeGatewayUpstreamKey(endpoint.address); !slices.Contains(failed, key) {
+			return gateway.Upstream{Key: key, Node: endpoint.name, Dial: func(ctx context.Context) (net.Conn, error) {
+				return d.dialPlacement(ctx, endpoint, pref)
+			}, Used: d.metrics.placement.WithLabelValues(placementRemote).Inc}, nil
+		}
+	}
+	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
+	viaLocal := d.healthy.Load() && !localExcluded
+	if viaLocal && !slices.Contains(failed, localUpstreamKey) {
+		return gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}, nil
+	}
+	pool, ok := d.fallback.(gateway.UpstreamPicker)
+	if !ok {
+		return gateway.Upstream{}, fmt.Errorf("%w: compute edge: the compute pool cannot name its nodes", gateway.ErrNoComputeCapacity)
+	}
+	upstream, err := pool.PickUpstream(ctx, rec, failed)
+	if err != nil {
+		return gateway.Upstream{}, fmt.Errorf("compute edge: compute pool: %w", err)
+	}
+	if planned := !viaLocal && (d.drained.Load() || localExcluded); !planned {
+		upstream.Used = d.metrics.fallbacks.Inc
+	}
+	return upstream, nil
+}
+
+// dialLocal opens a new connection to this node's gatewayd-internal.
+func (d *localFirstDialer) dialLocal(ctx context.Context) (net.Conn, error) {
+	conn, err := d.local.DialContext(ctx, "")
+	if err != nil && ctx.Err() == nil {
+		d.log.Warn("gatewayd-public: local gatewayd-internal refused the dial; using the compute pool", "err", err)
+	}
+	return conn, err
 }
 
 // HasAlternate reports whether the compute pool holds a node a retry has
@@ -380,14 +509,19 @@ func newControlPlaneForwarder(target string, trusted []netip.Prefix, log *slog.L
 }
 
 // computeEdgeRoot puts the credential-bound object-storage routes in front of
-// next: upload routes and their receipts, then public bucket reads, are
-// forwarded; everything else goes to next.
-func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
-	publicRead, err := objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
-		Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
-	})
-	if err != nil {
-		return nil, err
+// next: upload routes and their receipts are forwarded; public bucket reads
+// go to localReads when the edge serves them itself and are forwarded
+// otherwise; everything else goes to next.
+func computeEdgeRoot(next, forward, localReads http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
+	publicRead := localReads
+	if publicRead == nil {
+		var err error
+		publicRead, err = objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
+			Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if objectstorage.IsUploadPath(r.URL.Path) {
@@ -396,6 +530,32 @@ func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadS
 		}
 		publicRead.ServeHTTP(w, r)
 	}), nil
+}
+
+// publicReadBudgetEnv is the compute edge's part of its node's gateway port
+// share for public bucket reads, in bytes per second. s3_gateway_compute_service
+// sets it beside the provider registry and the gateway credential when the
+// manifest's object_storage.compute_public_reads is on.
+const publicReadBudgetEnv = "FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND"
+
+// computePublicReadBudget checks what a compute edge must hold to serve
+// public reads itself (ADR-20261031122757 §4 and step 7): the gateway
+// credential for every backend, never the bucket-admin one, and its part of
+// the node's port share (api.ObjectGatewayPublicReadSharePercent), which it
+// returns.
+func computePublicReadBudget(getenv func(string) string, registry *objectstorage.Registry) (int64, error) {
+	for _, b := range registry.Backends() {
+		if !b.GatewayCredential {
+			return 0, fmt.Errorf("compute edge public reads: backend %s names no gateway credential; a compute node never holds the bucket-admin one", b.ID)
+		}
+	}
+	raw := strings.TrimSpace(getenv(publicReadBudgetEnv))
+	budget, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || budget < api.MinObjectGatewayTransferBytesPerSecond || budget > api.MaxObjectGatewayTransferBytesPerSecond {
+		return 0, fmt.Errorf("compute edge public reads: %s must be the edge's part of the node's port share, %d–%d bytes/s, got %q",
+			publicReadBudgetEnv, api.MinObjectGatewayTransferBytesPerSecond, api.MaxObjectGatewayTransferBytesPerSecond, raw)
+	}
+	return budget, nil
 }
 
 // requireComputeEdgeConfig checks what a compute edge cannot run without.

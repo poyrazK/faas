@@ -7,7 +7,7 @@ import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
-import { runtimeConfig, servingContracts, limits, enginePool } from './config.mjs'
+import { runtimeConfig, servingContracts, limits, enginePool, UnsafeConfiguration } from './config.mjs'
 import { createAdmission } from './admission.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
@@ -21,6 +21,7 @@ import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
 import { createEngine, lifecyclePaths } from './engine.mjs'
 import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
+import { changeEventsTable, createChangeRelay, checkChangeEvents } from './changes.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -37,6 +38,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     problem(res, 503, 'data_api_overloaded')
   })
   const usage = createUsage(config.usage, { access: accessReport(config) })
+  // Change hooks (ADR-20261022121642) borrow free engine slots, never queue.
+  const changes = createChangeRelay(config, { upstreamPort, tryAcquire: admitted.tryAcquire })
   const transfers = { active: 0 }
   const server = http.createServer(async (req, res) => {
     const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
@@ -87,11 +90,15 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       if (storage.code) return problem(res, storage.status, storage.code)
     } else if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
     const writes = storage ? storage.write : !['GET', 'HEAD'].includes(req.method)
+    // A committed write may have recorded changes: publish them promptly.
+    if (changes && writes) res.once('finish', () => { if (res.statusCode < 300) changes.kick() })
     let rpc
     if (req.url.startsWith('/rest/v1/')) {
       const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
       let path
       try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
+      // Only the change event relay reads its table, over loopback.
+      if (path === changeEventsTable) return problem(res, 404, 'not_found')
       if (path.includes('/')) {
         const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
         const read = ['GET', 'HEAD'].includes(req.method)
@@ -246,7 +253,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     }).finally(() => serverKeyLease?.settled())
   })
   server.usage = usage
-  server.on('close', () => usage?.stop())
+  server.changes = changes
+  server.on('close', () => { usage?.stop(); changes?.stop() })
   return server
 }
 
@@ -353,6 +361,10 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
       delete document.schemes
       document.basePath = restBasePath
       const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
+      // The change event table is the relay's, never part of the API.
+      delete document.paths?.[`/${changeEventsTable}`]
+      delete document.definitions?.[changeEventsTable]
+      for (const name of Object.keys(document.parameters ?? {})) if (name === `body.${changeEventsTable}` || name.startsWith(`rowFilter.${changeEventsTable}.`)) delete document.parameters[name]
       for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
         else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters' && !(method === 'get' && publicRpcListed(config, { schema, name: path.slice(5) }))) delete document.paths[path][method]
@@ -374,30 +386,42 @@ export async function main(env = process.env) {
     if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
   }
   if (config.sqlDeadline) await checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh })
-  if (config.publicRead) {
-    try { await checkPublicRelations(config.connection, config.publicRead) } catch (error) {
-      runtimeFailure('data_api_public_read_unsafe')
-      throw Object.assign(new Error('Unsafe public read configuration'), { cause: error, reported: true })
-    }
-  }
+  // Inspection connects first, with the full query budget, so a suspended
+  // database is awake before the configuration checks run.
+  const snapshot = await inspect(config.connection, config.schemas)
+  config.snapshot = snapshot
+  config.functions = snapshot.functions
+  if (config.publicRead) await bootCheck(() => checkPublicRelations(config.connection, config.publicRead), 'data_api_public_read_unsafe', 'Unsafe public read configuration')
   if (config.storage) {
-    // Storage fails closed on its own: REST keeps serving while the owner's
-    // migration adds or repairs storage_objects.
-    try { await checkStorageTable(config.connection, config.storage.schema) } catch {
+    // An unsafe table disables storage on its own: REST keeps serving while
+    // the owner's migration adds or repairs storage_objects. An unreachable
+    // database fails the boot instead, because a disabled storage would be
+    // captured in the snapshot every wake restores.
+    try { await checkStorageTable(config.connection, config.storage.schema) } catch (error) {
+      if (!(error instanceof UnsafeConfiguration)) {
+        runtimeFailure('data_api_database_unavailable')
+        throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
+      }
       runtimeFailure('data_api_storage_unsafe')
       config.storageUnavailable = true
     }
   }
-  const snapshot = await inspect(config.connection, config.schemas)
-  config.snapshot = snapshot
-  config.functions = snapshot.functions
-  config.rowSecurity = await loadRowSecurity(config.connection, config.schemas)
-  if (config.publicRpc) {
-    try { await checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions) } catch (error) {
-      runtimeFailure('data_api_public_rpc_unsafe')
-      throw Object.assign(new Error('Unsafe public RPC configuration'), { cause: error, reported: true })
+  if (config.changeEvents) {
+    // Like storage, change hooks fail closed alone: an unsafe outbox turns
+    // them off, the API keeps serving and recorded changes wait in the table.
+    // An unreachable database fails the boot instead, because hooks turned
+    // off here would be captured in the snapshot every wake restores.
+    try { await checkChangeEvents(config.connection, config.changeEvents.schema) } catch (error) {
+      if (!(error instanceof UnsafeConfiguration)) {
+        runtimeFailure('data_api_database_unavailable')
+        throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
+      }
+      runtimeFailure('data_api_change_events_unavailable')
+      config.changeEventsUnavailable = true
     }
   }
+  config.rowSecurity = await loadRowSecurity(config.connection, config.schemas)
+  if (config.publicRpc) await bootCheck(() => checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions), 'data_api_public_rpc_unsafe', 'Unsafe public RPC configuration')
   config.fingerprint = fingerprint(snapshot)
   // Reject stale owner policies before starting an engine process.
   servingContracts(config)
@@ -442,6 +466,16 @@ export async function main(env = process.env) {
     else engine.signal('SIGUSR1')
   })
   server.listen(Number(env.PORT || 8080), '0.0.0.0')
+}
+
+// bootCheck runs a startup check, reporting an unsafe configuration apart
+// from a database the runtime could not reach.
+async function bootCheck(check, unsafeEvent, unsafeMessage) {
+  try { await check() } catch (error) {
+    const unsafe = error instanceof UnsafeConfiguration
+    runtimeFailure(unsafe ? unsafeEvent : 'data_api_database_unavailable')
+    throw Object.assign(new Error(unsafe ? unsafeMessage : 'Database unavailable during startup'), { cause: error, reported: true })
+  }
 }
 
 export function tokenVerifier(auth, keys) {

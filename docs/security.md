@@ -302,6 +302,18 @@ The rule's `mode` decides what happens to a detection:
 | `warn` | checked on every request; a detection adds `X-WAF-Warning: <rule id>` to the response | sampled and reported |
 | `block` | checked on every request; a detection is answered with `403` before your app wakes | sampled and reported |
 
+Checks include cookies. Apps on a `gregale.dev` host share that domain with
+every other customer's app, and any of their pages can set a cookie your
+visitors' browsers then send to you, so an attack-shaped cookie planted that
+way is blocked by a `block` rule like any other. A detection found only in
+cookies never puts the client in a penalty box. Apps on a custom domain are
+not affected.
+
+A check scores the whole URL and query, and up to 16 KiB of request headers:
+each header value up to 4 KiB, and headers in name order until the total is
+reached. Header content past that is not inspected, which keeps one client's
+oversized headers from slowing every other app's checks.
+
 Request bodies are never blocked: checking them costs tens to hundreds of
 milliseconds, so they are inspected off the request path, and only a sample
 of them under load. In `warn` and `block`, a request without a body is
@@ -314,12 +326,16 @@ check budget (roughly 500 requests per second) runs out, or no check frees
 within that wait, the rest pass unchecked and are counted as
 `inline_skipped`; the WAF never slows your app down to keep up.
 
-Start in `observe`, look for false positives, then switch to `block`:
+Start in `observe`, look for false positives, then switch to `block`. Use
+`--match-host @app`: your app is always served at its own `<slug>.gregale.dev`
+address (and any companion hostnames) as well as its custom domains, and a
+security rule that names one host leaves the others open. The CLI warns when a
+WAF, challenge, IP, geo, JWT or other gate names a single host.
 
 ```sh
-gregale edge rule create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
+gregale edge rule create --app my-api --kind waf --match-host @app --match-path '/*'
 gregale edge rule waf review --app my-api            # detections grouped by CRS rule and path, each assessed
-gregale edge rule waf-exclude <rule-id> --add 942100  # silence a false positive, keeping the rest of the rule
+gregale edge rule waf update <rule-id> --add 942100  # silence a false positive, keeping the rest of the rule
 gregale edge rule update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
 ```
 
@@ -387,12 +403,22 @@ The pass lasts an hour by default and is tied to the browser's address
 range and User-Agent, so it cannot be copied to another machine. It covers
 the whole host: one pass lets the browser through every challenge rule on
 that host, including paths a route rule sends to another of your apps, but
-not on your other hosts. Start in
+not on your other hosts.
+
+Calls from a page on another site work when they carry a verified JWT, API
+key or consumer key: the gateway answers their CORS preflight itself, without
+allowing cookies, so the browser sends the call, and your app's own CORS
+headers still decide whether the page may read the answer. A cross-site call
+that relies on cookies cannot pass a challenge, because the pass cookie is
+not sent across sites, and the challenge page cannot load inside a frame on
+another site. Leave such paths out of the rule.
+
+Start in
 log mode to see what the rule would challenge, and add a `verified_bot
 missing` condition so search engine crawlers still reach your pages:
 
 ```sh
-gregale edge rule create --app my-site --kind challenge --match-host my-site.example.com \
+gregale edge rule create --app my-site --kind challenge --match-host @app \
   --match-path '/*' --match '{"field":"verified_bot","op":"missing"}' --mode log
 gregale edge rule update <rule-id> --mode enforce
 ```
@@ -460,9 +486,9 @@ choose, from 15 minutes to 24 hours (one hour by default). Switching it on
 again while it is on moves the end.
 
 ```sh
-gregale edge rule attack-mode on --app my-site --for 1h
-gregale edge rule attack-mode --app my-site       # is it on, and until when
-gregale edge rule attack-mode off --app my-site
+gregale edge rule attack-mode set on --app my-site --for 1h
+gregale edge rule attack-mode set --app my-site       # is it on, and until when
+gregale edge rule attack-mode set off --app my-site
 ```
 
 The dashboard's Edge protection panel has the same switch. Attack mode
@@ -499,8 +525,8 @@ and people alone. Like every recipe it starts in log mode, so you see what
 it would block first:
 
 ```sh
-gregale edge rule recipe control-ai-crawlers --app my-site
-gregale edge rule recipe control-ai-crawlers --app my-site --set purposes=all --set action=challenge
+gregale edge rule recipe apply control-ai-crawlers --app my-site
+gregale edge rule recipe apply control-ai-crawlers --app my-site --set purposes=all --set action=challenge
 ```
 
 For your own rules, conditions can use three fields:
@@ -546,7 +572,7 @@ nobody while the rules themselves keep refusing.
 
 ```sh
 # Block anyone who probes a scanner path from the whole app for 30 minutes.
-gregale edge rule recipe block-scanner-paths --app my-site --set penalty_minutes=30 --enforce
+gregale edge rule recipe apply block-scanner-paths --app my-site --set penalty_minutes=30 --enforce
 
 # A sign-in throttle that boxes a client for 15 minutes after 5 refusals in a minute.
 gregale edge rule update <rule-id> --penalty-for 15m --penalty-after 5 --penalty-within 1m
@@ -565,6 +591,10 @@ Some details to know:
   machine can rotate through.
 - Many people can share one address (offices, mobile carriers). A threshold
   above 1 and a short penalty keep one of them from locking out the rest.
+- A page on another site can make its visitors' browsers request your app,
+  including URLs your rules refuse. A box made only from such cross-site
+  requests lasts at most a minute, whatever the penalty says; one refusal
+  that did not come from another site gives it the full penalty.
 - A box made on one edge node holds on every node within about a second,
   and survives a restart. Each node counts refusals toward a box on its
   own, so a client spread over several nodes can be refused a few more

@@ -62,3 +62,17 @@ func RegisterSignatureEnforcement(reg prometheus.Registerer, verifying, required
 	}
 	reg.MustRegister(g)
 }
+
+// RegisterLegacyIdentities exports faas_seal_domain_legacy_identities: how
+// many fleet and host identities vmmd opens runtime secrets and registry
+// passwords with besides the runtime and build domains (ADR
+// 20261022111812). A contracted vmmd reports 0. Read at start, like the
+// binding switch.
+func RegisterLegacyIdentities(reg prometheus.Registerer, n int) {
+	g := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "faas_seal_domain_legacy_identities",
+		Help: "Fleet and host identities this vmmd opens runtime secrets and registry passwords with (ADR 20261022111812); 0 once contracted.",
+	})
+	g.Set(float64(n))
+	reg.MustRegister(g)
+}

@@ -2,8 +2,9 @@ package api
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // IssueFrequencyAlertRule counts retained accepted occurrences per canonical issue.
@@ -26,7 +27,7 @@ type UpdateIssueFrequencyAlertPolicyRequest struct {
 	Rules            []IssueFrequencyAlertRule `json:"rules"`
 }
 
-var issueFrequencyRuleKey = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+var issueFrequencyRuleKey = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,47}$`)
 
 func NormalizeIssueFrequencyAlertRules(in []IssueFrequencyAlertRule) ([]IssueFrequencyAlertRule, error) {
 	if len(in) > IssueFrequencyAlertMaxRules {

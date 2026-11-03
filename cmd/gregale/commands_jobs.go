@@ -40,6 +40,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -47,6 +48,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/labels"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -74,6 +76,8 @@ func cmdJobs(args []string) int {
 	switch subcommand {
 	case subList:
 		return cmdJobsList(rest)
+	case subLabel:
+		return cmdJobLabel(rest)
 	case subAdd:
 		return cmdJobsAdd(rest)
 	case subInfo:
@@ -135,13 +139,14 @@ func cmdJobsList(args []string) int {
 	// Jobs belong to the account, not to an app, so there is no --app filter;
 	// the flag package answered only "unknown flag --app" (Hunt 14 H14-63).
 	if argsPassAppFlag(args) {
-		PrintUsage(os.Stderr, "gregale job list lists every job in the account; it has no --app filter. Inspect one job with `gregale job get <job>`.\nusage: gregale job list [--limit N] [--offset N] [--all]", "jobs")
+		PrintUsage(os.Stderr, "gregale job list lists every job in the account; it has no --app filter. Inspect one job with `gregale job get <job>`.\nusage: gregale job list [--limit N] [--offset N] [--all] [-l SELECTOR]", "jobs")
 		return 1
 	}
 	fs := newFlagSet("jobs-list", flag.ContinueOnError)
 	limit := fs.Int("limit", 0, "page size (1..200; omit for server default 50)")
 	offset := fs.Int("offset", 0, "starting page offset")
 	all := fs.Bool("all", false, "walk every page using --limit and --offset")
+	selector := addSelectorFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -155,12 +160,20 @@ func cmdJobsList(args []string) int {
 		}
 	})
 	if limitProvided && (*limit < 1 || *limit > 200) {
-		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all]   (--limit must be between 1 and 200)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all] [-l SELECTOR]   (--limit must be between 1 and 200)", "jobs")
 		return 1
 	}
 	if *offset < 0 {
-		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all]   (--offset must be >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job list [--limit N] [--offset N] [--all] [-l SELECTOR]   (--offset must be >= 0)", "jobs")
 		return 1
+	}
+	var sel labels.Selector
+	if *selector != "" {
+		parsed, err := parseSelectorFlag(*selector)
+		if err != nil {
+			return printErr("Invalid selector", err)
+		}
+		sel = parsed
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -169,7 +182,7 @@ func cmdJobsList(args []string) int {
 	var out api.ListJobsResponse
 	first := true
 	items, next, err := collectOffsetPages(context.Background(), *offset, *all, func(ctx context.Context, offset int) ([]api.JobResponse, int, error) {
-		page, err := client.ListJobs(ctx, *limit, offset)
+		page, err := listJobsPage(ctx, client, *selector, sel, *limit, offset)
 		if first {
 			out = page
 			first = false
@@ -184,6 +197,10 @@ func cmdJobsList(args []string) int {
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
+	}
+	if len(out.Jobs) == 0 && *selector != "" {
+		_, _ = fmt.Fprintf(osStdout, "No job matches %s\n", *selector)
+		return 0
 	}
 	if len(out.Jobs) == 0 {
 		next := recoveryCLI() + " job list"
@@ -226,11 +243,12 @@ func cmdJobsAdd(args []string) int {
 	schedulePolicyJSON := fs.String("schedule-policy", "", "versioned schedule policy as JSON")
 	failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
+	args, argv := splitJobArgv(args)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale job create <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job create <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...] [-- COMMAND ARG...]", "jobs")
 		return 1
 	}
 	name := fs.Arg(0)
@@ -271,8 +289,14 @@ func cmdJobsAdd(args []string) int {
 		}
 		req.FailureRules = rules
 	}
+	if *command != "" && argv != nil {
+		PrintUsage(os.Stderr, "give the command as --command or after --, not both", "jobs")
+		return 1
+	}
 	if *command != "" {
 		req.Command = parseJobCommand(*command)
+	} else if len(argv) > 0 {
+		req.Command = argv
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -289,7 +313,7 @@ func cmdJobsAdd(args []string) int {
 	return 0
 }
 
-const jobCommandFlagUsage = "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array"
+const jobCommandFlagUsage = "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, pass a JSON array, or give the command after --"
 
 // parseJobCommand reads --command. A JSON array of strings is taken as the
 // exact argv; otherwise the value is split on commas, and "\," is a comma
@@ -317,6 +341,16 @@ func parseJobCommand(value string) []string {
 		}
 	}
 	return append(argv, part.String())
+}
+
+// splitJobArgv separates a command given after a bare "--" from the job's own
+// arguments, so `job create <name> --image REF -- /bin/sh -c 'echo a, b'`
+// passes the script unchanged. argv is nil without a "--".
+func splitJobArgv(args []string) (own, argv []string) {
+	if i := slices.Index(args, "--"); i >= 0 {
+		return args[:i], append([]string{}, args[i+1:]...)
+	}
+	return args, nil
 }
 
 // cmdJobsInfo implements `gregale jobs info <name>`. Returns the
@@ -353,11 +387,12 @@ func cmdJobsUpdate(args []string) int {
 	pause := fs.Bool("pause", false, "halt future dispatches (status=paused)")
 	resume := fs.Bool("resume", false, "resume dispatches (status=active)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
+	args, argv := splitJobArgv(args)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale job update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume] [-- COMMAND ARG...]", "jobs")
 		return 1
 	}
 	name := fs.Arg(0)
@@ -386,8 +421,15 @@ func cmdJobsUpdate(args []string) int {
 		req.ImageRef = &s
 		touched = true
 	}
+	if set["command"] && argv != nil {
+		PrintUsage(os.Stderr, "give the command as --command or after --, not both", "jobs")
+		return 1
+	}
 	if set["command"] {
 		req.Command = parseJobCommand(*command)
+		touched = true
+	} else if len(argv) > 0 {
+		req.Command = argv
 		touched = true
 	}
 	if set["ram"] {
@@ -1320,7 +1362,7 @@ func cmdJobsReplayFailed(args []string) int {
 	}
 	args = fs.Args()
 	if len(args) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale job replay-failed [JOB] [RUN_ID|latest] [--dry-run] [--wait | --results] [--wait-timeout 10m] [--poll-interval 2s]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job replay [JOB] [RUN_ID|latest] [--dry-run] [--wait | --results] [--wait-timeout 10m] [--poll-interval 2s]", "jobs")
 		return 1
 	}
 	if len(args) == 0 {
@@ -1455,12 +1497,12 @@ func cmdJobsArtifactURL(args []string) int {
 		return cmdJobsArtifactURLInteractive()
 	}
 	if len(args) != 4 || (args[1] != "latest" && !jobRunIDPattern.MatchString(args[1])) || args[3] == "" {
-		PrintUsage(os.Stderr, "usage: gregale job artifact-url <name> <run-id|latest> <task-index> <artifact-name>", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job artifact get <name> <run-id|latest> <task-index> <artifact-name>", "jobs")
 		return 1
 	}
 	taskIdx, err := strconv.Atoi(args[2])
 	if err != nil || taskIdx < 0 {
-		PrintUsage(os.Stderr, "usage: gregale job artifact-url <name> <run-id|latest> <task-index> <artifact-name>   (task-index >= 0)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job artifact get <name> <run-id|latest> <task-index> <artifact-name>   (task-index >= 0)", "jobs")
 		return 1
 	}
 	if args[1] == "latest" && !jobSlugPattern.MatchString(args[0]) {
@@ -2079,4 +2121,16 @@ func argsPassAppFlag(args []string) bool {
 		}
 	}
 	return false
+}
+
+// listJobsPage reads one page of jobs, or of the jobs sel picks when selector
+// is set. The server pages the matches; the CLI matches the returned labels
+// again, because an apid without labels ignores the selector.
+func listJobsPage(ctx context.Context, client *Client, selector string, sel labels.Selector, limit, offset int) (api.ListJobsResponse, error) {
+	if selector == "" {
+		return client.ListJobs(ctx, limit, offset)
+	}
+	page, err := client.ListJobsSelected(ctx, sel.String(), limit, offset)
+	page.Jobs = slices.DeleteFunc(page.Jobs, func(j api.JobResponse) bool { return !sel.Matches(j.Labels) })
+	return page, err
 }

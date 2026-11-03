@@ -42,21 +42,24 @@ const setAlertRuleStateSQL = `
 	)
 	select count(*) from changed`
 
-const alertEpisodeColumns = `e.id::text, e.rule_id::text, e.account_id::text, coalesce(r.app_id::text, ''),
-	r.name, r.metric, r.state, e.opened_at, e.resolved_at`
+// alertEpisodeColumns read an episode with its rule; once the rule is
+// deleted, the copy the alert_rules_keep_episodes trigger left on the episode
+// stands in for it (ADR-20261030214500), and the rule state reads empty.
+const alertEpisodeColumns = `e.id::text, e.rule_id::text, e.account_id::text, coalesce(coalesce(r.app_id, e.app_id)::text, ''),
+	coalesce(r.name, e.rule_name, ''), coalesce(r.metric, e.rule_metric, ''), coalesce(r.state, ''), e.opened_at, e.resolved_at`
 
 func (s *PgStore) ListAlertEpisodes(ctx context.Context, accountID, appID string, resolvedSince time.Time, limit int) ([]AlertEpisode, error) {
 	rows, err := s.pool.Query(ctx, `
 		with open_episodes as (
-			select e.id from alert_episodes e join alert_rules r on r.id = e.rule_id
-			 where e.account_id = $1 and e.resolved_at is null and ($4 = '' or r.app_id::text = $4)
+			select e.id from alert_episodes e left join alert_rules r on r.id = e.rule_id
+			 where e.account_id = $1 and e.resolved_at is null and ($4 = '' or coalesce(r.app_id, e.app_id)::text = $4)
 		), recent as (
-			select e.id from alert_episodes e join alert_rules r on r.id = e.rule_id
-			 where e.account_id = $1 and e.resolved_at >= $2 and ($4 = '' or r.app_id::text = $4)
+			select e.id from alert_episodes e left join alert_rules r on r.id = e.rule_id
+			 where e.account_id = $1 and e.resolved_at >= $2 and ($4 = '' or coalesce(r.app_id, e.app_id)::text = $4)
 			 order by e.resolved_at desc limit $3
 		)
 		select `+alertEpisodeColumns+`
-		  from alert_episodes e join alert_rules r on r.id = e.rule_id
+		  from alert_episodes e left join alert_rules r on r.id = e.rule_id
 		 where e.id in (select id from open_episodes union all select id from recent)
 		 order by e.opened_at desc, e.id desc
 		 limit $3`, accountID, resolvedSince.UTC(), limit, appID)
@@ -81,7 +84,7 @@ func (s *PgStore) AlertEpisodeByID(ctx context.Context, accountID, id string) (A
 	}
 	ep, err := scanAlertEpisode(s.pool.QueryRow(ctx, `
 		select `+alertEpisodeColumns+`
-		  from alert_episodes e join alert_rules r on r.id = e.rule_id
+		  from alert_episodes e left join alert_rules r on r.id = e.rule_id
 		 where e.id = $1 and e.account_id = $2`, id, accountID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AlertEpisode{}, ErrNotFound

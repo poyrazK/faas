@@ -27,12 +27,12 @@
 <section class="card" aria-labelledby="freezes">
   <h2 id="freezes">Deploy freezes</h2>
   {{if .Frozen}}<p class="frozen" role="status">Production releases are frozen. Deploys, retries and promotions are refused unless they override the freeze with a reason.</p>
-  <div class="scroll"><table><thead><tr><th>Reason</th><th>Kind</th><th>Until</th><th>By</th></tr></thead><tbody>
-  {{range .Active}}<tr><td>{{.Reason}}</td><td>{{.Kind}}</td><td>{{if .EndsAt}}<time datetime="{{.EndsAt}}">{{.EndsAt}}</time>{{else}}lifted{{end}}</td><td>{{.CreatedBy}}</td></tr>{{end}}
+  <div class="scroll"><table><thead><tr><th>Reason</th><th>Kind</th><th>Covers</th><th>Until</th><th>By</th></tr></thead><tbody>
+  {{range .Active}}<tr><td>{{.Reason}}</td><td>{{.Kind}}</td><td>{{if .App}}this app{{else if .Org}}all {{.Org}} apps{{else}}all personal apps{{end}}</td><td>{{if .EndsAt}}<time datetime="{{.EndsAt}}">{{.EndsAt}}</time>{{else}}lifted{{end}}</td><td>{{.CreatedBy}}</td></tr>{{end}}
   </tbody></table></div>
   {{else}}<p>Not frozen.</p>{{end}}
   {{with .Next}}<p>Next: “{{.Reason}}” starts <time datetime="{{.StartsAt}}">{{.StartsAt}}</time>.</p>{{end}}
-  <p class="muted"><code>gregale freeze create --app {{$.Data.AppSlug}} --reason TEXT --for 2h</code> · <code>gregale freeze lift &lt;id&gt;</code></p>
+  <p class="muted"><code>gregale freeze create --app {{$.Data.AppSlug}} --reason TEXT --for 2h</code> · <code>gregale freeze lift &lt;id&gt; --app {{$.Data.AppSlug}}</code></p>
 </section>
 {{end}}
 

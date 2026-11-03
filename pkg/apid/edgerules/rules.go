@@ -157,6 +157,27 @@ func utcTimePtr(t *time.Time) *time.Time {
 // the explicit ThrottleValidationContext keeps the boundary clear
 // without forcing a global lookup. matchPath is the rule's effective
 // match_path; kind=validate path parameters must align with it.
+// JWTAudienceProblem refuses a new or edited kind=jwt action that names
+// neither an audience nor a required claim (ADR-091 amendment 2026-11-02,
+// review round 8). The gateway skips the aud check when audience is empty, so
+// such a rule accepted every token its issuer signs: with a shared issuer
+// (GitHub Actions OIDC, Google) anyone can mint one for an audience of their
+// own. Rules saved before this check keep working, and a rollback may restore
+// one; only create and update are refused.
+func JWTAudienceProblem(a api.EdgeRuleJWTAction) *api.Problem {
+	for _, aud := range a.Audience {
+		if strings.TrimSpace(aud) == "" {
+			return api.ErrValidation("jwt action audience entries must not be empty")
+		}
+	}
+	if len(a.Audience) > 0 || len(a.RequiredClaims) > 0 {
+		return nil
+	}
+	return api.ErrValidation("jwt action needs an audience (or at least one required_claims entry): without one, " +
+		"every token the issuer signs passes, including tokens a shared issuer such as GitHub Actions or Google " +
+		"mints for anyone's audience")
+}
+
 func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, plan api.Plan) *api.Problem {
 	k := state.EdgeRuleKind(kind)
 	if !k.IsValid() {
@@ -201,7 +222,10 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return api.ErrValidation(fmt.Sprintf("jwt action: %v", err))
 		}
-		return a.Validate()
+		if prob := a.Validate(); prob != nil {
+			return prob
+		}
+		return JWTAudienceProblem(a)
 	case state.EdgeRuleKindIP:
 		var a api.EdgeRuleIPAction
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -347,13 +371,25 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 // app on a public host. Unknown slugs and other accounts' apps keep their
 // handling (the gateway refuses them at match time), so the check reveals
 // nothing about slugs the caller does not own.
-func (s *Service) RouteTargetProblem(ctx context.Context, accountID, kind string, raw json.RawMessage) *api.Problem {
+//
+// A credential bound to one app may route only to that app (ADR-091
+// amendment 2026-11-02, review round 8).
+//
+// A target of the account in another edge-rule scope is refused too (ADR-091
+// amendment 2026-10-31): a company app keeps its creator's account, so a
+// route on the creator's personal app could serve the company app on the
+// personal host, out of the company's sight, and the gateway refuses such a
+// route at match time.
+func (s *Service) RouteTargetProblem(ctx context.Context, accountID, sourceAppID, kind string, raw json.RawMessage) *api.Problem {
 	if kind != string(state.EdgeRuleKindRoute) || len(raw) == 0 {
 		return nil
 	}
 	var action api.EdgeRuleRouteAction
 	if json.Unmarshal(raw, &action) != nil || action.TargetAppSlug == "" {
 		return nil //nolint:nilerr // A malformed action is ValidateEdgeRuleAction's to report.
+	}
+	if prob := s.appBoundRouteTargetProblem(ctx, sourceAppID, action.TargetAppSlug); prob != nil {
+		return prob
 	}
 	target, err := s.Host.Store().AppBySlug(ctx, action.TargetAppSlug)
 	if errors.Is(err, state.ErrNotFound) {
@@ -362,10 +398,37 @@ func (s *Service) RouteTargetProblem(ctx context.Context, accountID, kind string
 	if err != nil {
 		return api.ErrCapacity("could not check the route target")
 	}
-	if target.AccountID != accountID || api.NormalizeAppVisibility(target.Visibility) != api.AppVisibilityInternal {
+	if target.AccountID != accountID {
 		return nil
 	}
-	return InternalRouteTargetProblem(target.Slug)
+	if api.NormalizeAppVisibility(target.Visibility) == api.AppVisibilityInternal {
+		return InternalRouteTargetProblem(target.Slug)
+	}
+	return s.routeTargetScopeProblem(ctx, sourceAppID, target)
+}
+
+// routeTargetScopeProblem refuses a route target outside the source app's
+// edge-rule scope.
+func (s *Service) routeTargetScopeProblem(ctx context.Context, sourceAppID string, target state.App) *api.Problem {
+	if sourceAppID == "" || sourceAppID == target.ID {
+		return nil
+	}
+	source, err := s.Host.Store().AppByID(ctx, sourceAppID)
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	sourceScope, err := state.AppEdgeRuleScope(ctx, s.Host.Store(), source)
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	targetScope, err := state.AppEdgeRuleScope(ctx, s.Host.Store(), target)
+	if err != nil {
+		return api.ErrCapacity("could not check the route target")
+	}
+	if sourceScope == targetScope {
+		return nil
+	}
+	return api.ErrValidation(fmt.Sprintf("route target %q belongs to a different owner than this app: route only between your personal apps, or between one organization's apps", target.Slug))
 }
 
 // InternalRouteTargetProblem is the refusal for a route rule, or manifest path
@@ -409,13 +472,20 @@ func (s *Service) ValidateEdgeRuleAsyncDestinations(ctx context.Context, appID, 
 // listEdgeRulesForApp returns every rule bound to the slug's app,
 // ordered by priority ASC then created_at DESC (the same shape the
 // gateway matcher sees so the dashboard's "match order" preview
-// matches the wire behaviour).
+// matches the wire behaviour). With ?covering=true it also returns the
+// rules of the account's other apps whose host pattern can cover this app's
+// hosts (CoveringRules), each with its own app_id; the ETag stays this app's.
 func (s *Service) ListEdgeRulesForApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}
 	rules, err := s.Host.Store().ListEdgeRulesForApp(r.Context(), app.ID)
+	if err == nil && wantsCoveringRules(r) {
+		var covering []state.EdgeRule
+		covering, err = s.VisibleCoveringRules(r, acct, app)
+		rules = state.MergeEdgeRulesInOrder(rules, covering)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list edge rules"))
 		return

@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/schedule"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -79,7 +80,7 @@ func (s *server) releaseFreezeOrSchedule(r *http.Request, acct state.Account, ap
 	if p != nil {
 		return nil, p
 	}
-	override, overrideIDs, p := s.scheduledFreezeOverride(r.Context(), acct, app, req.Scope, req.OverrideFreeze, at)
+	override, overrideIDs, p := s.scheduledFreezeOverride(r, acct, app, req.Scope, req.OverrideFreeze, at)
 	if p != nil {
 		return nil, p
 	}
@@ -101,9 +102,13 @@ func scheduledReleaseEligible(app state.App, scope string) *api.Problem {
 
 // scheduledFreezeOverride evaluates deploy freezes at a release's time. A
 // freeze active then refuses the schedule unless override gives a reason;
-// the override then covers exactly those freezes.
-func (s *server) scheduledFreezeOverride(ctx context.Context, acct state.Account, app state.App, scope, override string, at time.Time) (string, []string, *api.Problem) {
-	active, err := freeze.ActiveFor(ctx, s.store, acct.ID, app.ID, scope, at)
+// the override then covers exactly those freezes. Overriding a company's
+// freeze needs the right to lift it, as an immediate release's override does
+// (ADR-20261019071733 amendments 5 and 7): release_at may be a minute from
+// now, so a schedule must not be how a deploy-only key ships past one.
+func (s *server) scheduledFreezeOverride(r *http.Request, acct state.Account, app state.App, scope, override string, at time.Time) (string, []string, *api.Problem) {
+	ctx := r.Context()
+	active, err := freeze.ActiveFor(ctx, s.store, app, scope, at)
 	if err != nil {
 		logCustomerFailure(s.log, "read deploy freezes", err)
 		return "", nil, api.ErrInternal("Gregale could not read your deploy freezes.").WithHint("Retry in a moment.")
@@ -119,6 +124,12 @@ func (s *server) scheduledFreezeOverride(ctx context.Context, acct state.Account
 	}
 	if p := freeze.ValidateReason("override_freeze", override); p != nil {
 		return "", nil, p
+	}
+	for _, f := range active {
+		if p := s.freezeOverrideProblem(r, acct, f); p != nil {
+			s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+			return "", nil, p
+		}
 	}
 	ids := make([]string, 0, len(active))
 	for _, f := range active {
@@ -299,7 +310,7 @@ func (s *server) prepareDeploymentSchedule(r *http.Request, acct state.Account, 
 	if p != nil {
 		return state.ScheduledRelease{}, p
 	}
-	override, overrideIDs, p := s.scheduledFreezeOverride(r.Context(), acct, app, d.Scope, req.OverrideFreeze, at)
+	override, overrideIDs, p := s.scheduledFreezeOverride(r, acct, app, d.Scope, req.OverrideFreeze, at)
 	if p != nil {
 		return state.ScheduledRelease{}, p
 	}

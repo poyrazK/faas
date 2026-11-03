@@ -36,7 +36,7 @@ func (s *server) renderAppRealtime(w http.ResponseWriter, r *http.Request, log *
 		s.realtime.LoadInspector(r, acct, app, &data)
 	}
 	if data.ReplayJobURL != "" {
-		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, "realtime_replay_job", acct.ID, "faas_replay_job_csrf")
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, "realtime_replay_job", actorAccount(r, acct).ID, "faas_replay_job_csrf")
 		if tokenErr == nil {
 			data.ReplayJobCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: "faas_replay_job_csrf", Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})

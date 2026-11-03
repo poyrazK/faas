@@ -15,7 +15,14 @@ func readPromotionAdmissionCountsDB(ctx context.Context, db sqlc.DBTX, account, 
 	return promotionAdmissionCounts{r.FleetActive, r.AccountActive, r.FleetQueued, r.AccountQueued, r.Older}, mapErr(err)
 }
 func consumePromotionAdmissionApprovalDB(ctx context.Context, tx pgx.Tx, p ProjectEnvironmentPromotion) (*ProjectEnvironmentApproval, error) {
-	r, err := sqlc.New().ConsumePromotionAdmissionApproval(ctx, tx, sqlc.ConsumePromotionAdmissionApprovalParams{AccountID: p.AccountID, ProjectSlug: p.ProjectSlug, Environment: p.ToEnvironment, PlanTokenHash: p.Approval.PlanTokenHash, ApprovalTokenHash: p.Approval.ApprovalTokenHash})
+	var r sqlc.ConsumePromotionAdmissionApprovalRow
+	err := pgx.ErrNoRows
+	for _, pair := range approvalTokenPairs(p.Approval.PlanTokenHash, p.Approval.ApprovalTokenHash) {
+		r, err = sqlc.New().ConsumePromotionAdmissionApproval(ctx, tx, sqlc.ConsumePromotionAdmissionApprovalParams{AccountID: p.AccountID, ProjectSlug: p.ProjectSlug, Environment: p.ToEnvironment, PlanTokenHash: pair[0], ApprovalTokenHash: pair[1]})
+		if !errors.Is(err, pgx.ErrNoRows) {
+			break
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, &PromotionApprovalError{}
 	}

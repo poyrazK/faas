@@ -106,6 +106,7 @@ func (s *PgStore) ReleaseProjectEnvironmentCloneLease(ctx context.Context, lease
 	count, err := new(sqlc.Queries).ReleaseProjectEnvironmentCloneWorkerLease(ctx, tx, sqlc.ReleaseProjectEnvironmentCloneWorkerLeaseParams{
 		AccountID: mustPgUUID(op.AccountID), ProjectID: mustPgUUID(op.ProjectID), OperationID: mustPgUUID(op.ID),
 		LeaseToken: mustPgUUID(lease.Token), Revision: op.Revision, Status: op.Status, RetryMicroseconds: retryAfter.Microseconds(),
+		KeepAttempts: lease.AttemptCount,
 	})
 	if err != nil {
 		return mapErr(err)

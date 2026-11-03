@@ -32,7 +32,7 @@ func (s *server) dashboardDataAPIApp(w http.ResponseWriter, r *http.Request) (st
 		return acct, state.App{}, false
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID || app.Status == state.AppDeleted {
+	if err != nil || !dashboardAppOwner(r, &acct, app) || app.Status == state.AppDeleted {
 		http.NotFound(w, r)
 		return acct, state.App{}, false
 	}

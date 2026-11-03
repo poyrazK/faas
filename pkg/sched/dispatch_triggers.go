@@ -523,6 +523,11 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		poller = queue.deliveryPoller(res.Records)
 		defer poller.(*queuePoller).forgetClaims(batchItemIDs(res.Records))
 	}
+	// ADR-1322 amendment: a realtime trigger's group claims are renewed while
+	// the batch is delivered, so its invocations run for the app's timeout.
+	if realtime, ok := poller.(*realtimePoller); ok {
+		defer realtime.keepLeases(ctx, batchItemIDs(res.Records))()
+	}
 
 	// 3. Batch close: size / 6MB.
 	batch := closeBatch(res.Records, int(t.BatchSizeMax), int(t.PayloadMaxBytes))

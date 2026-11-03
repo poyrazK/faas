@@ -334,8 +334,11 @@ type StatsSnapshot struct {
 	// InstanceBridgeResidentBytes is the node's instance bridge units'
 	// memory (connection-survival ADR §2); nil when vmmd reports none.
 	InstanceBridgeResidentBytes *int64
-	Instances                   []VMInstanceStat
-	SampledAt                   time.Time
+	// CPUPressure is the node's CPU pressure readings (ADR 20261030100950);
+	// nil unless vmmd reported both.
+	CPUPressure *NodeCPUPressure
+	Instances   []VMInstanceStat
+	SampledAt   time.Time
 }
 
 // VMInstanceStat is the sched-side view of vmmdpb.InstanceStats —
@@ -1784,6 +1787,9 @@ func (c *VMMClient) Stats(ctx context.Context) (*StatsSnapshot, error) {
 	if v := resp.GetInstanceBridgeResidentBytes(); v != nil {
 		b := v.GetValue()
 		out.InstanceBridgeResidentBytes = &b
+	}
+	if p, b := resp.GetTenantCpuPressureSomeAvg10(), resp.GetHostCpuBusyPercent(); p != nil && b != nil {
+		out.CPUPressure = &NodeCPUPressure{SomeAvg10: p.GetValue(), BusyPercent: b.GetValue()}
 	}
 	for _, in := range resp.GetInstances() {
 		row := vmInstanceStatFromProto(in)

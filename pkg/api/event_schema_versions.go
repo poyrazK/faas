@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var eventSubscriptionVersionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+var eventSubscriptionVersionPattern = lazyregexp.New(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 func NormalizeEventSchemaVersions(versions []string) ([]string, error) {
 	if len(versions) > EventSubscriptionSchemaVersionsMax {

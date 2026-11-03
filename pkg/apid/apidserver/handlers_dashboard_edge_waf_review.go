@@ -85,7 +85,7 @@ func (s *server) dashboardExcludeEdgeWAFRule(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}

@@ -45,8 +45,11 @@ type oauthSnapshot struct {
 	UsedRefresh map[string]string
 }
 
+// snapshotLocked copies the records it returns: durableHandler marshals the
+// snapshot after releasing r.mu while handlers keep changing the live ones
+// (holdClientLocked extends a client's Expires).
 func (r *remoteServer) snapshotLocked() oauthSnapshot {
-	snapshot := oauthSnapshot{Format: stateFormat, APIBase: r.opts.APIBase, ResourceURL: r.opts.ResourceURL, Clients: r.clients, Requests: r.requests, Codes: r.codes, Grants: map[string]storedGrant{}, UsedRefresh: map[string]string{}}
+	snapshot := oauthSnapshot{Format: stateFormat, APIBase: r.opts.APIBase, ResourceURL: r.opts.ResourceURL, Clients: cloneRecords(r.clients), Requests: cloneRecords(r.requests), Codes: cloneRecords(r.codes), Grants: map[string]storedGrant{}, UsedRefresh: map[string]string{}}
 	for id, g := range r.grants {
 		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.approved, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments, Capabilities: g.capabilities, Renewable: g.renewable, CredentialIssued: g.credentialIssued}
 	}
@@ -54,6 +57,20 @@ func (r *remoteServer) snapshotLocked() oauthSnapshot {
 		snapshot.UsedRefresh[hash] = grant.id
 	}
 	return snapshot
+}
+
+// cloneRecords copies a record map and each record. The records' slices are
+// replaced, never changed in place, so sharing them is safe.
+func cloneRecords[T any](records map[string]*T) map[string]*T {
+	out := make(map[string]*T, len(records))
+	for key, record := range records {
+		if record != nil {
+			copied := *record
+			record = &copied
+		}
+		out[key] = record
+	}
+	return out
 }
 
 func (r *remoteServer) restoreOAuth() error {

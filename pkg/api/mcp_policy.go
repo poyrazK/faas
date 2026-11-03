@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // MCPResourcePolicy adds resource-server behavior to an existing JWT edge rule.
@@ -21,7 +23,7 @@ type MCPResourcePolicy struct {
 	PromptScopes   map[string][]string `json:"prompt_scopes"`
 }
 
-var mcpSimpleVariable = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
+var mcpSimpleVariable = lazyregexp.New(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 
 func (p *MCPResourcePolicy) Validate() error {
 	if p == nil {

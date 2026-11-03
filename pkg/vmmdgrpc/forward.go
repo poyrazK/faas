@@ -55,6 +55,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -231,7 +232,7 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// lock contention for marginal signal value.
 	finishActivity := s.beginDispatchActivity(reqInit)
 	defer finishActivity()
-	finishTrace := s.inflightTraces.begin(reqInit.GetInstance(), forwardTraceparent(reqInit))
+	finishTrace := s.inflightTraces.begin(reqInit.GetInstance(), forwardOf(reqInit, time.Now()))
 	defer finishTrace()
 	if err := s.prepareGuest(stream.Context(), reqInit.GetInstance()); err != nil {
 		return err
@@ -1739,15 +1740,29 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		}
 		httpReq.Header.Add(h.GetName(), h.GetValue())
 	}
+	// exchangeRetained and bridgeStreamEnded let a persistent exchange skip
+	// its completion wait: the bridge retains the completion, and its HTTP/2
+	// server ends the response stream only after the bridge handler returned.
+	// A refused exchange skips it too: it never reached the guest.
+	var (
+		exchange          string
+		exchangeRetained  bool
+		exchangeRefused   bool
+		bridgeStreamEnded bool
+	)
 	if persistent {
 		// Persistent bridges receive request metadata on this H2C stream,
 		// not through process-wide environment variables. The bridge strips
 		// these private headers before it forwards anything to the guest.
 		httpReq.Header.Set("X-Faas-Bridge-Persistent", "1")
-		exchange := uuid.NewString()
+		exchange = uuid.NewString()
 		httpReq.Header.Set(bridgecompletion.ExchangeHeader, exchange)
+		httpReq.Header.Set(bridgecompletion.RetainRequestHeader, bridgecompletion.RetainRequestValue)
 		defer func() {
 			reqCancel()
+			if exchangeRefused || (exchangeRetained && bridgeStreamEnded) {
+				return
+			}
 			if err := awaitBridgeCompletion(context.WithoutCancel(ctx), client, exchange); err != nil {
 				s.log.Warn("vmmd: bridge completion uncertain; fencing child", "instance", reqInit.GetInstance(), "err", err)
 				s.streamBridges.invalidate(ctx, bridgeLease)
@@ -1846,6 +1861,22 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		return status.Errorf(codes.Unavailable, "H2C request: %v (bridge: %v)", err, bridgeErr)
 	}
 	defer func() { _ = httpResp.Body.Close() }()
+	// Only the bridge that tracks this exchange can echo its ID; an older
+	// bridge, or a guest header, leaves the wait in place.
+	exchangeRetained = persistent && slices.Contains(httpResp.Header.Values(bridgecompletion.RetainedHeader), exchange)
+	// The bridge refused this exchange before the guest saw it, most likely
+	// because TrafficBridgeCompletionMaxEntries are open. It keeps no
+	// completion, so the completion wait would answer 404 and fence the
+	// bridge, ending every other exchange it carries. Fail this request
+	// alone, as admission does when the instance is full.
+	if persistent && slices.Contains(httpResp.Header.Values(bridgecompletion.RefusedHeader), exchange) {
+		exchangeRefused = true
+		_ = bodyPr.Close()
+		_ = bodyPw.Close()
+		s.log.Warn("vmmd: stream bridge refused an exchange; the instance is at its open exchange limit",
+			"instance", reqInit.GetInstance(), "limit", api.TrafficBridgeCompletionMaxEntries)
+		return instanceBusy(api.TrafficBridgeCompletionMaxEntries, api.TrafficBridgeCompletionMaxEntries+1)
+	}
 
 	// 8. Mirror guest response headers into the gRPC init frame.
 	initHeaders := make([]*vmmdpb.Header, 0, len(httpResp.Header))
@@ -1855,7 +1886,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		// can compute match/mismatch for vmmd_bridge_framing_total.
 		// Stripped from the gRPC init frame — this is a vmmd↔bridge
 		// signal, not a guest response header.
-		if strings.EqualFold(k, "X-Faas-Bridge-Framing") {
+		if strings.EqualFold(k, "X-Faas-Bridge-Framing") || strings.EqualFold(k, bridgecompletion.RetainedHeader) || strings.EqualFold(k, bridgecompletion.RefusedHeader) {
 			continue
 		}
 		if strings.EqualFold(k, "Transfer-Encoding") {
@@ -1964,6 +1995,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	// Order mirrors v1 (forward.go:391-432).
 	bodyErr := <-bodyErrCh
 	streamErr := <-streamErrCh
+	bridgeStreamEnded = streamErr == nil
 	if streamErr == nil && len(httpResp.Trailer) > 0 {
 		finalTrailers := make([]*vmmdpb.Header, 0, len(httpResp.Trailer))
 		for k, vs := range httpResp.Trailer {

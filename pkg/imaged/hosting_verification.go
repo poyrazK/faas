@@ -27,6 +27,7 @@ func (h *Handler) verifyHostingCandidate(ctx context.Context, app state.App, dep
 			ErrorCode: apihostingreceipt.SmokeErrorInternalApp, Error: "internal app has no public route to verify"}
 		return h.finishHostingVerification(ctx, app, dep, smoke, nil, false, started)
 	}
+	h.releaseCanariesForVerification(ctx, app, dep)
 	progress, err := h.beginHostingVerification(ctx, app, dep, started)
 	if err != nil {
 		return err
@@ -120,5 +121,32 @@ func (h *Handler) commitHostingFailure(ctx context.Context, app state.App, dep s
 func (h *Handler) observeHostingVerification(app state.App, outcome string, started time.Time) {
 	if h.ops != nil {
 		h.ops.ObserveAPIHostingPhase(hostingFlowForApp(app), "verified_url", outcome, time.Since(started))
+	}
+}
+
+// releaseCanariesForVerification frees the rollout grant an older in-flight
+// canary holds when this candidate could not otherwise be woken for its smoke
+// (ADR-20261030102813 amendment, Hunt 31 H31-4). With the default
+// max_concurrency of 1, the serving deployment and the canary use both
+// instances the app may run, so the smoke was refused 429 until the recovery
+// window failed the deploy. A failure here leaves the verification as it was.
+func (h *Handler) releaseCanariesForVerification(ctx context.Context, app state.App, dep state.Deployment) {
+	releaser, ok := h.store.(state.CanaryVerificationReleaser)
+	if !ok {
+		return
+	}
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
+	if err != nil {
+		h.log.Warn("hosting verification: read plan for canary release", "deployment_id", dep.ID, "err", err)
+		return
+	}
+	released, err := releaser.ReleaseCanariesForVerification(ctx, dep.ID, api.TrafficSplitMaxReleases(app.MaxConcurrency, acct.Plan))
+	if err != nil {
+		h.log.Warn("hosting verification: release in-flight canary", "deployment_id", dep.ID, "err", err)
+		return
+	}
+	if len(released) > 0 {
+		h.log.Info("hosting verification: superseded in-flight canary to verify a newer candidate",
+			"deployment_id", dep.ID, "app_id", app.ID, "released", released)
 	}
 }

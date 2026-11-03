@@ -18,8 +18,11 @@ import (
 var errBrowserAuthInput = errors.New("invalid browser authorization request")
 
 // mintBrowserAuthCode mints the code the request asks for; device reports a
-// CLI login code whose request asked for a device code (H67).
-func mintBrowserAuthCode(r *http.Request) (code string, hash []byte, device bool, err error) {
+// CLI login code to bind to a device code (H67). deviceCodes says whether the
+// store can bind one. Only a device-bound login code is short: a person types
+// it, and it is exchanged only with the device code. A CLI that predates device
+// codes exchanges by the code alone, so it gets a 64-bit code.
+func mintBrowserAuthCode(r *http.Request, deviceCodes bool) (code string, hash []byte, device bool, err error) {
 	var input api.CliAuthCodeRequest
 	if r.ContentLength != 0 && r.Body != http.NoBody {
 		if err := decodeJSON(r, &input); err != nil {
@@ -27,8 +30,12 @@ func mintBrowserAuthCode(r *http.Request) (code string, hash []byte, device bool
 		}
 	}
 	if input.Purpose == "" && len(input.Scopes) == 0 {
-		code, hash, err := mintCliAuthCodeRaw()
-		return code, hash, input.Device, err
+		if input.Device && deviceCodes {
+			code, hash, err := mintCliAuthCodeRaw()
+			return code, hash, true, err
+		}
+		code, hash, err := mintCodeOnlyCliAuthCode()
+		return code, hash, false, err
 	}
 	if input.Device {
 		return "", nil, false, errBrowserAuthInput
@@ -104,9 +111,12 @@ func mcpCodeScopes(raw string) []string {
 	return scopes
 }
 
+// cliLoginKeyLabel marks the key `gregale login` mints.
+const cliLoginKeyLabel = "cli-login"
+
 func browserAuthCredential(raw string) (string, []string, time.Duration) {
 	if !isMCPAuthCode(raw) {
-		return "cli-login", api.ScopesAdminOnly, cliAuthKeyTTL
+		return cliLoginKeyLabel, api.ScopesAdminOnly, cliAuthKeyTTL
 	}
 	// The key slides while used (ADR-20261028205920; TouchKeyLastUsed).
 	return api.MCPLoginKeyLabel, mcpCodeScopes(raw), api.MCPLoginKeyIdle

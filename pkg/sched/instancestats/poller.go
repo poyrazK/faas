@@ -139,6 +139,72 @@ type Poller struct {
 	// never updated, so an entry stays valid until the deployment leaves the
 	// instance list, when it is dropped. Only Tick touches it.
 	sidecarMBs map[string][]int
+	// resident caches the node's resident instance list for the telemetry
+	// path (ADR 20261102205122). Only Tick touches it.
+	resident residentList
+}
+
+// residentListMaxAge bounds how long the telemetry path reuses its node's
+// resident instance list. The list is reread sooner when the node's telemetry
+// reports an instance the list does not hold, so a new VM is joined at once; a
+// VM that left keeps its row for at most this long, and a missing sample
+// already keeps an instance's recent charge (ADR 20261101091815).
+const residentListMaxAge = time.Second
+
+// residentList is the telemetry path's cached resident instance list: read
+// at, the IDs it holds, and the IDs the node reported that it did not hold
+// when it was read (a VM being destroyed, or one without a live row), which
+// do not force another read before it ages out.
+type residentList struct {
+	at        time.Time
+	instances []state.Instance
+	ids       map[string]struct{}
+	unlisted  map[string]struct{}
+}
+
+// residentInstances returns the node's resident instances and whether they
+// were just read: the cached list while it is younger than residentListMaxAge
+// and the node reports no instance it does not know, else a fresh read.
+func (p *Poller) residentInstances(ctx context.Context, reader state.ResidentInstancesOnNodeReader, snapshot []sched.NodeTelemetryWithNode, now time.Time) ([]state.Instance, bool, error) {
+	cached := p.resident
+	if cached.ids != nil && !now.Before(cached.at) && now.Sub(cached.at) < residentListMaxAge && !cached.missing(snapshot, p.OwnerNodeID) {
+		return append([]state.Instance(nil), cached.instances...), false, nil
+	}
+	instances, err := reader.ListResidentInstancesOnNode(ctx, p.OwnerNodeID)
+	if err != nil {
+		return nil, false, err
+	}
+	fresh := residentList{at: now, instances: instances, ids: make(map[string]struct{}, len(instances)), unlisted: map[string]struct{}{}}
+	for _, in := range instances {
+		fresh.ids[in.ID] = struct{}{}
+	}
+	for _, row := range snapshot {
+		if id := row.Telemetry.InstanceID; row.NodeID == p.OwnerNodeID && id != "" {
+			if _, ok := fresh.ids[id]; !ok {
+				fresh.unlisted[id] = struct{}{}
+			}
+		}
+	}
+	p.resident = fresh
+	return append([]state.Instance(nil), instances...), true, nil
+}
+
+// missing reports whether the node's telemetry holds an instance the list
+// does not, beyond those it already lacked when read.
+func (r residentList) missing(snapshot []sched.NodeTelemetryWithNode, nodeID string) bool {
+	for _, row := range snapshot {
+		id := row.Telemetry.InstanceID
+		if row.NodeID != nodeID || id == "" {
+			continue
+		}
+		if _, ok := r.ids[id]; ok {
+			continue
+		}
+		if _, ok := r.unlisted[id]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // WithTelemetry switches the poller to the persistent node telemetry stream.
@@ -289,11 +355,22 @@ func (p *Poller) Tick(ctx context.Context) error {
 	}
 	var instances []state.Instance
 	var err error
+	// listFresh is false when the telemetry path reused its cached list; the
+	// missing-telemetry count is then skipped, since a VM that left within
+	// the list's age has no sample by design.
+	listFresh := true
+	var telemetrySnapshot []sched.NodeTelemetryWithNode
 	if p.FleetStats != nil && p.OwnerNodeID != "" {
 		// The owner listing follows app ownership, not physical placement:
 		// an owner's app may have instances on any active node. Only live
 		// instances have stats, so terminal history stays in Postgres.
 		instances, err = p.Store.ListLiveInstancesByNodeID(ctx, p.OwnerNodeID)
+	} else if onNode, ok := p.Store.(state.ResidentInstancesOnNodeReader); ok && p.Telemetry != nil && p.OwnerNodeID != "" {
+		// The local stream covers only this node: read its resident
+		// instances, not the fleet's (ADR 20261102072403), and at most once a
+		// second unless the stream reports a new one (ADR 20261102205122).
+		telemetrySnapshot = p.Telemetry.Snapshot(started)
+		instances, listFresh, err = p.residentInstances(ctx, onNode, telemetrySnapshot, started)
 	} else {
 		instances, err = p.Store.ListAllInstances(ctx)
 	}
@@ -337,9 +414,11 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// schedd (no owner node) reads vmmd Stats directly. Projecting its empty
 	// cache would hide every in-flight request from the idle reaper.
 	if p.Telemetry != nil && p.OwnerNodeID != "" {
-		rows, rolled := p.decodeTelemetrySnapshot(
-			p.Telemetry.Snapshot(p.now()), instances, sidecarByDeploy)
-		if p.Metrics != nil && len(rows) < len(instances) {
+		if telemetrySnapshot == nil {
+			telemetrySnapshot = p.Telemetry.Snapshot(p.now())
+		}
+		rows, rolled := p.decodeTelemetrySnapshot(telemetrySnapshot, instances, sidecarByDeploy)
+		if p.Metrics != nil && listFresh && len(rows) < len(instances) {
 			for nodeID := range telemetryMissingNodes(instances, rows) {
 				p.Metrics.InstanceStatsPartialError(nodeID)
 			}
@@ -348,6 +427,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.publishMemoryShadowWithBridges(instances, rows, p.Telemetry.InstanceBridgeMB(p.now()), started)
 		p.publishQuietPaused(rows, started)
 		p.publishMeasuredCPU(rows, started)
+		p.publishCPUPressure(p.Telemetry.CPUPressure(p.now()), started)
 		p.PauseLedger.Observe(ctx, rows, p.now())
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
@@ -360,13 +440,15 @@ func (p *Poller) Tick(ctx context.Context) error {
 	rows := make([]InstanceStat, 0, len(instances))
 	rolled := make([]wire.InstanceStatRow, 0, len(instances))
 	bridgeMB := make(map[string]int)
+	pressure := make(map[string]sched.NodeCPUPressure)
 	for _, node := range nodes {
-		nodeRows, nodeRolled, nodeBridge := p.tickNode(ctx, node, byNode[node.ID], sidecarByDeploy)
+		nodeRows, nodeRolled, snap := p.tickNode(ctx, node, byNode[node.ID], sidecarByDeploy)
 		rows = append(rows, nodeRows...)
 		rolled = append(rolled, nodeRolled...)
-		if nodeBridge > 0 {
+		if nodeBridge := snapshotBridgeMB(snap); nodeBridge > 0 {
 			bridgeMB[node.ID] = nodeBridge
 		}
+		snapshotCPUPressure(pressure, node.ID, snap)
 	}
 	// Replace is atomic; readers see either the previous snapshot
 	// or the next, never a torn mix.
@@ -374,6 +456,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	p.publishMemoryShadowWithBridges(instances, rows, bridgeMB, started)
 	p.publishQuietPaused(rows, started)
 	p.publishMeasuredCPU(rows, started)
+	p.publishCPUPressure(pressure, started)
 	p.PauseLedger.Observe(ctx, rows, p.now())
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
@@ -613,12 +696,13 @@ func (p *Poller) decodeTelemetrySnapshot(
 
 // tickNode reads one node's Stats, through Router's cached client when
 // set and otherwise over a fresh Dialer connection, and decodes the
-// result into InstanceStat rows + wire rollup rows. On failure it logs,
-// increments the per-node error counter, and returns empty slices — the
-// caller continues to the next node.
-func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings []state.Instance, sidecarByDeploy map[string][]int) ([]InstanceStat, []wire.InstanceStatRow, int) {
+// result into InstanceStat rows + wire rollup rows, returning the snapshot
+// for its node-level readings. On failure it logs, increments the per-node
+// error counter, and returns empty slices and a nil snapshot — the caller
+// continues to the next node.
+func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings []state.Instance, sidecarByDeploy map[string][]int) ([]InstanceStat, []wire.InstanceStatRow, *sched.StatsSnapshot) {
 	if p.Router == nil && p.Dialer == nil {
-		return nil, nil, 0
+		return nil, nil, nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, statsCallTimeout)
 	defer cancel()
@@ -634,7 +718,7 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 			if p.Metrics != nil {
 				p.Metrics.InstanceStatsPartialError(node.ID)
 			}
-			return nil, nil, 0
+			return nil, nil, nil
 		}
 		defer func() { _ = vmm.Close() }()
 		snap, err = vmm.Stats(callCtx)
@@ -644,10 +728,10 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		if p.Metrics != nil {
 			p.Metrics.InstanceStatsPartialError(node.ID)
 		}
-		return nil, nil, 0
+		return nil, nil, nil
 	}
 	rows, rolled := p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
-	return rows, rolled, snapshotBridgeMB(snap)
+	return rows, rolled, snap
 }
 
 // snapshotBridgeMB is the node's instance bridge memory a Stats snapshot

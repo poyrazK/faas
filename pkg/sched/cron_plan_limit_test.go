@@ -19,6 +19,7 @@ import (
 // per-account cap each subject was ranked under.
 type cronPlanStore struct {
 	plans    map[string]api.Plan
+	statuses map[string]state.AccountStatus // unset means active
 	orgs     map[string]state.Org
 	eligible map[string][]string
 	asked    map[string]int
@@ -29,13 +30,20 @@ func (s cronPlanStore) AccountByID(_ context.Context, id string) (state.Account,
 	if !ok {
 		return state.Account{}, errors.New("account unavailable")
 	}
-	return state.Account{ID: id, Plan: plan}, nil
+	status, ok := s.statuses[id]
+	if !ok {
+		status = state.AccountActive
+	}
+	return state.Account{ID: id, Plan: plan, Status: status}, nil
 }
 
 func (s cronPlanStore) OrgByID(_ context.Context, id string) (state.Org, error) {
 	org, ok := s.orgs[id]
 	if !ok {
 		return state.Org{}, state.ErrNotFound
+	}
+	if org.Status == "" {
+		org.Status = state.OrgStatusActive
 	}
 	return org, nil
 }
@@ -137,5 +145,23 @@ func TestCronDue(t *testing.T) {
 	}
 	if !sched.CronDue(daily, created.Add(30*time.Minute)) {
 		t.Fatal("daily 10:00 cron not due at 10:00")
+	}
+}
+
+// A suspended account's crons do not fire, so the gate refuses them before
+// the tick claims a fire it would only roll back.
+func TestCronPlanGateRefusesSuspendedAccounts(t *testing.T) {
+	ctx := context.Background()
+	store := cronPlanStore{
+		plans:    map[string]api.Plan{"active": api.PlanPro, "suspended": api.PlanPro},
+		statuses: map[string]state.AccountStatus{"suspended": state.AccountSuspended},
+		eligible: map[string][]string{"active": {"c1"}, "suspended": {"c2"}},
+	}
+	admit := sched.NewCronPlanGate(store)
+	if !admit(ctx, state.App{ID: "a1", AccountID: "active"}, state.Cron{ID: "c1", AppID: "a1"}) {
+		t.Fatal("an active account's eligible cron was refused")
+	}
+	if admit(ctx, state.App{ID: "a2", AccountID: "suspended"}, state.Cron{ID: "c2", AppID: "a2"}) {
+		t.Fatal("a suspended account's cron was admitted")
 	}
 }

@@ -58,7 +58,7 @@ func (s *server) savedProfilePage(w http.ResponseWriter, r *http.Request, acct s
 	s.includeSavedProfileDeployments(r, app, &data)
 	view.CanSave = data.Baseline.DeploymentID != "" && data.Query.DeploymentID != "" && (api.MustLimitsFor(acct.Plan).Profiling.Enabled || view.Saved != nil)
 	if view.CanSave && s.sessions != nil {
-		token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileInvestigationCSRFAction, acct.ID, profileInvestigationCSRFCookie)
+		token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileInvestigationCSRFAction, actorAccount(r, acct).ID, profileInvestigationCSRFCookie)
 		if err != nil {
 			view.Error = "Saving is temporarily unavailable. Reload to try again."
 			view.CanSave = false
@@ -209,7 +209,7 @@ func (s *server) dashboardProfileInvestigationTarget(w http.ResponseWriter, r *h
 		return
 	}
 	app, err = s.store.AppBySlug(r.Context(), r.PathValue("slug"))
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		ok = false
 		return

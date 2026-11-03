@@ -26,7 +26,8 @@ func TestPgStoreGitHubDeployPolicyParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGitHubDeployPolicy(default): %v", err)
 	}
-	if !defaults.PreviewEnabled || defaults.PreviewTTLHours != state.GitHubDeployPolicyDefaultPreviewTTLHours || defaults.PreviewServicePolicy != state.PreviewServicePolicyDeny {
+	if !defaults.PreviewEnabled || defaults.PreviewTTLHours != state.GitHubDeployPolicyDefaultPreviewTTLHours || defaults.PreviewServicePolicy != state.PreviewServicePolicyDeny ||
+		defaults.PreviewBotPRs || !defaults.PreviewDraftPRs {
 		t.Fatalf("defaults = %+v", defaults)
 	}
 	policy := state.GitHubDeployPolicy{
@@ -36,6 +37,8 @@ func TestPgStoreGitHubDeployPolicyParity(t *testing.T) {
 		IgnoredPaths:         []string{"docs/**", "README.md"},
 		PreviewEnabled:       false,
 		PreviewTTLHours:      72,
+		PreviewBotPRs:        true,
+		PreviewDraftPRs:      false,
 		PreviewServicePolicy: state.PreviewServicePolicyAllowMarked,
 		ProductionTrigger:    state.ProductionTriggerActions,
 	}
@@ -50,7 +53,8 @@ func TestPgStoreGitHubDeployPolicyParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetGitHubDeployPolicy(stored): %v", err)
 	}
-	if got.RootDir != policy.RootDir || len(got.IgnoredPaths) != 2 || got.IgnoredPaths[0] != "docs/**" || got.PreviewTTLHours != 72 || got.ProductionTrigger != state.ProductionTriggerActions {
+	if got.RootDir != policy.RootDir || len(got.IgnoredPaths) != 2 || got.IgnoredPaths[0] != "docs/**" || got.PreviewTTLHours != 72 || got.ProductionTrigger != state.ProductionTriggerActions ||
+		!got.PreviewBotPRs || got.PreviewDraftPRs {
 		t.Fatalf("round trip = %+v", got)
 	}
 	if _, err := store.UpsertGitHubDeployPolicy(ctx, state.GitHubDeployPolicy{

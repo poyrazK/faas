@@ -106,7 +106,7 @@ func reviewEdgeRules(rules []api.EdgeRuleResponse, stats api.EdgeRuleStatsRespon
 }
 
 func printEdgeRuleReview(slug string, it edgeRuleReviewJSON) {
-	label := cmp.Or(it.Name, it.Kind+" rule")
+	label := terminalSafe(cmp.Or(it.Name, it.Kind+" rule"))
 	since := it.Since.Format("2006-01-02 15:04 MST")
 	switch it.Status {
 	case api.EdgeRuleReviewReady:

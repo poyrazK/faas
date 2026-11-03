@@ -278,7 +278,14 @@ gregale debug captures my-app CAPTURE_UUID --delete
 
 The command prints the hottest functions per kind. `--output` writes
 `profile-<id>-<kind>.pb.gz`, which opens in `go tool pprof -http=:`,
-speedscope or Grafana Pyroscope. Windows are 1–60 seconds (default 10 s).
+speedscope or Grafana Pyroscope. Windows are 1–60 seconds (default 10 s). The
+command waits up to 10 minutes for a busy queue to start the capture; with
+`--no-wait` it returns at once.
+
+In the dashboard, open the app and choose **Capture a profile from a running
+instance** (`/dashboard/apps/<slug>/profiles/captures`): it starts captures,
+lists recent ones, and each capture's page shows its profiles, compares it
+with an earlier capture and deletes it.
 
 Captures only run on a RUNNING instance; a parked app is not woken, because a
 fresh process would not show the state you are investigating. Send a request
@@ -287,7 +294,13 @@ idleness. One capture per app runs at a time, and an account can start 60 per
 hour. Automatic captures (below) have their own limit of 30 per hour across the
 account's apps, so they never use up the 60, and captures you start run before
 automatic ones waiting in the queue. Captures are kept for 7 days; delete one
-sooner with `--delete` or `DELETE /v1/apps/{slug}/profiles/captures/{id}`.
+sooner with `--delete`, the dashboard or
+`DELETE /v1/apps/{slug}/profiles/captures/{id}`.
+
+An organization's apps count as the organization's: the organization's plan
+decides whether its apps can be captured, the hourly limits and the storage
+limit below are shared by all its apps, and every member who can open an app
+sees and can delete its captures.
 
 An account also has a capture storage limit, set by its plan (table below). A
 new capture is queued only if the stored profiles of unexpired captures, plus
@@ -506,7 +519,7 @@ A single heap capture shows where memory is held; two captures show what grew.
 Compare a capture with an earlier one of the same app:
 
 ```sh
-gregale debug capture-diff my-app CAPTURE_UUID --base EARLIER_CAPTURE_UUID
+gregale debug capture diff my-app CAPTURE_UUID --base EARLIER_CAPTURE_UUID
 ```
 
 The output lists functions by growth with their value in both captures. On the
@@ -827,7 +840,7 @@ GET /v1/apps/{slug}/profiles/canary-checks/{deployment_id}?limit=5
 ```
 
 Use `next_cursor` as the `before` query parameter to page through older stages.
-The deployment detail page and `gregale api route health profile-history APP`
+The deployment detail page and `gregale api route health profiles APP`
 show the same history. Each entry includes its exact stable/canary windows,
 threshold evidence and policy revision.
 
@@ -1315,7 +1328,7 @@ Other route, health and binding gates still apply.
 
 Inspect the baseline, route streaks, functions and call paths on the deployment
 dashboard, through `GET /v1/deployments/DEPLOYMENT_ID/canary/profile-gate`, or with
-`gregale release canary gate DEPLOYMENT_ID --json`. The readout uses retained evidence and
+`gregale release canary evidence DEPLOYMENT_ID --json`. The readout uses retained evidence and
 commit-pinned source links; it does not query profile storage. Changing the policy
 revision starts fresh evidence collection for the current stage. A passed gate
 certifies those recorded windows for that stage, rather than continuously

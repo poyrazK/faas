@@ -87,16 +87,23 @@ func (s *PgStore) CreateIssueToken(ctx context.Context, account, app string, in 
 	if n >= int64(lim.TokensPerApp) {
 		return api.IssueIngestToken{}, &IssueLimitError{Resource: "ingest_tokens", Limit: int64(lim.TokensPerApp), Observed: n + 1}
 	}
-	r, err := q.IssueInsertToken(ctx, tx, sqlc.IssueInsertTokenParams{AccountID: issueUUID(account), AppID: issueUUID(app), DeploymentID: issueUUID(in.DeploymentID), Environment: in.Environment, Name: in.Name, TokenHash: hash, ExpiresAt: issueTime(in.ExpiresAt)})
+	r, err := q.IssueInsertToken(ctx, tx, sqlc.IssueInsertTokenParams{AccountID: issueUUID(account), AppID: issueUUID(app), DeploymentID: issueUUID(in.DeploymentID), Environment: in.Environment, Name: in.Name, TokenHash: storedCredential(credTagIssueIngestToken, hash), ExpiresAt: issueTime(in.ExpiresAt)})
 	if err != nil {
 		return api.IssueIngestToken{}, err
 	}
 	return issueTokenRow(r), tx.Commit(ctx)
 }
 func (s *PgStore) FindIssueToken(ctx context.Context, hash []byte, now time.Time) (IssueCredential, error) {
-	r, err := sqlc.New().IssueFindToken(ctx, s.pool, sqlc.IssueFindTokenParams{TokenHash: hash, Now: issueTime(now)})
+	r, stored, err := firstCredentialMatch(ctx, credentialLookups(credTagIssueIngestToken, hash), func(ctx context.Context, value []byte) (sqlc.IssueIngestToken, error) {
+		r, err := sqlc.New().IssueFindToken(ctx, s.pool, sqlc.IssueFindTokenParams{TokenHash: value, Now: issueTime(now)})
+		return r, mapErr(err)
+	})
 	if err != nil {
-		return IssueCredential{}, mapErr(err)
+		return IssueCredential{}, err
+	}
+	// ADR 20261029202403: rewrite a plain or older-key hash on use.
+	if next, stale := staleCredential(credTagIssueIngestToken, hash, stored); stale {
+		_, _ = s.pool.Exec(ctx, `update issue_ingest_tokens set token_hash = $1 where id = $2 and token_hash = $3`, next, r.ID, stored)
 	}
 	return IssueCredential{issueID(r.ID), issueID(r.AccountID), issueID(r.AppID), issueID(r.DeploymentID), r.Environment}, nil
 }
@@ -932,6 +939,16 @@ func (s *PgStore) enrichIssueAttribution(ctx context.Context, now time.Time) err
 	return nil
 }
 
+// issueAttributionSettled reports whether no later evidence can attribute the
+// occurrence: it names no request, trace or invocation, or its evidence had
+// api.IssueAttributionRetryWindow since ingestion to arrive.
+func issueAttributionSettled(e api.IssueEvent, receivedAt, now time.Time) bool {
+	if e.RequestID == "" && e.TraceID == "" && e.InvocationID == "" {
+		return true
+	}
+	return !receivedAt.After(now.Add(-api.IssueAttributionRetryWindow))
+}
+
 func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries, row sqlc.IssueUnattributedEventsRow, now time.Time) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -977,7 +994,14 @@ func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries
 			}
 		}
 	}
-	changed, err := q.IssueEnrichAttribution(ctx, tx, sqlc.IssueEnrichAttributionParams{AppID: row.AppID, DeploymentID: row.DeploymentID, EventID: row.EventID, ConsumerID: consumer, TenantID: tenant, Now: issueTime(now)})
+	checkedAt := issueTime(now)
+	if !consumer.Valid && !tenant.Valid && issueAttributionSettled(e, row.ReceivedAt.Time, now) {
+		// Checked for the last time: an infinite check time takes the
+		// occurrence out of the retry scan for good, instead of locking its app
+		// and rewriting the row every maintenance pass until retention purges it.
+		checkedAt = pgtype.Timestamptz{InfinityModifier: pgtype.Infinity, Valid: true}
+	}
+	changed, err := q.IssueEnrichAttribution(ctx, tx, sqlc.IssueEnrichAttributionParams{AppID: row.AppID, DeploymentID: row.DeploymentID, EventID: row.EventID, ConsumerID: consumer, TenantID: tenant, Now: checkedAt})
 	if err != nil {
 		return err
 	}

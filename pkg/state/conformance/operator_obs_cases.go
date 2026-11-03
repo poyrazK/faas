@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -194,6 +195,51 @@ func testOperatorAlertTriageRetention(t *testing.T, fx *Fixture) {
 	logs, err := fx.Store.ListAuditLog(fx.Ctx, state.AuditLogFilter{KindPrefix: "operator.action.alert_triage", Limit: 10, IncludeAnonymous: true})
 	if err != nil || len(logs) != 1 {
 		t.Fatalf("retained audit: count=%d err=%v", len(logs), err)
+	}
+}
+
+// testOperatorActionsReachAuditLog pins ADR-20261102071817: an operator.action.*
+// event is copied into audit_log under the operator who acted, with its
+// trace, so the operator audit search finds it; other events are not.
+func testOperatorActionsReachAuditLog(t *testing.T, fx *Fixture) {
+	target := uuid.NewString()
+	trace := strings.Repeat("ab", 16)
+	view, err := json.Marshal(map[string]any{"actor": fx.Account.ID, "endpoint": "deployments.active", "target_account_id": target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Store.AppendEventWithTrace(fx.Ctx, "apid", "operator.action.view", &target, view, &trace); err != nil {
+		t.Fatalf("append view: %v", err)
+	}
+	if err := fx.Store.AppendEvent(fx.Ctx, "apid", "app.created", &target, []byte(`{"actor":"`+fx.Account.ID+`"}`)); err != nil {
+		t.Fatalf("append app event: %v", err)
+	}
+	logs, err := fx.Store.ListAuditLog(fx.Ctx, state.AuditLogFilter{OperatorOnly: true, TargetAccountID: &target, Limit: 10})
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("operator audit: %+v %v", logs, err)
+	}
+	row := logs[0]
+	if row.Kind != "operator.action.view" || row.AccountID == nil || *row.AccountID != uuid.MustParse(fx.Account.ID) ||
+		row.AccountEmail != fx.Account.Email || row.Actor != fx.Account.ID {
+		t.Fatalf("operator audit row: %+v", row)
+	}
+	var payload struct {
+		Endpoint string `json:"endpoint"`
+		TraceID  string `json:"trace_id"`
+	}
+	if err := json.Unmarshal(row.Data, &payload); err != nil || payload.Endpoint != "deployments.active" {
+		t.Fatalf("operator audit payload: %s %v", row.Data, err)
+	}
+	if got := payload.TraceID; got != trace && (row.TraceID == nil || *row.TraceID != trace) {
+		t.Fatalf("operator audit trace: data %q, field %v", got, row.TraceID)
+	}
+	// The customer's own audit log is filtered to their account: the row is filed under the operator.
+	targetID := uuid.MustParse(target)
+	if own, err := fx.Store.ListAuditLog(fx.Ctx, state.AuditLogFilter{AccountID: &targetID, Limit: 10}); err != nil || len(own) != 0 {
+		t.Fatalf("customer audit: %+v %v", own, err)
+	}
+	if other, err := fx.Store.ListAuditLog(fx.Ctx, state.AuditLogFilter{KindPrefix: "app.created", IncludeAnonymous: true, Limit: 10}); err != nil || len(other) != 0 {
+		t.Fatalf("non-operator event copied: %+v %v", other, err)
 	}
 }
 

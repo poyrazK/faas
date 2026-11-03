@@ -130,11 +130,14 @@ const (
 
 // MFA disable links allow one confirmation day after the existing one-day
 // cooldown. Delivery stops at that original cooldown; retries extend neither.
+// MFADisableLegacyTokenMaxBytes bounds the age-sealed token the legacy inline
+// path mails, which the confirmation page accepts beside the raw durable one.
 const (
-	MFADisableTokenBytes         = 32
-	MFADisableEmailCooldown      = 24 * time.Hour
-	MFADisableEmailConfirmWindow = 24 * time.Hour
-	InternalMailMFADisableTTL    = 24 * time.Hour
+	MFADisableTokenBytes          = 32
+	MFADisableLegacyTokenMaxBytes = 2048
+	MFADisableEmailCooldown       = 24 * time.Hour
+	MFADisableEmailConfirmWindow  = 24 * time.Hour
+	InternalMailMFADisableTTL     = 24 * time.Hour
 )
 
 const (
@@ -195,4 +198,13 @@ const (
 	InternalMailPasswordChangedAlertMaxBytes  = 512
 	InternalMailMFADisabledAlertTTL           = 24 * time.Hour
 	InternalMailMFADisabledAlertMaxBytes      = 512
+
+	// A restore slot notice is useful for a day; an 'ending' notice no later
+	// than the slot's end (ADR-20261031123259).
+	InternalMailManagedPostgresRestoreSlotTTL      = 24 * time.Hour
+	InternalMailManagedPostgresRestoreSlotMaxBytes = 512
+
+	// A plan excess notice is useful for a day (ADR-20261102125208).
+	InternalMailManagedPostgresPlanExcessTTL      = 24 * time.Hour
+	InternalMailManagedPostgresPlanExcessMaxBytes = 512
 )

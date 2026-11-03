@@ -600,6 +600,18 @@ Each step is one PR behind the switches. PRs that touch the VM lifecycle run `ma
 
 Agent egress (§12) follows as separate ADRs. Launch follows the public release.
 
+**Idle cost: two tracks (owner, 2026-10-30).** An idle agent uses 0 CPU and as little RAM as possible, and a minimal agent is nearly free. Two tracks deliver this, in this order:
+
+- **Track 1, harness runs** (Claude Code, Codex, any CLI in a microVM):
+  1. pause while waiting on the model, unbilled: 0 CPU (ADR-20261027090012);
+  2. schedd marks runs eligible; paused seconds unbilled; only active vCPU counted;
+  3. measured reservation and charge, size history, automatic sizing and the OOM rerun (step 13 here; ADR-20261027090015 §3);
+  4. warm-up preset snapshots: about 102 MB instead of 332 MB per Claude Code run (ADR-20261027090015 §1);
+  5. billing by average used RAM (ADR-20261027090011), with the floor and `k` set by the financial model;
+  6. flexible RAM with virtio-mem: boot small, grow on demand, shrink while waiting (ADR-20261027090015 §7);
+  7. compress while waiting: about 25 MB per waiting Claude Code run (ADR-20261027090015 §2), after the native-host check.
+- **Track 2, stateless agents** (ADR-20261030125501): sellers' event-driven loops on functions. They hold no VM, process or connection between events, so 0 CPU and 0 RAM. Gregale supplies the ordered inbox, RAP callbacks, platform tools and model access.
+
 New invariants get property tests:
 - concurrent agent runs never exceed the account or tenant limit;
 - a workflow's agent spend never exceeds its budget;

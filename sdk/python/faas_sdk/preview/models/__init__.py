@@ -73,6 +73,11 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_client_request import AgentClientRequest
+from .agent_connection_response import AgentConnectionResponse
+from .agent_connection_response_kind import AgentConnectionResponseKind
+from .agent_connections_response import AgentConnectionsResponse
+from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
 from .ai_deployment_usage import AIDeploymentUsage
 from .ai_deployment_usage_list import AIDeploymentUsageList
 from .alert_delivery_response import AlertDeliveryResponse
@@ -744,6 +749,9 @@ from .compose_process import ComposeProcess
 from .compose_process_stop_signal import ComposeProcessStopSignal
 from .compose_resources import ComposeResources
 from .compose_resources_cpu_millicores import ComposeResourcesCpuMillicores
+from .condition import Condition
+from .condition_status import ConditionStatus
+from .condition_type import ConditionType
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -1052,6 +1060,7 @@ from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
+from .custom_domain_hosts_response import CustomDomainHostsResponse
 from .custom_domain_response import CustomDomainResponse
 from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
@@ -1081,9 +1090,14 @@ from .dashboard_widget_window import DashboardWidgetWindow
 from .dashboards_response import DashboardsResponse
 from .data_api_access_config import DataAPIAccessConfig
 from .data_api_access_config_version import DataAPIAccessConfigVersion
+from .data_api_change_event import DataAPIChangeEvent
+from .data_api_change_event_batch import DataAPIChangeEventBatch
+from .data_api_change_event_batch_response import DataAPIChangeEventBatchResponse
+from .data_api_change_event_batch_version import DataAPIChangeEventBatchVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
+from .data_api_runtime import DataAPIRuntime
 from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
 from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
@@ -2192,6 +2206,7 @@ from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBra
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .git_hub_installation_summary import GitHubInstallationSummary
 from .git_hub_webhook_activity import GitHubWebhookActivity
 from .git_hub_webhook_activity_status import GitHubWebhookActivityStatus
 from .github_check_update_record import GithubCheckUpdateRecord
@@ -2401,6 +2416,10 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .label_change import LabelChange
+from .label_change_set import LabelChangeSet
+from .labels_response import LabelsResponse
+from .labels_response_labels import LabelsResponseLabels
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
@@ -2627,6 +2646,7 @@ from .managed_postgres_cutover_writer_isolation_state import ManagedPostgresCuto
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
+from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
 from .managed_postgres_health import ManagedPostgresHealth
@@ -2640,6 +2660,7 @@ from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
 from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
 from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
@@ -4993,6 +5014,10 @@ from .release_gate_kind import ReleaseGateKind
 from .release_gate_result import ReleaseGateResult
 from .release_gate_result_kind import ReleaseGateResultKind
 from .release_restore_point import ReleaseRestorePoint
+from .release_timeline import ReleaseTimeline
+from .release_timeline_event import ReleaseTimelineEvent
+from .release_timeline_event_kind import ReleaseTimelineEventKind
+from .release_timeline_phase import ReleaseTimelinePhase
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
@@ -5035,6 +5060,8 @@ from .resize_managed_postgres_database_request import ResizeManagedPostgresDatab
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
+from .resource_status import ResourceStatus
+from .resource_status_kind import ResourceStatusKind
 from .restore_app_body import RestoreAppBody
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_deleted_app_body import RestoreDeletedAppBody
@@ -5603,6 +5630,7 @@ from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequ
 from .set_canary_route_gate_request import SetCanaryRouteGateRequest
 from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
 from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
+from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
@@ -6293,6 +6321,11 @@ __all__ = (
     "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentClientRequest",
+    "AgentConnectionResponse",
+    "AgentConnectionResponseKind",
+    "AgentConnectionsResponse",
+    "AgentConnectionsRevokeAllResponse",
     "AIDeploymentUsage",
     "AIDeploymentUsageList",
     "AlertDeliveryResponse",
@@ -6950,6 +6983,9 @@ __all__ = (
     "ComposeProcessStopSignal",
     "ComposeResources",
     "ComposeResourcesCpuMillicores",
+    "Condition",
+    "ConditionStatus",
+    "ConditionType",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -7238,6 +7274,7 @@ __all__ = (
     "CronRun",
     "CronRunOutcome",
     "CSRFTokenResponse",
+    "CustomDomainHostsResponse",
     "CustomDomainResponse",
     "CustomMetricListResponse",
     "CustomMetricRequest",
@@ -7267,9 +7304,14 @@ __all__ = (
     "DashboardWidgetWindow",
     "DataAPIAccessConfig",
     "DataAPIAccessConfigVersion",
+    "DataAPIChangeEvent",
+    "DataAPIChangeEventBatch",
+    "DataAPIChangeEventBatchResponse",
+    "DataAPIChangeEventBatchVersion",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
+    "DataAPIRuntime",
     "DataAPIRuntimeConnectionReport",
     "DataAPIRuntimeConnectionReportRuntimeModel",
     "DataAPIRuntimeConnectionReportState",
@@ -8332,6 +8374,7 @@ __all__ = (
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
+    "GitHubInstallationSummary",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusDeployBranches",
@@ -8545,6 +8588,10 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "LabelChange",
+    "LabelChangeSet",
+    "LabelsResponse",
+    "LabelsResponseLabels",
     "LatestDeploymentsByAppResponse",
     "LinkPlatformTenantConsumerRequest",
     "LinkPlatformTenantSurfaceRequest",
@@ -8731,6 +8778,7 @@ __all__ = (
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
+    "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
     "ManagedPostgresHealth",
@@ -8744,6 +8792,7 @@ __all__ = (
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageImportReading",
     "ManagedPostgresUsageImportReadingMeter",
     "ManagedPostgresUsageImportRequest",
@@ -10903,6 +10952,10 @@ __all__ = (
     "ReleaseGateResult",
     "ReleaseGateResultKind",
     "ReleaseRestorePoint",
+    "ReleaseTimeline",
+    "ReleaseTimelineEvent",
+    "ReleaseTimelineEventKind",
+    "ReleaseTimelinePhase",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
     "ReorderDeploymentBody",
@@ -10945,6 +10998,8 @@ __all__ = (
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
+    "ResourceStatus",
+    "ResourceStatusKind",
     "RestoreAppBody",
     "RestoreAutomationRevisionRequest",
     "RestoreDeletedAppBody",
@@ -11503,6 +11558,7 @@ __all__ = (
     "SetCanaryRouteGateRequest",
     "SetCanaryRouteGateRequestMode",
     "SetCommitSourceEnabledBody",
+    "SetCustomDomainHostsRequest",
     "SetDeploymentAliasRequest",
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",

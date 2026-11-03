@@ -228,9 +228,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: %w", err)
 	}
+	// ADR-20261031103801: dependency caches share platform image layers,
+	// off by default.
+	sharePlatformBlobs, err := builderdpkg.ParseSharedPlatformBlobs(os.Getenv(builderdpkg.SharedPlatformBlobsEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
 	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
 		d.WithBuilderBaseDigest(builderBaseDigestPath)
 		d.WithDockerHubMirrors(mirrors)
+		d.WithSharedPlatformBlobs(sharePlatformBlobs)
 		// The node artifact cache shares the build drive filesystem and keeps
 		// less free than one build needs (#5709, ADR-20261027173012).
 		if sourceStorage != nil {
@@ -249,7 +256,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: %w", err)
 	}
-	// ADR-20261029105325: kernel overlayfs for builder BuildKit, off by default.
+	// ADR-20261029105325: kernel overlayfs for builder BuildKit, on by default.
 	buildkitSnapshotter, err := builderdpkg.ParseKernelOverlay(os.Getenv(builderdpkg.KernelOverlayEnv))
 	if err != nil {
 		return fmt.Errorf("builderd: %w", err)
@@ -386,6 +393,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer stopNotificationWorkers()
 	buildQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
 		if _, err := b.ProcessOne(workCtx, buildID); err != nil {
+			if errors.Is(err, builderdpkg.ErrCoalesced) {
+				log.Debug("builderd: build deferred behind an identical build", "build", buildID)
+				return
+			}
 			log.Warn("builderd: process", "build", buildID, "err", err)
 		}
 	})
@@ -765,6 +776,10 @@ func workerLoopWithMetrics(ctx context.Context, b buildWorkerProcessor, interval
 		// next tick without logging warn.
 		if errors.Is(err, builderdpkg.ErrNoSlot) {
 			log.Debug("builderd: worker tick — no slot, row requeued")
+			continue
+		}
+		if errors.Is(err, builderdpkg.ErrCoalesced) {
+			log.Debug("builderd: worker tick — deferred behind an identical build")
 			continue
 		}
 		log.Warn("builderd: worker tick — process next", "err", err)

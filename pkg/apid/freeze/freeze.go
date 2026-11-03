@@ -31,8 +31,8 @@ func IsProductionScope(scope string) bool {
 	return scope == "" || scope == api.DefaultEnvScope || scope == ProductionEnvironment
 }
 
-// Covers reports whether f applies to appID: an app freeze covers its app,
-// an account freeze covers every app.
+// Covers reports whether f applies to appID, one of its owner's apps: an app
+// freeze covers its app, an owner-wide freeze covers every app.
 func Covers(f state.ReleaseFreeze, appID string) bool {
 	return f.AppID == "" || f.AppID == appID
 }
@@ -65,22 +65,92 @@ func Active(freezes []state.ReleaseFreeze, appID string, now time.Time) []state.
 	return out
 }
 
-// ActiveFor reads the account's freezes and returns those that withhold a
-// production release of appID in scope. A store without freezes withholds
-// nothing.
-func ActiveFor(ctx context.Context, store any, accountID, appID, scope string, now time.Time) ([]state.ReleaseFreeze, error) {
-	if !IsProductionScope(scope) {
-		return nil, nil
+type orgReader interface {
+	OrgByID(context.Context, string) (state.Org, error)
+}
+
+type appReader interface {
+	AppByID(context.Context, string) (state.App, error)
+}
+
+// Owner names who owns the freezes that cover app (ADR-20261019071733
+// amendment 4): the company organization of a company app, the app's
+// account otherwise. A personal organization's apps and unattributed legacy
+// apps keep their account's freezes.
+func Owner(ctx context.Context, store any, app state.App) (state.ReleaseFreezeOwner, error) {
+	if app.OrgID == "" {
+		return state.ReleaseFreezeOwner{AccountID: app.AccountID}, nil
 	}
+	orgs, ok := store.(orgReader)
+	if !ok {
+		return state.ReleaseFreezeOwner{}, fmt.Errorf("resolve freeze owner of app %s: store cannot read organizations", app.ID)
+	}
+	org, err := orgs.OrgByID(ctx, app.OrgID)
+	if err != nil {
+		return state.ReleaseFreezeOwner{}, fmt.Errorf("resolve freeze owner of app %s: %w", app.ID, err)
+	}
+	if org.Personal {
+		return state.ReleaseFreezeOwner{AccountID: app.AccountID}, nil
+	}
+	return state.ReleaseFreezeOwner{OrgID: org.ID}, nil
+}
+
+// For reads the unlifted freezes, not yet ended, that cover app: its
+// owner's freezes on all apps and on app. A store without freezes holds
+// none.
+func For(ctx context.Context, store any, app state.App, now time.Time) ([]state.ReleaseFreeze, error) {
 	freezes, ok := store.(state.ReleaseFreezeStore)
 	if !ok {
 		return nil, nil
 	}
-	all, err := freezes.ListReleaseFreezes(ctx, accountID, now)
+	owner, err := Owner(ctx, store, app)
+	if err != nil {
+		return nil, err
+	}
+	all, err := freezes.ListReleaseFreezes(ctx, owner, now)
 	if err != nil {
 		return nil, fmt.Errorf("list release freezes: %w", err)
 	}
-	return Active(all, appID, now), nil
+	covering := all[:0]
+	for _, f := range all {
+		if Covers(f, app.ID) {
+			covering = append(covering, f)
+		}
+	}
+	return covering, nil
+}
+
+// ActiveFor returns the freezes that withhold a production release of app in
+// scope at now. A store without freezes withholds nothing.
+func ActiveFor(ctx context.Context, store any, app state.App, scope string, now time.Time) ([]state.ReleaseFreeze, error) {
+	if !IsProductionScope(scope) {
+		return nil, nil
+	}
+	covering, err := For(ctx, store, app, now)
+	if err != nil {
+		return nil, err
+	}
+	return Active(covering, app.ID, now), nil
+}
+
+// ActiveForAppID is ActiveFor for a caller that holds only the app's ID,
+// such as a runtime upgrade claim.
+func ActiveForAppID(ctx context.Context, store any, appID, scope string, now time.Time) ([]state.ReleaseFreeze, error) {
+	if !IsProductionScope(scope) {
+		return nil, nil
+	}
+	if _, ok := store.(state.ReleaseFreezeStore); !ok {
+		return nil, nil
+	}
+	apps, ok := store.(appReader)
+	if !ok {
+		return nil, fmt.Errorf("read app %s for its freezes: store cannot read apps", appID)
+	}
+	app, err := apps.AppByID(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("read app %s for its freezes: %w", appID, err)
+	}
+	return ActiveFor(ctx, store, app, scope, now)
 }
 
 // Summary describes active freezes in one line for surfaces without RFC 7807
@@ -182,13 +252,13 @@ func ValidateReason(field, reason string) *api.Problem {
 	return nil
 }
 
-// FromRequest validates a create request. appID is the resolved app (empty
-// for an account-wide freeze).
-func FromRequest(req api.CreateReleaseFreezeRequest, accountID, appID, createdBy string, now time.Time) (state.ReleaseFreeze, *api.Problem) {
+// FromRequest validates a create request for owner. appID is the resolved
+// app (empty for a freeze on all of the owner's apps).
+func FromRequest(req api.CreateReleaseFreezeRequest, owner state.ReleaseFreezeOwner, appID, createdBy string, now time.Time) (state.ReleaseFreeze, *api.Problem) {
 	if p := ValidateReason("reason", req.Reason); p != nil {
 		return state.ReleaseFreeze{}, p
 	}
-	f := state.ReleaseFreeze{AccountID: accountID, AppID: appID, Kind: req.Kind,
+	f := state.ReleaseFreeze{AccountID: owner.AccountID, OrgID: owner.OrgID, AppID: appID, Kind: req.Kind,
 		Reason: strings.TrimSpace(req.Reason), CreatedBy: createdBy}
 	switch req.Kind {
 	case api.ReleaseFreezeKindWindow:

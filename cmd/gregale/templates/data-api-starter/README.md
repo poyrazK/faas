@@ -16,12 +16,12 @@ gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json
 
 Run this from outside an existing project. It creates the starter, verifies and
 installs the SDK, generates types, checks the client and replays the scenarios.
-It removes disposable services when done; run `gregale data-api dev --check`
+It removes disposable services when done; run `gregale data-api serve --check`
 inside the new project to start a development session. See the
 [first-application journey](https://gregale.dev/docs/data-api-onboarding).
 
 For local development, install Node.js 22+, npm and Docker, then run
-`gregale data-api dev`. It starts a disposable database and authenticated API,
+`gregale data-api serve`. It starts a disposable database and authenticated API,
 applies these migrations, generates client types, and verifies Alice/Bob RLS
 isolation. The printed private `.gregale/data-api-dev-*.json` file contains
 the API URL and test tokens. Ctrl-C removes the database and identities;
@@ -37,9 +37,9 @@ options and cleanup details.
 The starter includes a ready-to-run `data-api.requests.json` collection:
 
 ```sh
-gregale data-api dev --port 0 --once --replay data-api.requests.json
+gregale data-api serve --port 0 --once --replay data-api.requests.json
 # Run just the ownership checks:
-gregale data-api dev --port 0 --once --replay data-api.requests.json --scenario notes-rls
+gregale data-api serve --port 0 --once --replay data-api.requests.json --scenario notes-rls
 ```
 
 The `notes-crud` scenario creates, reads, updates and deletes a note, including its database-managed version. `notes-rls` verifies Bob cannot read, update or delete Alice's captured note ID, and Alice cannot insert a note owned by Bob. `notes-rpc` calls `create_note_with_tags`, checks ownership and the attached tag, then deletes its note and tag. Each scenario captures generated IDs and checks its cleanup, so it can be replayed repeatedly in the inspector's **Replay all scenarios** view. These local checks need Node.js 22+, npm and Docker; they do not require a Gregale account, staging database, or pinned SDK artifacts.
@@ -49,7 +49,7 @@ Reloads report schema compatibility before regenerating types and save the last
 accepted contract to `.gregale/data-api-contract.json`. Use `--check-breaking` to
 reject breaking changes against that existing contract. For a fixed CI baseline,
 copy it to `schema.json`, commit that file, and run
-`gregale data-api dev --once --check-breaking --baseline schema.json`.
+`gregale data-api serve --once --check-breaking --baseline schema.json`.
 An explicitly selected baseline is never overwritten. Rejected changes preserve
 the contract and types; repair committed SQL with a new compatible migration.
 
@@ -63,7 +63,7 @@ The local dev server prints a private **Inspector** link. Open it to browse tabl
 Use **Saved requests** to save the current method, path, JSON body, and Alice/Bob identity in `data-api.requests.json` at the project root. Set an expected HTTP status and optionally an exact JSON response (object key order is ignored). Load or delete individual requests, replay one, or replay all sequentially; each replay reports passing and failing assertions. Replay executes writes as saved, so POST, PATCH, DELETE and RPC calls can change local data. Session tokens and authentication headers are never saved. The collection survives dev restarts and can be committed for teammates; use test data in request bodies. Saved requests are excluded from newly initialized migration app deployments. Conflicting edits require reloading the collection before saving. Run the same scenarios from the CLI or CI with:
 
 ```sh
-gregale data-api dev --port 0 --once --replay data-api.requests.json
+gregale data-api serve --port 0 --once --replay data-api.requests.json
 # Machine-readable JSON lines:
 gregale --json data-api dev --port 0 --once --replay data-api.requests.json
 ```
@@ -126,7 +126,7 @@ Organize independent workflows as version 2 named scenarios:
 The inspector can create, select and delete scenarios, edit each scenario's requests, replay the selected scenario, or replay all scenarios. Creating a named scenario upgrades a version 1 collection while preserving its requests in `default`. Version 1 files still work unchanged as that implicit scenario. Keep at least one scenario; delete its requests to empty it.
 
 ```sh
-gregale data-api dev --port 0 --once --replay data-api.requests.json --scenario notes-rls
+gregale data-api serve --port 0 --once --replay data-api.requests.json --scenario notes-rls
 ```
 
 Omit `--scenario` to run every scenario in file order. The flag requires `--replay`, and unknown names fail before Docker services start. Each scenario gets fresh variables; all scenarios share the same disposable database, so workflows should clean up their own rows or account for earlier writes. A failure in one scenario does not stop later scenarios. Scenario names are unique identifiers starting with a letter, followed by letters, digits, underscores or hyphens (maximum 64 characters). Request names must be unique within a scenario; there is an aggregate limit of 100 requests and a 64 KiB file limit.
@@ -909,7 +909,7 @@ for a typed example.
 
 ### Check committed types in local CI
 
-Run `gregale data-api dev --port 0 --once --check-types --check` after installing
+Run `gregale data-api serve --port 0 --once --check-types --check` after installing
 client dependencies. The disposable database applies your project migrations,
 verifies authorization scenarios, and compares generated types byte-for-byte
 with the configured output file. Missing or stale types exit nonzero without
@@ -917,7 +917,7 @@ creating or overwriting that file. `--check` then runs configured client checks;
 `--check-types` requires `--once`. Containers and volumes are removed on success
 and failure. No hosted account or staging credentials are required.
 
-To update types, run `gregale data-api dev --port 0 --once` with the same
+To update types, run `gregale data-api serve --port 0 --once` with the same
 `--directory`, `--config` and `--output` options, then commit the generated file.
 This detects drift; use `--check-breaking` separately for compatibility checks.
 The workflow still creates local contract artifacts and runs configured setup
@@ -1034,14 +1034,14 @@ for setup, examples, errors and recovery assumptions.
 
 ### Schema-driven form feedback
 
-Run `gregale data-api dev --validators --check` to regenerate runtime insert/update
+Run `gregale data-api serve --validators --check` to regenerate runtime insert/update
 parsers alongside types, including after watched migrations. The note form uses
 those generated rules before creating a request key or sending a save. Database
 constraints, RPC business rules and RLS remain authoritative. Plain type generation
 keeps the existing form validation. Keep your generation mode consistent in CI:
 
 ```sh
-gregale data-api dev --validators --check-types --once
+gregale data-api serve --validators --check-types --once
 ```
 
 ### Validate a CSV before importing notes

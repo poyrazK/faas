@@ -46,7 +46,10 @@ type brokerLanes struct {
 
 type triggerAppOwner struct {
 	app state.App
-	at  time.Time
+	// consumes is false for a deleted app and for one whose billing account
+	// is suspended or pending deletion (triggerAppConsumes).
+	consumes bool
+	at       time.Time
 }
 
 func (l *Loop) brokerLaneActive(triggerID string) bool {
@@ -66,8 +69,9 @@ func (l *Loop) markBrokerLane(triggerID string, delta int) {
 	}
 }
 
-// triggerAppOwned reports whether this schedd owns the trigger's app, as the
-// invocation drain decides it: an app on this node, or one not yet placed. A
+// triggerAppOwned reports whether this schedd should poll the trigger's
+// external broker: it owns the trigger's app, as the invocation drain decides
+// it (an app on this node, or one not yet placed), and the app can run. A
 // failed lookup polls, as before, so a store error never stops a trigger.
 func (l *Loop) triggerAppOwned(ctx context.Context, t sqlc.Trigger) bool {
 	if l.engine == nil || !t.AppID.Valid {
@@ -83,7 +87,7 @@ func (l *Loop) triggerAppOwned(ctx context.Context, t sqlc.Trigger) bool {
 		if err != nil {
 			return true
 		}
-		cached = triggerAppOwner{app: app, at: now}
+		cached = triggerAppOwner{app: app, consumes: triggerAppConsumes(ctx, l.engine.Store(), app), at: now}
 		l.brokerLanes.mu.Lock()
 		if l.brokerLanes.owners == nil || len(l.brokerLanes.owners) >= 10000 {
 			l.brokerLanes.owners = map[string]triggerAppOwner{}
@@ -91,7 +95,22 @@ func (l *Loop) triggerAppOwned(ctx context.Context, t sqlc.Trigger) bool {
 		l.brokerLanes.owners[appID] = cached
 		l.brokerLanes.mu.Unlock()
 	}
-	return l.engine.OwnsApp(cached.app)
+	return cached.consumes && l.engine.OwnsApp(cached.app)
+}
+
+// triggerAppConsumes reports whether a broker trigger's app may take records
+// from the customer's broker. A deleted app, or one whose billing account is
+// suspended or pending deletion, cannot run them: each record retried into
+// its dead-letter store and, on Kafka, was committed past, so the customer's
+// queue drained into an app they could no longer open (bug hunt 2026-10-28
+// B32). The inbound webhook receiver refuses the same two cases. A failed
+// account read polls, as a failed app read does.
+func triggerAppConsumes(ctx context.Context, store state.AppOwnerReader, app state.App) bool {
+	if app.Status == state.AppDeleted {
+		return false
+	}
+	acct, err := state.AppResourceAccount(ctx, store, app)
+	return err != nil || acct.Active()
 }
 
 // scheduleBrokerTriggerLane submits one trigger's batch to its lane. A

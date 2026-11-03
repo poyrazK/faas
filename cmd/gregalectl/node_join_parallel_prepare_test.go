@@ -93,7 +93,8 @@ func TestNodeJoinParallelPrepareContract(t *testing.T) {
 	for _, name := range []string{
 		"Create the release-bound runtime-base pre-stage directory",
 		"Extract the signed candidate for runtime-base pre-staging",
-		"Inspect the active vmmd binary before runtime pre-stage",
+		"Read the serving vmmd process before runtime pre-stage",
+		"Compare the serving vmmd's runtime base generations with the candidate's",
 		"Render fresh-host runtime configuration before pre-stage",
 		"Bootstrap fresh-host vmmd from the verified release candidate",
 		"Install the runtime-base pre-stage one-shot",
@@ -104,11 +105,16 @@ func TestNodeJoinParallelPrepareContract(t *testing.T) {
 		if !strings.Contains(w, notActivate) {
 			t.Fatalf("activation from the top must skip the finished pre-stage task %q: %q", name, w)
 		}
-		// Ansible stops at the first false condition; the skipped vmmd
-		// inspection leaves no .stat to read on activation from the top.
+		// Ansible stops at the first false condition, so the phase check
+		// comes before anything the pre-stage section reads.
 		if strings.Contains(w, "faas_join_active_vmmd") && strings.Index(w, notActivate) > strings.Index(w, "faas_join_active_vmmd") {
 			t.Fatalf("%q must check the phase before faas_join_active_vmmd: %q", name, w)
 		}
+	}
+	// The adoption checks before the drain read the inspection in every phase,
+	// so it must run in activation too (rc.315 fsn-2).
+	if inspect, ok := tasks["Inspect the active vmmd binary before runtime pre-stage"]; !ok || when(inspect) != "" {
+		t.Fatalf("the read-only vmmd inspection must run in every phase: %q", when(inspect))
 	}
 	if _, err := os.Stat(filepath.Join("..", "..", "deploy", "ansible", "roles", "supply_chain_scanners", "tasks", "grype_db.yml")); err != nil {
 		t.Fatalf("Grype database tasks file: %v", err)

@@ -161,7 +161,9 @@ func (l *Limiter) leaseConsume(ctx context.Context, batch CentralBatchBackend, s
 	t := l.lease
 	key := centralBatchKey{scope: scope, subjectID: subjectID, plan: plan}
 	now := l.now()
-	deadline := now.Add(centralConsultTimeout)
+	// A waiting request may need the statement in flight and then its own,
+	// each bounded by centralConsumeTimeout (ADR-20261027173012 amendment 2).
+	deadline := now.Add(centralBatchWait)
 	waited, waits := false, 0
 
 	t.mu.Lock()
@@ -219,7 +221,18 @@ func (l *Limiter) leaseConsume(ctx context.Context, batch CentralBatchBackend, s
 		// one that arrived later may need the next. A few rounds settle it.
 		waits++
 		if st.tokens == 0 && (waits >= leaseMaxWaits || !now.Before(deadline)) {
+			// The counter answered every statement this request waited for.
+			// When the last answer emptied the shared bucket, the request is
+			// over the limit, as a batched consume's requests past its grant
+			// are: a verified 429. Refusing it as unverified answered a burst
+			// past a small limit with 503 rate_limit_unavailable, and inside
+			// the outage grace admitted it from this gateway's own bucket
+			// (PulseWatch F16, ADR-20261027173012 amendment 3).
+			drained := now.Before(st.emptyUntil) || st.remaining == 0
 			t.mu.Unlock()
+			if drained {
+				return 0, false, true, nil
+			}
 			return 0, false, false, errCentralBatchWait
 		}
 	}
@@ -268,7 +281,10 @@ func (t *leaseTable) startLocked(l *Limiter, ctx context.Context, batch CentralB
 // it, so it keeps the triggering request's values but not its cancellation.
 func (t *leaseTable) run(l *Limiter, ctx context.Context, batch CentralBatchBackend, key centralBatchKey, st *leaseState, call *leaseCall, size, owed int, rps, burst float64) {
 	defer t.calls.Done()
-	leaseCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+	// A lease is an authoritative consume, so it gets the consume bound: a
+	// counter commit past 250 ms (a checkpoint or fsync stall) failed the
+	// lease, opened the breaker and refused requests within their limit.
+	leaseCtx, cancel := context.WithTimeout(ctx, centralConsumeTimeout)
 	granted, remaining, err := batch.ConsumeTokens(leaseCtx, key.scope, key.subjectID, key.plan, rps, burst, size+owed)
 	cancel()
 	now := l.now()
@@ -423,9 +439,12 @@ func (t *leaseTable) leaseSize(st *leaseState) int {
 }
 
 // allowance is how many requests one counter may admit on this gateway
-// before their tokens are debited.
+// before their tokens are debited. A counter whose burst is below
+// 1/AllowanceFraction (20 at the default) gets none: one unverified request
+// per gateway would be a large share of a small burst, such as a sign-in
+// throttle's, so its requests wait for a lease instead.
 func (t *leaseTable) allowance(burst float64) int {
-	return max(1, int(math.Floor(t.cfg.AllowanceFraction*burst)))
+	return int(math.Floor(t.cfg.AllowanceFraction * burst))
 }
 
 func (t *leaseTable) count(scope, outcome string, n int) {

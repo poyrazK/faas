@@ -117,8 +117,16 @@ var cliTreeFolds = map[string]string{
 }
 
 // cliTreeFold returns the tree path that now runs typed, matching its
-// command and verb before its command alone.
+// command and verb before its command alone. A flag fold matches today's
+// whole path (`events replay-preview` is `event backfill create --dry-run`).
 func cliTreeFold(typed []string) (string, string, bool) {
+	words := leadingTreeWords(typed)
+	for n := len(words); n > 0; n-- {
+		path := strings.Join(words[:n], " ")
+		if fold, ok := cliTreeFlagFoldOf(path); ok {
+			return path, fold.spelling(), true
+		}
+	}
 	for n := min(2, len(typed)); n > 0; n-- {
 		path := strings.Join(typed[:n], " ")
 		if fold, ok := cliTreeFolds[path]; ok {

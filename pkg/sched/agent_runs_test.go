@@ -71,6 +71,11 @@ func agentRunnerFixture(t *testing.T) (*sched.AgentRunner, *agentRouter, *sched.
 
 func agentRunnerFixtureWith(t *testing.T, snapshots bool) (*sched.AgentRunner, *agentRouter, *sched.NodeLedger, string) {
 	t.Helper()
+	return agentRunnerFixtureConfig(t, func(cfg *sched.AgentRunConfig) { cfg.Snapshots = snapshots })
+}
+
+func agentRunnerFixtureConfig(t *testing.T, edit func(*sched.AgentRunConfig)) (*sched.AgentRunner, *agentRouter, *sched.NodeLedger, string) {
+	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
 	node := func(name string) string {
@@ -89,8 +94,11 @@ func agentRunnerFixtureWith(t *testing.T, snapshots bool) (*sched.AgentRunner, *
 		t.Fatal(err)
 	}
 	router := &agentRouter{ledger: ledger}
-	runner, err := sched.NewAgentRunner(engine, router, sched.AgentRunConfig{BaseKey: "base/agent-base.ext4", LayerKey: "layer/agent.ext4",
-		Nodes: []string{"agents-1"}, Snapshots: snapshots})
+	cfg := sched.AgentRunConfig{BaseKey: "base/agent-base.ext4", LayerKey: "layer/agent.ext4", Nodes: []string{"agents-1"}}
+	if edit != nil {
+		edit(&cfg)
+	}
+	runner, err := sched.NewAgentRunner(engine, router, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +133,34 @@ func TestAgentRunnerPlacesOnThePoolAndReleases(t *testing.T) {
 	}
 	if ledger.ResidentFor(placed.Instance) || ledger.ResidentRAMForNode(agentNode) != 0 {
 		t.Fatal("the reservation outlived the run")
+	}
+}
+
+// adr: 20261027090012 — schedd marks a run for vmmd's model-wait pause only
+// when its switch is on and the run's version has not opted out; the delay
+// is the quiet pause delay.
+func TestAgentRunnerMarksTheModelWaitPause(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		switchOn bool
+		optIn    bool
+		want     time.Duration
+	}{
+		{name: "switch on, version allows it", switchOn: true, optIn: true, want: api.QuietPauseAfterMillis * time.Millisecond},
+		{name: "switch off", optIn: true},
+		{name: "version opted out", switchOn: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner, router, _, _ := agentRunnerFixtureConfig(t, func(cfg *sched.AgentRunConfig) { cfg.WaitPause = tc.switchOn })
+			a := agentAdmission()
+			a.PauseDuringModelCalls = tc.optIn
+			if _, err := runner.Run(context.Background(), a, agentRun(), nil, sched.AgentRunHooks{}, nil); err != nil {
+				t.Fatal(err)
+			}
+			if router.spec.ModelWaitPauseAfter != tc.want {
+				t.Fatalf("ModelWaitPauseAfter = %v, want %v", router.spec.ModelWaitPauseAfter, tc.want)
+			}
+		})
 	}
 }
 

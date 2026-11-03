@@ -27,10 +27,7 @@ func (s *Spool) commitArchive(upload string) error {
 	}
 	// The committed fragment is no longer pending, even if installing the
 	// history below needs another pass. CountExisting uses the same accounting.
-	s.written -= info.Size()
-	if s.written < 0 {
-		s.written = 0
-	}
+	s.releaseLocked(upload, info.Size())
 	if err := syncArchiveDir(base); err != nil {
 		return err
 	}

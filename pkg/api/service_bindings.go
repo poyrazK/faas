@@ -483,6 +483,27 @@ func ServiceBindingEnvForTransport(base map[string]string, bindings []AppService
 	return env
 }
 
+// PrivateServiceHTTPSCapability is the product capability an operator turns
+// on once every compute node runs the private service HTTPS listener and
+// gives guests its CA (docs/networking.md). It is off until then, and the
+// https service transport is refused while it is (ADR-20261029230000).
+const PrivateServiceHTTPSCapability = "private-service-https"
+
+// PrivateServiceHTTPSUnavailable is the reason the https service transport
+// is refused where the installation has not enabled private service HTTPS.
+const PrivateServiceHTTPSUnavailable = "private service HTTPS is not enabled on this installation, so https://<service>.internal does not answer; use the http transport (the default) or ask the operator to enable the private-service-https capability"
+
+// PrivateServiceHTTPSTransportProblem refuses the https transport while the
+// private-service-https capability is off. Every call from such a caller
+// would fail: the service proxy refuses its plain-HTTP calls, and nothing
+// answers its HTTPS ones.
+func PrivateServiceHTTPSTransportProblem(transport ServiceBindingTransport, enabled bool) *Problem {
+	if enabled || transport != ServiceBindingTransportHTTPS {
+		return nil
+	}
+	return ErrValidation("service_binding_transport https: " + PrivateServiceHTTPSUnavailable)
+}
+
 // ServiceBindingCanonicalURL is the GREGALE_SERVICE_<NAME>_URL value for a
 // caller's transport: the private HTTPS alias, or the plaintext service proxy.
 func ServiceBindingCanonicalURL(service string, transport ServiceBindingTransport) string {

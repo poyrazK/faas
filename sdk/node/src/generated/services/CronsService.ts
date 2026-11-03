@@ -6,8 +6,12 @@ import type { AppTaskResponse } from '../models/AppTaskResponse.js';
 import type { CreateCronRequest } from '../models/CreateCronRequest.js';
 import type { CronResponse } from '../models/CronResponse.js';
 import type { FireCronResponse } from '../models/FireCronResponse.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ListCronRunsResponse } from '../models/ListCronRunsResponse.js';
 import type { ListScheduleOccurrencesResponse } from '../models/ListScheduleOccurrencesResponse.js';
+import type { Problem } from '../models/Problem.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { UpdateCronRequest } from '../models/UpdateCronRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -84,6 +88,39 @@ export class CronsService {
         `,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
       },
+    });
+  }
+  /**
+   * Set and remove a cron's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the cron carries after it, with
+   * the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+   * Requires deploy:write or admin scope and MFA. While the capability is on,
+   * GET /v1/crons and GET /v1/crons/{id} include labels, and GET /v1/crons
+   * takes ?selector=, a Kubernetes label selector.
+   *
+   * @returns LabelsResponse The cron's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, scope or MFA, a cron this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateCronLabels({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/crons/{id}/labels',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
@@ -185,6 +222,35 @@ export class CronsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a cron's conditions.
+   * Preview (resource-conditions capability). The cron's Ready and
+   * LastRunSucceeded conditions, from the cron and its newest run as
+   * GET /v1/crons/{id}/runs reports it, and never stored. A disabled cron
+   * is terminally not ready; a suspended one is not ready until the
+   * suspension clears. LastRunSucceeded describes the newest run, so it
+   * is never terminal. Cache-Control no-store.
+   *
+   * @returns ResourceStatus The cron's conditions.
+   * @returns Problem Missing sign-in, read scope or MFA, a cron this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getCronStatus({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/crons/{id}/status',
+      path: {
+        'id': id,
       },
     });
   }

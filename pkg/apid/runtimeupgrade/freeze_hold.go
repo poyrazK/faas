@@ -26,7 +26,7 @@ func ReleaseFreezeHold(store any) func(context.Context, state.RuntimeUpgradeOper
 		if err != nil {
 			return false, fmt.Errorf("read serving deployment: %w", err)
 		}
-		active, err := freeze.ActiveFor(ctx, store, c.AccountID, c.AppID, serving.Scope, time.Now().UTC())
+		active, err := freeze.ActiveForAppID(ctx, store, c.AppID, serving.Scope, time.Now().UTC())
 		if err != nil {
 			return false, err
 		}

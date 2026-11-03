@@ -11,7 +11,9 @@ func (m *MemStore) PutSpendCapHold(_ context.Context, hold SpendCapHold) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[hold.AccountID]; !ok {
+	// An organization that owns its resources is its own billing subject
+	// (ADR-20261030093512).
+	if _, ok := m.accounts[hold.AccountID]; !ok && (m.orgs[hold.AccountID].ID == "" || m.orgs[hold.AccountID].Personal) {
 		return ErrNotFound
 	}
 	if m.spendCapHolds == nil {

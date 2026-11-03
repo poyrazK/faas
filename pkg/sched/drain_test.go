@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -40,9 +41,10 @@ type drainSynth struct {
 	calls          atomic.Int64
 	active         atomic.Int64
 	maxActive      atomic.Int64
-	permanent      atomic.Bool // if true, return ErrPermanentInvoke
-	transient      atomic.Bool // if true, return a transient error
-	refused        atomic.Bool // if true, the gateway refuses the dispatch before the app
+	permanent      atomic.Bool  // if true, return ErrPermanentInvoke
+	transient      atomic.Bool  // if true, return a transient error
+	refused        atomic.Bool  // if true, the gateway refuses the dispatch before the app
+	appStatus      atomic.Int64 // if set, the app's own code returned this status
 	responseStatus int
 	outcomeCode    string
 	hold           time.Duration
@@ -72,6 +74,9 @@ func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocatio
 	}
 	if perm {
 		return inv, ErrPermanentInvoke
+	}
+	if status := int(d.appStatus.Load()); status > 0 {
+		return inv, applicationStatusError{status: status, err: fmt.Errorf("%w: application returned HTTP %d", ErrPermanentInvoke, status)}
 	}
 	if trans {
 		return inv, errors.New("drain synth: transient")
@@ -211,10 +216,20 @@ func seedDrainInvocation(t *testing.T, store state.Store, source state.Invocatio
 		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
 	}
 	app := apps[0]
-	inv, err := store.EnqueueInvocation(ctx, state.Invocation{
+	seed := state.Invocation{
 		AppID: app.ID, AccountID: app.AccountID, Source: source,
 		Method: "POST", Path: "/x", DueAt: time.Now().Add(-time.Second),
-	})
+	}
+	if source == state.InvocationCron {
+		// A cron run carries its cron's id; the drain cancels one whose cron
+		// is gone instead of delivering it.
+		cron, err := store.CreateCron(ctx, app.ID, "0 * * * *", "/x", true)
+		if err != nil {
+			t.Fatalf("CreateCron: %v", err)
+		}
+		seed.CronID = &cron.ID
+	}
+	inv, err := store.EnqueueInvocation(ctx, seed)
 	if err != nil {
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}

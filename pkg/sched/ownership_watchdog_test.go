@@ -69,6 +69,11 @@ func (s *staleResidentStore) ListInstancesForApp(context.Context, string) ([]sta
 	return nil, nil
 }
 
+// The pre-check reads live rows only; it is just as stale.
+func (s *staleResidentStore) ListLiveInstancesForApps(context.Context, []string) ([]state.Instance, error) {
+	return nil, nil
+}
+
 // A wake that passed its ownership check lands its instance between the
 // rebalancer's pre-check and the move. The move used to go through and leave
 // the instance outside the new owner's ledger (H9-101); it now re-checks

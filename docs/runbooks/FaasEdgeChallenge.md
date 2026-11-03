@@ -5,7 +5,7 @@ Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`, group
 Alerts: `FaasEdgeChallengeSolveRateLow`, `FaasEdgeChallengeSolutionsRefused`,
 `FaasEdgeChallengeKeyMismatch`.
 Metric: `gateway_edge_challenge_total{app,outcome}` (issued, solved, passed,
-bypassed, rejected, invalid, expired),
+bypassed, rejected, invalid, expired, preflight),
 `gateway_edge_challenge_raised_total{app}` and
 `gateway_edge_challenge_key_info{key_id,source}`.
 Design: ADR-831 amendments 7, 8 and 17.

@@ -354,11 +354,13 @@ func renderDeploymentReleaseSummary(w io.Writer, summary api.DeploymentSummaryRe
 	// production-us hunt #8: during a canary the previous release still
 	// serves most traffic, and the rollback target skips live deployments,
 	// so the hint named the release before it ("--to v5" while v6 served
-	// 90%) - following it would have discarded both. The safe way back is
-	// to promote the still-serving release.
+	// 90%) - following it would have discarded both. Promoting the
+	// still-serving release is refused while the canary owns the weights
+	// (409 traffic_change_during_canary), so the way back is to abort the
+	// rollout, which returns its traffic to that release.
 	if prev := summary.Previous; prev != nil && prev.Status == statusLive && summary.Deployment.TrafficPercent < 100 &&
 		summary.Deployment.CanaryPreset != "" && summary.Deployment.CanaryPreset != "none" {
-		_, _ = fmt.Fprintf(w, "  Abort canary: gregale release traffic promote --app %s --release %s\n", appSlug, deploymentLabel(*prev))
+		_, _ = fmt.Fprintf(w, "  Abort canary: gregale rollouts recover %s --action abort\n", appSlug)
 		return
 	}
 	if summary.Deployment.TrafficPercent > 0 && summary.Deployment.TrafficPercent < 100 {
@@ -479,7 +481,7 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		if receipt.Interrupted {
 			return printSessionWaitRecovery(ctx, context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
 		}
-		return printSessionWaitRecovery(ctx, context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
+		return printSessionWaitRecovery(ctx, deploymentWaitDeadlineError(deadline), receiptDep, appSlug, stage, deadline, waitForRollout, 3)
 	}
 	var configurationErr error
 	if session := sessionFromContext(ctx); session != nil && final.Status == statusLive && (!waitForRollout || final.RolloutState != rolloutStateAborted) && (!darkDeploy || final.TrafficPercent == 0) {
@@ -509,7 +511,7 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 	}
 	if configurationErr != nil {
 		receipt.WaitStage = "configuration"
-		receipt.Recovery = sessionFromContext(ctx).recovery("configuration")
+		receipt.Recovery = sessionFromContext(ctx).recoveryWithTimeout("configuration", deadline)
 	}
 	if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 		return code

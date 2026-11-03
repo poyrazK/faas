@@ -363,6 +363,7 @@ func (h *Handler) runBurstCapacity(ctx context.Context, app App, maxInstances, p
 	for lifecycleCtx.Err() == nil {
 		healthy := h.burstHealthyCount(app.ID, admitter)
 		desired := desiredBurstInstancesForApp(state, app, perVM, maxInstances, time.Now())
+		desired = h.scaleByLocalShare(lifecycleCtx, app.ID, desired, maxInstances)
 		if desired <= healthy {
 			break
 		}

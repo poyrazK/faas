@@ -321,6 +321,10 @@ type StatsReader interface {
 type Server struct {
 	scheddpb.UnimplementedScheddServer
 
+	// databases is the database scheduler (ADR-1027); nil keeps the
+	// database RPCs UNIMPLEMENTED.
+	databases DatabaseScheduler
+
 	engine SchedAPI
 	stats  StatsReader
 	// agentRuns serves RunAgent (ADR-20261027090010 §6); nil answers Unimplemented.
@@ -1440,6 +1444,17 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 			}); ok {
 				if sink := provider.InstanceBridgeSink(); sink != nil {
 					sink(report.NodeID, time.Now(), v.GetValue())
+				}
+			}
+		}
+		// ADR 20261030100950: the node's CPU pressure readings, kept only
+		// when vmmd sent both.
+		if p, b := msg.GetTenantCpuPressureSomeAvg10(), msg.GetHostCpuBusyPercent(); p != nil && b != nil {
+			if provider, ok := s.engine.(interface {
+				CPUPressureSink() sched.CPUPressureSink
+			}); ok {
+				if sink := provider.CPUPressureSink(); sink != nil {
+					sink(report.NodeID, time.Now(), sched.NodeCPUPressure{SomeAvg10: p.GetValue(), BusyPercent: b.GetValue()})
 				}
 			}
 		}

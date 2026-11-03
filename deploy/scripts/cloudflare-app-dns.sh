@@ -4,10 +4,11 @@
 # workstation, one apps-domain zone at a time:
 #
 #   plan               show the records and Worker routes this script manages
-#   platform           give the apex, api., operations. and s3. their own
-#                      proxied record to the control-plane origin; a record
-#                      already serving it (a CNAME to the origin record, or an
-#                      A record with its address) is left alone
+#   platform           give each platform host (the apex, api., operations.,
+#                      s3.) that has no record of its own a proxied CNAME to
+#                      the control-plane origin. A host with its own record is
+#                      never repointed: some are served elsewhere (production's
+#                      apex and operations. are on Vercel)
 #   pilot HOST         send one app host to the tunnel: a route with no Worker
 #                      for HOST/* (it beats the wildcard route) and a proxied
 #                      CNAME HOST -> <tunnel>.cfargotunnel.com
@@ -66,15 +67,13 @@ records_of() {
 }
 record_of() { records_of "$1" | head -n 1; }
 
-# serves_origin NAME succeeds when NAME's only record is a CNAME to the origin
-# record or an A record with the origin's address.
-serves_origin() {
-  local origin_ip records type content
-  origin_ip=$(records_of "$ORIGIN_NAME" | awk '$2 == "A" { print $3; exit }')
-  records=$(records_of "$1")
-  [[ -n "$records" && $(wc -l <<<"$records") -eq 1 ]] || return 1
-  read -r _ type content _ <<<"$records"
-  [[ "$type" == CNAME && "$content" == "$ORIGIN_NAME" ]] || [[ "$type" == A && -n "$origin_ip" && "$content" == "$origin_ip" ]]
+# own_record NAME prints NAME's first address record as "type content", or
+# fails when it has none (so it would follow the wildcard).
+own_record() {
+  local record
+  record=$(record_of "$1")
+  [[ -n "$record" ]] || return 1
+  cut -d' ' -f2,3 <<<"$record"
 }
 
 # point NAME TARGET makes NAME a proxied CNAME to TARGET. A name with more
@@ -130,8 +129,8 @@ case "$action" in
     ;;
   platform)
     for name in $PLATFORM_HOSTS; do
-      if serves_origin "$name"; then
-        echo "ok: $name serves $ORIGIN_NAME"
+      if record=$(own_record "$name"); then
+        echo "ok: $name has its own record ($record), left alone"
       else
         point "$name" "$ORIGIN_NAME"
       fi
@@ -159,8 +158,8 @@ case "$action" in
     ;;
   wildcard)
     for name in $PLATFORM_HOSTS; do
-      if ! serves_origin "$name"; then
-        echo "$name does not serve $ORIGIN_NAME on its own record; run '$0 platform' first" >&2
+      if ! own_record "$name" >/dev/null; then
+        echo "$name has no record of its own and would follow the wildcard; run '$0 platform' first" >&2
         exit 1
       fi
     done

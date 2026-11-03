@@ -71,7 +71,7 @@ func (s OAuthService) Start(ctx context.Context, app, owner string, revision int
 		return "", "", err
 	}
 	nonce := hex.EncodeToString(raw)
-	c := oauthFlowSecret{AppID: app, AccountID: owner, Hash: OAuthStateHash(nonce), Revision: revision, ConfigHash: s.configHash()}
+	c := oauthFlowSecret{AppID: app, AccountID: owner, Hash: state.StoredCredentialHex(state.CredentialColumnSlackOAuthState, OAuthStateHash(nonce)), Revision: revision, ConfigHash: s.configHash()}
 	sealed, err := s.seal(c)
 	if err != nil {
 		return "", "", err
@@ -79,11 +79,19 @@ func (s OAuthService) Start(ctx context.Context, app, owner string, revision int
 	err = s.Store.StartIssueSlackOAuth(ctx, state.IssueSlackOAuthFlow{AppID: app, AccountID: owner, Hash: c.Hash, ExpectedRevision: revision, Sealed: sealed, ExpiresAt: time.Now().Add(api.IssueSlackOAuthFlowTTL)})
 	return nonce, s.Config.Authorize(nonce), err
 }
+
+// Claim claims the consent flow nonce started for owner, whose state hash
+// may be stored plain or keyed (ADR 20261029202403).
+func (s OAuthService) Claim(ctx context.Context, nonce, owner string) (state.IssueSlackOAuthFlow, error) {
+	return state.FirstCredentialHex(ctx, state.CredentialColumnSlackOAuthState, OAuthStateHash(nonce), func(ctx context.Context, hash string) (state.IssueSlackOAuthFlow, error) {
+		return s.Store.ClaimIssueSlackOAuth(ctx, hash, owner)
+	})
+}
 func (s OAuthService) Exchange(ctx context.Context, nonce, owner, code string) error {
 	if !s.Config.Enabled() || !ValidOAuthNonce(nonce) || len(code) == 0 || len(code) > api.IssueSlackOAuthCodeMaxBytes {
 		return state.ErrInvalidArgument
 	}
-	f, err := s.Store.ClaimIssueSlackOAuth(ctx, OAuthStateHash(nonce), owner)
+	f, err := s.Claim(ctx, nonce, owner)
 	if err != nil {
 		return err
 	}
@@ -110,7 +118,9 @@ func (s OAuthService) Pending(ctx context.Context, nonce, owner string) (state.I
 	if !s.Config.Enabled() || !ValidOAuthNonce(nonce) {
 		return state.IssueSlackOAuthFlow{}, state.IssueSlackInstallation{}, state.ErrInvalidArgument
 	}
-	f, err := s.Store.GetIssueSlackOAuth(ctx, OAuthStateHash(nonce), owner)
+	f, err := state.FirstCredentialHex(ctx, state.CredentialColumnSlackOAuthState, OAuthStateHash(nonce), func(ctx context.Context, hash string) (state.IssueSlackOAuthFlow, error) {
+		return s.Store.GetIssueSlackOAuth(ctx, hash, owner)
+	})
 	if err != nil || f.Phase != "choosing" {
 		return f, state.IssueSlackInstallation{}, state.ErrInvalidArgument
 	}

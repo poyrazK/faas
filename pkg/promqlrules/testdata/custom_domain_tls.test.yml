@@ -1,0 +1,41 @@
+# ADR-520 amendment 1: the ask endpoint refusing wildcard hosts at the fleet
+# issuance cap warns; refusals at a single owner's or registered domain's
+# budget do not.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 1m
+    name: "fleet-cap refusals warn"
+    input_series:
+      - series: 'gateway_tls_on_demand_ask_total{job="gatewayd-public",instance="10.0.0.2:9092",decision="deny_fleet_budget"}'
+        values: '0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasCustomDomainTLSFleetBudget
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-public
+              family: custom_domain_tls
+            exp_annotations:
+              summary: "New wildcard custom-domain hosts are refused at the fleet issuance cap"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomDomainTLS.md"
+              description: "The deployment admitted OnDemandTLSFleetNewHostsPer3h new hosts below wildcard custom domains in 3 hours, so no tenant can add another until admissions age out. The cap keeps the shared ACME account under Let's Encrypt's order limit; find the owners and registered domains that drew it."
+
+  - interval: 1m
+    name: "per-domain and per-owner refusals stay quiet"
+    input_series:
+      - series: 'gateway_tls_on_demand_ask_total{job="gatewayd-public",instance="10.0.0.2:9092",decision="deny_wildcard_budget"}'
+        values: '0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75'
+      - series: 'gateway_tls_on_demand_ask_total{job="gatewayd-public",instance="10.0.0.2:9092",decision="deny_owner_budget"}'
+        values: '0 5 10 15 20 25 30 35 40 45 50 55 60 65 70 75'
+      - series: 'gateway_tls_on_demand_ask_total{job="gatewayd-public",instance="10.0.0.2:9092",decision="deny_fleet_budget"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasCustomDomainTLSFleetBudget
+        exp_alerts: []

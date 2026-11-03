@@ -215,7 +215,7 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// dead-letter replay for one app. The account-level jobs
 			// page remains the canonical landing surface.
 			if jslug, ok := parseAppJobsPath(slug); ok {
-				if app, err := s.store.AppBySlug(r.Context(), jslug); err != nil || app.AccountID != acct.ID {
+				if app, err := s.store.AppBySlug(r.Context(), jslug); err != nil || !dashboardAppOwner(r, &acct, app) {
 					http.NotFound(w, r)
 					return
 				}
@@ -223,7 +223,7 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 				return
 			}
 			if qslug, ok := parseAppQueuesPath(slug); ok {
-				if app, err := s.store.AppBySlug(r.Context(), qslug); err != nil || app.AccountID != acct.ID {
+				if app, err := s.store.AppBySlug(r.Context(), qslug); err != nil || !dashboardAppOwner(r, &acct, app) {
 					http.NotFound(w, r)
 					return
 				}
@@ -545,13 +545,24 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 		latest = nil
 	}
 	view, _ := AccountFrom(ctx)
+	// The account count above stays the whole list; a label selector only
+	// narrows the rows (ADR-20261031100025).
+	accountAppCount := len(apps)
+	data := dashboard.AppsListData{LabelsOn: s.labelsReleased(r, acct)}
+	var labelsByApp map[string]map[string]string
+	if data.LabelsOn {
+		data.Selector = dashboardSelectorValue(r)
+		apps, labelsByApp, data.SelectorError = s.dashboardSelectApps(r, acct, apps)
+	}
 	items := make([]dashboard.AppListItem, 0, len(apps))
 	for _, a := range apps {
 		var last time.Time
 		if d, err := s.store.LatestDeployment(ctx, a.ID); err == nil {
 			last = d.CreatedAt
 		}
-		items = append(items, s.appListItem(ctx, a, latest, last))
+		item := s.appListItem(ctx, a, latest, last)
+		item.Labels = labelsByApp[a.ID]
+		items = append(items, item)
 	}
 	// Finding 6 (issue #314): stamp the per-row quota-cell metadata.
 	// account.Plan is the plan every app in this account sees
@@ -577,7 +588,7 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 	// issue 100 PromQL calls per render. nil = no badge.
 	badges := s.fetchDashboardSLOBadges(ctx, log, items, acct)
 	attachSLOBadges(items, badges)
-	accountView := dashboardAccountView(view, len(apps))
+	accountView := dashboardAccountView(view, accountAppCount)
 	if snapshot, rateErr := s.readAccountDeployRate(ctx, acct, timeNow().UTC()); rateErr != nil {
 		log.Warn("dashboard renderAppsList: account deploy rate", "account_id", acct.ID, "err", rateErr)
 	} else {
@@ -587,7 +598,8 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 		accountView.DeployRateResetsAt = snapshot.WindowResetsAt.UTC().Format(time.RFC3339)
 		accountView.DeployRateResetsLabel = snapshot.WindowResetsAt.UTC().Format("15:04 UTC")
 	}
-	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: accountView, Data: items}
+	data.Items = items
+	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: accountView, Data: data}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
@@ -617,7 +629,7 @@ func (s *server) renderAppCostTrend(w http.ResponseWriter, r *http.Request, log 
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -641,7 +653,7 @@ func (s *server) renderAppCostTrend(w http.ResponseWriter, r *http.Request, log 
 func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -695,7 +707,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	// The bound action is page-scoped ("fire_cron_{id}") so a token
 	// for cron A cannot be replayed against cron B; the same value
 	// is reused across renders as long as the cookie's MaxAge holds.
-	fireCSRFToken, err := middleware.IssueForAuthenticated(s.sessions, "fire_cron", acct.ID)
+	fireCSRFToken, err := middleware.IssueForAuthenticated(s.sessions, "fire_cron", actorAccount(r, acct).ID)
 	if err != nil {
 		log.Error("dashboard renderAppDetail: csrf issue fire_cron", "app_id", app.ID, "err", err)
 		fireCSRFToken = ""
@@ -711,7 +723,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		})
 	}
 	rollbackCSRFToken, err := middleware.IssueForAuthenticatedNamed(
-		s.sessions, dashboardRollbackAction, acct.ID, dashboardRollbackCSRFCookie)
+		s.sessions, dashboardRollbackAction, actorAccount(r, acct).ID, dashboardRollbackCSRFCookie)
 	if err != nil {
 		log.Error("dashboard renderAppDetail: csrf issue rollback", "app_id", app.ID, "err", err)
 		rollbackCSRFToken = ""
@@ -729,7 +741,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	cronPolicyCSRFAction := dashboardCronSchedulePolicyAction(app.Slug)
 	cronPolicyCSRFCookie := dashboardCronSchedulePolicyCookie(app.Slug)
 	schedulePolicyCSRFToken, err := middleware.IssueForAuthenticatedNamed(
-		s.sessions, cronPolicyCSRFAction, acct.ID, cronPolicyCSRFCookie)
+		s.sessions, cronPolicyCSRFAction, actorAccount(r, acct).ID, cronPolicyCSRFCookie)
 	if err != nil {
 		log.Error("dashboard renderAppDetail: csrf issue scheduled work policy", "app_id", app.ID, "err", err)
 		schedulePolicyCSRFToken = ""
@@ -790,6 +802,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		}
 		cronItems = append(cronItems, item)
 	}
+	attachDashboardCronLabels(cronItems, s.dashboardResourceLabels(r, acct, state.LabelKindCron, dashboardCronIDs(cronItems)))
 	workflowItems := s.fetchDashboardWorkflows(ctx, log, app.ID)
 	// Single-app detail page reuses the batched instance map; for
 	// a one-app render that's one extra row fetched but it keeps
@@ -869,6 +882,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		appCount = 0
 	}
 	appRow := s.appListItem(ctx, app, latest, time.Time{})
+	appRow.Labels = s.singleAppLabels(r, acct, app)
 	appRow.Plan = string(acct.Plan)
 	appRow.QuotaLabel = dashboardEmDash
 	// ADR-095 PR-C / issue #272 — preview environments panel. Fetched
@@ -1627,7 +1641,7 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	// only and leave the form's hidden input empty (the test
 	// TestDashboardRaiseOverageCap_PostsForm catches that exact
 	// regression).
-	if raiseTok, err := middleware.IssueForAuthenticated(s.sessions, "raise_overage_cap", acct.ID); err == nil {
+	if raiseTok, err := middleware.IssueForAuthenticated(s.sessions, "raise_overage_cap", actorAccount(r, acct).ID); err == nil {
 		data.RaiseCapConfirmToken = raiseTok
 		http.SetCookie(w, &http.Cookie{
 			Name:     middleware.CookieNameAuthenticated,
@@ -2941,7 +2955,7 @@ func parseDeployDetailPath(rest string) (string, string, bool) {
 func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug, deploymentID string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -2980,7 +2994,7 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	if dep.Status == state.DeploySuperseded {
 		data.CanRollback = true
 		if tok, err := middleware.IssueForAuthenticatedNamed(
-			s.sessions, dashboardRollbackAction, acct.ID, dashboardRollbackCSRFCookie,
+			s.sessions, dashboardRollbackAction, actorAccount(r, acct).ID, dashboardRollbackCSRFCookie,
 		); err == nil {
 			data.RollbackConfirmToken = tok
 			http.SetCookie(w, &http.Cookie{
@@ -3103,7 +3117,7 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 		if from := failedStageFromJSON(dep.StageState); from != "" {
 			data.CanRetry = true
 			data.RetryFromStage = from
-			if tok, err := middleware.IssueForAuthenticated(s.sessions, dashboardRetryDeploymentAction, acct.ID); err == nil {
+			if tok, err := middleware.IssueForAuthenticated(s.sessions, dashboardRetryDeploymentAction, actorAccount(r, acct).ID); err == nil {
 				data.DeploymentRetryCSRF = tok
 				http.SetCookie(w, &http.Cookie{
 					Name:     middleware.CookieNameAuthenticated,
@@ -3699,7 +3713,7 @@ func (s *server) renderDomainDoctor(w http.ResponseWriter, r *http.Request, log 
 	}
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		s.notFound(w, "no such app")
 		return
 	}
@@ -3811,7 +3825,7 @@ func parseWakeTimelinePath(rest string) (string, bool) {
 func (s *server) renderAppWakeTimeline(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		s.notFound(w, "no such app")
 		return
 	}

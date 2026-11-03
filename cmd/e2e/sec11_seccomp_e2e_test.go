@@ -157,10 +157,10 @@ func TestSec11_SeccompFilterEnforced_CrossProcess(t *testing.T) {
 		t.Fatalf("decode deployment: %v body=%s", err, raw)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), imageDeployLiveBudget+30*time.Second)
 	defer cancel()
 	defer h.DumpLogs(t)
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depResp.ID, 60*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depResp.ID, imageDeployLiveBudget); err != nil {
 		if d, derr := state.NewPgStore(pool).DeploymentByID(ctx, depResp.ID); derr == nil {
 			t.Logf("deployment state at failure: status=%s error=%q", d.Status, d.Error)
 		}

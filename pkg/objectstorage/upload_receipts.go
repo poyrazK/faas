@@ -39,7 +39,7 @@ func (h *uploadHandler) serveUploadReceipt(w http.ResponseWriter, r *http.Reques
 		uploadProblem(w, http.StatusMethodNotAllowed, "upload receipts only accept GET")
 		return true
 	}
-	acct, key, ok := h.authenticate(w, r, app)
+	acct, key, _, ok := h.authenticate(w, r, app)
 	if !ok {
 		return true
 	}

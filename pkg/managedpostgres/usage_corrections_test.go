@@ -5,6 +5,7 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -83,6 +84,9 @@ func TestUsageCorrectionsYieldToForwardRecovery(t *testing.T) {
 		}
 		return []MeterReading{{Meter: MeterComputeUnitSeconds, Quantity: quantity}}
 	}
+	// An hour later the tail is due for its correction, after both forward
+	// windows: the one recovery left and the one that has since closed.
+	now = now.Add(time.Hour)
 	if _, err := collector.Collect(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +94,7 @@ func TestUsageCorrectionsYieldToForwardRecovery(t *testing.T) {
 		t.Fatalf("replay displaced missing usage: %+v", provider.windows[24:])
 	}
 	snapshot, err := store.UsageSnapshot(ctx, "account", now)
-	if err != nil || snapshot.ComputeUnitSeconds != 1539 || snapshot.Stale(registry.UsagePolicy(), now) {
+	if err != nil || snapshot.ComputeUnitSeconds != 1599 || snapshot.Stale(registry.UsagePolicy(), now) {
 		t.Fatalf("recovery missed a correction or coverage: %+v, %v", snapshot, err)
 	}
 }
@@ -113,12 +117,13 @@ func TestUsageCorrectionFailurePreservesCoverageAndRetries(t *testing.T) {
 		}
 		return nil
 	}
-	now = now.Add(time.Minute)
+	// The correction is due an hour after the tail was observed.
+	now = now.Add(time.Hour + time.Minute)
 	if summary, err := collector.Collect(ctx); !errors.Is(err, ErrUnavailable) || summary.Deferred != 1 {
 		t.Fatalf("failed correction was hidden: %+v, %v", summary, err)
 	}
 	snapshot, err := store.UsageSnapshot(ctx, "account", now)
-	if err != nil || snapshot.ComputeUnitSeconds != 180 || snapshot.Stale(registry.UsagePolicy(), now) {
+	if err != nil || snapshot.ComputeUnitSeconds != 240 || snapshot.Stale(registry.UsagePolicy(), now) {
 		t.Fatalf("failed replay erased established coverage or ledger: %+v, %v", snapshot, err)
 	}
 	provider.usageError = nil
@@ -129,12 +134,14 @@ func TestUsageCorrectionFailurePreservesCoverageAndRetries(t *testing.T) {
 		}
 		return []MeterReading{{Meter: MeterComputeUnitSeconds, Quantity: quantity}}
 	}
+	// The failed window keeps the tail's oldest observation old, so the next
+	// sweep retries it at once.
 	now = now.Add(time.Minute)
 	if _, err := collector.Collect(ctx); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err = store.UsageSnapshot(ctx, "account", now)
-	if err != nil || snapshot.ComputeUnitSeconds != 219 || len(store.usage) != 3 {
+	if err != nil || snapshot.ComputeUnitSeconds != 279 || len(store.usage) != 4 {
 		t.Fatalf("correction did not recover: %+v, %v", snapshot, err)
 	}
 }
@@ -289,5 +296,33 @@ func TestUsageCollectorResumesCheckpointsWithEquivalentTimezones(t *testing.T) {
 				t.Fatalf("resumed usage = %+v, %v", snapshot, err)
 			}
 		})
+	}
+}
+
+// Consumption APIs are rate limited per account (Neon: about 50 requests a
+// minute), so the correction tail is replayed once per window, not on every
+// five-minute sweep.
+func TestUsageCollectorReplaysCorrectionsOncePerWindow(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 1, 10, 7, 0, 0, time.UTC)
+	store, registry, provider := usageRecoveryFixture(t, now, 6*time.Hour)
+	var requests []int
+	for range 14 {
+		before := len(provider.windows)
+		collector, err := NewUsageCollector(registry, store, UsageCollectorOptions{Now: func() time.Time { return now }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := collector.Collect(ctx); err != nil {
+			t.Fatal(err)
+		}
+		requests = append(requests, len(provider.windows)-before)
+		now = now.Add(5 * time.Minute)
+	}
+	// 10:07 backfills six windows and 11:02 collects the next one. Until
+	// 11:07 the tail was observed within the hour; 11:07 replays it once.
+	want := []int{6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 0}
+	if !slices.Equal(requests, want) {
+		t.Fatalf("provider requests per sweep = %v, want %v", requests, want)
 	}
 }

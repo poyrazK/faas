@@ -52,7 +52,10 @@ type sigstoreBundleManifest struct {
 // registry has none or lists no bundle there, the referrers tag schema
 // (sha256-<hex>), which is where GHCR keeps them. Each bundle's own manifest
 // must name digest as its subject. At most api.BaseProvenanceMaxBundles
-// bundles are read, the most recently listed first.
+// bundles are read, the most recently listed first. A bundle this reader
+// refuses is skipped while another can be read: since #6048 each platform
+// image also carries an SPDX SBOM attestation, several MiB for a Debian base,
+// beside its provenance (v0.1.18-rc.310's release failed on it).
 func (c *RegistryClient) PullSigstoreBundles(ctx context.Context, ref, digest string, auth *BasicAuth) (bundles [][]byte, err error) {
 	defer func() { err = scrubAuthFromError(err, auth) }()
 	r, err := ParseReference(ref)
@@ -73,12 +76,20 @@ func (c *RegistryClient) PullSigstoreBundles(ctx context.Context, ref, digest st
 	if len(candidates) == 0 {
 		return nil, ErrSigstoreBundleMissing
 	}
+	var refused error
 	for _, candidate := range candidates {
 		bundle, err := c.readSigstoreBundle(ctx, r, candidate, digest, access)
+		if errors.Is(err, ErrImageManifestInvalid) {
+			refused = err
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		bundles = append(bundles, bundle)
+	}
+	if len(bundles) == 0 {
+		return nil, refused
 	}
 	return bundles, nil
 }

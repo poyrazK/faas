@@ -45,6 +45,9 @@ type Service struct {
 	mfaEnabledAlert           *credentialConfig
 	passwordChangedAlert      *credentialConfig
 	requested, enabled        func() bool
+
+	managedPostgresRestoreSlot *credentialConfig
+	managedPostgresPlanExcess  *credentialConfig
 }
 
 // NewFromEnv performs no DB, credential or socket configuration reads with

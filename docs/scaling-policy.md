@@ -161,7 +161,9 @@ OTEL_EXPORTER_OTLP_METRICS_HEADERS="Authorization=Bearer $GREGALE_METRICS_KEY"
 OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
 ```
 
-Both `http/protobuf` and `http/json` work; bodies are limited to 1 MiB.
+Both `http/protobuf` and `http/json` work, uncompressed or with gzip
+(`Content-Encoding: gzip`, the OpenTelemetry Collector's default); bodies
+are limited to 1 MiB, also once decompressed.
 Each data point becomes a custom metric under the same per-app name cap:
 
 - **Gauges** are stored like a pushed value and can drive scaling.

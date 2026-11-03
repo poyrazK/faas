@@ -62,7 +62,7 @@ gregale app binding verify orders-worker --release DEPLOYMENT_UUID --release-pol
 ```
 
 The final command explicitly consents to publishing a safe test message. Save
-its run ID and resume it with `gregale app binding verification-runs resume
+its run ID and resume it with `gregale app binding verification resume
 orders-worker RUN_ID --json` after a disconnected session. Resume retains the
 original message and deadline. Verification does not promote traffic; promotion
 rechecks fresh completion evidence. Cancelled, expired or other-deployment

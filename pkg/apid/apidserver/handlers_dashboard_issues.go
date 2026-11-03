@@ -114,7 +114,7 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 	data.OwnershipRulesSaved = r.URL.Query().Get("ownership_rules") == "updated"
 	data.Since = strings.TrimSpace(r.URL.Query().Get("since"))
 	data.EventCursor = strings.TrimSpace(r.URL.Query().Get("event_cursor"))
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, actorAccount(r, acct).ID, dashboardIssueCookie)
 	if err != nil {
 		renderProblem(w, log, err)
 		return
@@ -154,7 +154,7 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 	if api.MustLimitsFor(acct.Plan).DebugTelemetryEnabled && s.sessions != nil {
-		replayToken, replayErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardDebugReplayAction, acct.ID, dashboardDebugReplayCSRFCookie)
+		replayToken, replayErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardDebugReplayAction, actorAccount(r, acct).ID, dashboardDebugReplayCSRFCookie)
 		if replayErr != nil {
 			log.Warn("dashboard issues: issue replay csrf", "account_id", acct.ID, "app_id", app.ID, "err", replayErr)
 		} else {

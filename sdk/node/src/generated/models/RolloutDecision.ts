@@ -40,6 +40,10 @@ export type RolloutDecision = {
    * The release gates judged with this decision.
    */
   gates?: Array<ReleaseGateResult>;
+  /**
+   * Post-release decisions only: why an automatic rollback did not take the release off: the problem code that refused it, such as rollback_crosses_release, or rollback_failed when it ran and did not restore the previous release. The regression was found; the release keeps serving until someone rolls back or ships a fix.
+   */
+  rollback_skipped?: string;
   decided_at: string;
 };
 

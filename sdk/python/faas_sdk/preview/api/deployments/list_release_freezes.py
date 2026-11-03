@@ -75,10 +75,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> Response[ListReleaseFreezesResponse | Problem]:
-    """List deploy freezes.
+    """List the account's deploy freezes.
 
-     Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback
-    policies. `app` narrows the list to the freezes covering one app.
+     The account's unlifted freezes that have not ended: active and upcoming windows, weekly windows and
+    after-rollback policies. They cover the account's personal apps; a company organization's freezes
+    are on `/v1/orgs/{slug}/freezes`. `app` narrows the list to the freezes covering one personal app; a
+    company app is refused with 409.
 
     Args:
         app (str | Unset):
@@ -107,10 +109,12 @@ def sync(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> ListReleaseFreezesResponse | Problem | None:
-    """List deploy freezes.
+    """List the account's deploy freezes.
 
-     Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback
-    policies. `app` narrows the list to the freezes covering one app.
+     The account's unlifted freezes that have not ended: active and upcoming windows, weekly windows and
+    after-rollback policies. They cover the account's personal apps; a company organization's freezes
+    are on `/v1/orgs/{slug}/freezes`. `app` narrows the list to the freezes covering one personal app; a
+    company app is refused with 409.
 
     Args:
         app (str | Unset):
@@ -134,10 +138,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> Response[ListReleaseFreezesResponse | Problem]:
-    """List deploy freezes.
+    """List the account's deploy freezes.
 
-     Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback
-    policies. `app` narrows the list to the freezes covering one app.
+     The account's unlifted freezes that have not ended: active and upcoming windows, weekly windows and
+    after-rollback policies. They cover the account's personal apps; a company organization's freezes
+    are on `/v1/orgs/{slug}/freezes`. `app` narrows the list to the freezes covering one personal app; a
+    company app is refused with 409.
 
     Args:
         app (str | Unset):
@@ -164,10 +170,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     app: str | Unset = UNSET,
 ) -> ListReleaseFreezesResponse | Problem | None:
-    """List deploy freezes.
+    """List the account's deploy freezes.
 
-     Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback
-    policies. `app` narrows the list to the freezes covering one app.
+     The account's unlifted freezes that have not ended: active and upcoming windows, weekly windows and
+    after-rollback policies. They cover the account's personal apps; a company organization's freezes
+    are on `/v1/orgs/{slug}/freezes`. `app` narrows the list to the freezes covering one personal app; a
+    company app is refused with 409.
 
     Args:
         app (str | Unset):

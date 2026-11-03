@@ -2,12 +2,11 @@
 package api
 
 import (
-	"regexp"
-
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var outboundQualificationRevision = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var outboundQualificationRevision = lazyregexp.New(`^[a-f0-9]{64}$`)
 
 // OutboundQualificationProbe is one probe-ready outbound binding of an
 // enforced qualification candidate. outboundd sends Policy through its own

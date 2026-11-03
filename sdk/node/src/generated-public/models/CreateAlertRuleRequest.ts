@@ -30,6 +30,10 @@ export type CreateAlertRuleRequest = {
    * Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify.
    */
   post_deploy_rollback_window_seconds?: number;
+  /**
+   * Also send the webhook a signed alert.resolved event when the rule recovers. Requires webhook_url; notification channels always receive resolves. Defaults to false, because receivers that predate it count every delivery as a fire.
+   */
+  notify_resolved?: boolean;
   name: string;
   enabled?: boolean;
   /**

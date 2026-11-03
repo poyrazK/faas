@@ -87,9 +87,10 @@ def sync_detailed(
 ) -> Response[Problem | ReleaseFreeze]:
     """Freeze production releases.
 
-     Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
-    the account. While a freeze is active, new production deployments are refused with `release_frozen`
-    unless the request carries `override_freeze`.
+     Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every
+    personal app of the account. While a freeze is active, new production deployments are refused with
+    `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its
+    organization: naming one is refused with 409.
 
     Args:
         body (CreateReleaseFreezeRequest): Creates a freeze. A window takes `starts_at` (default
@@ -122,9 +123,10 @@ def sync(
 ) -> Problem | ReleaseFreeze | None:
     """Freeze production releases.
 
-     Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
-    the account. While a freeze is active, new production deployments are refused with `release_frozen`
-    unless the request carries `override_freeze`.
+     Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every
+    personal app of the account. While a freeze is active, new production deployments are refused with
+    `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its
+    organization: naming one is refused with 409.
 
     Args:
         body (CreateReleaseFreezeRequest): Creates a freeze. A window takes `starts_at` (default
@@ -152,9 +154,10 @@ async def asyncio_detailed(
 ) -> Response[Problem | ReleaseFreeze]:
     """Freeze production releases.
 
-     Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
-    the account. While a freeze is active, new production deployments are refused with `release_frozen`
-    unless the request carries `override_freeze`.
+     Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every
+    personal app of the account. While a freeze is active, new production deployments are refused with
+    `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its
+    organization: naming one is refused with 409.
 
     Args:
         body (CreateReleaseFreezeRequest): Creates a freeze. A window takes `starts_at` (default
@@ -185,9 +188,10 @@ async def asyncio(
 ) -> Problem | ReleaseFreeze | None:
     """Freeze production releases.
 
-     Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
-    the account. While a freeze is active, new production deployments are refused with `release_frozen`
-    unless the request carries `override_freeze`.
+     Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every
+    personal app of the account. While a freeze is active, new production deployments are refused with
+    `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its
+    organization: naming one is refused with 409.
 
     Args:
         body (CreateReleaseFreezeRequest): Creates a freeze. A window takes `starts_at` (default

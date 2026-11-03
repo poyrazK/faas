@@ -45,7 +45,8 @@ Track the release workflow in GitHub Actions (`.github/workflows/release.yml`):
   every pin with the shipped Sigstore root (ADR-20261029155852).
 - Release publication with SHA256 checksums.
 
-Platform images on ghcr carry the same kind of provenance attestation.
+Platform images on ghcr carry the same kind of provenance attestation, plus
+an SPDX SBOM attestation.
 `images.yml` attests each promoted image's platform digests on main:
 builder-base for linux/amd64 and linux/arm64, each runtime base for
 linux/amd64. These are the digests the release pins in `runtime-bases.env`.

@@ -48,6 +48,14 @@ SELECT payload FROM financial_compute_leases
  WHERE account_id=sqlc.arg(account_id)::uuid AND (app_id=sqlc.narg(app_id)::uuid OR job_id=sqlc.narg(job_id)::uuid) AND instance_id=sqlc.arg(instance_id)::text
  ORDER BY started_at DESC,(payload->>'granted_at')::timestamptz DESC LIMIT 1;
 
+-- FinancialComputeLatestLease for many app instances in one statement, through
+-- financial_compute_instance_history (ADR 20261102160622). The caller matches
+-- each row's account and app to its instance's.
+-- name: FinancialComputeLatestAppInstanceLeases :many
+SELECT DISTINCT ON (instance_id) instance_id, payload FROM financial_compute_leases
+ WHERE instance_id=ANY(sqlc.arg(instance_ids)::text[]) AND account_id=ANY(sqlc.arg(account_ids)::uuid[]) AND app_id=ANY(sqlc.arg(app_ids)::uuid[])
+ ORDER BY instance_id, started_at DESC,(payload->>'granted_at')::timestamptz DESC;
+
 -- name: FinancialComputeAppManaged :one
 SELECT EXISTS(SELECT 1 FROM financial_compute_books WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid)
  OR EXISTS(SELECT 1 FROM financial_compute_job_books WHERE account_id=sqlc.arg(account_id)::uuid AND job_id=sqlc.narg(job_id)::uuid)

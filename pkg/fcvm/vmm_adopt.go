@@ -121,8 +121,7 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 		if info, err := os.Stat(rec.consolePath); err == nil {
 			from = info.Size()
 		}
-		w := &customerConsoleWriter{ring: ring}
-		go tailConsole(rec.consolePath, from, w, w.Flush, rec.done)
+		v.startConsoleTail(rec, from, &customerConsoleWriter{ring: ring})
 	}
 	go v.watchAdoptedProcess(l, cmd, rec, wait)
 	return nil
@@ -167,7 +166,9 @@ func (v *JailerVMM) adoptGuestBinds(instance string, pid int, binds []resourceAs
 			return fmt.Errorf("vmm: adopt %s: bind %s lacks its checkpoint", instance, a.Path)
 		}
 		f, err := openRecordedBindSource(a.Source, *a.SourceFile)
+		viaGuest := false
 		if errors.Is(err, errBindSourceReplaced) {
+			viaGuest = true
 			// The path now names another file: take the recorded one from
 			// the guest's own view, where it is still bound.
 			rel, relErr := filepath.Rel(chroot, a.Path)
@@ -183,7 +184,13 @@ func (v *JailerVMM) adoptGuestBinds(instance string, pid int, binds []resourceAs
 		mode := os.FileMode(a.OriginalMode).Perm()
 		mount, target := *a.Mount, *a.Target
 		v.mu.Lock()
-		handle, err := v.retainBindSourceLocked(bindSourceKey{path: a.Source, file: *a.SourceFile}, mode, f)
+		key := bindSourceKey{path: a.Source, file: *a.SourceFile}
+		handle, err := v.retainBindSourceLocked(key, mode, f)
+		if err == nil && viaGuest {
+			state := v.bindSourceModes[key]
+			state.viaGuest = true
+			v.bindSourceModes[key] = state
+		}
 		if err == nil {
 			if v.bindMounts == nil {
 				v.bindMounts = make(map[string][]ephemeralBind)

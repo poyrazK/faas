@@ -48,6 +48,8 @@ import type { ReleaseDiff } from '../models/ReleaseDiff.js';
 import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
 import type { ReleaseFreezeStatus } from '../models/ReleaseFreezeStatus.js';
 import type { ReleaseGate } from '../models/ReleaseGate.js';
+import type { ReleaseTimeline } from '../models/ReleaseTimeline.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackOperation } from '../models/RollbackOperation.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
@@ -1360,8 +1362,8 @@ export class DeploymentsService {
     });
   }
   /**
-   * List deploy freezes.
-   * Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. `app` narrows the list to the freezes covering one app.
+   * List the account's deploy freezes.
+   * The account's unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. They cover the account's personal apps; a company organization's freezes are on `/v1/orgs/{slug}/freezes`. `app` narrows the list to the freezes covering one personal app; a company app is refused with 409.
    * @returns ListReleaseFreezesResponse The account's freezes.
    * @throws ApiError
    */
@@ -1392,7 +1394,7 @@ export class DeploymentsService {
   }
   /**
    * Freeze production releases.
-   * Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`.
+   * Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every personal app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its organization: naming one is refused with 409.
    * @returns ReleaseFreeze The freeze.
    * @throws ApiError
    */
@@ -1421,7 +1423,7 @@ export class DeploymentsService {
   }
   /**
    * Lift a deploy freeze.
-   * Stops the freeze from withholding releases. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.
+   * Stops the freeze from withholding releases. Needs the admin scope (a signed-in session or an admin key); a deploy:write key gets 403. The freeze is kept, with who lifted it and when, for the audit trail. 404 `release_freeze_not_found` when no unlifted freeze has this ID.
    * @returns ReleaseFreeze The lifted freeze.
    * @throws ApiError
    */
@@ -1472,6 +1474,114 @@ export class DeploymentsService {
       },
       errors: {
         401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the deploy freezes covering an app.
+   * The app owner's unlifted freezes that have not ended, on all of its apps and on this app. A company app's freezes belong to its organization; a personal app's to its account. Requires `org.read_app` on a company app.
+   * @returns ListReleaseFreezesResponse The freezes covering the app.
+   * @throws ApiError
+   */
+  public static listAppReleaseFreezes({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListReleaseFreezesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/freezes',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Freeze production releases of an app.
+   * Creates a window, weekly or after-rollback freeze on the app, owned by the app's owner: the company organization of a company app. On a company app a member who deploys may create a window; weekly and after-rollback policies need an owner or admin (`org.manage_app_security`). `app` in the body must be empty or this app.
+   * @returns ReleaseFreeze The freeze on the app, owned by the app's owner.
+   * @throws ApiError
+   */
+  public static createAppReleaseFreeze({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateReleaseFreezeRequest,
+  }): CancelablePromise<ReleaseFreeze> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/freezes',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Lift a deploy freeze on an app.
+   * Lifts a freeze on this app. Needs the admin scope (a signed-in session or an admin key). Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID.
+   * @returns ReleaseFreeze The lifted freeze on the app.
+   * @throws ApiError
+   */
+  public static liftAppReleaseFreeze({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The ID of a freeze on this app.
+     */
+    id: string,
+  }): CancelablePromise<ReleaseFreeze> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/freezes/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -1551,7 +1661,7 @@ export class DeploymentsService {
   }
   /**
    * Remove a release gate.
-   * 404 `release_gate_not_found` when the app has no gate with this name.
+   * Needs the admin scope (a signed-in session or an admin key); a deploy:write key cannot remove the gates it deploys past. 404 `release_gate_not_found` when the app has no gate with this name.
    * @returns ReleaseGate The removed release gate.
    * @throws ApiError
    */
@@ -1619,7 +1729,7 @@ export class DeploymentsService {
   }
   /**
    * Require approvals for an app's production releases.
-   * Creates or replaces the policy. Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval.
+   * Creates or replaces the policy. Needs the admin scope (a signed-in session or an admin key). Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval.
    * @returns ReleaseApprovalPolicy The saved policy.
    * @throws ApiError
    */
@@ -1657,7 +1767,7 @@ export class DeploymentsService {
   }
   /**
    * Stop requiring release approvals.
-   * Releases waiting for approval continue on the canary's next step.
+   * Needs the admin scope (a signed-in session or an admin key). Releases waiting for approval continue on the canary's next step.
    * @returns void
    * @throws ApiError
    */
@@ -2281,7 +2391,7 @@ export class DeploymentsService {
   }
   /**
    * Approve or reject a release.
-   * Records one decision per person. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one.
+   * Records one decision per person. An approval needs a signed-in dashboard session: 403 `release_approval_session_required` to an API key or token, with the release's approval page as the hint; a rejection is accepted from either. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one.
    * @returns ReleaseApprovalStatus The release's approval status after the decision.
    * @throws ApiError
    */
@@ -2347,6 +2457,37 @@ export class DeploymentsService {
       },
       errors: {
         400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show a release's phase and history.
+   * Composes what Gregale recorded about one release into a phase, a one-line summary and its events, oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and gate results behind it, holds, completion, the post-release watch, abort or rollback, and the release that replaced it. Reads at most 500 audit rows; truncated=true means older history was left out.
+   * @returns ReleaseTimeline The release timeline.
+   * @throws ApiError
+   */
+  public static getReleaseTimeline({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ReleaseTimeline> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/timeline',
+      path: {
+        'id': id,
+      },
+      errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -2635,6 +2776,34 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a deployment's conditions.
+   * Preview (resource-conditions capability). The deployment's Ready,
+   * Progressing and RolledOut conditions, mapped from
+   * the response GET /v1/deployments/{id} returns and never stored.
+   * Failed, cancelled and superseded deployments report terminal
+   * conditions. Cache-Control no-store.
+   *
+   * @returns ResourceStatus The deployment's conditions.
+   * @returns Problem Missing sign-in, read scope or MFA, a deployment this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getDeploymentStatus({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/status',
+      path: {
+        'id': id,
       },
     });
   }

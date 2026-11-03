@@ -73,6 +73,12 @@ var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in
 // implementation.
 var ErrNoSlot = errors.New("builderd: no builder slot available")
 
+// ErrCoalesced is returned when a build that missed the cache is deferred
+// behind an identical build another claim is already building
+// (ADR-20261102100000). Like ErrNoSlot, the row is back in the queue; it is
+// claimed again once that build is done, on the node whose cache holds it.
+var ErrCoalesced = errors.New("builderd: deferred behind an identical running build")
+
 // ErrDraining is returned when a new build arrives after builderd has begun
 // shutting down. The durable queue remains the source of truth, so rejecting
 // new work here lets the next builderd instance claim it cleanly.
@@ -313,6 +319,21 @@ func (b *Builderd) InvalidateWarmBuilder() (WarmSnapshot, bool) {
 // WarmState reports the current guaranteed-slot lifecycle state.
 func (b *Builderd) WarmState() WarmState {
 	return b.warm.State()
+}
+
+// openImageBuildStage closes source_download and opens image_build when a
+// build starts, at both start sites: the VM spawn and the cache hit. The
+// source has been materialized, validated, hashed, and classified; everything
+// after this boundary belongs to the customer-visible image build phase,
+// including imaged's preparation of the layer. A cache hit that skipped this
+// left imaged's queue wait recorded as source download (up to 12 minutes in
+// production on 2026-10-30). Keep this projection best-effort, matching
+// imaged's transition helper; the durable build/deployment status remains
+// authoritative if the stage write is temporarily unavailable.
+func (b *Builderd) openImageBuildStage(ctx context.Context, deploymentID string, build state.Build, buildStart time.Time) {
+	if _, err := b.store.AppendDeploymentStage(ctx, deploymentID, state.StageSourceDownload, state.StageImageBuild, buildStart, builderQueueWaitReason(build)); err != nil {
+		b.log.Warn("builderd: open image-build stage", "deployment", deploymentID, "err", err)
+	}
 }
 
 // Production keeps warm builders off (Config.DisableWarmBuilders). A captured
@@ -1069,6 +1090,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[gitops] unchanged isolated context and recipe verified; reusing signed origin deployment %s build %s; target qualification remains required\n", cached.Toolchain.OriginDeploymentID, cached.Toolchain.OriginBuildID))
 		}
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
+		b.openImageBuildStage(ctx, dep.ID, build, buildStart)
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[build] cache hit (sha256:%s) — skipping vm spawn\n", cacheKeySHA256))
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
 			BuildResult{BuildID: build.ID, LayerPath: cached.Path, LayerBytes: cached.Bytes, CacheHit: true,
@@ -1094,6 +1116,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 
 	}
 	b.emitBuildLog(ctx, build.ID, "[build] cache "+cacheOutcome+", scheduling vm\n")
+	if b.deferBehindIdenticalBuild(ctx, build, cacheAvailable && !reuseOptedIn, cacheKeySHA256) {
+		return BuildResult{}, ErrCoalesced
+	}
 
 	// Slot allocation (CLAUDE.md: builds never outrank tenant wakes).
 	slot, releaseSlot, acquired := b.acquireSlot()
@@ -1127,15 +1152,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
 	buildStart = time.Now()
 	b.emitBuildLog(ctx, build.ID, "build started\n")
-	// The source has been materialized, validated, hashed, and classified.
-	// Everything after this boundary belongs to the customer-visible image
-	// build phase: VM startup, Railpack/buildkit, and artifact publication.
-	// Keep this projection best-effort, matching imaged's transition helper;
-	// the durable build/deployment status remains authoritative if the stage
-	// write is temporarily unavailable.
-	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, builderQueueWaitReason(build)); stageErr != nil {
-		b.log.Warn("builderd: open image-build stage", "deployment", dep.ID, "err", stageErr)
-	}
+	b.openImageBuildStage(ctx, dep.ID, build, buildStart)
 
 	if b.vm == nil {
 		b.markFailed(ctx, build, state.FailureInfra, "vm driver not wired (metal only)", buildStart)
@@ -1406,6 +1423,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	} else if out.DependencyCacheUnchanged {
 		b.emitBuildLog(ctx, build.ID, "dependencies unchanged — kept the dependency cache for the next build\n")
 	} else if out.DependencyCacheStored {
+		b.logSharedPlatformBytes(build, out)
 		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next build\n")
 	} else if cacheOwed {
 		b.emitBuildLog(ctx, build.ID, "dependency cache will be saved after the image is handed off\n")
@@ -1575,6 +1593,7 @@ func (b *Builderd) exportDeferredCache(ctx context.Context, vm DeferredCacheVM, 
 	}
 	b.log.Info("builderd: deferred dependency cache saved", "build", build.ID,
 		"deployment", build.DeploymentID, "duration_ms", time.Since(start).Milliseconds())
+	b.logSharedPlatformBytes(build, out)
 	b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next build\n")
 }
 
@@ -1632,6 +1651,40 @@ func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment 
 
 type buildCacheOutcomeWriter interface {
 	SetBuildCacheOutcome(context.Context, string, string, string) error
+}
+
+// deferBehindIdenticalBuild requeues build to wait for an identical build (the
+// same cache key) that an earlier claim is building, so the image is built
+// once and this build takes the cache hit (ADR-20261102100000). Services of a
+// project that share a build context, such as web, worker and beat on
+// `build: .`, otherwise build the same image side by side and hold builder
+// slots other services wait for. It waits only for a build claimed earlier,
+// so two identical builds never wait for each other, and whenever it cannot
+// tell it reports false and the build proceeds as before. A claim that is no
+// longer current (cancelled, or taken over) stops here.
+func (b *Builderd) deferBehindIdenticalBuild(ctx context.Context, build state.Build, cacheable bool, keySHA256 string) bool {
+	store, ok := b.store.(state.BuildCoalescingStore)
+	if !ok || !cacheable || keySHA256 == "" {
+		return false
+	}
+	producer, err := store.RunningIdenticalBuild(ctx, build, keySHA256)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			b.log.Warn("builderd: look up an identical running build (building anyway)", "build", build.ID, "err", err)
+		}
+		return false
+	}
+	err = store.DeferBuildBehind(ctx, build, producer)
+	b.pipeline.observeRequeue(ctx, requeueIdenticalBuild, err)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return true
+	case err != nil:
+		b.log.Warn("builderd: defer behind an identical build (building anyway)", "build", build.ID, "producer", producer, "err", err)
+		return false
+	}
+	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[build] build %s is already building this image; waiting to reuse its result\n", producer))
+	return true
 }
 
 // observeCacheOutcome persists the decision before the terminal build write
