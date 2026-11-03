@@ -109,11 +109,25 @@ func MonthComputeIncludedMBSeconds(current api.Plan, snapshots []FinancialPriceS
 // meterd records a plan change within a minute; until it has, the current
 // plan counts from now.
 func monthOverageCents(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, mbSeconds int64, usageBefore func(time.Time) (int64, error)) (int64, error) {
-	billed, err := MonthBilledComputeMBSeconds(current, withCurrentPlan(current, snapshots, now), now, mbSeconds, usageBefore)
+	billed, err := CurrentMonthBilledComputeMBSeconds(current, snapshots, now, mbSeconds, usageBefore)
 	if err != nil {
 		return 0, err
 	}
 	return api.OverageCentsForBillableMBSeconds(billed), nil
+}
+
+// CurrentMonthBilledComputeMBSeconds is MonthBilledComputeMBSeconds through
+// now for the month in progress: a plan change meterd has not recorded yet
+// counts from now. The spend cap and the usage pages read this one figure, so
+// they show what the provider is billed (ADR-20261101113742).
+func CurrentMonthBilledComputeMBSeconds(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, usage int64, usageBefore func(time.Time) (int64, error)) (int64, error) {
+	return MonthBilledComputeMBSeconds(current, withCurrentPlan(current, snapshots, now), now, usage, usageBefore)
+}
+
+// CurrentMonthComputeIncludedMBSeconds is the month's compute allowance as of
+// now, with a plan change meterd has not recorded yet counted from now.
+func CurrentMonthComputeIncludedMBSeconds(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time) int64 {
+	return MonthComputeIncludedMBSeconds(current, withCurrentPlan(current, snapshots, now), now)
 }
 
 // MonthBilledComputeMBSeconds returns the compute overage (mb_seconds) the

@@ -292,11 +292,13 @@ type Dispatcher struct {
 	// short schedules here so a 7-attempt path runs in <1s wall.
 	Backoffs map[state.AppWebhookRetryPolicy][]time.Duration
 
-	// HTTPClient is shared across deliveries; nil resolves to
-	// oci.NewEgressHTTPClientAllowLoopback (the SSRF-guarded
-	// dialer) so production egress rules apply on every POST. The
-	// e2e test sets FAAS_EGRESS_ALLOW_LOOPBACK=1 to permit
-	// loopback; that flag is read by oci.NewEgressHTTPClientAllowLoopback.
+	// HTTPClient overrides the delivery client (tests). Production
+	// leaves it nil: every delivery then sends through
+	// webhookout.SharedHTTPClient, the process-wide SSRF-guarded client
+	// with a bounded idle pool, with PerAttempt as its timeout. One
+	// pool for the process is the point: a client per delivery left a
+	// keep-alive connection idling per delivery. The e2e sets
+	// FAAS_EGRESS_ALLOW_LOOPBACK=1 to permit loopback.
 	HTTPClient    *http.Client
 	HealthMetrics *DeliveryHealthMetrics
 
@@ -368,20 +370,6 @@ func (d *Dispatcher) WithBackoffs(b map[state.AppWebhookRetryPolicy][]time.Durat
 // Run's "ctx.Done() returns nil" contract: a cancelled context is a
 // clean exit, not an error.
 func (d *Dispatcher) Run(ctx context.Context) error {
-	if d.HTTPClient == nil {
-		// SSRF-guarded dialer with loopback escape hatch for the e2e
-		// (mirrors pkg/webhookout.NewDispatcher pattern).
-		if hc := oci.NewEgressHTTPClientAllowLoopback(); hc != nil {
-			d.HTTPClient = hc
-		} else {
-			d.HTTPClient = oci.NewEgressHTTPClient()
-		}
-		// Apply PerAttempt as the client-level timeout only when we
-		// built the client ourselves (oci returns no-timeout
-		// clients). Mirrors pkg/webhookout.NewDispatcher.
-		d.HTTPClient.Timeout = d.PerAttempt
-	}
-
 	d.loadMu.Lock()
 	d.wake = make(chan struct{}, 1)
 	d.loadMu.Unlock()
@@ -740,7 +728,9 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	// Per-delivery dispatcher. We construct one per call so the
 	// HeaderSet is locked in (issue #476's wire is HeaderSetWebhook)
 	// and the Sleeper is the dispatcher-level injection (tests
-	// fast-forward 7.5h of backoff in <1s).
+	// fast-forward 7.5h of backoff in <1s). It is cheap: with a nil
+	// HTTPClient it sends through the process-wide shared client, so
+	// constructing one per delivery opens no transport of its own.
 	disp := webhookout.NewDispatcher(webhookout.DispatcherOptions{
 		MaxAttempts: 1, // the dispatcher owns the retry ladder
 		// The ledger attempt numbers the request: X-Faas-Webhook-Attempt

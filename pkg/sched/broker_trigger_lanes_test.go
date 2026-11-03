@@ -27,12 +27,15 @@ type laneSource struct {
 	polls   atomic.Int32
 	started chan struct{}
 	once    sync.Once
+	// asked is the batch_size_max of the last poll.
+	asked atomic.Int32
 }
 
 func (s *laneSource) Kind() string { return "lane-broker" }
 
-func (s *laneSource) Poll(ctx context.Context, _ sqlc.Trigger) sched.PollResult {
+func (s *laneSource) Poll(ctx context.Context, trigger sqlc.Trigger) sched.PollResult {
 	s.polls.Add(1)
+	s.asked.Store(trigger.BatchSizeMax)
 	s.once.Do(func() { close(s.started) })
 	if s.hold != nil {
 		select {

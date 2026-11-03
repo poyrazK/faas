@@ -501,12 +501,61 @@ func (s *server) releaseApprovalTrafficProblem(r *http.Request, app state.App, d
 // at 0% to the approvals a traffic increase meets: a release deployed with
 // no traffic, or parked for its schedule, is a forward release, not a
 // known-good one, and rolling back to it must not ship it past its approvals
-// or its schedule. A superseded target served before and needs none.
+// or its schedule. A superseded target is held by
+// supersededRollbackTargetProblem.
 func (s *server) rollbackTargetApprovalProblem(ctx context.Context, app state.App, target state.Deployment) *api.Problem {
 	if target.Status != state.DeployLive {
-		return nil
+		return s.supersededRollbackTargetProblem(ctx, app, target)
 	}
 	return s.approvalTrafficProblem(ctx, app, target)
+}
+
+// supersededRollbackTargetProblem holds a rollback to a superseded release
+// (amendment 10). A rejected release never ships by rollback, whether or not
+// its canary served. One that never served (staged without traffic, or
+// waiting for approval, then replaced) is a forward release, not a
+// known-good one: it meets the break-glass pause, the freezes and the
+// approvals a new release meets, and a rollback carries no override. A
+// release that served before is a rollback target, which those never hold.
+func (s *server) supersededRollbackTargetProblem(ctx context.Context, app state.App, target state.Deployment) *api.Problem {
+	_, status, err := s.releaseApprovalState(ctx, app, target)
+	if err != nil {
+		logCustomerFailure(s.log, "read release approvals for rollback target", err)
+		return api.ErrInternal("Gregale could not read this release's approvals.").WithHint("Retry in a moment.")
+	}
+	if status.State == api.ReleaseApprovalStateRejected {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "rejected")
+		return approval.Problem(status)
+	}
+	history, ok := s.store.(state.DeploymentServingHistoryStore)
+	if !ok {
+		return nil
+	}
+	served, err := history.DeploymentServedBefore(ctx, target.ID)
+	if err != nil {
+		logCustomerFailure(s.log, "read rollback target serving history", err)
+		return api.ErrInternal("Gregale could not check whether this release served before.").WithHint("Retry in a moment.")
+	}
+	if served {
+		return nil
+	}
+	if p := s.platformReleasePauseProblem(); p != nil {
+		return p
+	}
+	now := time.Now().UTC()
+	active, err := freeze.ActiveFor(ctx, s.store, app, target.Scope, now)
+	if err != nil {
+		s.log.Warn("deploy freeze: could not read freezes; rolling back", "app", app.ID, "err", err)
+	} else if len(active) > 0 {
+		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
+			WithHint("This release never served, so rolling back to it ships it as a new release. Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
+	}
+	if approval.Blocks(status) {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "held")
+		return approval.Problem(status)
+	}
+	return nil
 }
 
 func (s *server) approvalTrafficProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {

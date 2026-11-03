@@ -7930,6 +7930,10 @@ func (m *MemStore) UpsertGithubInstallBinding(_ context.Context, b GitHubBinding
 	if !ok || app.AccountID != b.AccountID {
 		return ErrNotFound
 	}
+	// Mirrors PgStore: rebinding to another repository retires its previews.
+	if previous, bound := m.githubBindings[b.AppID]; bound && githubBindingRepoChanged(previous, b) {
+		m.markAppPRPreviewsStaleLocked(app)
+	}
 	// Mirrors PgStore: a re-bind keeps the app's GitHub policy.
 	b.ProductionTrigger = m.githubBindings[b.AppID].ProductionTrigger
 	b.PreviewsOff = m.githubBindings[b.AppID].PreviewsOff
@@ -7980,7 +7984,14 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 	if !ok {
 		return ErrNotFound
 	}
-	// Mirrors PgStore: the app's PR preview environments go stale.
+	m.markAppPRPreviewsStaleLocked(parent)
+	delete(m.githubBindings, appID)
+	return nil
+}
+
+// markAppPRPreviewsStaleLocked mirrors PgStore's markAppPRPreviewsStaleTx.
+// Callers hold m.mu.
+func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 	anchors := make(map[string]string)
 	for _, set := range m.previewSets {
 		if root, ok := m.apps[set.RootAppID]; ok {
@@ -8005,8 +8016,6 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 			m.apps[id] = preview
 		}
 	}
-	delete(m.githubBindings, appID)
-	return nil
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
@@ -15089,6 +15098,12 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 	}
 	for _, id := range ids {
 		inv := m.invocations[id]
+		// A pull lease that lapsed on its message's last attempt
+		// dead-letters (ADR-20261101093812).
+		if m.queueLeaseExhaustedLocked(inv) {
+			m.setInvocationLocked(id, exhaustQueueLease(inv, now))
+			continue
+		}
 		quotaReserved := inv.QuotaReserved
 		inv.State = InvocationPending
 		inv.QuotaReserved = false
@@ -19969,19 +19984,21 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 	checkpoint := m.networkUsageCheckpoints[instanceID]
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
-		if !checkpoint.netTxValid {
-			netTxDelta = netTxCumulative
-		} else if netTxCumulative >= checkpoint.netTx {
+		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
+		if checkpoint.netTxValid && netTxCumulative >= checkpoint.netTx {
 			netTxDelta = netTxCumulative - checkpoint.netTx
+		} else {
+			netTxDelta = netTxCumulative
 		}
 		checkpoint.netTx = netTxCumulative
 		checkpoint.netTxValid = true
 	}
 	if netRxValid {
-		if !checkpoint.netRxValid {
-			netRxDelta = netRxCumulative
-		} else if netRxCumulative >= checkpoint.netRx {
+		// Mirrors PgStore: a counter below its checkpoint restarted from zero.
+		if checkpoint.netRxValid && netRxCumulative >= checkpoint.netRx {
 			netRxDelta = netRxCumulative - checkpoint.netRx
+		} else {
+			netRxDelta = netRxCumulative
 		}
 		checkpoint.netRx = netRxCumulative
 		checkpoint.netRxValid = true
@@ -29245,6 +29262,7 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		limit = 200
 	}
 	replayed := 0
+	var capped error
 	for _, ev := range m.deadLetterEventsForAccountLocked(accountID) {
 		if replayed >= limit || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
@@ -29258,12 +29276,18 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 			continue
 		}
+		if IsQueueCapError(err) {
+			if capped == nil {
+				capped = err
+			}
+			continue
+		}
 		if err != nil {
 			return replayed, err
 		}
 		replayed++
 	}
-	return replayed, nil
+	return replayedOrQueueCap(replayed, capped)
 }
 
 func (m *MemStore) DeleteDeadLetterEventForAccount(_ context.Context, accountID, eventID string) error {
@@ -29348,7 +29372,7 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		}
 		// ADR-20261031101000: replay resets attempts, so keyed work past its
 		// pending deadline would only expire again.
-		if inv.WorkPolicyName != "" && inv.WorkExpiresAt != nil && !inv.WorkExpiresAt.After(now) {
+		if KeyedReplayExpired(inv, now) {
 			return DeadLetterEvent{}, ErrKeyedReplayExpired
 		}
 		if _, err := m.retryQueueDeadLetterLocked(accountID, event.SourceID, now); err != nil {
@@ -29480,6 +29504,7 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 	}
 	events := m.deadLetterEventsLocked(appID)
 	replayed := 0
+	var capped error
 	for _, ev := range events {
 		if replayed >= limit || ev.AccountID != accountID || ev.ReplayedAt != nil || !DeadLetterReplayable(ev.Source) {
 			continue
@@ -29488,11 +29513,17 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 				continue
 			}
+			if IsQueueCapError(err) {
+				if capped == nil {
+					capped = err
+				}
+				continue
+			}
 			return replayed, err
 		}
 		replayed++
 	}
-	return replayed, nil
+	return replayedOrQueueCap(replayed, capped)
 }
 
 // DeleteDeadLetterEvent purges only the unified ledger projection. The source

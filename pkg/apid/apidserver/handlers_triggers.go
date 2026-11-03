@@ -68,6 +68,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -1117,6 +1118,10 @@ func (s *server) retryTriggerRecord(w http.ResponseWriter, r *http.Request, acct
 		uuidFromPgtype(trigger.ID).String(), recID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such record")
+			return
+		}
+		if problem := appevents.QueueCapProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not retry record"))

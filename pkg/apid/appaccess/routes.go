@@ -27,6 +27,7 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/agent-callbacks/revocations":  authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}":                   authz.OrgActionReadApp,
 	"PATCH /v1/apps/{slug}":                 authz.OrgActionConfigureApp,
+	"PATCH /v1/apps/{slug}/labels":          authz.OrgActionConfigureApp,
 	"DELETE /v1/apps/{slug}":                authz.OrgActionDeleteApp,
 	"POST /v1/apps/{slug}/restore":          authz.OrgActionDeleteApp,
 	"POST /v1/apps/{slug}/park":             authz.OrgActionDeployApp,
