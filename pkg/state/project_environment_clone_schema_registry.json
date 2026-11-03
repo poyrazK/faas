@@ -9593,6 +9593,7 @@
       "cron_schedule",
       "cron_timezone",
       "env_overrides",
+      "environment_git_source_id",
       "failure_rules",
       "id",
       "image_cmd",

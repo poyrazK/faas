@@ -1086,6 +1086,7 @@ type Querier interface {
 	// The partial index `deployments_snapshot_backoff_idx` covers this lookup.
 	DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentSnapshotBackoffActiveRow, error)
 	DetachEnvironmentGitSource(ctx context.Context, db DBTX, arg DetachEnvironmentGitSourceParams) (int64, error)
+	DetachedEnvironmentJobWasDeleted(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error)
 	DevBridgeByID(ctx context.Context, db DBTX, arg DevBridgeByIDParams) (DevBridgeByIDRow, error)
 	DevBridgeWebhookReplayByID(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByIDParams) (DevBridgeWebhookReplay, error)
 	DevBridgeWebhookReplayByKey(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByKeyParams) (DevBridgeWebhookReplay, error)
@@ -1141,11 +1142,18 @@ type Querier interface {
 	// router's live-scope fallback when no active release exists.
 	EnvironmentGitOpsHasServingManagedWorkload(ctx context.Context, db DBTX, arg EnvironmentGitOpsHasServingManagedWorkloadParams) (bool, error)
 	EnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (EnvironmentGitOpsImageCandidateRow, error)
+	EnvironmentGitOpsJobHasActiveTasks(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error)
 	EnvironmentGitOpsLifecyclePending(ctx context.Context, db DBTX, sourceID pgtype.UUID) (pgtype.Bool, error)
+	// Detached sources retain frozen history without owning new manual releases.
+	EnvironmentGitOpsManagedForScope(ctx context.Context, db DBTX, arg EnvironmentGitOpsManagedForScopeParams) (bool, error)
 	// The approved-intent transaction holds source/app/account before this row.
 	EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, arg EnvironmentGitOpsQueueForUpdateParams) (QueueBinding, error)
+	// Recovery observes the committed effect's original scope even when its
+	// workload is absent from the current approved definition.
+	EnvironmentGitOpsRuntimeEffectTarget(ctx context.Context, db DBTX, arg EnvironmentGitOpsRuntimeEffectTargetParams) (EnvironmentGitOpsRuntimeEffectTargetRow, error)
 	EnvironmentGitOpsUnqualifiedWorkloads(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitOpsUnqualifiedWorkloadsRow, error)
 	EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg EnvironmentGitSourceHealthParams) (EnvironmentGitSourceHealthRow, error)
+	EnvironmentJobIsReleased(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error)
 	EnvironmentQualificationAdmissionInputs(ctx context.Context, db DBTX, arg EnvironmentQualificationAdmissionInputsParams) (EnvironmentQualificationAdmissionInputsRow, error)
 	EnvironmentQualificationAppProtocol(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
 	EnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationConfigReceipt, error)
@@ -1192,6 +1200,7 @@ type Querier interface {
 	EnvironmentWorkloadGraphsForRollback(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphsForRollbackParams) ([]EnvironmentWorkloadGraph, error)
 	EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error)
 	EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentContextParams) ([]byte, error)
+	EnvironmentWorkloadIntentForOwnedJob(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentForOwnedJobParams) ([]byte, error)
 	EnvironmentWorkloadIntentLockSource(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentLockSourceParams) ([]pgtype.UUID, error)
 	// Called after qualificationCurrentTx locks the source and its mapped apps.
 	EnvironmentWorkloadQualificationAppOwner(ctx context.Context, db DBTX, id pgtype.UUID) (EnvironmentWorkloadQualificationAppOwnerRow, error)
@@ -4080,6 +4089,7 @@ type Querier interface {
 	LockEnvironmentGitOpsCandidateApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error)
 	LockEnvironmentGitOpsEnvironment(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsEnvironmentParams) (pgtype.UUID, error)
 	LockEnvironmentGitOpsIntentApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error)
+	LockEnvironmentGitOpsJobUpdate(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsJobUpdateParams) (string, error)
 	LockEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsLeaseParams) (EnvironmentGitopsJob, error)
 	LockEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsRuntimeEffectParams) (EnvironmentGitopsRuntimeEffect, error)
 	LockEnvironmentGitOpsServingProject(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsServingProjectParams) (pgtype.UUID, error)
@@ -5050,6 +5060,7 @@ type Querier interface {
 	// A callback may have made this run due while its coordinator still held the
 	// fence. Preserve that earlier wake when the coordinator parks afterwards.
 	ParkCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg ParkCustomerOperationWorkflowRunParams) error
+	PauseEnvironmentGitOpsJobUpdate(ctx context.Context, db DBTX, arg PauseEnvironmentGitOpsJobUpdateParams) error
 	PauseEnvironmentWorkloadRetirementJob(ctx context.Context, db DBTX, arg PauseEnvironmentWorkloadRetirementJobParams) error
 	PeekProductionQueue(ctx context.Context, db DBTX, arg PeekProductionQueueParams) ([]Invocation, error)
 	PendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsEffect, error)
@@ -6377,6 +6388,7 @@ type Querier interface {
 	ReleaseRunsCrossedBy(ctx context.Context, db DBTX, arg ReleaseRunsCrossedByParams) ([]ReleaseRunsCrossedByRow, error)
 	ReleaseUnownedNotification(ctx context.Context, db DBTX, arg ReleaseUnownedNotificationParams) (int64, error)
 	ReleaseWorkerCandidateOwner(ctx context.Context, db DBTX, arg ReleaseWorkerCandidateOwnerParams) (ReleaseWorkerCandidateOwnerRow, error)
+	RememberDetachedEnvironmentJobOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	RemoveApplicationStandardUnselectedDrains(ctx context.Context, db DBTX, arg RemoveApplicationStandardUnselectedDrainsParams) error
 	RemoveApplicationStandardUnselectedSigners(ctx context.Context, db DBTX, arg RemoveApplicationStandardUnselectedSignersParams) error
 	RenewAppForkLease(ctx context.Context, db DBTX, arg RenewAppForkLeaseParams) (AppFork, error)

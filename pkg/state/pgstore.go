@@ -8720,13 +8720,11 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if activeCanary {
 		return Deployment{}, ErrTrafficChangeDuringCanary
 	}
-	var managedWorkload bool
-	if err := tx.QueryRow(ctx, `select exists (
-		select 1 from deployments where app_id=$1 and environment_workload_runtime is not null
-	)`, appID).Scan(&managedWorkload); err != nil {
+	managedWorkload, err := environmentGitOpsManagedForScopeTx(ctx, tx, appID, trafficScope)
+	if err != nil {
 		return Deployment{}, fmt.Errorf("state: check managed workload before traffic update: %w", err)
 	}
-	if managedWorkload {
+	if trafficTarget.Managed || managedWorkload {
 		return Deployment{}, ErrConflict
 	}
 
@@ -8974,11 +8972,11 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if err := rows.Err(); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary iterate siblings: %w", err)
 	}
-	managedWorkload, err := environmentGitOpsManagedForAppTx(ctx, tx, dep.AppID)
+	managedWorkload, err := environmentGitOpsManagedForScopeTx(ctx, tx, dep.AppID, dep.Scope)
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: check managed workload before canary advance: %w", err)
 	}
-	if managedWorkload {
+	if dep.EnvironmentWorkloadManaged() || managedWorkload {
 		return Deployment{}, 0, ErrConflict
 	}
 	// Use the database clock both for the gate and the new stage anchor. That
@@ -9733,9 +9731,9 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
 		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')
-		   and not ($2 = 'live' and status <> 'live' and exists (
+		   and not ($2 = 'live' and status <> 'live' and (environment_workload_runtime is not null or exists (
 		     select 1 from deployments managed where managed.app_id=deployments.app_id
-		       and managed.scope=deployments.scope and managed.environment_workload_runtime is not null))
+		       and managed.scope=deployments.scope and environment_workload_ownership_active(managed))))
 		   and not (environment_workload_runtime is not null and status = 'live' and $2 not in ('live', 'failed'))`,
 		id, string(status), nullString(errMsg))
 	if err != nil {
@@ -10583,7 +10581,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	if err != nil {
 		return fmt.Errorf("state: check managed workload before deployment promotion: %w", err)
 	}
-	if managed {
+	if dep.EnvironmentWorkloadManaged() || managed {
 		return ErrConflict
 	}
 	if err := s.checkDeploymentAutomations(ctx, tx, dep); err != nil {
@@ -12118,7 +12116,7 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: check managed workload before rollback preparation: %w", err)
 	}
-	if managed {
+	if target.EnvironmentWorkloadManaged() || managed {
 		return Deployment{}, ErrInvalidArgument
 	}
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {

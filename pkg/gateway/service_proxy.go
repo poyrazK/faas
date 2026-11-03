@@ -754,7 +754,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	setProbeStage("binding")
 	p.withServiceRoutingInputs(r, callerDeploymentID, targetPath, probe)
-	if p.pinServicePolicy(dispatchWriter, r, caller, service, alias) {
+	if p.pinServicePolicy(dispatchWriter, r, caller, service, alias, environmentBinding) {
 		return
 	}
 	dependencyCtx = r.Context()
@@ -821,7 +821,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
 	authorize := p.authorizeServiceCaller
-	if environmentBinding != nil && environmentBinding.FrozenPolicy {
+	if environmentBinding != nil && environmentBinding.FrozenPolicy && p.policy == nil {
 		authorize = p.authorizeBound
 		if authorize == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "frozen service authorization is unavailable")

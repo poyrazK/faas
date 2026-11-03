@@ -74,5 +74,8 @@ func (s *server) RenderReleaseSafetyForTest(acct state.Account, slug string) *ht
 // GitOpsReleaseHoldForTest names what holds activating graph, or "".
 func (s *server) GitOpsReleaseHoldForTest(ctx context.Context, lease state.EnvironmentGitOpsLease, graph state.EnvironmentWorkloadGraph) (string, error) {
 	b := &environmentGitOpsBackend{server: s}
+	if lease.Source.ID != "" {
+		b.intent, _ = s.store.(state.EnvironmentGitOpsIntentStore)
+	}
 	return b.gitOpsReleaseHold(ctx, lease, graph)
 }

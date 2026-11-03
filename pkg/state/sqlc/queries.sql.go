@@ -13526,7 +13526,7 @@ func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX,
 }
 
 const customerOperationJobByName = `-- name: CustomerOperationJobByName :one
-SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, image_entrypoint, image_cmd, labels FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
+SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, image_entrypoint, image_cmd, labels, environment_git_source_id FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
 `
 
 type CustomerOperationJobByNameParams struct {
@@ -13571,6 +13571,7 @@ func (q *Queries) CustomerOperationJobByName(ctx context.Context, db DBTX, arg C
 		&i.ImageEntrypoint,
 		&i.ImageCmd,
 		&i.Labels,
+		&i.EnvironmentGitSourceID,
 	)
 	return i, err
 }
@@ -15744,6 +15745,18 @@ func (q *Queries) DetachEnvironmentGitSource(ctx context.Context, db DBTX, arg D
 	return result.RowsAffected(), nil
 }
 
+const detachedEnvironmentJobWasDeleted = `-- name: DetachedEnvironmentJobWasDeleted :one
+SELECT (status='deleted' AND NOT environment_workload_job_owned(j))::boolean AS replace
+FROM jobs j WHERE id=$1::uuid
+`
+
+func (q *Queries) DetachedEnvironmentJobWasDeleted(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, detachedEnvironmentJobWasDeleted, jobID)
+	var replace bool
+	err := row.Scan(&replace)
+	return replace, err
+}
+
 const devBridgeByID = `-- name: DevBridgeByID :one
 SELECT id,scope,attachment_digest,request_digest,expires_at,revoked_at
 FROM dev_bridge_sessions WHERE id=$1 AND account_id=$2
@@ -16658,11 +16671,29 @@ func (q *Queries) EnvironmentGitOpsImageCandidate(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const environmentGitOpsJobHasActiveTasks = `-- name: EnvironmentGitOpsJobHasActiveTasks :one
+SELECT EXISTS(SELECT 1 FROM job_runs r JOIN job_tasks t ON t.run_id=r.id
+ WHERE r.job_id=$1::uuid AND t.status IN ('queued','claimed'))
+`
+
+func (q *Queries) EnvironmentGitOpsJobHasActiveTasks(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, environmentGitOpsJobHasActiveTasks, jobID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const environmentGitOpsLifecyclePending = `-- name: EnvironmentGitOpsLifecyclePending :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
  OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects WHERE source_id=$1::uuid AND completed_at IS NULL)
  OR EXISTS(SELECT 1 FROM environment_workload_graphs WHERE source_id=$1::uuid AND phase='preparing')
- OR EXISTS(SELECT 1 FROM environment_workload_qualification_requests q JOIN environment_workload_graphs g ON g.id=q.graph_id WHERE g.source_id=$1::uuid) AS pending
+ OR EXISTS(SELECT 1 FROM environment_qualification_executions e
+   LEFT JOIN instances i ON i.id=e.instance_id
+   WHERE e.frame->>'source_id'=$1::uuid::text
+     AND (e.retired_at IS NULL OR i.state NOT IN ('parked','stopped','failed')))
+ OR EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+   JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN instances i ON i.id=q.reserved_instance_id
+   WHERE g.source_id=$1::uuid AND i.state NOT IN ('parked','stopped','failed')) AS pending
 `
 
 func (q *Queries) EnvironmentGitOpsLifecyclePending(ctx context.Context, db DBTX, sourceID pgtype.UUID) (pgtype.Bool, error) {
@@ -16670,6 +16701,25 @@ func (q *Queries) EnvironmentGitOpsLifecyclePending(ctx context.Context, db DBTX
 	var pending pgtype.Bool
 	err := row.Scan(&pending)
 	return pending, err
+}
+
+const environmentGitOpsManagedForScope = `-- name: EnvironmentGitOpsManagedForScope :one
+SELECT EXISTS (SELECT 1 FROM deployments d
+ WHERE d.app_id=$1::uuid AND d.scope=$2::text
+ AND environment_workload_ownership_active(d))::boolean AS managed
+`
+
+type EnvironmentGitOpsManagedForScopeParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+// Detached sources retain frozen history without owning new manual releases.
+func (q *Queries) EnvironmentGitOpsManagedForScope(ctx context.Context, db DBTX, arg EnvironmentGitOpsManagedForScopeParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentGitOpsManagedForScope, arg.AppID, arg.Scope)
+	var managed bool
+	err := row.Scan(&managed)
+	return managed, err
 }
 
 const environmentGitOpsQueueForUpdate = `-- name: EnvironmentGitOpsQueueForUpdate :one
@@ -16710,6 +16760,48 @@ func (q *Queries) EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, 
 		&i.DeploymentScope,
 		&i.EnvironmentID,
 		&i.OrgID,
+	)
+	return i, err
+}
+
+const environmentGitOpsRuntimeEffectTarget = `-- name: EnvironmentGitOpsRuntimeEffectTarget :one
+SELECT t.app_id,t.resource,t.environment_slug,t.required_at::timestamptz AS required_at,
+ t.stale_residents,t.starting_residents,t.stale_snapshots
+FROM environment_gitops_runtime_targets t
+JOIN environment_gitops_runtime_effects effect ON effect.source_id=t.source_id
+ AND effect.app_id=t.app_id AND effect.environment_slug=t.environment_slug
+WHERE effect.source_id=$1::uuid AND effect.id=$2::uuid
+ AND effect.completed_at IS NULL
+`
+
+type EnvironmentGitOpsRuntimeEffectTargetParams struct {
+	SourceID pgtype.UUID
+	EffectID pgtype.UUID
+}
+
+type EnvironmentGitOpsRuntimeEffectTargetRow struct {
+	AppID             pgtype.UUID
+	Resource          string
+	EnvironmentSlug   string
+	RequiredAt        pgtype.Timestamptz
+	StaleResidents    int64
+	StartingResidents int64
+	StaleSnapshots    int64
+}
+
+// Recovery observes the committed effect's original scope even when its
+// workload is absent from the current approved definition.
+func (q *Queries) EnvironmentGitOpsRuntimeEffectTarget(ctx context.Context, db DBTX, arg EnvironmentGitOpsRuntimeEffectTargetParams) (EnvironmentGitOpsRuntimeEffectTargetRow, error) {
+	row := db.QueryRow(ctx, environmentGitOpsRuntimeEffectTarget, arg.SourceID, arg.EffectID)
+	var i EnvironmentGitOpsRuntimeEffectTargetRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Resource,
+		&i.EnvironmentSlug,
+		&i.RequiredAt,
+		&i.StaleResidents,
+		&i.StartingResidents,
+		&i.StaleSnapshots,
 	)
 	return i, err
 }
@@ -16798,6 +16890,18 @@ func (q *Queries) EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg E
 		&i.OldestVerificationAgeSeconds,
 	)
 	return i, err
+}
+
+const environmentJobIsReleased = `-- name: EnvironmentJobIsReleased :one
+SELECT environment_workload_job_released(j)::boolean AS released
+FROM jobs j WHERE id=$1::uuid
+`
+
+func (q *Queries) EnvironmentJobIsReleased(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, environmentJobIsReleased, jobID)
+	var released bool
+	err := row.Scan(&released)
+	return released, err
 }
 
 const environmentQualificationAdmissionInputs = `-- name: EnvironmentQualificationAdmissionInputs :one
@@ -17617,6 +17721,25 @@ func (q *Queries) EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX,
 	var context []byte
 	err := row.Scan(&context)
 	return context, err
+}
+
+const environmentWorkloadIntentForOwnedJob = `-- name: EnvironmentWorkloadIntentForOwnedJob :one
+SELECT to_jsonb(i)::jsonb AS intent
+FROM app_environment_workload_intents i JOIN jobs j ON j.id=i.job_id
+WHERE i.account_id=$1::uuid AND i.job_id=$2::uuid
+ AND environment_workload_job_owned(j)
+`
+
+type EnvironmentWorkloadIntentForOwnedJobParams struct {
+	AccountID pgtype.UUID
+	JobID     pgtype.UUID
+}
+
+func (q *Queries) EnvironmentWorkloadIntentForOwnedJob(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentForOwnedJobParams) ([]byte, error) {
+	row := db.QueryRow(ctx, environmentWorkloadIntentForOwnedJob, arg.AccountID, arg.JobID)
+	var intent []byte
+	err := row.Scan(&intent)
+	return intent, err
 }
 
 const environmentWorkloadIntentLockSource = `-- name: EnvironmentWorkloadIntentLockSource :many
@@ -29352,10 +29475,7 @@ func (q *Queries) HasEarlierMCPNotification(ctx context.Context, db DBTX, arg Ha
 
 const hasEnvironmentGitOpsRuntimeDrift = `-- name: HasEnvironmentGitOpsRuntimeDrift :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = $1::uuid
-AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)
- UNION ALL
- SELECT 1 FROM environment_managed_fields WHERE source_id=$1::uuid
- AND (field_path='source' OR starts_with(field_path,'runtime/'))) AS drifted
+AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)) AS drifted
 `
 
 func (q *Queries) HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error) {
@@ -54882,19 +55002,23 @@ FROM (
     and occurrence.schedule_revision=managed.schedule_revision and occurrence.status='running'
     and occurrence.created_at>=release.created_at and occurrence.started_at>=release.created_at
     and run.created_at>=release.created_at and run.started_at>=release.created_at
-    and managed.kind='recurring' and managed.status='active'
-    and intent.schedule is not null and intent.source->>'kind'='image'
-    and managed.image_ref=intent.source->>'image'
+    and managed.kind='recurring' and managed.status IN ('active','paused')
+    and intent.schedule is not null
     and managed.image_materialization_status='ready' and coalesce(managed.image_storage_key,'')<>''
-    and managed.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$')
+    and (
+      (intent.source->>'kind'='image' and managed.image_ref=intent.source->>'image'
+       and managed.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$'))
+      or (intent.source->>'kind' in ('source','dockerfile')
+          and environment_workload_source_job_deployment_matches(managed.id,deployment.id)
+          and managed.image_resolved_digest='gregale-deployment:'||deployment.id::text
+          and managed.image_storage_key=deployment.rootfs_key)
+    )
     and managed.cron_schedule=intent.schedule->>'cron'
     and managed.cron_timezone=intent.schedule->>'timezone'
     and managed.schedule_policy is not distinct from NULLIF(intent.schedule->'schedule_policy','null'::jsonb)
     and managed.failure_rules is not distinct from NULLIF(intent.schedule->'failure_rules','null'::jsonb)
-    and source.mode='enforce' and not source.suspended and source.approved_revision_id is not null
-    and source.generation::text=deployment.environment_workload_runtime->>'generation'
-    and source.intent_version::text=deployment.environment_workload_runtime->>'intent_version'
-    and source.approved_revision_id::text=deployment.environment_workload_runtime->>'revision_id'
+    -- The exact active release authorizes serving. Controller suspension,
+    -- report mode and a newer approval do not withdraw that release.
     and source.id::text=deployment.environment_workload_runtime->>'source_id'
     and source.environment_id::text=deployment.environment_workload_runtime->>'environment_id'
     and deployment.environment_workload_runtime->>'app_id'=intent.app_id::text
@@ -54923,7 +55047,8 @@ FROM (
     and run.execution_class='standard' and run.failure_policy='continue'
     and run.input_manifest_version=0 and coalesce(run.input_digest,'')=''
     and run.input_manifest_uri is null and run.input_manifest_sha256 is null
-    and managed.max_parallelism=1 and managed.retry_max=0 and cardinality(managed.command)=0
+    and managed.max_parallelism=1 and managed.retry_max=0
+    and to_jsonb(managed.command)=coalesce(nullif(intent.runtime->'entrypoint','null'::jsonb),'[]'::jsonb)
     and managed.env_overrides=coalesce(deployment.environment_workload_runtime->'variables','{}'::jsonb)
     and coalesce(deployment.environment_workload_runtime->'queue_bindings','{}'::jsonb)='{}'::jsonb
   ) managed_job on true
@@ -57007,6 +57132,32 @@ func (q *Queries) LockEnvironmentGitOpsIntentApps(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockEnvironmentGitOpsJobUpdate = `-- name: LockEnvironmentGitOpsJobUpdate :one
+SELECT j.status FROM jobs j JOIN app_environment_workload_intents i ON i.job_id=j.id
+WHERE i.account_id=$1::uuid AND i.app_id=$2::uuid
+ AND i.environment_id=$3::uuid AND j.id=$4::uuid
+ AND j.account_id=i.account_id FOR UPDATE OF j
+`
+
+type LockEnvironmentGitOpsJobUpdateParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	JobID         pgtype.UUID
+}
+
+func (q *Queries) LockEnvironmentGitOpsJobUpdate(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsJobUpdateParams) (string, error) {
+	row := db.QueryRow(ctx, lockEnvironmentGitOpsJobUpdate,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentID,
+		arg.JobID,
+	)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const lockEnvironmentGitOpsLease = `-- name: LockEnvironmentGitOpsLease :one
@@ -72195,7 +72346,8 @@ SELECT jsonb_build_object(
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
         'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,
             'source_url',coalesce(d.source_url,''),'commit_sha',coalesce(d.commit_sha,''),'source_root',coalesce(d.source_root,''),
-            'inputs',environment_workload_deployment_inputs(d),'managed',d.environment_workload_runtime IS NOT NULL) ORDER BY d.id) FROM deployments d
+            'inputs',environment_workload_deployment_inputs(d),'managed',d.environment_workload_runtime IS NOT NULL,
+            'plan_hash',d.environment_workload_runtime->>'plan_hash') ORDER BY d.id) FROM deployments d
           WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
             'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
@@ -72691,6 +72843,21 @@ type ParkCustomerOperationWorkflowRunParams struct {
 // fence. Preserve that earlier wake when the coordinator parks afterwards.
 func (q *Queries) ParkCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg ParkCustomerOperationWorkflowRunParams) error {
 	_, err := db.Exec(ctx, parkCustomerOperationWorkflowRun, arg.Status, arg.DueAt, arg.ID)
+	return err
+}
+
+const pauseEnvironmentGitOpsJobUpdate = `-- name: PauseEnvironmentGitOpsJobUpdate :exec
+UPDATE jobs SET status='paused',updated_at=$1::timestamptz
+WHERE id=$2::uuid AND status='active'
+`
+
+type PauseEnvironmentGitOpsJobUpdateParams struct {
+	UpdatedAt pgtype.Timestamptz
+	JobID     pgtype.UUID
+}
+
+func (q *Queries) PauseEnvironmentGitOpsJobUpdate(ctx context.Context, db DBTX, arg PauseEnvironmentGitOpsJobUpdateParams) error {
+	_, err := db.Exec(ctx, pauseEnvironmentGitOpsJobUpdate, arg.UpdatedAt, arg.JobID)
 	return err
 }
 
@@ -93411,6 +93578,20 @@ func (q *Queries) ReleaseWorkerCandidateOwner(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const rememberDetachedEnvironmentJobOwners = `-- name: RememberDetachedEnvironmentJobOwners :exec
+UPDATE jobs j SET environment_git_source_id=s.id
+FROM environment_git_sources s
+JOIN environment_gitops_resources r ON r.source_id=s.id
+JOIN app_environment_workload_intents i ON i.app_id=r.app_id AND i.environment_id=s.environment_id AND i.account_id=s.account_id
+WHERE s.id=$1::uuid AND s.detached AND j.id=i.job_id
+ AND j.account_id=s.account_id AND j.environment_git_source_id IS NULL
+`
+
+func (q *Queries) RememberDetachedEnvironmentJobOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error {
+	_, err := db.Exec(ctx, rememberDetachedEnvironmentJobOwners, sourceID)
+	return err
+}
+
 const removeApplicationStandardUnselectedDrains = `-- name: RemoveApplicationStandardUnselectedDrains :exec
 DELETE FROM app_log_drains WHERE app_id = $1::uuid AND NOT (id = ANY($2::uuid[]))
 `
@@ -104985,9 +105166,9 @@ const updateTrafficDeploymentStatus = `-- name: UpdateTrafficDeploymentStatus :e
 UPDATE deployments SET status=$1::text, error=$2::text
 WHERE id=$3::uuid
   AND (status<>'cancelled' OR $1::text='cancelled')
-  AND NOT ($1::text='live' AND status<>'live' AND EXISTS (
+  AND NOT ($1::text='live' AND status<>'live' AND (environment_workload_runtime IS NOT NULL OR EXISTS (
     SELECT 1 FROM deployments managed WHERE managed.app_id=deployments.app_id
-      AND managed.scope=deployments.scope AND managed.environment_workload_runtime IS NOT NULL))
+      AND managed.scope=deployments.scope AND environment_workload_ownership_active(managed))))
   AND NOT (environment_workload_runtime IS NOT NULL AND status='live' AND $1::text NOT IN ('live', 'failed'))
 `
 

@@ -16,6 +16,37 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 
 Approved Git content, observed intent, qualification, activation and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source, runtime, secret-reference, service-binding and queue-binding fields prevent the applied revision from advancing.
 
+Owned source and runtime fields stop blocking convergence once the current whole
+graph has preparation, qualification, activation and serving proof. That evidence
+must still match the approved revision, generation, intent version, plan and exact
+active release. Stale or missing proof and unfinished fleet refreshes keep the
+revision pending. A newer definition removing a workload does not discard an
+earlier committed refresh: recovery still checks its original app and environment,
+invalidates old snapshots and waits for stale residents to refresh or drain.
+Report mode observes that work before planning and can finalize an effect that
+is already fresh or cold, including when a newer definition has drift or omits
+the workload. It does not invalidate snapshots, advance refresh boundaries or
+request a refresh. Stale runtime work keeps source detachment blocked until it
+becomes fresh or drains.
+
+The platform release pause holds both candidate activation and the first cutover
+of a full-environment retirement. Production freezes and application release
+approval policies also cover the apps being retired, including when no workload
+remains in the desired graph. Retirement already cut over can finish cleanup
+while a release hold is active; a new release waits until its holds end.
+
+Policy-effect recovery preserves the complete minimum gateway roster. Departed
+gateways with durable acknowledgements do not need to acknowledge again; missing
+receipts still block recovery. Every current serving gateway, including a newly
+registered gateway, must acknowledge the replay before recovery can finish.
+
+After activation, ordinary serving instances publish their runtime input receipts
+and park, stop, fail and retire through the normal scheduler lifecycle. Retained
+frozen deployment inputs do not make those instances qualification VMs. Capture
+and restore qualification reservations still require their private attempt lease
+and physical retirement evidence, including after parent removal; held legacy
+candidates missing an execution frame remain fenced.
+
 An immutable `source.kind: image` may set `source.full_rootfs: true` when the image is not layered on Gregale's runtime base. The choice is part of the reviewed source contract and is frozen with the candidate deployment; other source kinds reject it. Omitting the field keeps the existing dispatch policy, including inherited settings on adopted workloads.
 For an adopted workload with live deployments, a conflicting inherited full-rootfs setting blocks preparation until the live deployment policy and reviewed source agree.
 
@@ -157,6 +188,10 @@ gregale projects environments gitops approve shop staging \
 gregale projects environments gitops adoption-preview shop staging > adoption-plan.json
 ```
 
+Status reports and adoption previews omit before/after values, including
+unmanaged console values. Their plan hashes remain valid review receipts;
+reconciliation and adoption revalidate against the complete internal observation.
+
 Inspect the mapped resource IDs, owned fields and blocking reasons. Adoption preserves existing values and transfers the reviewed ownership; it does not activate a new workload:
 
 ```sh
@@ -227,7 +262,11 @@ creates or reconciles a deterministic, paused Gregale `jobs` record and stores
 its ID on the scoped workload intent. Database checks require that link to
 match the reviewed immutable image, schedule and variables; the Jobs API cannot
 edit or delete a linked record. Removing the schedule pauses and retires the
-managed Job. Its definition accepts a reviewed
+managed Job. Before changing a linked Job, the controller commits a reviewed,
+lease-checked pause and waits for queued and running tasks to finish. Accepted
+tasks retain their frozen inputs and private service identity while draining;
+the old schedule cannot admit new occurrences. Intent updates then leave the
+Job paused through qualification and release activation. Its definition accepts a reviewed
 `schedule` for `execution_mode: job`: a five-field cron expression, IANA
 timezone (UTC by default), and Gregale's schedule and failure policies. That
 contract is frozen and observed. Before activation, Gregale verifies that the
@@ -1309,6 +1348,18 @@ Customer source creation and updates support `report` mode. A request to enable
 `enforce` returns `409 environment_git_enforcement_unavailable`; the dashboard
 also disables that choice. Internal executor qualification remains separate.
 
+Suspending reconciliation pauses controller writes; report mode observes drift
+without applying changes. An active release continues to authorize its frozen
+private service bindings in either state. Calls still require the exact live
+caller and target deployments in that release, the original source scope and
+the reviewed binding policy. Pausing reconciliation grants no access to unbound
+services. Scheduled Job callers retain their release-bound identity during
+these controls and while a newer revision awaits activation. Image defaults,
+reviewed commands and qualified source/Dockerfile layers use the same scoped
+service authorization.
+New verification probes still require active enforcement and are invalidated
+when reconciliation is suspended or switched to report mode.
+
 The Terraform provider reserves the scoped fields managed by `gregale_env` and
 `gregale_project_environment_config`, plus workload source intent for scoped
 `gregale_deployment` resources. Refresh/import also registers ownership.
@@ -1340,14 +1391,43 @@ gregale projects environments gitops unbind shop staging \
 Both operations require the current generation and report mode, release only the
 retired binding's Git ownership and overrides, and preserve existing values,
 resource identities, revisions, reports and execution journals. Pending effects,
-graph preparation block retirement. Bindings with qualification records cannot
-yet be retired by this preview; those records and their execution evidence remain
-protected. Rebinding creates
+graph preparation and unfinished qualification cleanup block retirement.
+Completed qualification records remain protected without preventing retirement:
+every capture and restore execution must have retirement evidence and any
+associated instance must be terminal. Rebinding creates
 a new verified source with a later generation and requires fresh review, approval
 and adoption. Old approvals, plans and leases cannot authorize the replacement.
 Retired binding history remains stored for operator inspection; the status page
 shows the active binding. Repository identity comes from the project's current
-verified GitHub connection. Disconnecting does not delete any workload or queue.
+verified GitHub connection. Disconnecting removes the original source binding
+required for its private service aliases; it does not delete any workload or
+queue. See [ADR-20261103180000](adr/20261103180000-gitops-job-serving-and-source-retirement.md).
+
+Workload rollout ownership is scoped to the app and environment. A production
+candidate does not block manual staging traffic or canary advancement. Report
+mode and suspension retain ownership until disconnect. After disconnect, fresh
+manual deployments and replacement release sets may take over that environment;
+existing checked binding policies still apply. Frozen candidates cannot be
+activated manually, and their runtime inputs and qualification history remain
+protected. An active release remains selected until it is explicitly replaced or
+deactivated through the release APIs. See
+[ADR-20261103190000](adr/20261103190000-gitops-scoped-ownership-and-manual-handoff.md).
+
+Disconnect also releases scheduled Job edits and deletion. The Job, its runs
+and the retained scoped intent remain available as history. Rebinding alone
+does not lock those Jobs again: fresh approval, adoption and controller
+reconciliation are required. Candidate preparation reuses an edited Job or
+creates a replacement for a deleted Job, then freezes that identity in the new
+graph. A detached source Job needs ordinary image input before it can run
+without its former GitOps binding; its qualified source artifact cannot be
+replaced through ordinary materializer APIs.
+
+Private GitOps service calls pin the verified release and deployment with their
+reviewed authorization policy. HTTP and HTTPS aliases use the scoped binding
+even when ordinary app policy requires declared dependencies. Tenant checks,
+HTTPS requirements, method/path grants and release selectors still apply. See
+[ADR-20261103200000](adr/20261103200000-gitops-service-policy-and-job-handoff.md).
+
 
 Completed report history keeps at most 1,000 runs per source and seven days of
 reports, retaining the latest completed run and all active runs. Pruning happens

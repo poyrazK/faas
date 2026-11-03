@@ -10081,9 +10081,9 @@ WHERE d.id=sqlc.arg(deployment_id)::uuid;
 UPDATE deployments SET status=sqlc.arg(status)::text, error=sqlc.narg(error)::text
 WHERE id=sqlc.arg(deployment_id)::uuid
   AND (status<>'cancelled' OR sqlc.arg(status)::text='cancelled')
-  AND NOT (sqlc.arg(status)::text='live' AND status<>'live' AND EXISTS (
+  AND NOT (sqlc.arg(status)::text='live' AND status<>'live' AND (environment_workload_runtime IS NOT NULL OR EXISTS (
     SELECT 1 FROM deployments managed WHERE managed.app_id=deployments.app_id
-      AND managed.scope=deployments.scope AND managed.environment_workload_runtime IS NOT NULL))
+      AND managed.scope=deployments.scope AND environment_workload_ownership_active(managed))))
   AND NOT (environment_workload_runtime IS NOT NULL AND status='live' AND sqlc.arg(status)::text NOT IN ('live', 'failed'));
 
 -- name: ReadTrafficDeploymentStatus :one
@@ -10326,19 +10326,23 @@ FROM (
     and occurrence.schedule_revision=managed.schedule_revision and occurrence.status='running'
     and occurrence.created_at>=release.created_at and occurrence.started_at>=release.created_at
     and run.created_at>=release.created_at and run.started_at>=release.created_at
-    and managed.kind='recurring' and managed.status='active'
-    and intent.schedule is not null and intent.source->>'kind'='image'
-    and managed.image_ref=intent.source->>'image'
+    and managed.kind='recurring' and managed.status IN ('active','paused')
+    and intent.schedule is not null
     and managed.image_materialization_status='ready' and coalesce(managed.image_storage_key,'')<>''
-    and managed.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$')
+    and (
+      (intent.source->>'kind'='image' and managed.image_ref=intent.source->>'image'
+       and managed.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$'))
+      or (intent.source->>'kind' in ('source','dockerfile')
+          and environment_workload_source_job_deployment_matches(managed.id,deployment.id)
+          and managed.image_resolved_digest='gregale-deployment:'||deployment.id::text
+          and managed.image_storage_key=deployment.rootfs_key)
+    )
     and managed.cron_schedule=intent.schedule->>'cron'
     and managed.cron_timezone=intent.schedule->>'timezone'
     and managed.schedule_policy is not distinct from NULLIF(intent.schedule->'schedule_policy','null'::jsonb)
     and managed.failure_rules is not distinct from NULLIF(intent.schedule->'failure_rules','null'::jsonb)
-    and source.mode='enforce' and not source.suspended and source.approved_revision_id is not null
-    and source.generation::text=deployment.environment_workload_runtime->>'generation'
-    and source.intent_version::text=deployment.environment_workload_runtime->>'intent_version'
-    and source.approved_revision_id::text=deployment.environment_workload_runtime->>'revision_id'
+    -- The exact active release authorizes serving. Controller suspension,
+    -- report mode and a newer approval do not withdraw that release.
     and source.id::text=deployment.environment_workload_runtime->>'source_id'
     and source.environment_id::text=deployment.environment_workload_runtime->>'environment_id'
     and deployment.environment_workload_runtime->>'app_id'=intent.app_id::text
@@ -10367,7 +10371,8 @@ FROM (
     and run.execution_class='standard' and run.failure_policy='continue'
     and run.input_manifest_version=0 and coalesce(run.input_digest,'')=''
     and run.input_manifest_uri is null and run.input_manifest_sha256 is null
-    and managed.max_parallelism=1 and managed.retry_max=0 and cardinality(managed.command)=0
+    and managed.max_parallelism=1 and managed.retry_max=0
+    and to_jsonb(managed.command)=coalesce(nullif(intent.runtime->'entrypoint','null'::jsonb),'[]'::jsonb)
     and managed.env_overrides=coalesce(deployment.environment_workload_runtime->'variables','{}'::jsonb)
     and coalesce(deployment.environment_workload_runtime->'queue_bindings','{}'::jsonb)='{}'::jsonb
   ) managed_job on true
@@ -11338,7 +11343,8 @@ SELECT jsonb_build_object(
         'workload_intent',(SELECT to_jsonb(w) FROM app_environment_workload_intents w WHERE w.app_id=a.id AND w.environment_id=s.environment_id),
         'sources',coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'kind',d.kind,'image',d.image_digest,
             'source_url',coalesce(d.source_url,''),'commit_sha',coalesce(d.commit_sha,''),'source_root',coalesce(d.source_root,''),
-            'inputs',environment_workload_deployment_inputs(d),'managed',d.environment_workload_runtime IS NOT NULL) ORDER BY d.id) FROM deployments d
+            'inputs',environment_workload_deployment_inputs(d),'managed',d.environment_workload_runtime IS NOT NULL,
+            'plan_hash',d.environment_workload_runtime->>'plan_hash') ORDER BY d.id) FROM deployments d
           WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
             'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
@@ -11399,6 +11405,20 @@ SELECT set_config('gregale.gitops_lease', sqlc.arg(lease_token)::text, true)::te
 -- name: TouchEnvironmentGitOpsIntent :exec
 UPDATE environment_git_sources SET intent_version = intent_version + 1, updated_at = now()
 WHERE id = sqlc.arg(source_id)::uuid;
+
+-- name: LockEnvironmentGitOpsJobUpdate :one
+SELECT j.status FROM jobs j JOIN app_environment_workload_intents i ON i.job_id=j.id
+WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
+ AND i.environment_id=sqlc.arg(environment_id)::uuid AND j.id=sqlc.arg(job_id)::uuid
+ AND j.account_id=i.account_id FOR UPDATE OF j;
+
+-- name: EnvironmentGitOpsJobHasActiveTasks :one
+SELECT EXISTS(SELECT 1 FROM job_runs r JOIN job_tasks t ON t.run_id=r.id
+ WHERE r.job_id=sqlc.arg(job_id)::uuid AND t.status IN ('queued','claimed'));
+
+-- name: PauseEnvironmentGitOpsJobUpdate :exec
+UPDATE jobs SET status='paused',updated_at=sqlc.arg(updated_at)::timestamptz
+WHERE id=sqlc.arg(job_id)::uuid AND status='active';
 
 -- name: PutEnvironmentGitOpsVariable :exec
 INSERT INTO app_envs(account_id, app_id, scope, key, value)
@@ -11546,6 +11566,17 @@ FROM environment_gitops_runtime_targets t WHERE source_id = sqlc.arg(source_id):
 AND EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_desired_revisions rev ON rev.id=s.approved_revision_id
  WHERE s.id=t.source_id AND rev.definition->'workloads' ? substring(t.resource from 10))
 AND account_id = sqlc.arg(account_id)::uuid ORDER BY app_id;
+
+-- Recovery observes the committed effect's original scope even when its
+-- workload is absent from the current approved definition.
+-- name: EnvironmentGitOpsRuntimeEffectTarget :one
+SELECT t.app_id,t.resource,t.environment_slug,t.required_at::timestamptz AS required_at,
+ t.stale_residents,t.starting_residents,t.stale_snapshots
+FROM environment_gitops_runtime_targets t
+JOIN environment_gitops_runtime_effects effect ON effect.source_id=t.source_id
+ AND effect.app_id=t.app_id AND effect.environment_slug=t.environment_slug
+WHERE effect.source_id=sqlc.arg(source_id)::uuid AND effect.id=sqlc.arg(effect_id)::uuid
+ AND effect.completed_at IS NULL;
 
 -- name: InsertEnvironmentGitOpsRuntimeEffect :execrows
 INSERT INTO environment_gitops_runtime_effects(source_id, revision_id, generation, intent_version, plan_hash,
@@ -11732,10 +11763,7 @@ WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL) AS pending
 
 -- name: HasEnvironmentGitOpsRuntimeDrift :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = sqlc.arg(source_id)::uuid
-AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)
- UNION ALL
- SELECT 1 FROM environment_managed_fields WHERE source_id=sqlc.arg(source_id)::uuid
- AND (field_path='source' OR starts_with(field_path,'runtime/'))) AS drifted;
+AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)) AS drifted;
 
 -- name: ListServiceRecoveryApps :many
 SELECT a.id FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
@@ -18454,7 +18482,13 @@ SELECT e.id FROM project_environments e WHERE e.account_id=sqlc.arg(account_id):
 SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id=sqlc.arg(source_id)::uuid AND completed_at IS NULL)
  OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects WHERE source_id=sqlc.arg(source_id)::uuid AND completed_at IS NULL)
  OR EXISTS(SELECT 1 FROM environment_workload_graphs WHERE source_id=sqlc.arg(source_id)::uuid AND phase='preparing')
- OR EXISTS(SELECT 1 FROM environment_workload_qualification_requests q JOIN environment_workload_graphs g ON g.id=q.graph_id WHERE g.source_id=sqlc.arg(source_id)::uuid) AS pending;
+ OR EXISTS(SELECT 1 FROM environment_qualification_executions e
+   LEFT JOIN instances i ON i.id=e.instance_id
+   WHERE e.frame->>'source_id'=sqlc.arg(source_id)::uuid::text
+     AND (e.retired_at IS NULL OR i.state NOT IN ('parked','stopped','failed')))
+ OR EXISTS(SELECT 1 FROM environment_workload_qualification_requests q
+   JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN instances i ON i.id=q.reserved_instance_id
+   WHERE g.source_id=sqlc.arg(source_id)::uuid AND i.state NOT IN ('parked','stopped','failed')) AS pending;
 
 -- name: DetachEnvironmentGitSource :execrows
 UPDATE environment_git_sources SET detached=true,suspended=true,generation=generation+1,intent_version=intent_version+1,updated_at=now()
@@ -27713,3 +27747,31 @@ WHERE runtime_secret_signatures.signature IS DISTINCT FROM EXCLUDED.signature;
 -- name: ReadRuntimeSecretSignatures :many
 SELECT ciphertext_sha256, signature FROM runtime_secret_signatures
 WHERE ciphertext_sha256 = ANY(sqlc.arg(digests)::bytea[]);
+
+-- name: EnvironmentGitOpsManagedForScope :one
+-- Detached sources retain frozen history without owning new manual releases.
+SELECT EXISTS (SELECT 1 FROM deployments d
+ WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+ AND environment_workload_ownership_active(d))::boolean AS managed;
+
+-- name: RememberDetachedEnvironmentJobOwners :exec
+UPDATE jobs j SET environment_git_source_id=s.id
+FROM environment_git_sources s
+JOIN environment_gitops_resources r ON r.source_id=s.id
+JOIN app_environment_workload_intents i ON i.app_id=r.app_id AND i.environment_id=s.environment_id AND i.account_id=s.account_id
+WHERE s.id=sqlc.arg(source_id)::uuid AND s.detached AND j.id=i.job_id
+ AND j.account_id=s.account_id AND j.environment_git_source_id IS NULL;
+
+-- name: EnvironmentWorkloadIntentForOwnedJob :one
+SELECT to_jsonb(i)::jsonb AS intent
+FROM app_environment_workload_intents i JOIN jobs j ON j.id=i.job_id
+WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.job_id=sqlc.arg(job_id)::uuid
+ AND environment_workload_job_owned(j);
+
+-- name: DetachedEnvironmentJobWasDeleted :one
+SELECT (status='deleted' AND NOT environment_workload_job_owned(j))::boolean AS replace
+FROM jobs j WHERE id=sqlc.arg(job_id)::uuid;
+
+-- name: EnvironmentJobIsReleased :one
+SELECT environment_workload_job_released(j)::boolean AS released
+FROM jobs j WHERE id=sqlc.arg(job_id)::uuid;

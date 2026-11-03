@@ -5941,7 +5941,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 		d.CanaryTotalSteps <= 0 || params.ExpectedStep >= d.CanaryTotalSteps {
 		return Deployment{}, 0, ErrCanaryStateInvalid
 	}
-	if m.environmentGitOpsManagedForAppLocked(d.AppID) {
+	if d.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
 		return Deployment{}, 0, ErrConflict
 	}
 	d.RolloutState = rolloutState
@@ -6148,10 +6148,8 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 			return Deployment{}, err
 		}
 	}
-	for _, sibling := range m.deployments {
-		if sibling.AppID == d.AppID && normalizedDeploymentScope(sibling.Scope) == normalizedDeploymentScope(d.Scope) && sibling.EnvironmentWorkloadManaged() {
-			return Deployment{}, ErrConflict
-		}
+	if d.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
+		return Deployment{}, ErrConflict
 	}
 	for _, other := range m.deployments {
 		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && other.CanaryTotalSteps > 0 &&
@@ -9862,7 +9860,7 @@ func (m *MemStore) UpdateDeploymentStatus(ctx context.Context, id string, status
 		return ErrInvalidStateTransition
 	}
 
-	if status == DeployLive && d.Status != DeployLive && m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
+	if status == DeployLive && d.Status != DeployLive && (d.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope)) {
 		return ErrInvalidStateTransition
 	}
 	if d.EnvironmentWorkloadManaged() && d.Status == DeployLive && status != DeployLive && status != DeployFailed {
@@ -10069,7 +10067,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		}
 	}
 
-	if m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
+	if d.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
 		if !m.runtimeUpgradeTrafficAllowedLocked(d) &&
 			(d.TrafficPercent > 0 || !d.TrafficPercentExplicit || d.CanaryTotalSteps > 0 || IsServiceRollout(d)) {
 			return ErrConflict
@@ -11128,7 +11126,7 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
 	}
-	if m.environmentGitOpsManagedForScopeLocked(target.AppID, target.Scope) {
+	if target.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(target.AppID, target.Scope) {
 		return Deployment{}, ErrInvalidArgument
 	}
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
