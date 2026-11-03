@@ -2,7 +2,6 @@ package apidserver
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -53,26 +52,16 @@ func (s *server) getAppRouteCustomerUsage(w http.ResponseWriter, r *http.Request
 		RouteLimit: api.RouteCustomerUsageMaxRoutes, CustomerLimit: api.RouteCustomerUsageMaxCustomers,
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("route customer analytics"))
+		api.WriteProblem(w, routeAnalyticsProblem(err, "route customer analytics"))
 		return
 	}
 	writeJSON(w, http.StatusOK, routeCustomerResponse(app.Slug, deployment.ID, window, rows))
 }
 
+// routeCustomerWindow is the request analytics window; retention is anchored
+// to collection time there, including for a historical until.
 func routeCustomerWindow(r *http.Request, now time.Time, retention time.Duration) (requestAnalyticsWindow, error) {
-	window, err := parseRequestAnalyticsWindow(r, now, retention)
-	if err != nil {
-		return window, err
-	}
-	// Retention is anchored to collection time, including for historical until.
-	minimum := now.Add(-retention)
-	if !window.Until.After(minimum) {
-		return window, fmt.Errorf("until must be within retained telemetry")
-	}
-	if window.From.Before(minimum) {
-		window.From, window.WindowClamped = minimum, true
-	}
-	return window, nil
+	return parseRequestAnalyticsWindow(r, now, retention)
 }
 
 func routeCustomerResponse(slug, deployment string, window requestAnalyticsWindow, rows []sqlc.RequestTelemetryRouteCustomersRow) api.RouteCustomerUsageResponse {

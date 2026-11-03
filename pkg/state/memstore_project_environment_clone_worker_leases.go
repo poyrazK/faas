@@ -85,6 +85,9 @@ func (m *MemStore) ReleaseProjectEnvironmentCloneLease(_ context.Context, lease 
 	op.Revision++
 	op.UpdatedAt = now
 	stored.token, stored.until, stored.nextAttemptAt = "", time.Time{}, now.Add(retryAfter)
+	if lease.AttemptCount >= 1 && lease.AttemptCount < stored.attemptCount {
+		stored.attemptCount = lease.AttemptCount
+	}
 	m.projectEnvironmentCloneOperations[op.ID] = op
 	m.projectEnvironmentCloneWorkerLeases[op.ID] = stored
 	return nil
@@ -99,6 +102,18 @@ func (m *MemStore) clearCloneWorkerLeaseLocked(operationID string) {
 	lease := m.projectEnvironmentCloneWorkerLeases[operationID]
 	lease.token, lease.until = "", time.Time{}
 	m.projectEnvironmentCloneWorkerLeases[operationID] = lease
+}
+
+func (m *MemStore) UnfinishedProjectEnvironmentClonesForProject(_ context.Context, projectID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var count int64
+	for _, op := range m.projectEnvironmentCloneOperations {
+		if op.ProjectID == projectID && cloneOperationWorkerEligible(op.Status) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (m *MemStore) UnfinishedProjectEnvironmentClones(context.Context) (int64, error) {

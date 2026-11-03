@@ -521,36 +521,16 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		broker, err := natsBrokers.forURL(cfg.URL)
+		// The pool (nats_broker_pool.go) shares one connection per URL.
+		broker, release, err := natsBrokers.acquire(cfg.URL)
 		if err != nil {
 			return nil, err
 		}
-		return newNATSPoller(broker, t)
+		src, err := newNATSPoller(broker, t)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		return &pooledNATSPoller{triggerSource: src, broker: broker, release: release}, nil
 	})
-}
-
-// natsBrokerPool holds one connection per server URL (credentials
-// included), opened when the first trigger naming the URL builds its
-// poller. Triggers that share a URL share the connection. Nothing ever
-// registered a broker before, so every NATS trigger failed to construct.
-type natsBrokerPool struct {
-	mu      sync.Mutex
-	dial    func(rawURL string) (*natsBroker, error)
-	brokers map[string]*natsBroker
-}
-
-var natsBrokers = &natsBrokerPool{dial: NewNATSBroker, brokers: map[string]*natsBroker{}}
-
-func (p *natsBrokerPool) forURL(rawURL string) (*natsBroker, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if b, ok := p.brokers[rawURL]; ok {
-		return b, nil
-	}
-	b, err := p.dial(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	p.brokers[rawURL] = b
-	return b, nil
 }

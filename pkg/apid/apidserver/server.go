@@ -258,7 +258,10 @@ type server struct {
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
 	// managedPostgresCapMode is FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT, read
 	// by the usage views (ADR-20261025094915).
-	managedPostgresCapMode         managedpostgres.CapEnforcementMode
+	managedPostgresCapMode managedpostgres.CapEnforcementMode
+	// managedPostgresPlanExcessOn is true while the cap sweep suspends
+	// databases past their plan (ADR-20261102125208), so the views say so.
+	managedPostgresPlanExcessOn    bool
 	managedPostgresHealthCollector *managedpostgres.HealthCollector
 	// managedPostgresSQLProber probes the canary databases (ADR-20261029172812); nil when unconfigured.
 	managedPostgresSQLProber  *managedpostgres.SQLProber
@@ -3117,8 +3120,10 @@ func (s *server) handler() http.Handler {
 	// POST /v1/crons/{id}/run inserts. IDOR-safe byte-identical-404:
 	// bad UUID, no row, cross-account row all return the same
 	// not_found Problem body — no existence oracle. Same auth +
-	// scope as the cron-run write (ScopesReadSurface).
-	mux.HandleFunc("GET /v1/cron-fire-now-requests/{request_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFireCronRequest)))
+	// deploy:write reads it too: it may POST the run, and `gregale cron run
+	// --wait` follows the run through this row (crons audit 2026-11-03).
+	// requireMFA matches the rest of the cron family.
+	mux.HandleFunc("GET /v1/cron-fire-now-requests/{request_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.getFireCronRequest))))
 	// Builds (issue #299 / ADR-038 Phase 3). The /sbom route is the
 	// ADR-038 Phase-3 companion to /provenance — same auth, same
 	// scoping, same IDOR-safe Build → Deployment → App → AccountID
@@ -3202,7 +3207,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/domains/{domain}/hosts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearDomainHosts))))
 
 	// Crons.
-	mux.HandleFunc("GET /v1/crons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCrons))))
+	mux.HandleFunc("GET /v1/crons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.listCrons))))
 	mux.HandleFunc("POST /v1/crons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createCron)))))
 	mux.HandleFunc("PATCH /v1/crons/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateCron))))
 	mux.HandleFunc("PATCH /v1/crons/{id}/labels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateCronLabels))))
@@ -3874,7 +3879,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/bindings/queue-canaries", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createQueueBindingCanary))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings/queue-canaries/{canary}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBindingCanary))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/bindings/queue-canaries/{canary}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelQueueBindingCanary))))
-	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listQueueBindings))))
+	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.listQueueBindings))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(defaultJSONBodyLimit, s.createQueueBinding))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBinding))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBindingStatus))))
@@ -4560,6 +4565,10 @@ func (s *server) handler() http.Handler {
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRestore))))
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/revoke-sessions",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevokeSessions))))
+	// ADR-20261101214152: support raises (or returns to the plan's) a paid
+	// billing subject's object-storage ceiling.
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/object-storage-ceiling",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsObjectStorageCeiling))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/drain",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeDrain))))
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/force-drain",
@@ -4810,6 +4819,16 @@ func (s *server) handler() http.Handler {
 	// ADR-20261030093512: an organization billing subject has its own spend cap.
 	mux.HandleFunc("GET /v1/orgs/{slug}/overage-cap", s.orgBillingRoute(authz.OrgActionView, s.getOverageCap))
 	mux.HandleFunc("POST /v1/orgs/{slug}/overage-cap", s.orgBillingRoute(authz.OrgActionChangePlan, s.raiseOverageCap))
+	// ADR-20261031211500: an organization that owns its resources pays for
+	// them, so it holds the costs and budgets for that usage.
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/costs", s.orgFinancialBudgetRoute(false, s.getFinancialCosts))
+	mux.HandleFunc("POST /v1/orgs/{slug}/billing/budgets/preview", s.orgFinancialBudgetRoute(false, s.previewFinancialBudget))
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/budgets", s.orgFinancialBudgetRoute(false, s.listFinancialBudgets))
+	mux.HandleFunc("POST /v1/orgs/{slug}/billing/budgets", s.orgFinancialBudgetRoute(true, s.createFinancialBudget))
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/budgets/{id}", s.orgFinancialBudgetRoute(false, s.getFinancialBudget))
+	mux.HandleFunc("PUT /v1/orgs/{slug}/billing/budgets/{id}", s.orgFinancialBudgetRoute(true, s.updateFinancialBudget))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}/billing/budgets/{id}", s.orgFinancialBudgetRoute(true, s.deleteFinancialBudget))
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/budgets/{id}/revisions", s.orgFinancialBudgetRoute(false, s.listFinancialBudgetRevisions))
 	mux.HandleFunc("GET /v1/billing/status", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.getBillingStatus)))
 
 	// Billing retry (issue #242). Closes the customer-trust lie in
@@ -6141,6 +6160,8 @@ func idempotencyReplayable(status int) bool {
 
 // Binding refusals depend on fresh evidence and policy, and must not freeze a
 // worker's exact recovery key for 24 hours after the recipient is verified.
+// A full clone refusal clears once the source stops using a blocking resource
+// or admission opens, so a retry with the same key must be evaluated again.
 func idempotencyResponseReplayable(status int, body []byte) bool {
 	if !idempotencyReplayable(status) {
 		return false
@@ -6155,7 +6176,8 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 		return true
 	}
 	switch problem.Code {
-	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged:
+	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
+		api.CodeFullEnvironmentCloneUnavailable:
 		return false
 	default:
 		return true

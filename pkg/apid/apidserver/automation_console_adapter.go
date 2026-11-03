@@ -45,6 +45,12 @@ func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.
 	if handler == nil {
 		return automationconsole.Response{Status: http.StatusNotFound}
 	}
+	// The dashboard route is gated as Automations, but some operations invoke
+	// handlers owned by other capabilities (for example Workflows). Forwarding
+	// directly to a handler does not go through the API route middleware.
+	if h.server.capGate != nil && !h.server.capGate.Allowed(method+" "+path, flagSubject(r, acct)) {
+		return automationconsole.Response{Status: http.StatusNotFound}
+	}
 	request := r.Clone(r.Context())
 	request.Header = r.Header.Clone()
 	request.Header.Del("Idempotency-Key")

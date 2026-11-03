@@ -44,3 +44,13 @@
 - **Rejected alternatives:**
   - **Promote only `projects`.** Its value is the calls between services; leaving bindings and wake-ahead in beta would put GA deploys on beta call paths.
   - **Use native evidence only.** The KVM-free test runs on every pull request and found both defects; the native lane cannot run per pull request.
+
+## Amendment 2026-10-30: service calls stay in the caller's environment
+
+- **Defect:** service-call routing weighed every live deployment of the target app, across environments. A stage deployment goes live at 100% in its own scope, so once a service was deployed to `staging`, about half of production calls to it ran the staging deployment. A stage caller could likewise reach production services.
+- **Decision:** a service call stays in its caller's environment, read from the caller's deployment scope.
+  - A production caller (no, default or `production` scope) reaches only the target's production lane. That is the public edge's single lane: named `production` once it carries traffic, the legacy default lane before that.
+  - A stage caller reaches only the target's deployment in the same stage. When the target has none there, the call is refused with 403 (`gateway_service_call_total{outcome="environment_denied"}`); stages never fall back to production.
+  - An explicit target deployment (`api.TargetDeploymentHeader`) must be in the caller's environment.
+  - Release-set and GitOps bindings already name environment-correct deployments and are unchanged.
+- **Consequence:** a stage that relied on calling a production service must deploy that service to the stage.

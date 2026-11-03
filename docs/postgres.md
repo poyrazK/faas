@@ -34,6 +34,18 @@ Operators: see the [operator guide](managed-postgres.md).
 - A plan downgrade waits until your databases fit the new plan: the refusal
   lists the databases to delete and the ones to move to a class the plan
   includes. A database whose delete is scheduled no longer counts.
+- A plan can also drop without that check, for example when a subscription
+  ends. Databases the new plan no longer includes are then suspended, never
+  deleted:
+  - your oldest databases are kept, up to the plan's database limit;
+  - a newer one shows `plan_excess: database_limit`;
+  - one in a class the plan does not include shows
+    `plan_excess: service_class`.
+
+  `get`, `list` and the dashboard show it, and you get an email. Its data,
+  credentials and app bindings are kept, but it does not start until you
+  upgrade, delete a database, or resize it to an included class. The next
+  usage sweep, within minutes, resumes it.
 - When the platform is near capacity, new databases on the Free plan pause
   first (`503 managed_postgres_new_databases_paused`); paid plans can still
   create them.

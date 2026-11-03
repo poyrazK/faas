@@ -97,3 +97,27 @@ capacity, an app that has already used its fair share of the minute
 below their share keep the remaining tokens. The account total is unchanged,
 and an account with one active app is limited only by its bucket. A refused
 row is `RATE_LIMITED` as before.
+
+## Amendment 2 (2026-11-02) · request analytics reads are bounded and say when they are incomplete
+
+The bounded reads above covered route advice, the awake report and insights,
+but not request analytics. `GET /v1/apps/{slug}/analytics`, its
+`/timeseries` and `/route-customers` ran up to seven aggregate statements over
+the whole window with no statement timeout. The dashboard app page ran most
+of them on every render, and it re-renders on every account-wide live event.
+
+- Those reads (the summary, group, deployment, route/deployment and
+  dependency-span queries, both timeseries and route customers) now run in
+  the same read-only transaction with `RouteAnalyticsQueryTimeout` and answer
+  503 with "retry with a shorter ?since" when it is spent.
+- The dashboard panel has an overall `DashboardRequestAnalyticsTimeout`
+  (5 s); past it the panel is left out of that render. The page's live
+  re-render is throttled to one per event type every 3 s, and the first
+  event still renders at once.
+- Responses carry `telemetry_complete` and `telemetry_gaps`. They are judged
+  from the coverage heartbeats route removal uses, over the window up to
+  `RequestAnalyticsSettleLag` (2 min) before now, so ring overwrites, dropped
+  batches and rows over an ingest cap no longer lower totals silently.
+- Retention is counted back from now, not from `until`. A historical `until`
+  older than the plan's retention is a 400, as route customers already
+  answered.

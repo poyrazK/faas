@@ -83,9 +83,9 @@ if os.getenv("FAAS_PROFILING_ENABLED") == "1":
                             tags={"gregale_epoch": config["epoch"], "gregale_process": str(os.getpid())})
         _state.update(profiler=pyroscope, running=True)
 
-    def _start_heap():
+    def _start_heap(frames=None):
         import _gregale_heap
-        _gregale_heap.start()
+        _gregale_heap.start(frames or _gregale_heap.MAX_FRAMES)
         _state.update(heap=True, heap_from=time.time_ns())
 
     def _stop_heap(endpoint, flush):
@@ -104,6 +104,10 @@ if os.getenv("FAAS_PROFILING_ENABLED") == "1":
         _stop_heap(endpoint, flush and endpoint is not None)
         _state["capture"] = None
 
+    def _heap_low_memory():
+        import _gregale_heap
+        return _gregale_heap.low_memory()
+
     def _tick(endpoint):
         with urllib.request.urlopen(endpoint + "/control?pid=" + str(os.getpid()), timeout=0.2) as response:
             config = json.loads(response.read(4096))
@@ -112,9 +116,11 @@ if os.getenv("FAAS_PROFILING_ENABLED") == "1":
         if (_state["running"] or _state["heap"]) and (
                 config["suspended"] or not same_epoch or not config["enabled"]
                 or bool(config.get("capture")) != (capture is not None)):
-            # The window ends in its own epoch: flush. A new epoch is a
-            # checkpoint or restore, whose samples are discarded.
-            _stop(endpoint, flush=same_epoch and not config["suspended"])
+            # The window ends in its own epoch, or a capture cuts a
+            # continuous window short: flush, under the window's epoch. Any
+            # other new epoch is a checkpoint or restore: discard.
+            starting_capture = bool(config.get("capture")) and capture is None
+            _stop(endpoint, flush=(same_epoch or starting_capture) and not config["suspended"])
         if config["suspended"]:
             req = urllib.request.Request(endpoint + "/control/ack?pid=" + str(os.getpid()) + "&epoch=" + config["epoch"], method="POST")
             with urllib.request.urlopen(req, timeout=0.2):
@@ -132,7 +138,16 @@ if os.getenv("FAAS_PROFILING_ENABLED") == "1":
             if "cpu" in kinds:
                 _start_cpu(endpoint, config)
             if "heap" in kinds:
-                _start_heap()
+                import _gregale_heap
+                if not _gregale_heap.low_memory():
+                    # A capture with checkpoints was triggered by low memory.
+                    _start_heap(_gregale_heap.LOW_MEMORY_FRAMES if config.get("checkpoint_seconds", 0) > 0 else None)
+        elif _state["heap"] and _heap_low_memory():
+            # Tracing itself must not push the process into an OOM kill:
+            # stop it, freeing its traces, and keep the rest of the window.
+            import _gregale_heap
+            _gregale_heap.stop()
+            _state["heap"] = False
         elif (_state["heap"] and capture is not None and config.get("capture") and same_epoch
               and config.get("checkpoint_seconds", 0) > 0
               and time.time_ns() - capture["checkpoint_at"] >= config["checkpoint_seconds"] * 10**9):

@@ -54,3 +54,17 @@ Ticket subscribers poll retained history and do not advertise fleet ephemeral
 routes or presence. Browser factories obtain a fresh ticket on reconnect; SSE
 closes normally at ticket expiry so the existing helper can reconnect. Runtime
 qualification, migration application and production activation are deferred.
+
+## Amendment (2026-11-02): ticket reads before authentication are bounded
+
+A node cannot tell an issued ticket from a made-up `grt_` token without asking
+the control plane, so any client could make every handshake cost four
+queries. Now a node refuses a malformed token without a read, caches tickets
+(and tokens the control plane does not know, for 30 s) with access decisions
+(ADR-1113 amendment of 2026-11-02), and bounds the reads new connections cause:
+50 a second per endpoint (bursts of 500, so all 1,024 live tickets of an
+endpoint reconnect within seconds) and 200 a second per node (bursts of 1,000),
+`api.RealtimeTicketReads*`. A connection past them gets 503 with
+`Retry-After: 1`; a ticket the control plane cannot be asked about is 503, not
+401. Existing ticket connections recheck through the cache and are not
+budgeted. A revoked ticket's sockets close within about two seconds.

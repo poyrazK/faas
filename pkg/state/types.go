@@ -1996,6 +1996,12 @@ type AppManifest struct {
 	// /run/secrets in its main workload (ADR-20261023090000). imaged copies
 	// them into the guest manifest; they name app secrets, never values.
 	ProjectSecretFiles []api.SecretFile `json:"project_secret_files,omitempty"`
+	// ProjectReleaseCommand is the command of the Compose service this app
+	// waits for with service_completed_successfully (ADR-20261102192943).
+	// A deploy whose source declares no release command (gregale.yaml
+	// release.command or Procfile release:) runs it as the release command.
+	ProjectReleaseCommand      []string `json:"project_release_command,omitempty"`
+	ProjectReleaseCommandShell bool     `json:"project_release_command_shell,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -2511,10 +2517,14 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// submissionAttemptID is creation-only metadata, never copied onto the wire.
-	submissionAttemptID  string
-	releaseWorkerAttempt string
-	releaseConfigAttempt string
-	retryDeploymentID    string
+	submissionAttemptID string
+	// eventSubscriptionIntent is creation-only: the event subscriptions a
+	// production manifest deploy declares (ADR-20261101030512). nil records
+	// no intent; an empty slice declares none.
+	eventSubscriptionIntent *[]string
+	releaseWorkerAttempt    string
+	releaseConfigAttempt    string
+	retryDeploymentID       string
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`
@@ -8043,8 +8053,11 @@ type Org struct {
 	ProviderCustomerID       string
 	StripeSubscriptionItem   string
 	DeletedPending           bool
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	// DeletionRequestedAt is when DeletedPending turned on (ADR-20261101143527);
+	// meterd delivers the organization's usage from before it.
+	DeletionRequestedAt *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // OrgMembership is the (org, account) join row. The pair is the PK;

@@ -361,6 +361,16 @@ func staticEgressIPString(ip *netip.Addr) string {
 	return ip.String()
 }
 
+// deploymentStaticEgressIP pins the app's static egress IP (ADR-119) only for
+// a production-lane deployment. A stage leaves through the shared egress pool,
+// so a partner allowlist for production's address never accepts stage traffic.
+func deploymentStaticEgressIP(app state.App, dep state.Deployment) string {
+	if !state.ProductionDeploymentScope(dep.Scope) {
+		return ""
+	}
+	return staticEgressIPString(app.StaticEgressIP)
+}
+
 // startupDeadlineForApp resolves the readiness budget at the scheduler
 // boundary. The manifest stores an optional customer override; zero inherits
 // the plan default. Returning zero for an unknown plan preserves the vmmd
@@ -661,7 +671,7 @@ type Engine struct {
 	brokerLag BrokerLagReader
 
 	mu    sync.Mutex
-	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	appMu map[string]*appLock // app_id -> serialisation lock, while held or awaited
 	// frozenTier (ADR-1151, schedd `frozen_tier`) freezes idle eligible
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
@@ -1031,7 +1041,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		fcVer:                    fcVer,
 		log:                      log,
 		jobContext:               ctx,
-		appMu:                    map[string]*sync.Mutex{},
+		appMu:                    map[string]*appLock{},
 		restorePlacementInFlight: map[string]int{},
 		restartInFlight:          map[string]*restartCall{},
 		restartCompleted:         map[string]string{},
@@ -1970,22 +1980,20 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// before this path returns a running instance, and in
 	// admitAndDispatchWithOptions before a new admission. Checking it here
 	// as well cost every wake that goes on to admit a second round trip.
-	if err := insErr; err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
-		if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+	if err := insErr; err == nil {
+		if running := e.readRunningWake(ctx, appID, ins); running.modeMatches {
+			if running.barrierErr != nil {
+				release()
+				return WakeResult{}, running.barrierErr
+			}
+			if running.depErr != nil {
+				release()
+				return WakeResult{}, fmt.Errorf("sched: wake: instance deployment: %w", running.depErr)
+			}
 			release()
-			return WakeResult{}, err
+			return e.runningWakeResult(ctx, appID, app.AccountID, ins, running.dep), nil
 		}
-		// Port and provenance belong to the selected instance's deployment.
-		// A newer live row, including one in another stage, cannot replace it.
-		resolvedDeploymentID := ins.DeploymentID
-		dep, depErr := e.store.DeploymentByID(ctx, resolvedDeploymentID)
-		if depErr != nil {
-			release()
-			return WakeResult{}, fmt.Errorf("sched: wake: instance deployment: %w", depErr)
-		}
-		release()
-		return e.runningWakeResult(ctx, appID, app.AccountID, ins, dep), nil
-	} else if err != nil && !errors.Is(err, state.ErrNotFound) {
+	} else if !errors.Is(err, state.ErrNotFound) {
 		// A fenced app reports the barrier, as it did before the lookup.
 		if barrierErr := e.checkManagedPostgresAdmission(ctx, appID); barrierErr != nil {
 			release()
@@ -2024,8 +2032,13 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 // retained-release wake can use a zero-weight deployment without borrowing
 // another revision's instance.
 func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID, scope string) (state.Instance, error) {
-	var dep state.Deployment
-	var err error
+	var (
+		dep           state.Deployment
+		err           error
+		instances     []state.Instance
+		instancesErr  error
+		instancesRead bool
+	)
 	selected, haveSelection := wakeEnvironmentFrom(ctx)
 	haveSelection = haveSelection && selected.reusableFor(appID) &&
 		(deploymentID == "" || deploymentID == selected.deployment.ID)
@@ -2033,15 +2046,26 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 		// Reusing an instance of the selection made for this wake routes no
 		// differently than the gateway's cached target; admission re-resolves.
 		dep, deploymentID = selected.deployment, selected.deployment.ID
-	} else if deploymentID == "" {
-		if scope == "" {
-			dep, err = state.ResolveProductionDeployment(ctx, e.store, appID)
-		} else {
-			dep, err = e.store.LiveDeploymentForScope(ctx, appID, scope)
-		}
-		deploymentID = dep.ID
 	} else {
-		dep, err = e.store.DeploymentByID(ctx, deploymentID)
+		// The app's live instances do not depend on the deployment selected,
+		// so they are read beside it instead of one round trip after it.
+		concurrently(
+			func() {
+				switch {
+				case deploymentID != "":
+					dep, err = e.store.DeploymentByID(ctx, deploymentID)
+				case scope == "":
+					dep, err = state.ResolveProductionDeployment(ctx, e.store, appID)
+				default:
+					dep, err = e.store.LiveDeploymentForScope(ctx, appID, scope)
+				}
+			},
+			func() { instances, instancesErr = e.liveInstancesForApp(ctx, appID) },
+		)
+		instancesRead = true
+		if deploymentID == "" {
+			deploymentID = dep.ID
+		}
 	}
 	if err != nil {
 		return state.Instance{}, err
@@ -2061,9 +2085,11 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 			return state.Instance{}, err
 		}
 	}
-	instances, err := e.liveInstancesForApp(ctx, appID)
-	if err != nil {
-		return state.Instance{}, err
+	if !instancesRead {
+		instances, instancesErr = e.liveInstancesForApp(ctx, appID)
+	}
+	if instancesErr != nil {
+		return state.Instance{}, instancesErr
 	}
 	for _, instance := range instances {
 		// ADR-732: a running fork shares the live deployment but never
@@ -2307,7 +2333,21 @@ func (e *Engine) destroyForRuntimeConfigRestart(ctx context.Context, instance st
 }
 
 func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, ins state.Instance) bool {
-	app, err := state.AppForInstance(ctx, e.store, ins)
+	var dep state.Deployment
+	var depErr error
+	if ins.DeploymentID != "" {
+		dep, depErr = e.store.DeploymentByID(ctx, ins.DeploymentID)
+	}
+	return e.wakeInstanceModeMatchesDeployment(ctx, appID, ins, dep, depErr)
+}
+
+// wakeInstanceModeMatchesDeployment is wakeInstanceModeMatchesApp over the
+// instance's deployment row (and its read error), read by the caller.
+func (e *Engine) wakeInstanceModeMatchesDeployment(ctx context.Context, appID string, ins state.Instance, dep state.Deployment, depErr error) bool {
+	app, err := state.App{}, depErr
+	if err == nil || ins.DeploymentID == "" {
+		app, err = state.AppForInstanceDeployment(ctx, e.store, ins, dep)
+	}
 	if err != nil {
 		e.log.Warn("sched: wake: pinned app lookup for instance mode failed", "app", logsanitize.Field(appID), "instance", ins.ID, "err", logsanitize.FieldAny(err))
 		return false
@@ -3985,7 +4025,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// their old netns — the app_changed pg_notify path
 		// fires UpdateStaticEgressIP gRPC to patch them
 		// (pkg/sched/egress_drift.go).
-		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		StaticEgressIP: deploymentStaticEgressIP(app, dep),
 		// Issue #460 / ADR-053 (PR-C): per-deployment runtime port
 		// resolved from the explicit override or persisted source
 		// profile. The host-facing readiness port stays on 8080;
@@ -6073,7 +6113,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
-		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		StaticEgressIP: deploymentStaticEgressIP(app, dep),
 		// Issue #460 / ADR-053 (PR-C): effective deployment runtime
 		// port. 0 = legacy 8080 (vmmd wire default).
 		Port: deploymentRuntimePort(dep),
@@ -7281,14 +7321,18 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 }
 
 // appMustPark reports whether no instance of app may stay live: the app is
-// evicted_cold, its account is suspended or abuse-held, or the account has
-// reached its monthly spend cap. The cap check is cached and fails open
-// (OverageChecker), so a transient read error never parks an app.
+// evicted_cold, its account is suspended or abuse-held, or its billing
+// subject has reached its monthly spend cap. account is the app's resource
+// account (state.AppResourceAccount); for a company app whose organization
+// owns its resources, its ID is the creator's and the organization's cap
+// governs (ADR-20261030093512, as spendCapSubject). The cap check is cached
+// and fails open (OverageChecker), so a transient read error never parks an
+// app.
 func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.Account) bool {
 	if app.Status == state.AppEvictedCold || account.Status == state.AccountSuspended || account.AbuseHeld() {
 		return true
 	}
-	return e.spendCapReached(ctx, account.ID)
+	return e.spendCapReached(ctx, account.ResourceOwnerID())
 }
 
 // ParkApp tears down every live instance of an app whose lifecycle has already
@@ -10890,26 +10934,68 @@ func cooldownSRemaining(app *state.App, now time.Time) int {
 	return int(remaining.Seconds())
 }
 
+// appLock is one app's serialisation lock. refs counts its holder and its
+// waiters, under Engine.mu; the entry leaves Engine.appMu when it reaches
+// zero, so the map holds only apps someone is working on (ADR
+// 20261102160622). Every lock and unlock goes through lockApp, tryLockApp
+// and unlockApp: a caller that kept the *appLock past its unlock could lock
+// a mutex another caller no longer shares.
+type appLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
 func (e *Engine) lockApp(appID string) func() {
-	e.appMutex(appID).Lock()
+	e.appLockRef(appID).mu.Lock()
 	return func() { e.unlockApp(appID) }
 }
 
-func (e *Engine) unlockApp(appID string) {
-	e.appMutex(appID).Unlock()
+// tryLockApp locks appID's lock when it is free and reports whether it did.
+func (e *Engine) tryLockApp(appID string) (func(), bool) {
+	l := e.appLockRef(appID)
+	if l.mu.TryLock() {
+		return func() { e.unlockApp(appID) }, true
+	}
+	e.mu.Lock()
+	e.dropAppLockRefLocked(appID, l)
+	e.mu.Unlock()
+	return nil, false
 }
 
-// appMutex returns the stable per-app serialisation mutex, creating it on first
-// use. Never GC'd (one-box scale, single-digit apps).
-func (e *Engine) appMutex(appID string) *sync.Mutex {
+func (e *Engine) unlockApp(appID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	mu, ok := e.appMu[appID]
-	if !ok {
-		mu = &sync.Mutex{}
-		e.appMu[appID] = mu
+	l := e.appMu[appID]
+	if l == nil {
+		panic("sched: unlock of an app lock nobody holds: " + appID)
 	}
-	return mu
+	l.mu.Unlock()
+	e.dropAppLockRefLocked(appID, l)
+}
+
+// appLockRef returns appID's lock with a reference taken for the caller,
+// creating it on first use.
+func (e *Engine) appLockRef(appID string) *appLock {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.appMu == nil {
+		e.appMu = map[string]*appLock{}
+	}
+	l := e.appMu[appID]
+	if l == nil {
+		l = &appLock{}
+		e.appMu[appID] = l
+	}
+	l.refs++
+	return l
+}
+
+// dropAppLockRefLocked releases a reference; the caller holds e.mu.
+func (e *Engine) dropAppLockRefLocked(appID string, l *appLock) {
+	l.refs--
+	if l.refs <= 0 && e.appMu[appID] == l {
+		delete(e.appMu, appID)
+	}
 }
 
 // Ledger exposes the engine's admission ledger for the reaper's resident-RAM

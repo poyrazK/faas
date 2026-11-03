@@ -1,9 +1,11 @@
 package managedpostgres
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -87,20 +89,28 @@ func PlanExcess(databases []Database, limits api.ManagedPostgresPlanLimits) map[
 	return excess
 }
 
+// planExcessEnforced reports whether the sweep suspends databases past their
+// plan, rather than only logging them.
+func (e *CapEnforcer) planExcessEnforced() bool {
+	return e.planExcess == CapEnforcementOn && e.mode == CapEnforcementOn
+}
+
 // suspendPlanExcess holds each quota scope whose databases are all past the
 // subject's plan at its own use, so the provider suspends it. A scope that
 // also holds a database inside the plan keeps running. In shadow, or while
-// the compute cap is not on, it only logs.
-func (e *CapEnforcer) suspendPlanExcess(subjectID string, databases []Database, limits CapLimits, plan *computeCapPlan, summary *CapSweepSummary) {
+// the compute cap is not on, it only logs. It returns the databases it
+// suspends, by reason.
+func (e *CapEnforcer) suspendPlanExcess(subjectID string, databases []Database, limits CapLimits, plan *computeCapPlan, summary *CapSweepSummary) map[string]string {
 	if e.planExcess == CapEnforcementOff {
-		return
+		return nil
 	}
 	excess := PlanExcess(databases, limits.Entitlement)
 	if len(excess) == 0 {
-		return
+		return nil
 	}
 	summary.PlanExcessDatabases += len(excess)
-	enforce := e.planExcess == CapEnforcementOn && e.mode == CapEnforcementOn
+	enforce := e.planExcessEnforced()
+	suspended := make(map[string]string)
 	for i := range plan.decisions {
 		decision := &plan.decisions[i]
 		var reasons []string
@@ -123,11 +133,55 @@ func (e *CapEnforcer) suspendPlanExcess(subjectID string, databases []Database, 
 			e.logger.Info("managed postgres plan excess (shadow)", attrs...)
 		default:
 			summary.PlanExcessScopesSuspended++
+			for _, id := range decision.databaseIDs {
+				suspended[id] = excess[id]
+			}
 			decision.target = max(decision.used, 1)
 			decision.apply = capQuotaNeedsWrite(decision.current, decision.target, decision.used)
 			if decision.apply {
 				e.logger.Info("managed postgres plan excess suspended", attrs...)
 			}
+		}
+	}
+	return suspended
+}
+
+// recordPlanExcessNotices records a notice for each database the sweep
+// suspended and drops the notices of the subject's other databases. A
+// failure is logged; the next sweep tries again.
+func (e *CapEnforcer) recordPlanExcessNotices(ctx context.Context, databases []Database, suspended map[string]string, now time.Time, summary *CapSweepSummary) {
+	store, ok := e.store.(PlanExcessNoticeStore)
+	if !ok {
+		return
+	}
+	ids := make([]string, len(databases))
+	for i, database := range databases {
+		ids[i] = database.ID
+	}
+	recorded, err := store.SyncPlanExcessNotices(ctx, ids, suspended, now)
+	summary.PlanExcessNoticed += recorded
+	if err != nil {
+		e.logger.Warn("managed postgres plan excess notices not recorded", "database_ids", ids, "error", err)
+	}
+}
+
+// mailPlanExcessNotices queues the email for each notice still unmailed and
+// under a day old. A failed email does not fail the sweep.
+func (e *CapEnforcer) mailPlanExcessNotices(ctx context.Context, summary *CapSweepSummary) {
+	store, ok := e.store.(PlanExcessNoticeStore)
+	if !ok || e.planNotify == nil || !e.planExcessEnforced() {
+		return
+	}
+	notices, err := store.UnmailedPlanExcessNotices(ctx, e.now().UTC().Add(-api.InternalMailManagedPostgresPlanExcessTTL), e.batchSize)
+	if err != nil {
+		summary.PlanExcessNotifyFailed++
+		e.logger.Warn("managed postgres plan excess notices not listed", "error", err)
+		return
+	}
+	for _, notice := range notices {
+		if err := e.planNotify(ctx, notice); err != nil {
+			summary.PlanExcessNotifyFailed++
+			e.logger.Warn("managed postgres plan excess email not queued", "database", notice.DatabaseID, "error", err)
 		}
 	}
 }

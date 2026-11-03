@@ -11,11 +11,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// checkApplicationStandardAdmission runs the budget check and the enrollment
+// read at once: neither depends on the other, and every admission path waits
+// for both. The budget's answer still comes first.
 func (e *Engine) checkApplicationStandardAdmission(ctx context.Context, app state.App) error {
-	if err := e.checkFinancialBudgetAdmission(ctx, app, ""); err != nil {
-		return err
+	if app.OrgID == "" { // No enrollment to read.
+		return e.checkFinancialBudgetAdmission(ctx, app, "")
 	}
-	return e.checkApplicationStandardEnrollment(ctx, app)
+	var budgetErr, enrollmentErr error
+	concurrently(
+		func() { budgetErr = e.checkFinancialBudgetAdmission(ctx, app, "") },
+		func() { enrollmentErr = e.checkApplicationStandardEnrollment(ctx, app) },
+	)
+	if budgetErr != nil {
+		return budgetErr
+	}
+	return enrollmentErr
 }
 
 // checkApplicationStandardEnrollment is checkApplicationStandardAdmission

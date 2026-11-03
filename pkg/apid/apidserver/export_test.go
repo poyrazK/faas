@@ -602,6 +602,11 @@ func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
 }
 
 func (s *server) InboundWebhookURLForTest(token string) string { return s.inboundWebhookURL(token) }
+
+// ProfilePlanForTest exposes the plan profiling judges app by (ADR-1155).
+func (s *server) ProfilePlanForTest(ctx context.Context, fallback api.Plan, app state.App) api.Plan {
+	return s.profilePlan(ctx, fallback, app)
+}
 func (s *server) IsWebDashboardOriginForTest(origin *url.URL) bool {
 	return s.isWebDashboardOrigin(origin)
 }
@@ -647,6 +652,14 @@ var ParseIssueListFilter = parseIssueListFilter
 var ParseRequestAnalyticsGroupBy = parseRequestAnalyticsGroupBy
 var ParseRequestAnalyticsRouteFilter = parseRequestAnalyticsRouteFilter
 var ParseRequestAnalyticsWindow = parseRequestAnalyticsWindow
+
+// RequestAnalyticsCompleteness judges the window [from, until) read at asOf.
+func RequestAnalyticsCompleteness(ctx context.Context, reader interface {
+	RequestTelemetryCompleteness(context.Context, string, time.Time, time.Time) ([]string, error)
+}, appID string, from, until, asOf time.Time) (*bool, []string) {
+	return requestAnalyticsCompletenessFrom(ctx, reader, nil, appID, requestAnalyticsWindow{From: from, Until: until, AsOf: asOf})
+}
+
 var ParseScanMultipart = parseScanMultipart
 var ParseSuspectedDependency = parseSuspectedDependency
 var ParseSweepOlderThan = parseSweepOlderThan
@@ -788,6 +801,7 @@ var ValidateAnnotationForm = validateAnnotationForm
 var ValidateCapturedProjectEnvironmentDatabaseResources = validateCapturedProjectEnvironmentDatabaseResources
 var ValidateCapturedProjectEnvironmentObjectResources = validateCapturedProjectEnvironmentObjectResources
 var ValidateCloneCoordinatorInventory = validateCloneCoordinatorInventory
+var FullProjectEnvironmentCloneAdmissionProblem = fullProjectEnvironmentCloneAdmissionProblem
 var ValidateOverrides = validateOverrides
 var ValidateProjectEnvironmentPromotionResume = validateProjectEnvironmentPromotionResume
 var ValidateScannedSchedules = validateScannedSchedules
@@ -1184,6 +1198,9 @@ func (r *server) DashboardSaveProfileInvestigation(p0 http.ResponseWriter, p1 *h
 func (r *server) DeleteProjectEnvironment(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteProjectEnvironment(p0, p1, p2)
 }
+func (r *server) DeleteProjectForTest(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.deleteProject(p0, p1, p2)
+}
 func (r *server) DeleteQueueBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteQueueBinding(p0, p1, p2)
 }
@@ -1456,6 +1473,12 @@ func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
 }
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
+}
+
+// SourceRefManifestEventIntent is the declared subscription set a
+// production deploy records for go-live (ADR-20261101030512); nil records none.
+func SourceRefManifestEventIntent(staged sourceRefManifestStaged) []string {
+	return staged.eventSubscriptionIntent
 }
 
 // WithEventSubscriptionReconcile marks ctx as a production deploy whose
@@ -1951,6 +1974,13 @@ func (r *server) SetManagedPostgresCapModeForTest(mode managedpostgres.CapEnforc
 	r.managedPostgresCapMode = mode
 }
 
+// SetManagedPostgresPlanExcessForTest sets whether the views report databases
+// past their plan, as configureManagedPostgresCapMode would with
+// FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT and the compute cap both on.
+func (r *server) SetManagedPostgresPlanExcessForTest(on bool) {
+	r.managedPostgresPlanExcessOn = on
+}
+
 // EnsureDevPostgresForTest provisions a developer environment's database as
 // `gregale dev --postgres` does.
 func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Account, app state.App) (*api.DevPostgresResponse, error) {
@@ -2037,6 +2067,24 @@ var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
 // OIDCAccountLookup is the OIDC exchange's account lookup with project
 // repository bindings confirmed through repos (ADR-20261101160300,
 // amendment 1).
-func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLister) oidc.AccountLookup {
+func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
 	return newOIDCAccountLookup(store, repos)
+}
+
+// Inline security alerts (bug hunt H99).
+func (r *server) AlertPasswordChangedInline(ctx context.Context, acct state.Account, method string) {
+	r.alertPasswordChangedInline(ctx, acct, method)
+}
+func (r *server) AlertMFAEnabledInline(ctx context.Context, acct state.Account) {
+	r.alertMFAEnabledInline(ctx, acct)
+}
+func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account, method string) {
+	r.alertMFADisabledInline(ctx, acct, method)
+}
+
+// ResolveSourceReleaseCommand exposes the release command precedence of a
+// source deployment (ADR-20261102192943).
+func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
+	return resolved.command, resolved.shell, problem
 }

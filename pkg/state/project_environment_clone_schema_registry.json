@@ -905,7 +905,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -1628,6 +1634,19 @@
     "kind": "operational"
   },
   {
+    "table": "app_memory_pressure",
+    "columns": [
+      "app_id",
+      "episodes",
+      "last_at",
+      "lowest_available_mb",
+      "peak_anon_mb",
+      "total_mb",
+      "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_openapi_docs",
     "columns": [
       "account_id",
@@ -2307,7 +2326,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -3741,7 +3766,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -4855,6 +4886,19 @@
       "reason",
       "revision",
       "session_id",
+      "status",
+      "updated_at"
+    ]
+  },
+  {
+    "table": "deployment_event_subscription_intents",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "created_at",
+      "declared_subscription_ids",
+      "deployment_id",
+      "reason",
       "status",
       "updated_at"
     ]
@@ -7580,6 +7624,7 @@
       "processed_at",
       "received_at",
       "repo_full_name",
+      "skip_reason",
       "status",
       "updated_at"
     ],
@@ -8881,7 +8926,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "deployment"
+      "owner": "deployment",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -9462,6 +9513,7 @@
       "input_manifest_version",
       "job_id",
       "latest_start_at",
+      "logs_cleared_finished_at",
       "occurrence_id",
       "operation_id",
       "parallelism",
@@ -9752,6 +9804,27 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_overage_pending",
+    "columns": [
+      "allowance_unit_seconds",
+      "billed_storage_byte_seconds",
+      "billed_unit_seconds",
+      "from_millicents",
+      "live",
+      "period_start",
+      "previous_live",
+      "previous_millicents",
+      "provider",
+      "step_at",
+      "storage_pool_bytes",
+      "subject_id",
+      "target_millicents",
+      "used_storage_byte_seconds",
+      "used_unit_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_bindings",
     "columns": [
       "access",
@@ -9786,7 +9859,21 @@
       "materialize"
     ],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "state",
+          "not": "deleted"
+        },
+        {
+          "column": "deleted_at",
+          "null": true
+        },
+        {
+          "column": "scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -10178,6 +10265,16 @@
       "provider_resource_id",
       "source_resource_id",
       "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_plan_excess_notices",
+    "columns": [
+      "database_id",
+      "mail_intent_id",
+      "reason",
+      "recorded_at"
     ],
     "kind": "operational"
   },
@@ -11077,6 +11174,12 @@
           "managed_realtime_endpoints",
           "id"
         ]
+      ],
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
       ]
     }
   },
@@ -11376,6 +11479,12 @@
           "managed_realtime_endpoints",
           "id"
         ]
+      ],
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
       ]
     }
   },
@@ -12234,7 +12343,17 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "data_checkpoint_unavailable"
+      "unavailable": "data_checkpoint_unavailable",
+      "live": [
+        {
+          "column": "state",
+          "not": "deleted"
+        },
+        {
+          "column": "scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -12475,6 +12594,17 @@
       "token"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "object_storage_ceiling_grants",
+    "columns": [
+      "granted_at",
+      "granted_by",
+      "max_bytes",
+      "owner_id",
+      "reason"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "object_storage_capacity_reconciliations",
@@ -13171,6 +13301,7 @@
       "business_name",
       "created_at",
       "deleted_pending",
+      "deletion_requested_at",
       "id",
       "last_quota_warning_at",
       "name",
@@ -16873,7 +17004,13 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "work_activation_unavailable"
+      "unavailable": "work_activation_unavailable",
+      "live": [
+        {
+          "column": "retired_at",
+          "null": true
+        }
+      ]
     }
   },
   {

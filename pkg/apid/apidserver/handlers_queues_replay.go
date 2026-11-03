@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -52,6 +53,10 @@ func (s *server) queueDeadLetterReplay(w http.ResponseWriter, r *http.Request, a
 			// dead-lettered). All three render as 404 with the
 			// same shape — no enumeration.
 			api.WriteProblem(w, api.ErrInvocationNotFound(id))
+			return
+		}
+		if problem := appevents.QueueCapProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("queue dead-letter replay"))

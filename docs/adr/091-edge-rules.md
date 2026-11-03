@@ -1613,6 +1613,65 @@ another app's host to this app is refused too; deploy such a project with an
 account key. Account keys, organization keys and dashboard sessions are not
 limited.
 
+## Amendment (2026-11-02): review round 8 — app-bound route targets, gate paths, JWT audience, rule shapes, renames
+
+A review of main after round 7 found seven more gaps.
+
+1. **An app-bound credential may route only to its own app.** The
+   2026-10-31 check kept a deploy token's rules on its app's hosts, but a
+   `route` rule there could still name any public app of the account: a
+   leaked token could serve another app on its app's hosts, past that app's
+   host-specific rules. `RouteTargetProblem` now refuses, for such a
+   credential, any target but the token's app, on create, update and
+   rollback. The refusal does not depend on whether the slug exists.
+2. **Access gates match the client's path, then the rewritten one.** Rewrite
+   runs before the `ip`, `geo`, `jwt`, `throttle`, `waf` and `challenge`
+   gates, and they matched only the rewritten path: a `jwt` rule on
+   `/api/**` stopped applying once a rewrite took `/api` away. Declared
+   routes and the request deadline already used the client's path. The gates
+   now pick their rule for the client's path first and the rewritten path
+   second (`matchEdgeGate`), so a gate written for either keeps applying; the
+   trace does the same. Later kinds still see the rewritten path.
+3. **A new or edited `jwt` rule names an audience or a required claim.** The
+   gateway skips the `aud` check when `audience` is empty, so such a rule
+   accepted every token its issuer signs, and shared issuers (GitHub Actions
+   OIDC, Google) sign tokens for anyone's audience. Create and update now
+   refuse a rule with neither `audience` nor `required_claims`. Rules saved
+   before keep working and may be restored by rollback; this is a validation
+   change, not a gateway one.
+4. **A rule the gateway cannot enforce fails its host closed.** Every
+   compiler skipped a row whose kind it did not know or whose action was
+   missing, and the WAF and challenge compilers skipped one whose values apid
+   would refuse, all without a compile error, so the rule silently stopped
+   refusing. The control plane upgrades before the edge, so a kind added
+   later reaches older gateways first. Such rows are now compile errors,
+   counted and failing the host closed like a bad glob; a test keeps every
+   `state.EdgeRuleKind` known to the gateway. docs/release-compatibility.md
+   asks that new kinds, and fields that make a rule refuse more, be released
+   behind a capability turned on after the edge rollout.
+5. **The other surfaces that write a company app's rules have organization
+   permissions.** OpenAPI policy apply and route-policy apply create edge
+   rules but had no reviewed action, so only the creator could use them.
+   Applies take `org.manage_app_security`, importing or editing the OpenAPI
+   contract `org.configure_app`, and previews, plans, receipts, throttle
+   suggestions and `GET /v1/apps/{slug}/policy/status` `org.read_app`.
+6. **The MCP access audit reads the rules that apply to the app.** The CLI
+   read `GET /v1/edge-rules`, the caller's own account, so an organization
+   member other than a company app's creator saw none of its rules and the
+   audit failed. It now reads `GET /v1/apps/{slug}/edge-rules?covering=true`,
+   and the server's policy fingerprint covers the same set: the app's own JWT
+   rules and those of its live sibling apps in the same owner scope other
+   than `@app` ones (before, every JWT rule of the account, including other
+   apps' `@app` rules, which never apply to this app).
+7. **A rename moves rules written for the app's platform hostname.** Round 4
+   left exact-host rules on `<slug>.<apps domain>` behind: the rename frees
+   that hostname, so an `ip` allowlist written for it stopped protecting the
+   app without a word, and a later app of the account given the old slug
+   would have taken it. The rename now fences those rules' old and new hosts
+   and moves the account's rules on the old platform hostname (under any
+   apps domain) to the new one, as it retargets route rules. Rules on custom
+   domains are unchanged.
+
 ## Amendment (2026-11-02): shared caches and rules that name one host
 
 A further edge-security review found two ways an access rule did not hold.
@@ -1647,3 +1706,59 @@ A further edge-security review found two ways an access rule did not hold.
    throttle, validate, maintenance, waf, challenge) names one exact host. A
    setting that serves an app only on its custom domains is a separate
    decision.
+
+## Amendment (2026-11-02, later): method overrides, path parameters, unresolved countries, client-chosen scopes
+
+A fourth edge-security review found gates that a request could step around,
+and a geo rule that refused clients it had no reason to refuse.
+
+1. **Method overrides skipped method-scoped gates.** Express
+   (method-override), Laravel, Rails, Spring and ASP.NET run a POST that
+   carries `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override`,
+   or a `_method` query parameter, as the method it names. A gate scoped to
+   `DELETE` compared the request line's `POST` and let it through. A gate of
+   a kind that denies or constrains (`jwt`, `ip`, `geo`, `limit`, `throttle`,
+   `validate`, `maintenance`, `waf`, `challenge`) now also matches the
+   override method: the gateway selects the higher-priority of the request
+   method's match and the override's (the request method's on a tie), and
+   conditions see the method each selects for. Only the nine standard method
+   names count, an override equal to the request method is ignored, and the
+   headers and query are read before any rewrite runs. The trace simulator
+   applies the same rule and says when a rule matched through an override. A
+   `_method` field in a form body is not read: the edge does not parse request
+   bodies to select rules, and the docs say to leave `match_methods` off a
+   gate for an app that honours one.
+2. **`;` path parameters skipped path-scoped gates.** Servlet containers and
+   Spring drop each segment's `;` parameters before routing, so
+   `/admin;x/users` reaches the app's `/admin/users` while the gate on
+   `/admin/**` compared the raw path. Protective path matching now also
+   tries the normalized path with each segment cut at its first `;` (and that
+   form case-folded). As with the earlier forms, it only adds coverage.
+3. **A deny-only geo rule refused addresses with no country.** The hardening
+   in #1942 answered every lookup that produced no country with 503, so an
+   address the database places in no country (a reserved range, or one
+   allocated after the pinned database was built) could not reach an app
+   whose only geo rule denied two countries. The docs meanwhile said such
+   requests pass. Now only a failed lookup is unavailable (503, as before);
+   an address with no country is in no list, so a deny-only rule passes it
+   and an allow list refuses it with 403 `geo_denied`. The database is a
+   monthly DB-IP release pinned by checksum and never fetched by the daemon;
+   it had not been bumped since 2026-09, and the age gauge
+   (`geoip_db_age_seconds`) was registered but never set. That gauge is
+   replaced by `geoip_db_build_timestamp_seconds`, read at scrape time from
+   the database's `build_epoch`, and `FaasGeoIPDatabaseStale` warns when the
+   loaded database is more than 75 days old (two missed releases). The pin
+   moves to 2026-11. Countries still never come from `CF-IPCountry` or any
+   other request header.
+4. **The challenge pass docs overclaimed.** They said a pass "cannot be
+   copied to another machine". A pass is stateless and bound to the client's
+   IPv4 /24 or IPv6 /48 and User-Agent for up to its TTL (24 hours at most),
+   so every client in that range with that User-Agent can use it. The docs
+   now say so and point to short pass TTLs and an address-keyed `throttle`
+   rule for a range that keeps coming back.
+5. **Gates scoped by client-chosen values.** A gate scoped by
+   `match_headers`, or by a `header:`, `cookie:` or `query:` field in its
+   condition, applies only when the client sends that value. This stays
+   allowed (an app may want a gate only for one client), but
+   `gregale edge rule create` now warns, and the docs say to scope gates by
+   path, method, `client_ip`, `country` or `asn`.

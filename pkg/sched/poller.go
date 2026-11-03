@@ -99,8 +99,10 @@ type PollResult struct {
 // trigger_id) pair and calls Poll/Ack/Nack/Close on it.
 //
 // The interface intentionally does NOT take the trigger's
-// batch_size_max / batch_window_ms — those are enforced by the
-// dispatch tick (commit #14) after Poll returns. Keeping the
+// batch_size_max as a parameter — pollers read it from the trigger
+// and the dispatch tick truncates after Poll returns. batch_window_ms
+// is not applied: a batch is what one poll returns
+// (ADR-20261101104512). Keeping the
 // poller interface broker-agnostic lets each implementation pick
 // its own "reasonable default" (kafka: 1 message; nats: pull-batch
 // size = 100; queue: 64 rows; etc.) and the dispatch tick

@@ -83,6 +83,10 @@ type kafkaPoller struct {
 	topic    string
 	groupID  string
 	batchMax int
+	// lag reads the group's committed lag; group keeps the consumer-group
+	// errors kafka-go logs (kafka_broker_health.go). Either may be nil.
+	lag   *kafkaLagReader
+	group *kafkaGroupHealth
 
 	mu        sync.Mutex
 	inFlight  map[string]kafka.Message
@@ -330,6 +334,7 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 	if err != nil {
 		return nil, err
 	}
+	group := newKafkaGroupHealth()
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        cfg.Brokers,
 		GroupID:        cfg.Group,
@@ -340,6 +345,7 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 		MaxWait:        250 * time.Millisecond,
 		CommitInterval: 0, // explicit commits only
 		Dialer:         dialer,
+		ErrorLogger:    group.logger(),
 	})
 	return &kafkaPoller{
 		reader:   reader,
@@ -347,6 +353,8 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 		topic:    cfg.Topic,
 		groupID:  cfg.Group,
 		batchMax: 100,
+		lag:      newKafkaLagReader(cfg, dialer),
+		group:    group,
 		inFlight: map[string]kafka.Message{},
 		open:     map[int]map[int64]bool{},
 		settled:  map[int][]kafka.Message{},
@@ -426,7 +434,7 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		k.open[msg.Partition][msg.Offset] = true
 		k.mu.Unlock()
 	}
-	return PollResult{Records: out}
+	return k.pollHealth(PollResult{Records: out})
 }
 
 func kafkaSourceRecord(msg kafka.Message) SourceRecord {
@@ -591,20 +599,8 @@ func (k *kafkaPoller) Close() error {
 	for kk := range k.inFlight {
 		delete(k.inFlight, kk)
 	}
+	k.lag.close()
 	return k.reader.Close()
-}
-
-// BrokerStats returns consumer lag and queue depth from segmentio/kafka-go.
-func (k *kafkaPoller) BrokerStats(_ context.Context, _ sqlc.Trigger) BrokerStats {
-	if k == nil || k.reader == nil {
-		return BrokerStats{Available: false}
-	}
-	stats := k.reader.Stats()
-	return BrokerStats{
-		Lag:       stats.Lag,
-		Depth:     stats.QueueLength,
-		Available: true,
-	}
 }
 
 func init() {

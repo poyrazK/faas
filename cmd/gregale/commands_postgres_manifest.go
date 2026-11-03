@@ -102,6 +102,12 @@ func deployManifestPostgresBindings(ctx context.Context, client manifestPostgres
 		return fmt.Errorf("load app %q for database bindings: %w", slug, err)
 	}
 	databases, err := client.ListManagedPostgresDatabases(ctx)
+	if readRefused(err) {
+		// Attaching a database grants the app a credential, which takes
+		// postgres:manage; a deploy token or a deploy:write key cannot
+		// (ADR-20261031162858 amendment 1).
+		return fmt.Errorf("gregale.yaml attaches databases to %q, which needs a credential with postgres:manage; a deploy token or a deploy:write key cannot attach them: %w", slug, err)
+	}
 	if err != nil {
 		return fmt.Errorf("list managed databases for %q: %w", slug, err)
 	}
