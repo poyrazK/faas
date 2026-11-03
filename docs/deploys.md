@@ -828,6 +828,9 @@ with `release_frozen`, which names the freeze, its reason and its creator:
   began (`traffic`, promote, or a rollback to it): it has never served, so it
   waits like a new deploy. A release deployed during the freeze, or one that
   served before, is not refused.
+- a rollback to a release that never served, even after a newer release
+  replaced it. A rollback can't carry an override, and a rollback to a
+  rejected release is always refused.
 
 A GitOps source managing the `production` environment keeps its sync
 unconverged while a freeze covers one of its apps, and activates the new
@@ -1078,7 +1081,9 @@ Terraform, into the default scope or a project's `production` environment.
 It does not apply to an app's first deploy into that scope, PR previews,
 other project environments, atomic project releases (which cut every app
 over together), or service, worker, and job apps, which keep their own
-rollout behavior.
+rollout behavior. A promotion into `production` gets the first-wake 5xx
+rollback and the post-release watch but no canary: its protected approval
+already stands in for the app's approval policy.
 
 The adaptive ladder sends 1%, then 10%, then 50%, then 100% of traffic to the
 new revision. Each stage lasts at least a minute and advances as soon as both

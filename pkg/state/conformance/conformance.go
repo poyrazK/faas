@@ -189,6 +189,7 @@ func Run(t *testing.T, open Open) {
 		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"deployment_outcomes_exclude_customer_caused_failures", testDeploymentOutcomesExcludeCustomerCausedFailures},
+		{"deployment_served_before_tracks_traffic", testDeploymentServedBefore},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"keyed_invocation_replacement_and_completion_are_fenced", testKeyedInvocationReplacementAndCompletion},
