@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS environment_branch_captures (
     attempts           int         NOT NULL DEFAULT 0,
     lease_token        uuid,
     lease_until        timestamptz,
+    -- The capture VM of the latest attempt, so the next claim can retire it
+    -- when schedd stopped before it did.
+    instance_id        uuid,
     failure            text        NOT NULL DEFAULT '',
     -- The published artifact; set only in state ready.
     fc_version         text        NOT NULL DEFAULT '',

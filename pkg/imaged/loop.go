@@ -759,6 +759,16 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 		l.log.Warn("imaged: local snapshot orphan crash capture list", "err", err)
 		return
 	}
+	// ADR-20261031193635: an environment branch capture also lives under its
+	// parent deployment's directory and outlives the parent's snapshot rows.
+	if branches, ok := l.store.(state.EnvironmentBranchCaptureStore); ok {
+		branchIDs, err := branches.EnvironmentBranchCaptureDeploymentIDs(ctx)
+		if err != nil {
+			l.log.Warn("imaged: local snapshot orphan branch capture list", "err", err)
+			return
+		}
+		captureIDs = append(captureIDs, branchIDs...)
+	}
 	known := make(map[string]struct{}, len(knownIDs)+len(captureIDs))
 	for _, deploymentID := range append(knownIDs, captureIDs...) {
 		known[deploymentID] = struct{}{}

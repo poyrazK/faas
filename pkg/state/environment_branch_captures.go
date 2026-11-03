@@ -41,7 +41,10 @@ type EnvironmentBranchCapture struct {
 	State        string
 	Attempts     int
 	LeaseToken   string
-	Failure      string
+	// InstanceID is the capture VM of the latest attempt; the next claim
+	// retires it if schedd stopped before it did.
+	InstanceID string
+	Failure    string
 	EnvironmentBranchCaptureArtifact
 	RequestedAt time.Time
 	ReadyAt     time.Time
@@ -77,6 +80,12 @@ type EnvironmentBranchCaptureStore interface {
 	// FailEnvironmentBranchCapture releases a leased capture for a retry, or
 	// fails it for good when permanent.
 	FailEnvironmentBranchCapture(ctx context.Context, id, leaseToken, failure string, permanent bool) error
+	// RecordEnvironmentBranchCaptureInstance notes the leased attempt's
+	// capture VM before it boots.
+	RecordEnvironmentBranchCaptureInstance(ctx context.Context, id, leaseToken, instanceID string) error
+	// EnvironmentBranchCaptureDeploymentIDs lists deployments whose capture is
+	// requested or ready, so imaged's orphan sweep keeps their directories.
+	EnvironmentBranchCaptureDeploymentIDs(ctx context.Context) ([]string, error)
 	// EnvironmentBranchLineageParent returns the deployment a branch
 	// deployment was created from: the only one whose capture it restores.
 	// ErrNotFound when no branch created the deployment.
@@ -206,6 +215,34 @@ func (m *MemStore) FailEnvironmentBranchCapture(_ context.Context, id, leaseToke
 	return nil
 }
 
+func (m *MemStore) RecordEnvironmentBranchCaptureInstance(_ context.Context, id, leaseToken, instanceID string) error {
+	if instanceID == "" {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	capture, err := m.leasedEnvironmentBranchCaptureLocked(id, leaseToken)
+	if err != nil {
+		return err
+	}
+	capture.InstanceID = instanceID
+	m.environmentBranchCaptures[capture.DeploymentID] = capture
+	return nil
+}
+
+func (m *MemStore) EnvironmentBranchCaptureDeploymentIDs(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, 0, len(m.environmentBranchCaptures))
+	for deploymentID, capture := range m.environmentBranchCaptures {
+		if capture.State != EnvironmentBranchCaptureFailed {
+			out = append(out, deploymentID)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func (m *MemStore) EnvironmentBranchLineageParent(_ context.Context, deploymentID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -230,14 +267,14 @@ func (s *PgStore) EnvironmentBranchLineageParent(ctx context.Context, deployment
 	return parent, mapErr(err)
 }
 
-const environmentBranchCaptureColumns = `id::text, deployment_id::text, state, attempts, coalesce(lease_token::text, ''), failure,
+const environmentBranchCaptureColumns = `id::text, deployment_id::text, state, attempts, coalesce(lease_token::text, ''), coalesce(instance_id::text, ''), failure,
 	fc_version, storage_key, base_image_version, cpu_template, cpu_model, mem_bytes, disk_bytes, stored_bytes,
 	requested_at, ready_at`
 
 func scanEnvironmentBranchCapture(row pgx.Row) (EnvironmentBranchCapture, error) {
 	var c EnvironmentBranchCapture
 	var ready *time.Time
-	err := row.Scan(&c.ID, &c.DeploymentID, &c.State, &c.Attempts, &c.LeaseToken, &c.Failure,
+	err := row.Scan(&c.ID, &c.DeploymentID, &c.State, &c.Attempts, &c.LeaseToken, &c.InstanceID, &c.Failure,
 		&c.FCVersion, &c.StorageKey, &c.BaseImageVersion, &c.CPUTemplate, &c.CPUModel, &c.MemBytes, &c.DiskBytes, &c.StoredBytes,
 		&c.RequestedAt, &ready)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -295,7 +332,7 @@ func (s *PgStore) ClaimEnvironmentBranchCapture(ctx context.Context, leaseToken 
 		now.UTC(), leaseToken, now.UTC().Add(lease)))
 }
 
-const environmentBranchCaptureColumnsQualified = `c.id::text, c.deployment_id::text, c.state, c.attempts, coalesce(c.lease_token::text, ''), c.failure,
+const environmentBranchCaptureColumnsQualified = `c.id::text, c.deployment_id::text, c.state, c.attempts, coalesce(c.lease_token::text, ''), coalesce(c.instance_id::text, ''), c.failure,
 	c.fc_version, c.storage_key, c.base_image_version, c.cpu_template, c.cpu_model, c.mem_bytes, c.disk_bytes, c.stored_bytes,
 	c.requested_at, c.ready_at`
 
@@ -320,6 +357,25 @@ func (s *PgStore) FailEnvironmentBranchCapture(ctx context.Context, id, leaseTok
 		       lease_token = null, lease_until = null, failure = $3
 		 where id = $1 and lease_token = $2 and state = 'requested'`,
 		clipEnvironmentBranchCaptureFailure(failure), permanent)
+}
+
+func (s *PgStore) RecordEnvironmentBranchCaptureInstance(ctx context.Context, id, leaseToken, instanceID string) error {
+	if _, err := uuid.Parse(instanceID); err != nil {
+		return ErrInvalidArgument
+	}
+	return s.finishEnvironmentBranchCapture(ctx, id, leaseToken, `
+		update environment_branch_captures set instance_id = $3
+		 where id = $1 and lease_token = $2 and state = 'requested'`, instanceID)
+}
+
+func (s *PgStore) EnvironmentBranchCaptureDeploymentIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `select deployment_id::text from environment_branch_captures
+		where state in ('requested', 'ready') order by deployment_id`)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	return ids, mapErr(err)
 }
 
 func (s *PgStore) finishEnvironmentBranchCapture(ctx context.Context, id, leaseToken, query string, args ...any) error {

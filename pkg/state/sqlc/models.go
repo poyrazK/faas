@@ -4499,6 +4499,7 @@ type EnvironmentBranchCapture struct {
 	Attempts         int32
 	LeaseToken       pgtype.UUID
 	LeaseUntil       pgtype.Timestamptz
+	InstanceID       pgtype.UUID
 	Failure          string
 	FcVersion        string
 	StorageKey       string

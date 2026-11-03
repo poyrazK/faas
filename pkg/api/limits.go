@@ -7068,6 +7068,13 @@ const (
 	CrashCaptureCooldown  = 10 * time.Minute
 	CrashCaptureTimeout   = 5 * time.Minute
 
+	// EnvironmentBranchCaptureLease bounds one credential-free capture attempt
+	// (ADR-20261031193635 slice 5a): cold boot, capture and retirement. A
+	// capture failed this many times stays failed and its branches keep
+	// cold-booting.
+	EnvironmentBranchCaptureLease       = 10 * time.Minute
+	EnvironmentBranchCaptureMaxAttempts = 3
+
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect
 	// the upstream GitHub budget (60 anonymous API calls per hour) and to keep a

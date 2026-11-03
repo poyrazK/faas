@@ -129,7 +129,7 @@ func (s *PgStore) ObjectBucketOverlayTombstones(ctx context.Context, bucketID st
 }
 
 func (s *PgStore) DeleteObjectBucketOverlay(ctx context.Context, bucketID string) error {
-	if _, err := uuid.Parse(bucketID); err != nil {
+	if !validUUID(bucketID) {
 		return nil
 	}
 	_, err := s.pool.Exec(ctx, `delete from object_bucket_overlays where bucket_id = $1`, bucketID)

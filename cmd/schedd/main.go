@@ -2536,6 +2536,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if forkCoordinator != nil {
 		go forkCoordinator.Run(ctx)
 	}
+	// ADR-20261031193635 slice 5a: credential-free captures of branch
+	// parents. Rows exist only once an opted-in branch cold-boots.
+	go sched.NewEnvironmentBranchCaptureWorker(store, engine, 0, log).Run(ctx)
 	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
 		// ADR-733: captures pause a serving instance, so one coordinator
 		// runs them one at a time. vmmd seals every capture at the source,

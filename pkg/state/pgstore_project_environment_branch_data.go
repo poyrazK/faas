@@ -248,7 +248,7 @@ func (s *PgStore) RemoveProjectEnvironmentBranchDatabase(ctx context.Context, id
 }
 
 func (s *PgStore) ProjectEnvironmentBranchDeploymentsAwaitingActivation(ctx context.Context, environmentID string) ([]Deployment, error) {
-	if _, err := uuid.Parse(environmentID); err != nil {
+	if !validUUID(environmentID) {
 		return nil, nil
 	}
 	rows, err := s.pool.Query(ctx, `
@@ -284,7 +284,7 @@ func (s *PgStore) ProjectEnvironmentBranchDeploymentsAwaitingActivation(ctx cont
 }
 
 func (s *PgStore) EnvironmentBranchDataReady(ctx context.Context, deploymentID string) (bool, error) {
-	if _, err := uuid.Parse(deploymentID); err != nil {
+	if !validUUID(deploymentID) {
 		return true, nil
 	}
 	var state string

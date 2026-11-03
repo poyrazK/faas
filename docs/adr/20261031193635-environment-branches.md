@@ -180,6 +180,26 @@ booting. Rules:
     reload, or lazily. An app whose init needs its database fails the capture boot's
     readiness; the capture is then marked failed for that deployment and its branches
     keep cold-booting.
+  - **How a capture is made.** A schedd worker claims a requested capture (a lease of
+    `api.EnvironmentBranchCaptureLease`) and boots the parent deployment on a new
+    instance row with the production-fork mode (ADR-732): never routed, counted
+    toward the node's RAM ceiling but not toward `max_concurrency`, never parked,
+    idle-reaped or snapshotted. The boot is quarantined, so the guest can open no flow
+    at all, and goes straight to vmmd's cold boot without the rehearsal or managed
+    native admission wrappers. Once ready, the worker takes a warm capture into a
+    fresh capture key under the parent's snapshot directory (the ADR-733 crash
+    capture path, which writes no `snapshots` row), destroys the VM and publishes the
+    artifact, CPU identity included, to `environment_branch_captures`. The row records
+    the attempt's instance, so the next claim destroys a capture VM a stopped schedd
+    left behind. A capture that cannot be made credential-free, or whose parent is gone
+    or quarantined, fails at once; any other failure retries on a later tick, up to
+    `api.EnvironmentBranchCaptureMaxAttempts`. The capture VM bills like a fork. imaged's
+    orphan sweep keeps the directory of every deployment with a requested or ready
+    capture; an imaged older than this keeps only deployments with snapshot rows, so
+    5b must treat a missing capture object as a restore failure and cold-boot.
+    Follow-ups: removing a capture's objects on a remote storage backend when its row
+    goes, and objects left by failed attempts (the local sweep removes them only with
+    the deployment).
   - What this does not cover: a customer secret that itself holds a production
     credential reaches the branch by value, on either path. That is section 6's rule for
     every branch and stage.

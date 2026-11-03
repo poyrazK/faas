@@ -377,7 +377,7 @@ func attachBranchDeploymentTx(ctx context.Context, tx pgx.Tx, input projectEnvir
 }
 
 func (s *PgStore) EnvironmentBranchDeployment(ctx context.Context, deploymentID string) (bool, error) {
-	if _, err := uuid.Parse(deploymentID); err != nil {
+	if !validUUID(deploymentID) {
 		return false, nil
 	}
 	var exists bool

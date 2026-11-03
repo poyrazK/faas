@@ -74,6 +74,16 @@ func environmentBranchCaptures(t *testing.T, s contractTestStore) {
 	if err != nil || claimed.Attempts != 2 || claimed.Failure != "capture boot not ready" {
 		t.Fatalf("retry claim = %+v, %v", claimed, err)
 	}
+	instanceID := uuid.NewString()
+	if err := s.RecordEnvironmentBranchCaptureInstance(ctx, claimed.ID, uuid.NewString(), instanceID); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("record instance without the lease: %v", err)
+	}
+	if err := s.RecordEnvironmentBranchCaptureInstance(ctx, claimed.ID, lease, instanceID); err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := s.EnvironmentBranchCaptureDeploymentIDs(ctx); err != nil || len(ids) != 1 || ids[0] != parentID {
+		t.Fatalf("capture deployments while requested = %v, %v", ids, err)
+	}
 	artifact := state.EnvironmentBranchCaptureArtifact{FCVersion: "1.12.0", StorageKey: "snapshots/branch-capture", MemBytes: 256 << 20, DiskBytes: 1 << 20}
 	if err := s.PublishEnvironmentBranchCapture(ctx, claimed.ID, uuid.NewString(), artifact); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("publish without the lease: %v", err)
@@ -85,7 +95,7 @@ func environmentBranchCaptures(t *testing.T, s contractTestStore) {
 		t.Fatal(err)
 	}
 	ready, err := s.EnvironmentBranchCapture(ctx, parentID)
-	if err != nil || ready.State != state.EnvironmentBranchCaptureReady || ready.StorageKey != artifact.StorageKey || ready.ReadyAt.IsZero() || ready.LeaseToken != "" {
+	if err != nil || ready.State != state.EnvironmentBranchCaptureReady || ready.StorageKey != artifact.StorageKey || ready.ReadyAt.IsZero() || ready.LeaseToken != "" || ready.InstanceID != instanceID {
 		t.Fatalf("ready = %+v, %v", ready, err)
 	}
 	if err := s.FailEnvironmentBranchCapture(ctx, claimed.ID, lease, "late", true); !errors.Is(err, state.ErrConflict) {
@@ -117,5 +127,8 @@ func environmentBranchCaptures(t *testing.T, s contractTestStore) {
 	}
 	if _, err := s.ClaimEnvironmentBranchCapture(ctx, uuid.NewString(), now.Add(time.Hour), time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("claimed a finished capture: %v", err)
+	} // imaged keeps the ready capture's directory, not the failed one's.
+	if ids, err := s.EnvironmentBranchCaptureDeploymentIDs(ctx); err != nil || len(ids) != 1 || ids[0] != parentID {
+		t.Fatalf("capture deployments = %v, %v", ids, err)
 	}
 }

@@ -36461,6 +36461,7 @@ CREATE TABLE public.environment_branch_captures (
     attempts integer DEFAULT 0 NOT NULL,
     lease_token uuid,
     lease_until timestamp with time zone,
+    instance_id uuid,
     failure text DEFAULT ''::text NOT NULL,
     fc_version text DEFAULT ''::text NOT NULL,
     storage_key text DEFAULT ''::text NOT NULL,
