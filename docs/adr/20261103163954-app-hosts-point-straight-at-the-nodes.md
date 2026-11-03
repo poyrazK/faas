@@ -7,12 +7,12 @@
     round-robin DNS": the app records become DNS-only; the edge presents a
     publicly trusted certificate, stops requiring Cloudflare's client
     certificate and takes the client address from the connection; the
-    firewall admits everyone on ports 80 and 443;
+    firewall admits everyone on port 443 of the entry address;
   - ADR-20261030115139: for app hosts, Cloudflare is authoritative DNS only.
     Platform hosts stay proxied.
 - **Related:** ADR-070 (one public ingress per node), ADR-100 (the certmagic
   issuer), ADR-119 (static outbound IP), ADR-520 (custom domains),
-  ADR-1343 (the tunnel)
+  ADR-831 (edge WAF, bot challenge), ADR-1343 (the tunnel)
 
 This record has a date-and-time identifier because numbered ADRs collide
 when parallel changes pick the next number.
@@ -82,26 +82,56 @@ the hosting provider.
 ### 2. The edge serves the public directly
 
 gatewayd-public stays the only public listener on a node (ADR-070), now on
-ports 443 and 80:
+port 443:
 
 - **Certificate.** A publicly trusted certificate for `*.<apps domain>`
   (§3), in place of the Cloudflare Origin CA certificate.
-- **No client certificate.** `FAAS_EDGE_PUBLIC_TLS_CLIENT_CA_FILE` becomes
-  optional. Without it the listener asks for no client certificate.
+- **Optional client certificate.** The listener stops requiring
+  Cloudflare's client certificate but keeps its CA and verifies one when
+  given (`tls.VerifyClientCertIfGiven`). A proxied record therefore still
+  works, which is how a host goes back behind Cloudflare under attack (§4).
+  The pilot checks that no browser asks its user to pick a certificate.
 - **Client address.** The connection's peer address is the client.
-  `CF-Connecting-IP` and `X-Forwarded-For` sent by the client are removed
-  and never trusted.
+  `CF-Connecting-IP` and `X-Forwarded-For` are trusted only on a connection
+  that presented Cloudflare's verified certificate, as today
+  (`verifiedIngress` in `pkg/gateway/internal_proxy.go`); from anyone else
+  they are removed. `FAAS_TRUSTED_INGRESS_CIDRS` lists no range a public
+  client can come from.
+- **Server name.** The handshake fails when the client sends no server
+  name or one outside the app domains, before any HTTP work. Scans of the
+  node addresses get no certificate. Today the listener serves its one
+  certificate for any name.
 - **Protocols.** TLS 1.2 or later. HTTP/2 and HTTP/1.1 through ALPN; behind
-  Cloudflare the listener offered HTTP/1.1 only.
-- **Port 80** answers only a redirect to https, and later ACME HTTP-01
-  challenges.
+  Cloudflare the listener offered HTTP/1.1 only. HTTP/2 gets explicit
+  limits rather than library defaults: at most 100 concurrent streams per
+  connection and capped header-list and frame sizes. The stdlib's HTTP/2
+  denial-of-service fixes (Rapid Reset, CONTINUATION floods) make Go patch
+  releases urgent for this listener.
+- **Port 80 stays closed.** Every apps domain today is under `.dev`, which
+  browsers load over HTTPS only (the whole TLD is HSTS-preloaded), and the
+  wildcard certificate uses DNS-01. The public server's plain listener
+  accepts HTTP/2 without TLS and trusts the ingress ranges' forwarded
+  headers (`cmd/gatewayd-public/main.go`), so it never faces the public.
+  When custom domains need port 80, it gets a separate server that only
+  redirects and answers ACME challenges.
 - **HSTS** as `pkg/httpsec` already sets it.
-- **Firewall.** The rendered ruleset admits ports 80 and 443 on the public
-  address from anywhere, and still drops everything else there. An
-  operator-managed block list of address ranges is part of the rendered
-  ruleset. A rule added by hand does not survive: the host firewall's reload
-  (`flush ruleset` in `pkg/netns/policy.go`) wiped one within a minute on
-  2026-11-03.
+- **Firewall.** The rendered ruleset admits port 443 from anywhere to the
+  entry address only (`ip daddr`), and drops everything else on that
+  address. SSH and the private platform ports are admitted only from
+  private or operator ranges, never on the entry address. The renderer's
+  current shape without source ranges, `tcp dport { 22,80,443 } accept`
+  from anywhere (`pkg/netns/policy.go`), would put SSH on an address that
+  is now in public DNS.
+- **Entry address.** On OVH, entry uses an additional IP rather than the
+  server's main address, so it can be moved, rotated or null-routed without
+  losing management access. OVH's network firewall on that IP admits TCP
+  443 only, ahead of the server. On GCP the forwarding-rule address already
+  carries only 443.
+- **Block list.** An operator-managed block list of address ranges is a
+  named set in the rendered ruleset, written by vmmd (the only root
+  daemon), with a timeout per entry. A rule added by hand does not survive:
+  the host firewall's reload (`flush ruleset` in `pkg/netns/policy.go`)
+  wiped one within a minute on 2026-11-03.
 
 ### 3. The control plane issues the certificates
 
@@ -119,6 +149,20 @@ ports 443 and 80:
   new table only it writes. An edge loads the certificate at start and on a
   `pg_notify`, and keeps serving the one it has while Postgres is down. No
   request reads Postgres.
+- **Key.** ECDSA P-256, whose handshake signatures cost the node far less
+  CPU than RSA-2048 under a handshake flood. A new key at each renewal.
+  Edges hold the key in memory only, never in a file.
+- **Exposure.** Unlike the Origin CA certificate, which only Cloudflare
+  trusted, this key is publicly trusted and sits on every compute node. A
+  guest escape on any node exposes it for every app host until the next
+  renewal. In-memory keys and per-renewal rotation bound that; the
+  key-loss runbook revokes and reissues.
+- **CAA.** The apps domain publishes `issue` and `issuewild` records naming
+  `letsencrypt.org` with `accounturi` set to `edgednsd`'s ACME account
+  (RFC 8657), so no other CA or account can issue for it. Today
+  `docs/domains.md` mentions CAA only for customers' domains.
+- **Transparency.** A watch on Certificate Transparency logs for the apps
+  domain pages on any certificate `edgednsd` did not issue.
 - **Expiry.** `edge_certificate_expiry_seconds{name}` on each edge, an alert
   at 14 days and a runbook, before the first host goes live.
 - **Custom domains** stay off (ADR-520). Their certificates are an open
@@ -131,6 +175,14 @@ What Cloudflare absorbed now reaches the node. The layers:
 - **Network floods: the provider.** OVH includes network anti-DDoS on its
   servers. On GCP, which is test-only, Google's network absorbs some. This
   is the one layer we do not run.
+- **Connection floods: the kernel.** The rendered ruleset limits new
+  connections per second and open connections per source address on the
+  entry address (nftables sets with timeouts), so a flood is dropped
+  before the edge spends a TLS handshake on it. Public connections share
+  the conntrack table with tenant NAT, and a flood that fills it breaks
+  every guest's egress: `nf_conntrack_max` is sized for public entry, an
+  alert fires as the table fills, and SYN cookies stay on. These limits
+  sit well above the edge's.
 - **Connection limits in the edge.** These are kept per node, in memory,
   with no Postgres:
   - open connections per client address (IPv4 /32, IPv6 /64);
@@ -138,18 +190,55 @@ What Cloudflare absorbed now reaches the node. The layers:
   - TLS handshakes in progress per node, sized to the CPU, so a handshake
     flood cannot starve requests;
   - requests per second per client address, answered `429` with a problem
-    body.
+    body;
+  - requests per second per hostname, checked before routing or a wake.
+    Every node takes every app host, so a flood on one app reaches every
+    edge; this ceiling answers that app `429` and keeps its neighbours
+    served.
+- **Unknown hosts never reach Postgres.** A gateway caches only routes it
+  found (`pkg/gateway/pgbackend.go`); concurrent requests share one lookup
+  only for the same name. So every request to a new random name under the
+  wildcard is a read on the control plane's Postgres, and only Cloudflare's
+  HTTP DDoS rules stood in front of that. Gateways keep the set of routed
+  names in memory, current through the route notifications they already
+  receive, and answer any other name `404` without a read.
+- **Requests the edge forwards.** The compute edge sends object-storage
+  uploads and public reads on to the control plane's private listener
+  (`newControlPlaneForwarder` in `cmd/gatewayd-public/edge_mode.go`). The
+  per-address limits apply before the forwarder, and it has its own cap on
+  requests in flight, so direct clients cannot push more at the control
+  plane than Cloudflare let through.
 - **Slow clients.** The existing 10 s header timeout and 1 MiB header cap,
-  plus an idle timeout and a minimum request-body rate.
+  plus an idle timeout and a minimum request-body rate. The public
+  server's read timeout is the whole request envelope
+  (`api.CustomerRequestEnvelopeTimeout`, minutes long), so the body rate is
+  required before the first host goes live, not later.
 - **Per-account limits** stay as they are.
 - **Values.** The limits live in `pkg/api/limits.go`, and the pilot sets the
   starting values. They must allow carrier-grade NAT, where thousands of
   users share one address.
-- **Visibility.** `gatewayd_public_edge_refused_total{reason}` counts every
-  refusal by limit.
+- **Visibility.** Cloudflare's analytics go with the proxy. Each edge
+  exports `gatewayd_public_edge_refused_total{reason}` for every refusal by
+  limit, the handshake rate and failures, requests for unknown hosts and
+  sampled top source addresses. An "under attack" runbook covers reading
+  them and the steps below.
+- **Going back behind Cloudflare.** Two levels, each a runtime change
+  rather than a release, rehearsed before the wildcard moves:
+  - **One host.** `edgednsd` writes a proxied record for the attacked
+    name. A record for the exact name wins over the wildcard, so the host
+    is behind Cloudflare again within about the TTL. This works because
+    the edge still verifies Cloudflare's certificate (§2) and Cloudflare's
+    ranges still reach port 443.
+  - **Every host, or the addresses themselves.** The wildcard goes back to
+    proxied records and the firewall to Cloudflare's ranges
+    (`front: cloudflare`), and entry moves to spare addresses: an attacker
+    who already holds the node addresses ignores DNS.
 
-We give up Cloudflare's web application firewall, bot management and cache,
-and do not replace them. A customer who needs them can put their own CDN in
+Customers keep ADR-831's edge rules: WAF signatures, the bot challenge,
+per-IP throttles and IP and geo rules. They run in the gateway before a VM
+wakes and key on the client address, which is now the connection's own. We
+give up Cloudflare's free managed rules, its HTTP DDoS rules and its cache,
+and do not replace them. A customer who needs more can put their own CDN in
 front of a custom domain, once custom domains return.
 
 ### 5. Overload spill
@@ -165,8 +254,9 @@ move too. This is a later step with its own switch, off by default.
 
 - `public_edge.front: cloudflare | none`, default `cloudflare`, which is
   ADR-20261102081618 as written. `none` turns on §1–§4 together: DNS-only
-  records, the public certificate, no client certificate, the peer address
-  as client, the open firewall and the limits.
+  records, the public certificate, the optional client certificate, the
+  peer address as client, port 443 open on the entry address and the
+  limits.
 - `front: none` requires `public_edge.entry` to be `both` or `direct`.
 - The limits key on the client address as §2 defines it. Under
   `front: cloudflare` that is `CF-Connecting-IP` from a connection that
@@ -174,11 +264,17 @@ move too. This is a later step with its own switch, off by default.
 
 ## Rollout
 
-1. **Edge:** optional client certificate, peer address as client, HTTP/2 and
-   the limits, all off by default.
-2. **Certificates:** issuance in `edgednsd`, the table, loading in the edge
-   and the expiry alert. Let's Encrypt's staging CA first.
-3. **Ansible and the manifest:** `front`, the firewall and port 80.
+1. **Edge:** optional client certificate, peer address as client, the
+   server-name check, HTTP/2 with its limits, the per-address and
+   per-hostname limits, the cap on forwarded requests and the minimum body
+   rate, all off by default. Gateways answer unknown hosts from memory.
+2. **Certificates:** issuance in `edgednsd` with an ECDSA key, the table,
+   in-memory loading in the edge, the expiry alert, the CAA records and the
+   Certificate Transparency watch. Let's Encrypt's staging CA first.
+3. **Ansible and the manifest:** `front`, the firewall scoped to the entry
+   address with SSH off it, the kernel connection limits, conntrack sizing
+   and its alert, the block-list set, and the OVH entry address with its
+   network firewall.
 4. **Pilot.** A new test host, not `h10-hello-node`, whose records are
    proxied. Its DNS-only records point at both nodes. It measures:
    - the spread, from several resolvers (1.1.1.1, 8.8.8.8, 9.9.9.9, the
@@ -189,10 +285,16 @@ move too. This is a later step with its own switch, off by default.
    - first-request latency from Istanbul, against the proxied path;
    - what a refused, a silent and a withdrawn node cost a browser and curl;
    - the limits under a synthetic flood from one address, removed as soon as
-     measured.
-5. **Wildcard.** `*.<apps domain>` moves to the DNS-only records. Rollback is
-   the proxied records (ADR-20261102081618) or the tunnel CNAME, both kept
-   for one release.
+     measured;
+   - a flood of random names under the pilot's domain, which must cause no
+     Postgres reads;
+   - that no browser prompts for a client certificate;
+   - going back behind Cloudflare: a proxied record for the pilot host, and
+     the time until clients reach Cloudflare.
+5. **Wildcard.** `*.<apps domain>` moves to the DNS-only records once both
+   levels of going back behind Cloudflare (§4) are rehearsed and the "under
+   attack" runbook exists. Rollback is the proxied records
+   (ADR-20261102081618) or the tunnel CNAME, both kept for one release.
 6. **Overload spill** (§5).
 
 ## Consequences
@@ -209,8 +311,12 @@ move too. This is a later step with its own switch, off by default.
   (2026-11-02), where Cloudflare finished them close to the user. Requests on
   an open connection do not pay it again.
 - **Node addresses are public.** An HTTP flood from one address is bounded
-  by §4. A distributed one is bounded only by the nodes' capacity and the
-  provider's network protection. This is the main risk accepted.
+  by §4. A distributed one is bounded by the nodes' capacity and the
+  provider's network protection until an operator moves the host, or every
+  host, back behind Cloudflare (§4). This is the main risk accepted.
+- **A publicly trusted wildcard key on every node** (§3). A node
+  compromise now yields a certificate browsers trust for every app host,
+  where the Origin CA key it replaces was trusted only by Cloudflare.
 - **No cache.** The app serves every static response itself.
 - **Cloudflare becomes replaceable** by any DNS provider with an API.
   cloudflared and the tunnel go, as in ADR-20261102081618.
@@ -243,3 +349,10 @@ move too. This is a later step with its own switch, off by default.
 - **Answer order:** whether Cloudflare or common resolvers rotate it. The
   pilot measures it.
 - **IPv6:** the GCP nodes have none.
+- **Client-certificate prompt:** if a browser asks its user to pick a
+  certificate because the listener requests one, Cloudflare instead reaches
+  a second listener on its own port, which requires the certificate, and
+  443 asks for none.
+- **Port 80 for an apps domain outside an HSTS-preloaded TLD:** such an
+  alias apps domain (ADR-20261026100000) needs the redirect-only server of
+  §2 before it moves to DNS-only records.
