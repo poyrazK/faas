@@ -1220,3 +1220,20 @@ const (
 func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
 	r.failInterruptedFireNowRequests(ctx)
 }
+
+// RealtimeIdleDelays observes claims of the given sizes on a fresh realtime
+// poller and returns the idle delay after each.
+func RealtimeIdleDelays(sizes []int) []time.Duration {
+	p := &realtimePoller{}
+	now := time.Unix(1_000, 0)
+	out := make([]time.Duration, 0, len(sizes))
+	for _, n := range sizes {
+		batch := state.RealtimeConsumerGroupBatch{Claims: make([]state.RealtimeConsumerGroupClaim, n)}
+		p.observeClaim(batch, now)
+		if p.idle(now) != (p.idleDelay > 0) || p.idle(now.Add(p.idleDelay)) {
+			panic("idle window does not match the delay")
+		}
+		out = append(out, p.idleDelay)
+	}
+	return out
+}

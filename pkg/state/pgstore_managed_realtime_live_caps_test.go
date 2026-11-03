@@ -203,3 +203,36 @@ func TestPgStoreManagedRealtimeReconnectPathsSkipTheEndpointLock(t *testing.T) {
 		t.Fatal("creating a cursor did not wait for the endpoint lock that keeps the cap exact")
 	}
 }
+
+// adr: 1323 (amendment of 2026-11-03) — channel route bookkeeping no longer
+// locks the endpoint row: a channel's first subscriber is recorded while
+// another transaction holds that row.
+func TestPgStoreManagedRealtimeChannelRoutesSkipTheEndpointLock(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-realtime-route-lock", "realtime-route-lock")
+	endpoint, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := s.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if _, err := holder.Exec(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	quick, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	route := state.ManagedRealtimeChannelRoute{EndpointID: endpoint.ID, Channel: "orders", NodeID: node.ID}
+	if err := s.AddManagedRealtimeChannelRoutes(quick, []state.ManagedRealtimeChannelRoute{route}); err != nil {
+		t.Fatalf("adding a route while the endpoint row is locked = %v", err)
+	}
+	if err := s.RemoveManagedRealtimeChannelRoute(quick, route); err != nil {
+		t.Fatalf("removing a route while the endpoint row is locked = %v", err)
+	}
+}
