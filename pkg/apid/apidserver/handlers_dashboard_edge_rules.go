@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -71,6 +72,11 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	if presetErr != nil {
 		log.Warn("dashboard edge rules: list CORS presets", "account_id", acct.ID, "app_id", app.ID, "err", presetErr)
 	} else {
+		if _, company := corsPresetCompanyApp(r); company {
+			// A company app's page manages only the app's own presets
+			// (ADR-091 amendment 2026-11-03).
+			presets = slices.DeleteFunc(presets, func(p state.CorsPreset) bool { return p.AppID != app.ID })
+		}
 		data.CorsPresets = projectDashboardCorsPresets(presets, app.ID)
 	}
 	if traceForm != nil {
