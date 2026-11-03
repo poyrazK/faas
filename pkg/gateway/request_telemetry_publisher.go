@@ -346,23 +346,37 @@ func (p *requestTelemetryPublisher) shipPending(ctx context.Context) bool {
 	return false
 }
 
+// acceptPartialDelivery keeps only the rows worth sending again. Accepted rows
+// are shipped; rejected rows are dropped and journaled as losses now, so a row
+// the receiver will never take (an app over its ingest cap) cannot hold the
+// publisher in retry backoff while every other app's rows wait behind it.
 func (p *requestTelemetryPublisher) acceptPartialDelivery(partial *RequestTelemetryDeliveryError) {
 	remaining := make([]RequestTelemetryRow, 0, len(p.pending))
+	var rejected []RequestTelemetryRow
 	var shipped int64
 	for _, row := range p.pending {
-		if partial.Accepted[row.EventID] {
+		switch {
+		case partial.Accepted[row.EventID]:
 			shipped += int64(normalizedRequestTelemetryCount(row.Count))
-		} else {
+		case partial.Rejected[row.EventID]:
+			rejected = append(rejected, row)
+		default:
 			remaining = append(remaining, row)
 		}
 	}
 	p.recordShipped(shipped)
+	if len(rejected) != 0 {
+		p.recordDroppedRows(rejected)
+	}
 	p.pending = remaining
 }
 
 // Partial responses preserve accepted rows when another app is rejected.
+// Rejected rows are final (the receiver must not be asked again); rows in
+// neither map are retried.
 type RequestTelemetryDeliveryError struct {
 	Accepted map[uuid.UUID]bool
+	Rejected map[uuid.UUID]bool
 	Cause    error
 }
 
