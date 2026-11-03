@@ -562,6 +562,14 @@ func (s *server) approvalTrafficProblem(ctx context.Context, app state.App, d st
 	if p := s.darkReleasePauseProblem(d); p != nil {
 		return p
 	}
+	// A release staged without traffic in a protected environment reaches
+	// traffic only through an approved plan or promotion (ADR-20261019071733
+	// amendment 9).
+	if neverServedDark(d) {
+		if p := protectedEnvironmentReleaseProblem(ctx, s.store, app, d.Scope); p != nil {
+			return p
+		}
+	}
 	// ADR-20261021152201: a release waiting for its scheduled start takes
 	// no traffic by hand.
 	if p := s.scheduledTrafficProblem(ctx, d); p != nil {
@@ -679,10 +687,42 @@ func (s *server) abortForApproval(ctx context.Context, app state.App, d state.De
 		return
 	}
 	reason := "release approval: " + summary
-	if _, _, err := decisions.RecoverRolloutWithDecision(ctx, app.ID, "abort", reason,
-		approval.AbortDecision(rule, summary, d, time.Now())); err != nil {
+	decision := approval.AbortDecision(rule, summary, d, time.Now())
+	// Abort this release, not the app's newest rollout: with another
+	// environment rolling out, an app-level abort is ambiguous and refused,
+	// and the rejected release would keep its canary traffic (approvals ADR
+	// amendment 11).
+	var err error
+	if predecessor, ok := s.rolloutPredecessor(ctx, d); ok {
+		_, _, err = decisions.RecoverRolloutForDeploymentWithDecision(ctx, app.ID, d.ID, predecessor.ID, "abort", reason, decision)
+	} else {
+		_, _, err = decisions.RecoverRolloutWithDecision(ctx, app.ID, "abort", reason, decision)
+	}
+	if err != nil {
 		s.log.Warn("apid: abort release for approval failed", "deployment", d.ID, "rule", rule, "err", err)
 	}
+}
+
+// rolloutPredecessor is the release a canary in flight returns its traffic
+// to on abort: the newest earlier live release of its scope that serves.
+func (s *server) rolloutPredecessor(ctx context.Context, d state.Deployment) (state.Deployment, bool) {
+	live, err := s.store.LiveDeployments(ctx, d.AppID)
+	if err != nil {
+		s.log.Warn("apid: read rollout predecessor", "deployment", d.ID, "err", err)
+		return state.Deployment{}, false
+	}
+	var best state.Deployment
+	found := false
+	for _, other := range live {
+		if other.ID == d.ID || other.TrafficPercent <= 0 || recoveryScope(other.Scope) != recoveryScope(d.Scope) ||
+			!other.CreatedAt.Before(d.CreatedAt) {
+			continue
+		}
+		if !found || other.CreatedAt.After(best.CreatedAt) {
+			best, found = other, true
+		}
+	}
+	return best, found
 }
 
 // appSharedInOrg reports whether more than one person can act on app.

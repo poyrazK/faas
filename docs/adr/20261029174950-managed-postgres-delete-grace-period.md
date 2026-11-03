@@ -141,3 +141,19 @@ way.
 - **Suspend through the compute quota.** Undo would have to restore a quota
   that may never have been set, and the cap sweep rewrites quotas. The
   endpoint's `disabled` flag is reversible exactly.
+
+## Amendment 1 (2026-11-03): one waived schedule per database per 30 days
+
+Decision 6 waived every usage window inside any scheduled delete. Nothing
+limited how often one database cycled, so a customer could schedule a delete,
+undo it shortly before the window closed and schedule it again, paying only
+for the short ready gaps while Gregale paid the provider for the storage
+(bug hunt H106).
+
+A waiver now counts only when no earlier waiver for the same database began
+within `api.ManagedPostgresUsageWaiverPeriod` (30 days) before it.
+`ManagedPostgresUsageForSubject` and the in-memory store apply the same rule;
+the trigger still records every window, so nothing changes in the schema. A
+customer who undoes a mistaken delete keeps the first week waived; a second
+schedule within 30 days is billed as usual. The fleet spend breaker is
+unchanged.

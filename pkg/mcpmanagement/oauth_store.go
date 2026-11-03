@@ -106,6 +106,9 @@ type oauthGrant struct {
 	environments          *EnvironmentConsent
 	availableEnvironments []EnvironmentGrant
 	capabilities          []string
+	// org and orgName name the shared organization the grant's key acts in
+	// (ADR-20261101225122); empty for the personal one.
+	org, orgName string
 }
 
 func randomToken(prefix string) (string, error) {

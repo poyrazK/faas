@@ -149,6 +149,9 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	trafficAppsSuffix string
+	// planChangedAt is when each account's or org's plan last changed
+	// (PlanChangedAt, ADR-20261103121407).
+	planChangedAt map[string]time.Time
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                              map[string]int64
@@ -398,11 +401,10 @@ type MemStore struct {
 	// databaseSwitches mirrors release_database_switches
 	// (ADR-20261023181931).
 	databaseSwitches map[string]DatabaseSwitch
-	// Snapshot restore reservations are separate from mu so the coordinator
-	// can serialize only its short lease/count critical section.
-	snapshotRestorePressureMu sync.Mutex
-	snapshotRestoreLeaseMu    sync.Mutex
-	snapshotRestoreLeases     map[string]snapshotRestorePressureLease
+	// Snapshot restore leases are separate from mu: wake placement reads and
+	// writes them on every snapshot restore (ADR 20261103195512).
+	snapshotRestoreLeaseMu sync.Mutex
+	snapshotRestoreLeases  map[string]snapshotRestorePressureLease
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
 	runtimeConfigChangedAt            map[string]time.Time
 	environmentRuntimeConfigChangedAt map[environmentRuntimeKey]time.Time
@@ -728,6 +730,7 @@ type MemStore struct {
 	workflowStepAttempts              map[workflowStepAttemptKey]WorkflowStepAttempt
 	workflowOperationEffects          map[workflowStepAttemptKey][]workflowOperationStoredEffect
 	workflowEvents                    map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowEventApps                 map[string]string          // run_id → app_id, retained after run cleanup
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -785,14 +788,17 @@ type MemStore struct {
 	// invariant is enforced at insert time. MemStore holds no
 	// concurrency control beyond m.mu — the dispatcher's claim
 	// query is a single goroutine today.
-	appWebhooks                     map[string]AppWebhook
-	appWebhookDeliveries            map[string]AppWebhookDelivery
-	appWebhookDeliverySources       map[string]string
-	entityOutboxAcceptances         map[string]string
-	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
-	appWebhookReplayGenerations     map[string]int
-	appWebhookReceiverCooldowns     map[string]time.Time
-	appWebhookRecoveryProbes        map[string]string
+	appWebhooks                 map[string]AppWebhook
+	appWebhookDeliveries        map[string]AppWebhookDelivery
+	appWebhookDeliverySources   map[string]string
+	entityOutboxAcceptances     map[string]string
+	appWebhookDeliveryAttempts  map[string][]AppWebhookDeliveryAttempt
+	appWebhookReplayGenerations map[string]int
+	appWebhookReceiverCooldowns map[string]time.Time
+	appWebhookRecoveryProbes    map[string]string
+	// appWebhookPreviousSecrets mirrors app_webhooks.previous_secret_*
+	// (ADR-20261101093517), kept beside the rows so AppWebhook stays as is.
+	appWebhookPreviousSecrets       map[string]appWebhookPreviousSecret
 	inboundWebhookEndpoints         map[string]InboundWebhookEndpoint
 	webhookAutomationBindings       map[string]WebhookAutomationBinding
 	webhookAutomationReceipts       map[string]WebhookAutomationReceipt
@@ -1367,10 +1373,11 @@ type MemStore struct {
 	// token hash (hex-encoded for map safety). All maps are guarded
 	// by m.mu and never escape the package — handlers go through
 	// Store (this interface) so the sqlc vs memstore parity holds.
-	orgs        map[string]Org
-	orgsBySlug  map[string]string // lower(slug) -> id
-	memberships map[orgAccountKey]OrgMembership
-	invitations map[string]OrgInvitation // hex(hash) -> OrgInvitation
+	orgs             map[string]Org
+	orgAgentPolicies map[string]OrgAgentPolicy // ADR-20261101225122
+	orgsBySlug       map[string]string         // lower(slug) -> id
+	memberships      map[orgAccountKey]OrgMembership
+	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation
 	// computeNodes mirrors the compute_nodes table; keyed by id (issue
 	// #97 / ADR-025 axis 3). The synthetic 'default-local' row is
 	// seeded by NewMemStore so tests don't have to call
@@ -1778,6 +1785,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		workflowStepAttempts:            map[workflowStepAttemptKey]WorkflowStepAttempt{},
 		workflowOperationEffects:        map[workflowStepAttemptKey][]workflowOperationStoredEffect{},
 		workflowEvents:                  map[string][]WorkflowEvent{},
+		workflowEventApps:               map[string]string{},
 		appTasks:                        map[string]AppTask{},
 		fireNowRequests:                 map[string]FireNowRequest{},
 		operatorIntents:                 map[string]OperatorIntent{},
@@ -1804,6 +1812,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		appWebhookDeliveryAttempts:      map[string][]AppWebhookDeliveryAttempt{},
 		appWebhookReplayGenerations:     map[string]int{},
 		appWebhookReceiverCooldowns:     map[string]time.Time{},
+		appWebhookPreviousSecrets:       map[string]appWebhookPreviousSecret{},
 		appWebhookRecoveryProbes:        map[string]string{},
 		inboundWebhookEndpoints:         map[string]InboundWebhookEndpoint{},
 		workflowCallbackWebhookBindings: map[string]WorkflowCallbackWebhookBinding{},
@@ -2587,11 +2596,13 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	} else {
 		m.overageCapCents[id] = *next
 	}
+	m.notePlanChangeLocked(id, a.Plan, plan)
 	a.Plan = plan
 	m.storeRouteCheckAccountLocked(id, a)
 	now := time.Now().UTC()
 	for orgID, org := range m.orgs {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
+			m.notePlanChangeLocked(orgID, org.Plan, plan)
 			org.Plan = plan
 			org.UpdatedAt = now
 			m.orgs[orgID] = org
@@ -7734,6 +7745,12 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
+	for runID, appID := range m.workflowEventApps {
+		if appID == id {
+			delete(m.workflowEvents, runID)
+			delete(m.workflowEventApps, runID)
+		}
+	}
 	m.deleteEventExecutionLedgerAppLocked(id)
 	m.deleteScenarioWorkerFaultsForAppLocked(id)
 	if purged, ok := m.apps[id]; ok {
@@ -13713,6 +13730,17 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 		}
 		if opts.FailureRules != nil && !sameWorkPolicy(c.FailureRules, opts.FailureRules) {
 			c.FailureRules = workpolicy.Clone(opts.FailureRules)
+			scheduleChanged = true
+		}
+		if opts.ClearSchedulePolicy && opts.SchedulePolicy != nil || opts.ClearFailureRules && opts.FailureRules != nil {
+			return Cron{}, ErrInvalidArgument
+		}
+		if opts.ClearSchedulePolicy && c.SchedulePolicy != nil {
+			c.SchedulePolicy = nil
+			scheduleChanged = true
+		}
+		if opts.ClearFailureRules && c.FailureRules != nil {
+			c.FailureRules = nil
 			scheduleChanged = true
 		}
 	}
@@ -27197,6 +27225,7 @@ func (m *MemStore) UpdateOrgPlan(ctx context.Context, id string, plan api.Plan) 
 	if !ok {
 		return ErrNotFound
 	}
+	m.notePlanChangeLocked(id, o.Plan, plan)
 	o.Plan = plan
 	o.UpdatedAt = time.Now().UTC()
 	m.orgs[id] = o

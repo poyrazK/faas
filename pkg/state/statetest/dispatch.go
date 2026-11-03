@@ -27,6 +27,8 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"EvaluateAutomationFailurePolicies":      true,
+	"GetAutomationFailurePolicy":             true,
 	"DefaultCustomDomain":                    true,
 	"DefaultCustomDomains":                   true,
 	"DeploymentWorkerDrainStatus":            true,
@@ -121,6 +123,7 @@ var memDispatched = map[string]bool{
 	"ListRouteHealthHistory":                                  true,
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
+	"ListInstancesByStatesOlderThan":                          true,
 	"IssueObjectMultipartURLCredential":                       true,
 	"JobRunAttachSession":                                     true,
 	"LatestParkedDeploymentForApp":                            true,
@@ -289,6 +292,24 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) EvaluateAutomationFailurePolicies(ctx context.Context, owner, after string, limit int, now time.Time) (string, error) {
+	if o, ok := s.over.(interface {
+		EvaluateAutomationFailurePolicies(context.Context, string, string, int, time.Time) (string, error)
+	}); ok {
+		return o.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+	}
+	return s.MemStore.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+}
+
+func (s *Mem) GetAutomationFailurePolicy(ctx context.Context, appID, name string) (api.AutomationFailurePolicyResponse, error) {
+	if o, ok := s.over.(interface {
+		GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error)
+	}); ok {
+		return o.GetAutomationFailurePolicy(ctx, appID, name)
+	}
+	return s.MemStore.GetAutomationFailurePolicy(ctx, appID, name)
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -890,6 +911,15 @@ func (s *Mem) InstanceByID(p0 context.Context, p1 string) (state.Instance, error
 		return o.InstanceByID(p0, p1)
 	}
 	return s.MemStore.InstanceByID(p0, p1)
+}
+
+func (s *Mem) ListInstancesByStatesOlderThan(p0 context.Context, p1 []state.State, p2 time.Time) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListInstancesByStatesOlderThan(context.Context, []state.State, time.Time) ([]state.Instance, error)
+	}); ok {
+		return o.ListInstancesByStatesOlderThan(p0, p1, p2)
+	}
+	return s.MemStore.ListInstancesByStatesOlderThan(p0, p1, p2)
 }
 
 func (s *Mem) IssueObjectMultipartURLCredential(p0 context.Context, p1 state.ObjectS3Credential, p2 state.ObjectMultipartUpload, p3 api.ObjectStoragePolicy) (state.ObjectS3Credential, error) {

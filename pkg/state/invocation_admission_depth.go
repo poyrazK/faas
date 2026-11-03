@@ -65,7 +65,7 @@ func lockInvocationAdmissionAppDB(ctx context.Context, tx pgx.Tx, inv Invocation
 // environment-owned rows.
 func checkInvocationAdmissionDepthDB(ctx context.Context, tx pgx.Tx, inv Invocation) error {
 	q := sqlc.New()
-	if inv.AdmissionMaxBacklogBytes > 0 && inv.Source == InvocationQueue {
+	if backlogBytesCapApplies(inv) {
 		account, err := productionWorkUUID(inv.AccountID)
 		if err != nil {
 			return err
@@ -99,11 +99,22 @@ func checkInvocationAdmissionDepthDB(ctx context.Context, tx pgx.Tx, inv Invocat
 	return invocationAdmissionDepth(inv, int(n))
 }
 
-// invocationAdmissionBytes refuses a queue message while the account's
-// pending queue bytes are at the cap. A message admitted just under it may
-// pass it by its own size.
+// backlogBytesCapApplies reports whether inv's producer set the account
+// backlog-bytes cap for a source that honours it. Queue messages count
+// towards the backlog. Inbound webhooks (ADR-20261101093517) are refused
+// while it is full but do not add to it: the backlog counter carries queue
+// payload bytes only, and an inbound body is at most api.WebhookMaxBodyBytes,
+// so the app's pending cap bounds their bytes.
+func backlogBytesCapApplies(inv Invocation) bool {
+	return inv.AdmissionMaxBacklogBytes > 0 &&
+		(inv.Source == InvocationQueue || inv.Source == InvocationInboundWebhook)
+}
+
+// invocationAdmissionBytes refuses a queue message or an inbound webhook
+// while the account's pending queue bytes are at the cap. A message admitted
+// just under it may pass it by its own size.
 func invocationAdmissionBytes(inv Invocation, held int64) error {
-	if inv.AdmissionMaxBacklogBytes > 0 && inv.Source == InvocationQueue && held >= inv.AdmissionMaxBacklogBytes {
+	if backlogBytesCapApplies(inv) && held >= inv.AdmissionMaxBacklogBytes {
 		return &InvocationBacklogBytesError{Limit: inv.AdmissionMaxBacklogBytes, Observed: held}
 	}
 	return nil
@@ -129,7 +140,7 @@ func (m *MemStore) queueBacklogBytesLocked(accountID string, superseded func(Inv
 
 // checkInvocationAdmissionLocked mirrors checkInvocationAdmissionDepthDB.
 func (m *MemStore) checkInvocationAdmissionLocked(inv Invocation, superseded func(Invocation) bool) error {
-	if inv.AdmissionMaxBacklogBytes > 0 && inv.Source == InvocationQueue {
+	if backlogBytesCapApplies(inv) {
 		if err := invocationAdmissionBytes(inv, m.queueBacklogBytesLocked(inv.AccountID, superseded)); err != nil {
 			return err
 		}

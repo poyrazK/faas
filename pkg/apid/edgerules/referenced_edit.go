@@ -204,6 +204,35 @@ func (s *Service) RetargetPlatformHostRules(ctx context.Context, accountID, oldS
 	return len(moves), nil
 }
 
+// RetargetAfterRename points the account's route rules naming oldSlug, and
+// its rules on oldSlug's platform hostname, at newSlug, inside the
+// RenameEdit barrier. Each step re-lists by the old slug, so a failed step
+// is retried once; what still fails is returned for the rename to report
+// (ADR-091 amendment 2026-11-03, review round 9): the app was renamed, and
+// those rules no longer cover it.
+func (s *Service) RetargetAfterRename(ctx context.Context, accountID, oldSlug, newSlug string) error {
+	steps := []struct {
+		what string
+		run  func() (int, error)
+	}{
+		{"route rules naming the old slug", func() (int, error) { return s.RetargetRouteRules(ctx, accountID, oldSlug, newSlug) }},
+		{"rules on the old platform hostname", func() (int, error) {
+			return s.RetargetPlatformHostRules(ctx, accountID, oldSlug, newSlug)
+		}},
+	}
+	var errs []error
+	for _, step := range steps {
+		_, err := step.run()
+		if err != nil {
+			_, err = step.run()
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", step.what, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 type platformHostMove struct {
 	rule state.EdgeRule
 	host string

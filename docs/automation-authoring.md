@@ -35,7 +35,9 @@ integrations or event sources separately.
 5. After publication, confirm real side effects and choose **Run published
    automation**. Only the sample's `input` is submitted. Mock results never
    control real execution. Repeating the same form submission reuses its admitted
-   run through the existing idempotency mechanism.
+   run through the existing idempotency mechanism while the displayed draft
+   revision remains current. If it changed, inspect run history before reloading
+   and starting another run.
 
 The page shows recent health, queue observations, run states, pinned deployments,
 and step attempts. Run input/output bodies and raw errors remain behind explicit
@@ -47,6 +49,12 @@ starts** is selected. Manual runs remain distinct from that setting. The console
 cannot enable a disabled workflow runtime, satisfy tenant admission requirements,
 configure outbound worker flags, or establish native KVM qualification. The
 existing permissions, publication policies and execution gates still apply.
+
+The `automations` capability controls access to this authoring surface. Turning
+it off does not pause published schedules, accepted events, or existing runs.
+Pause automatic starts and drain or cancel runs before access is removed. The
+separate `workflows` capability holds all workflow execution for the account,
+including workflows declared in a deployment manifest.
 
 ### Save and rerun reusable test cases
 
@@ -354,15 +362,17 @@ one next case. Browser continuation never takes over a shared CLI journal.
 Clients can POST `live-suites/{suite_id}/start` with `expected_version`,
 `expected_published_version`, `expected_deployment_id`, ordered case names in
 `cases` and `confirm_real_actions: true`. Use a UUIDv7 generated within the last
-ten minutes and reuse its exact ID and body after a lost response. An identical
-retained start request reads progress without advancing it. POST
+ten minutes and reuse its exact ID and body after a lost response. IDs up to 30
+seconds ahead of server time are accepted to allow for clock differences. An
+identical retained start request reads progress without advancing it. POST
 `live-suites/{suite_id}/advance` with `confirm_real_actions: true` to continue.
 Each admission and its stored run link commit together; missing suites are never
 recreated by continuation. Go, Node and Python expose both operations.
 
 Suite history keeps at most 100 records per automation. Recent dashboard start
-receipts are protected for the creation window so history churn cannot erase
-recovery identity while the original creation request can still be admitted.
+receipts are protected for the creation window plus the clock-skew allowance so
+history churn cannot erase recovery identity while the original creation request
+can still be admitted.
 When all slots are protected, new creation waits rather than displacing them.
 
 ### Compare suites between deployments
@@ -617,8 +627,10 @@ fit the existing 16 KiB policy limit after canonical serialization as well as on
 name instead of creating a new name for each build. Automation deletion removes
 its history. Clearing saved cases retains audit receipts but removes evidence.
 Active current baseline suite groups are protected from normal suite pruning within the
-existing 100-group budget; linked run/report retention still applies. Replaced
-groups can be pruned normally. Missing or invalidated evidence blocks gates;
+existing 100-group budget; linked run/report retention still applies. Completed
+workflow runs and their reports normally expire 30 days after completion. This
+retention applies regardless of the baseline policy; renew the baseline before
+its evidence expires. Replaced groups can be pruned normally. Missing or invalidated evidence blocks gates;
 receipts do not recreate or execute it.
 
 ### Share suite results with your team
@@ -1761,6 +1773,13 @@ workflow start intent. The workflow input is a CloudEvents envelope whose
 customers cannot use it to forge verified ingress. Signing secrets are never
 included in the input.
 
+The complete workflow input envelope, including the provider body and
+server-added metadata, must fit within 1 MiB. A matching webhook that exceeds
+this limit receives HTTP 413 with code `event_envelope_too_large`; reduce the
+provider payload and retry. The check conservatively accounts for exponent-form
+JSON numbers expanding when stored. Paused targets and nonmatching event types
+can still be recorded as ignored without creating a workflow input.
+
 Provider retries return the original receipt and do not start another run.
 Different content for the same endpoint/event ID conflicts. Retries still use
 the original receipt after binding removal; retained events accepted through
@@ -1772,6 +1791,10 @@ Paused/unpublished targets and nonmatching event types receive an `ignored`
 receipt. Content filters are evaluated by schedd: a mismatch reports
 `routing_status: filtered` and starts no run. Pausing or editing a definition
 affects future events; already accepted definitions and filters stay captured.
+When the workflows capability is disabled, captured workflow recipients wait
+without consuming routing attempts. A captured definition that exceeds a
+downgraded plan's limits also waits for an eligible plan. Delivery age limits
+and receipt retention still apply while recipients wait.
 The workflow runtime, account/app eligibility and live deployment must be
 available for new acceptance. Integration bindings remain validated. A
 runtime/configuration outage returns 503 without accepting new work.

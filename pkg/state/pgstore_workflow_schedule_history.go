@@ -65,19 +65,34 @@ func (s *PgStore) PruneWorkflowScheduleOccurrences(ctx context.Context, before t
 }
 
 func (s *PgStore) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, owner string, minute time.Time, limit int) ([]WorkflowScheduleCandidate, error) {
+	return s.ListFairTenantWorkflowScheduleCandidatesAfter(ctx, owner, minute, limit, nil)
+}
+
+func (s *PgStore) ListFairTenantWorkflowScheduleCandidatesAfter(ctx context.Context, owner string, minute time.Time, limit int, after *FairTenantScheduleCursor) ([]WorkflowScheduleCandidate, error) {
 	if limit <= 0 || limit > api.WorkflowScheduleBatch {
 		return nil, ErrInvalidArgument
 	}
-	rows, err := sqlc.New().ListFairTenantWorkflowScheduleCandidates(ctx, s.pool, sqlc.ListFairTenantWorkflowScheduleCandidatesParams{
+	params := sqlc.ListFairTenantWorkflowScheduleCandidatesParams{
 		OwnerNodeID: mustPgUUID(owner), EvaluationMinute: pgtype.Timestamptz{Time: minute, Valid: true}, BatchLimit: int32(limit),
-	})
+	}
+	if after != nil {
+		params.AfterAppID = mustPgUUID(after.AppID)
+		params.AfterTenantID = mustPgUUID(after.TenantID)
+		params.AfterWorkflowName = after.WorkflowName
+		params.AfterAdmittedAt = nullableTimestamptzPtr(after.LastAdmittedAt)
+		if !params.AfterAppID.Valid || !params.AfterTenantID.Valid {
+			return nil, ErrInvalidArgument
+		}
+	}
+	rows, err := sqlc.New().ListFairTenantWorkflowScheduleCandidates(ctx, s.pool, params)
 	if err != nil {
 		return nil, fmt.Errorf("state: list fair tenant workflow schedules: %w", err)
 	}
 	result := make([]WorkflowScheduleCandidate, 0, len(rows))
 	for _, row := range rows {
 		result = append(result, WorkflowScheduleCandidate{AppID: pgUUIDString(row.AppID),
-			PlatformTenantID: pgUUIDString(row.PlatformTenantID), DeploymentID: pgUUIDString(row.DeploymentID), Workflows: cloneWorkflowJSON(row.Workflows)})
+			PlatformTenantID: pgUUIDString(row.PlatformTenantID), DeploymentID: pgUUIDString(row.DeploymentID), Workflows: cloneWorkflowJSON(row.Workflows),
+			FairWorkflowName: row.FairWorkflowName, FairLastAdmittedAt: timestamptzToTimePtr(row.FairLastAdmittedAt)})
 	}
 	return result, nil
 }

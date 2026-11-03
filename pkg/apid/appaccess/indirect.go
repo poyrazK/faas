@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -39,6 +40,12 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 		var rule state.EdgeRule
 		rule, err = store.GetEdgeRuleByID(r.Context(), id)
 		appID = rule.AppID
+	case companyListPath(path) && r.URL.Query().Get("app") != "":
+		// Edge-rule lists and CORS presets are account objects; ?app=<slug>
+		// manages a company app's own (ADR-091 amendment 2026-11-03,
+		// review round 9) with the member's organization role on it.
+		app, err := store.AppBySlug(r.Context(), r.URL.Query().Get("app"))
+		return app, true, err
 	case strings.HasPrefix(path, "/v1/invocations/") && id != "":
 		var invocation state.Invocation
 		invocation, err = store.InvocationByID(r.Context(), id)
@@ -57,6 +64,32 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 	}
 	app, err := store.AppByID(r.Context(), appID)
 	return app, true, err
+}
+
+// previewStatusReads are the PR preview status reads a credential bound to the
+// production app may make (ADR-20261102203228).
+var previewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// previewAccessApp is the app a preview route is authorized against: the
+// preview, except for a status read made with a credential bound to one app,
+// which reads its own app's previews and is authorized against the preview's
+// production app (ADR-20261102203228).
+func previewAccessApp(r *http.Request, store Store, preview state.App) string {
+	if !previewStatusReads[r.Pattern] || preview.PreviewOfSlug == "" {
+		return preview.ID
+	}
+	_, key, _, ok := authmw.PrincipalFrom(r)
+	if !ok || key == nil || key.AppID == "" {
+		return preview.ID
+	}
+	parent, err := store.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if err != nil || parent.ID != key.AppID || parent.AccountID != preview.AccountID {
+		return preview.ID
+	}
+	return parent.ID
 }
 
 // fireNowRequestApp resolves the app behind a manual cron run's request. A
@@ -111,7 +144,10 @@ func ownedResourceApp(r *http.Request, store Store, actorID string) (string, err
 		return id, nil
 	case strings.HasPrefix(path, "/v1/preview/") && r.PathValue("slug") != "":
 		preview, err := store.AppBySlug(ctx, r.PathValue("slug"))
-		return preview.ID, missing(err)
+		if err != nil {
+			return "", missing(err)
+		}
+		return previewAccessApp(r, store, preview), nil
 	case strings.HasPrefix(path, "/v1/freezes/") && validID(id):
 		freezes, ok := store.(state.ReleaseFreezeStore)
 		if !ok {
@@ -162,4 +198,15 @@ func missing(err error) error {
 		return nil
 	}
 	return err
+}
+
+// companyListPath is an edge-rule list or CORS preset URL, which addresses a
+// company app by its ?app= query.
+func companyListPath(path string) bool {
+	for _, prefix := range []string{"/v1/edge-rule-lists", "/v1/cors-presets"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }

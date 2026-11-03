@@ -283,11 +283,21 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	}
 	cursors := make(map[string]overageCursor)
 	grants := p.newMonthGrants()
+	held := newHeldUsage(start)
+	defer p.publishHeld(state.BillingMeterCompute, held)
 	pushed := 0
 	var firstErr error
 	for _, window := range ordered {
 		acct, ok := byID[window.AccountID]
-		if !ok || acct.Plan == "free" || !usageDeliverable(acct, window.Hour) {
+		if !ok {
+			held.add(state.BillingMeterCompute, UsageHeldUnknownSubject, window.Hour)
+			continue
+		}
+		if acct.Plan == "free" {
+			continue
+		}
+		if !usageDeliverable(acct, window.Hour) {
+			held.add(state.BillingMeterCompute, heldReason(acct), window.Hour)
 			continue
 		}
 		acct, err = p.accountForProvider(ctx, acct)
@@ -306,6 +316,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 			p.log.Warn("meter: billing identity incomplete",
 				"account", acct.ID, "provider_customer_id_set", acct.ProviderCustomerID != "",
 				"subscription_id_set", acct.StripeSubscriptionItem != "", "replay", true)
+			held.add(state.BillingMeterCompute, UsageHeldIdentityIncomplete, window.Hour)
 			continue
 		}
 		free, err := grants.freeAt(ctx, acct, window.Hour)
@@ -407,11 +418,21 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		return windows[i].AccountID < windows[j].AccountID
 	})
 	cursors := make(map[string]overageCursor)
+	held := newHeldUsage(start)
+	defer p.publishHeld(meter, held)
 	pushed := 0
 	var firstErr error
 	for _, window := range windows {
 		acct, exists := byID[window.AccountID]
-		if !exists || acct.Plan == api.PlanFree || !usageDeliverable(acct, window.Hour) {
+		if !exists {
+			held.add(meter, UsageHeldUnknownSubject, window.Hour)
+			continue
+		}
+		if acct.Plan == api.PlanFree {
+			continue
+		}
+		if !usageDeliverable(acct, window.Hour) {
+			held.add(meter, heldReason(acct), window.Hour)
 			continue
 		}
 		policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, meter)
@@ -435,6 +456,7 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		}
 		if acct.ProviderCustomerID == "" || acct.StripeSubscriptionItem == "" {
 			p.log.Warn("meter: billing identity incomplete", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "replay", true)
+			held.add(meter, UsageHeldIdentityIncomplete, window.Hour)
 			continue
 		}
 		free, err := grants.freeAt(ctx, acct, window.Hour)

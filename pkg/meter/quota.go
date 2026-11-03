@@ -43,6 +43,9 @@ type QuotaAction struct {
 	Action    string // "" | "warn" | "stop"
 	UsedGB    float64
 	QuotaGB   int
+	// EgressStop is true when the stop is the month's egress ceiling rather
+	// than the compute allowance (ADR-20261103131742).
+	EgressStop bool
 }
 
 // EnforceQuota is the per-tick decision the meterd quota loop runs once
@@ -91,6 +94,11 @@ type QuotaParams struct {
 	Log              *slog.Logger
 	WarningRequested func() bool
 	WarningCommands  QuotaWarningCommands
+	// EgressBytes is the subject's application egress this month and
+	// EgressCeilingBytes the ceiling it stops at; zero means no ceiling
+	// applies (ADR-20261103131742).
+	EgressBytes        int64
+	EgressCeilingBytes int64
 }
 
 // Enforce keeps the existing quota/parking ladder; only paid warning issuance
@@ -112,21 +120,34 @@ func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB 
 		}
 		res = checkQuotaAgainst(account.Plan, usedGB, quota)
 	}
+	// ADR-20261103131742: egress the plan does not bill is capped at the
+	// plan's monthly egress. Past it the subject stops like a Free account
+	// past its compute allowance, until the month ends or the plan grows.
+	egressStop := res.Action != "stop" && p.EgressCeilingBytes > 0 && p.EgressBytes >= p.EgressCeilingBytes
+	if egressStop {
+		res.Action = "stop"
+	}
 	act := QuotaAction{
 		AccountID: account.ID, Plan: account.Plan,
-		Action: res.Action, UsedGB: res.UsedGB, QuotaGB: res.QuotaGB,
+		Action: res.Action, UsedGB: res.UsedGB, QuotaGB: res.QuotaGB, EgressStop: egressStop,
 	}
 	switch res.Action {
 	case "stop":
-		// Free hard stop. Flip the account, fan out, park instances. Only
-		// an active account is suspended, and the suspension is recorded
-		// as a quota stop so the next month (or an upgrade) lifts it.
+		// Free hard stop, or the egress ceiling. Flip the account, fan out,
+		// park instances. Only an active account is suspended, and the
+		// suspension is recorded as a quota stop so the next month (or an
+		// upgrade) lifts it.
 		transitioned, err := store.SuspendAccountForFreeQuota(ctx, account.ID)
 		if err != nil {
 			return act, fmt.Errorf("meter: suspend %s: %w", account.ID, err)
 		}
+		parkReason, reason := "quota_exceeded_free", "compute"
+		if egressStop {
+			parkReason, reason = "quota_exceeded_egress", "egress"
+		}
 		if transitioned {
-			log.Info("meter: free-tier hard stop", "account", account.ID, "used_gb", usedGB, "quota_gb", res.QuotaGB)
+			log.Info("meter: quota hard stop", "account", account.ID, "plan", account.Plan, "reason", reason,
+				"used_gb", usedGB, "quota_gb", res.QuotaGB, "egress_bytes", p.EgressBytes, "egress_ceiling_bytes", p.EgressCeilingBytes)
 		}
 		if transitioned {
 			notifyAccountAppLifecycle(ctx, store, notif, account.ID, "account_suspended", log)
@@ -139,15 +160,20 @@ func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB 
 			if !state.State(in.State).CountsForRAM() {
 				continue
 			}
-			if err := schedd.ParkInstance(ctx, in.ID, "quota_exceeded_free", ""); err != nil {
+			if err := schedd.ParkInstance(ctx, in.ID, parkReason, ""); err != nil {
 				log.Warn("meter: park instance failed", "instance", in.ID, "err", err)
 				continue
 			}
 		}
-		payload, _ := json.Marshal(map[string]any{
+		fields := map[string]any{
 			"account_id": account.ID, "used_gb": usedGB,
 			"quota_gb": res.QuotaGB, "at": at.UTC().Format(time.RFC3339Nano),
-		})
+			"reason": reason,
+		}
+		if egressStop {
+			fields["egress_bytes"], fields["egress_ceiling_bytes"] = p.EgressBytes, p.EgressCeilingBytes
+		}
+		payload, _ := json.Marshal(fields)
 		if err := notif.Notify(ctx, db.NotifyBillingPastDue, string(payload)); err != nil {
 			log.Warn("meter: notify billing_past_due", "err", err)
 		}

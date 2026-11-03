@@ -3342,12 +3342,7 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, appRenameWriteProblem(err, req.NewSlug))
 		return
 	}
-	if retargeted, err := s.edgeRules.RetargetRouteRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
-		s.log.Error("app renamed but its route rules still name the old slug", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "retargeted", retargeted, "err", err)
-	}
-	if moved, err := s.edgeRules.RetargetPlatformHostRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
-		s.log.Error("app renamed but rules on its old hostname did not move", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "moved", moved, "err", err)
-	}
+	s.retargetEdgeRulesAfterRename(w, r, acct, updated.ID, oldSlug, req.NewSlug)
 	if prob := s.edgeRules.ApplyReferencedEdit(r.Context(), w, routeEdit, updated.ID, convergences); prob != nil {
 		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)
 	}
@@ -3359,6 +3354,21 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	s.audit.Emit(r.Context(), "app.renamed", &acct.ID, map[string]any{"app_id": updated.ID, "from": oldSlug, "to": req.NewSlug})
 	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
+}
+
+// retargetEdgeRulesAfterRename moves the account's edge rules that name the
+// old slug or its platform hostname. The rename itself has committed; rules
+// that could not be moved are reported to the caller (a Warning header) and
+// in the account's audit trail, not only the daemon log (ADR-091 amendment
+// 2026-11-03, review round 9).
+func (s *server) retargetEdgeRulesAfterRename(w http.ResponseWriter, r *http.Request, acct state.Account, appID, oldSlug, newSlug string) {
+	err := s.edgeRules.RetargetAfterRename(r.Context(), acct.ID, oldSlug, newSlug)
+	if err == nil {
+		return
+	}
+	s.log.Error("app renamed but some edge rules still name its old slug or hostname", "app_id", appID, "from", oldSlug, "to", newSlug, "err", err)
+	s.audit.Emit(r.Context(), "app.rename_edge_rules_incomplete", &acct.ID, map[string]any{"app_id": appID, "from": oldSlug, "to": newSlug})
+	w.Header().Set("Warning", `299 - "the app was renamed, but some edge rules still name `+oldSlug+`; review them with gregale edge rule list `+newSlug+`"`)
 }
 
 // --- instances -------------------------------------------------------------
@@ -4508,6 +4518,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.ClearSchedulePolicy && req.SchedulePolicy != nil || req.ClearFailureRules && req.FailureRules != nil {
+		api.WriteProblem(w, api.ErrValidation("clear_schedule_policy and clear_failure_rules cannot be sent with the field they clear"))
+		return
+	}
 	if req.Schedule != nil {
 		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
 			api.WriteProblem(w, problem)
@@ -4561,9 +4575,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 			return
 		}
 	}
-	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil || req.ClearSchedulePolicy || req.ClearFailureRules {
 		opts := state.CronOptions{RetryMax: c.RetryMax, RetryBackoffSeconds: c.RetryBackoffSeconds,
-			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules}
+			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
+			ClearSchedulePolicy: req.ClearSchedulePolicy, ClearFailureRules: req.ClearFailureRules}
 		if req.RetryMax != nil {
 			opts.RetryMax = *req.RetryMax
 		}
@@ -4616,6 +4631,14 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.RetryMax != nil {
 		oldCron["retry_max"] = c.RetryMax
 		newCron["retry_max"] = updated.RetryMax
+	}
+	if req.ClearSchedulePolicy {
+		oldCron["schedule_policy"] = c.SchedulePolicy != nil
+		newCron["schedule_policy"] = updated.SchedulePolicy != nil
+	}
+	if req.ClearFailureRules {
+		oldCron["failure_rules"] = c.FailureRules != nil
+		newCron["failure_rules"] = updated.FailureRules != nil
 	}
 	if req.RetryBackoffSeconds != nil {
 		oldCron["retry_backoff_seconds"] = c.RetryBackoffSeconds
@@ -5344,6 +5367,11 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			"from", logsanitize.Field(string(acct.Plan)),
 			"to", logsanitize.Field(string(plan)),
 		)
+		// ADR-20261103131742: the customer portal no longer switches plans,
+		// so an existing subscription is upgraded through the provider API.
+		if acct.Plan.RequiresBillingUpgradeTo(plan) && s.upgradeSubscription(w, r, acct, plan) {
+			return
+		}
 		prob := &api.Problem{
 			Status: http.StatusPaymentRequired,
 			Code:   api.CodePayment,
@@ -5373,6 +5401,10 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			// through to the portal URL; any other error is a provider
 			// or store failure the customer should retry.
 			txID, checkoutURL, err := s.beginHostedCheckout(r.Context(), acct, plan)
+			if errors.Is(err, billing.ErrCustomerEmailInUse) {
+				api.WriteProblem(w, api.ErrBillingEmailInUse(acct.ResourceOrgID != ""))
+				return
+			}
 			if err != nil && !errors.Is(err, errNoHostedCheckout) {
 				api.WriteProblem(w, api.ErrCapacity("upgrade unavailable"))
 				return
@@ -5426,36 +5458,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, prob)
 			return
 		}
-		effectiveAt, err := changer.ChangeSubscriptionPlan(r.Context(), billingAcct, plan)
-		if err != nil {
-			s.log.Error("schedule plan change failed",
-				"account", acct.ID,
-				"from", logsanitize.Field(string(acct.Plan)),
-				"to", logsanitize.Field(string(plan)),
-				"err", logsanitize.FieldAny(err))
-			if errors.Is(err, billing.ErrAlreadyCancelled) {
-				api.WriteProblem(w, api.NewProblem(http.StatusConflict,
-					api.CodeConflict, "billing subscription unavailable",
-					"the billing subscription is no longer active; refresh billing and try again"))
-				return
-			}
-			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,
-				"billing_plan_change_failed", "billing plan change failed",
-				"the provider could not schedule this plan change; the current plan remains active"))
-			return
-		}
-		updated, err := state.BillingResourceAccount(r.Context(), s.store, acct.ID)
-		if err != nil {
-			updated = acct
-		}
-		status := "pending_provider_confirmation"
-		response := s.accountResponse(r.Context(), updated, r)
-		response.PlanChangeStatus = status
-		response.RequestedPlan = string(plan)
-		if !effectiveAt.IsZero() {
-			response.EffectiveAt = &effectiveAt
-		}
-		writeJSON(w, http.StatusAccepted, orgbilling.PlanResponse(updated, response))
+		s.scheduleProviderPlanChange(w, r, acct, billingAcct, changer, plan)
 		return
 	}
 	if err := s.setAccountPlan(r.Context(), acct, plan); err != nil {
@@ -7318,6 +7321,15 @@ func combinedOverageCents(provider billing.Provider, plan api.Plan, usedEgressBy
 	return computeCents + egressCents
 }
 
+// saturatingAddCents adds two non-negative cent amounts, saturating at
+// math.MaxInt64.
+func saturatingAddCents(a, b int64) int64 {
+	if b > math.MaxInt64-a {
+		return math.MaxInt64
+	}
+	return a + b
+}
+
 // accountUsage serves the account-level usage projection. Compute remains
 // available when an optional service is not configured; configured service
 // accounting failures fail the whole projection so callers do not mistake a
@@ -7732,8 +7744,9 @@ func cronScheduleProblem(s string) *api.Problem {
 //     returns DESC, the SSE client expects chronological).
 //  2. Live tail — subscribe to the in-process broadcaster, write
 //     every published log line until the context cancels or the
-//     deployment transitions to `live`/`failed` (an `end` event is
-//     emitted).
+//     deployment reaches `live` or a terminal status (`status` then
+//     `end` events are emitted). A deployment already there skips
+//     the tail and ends straight after the initial page.
 //
 // ?before_seq=0 (default) opens with the oldest 50; pass ?before_seq=N
 // to resume from seq N. ?limit= caps the initial page (default 50,
@@ -7796,6 +7809,23 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 
+	// ADR-117 §3: per-connection set of stages already announced so
+	// the diff on each tick emits `event: stage` exactly once. The
+	// closed 6-stage vocabulary is encoded in pkg/state.StageName
+	// consts; `announced` is keyed by StageName so the jsonb row's
+	// `current` field maps straight through without a string copy.
+	announced := make(map[state.StageName]string)
+	var lastStageStateRaw []byte
+
+	// A deployment that already finished has nothing to tail. End now
+	// rather than at the first status poll: the dashboard's release
+	// dialog follows the build log of finished deployments too, and
+	// each visit used to hold the connection for that 2 s poll.
+	if deploymentLogTailDone(d.Status) {
+		endDeploymentLogStream(w, flusher, d, announced, &lastStageStateRaw)
+		return
+	}
+
 	// Live tail: subscribe to the broadcaster until deploy is done
 	// or the client disconnects.
 	sub, cancel := s.events.Subscribe(events.TopicDeploymentLog)
@@ -7813,14 +7843,6 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 	// poll tick — negligible load compared to the build itself.
 	statusTicker := time.NewTicker(2 * time.Second)
 	defer statusTicker.Stop()
-
-	// ADR-117 §3: per-connection set of stages already announced so
-	// the diff on each tick emits `event: stage` exactly once. The
-	// closed 6-stage vocabulary is encoded in pkg/state.StageName
-	// consts; `announced` is keyed by StageName so the jsonb row's
-	// `current` field maps straight through without a string copy.
-	announced := make(map[state.StageName]string)
-	var lastStageStateRaw []byte
 
 	// Move 3: one-shot backstop timer (replaces per-iteration
 	// time.After(10*time.Minute), which was never reaping the timer
@@ -7875,12 +7897,8 @@ func (s *server) streamDeploymentLogs(w http.ResponseWriter, r *http.Request, ac
 			// backstop, so a waiting `gregale deploy` sat on a
 			// cancelled build for minutes (H10-48).
 			if d2, err := s.store.DeploymentByID(ctx, id); err == nil {
-				if d2.Status == state.DeployLive || d2.Status.IsTerminal() {
-					emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
-					_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d2.Status)
-					if flusher != nil {
-						flusher.Flush()
-					}
+				if deploymentLogTailDone(d2.Status) {
+					endDeploymentLogStream(w, flusher, d2, announced, &lastStageStateRaw)
 					return
 				}
 				emitStageDiff(w, flusher, d2.StageState, announced, &lastStageStateRaw)
@@ -8020,6 +8038,27 @@ func writeLogEvent(w http.ResponseWriter, flusher http.Flusher, e state.LogEntry
 		"written_at": e.WrittenAt.UTC().Format(time.RFC3339Nano),
 	})
 	_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\n", payload)
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+// deploymentLogTailDone reports whether a deployment's build log has
+// stopped growing, so a follow stream has nothing left to wait for.
+func deploymentLogTailDone(status state.DeploymentStatus) bool {
+	return status == state.DeployLive || status.IsTerminal()
+}
+
+// endDeploymentLogStream closes a follow stream on a finished deployment:
+// any stage frames not yet announced, the `status` frame the CLI's deploy
+// wait reads, then `end`. EventSource clients (the dashboard) know only
+// `end` as a clean close; without it they took the closed connection for
+// a dropped one and reconnected every few seconds, replaying the log each
+// time.
+func endDeploymentLogStream(w http.ResponseWriter, flusher http.Flusher, d state.Deployment, announced map[state.StageName]string, lastStageStateRaw *[]byte) {
+	emitStageDiff(w, flusher, d.StageState, announced, lastStageStateRaw)
+	_, _ = fmt.Fprintf(w, "event: status\ndata: {\"status\":%q}\n\n", d.Status)
+	_, _ = fmt.Fprint(w, "event: end\ndata: {}\n\n")
 	if flusher != nil {
 		flusher.Flush()
 	}

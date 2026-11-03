@@ -225,6 +225,50 @@ func TestReleaseApprovalRejectionAbortsTheRollout(t *testing.T) {
 		http.StatusConflict, api.CodeReleaseApprovalRejected)
 }
 
+// A rejection aborts the rejected release even while another environment of
+// the app rolls out, where an app-level abort is ambiguous (amendment 11).
+func TestReleaseApprovalRejectionAbortsWithAnotherEnvironmentRollingOut(t *testing.T) {
+	ctx := context.Background()
+	f := newApprovalFixture(ctx, t, "approval-reject-envs", time.Now().Add(-time.Hour), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 2})
+	store := *f.e.Store()
+	stagingPrior, err := store.CreateDeployment(ctx, state.Deployment{AppID: f.app.ID, Scope: "staging", ImageDigest: "sha256:staging-prior"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, stagingPrior.ID); err != nil {
+		t.Fatal(err)
+	}
+	stagingCanary, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: f.app.ID, Scope: "staging", ImageDigest: "sha256:staging-canary", RootfsKey: "rootfs/staging", CanaryPreset: "balanced",
+		CanaryTotalSteps: 4, RolloutState: "pending", TrafficPercent: 1, CreatedAt: time.Now().UTC().Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, stagingCanary.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetDeploymentCanaryState(ctx, stagingCanary.ID, "balanced", 0, 4, time.Now(), "rolling_out"); err != nil {
+		t.Fatal(err)
+	}
+	var status api.ReleaseApprovalStatus
+	rec := guardDo(t, f.e, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionReject, Comment: "checkout latency is up"}, &status)
+	if rec.Code != http.StatusOK || status.State != api.ReleaseApprovalStateRejected {
+		t.Fatalf("reject = %d %+v", rec.Code, status)
+	}
+	if got := f.deployment(t); got.RolloutState != "aborted" || got.TrafficPercent != 0 {
+		t.Fatalf("rejected production canary state=%q traffic=%d, want aborted at 0%%", got.RolloutState, got.TrafficPercent)
+	}
+	staging, err := store.DeploymentByID(ctx, stagingCanary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.NormalizeRolloutState(staging.RolloutState) != "rolling_out" {
+		t.Fatalf("the staging canary = %q, want it left rolling out", staging.RolloutState)
+	}
+}
+
 func TestReleaseApprovalTimeoutAbortsOnTheWorkersNextTick(t *testing.T) {
 	ctx := context.Background()
 	f := newApprovalFixture(ctx, t, "approval-timeout", time.Now().Add(-2*time.Hour),

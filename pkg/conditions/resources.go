@@ -216,6 +216,8 @@ func cronPausedText(paused string) string {
 		return "it is over the plan's cron limits, and only the oldest crons within them run."
 	case "account_suspended":
 		return "the account that owns the app is suspended."
+	case "budget_held":
+		return "a compute budget holds the app; the cron runs once when the hold lifts."
 	}
 	return paused + "."
 }

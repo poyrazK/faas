@@ -900,6 +900,20 @@ func (l *NodeLedger) Concurrency(appID string) int {
 	return l.perApp[appID]
 }
 
+// InstancesForApp returns the instances this ledger holds a reservation for
+// under appID, whatever their state (ADR 20261103131546).
+func (l *NodeLedger) InstancesForApp(appID string) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var ids []string
+	for id, r := range l.entries {
+		if r.appID == appID {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // AppInstancesByNode counts appID's serving reservations on each node, the
 // instances replica spread keeps apart (ADR-20261026140000). The owner
 // scheduler admits every instance of its apps, so its ledger sees them all.
