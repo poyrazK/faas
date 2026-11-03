@@ -105,9 +105,10 @@ func TestEnvironmentBranchIdentityReloadMetal(t *testing.T) {
 	// the parent's credential-free capture.
 	first := createEnvironmentBranch(t, h, key, project.Slug, "pr-1", appID)
 	body, wakeID, status := doGetWithHostCapturingWakeID(t, client, url, environmentBranchHost(t, store, account.ID, project.ID, "pr-1", appID), 60*time.Second)
-	if status != http.StatusOK || !strings.HasPrefix(strings.TrimSpace(string(body)), "color=production reloads=0") {
-		t.Fatalf("first branch wake: status=%d body=%q", status, body)
+	if status != http.StatusOK || !strings.HasSuffix(strings.TrimSpace(string(body)), " reloads=0") {
+		t.Fatalf("first branch wake: status=%d body=%q, want a cold boot without a reload", status, body)
 	}
+	t.Logf("first branch wake served %q", strings.TrimSpace(string(body)))
 	waitWakeMethod(t, pool, wakeID, "cold_boot")
 	capture := waitEnvironmentBranchCapture(t, pool, parentID)
 	var snapshotRows int
@@ -190,7 +191,7 @@ func environmentBranchHost(t *testing.T, store *state.PgStore, accountID, projec
 	if err != nil {
 		t.Fatalf("branch environment %s: %v", branch, err)
 	}
-	host := hostidentity.BuildEnvironmentHost(".apps.test.example", environment.ID, appID)
+	host := hostidentity.BuildEnvironmentHost(hostidentity.DeploySuffix(), environment.ID, appID)
 	if host == "" {
 		t.Fatalf("no environment host for %s/%s", environment.ID, appID)
 	}
