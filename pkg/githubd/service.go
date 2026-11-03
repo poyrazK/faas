@@ -620,10 +620,23 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 	}
 	var result reconcile.Result
+	// held names the project apps this push does not deploy, with the reason
+	// its GitHub check gives (ADR-20261103112845).
+	held := map[string]string{}
 	if deployProject {
-		// githubd is push-driven (no --exclude analog on the webhook
-		// path); pass nil so workloadDiff's exclude filter is a no-op.
-		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, nil)
+		// A push never removes a service: an app whose service left the
+		// Compose file (or is hidden by an inactive profile) is excluded
+		// from the reconcile, keeps serving, and waits for a reviewed deploy.
+		kept, keptErr := s.pushKeptServices(ctx, project, scan)
+		if keptErr != nil {
+			return reconcile.Result{}, keptErr
+		}
+		exclude := make([]string, 0, len(kept))
+		for _, app := range kept {
+			exclude = append(exclude, app.WorkloadName)
+			held[app.ID] = fmt.Sprintf("Kept: %s is not in the Compose file at this commit, and a GitHub push does not remove services. It keeps serving its last release. Deploy with `gregale deploy` or from the dashboard to review and remove it.", app.WorkloadName)
+		}
+		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, exclude)
 		if err != nil {
 			if errors.Is(err, reconcile.ErrIgnored) {
 				// Defensive: ErrIgnored is the Plan-side sentinel;
@@ -642,6 +655,15 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// handler can branch on the typed sentinel.
 		if result.WasIgnored {
 			return result, pushSkip(SkipReasonBranchNotDeployed)
+		}
+		// A service whose Compose postgres a push cannot create waits for a
+		// reviewed deploy instead of starting without its database.
+		waiting, waitErr := s.pushServicesWaitingForDatabase(ctx, project, scan, tree.FS(), deploymentScope)
+		if waitErr != nil {
+			return result, waitErr
+		}
+		for id, reason := range waiting {
+			held[id] = reason
 		}
 	}
 
@@ -762,6 +784,18 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	toEnqueue = append(toEnqueue, boundToEnqueue...)
 	for _, app := range toEnqueue {
 		appScope := deploymentScope
+		if reason, ok := held[app.ID]; ok && !appBound[app.ID] {
+			// No deployment exists for a held app, so no outbox writes its
+			// check; write it here on every delivery path.
+			s.Log.Info("githubd: push holds app", "app_id", app.ID, "detail", reason)
+			if s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil {
+				if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					app.Slug, appScope, githubdgrpc.CheckPhaseFailed, reason); werr != nil {
+					s.Log.Warn("githubd: write held app check", "app_id", app.ID, "err", werr)
+				}
+			}
+			continue
+		}
 		if appBound[app.ID] {
 			appScope = state.DefaultEnvScope
 		} else if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
