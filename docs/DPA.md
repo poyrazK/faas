@@ -94,6 +94,16 @@ keeping (tax invoices: 7 years).
   archive deletes them 90 days after they are written, and with the
   account (section 11); the storage provider keeps a deleted object
   recoverable for 7 more days before purging it.
+- Build logs: the output of building Controller's deployments (build
+  steps, the builder's own messages and the tail of the build tool's
+  output), which can contain personal data a build script prints. Each
+  deployment's build log is stored up to a size cap (8 MiB by default);
+  output past it is not stored. A deployment's build log is deleted
+  within a day once 90 days have passed since its last line was written,
+  except while the deployment is live or is one of its application's 10
+  most recent deployments; those are kept until that no longer holds.
+  Build logs are deleted with their deployment, application or account
+  (section 11).
 - Job output: the last 1 MiB of what each attempt of a job task Controller
   runs writes to standard output and standard error, which can contain any
   personal data the job chooses to write. Stored in the platform database

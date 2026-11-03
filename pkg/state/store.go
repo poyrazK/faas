@@ -3075,6 +3075,12 @@ type Store interface {
 	// cheap).
 	AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (seq int64, err error)
 	ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) (rows []LogEntry, hasMore bool, err error)
+	// DeploymentLogUsage sums the bytes of a deployment's stored log lines
+	// and reports whether a DeploymentLogStreamSystem row (the truncation
+	// marker) is among them. builderd reads it when it first writes to a
+	// build, and after an idle gap, to enforce its per-build byte cap across
+	// restarts and builder nodes (ADR-20261102182856).
+	DeploymentLogUsage(ctx context.Context, deploymentID string) (DeploymentLogUsage, error)
 	LogEventStore
 	LogProjectionStore
 	LogSavedSearchStore

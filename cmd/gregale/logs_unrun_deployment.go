@@ -48,6 +48,10 @@ func buildLogsForUnrunDeployment(ctx context.Context, client *api.Client, deploy
 	dec.SetCloseFn(body.Close)
 	defer func() { _ = dec.Close() }()
 	for e := range dec.Events() {
+		if message, ok := buildLogExpiredMessage(e); ok {
+			PrintWarn(osStderr, "%s", terminalSafe(message))
+			continue
+		}
 		switch e.Event {
 		case "log":
 			var entry struct {

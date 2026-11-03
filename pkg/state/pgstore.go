@@ -27998,6 +27998,16 @@ func (s *PgStore) AppendDeploymentLog(ctx context.Context, deploymentID, stream,
 	return seq, err
 }
 
+// DeploymentLogUsage sums a deployment's stored build log (ADR-20261102182856).
+// An id that is not a uuid binds the zero uuid, which has no rows.
+func (s *PgStore) DeploymentLogUsage(ctx context.Context, deploymentID string) (DeploymentLogUsage, error) {
+	row, err := sqlc.New().DeploymentLogUsage(ctx, s.pool, mustPgUUID(deploymentID))
+	if err != nil {
+		return DeploymentLogUsage{}, fmt.Errorf("state: deployment log usage: %w", err)
+	}
+	return DeploymentLogUsage{Bytes: row.Bytes, Truncated: row.Truncated}, nil
+}
+
 // ListDeploymentLogs returns the page of rows with seq < beforeSeq
 // (zero → all rows), DESC, capped at limit. hasMore is true if there's
 // at least one older row beyond the page.

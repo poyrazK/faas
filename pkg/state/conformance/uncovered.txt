@@ -29,7 +29,6 @@ AppWebhookDeliveryByID
 AppendBuilderUsage
 AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
-AppendDeploymentLog
 AppendDeploymentStage
 AppendSnapshotStorage
 AppendUploadBytes

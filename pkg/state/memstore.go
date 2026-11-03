@@ -22187,6 +22187,19 @@ func (m *MemStore) AppendDeploymentLog(_ context.Context, deploymentID, stream, 
 	return seq, nil
 }
 
+// DeploymentLogUsage mirrors PgStore: the bytes of every stored line and
+// whether a DeploymentLogStreamSystem row is among them.
+func (m *MemStore) DeploymentLogUsage(_ context.Context, deploymentID string) (DeploymentLogUsage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var usage DeploymentLogUsage
+	for _, e := range m.deploymentLogs[deploymentID] {
+		usage.Bytes += int64(len(e.Line))
+		usage.Truncated = usage.Truncated || e.Stream == DeploymentLogStreamSystem
+	}
+	return usage, nil
+}
+
 // ListDeploymentLogs returns the page of rows whose seq < beforeSeq
 // (zero → all rows), in DESC seq order, capped at limit. hasMore is
 // true when there are older rows still to fetch (rows == limit AND

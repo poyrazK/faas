@@ -15566,6 +15566,28 @@ func (q *Queries) DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, i
 	return err
 }
 
+const deploymentLogUsage = `-- name: DeploymentLogUsage :one
+SELECT coalesce(sum(octet_length(line)), 0)::bigint AS bytes,
+       coalesce(bool_or(stream = 'system'), false)::boolean AS truncated
+  FROM deployment_logs
+ WHERE deployment_id = $1::uuid
+`
+
+type DeploymentLogUsageRow struct {
+	Bytes     int64
+	Truncated bool
+}
+
+// Bytes of a deployment's stored build log and whether its truncation marker
+// (a 'system' row) is among them (ADR-20261102182856). One range scan of
+// deployment_logs_pkey; builderd reads it once per build, not per line.
+func (q *Queries) DeploymentLogUsage(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentLogUsageRow, error) {
+	row := db.QueryRow(ctx, deploymentLogUsage, deploymentID)
+	var i DeploymentLogUsageRow
+	err := row.Scan(&i.Bytes, &i.Truncated)
+	return i, err
+}
+
 const deploymentReadinessConfigs = `-- name: DeploymentReadinessConfigs :many
 SELECT CAST(id AS text) AS deployment_id, CAST(app_id AS text) AS app_id,
        override_readiness_probe,

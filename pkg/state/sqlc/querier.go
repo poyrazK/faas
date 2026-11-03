@@ -1046,6 +1046,10 @@ type Querier interface {
 	// A deployment with nothing recorded is left alone: no row version and no
 	// update triggers for the common case.
 	DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// Bytes of a deployment's stored build log and whether its truncation marker
+	// (a 'system' row) is among them (ADR-20261102182856). One range scan of
+	// deployment_logs_pkey; builderd reads it once per build, not per line.
+	DeploymentLogUsage(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DeploymentLogUsageRow, error)
 	// Immutable probe configuration only; do not project customer credentials or
 	// unrelated manifest settings into the gateway's bounded readiness refresh.
 	DeploymentReadinessConfigs(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) ([]DeploymentReadinessConfigsRow, error)

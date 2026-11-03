@@ -229,6 +229,8 @@ type Builderd struct {
 	draining    bool
 	processWG   sync.WaitGroup
 	activeVMs   map[string]BuildHandle
+	// logBudget enforces Config.BuildLogMaxBytes on deployment_logs.
+	logBudget buildLogBudget
 }
 
 // New wires a Builderd. vm may be nil in unit tests (the orchestrator still
@@ -2101,23 +2103,27 @@ func retryStateMutation(ctx context.Context, op func() error) error {
 // emitBuildLog persists a line in the control-plane database, mirrors it to
 // the node-local bounded file, and fans out a notification for live SSE
 // subscribers. The database row is the durable cross-host source of truth;
-// builderd and apid do not share a filesystem in production.
+// builderd and apid do not share a filesystem in production. Both copies are
+// capped at Config.BuildLogMaxBytes; the database copy records a truncation
+// marker at the cap and later lines are no longer fanned out
+// (ADR-20261102182856).
 func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
+	notify := line
 	if build, err := b.store.BuildByID(ctx, buildID); err != nil {
 		b.log.Warn("builderd: resolve durable build log", "build", buildID, "err", err)
-	} else if _, err := b.store.AppendDeploymentLog(ctx, build.DeploymentID, "build", line); err != nil {
-		b.log.Warn("builderd: persist build log", "build", buildID, "deployment", build.DeploymentID, "err", err)
+	} else {
+		notify = b.persistBuildLog(ctx, buildID, build.DeploymentID, line)
 	}
 	if err := appendLogBounded(ctx, b.store, buildID, line, b.cfg.SourceSpoolDir, b.cfg.BuildLogMaxBytes); err != nil {
 		b.log.Warn("builderd: append node-local log", "build", buildID, "err", err)
 	}
-	if b.notif == nil {
+	if b.notif == nil || notify == "" {
 		return
 	}
 	payload := safetext.JSONObject(struct {
 		Build string `json:"build"`
 		Line  string `json:"line"`
-	}{Build: buildID, Line: line})
+	}{Build: buildID, Line: notify})
 	if err := b.notif.Notify(ctx, db.NotifyBuildLog, string(payload)); err != nil {
 		b.log.Warn("builderd: notify log", "build", buildID, "err", err)
 	}

@@ -105,7 +105,12 @@ func runLatestFailureLogs(slug string) int {
 	decoder.SetCloseFn(body.Close)
 	defer func() { _ = decoder.Close() }()
 	var outputErr error
+	expired := ""
 	code, streamErr := consumeLogStream(ctx, decoder.Events(), decoder.Errors(), func(event api.Event) (bool, int) {
+		if message, ok := buildLogExpiredMessage(event); ok {
+			expired = message
+			return false, 0
+		}
 		switch event.Event {
 		case "end":
 			return true, 0
@@ -149,9 +154,12 @@ func runLatestFailureLogs(slug string) int {
 		return code
 	}
 	receipt.Type = "summary"
-	if receipt.Lines == 0 {
+	switch {
+	case receipt.Lines == 0 && expired != "":
+		receipt.Message = expired + " Inspect persisted failure evidence."
+	case receipt.Lines == 0:
 		receipt.Message = "No retained build/deploy log entries were returned. The response does not establish whether logs expired or were never recorded. Inspect persisted failure evidence."
-	} else {
+	default:
 		receipt.Message = "Read completed for the selected deployment; runtime and HTTP logs are separate."
 	}
 	if jsonOutput {

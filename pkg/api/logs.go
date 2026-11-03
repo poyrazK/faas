@@ -149,6 +149,20 @@ func (c *Client) StreamAppArchivedLogs(ctx context.Context, slug string, selecto
 	return c.stream(ctx, "/v1/apps/"+url.PathEscape(slug)+"/logs?"+q.Encode())
 }
 
+// DeploymentLogExpiredEvent names the SSE frame GET /v1/deployments/{id}/logs
+// sends, after an empty first page, when build log retention deleted the
+// deployment's build log (ADR-20261102182856). Its data is a
+// DeploymentLogExpiredNotice. Older clients ignore the frame and see an empty
+// log, as before.
+const DeploymentLogExpiredEvent = "expired"
+
+// DeploymentLogExpiredNotice is the data of a DeploymentLogExpiredEvent frame.
+type DeploymentLogExpiredNotice struct {
+	Message             string `json:"message"`
+	RetentionDays       int    `json:"retention_days,omitempty"`
+	RetainedDeployments int    `json:"retained_deployments,omitempty"`
+}
+
 // StreamDeploymentLogs opens GET /v1/deployments/{id}/logs. beforeSeq
 // narrows the initial page to rows whose seq is strictly less than
 // the cursor (server-side default is 0 = the most recent page); pass

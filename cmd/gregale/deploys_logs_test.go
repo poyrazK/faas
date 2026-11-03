@@ -45,3 +45,30 @@ func TestCmdDeploysLogsPrintsBuildLog(t *testing.T) {
 		t.Fatalf("limit query = %q, want 20", limit)
 	}
 }
+
+// adr: 20261102182856
+// A deployment whose build log retention deleted says so instead of
+// reporting no retained lines.
+func TestCmdDeploysLogsSaysAnExpiredBuildLogExpired(t *testing.T) {
+	main.ResetJSONOut(t)
+	const id = "0123456789abcdef0123456789abcdef"
+	const message = "This deployment's build log has expired. Build logs are deleted 90 days after the build, except for an app's live deployments and its 10 most recent deployments."
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		notice, _ := json.Marshal(map[string]any{"message": message, "retention_days": 90, "retained_deployments": 10})
+		_, _ = fmt.Fprintf(w, "event: expired\ndata: %s\n\n", notice)
+		_, _ = fmt.Fprint(w, "event: end\ndata: {}\n\n")
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	stderr, restore := main.CaptureStderr(t)
+	code := main.CmdDeploys([]string{"logs", id})
+	restore()
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if out := stderr.String(); !strings.Contains(out, message) || strings.Contains(out, "no retained build or deploy log lines") {
+		t.Fatalf("stderr = %q", out)
+	}
+}
