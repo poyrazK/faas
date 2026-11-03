@@ -28,8 +28,16 @@ Open evidence:
   [GA rollout](managed-postgres.md#ga-rollout)).
 - The compute and storage cap qualifications, the deletion hold check and the
   enforcement switches are operator steps in the same rollout.
-- Free and Hobby cannot restore: a restore is a second database and those
-  plans allow one.
+- Free and Hobby restore into the restore slot
+  ([ADR-20261031123259](adr/20261031123259-managed-postgres-restore-slot.md)):
+  one copy past the database limit until the slot ends. A rollback that
+  restores the database must fit inside the limit, so it needs room for a
+  second database.
+- A source with restore copies can be deleted, and work on existing
+  databases no longer stops when the production approval lapses or a
+  capacity setting changes
+  ([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md),
+  not released).
 
 ## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
 

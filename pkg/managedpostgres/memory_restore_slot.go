@@ -38,7 +38,7 @@ func (s *MemoryStore) CountSubjectDatabases(_ context.Context, subjectID string)
 	defer s.mu.Unlock()
 	var count int64
 	for _, database := range s.databases {
-		if database.State != StateDeleted && s.billingSubject(database) == subjectID {
+		if database.CountsTowardLimit() && s.billingSubject(database) == subjectID {
 			count++
 		}
 	}
@@ -57,4 +57,18 @@ func (s *MemoryStore) ClearRestoreSlot(_ context.Context, databaseID string, now
 	database.UpdatedAt = now
 	s.databases[databaseID] = database
 	return true, nil
+}
+
+var _ RestoreCopiesStore = (*MemoryStore)(nil)
+
+// HasRestoreCopies implements RestoreCopiesStore.
+func (s *MemoryStore) HasRestoreCopies(_ context.Context, databaseID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, database := range s.databases {
+		if database.RestoreSourceDatabaseID == databaseID && database.State != StateDeleted {
+			return true, nil
+		}
+	}
+	return false, nil
 }

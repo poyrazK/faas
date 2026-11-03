@@ -250,7 +250,19 @@ days before it erases it.
 Until it is purged, a deleted database:
 - still counts toward your plan's database limit;
 - keeps its name, so creating another database with that name returns 409;
-- uses nothing from your compute allowance or storage pool.
+- uses nothing from your compute allowance or storage pool, unless it has a
+  restored copy (below).
+
+A database you restored a copy from, for example the original database after
+a rollback that restored it, can be deleted while the copy lives. The copy is
+stored inside the original, so:
+- the 7 days to recover it run as usual, and its usage keeps counting, because
+  it includes the copy's;
+- after that it stays in `deleting`, with `last_error_code`
+  `restore_copies_remain`. It no longer counts toward your database limit, and
+  can no longer be recovered;
+- it is deleted for good once you delete its copies. Until then its name stays
+  taken, and the storage it holds stays in your storage pool.
 
 Undelete applies the same plan check as create. A database your current plan
 no longer allows, for example after a downgrade, cannot be recovered.

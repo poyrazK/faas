@@ -103,9 +103,20 @@ databases. The staging canary list is not read in production. Until
 `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` are both `on`, only an account
 a flag rule names, or one that opted in, is released: the flag's default, the
 GA tier included, releases nobody while databases would run uncapped. apid
-logs `managed postgres release held to accounts a flag rule names` at start. When the
-approval ends, new databases, bindings, restores and resizes close; existing
-databases and credentials keep working.
+logs `managed postgres release held to accounts a flag rule names` at start.
+
+The approval gates new databases only
+([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md)).
+When it ends, or the backend's fingerprint changes and awaits a new
+approval, creating a database closes. Work on databases that exist follows
+`provisioning_enabled` alone and keeps going:
+
+- restores and rollbacks that restore the database;
+- resizes;
+- new bindings and credential rotation;
+- finishing a database that was already reserved.
+
+Set `provisioning_enabled` to false to stop all of it.
 
 The fleet ceilings apply across every account:
 
@@ -415,6 +426,23 @@ portable region name; `settings.region_id` is the current Neon placement for
 that region. Existing database rows contain a fingerprint of this non-secret
 placement. Changing the organization, physical region, or limits fences those
 rows instead of silently moving provider operations to a new destination.
+
+To change `max_storage_bytes` or `max_restore_window_seconds` without fencing
+the existing databases, add the backend's old `settings` to
+`previous_settings` in the same change:
+
+```json
+"settings": {"region_id": "aws-us-east-1", "max_storage_bytes": "214748364800", "max_restore_window_seconds": "604800"},
+"previous_settings": [
+  {"region_id": "aws-us-east-1", "max_storage_bytes": "107374182400", "max_restore_window_seconds": "604800"}
+]
+```
+
+Databases created under an entry keep resolving to the backend, which applies
+its current limits. An entry that differs in any other setting fails startup:
+that is a placement change. The backend's fingerprint still changes, so in
+production renew the approval for the new fingerprint before new databases
+open again ([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md)).
 
 The adapter requires explicit `max_storage_bytes` and
 `max_restore_window_seconds` settings. Set them to promises supported by the
@@ -1223,10 +1251,17 @@ per-target usage isolation; the usage collector exposes skipped descendants as
 `included_in_source` rather than as independently metered databases. Providers
 that can meter restores independently may instead declare that capability.
 If a create response is lost, branch-name discovery recovers the accepted
-branch without a second POST. Deleting a source is rejected while an active
-restore descendant exists, and deleting a restore target removes only its
-branch. Cutover remains an explicit binding operation; restore never silently
-rewires an app.
+branch without a second POST. Deleting a restore target removes only its
+branch. A source with an active restore descendant can be deleted
+([ADR-20261103091657](adr/20261103091657-managed-postgres-existing-databases-outlive-approvals-and-config-changes.md)):
+- its undo window runs as usual;
+- its purge then keeps the project, holds it, and leaves the row in `deleting`
+  with `last_error_code` `restore_copies_remain`;
+- an hourly retry deletes the project once no undeleted descendant remains.
+
+Past the undo window it no longer counts toward the owner's database limit;
+its usage, which includes the descendants', is still metered. Cutover remains
+an explicit binding operation; restore never silently rewires an app.
 
 ## Restore cutover preparation and verification
 
