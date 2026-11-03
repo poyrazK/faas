@@ -28,7 +28,7 @@ func cronDispositionReason(status, scope, rollout string, traffic, steps int, ex
 	if rollout == "aborted" || status == "aborted" {
 		return "rollout_aborted"
 	}
-	if scope != "" && scope != DefaultEnvScope || explicit && traffic == 0 && steps == 0 {
+	if !IsProductionScope(scope) || explicit && traffic == 0 && steps == 0 {
 		return "non_production"
 	}
 	if id != latest {

@@ -435,6 +435,18 @@ enough to hold every check slot; a check now scores at most 16 KiB of
 headers (ADR-831 amendment 19). Docs and a CLI warning now steer gates to
 `@app`, since a rule naming one host leaves the app's platform hostname open.
 
+2026-11-02, later: a fourth review fixed five more (ADR-091 amendment
+2026-11-02, later). Gates scoped to `DELETE`, `PUT` or `PATCH` now also cover
+a POST that asks the app to run it as that method (`X-HTTP-Method-Override`
+and similar headers, `?_method=`), and path gates also match the path without
+`;` parameters, which Java servers drop. A deny-only `geo` rule no longer
+answers 503 to an address the database places in no country (an allow list
+refuses it); a failed lookup still answers 503. The country database moves
+to the 2026-11 release, and `FaasGeoIPDatabaseStale` warns when it is more
+than 75 days old. The challenge-pass docs now say a pass is shared by its
+/24 or /48 and User-Agent, and the CLI warns when a gate is scoped by
+headers, cookies or query values the client chooses.
+
 ## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the

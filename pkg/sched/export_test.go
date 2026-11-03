@@ -101,6 +101,7 @@ var RouterCloseGrace = &routerCloseGrace
 
 // Package-level funcs
 var AppTaskFailureStage = appTaskFailureStage
+var DeploymentStaticEgressIP = deploymentStaticEgressIP
 var AppTaskGRPCCode = appTaskGRPCCode
 var AppTaskResultFromResponse = appTaskResultFromResponse
 var AppendEnvironmentGitOpsJobServiceBindings = appendEnvironmentGitOpsJobServiceBindings
@@ -1130,6 +1131,18 @@ func (r *Engine) ReconcileFinancialBudgetStopsForTick(ctx context.Context, apps 
 // tick preload.
 func (r *Engine) ReconcileFinancialBudgetStopsWithPreload(ctx context.Context, appID string, rows []state.Instance, leases map[string]financial.ComputeLease) error {
 	return r.reconcileFinancialBudgetStops(ctx, appID, &strictComputePreload{rows: map[string][]state.Instance{appID: rows}, leases: leases})
+}
+
+// RecordRunningReasonObservations runs the reaper's "why is it running"
+// recorder (ADR 20261102205122).
+func (l *Loop) RecordRunningReasonObservations(ctx context.Context, apps []state.App, snapshot []InstanceInfo, now time.Time) {
+	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
+}
+
+// StrictComputeSweepIdle reports whether the reaper tick's strict compute
+// sweep skips app (ADR 20261102205122).
+func (r *Engine) StrictComputeSweepIdle(ctx context.Context, apps []state.App, app state.App) bool {
+	return r.loadStrictComputePreload(ctx, apps).idle(app, r.financialBudgetNow())
 }
 
 // LockApp, TryLockApp and AppLocks reach the per-app serialisation locks

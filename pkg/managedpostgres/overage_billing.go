@@ -90,6 +90,12 @@ type OverageSubject struct {
 // OverageBillingStore is an optional UsageStore capability.
 // RecordOverageDelivery advances a month's delivered charge only from
 // previousMillicents, so two apid replicas cannot both deliver one step.
+//
+// A step is reserved before it is sent (ADR-20261101143527): ReserveOverage
+// holds at most one step per provider, subject and month, OveragePending
+// returns it until CompleteOverage records it as delivered and clears it, in
+// one transaction. A step that was sent but not recorded is therefore sent
+// again unchanged, and the provider deduplicates it on its target.
 type OverageBillingStore interface {
 	OverageSubjects(ctx context.Context, periodStart time.Time) ([]OverageSubject, error)
 	OverageDelivered(ctx context.Context, provider, subjectID string, periodStart time.Time) (OverageDelivery, error)
@@ -98,6 +104,28 @@ type OverageBillingStore interface {
 	// row, which charged nothing; a shadow delivery never replaces a live
 	// one. It reports false when another writer moved the row first.
 	RecordOverageDelivery(ctx context.Context, delivery OverageDelivery, previous OverageDelivery) (bool, error)
+	OveragePending(ctx context.Context, provider, subjectID string, periodStart time.Time) (OveragePendingStep, bool, error)
+	ReserveOverage(ctx context.Context, pending OveragePendingStep) (bool, error)
+	CompleteOverage(ctx context.Context, pending OveragePendingStep) (bool, error)
+}
+
+// OveragePendingStep is a step reserved for one provider before it is sent.
+// Live is the delivery mode it was reserved in: a shadow step is never sent.
+// Previous is the month's delivery row as read when the step was computed;
+// completing the step advances the row from it, as RecordOverageDelivery does.
+type OveragePendingStep struct {
+	Provider string
+	Live     bool
+	Step     OverageChargeStep
+	Previous OverageDelivery
+}
+
+func validOveragePending(p OveragePendingStep) bool {
+	s := p.Step
+	return p.Provider != "" && s.SubjectID != "" && !s.PeriodStart.IsZero() && s.PeriodStart.Equal(monthStart(s.PeriodStart)) &&
+		!s.At.Before(s.PeriodStart) && s.UsedUnitSeconds >= 0 && s.AllowanceSeconds >= 0 && s.BilledUnitSeconds >= 0 &&
+		s.UsedStorageByteSeconds >= 0 && s.StoragePoolBytes >= 0 && s.BilledStorageByteSeconds >= 0 &&
+		s.DeliveredMillicents >= 0 && s.TargetMillicents > s.DeliveredMillicents && p.Previous.Millicents >= 0
 }
 
 // OverageChargeStep raises a subject's month charge from Delivered to Target.
@@ -209,6 +237,15 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	if err != nil {
 		return err
 	}
+	// A step reserved by an earlier pass is finished before a new one is
+	// computed: it may have reached the provider (ADR-20261101143527).
+	pending, found, err := b.billing.OveragePending(ctx, b.options.Provider, subject.SubjectID, month)
+	if err != nil {
+		return err
+	}
+	if found {
+		return b.send(ctx, pending, summary)
+	}
 	delivered, err := b.billing.OverageDelivered(ctx, b.options.Provider, subject.SubjectID, month)
 	if err != nil {
 		return err
@@ -249,32 +286,48 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	}
 	// The provider de-duplicates on the step's starting point, not its
 	// target: after an ambiguous publish (a timeout, apid restarting) the
-	// next sweep starts from the same point, so its step is a duplicate of
-	// the one the provider may hold, never a second charge.
-	step := OverageChargeStep{SubjectID: subject.SubjectID, PeriodStart: month, At: now,
+	// next sweep starts from the same point. The step is also reserved
+	// before it is sent (ADR-20261101143527), so that sweep sends the
+	// identical step rather than computing a new one.
+	pending = OveragePendingStep{Provider: b.options.Provider, Live: live, Previous: delivered, Step: OverageChargeStep{
+		SubjectID: subject.SubjectID, PeriodStart: month, At: now,
 		UsedUnitSeconds: snapshot.ComputeUnitSeconds, AllowanceSeconds: max(limits.Allowance, subject.Allowance),
 		BilledUnitSeconds: billed, DeliveredMillicents: baseline, TargetMillicents: target,
-		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: limits.StorageAllowance, BilledStorageByteSeconds: storageBilled}
-	if live {
+		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: limits.StorageAllowance, BilledStorageByteSeconds: storageBilled}}
+	reserved, err := b.billing.ReserveOverage(ctx, pending)
+	if err != nil || !reserved {
+		// Another replica holds this month's step; it sends it.
+		return err
+	}
+	return b.send(ctx, pending, summary)
+}
+
+// send delivers a reserved step and records it. A failure leaves the step
+// reserved, so the next pass sends the same step again rather than a new one.
+func (b *OverageBiller) send(ctx context.Context, pending OveragePendingStep, summary *OverageBillingSummary) error {
+	step := pending.Step
+	if pending.Live {
+		if b.options.Publish == nil {
+			return errors.New("a live step is reserved while delivery is in shadow mode")
+		}
 		if err := b.options.Publish(ctx, step); err != nil {
 			return err
 		}
 	}
-	recorded, err := b.billing.RecordOverageDelivery(ctx, OverageDelivery{Provider: b.options.Provider, SubjectID: subject.SubjectID,
-		PeriodStart: month, Live: live, BilledUnitSeconds: billed, Millicents: target, UpdatedAt: now, BilledStorageByteSeconds: storageBilled}, delivered)
+	recorded, err := b.billing.CompleteOverage(ctx, pending)
 	if err != nil || !recorded {
-		// Another replica recorded first. A published step is idempotent on
-		// its target, so the provider keeps one copy.
+		// The month moved on without this step (a release that predates
+		// reservations recorded one); it was cleared.
 		return err
 	}
-	summary.Millicents += target - baseline
-	if live {
+	summary.Millicents += step.TargetMillicents - step.DeliveredMillicents
+	if pending.Live {
 		summary.Delivered++
 	} else {
 		summary.Shadowed++
 	}
-	b.options.Logger.Info("managed postgres overage charged", "subject_id", subject.SubjectID, "period", month.Format("2006-01"),
-		"live", live, "used_unit_seconds", snapshot.ComputeUnitSeconds, "billed_unit_seconds", billed,
-		"billed_storage_byte_seconds", storageBilled, "previous_millicents", baseline, "target_millicents", target)
+	b.options.Logger.Info("managed postgres overage charged", "subject_id", step.SubjectID, "period", step.PeriodStart.Format("2006-01"),
+		"live", pending.Live, "used_unit_seconds", step.UsedUnitSeconds, "billed_unit_seconds", step.BilledUnitSeconds,
+		"billed_storage_byte_seconds", step.BilledStorageByteSeconds, "previous_millicents", step.DeliveredMillicents, "target_millicents", step.TargetMillicents)
 	return nil
 }

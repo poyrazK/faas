@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.request_analytics_telemetry_gap import RequestAnalyticsTelemetryGap, check_request_analytics_telemetry_gap
 from ..models.request_analytics_timeseries_response_bucket import (
     RequestAnalyticsTimeseriesResponseBucket,
     check_request_analytics_timeseries_response_bucket,
@@ -57,6 +58,11 @@ class RequestAnalyticsTimeseriesResponse:
     """Exact method filter when a route-level series was requested."""
     group_by: RequestAnalyticsTimeseriesResponseGroupBy | Unset = UNSET
     series: list[RequestAnalyticsTimeseriesSeries] | Unset = UNSET
+    telemetry_complete: bool | Unset = UNSET
+    """Same as on the analytics overview: true when every gateway delivered the series window, judged up to two
+    minutes before `as_of`."""
+    telemetry_gaps: list[RequestAnalyticsTelemetryGap] | Unset = UNSET
+    """Why requests in the series window may be missing. Empty or absent when the window is complete."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +102,15 @@ class RequestAnalyticsTimeseriesResponse:
                 series_item = series_item_data.to_dict()
                 series.append(series_item)
 
+        telemetry_complete = self.telemetry_complete
+
+        telemetry_gaps: list[str] | Unset = UNSET
+        if not isinstance(self.telemetry_gaps, Unset):
+            telemetry_gaps = []
+            for telemetry_gaps_item_data in self.telemetry_gaps:
+                telemetry_gaps_item: str = telemetry_gaps_item_data
+                telemetry_gaps.append(telemetry_gaps_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -118,6 +133,10 @@ class RequestAnalyticsTimeseriesResponse:
             field_dict["group_by"] = group_by
         if series is not UNSET:
             field_dict["series"] = series
+        if telemetry_complete is not UNSET:
+            field_dict["telemetry_complete"] = telemetry_complete
+        if telemetry_gaps is not UNSET:
+            field_dict["telemetry_gaps"] = telemetry_gaps
 
         return field_dict
 
@@ -173,6 +192,17 @@ class RequestAnalyticsTimeseriesResponse:
 
                 series.append(series_item)
 
+        telemetry_complete = d.pop("telemetry_complete", UNSET)
+
+        _telemetry_gaps = d.pop("telemetry_gaps", UNSET)
+        telemetry_gaps: list[RequestAnalyticsTelemetryGap] | Unset = UNSET
+        if _telemetry_gaps is not UNSET:
+            telemetry_gaps = []
+            for telemetry_gaps_item_data in _telemetry_gaps:
+                telemetry_gaps_item = check_request_analytics_telemetry_gap(telemetry_gaps_item_data)
+
+                telemetry_gaps.append(telemetry_gaps_item)
+
         request_analytics_timeseries_response = cls(
             slug=slug,
             since=since,
@@ -186,6 +216,8 @@ class RequestAnalyticsTimeseriesResponse:
             method=method,
             group_by=group_by,
             series=series,
+            telemetry_complete=telemetry_complete,
+            telemetry_gaps=telemetry_gaps,
         )
 
         request_analytics_timeseries_response.additional_properties = d
