@@ -667,7 +667,9 @@ jobs:
     # bounds. On 2026-10-27 the apidserver package alone reached the old 45m
     # package timeout (2705 s, run 40420329172) inside a 66-minute job, so
     # the bounds are 60m and 90 minutes until apidserver gets its own shards.
-    timeout-minutes: 90
+    # On 2026-11-03 apidserver took 3582 s (18 s under 60m) and the job hit
+    # 90 minutes (run 41565131421), so the bounds are now 90m and 120.
+    timeout-minutes: 120
     permissions:
       contents: read
       id-token: write
@@ -790,7 +792,7 @@ jobs:
           # the aggregate still requires every complete state shard below.
           STATEPKG=$(go list ./pkg/state)
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
-          go test -json -race -count=1 -p 4 -timeout=60m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -json -race -count=1 -p 4 -timeout=90m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
 
       - name: application-standard ledger recovery tests
