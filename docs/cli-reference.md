@@ -3404,6 +3404,21 @@ Preview or delete a project
 | `--dry-run` | preview affected state |  |
 | `--yes` | confirm project deletion |  |
 
+### project rollback
+
+Roll every service back to its previous live deployment, in dependency order
+
+`gregale project rollback [--dry-run] [--yes] [--acknowledge-releases] [--timeout <DURATION>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | print the rollback order |  |
+| `--yes` | roll every service back |  |
+| `--acknowledge-releases` | accept rolling back across release commands |  |
+| `--timeout <DURATION>` | wait per service (default 10m) |  |
+
+Stops at the first service that fails and names the rest.
+
 
 ## build
 

@@ -140,7 +140,7 @@ func (s *Service) pushServicesWithHeldSlugs(ctx context.Context, project state.P
 		}
 		scan.DependencyReferences = append(scan.DependencyReferences, scan.Workloads[i])
 		if holder.AccountID == project.AccountID && holder.Status == state.AppDeleted {
-			reasons[slug] = fmt.Sprintf("Not deployed: %s would create app %s, but a deleted app keeps that name during its restore window. Restore it with `gregale apps restore %s`, or give the service another app name.", workload.Name, slug, slug)
+			reasons[slug] = fmt.Sprintf("Not deployed: %s would create app %s, but a deleted app keeps that name during its restore window. Restore it with `gregale app restore %s`, or give the service another app name.", workload.Name, slug, slug)
 		} else {
 			reasons[slug] = fmt.Sprintf("Not deployed: %s would create app %s, but another app already uses that name. Give the service another app name.", workload.Name, slug)
 		}

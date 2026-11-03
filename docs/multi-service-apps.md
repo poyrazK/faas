@@ -325,7 +325,7 @@ change before anything is applied:
   service: the app keeps serving its last release, and the push's GitHub check
   says a reviewed deploy removes it. A service hidden by an inactive Compose
   `profiles:` entry counts as removed. A removed app can be restored for 7 days
-  with `gregale apps restore <slug>`. Until it is restored or purged, the app
+  with `gregale app restore <slug>`. Until it is restored or purged, the app
   keeps its name: a push that brings the service back does not deploy it, and
   its GitHub check says to restore the app or give the service another app name.
 - **Deleting one service** with `gregale app delete` is refused while another

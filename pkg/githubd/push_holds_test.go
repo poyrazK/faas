@@ -173,7 +173,7 @@ func TestPushHoldsServiceWhoseSlugADeletedAppHolds(t *testing.T) {
 	}
 	rec.calls = nil
 	push(t, svc, "c0ffee02")
-	if !failedCheck(*checks, billing.Slug, "gregale apps restore "+billing.Slug) {
+	if !failedCheck(*checks, billing.Slug, "gregale app restore "+billing.Slug) {
 		t.Fatalf("no restore check for %s: %+v", billing.Slug, *checks)
 	}
 	deployed := false
