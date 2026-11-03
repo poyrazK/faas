@@ -161,6 +161,31 @@ func (d *Decider) ReleasedByDefault(capability string) bool {
 	return true
 }
 
+// EveryAccount reports whether a capability and its ancestors are enabled for
+// every subject, including the absence of account or organization deny rules.
+func (d *Decider) EveryAccount(capability string) bool {
+	if d == nil {
+		return true
+	}
+	snapshot := d.snapshot()
+	for id, depth := capability, 0; id != "" && depth < maxDepth; id, depth = d.parent[id], depth+1 {
+		key, flagged := d.flagKey[id]
+		if !flagged {
+			continue
+		}
+		if _, _, ok := snapshot.Definition(key); ok {
+			if !snapshot.EveryAccount(key) {
+				return false
+			}
+			continue
+		}
+		if def := d.fallback[id]; !def.Enabled || !def.Default {
+			return false
+		}
+	}
+	return true
+}
+
 // Known reports whether the catalog has the capability.
 func (d *Decider) Known(capability string) bool {
 	if d == nil {

@@ -957,6 +957,14 @@ The response contains `app_id`, `source`, `duplicate`, and an ordinary `receipt`
 
 After a lost response or retryable server error, preserve the application, key and content. Do not generate a replacement key. This endpoint requires MFA and events:publish, deploy:write or admin and uses existing app ownership and rate limits; it does not use the short-lived request-wide Idempotency-Key cache. Acceptance means durable storage, not successful consumer delivery or exactly-once side effects. Receivers must still deduplicate side effects.
 
+Published event envelopes must fit within the 1 MiB workflow input limit,
+including server-added identity, time, producer and tracing fields. A request
+body below its own size limit can still exceed this envelope limit. The server
+rejects it before acceptance with `event_envelope_too_large` (HTTP 413 for
+single-event publication, or a non-retryable item result for batch publication).
+The size check conservatively accounts for exponent-form JSON numbers expanding
+when stored. Reduce the event data and publish again.
+
 Deduplication lasts while the receipt remains retained. Settled receipts become eligible for pruning after the plan's [settled-receipt window](events.md#settled-receipt-retention); unsettled work and retention holds can extend that period. Repeated publication does not refresh retention. After actual pruning, the same key can create a new acceptance and fanout. Renaming the producer app preserves identity, while deleting and recreating an app creates a new UUID namespace. Legacy account/source/id publication of the derived identity addresses the same event; the namespace is not an isolation boundary between authorized producers in the same account.
 
 The CLI always prints JSON. Go exposes `PublishAppEvent`; Node and Python expose the generated `publishAppEvent` / `publish_app_event` methods. No new storage migration is needed. See [ADR-929](adr/929-application-scoped-producer-key-publication.md).
