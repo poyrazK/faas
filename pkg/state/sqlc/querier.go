@@ -723,6 +723,12 @@ type Querier interface {
 	CountRecentAutomaticProfileCaptures(ctx context.Context, db DBTX, arg CountRecentAutomaticProfileCapturesParams) (int64, error)
 	// Manual and automatic captures have separate hourly quotas (ADR-1155).
 	CountRecentProfileCaptures(ctx context.Context, db DBTX, arg CountRecentProfileCapturesParams) (int64, error)
+	// GET /v1/triggers/{id}/metrics (ADR-20261101104512): a trigger's records
+	// per state, each count stopping at sqlc.arg(count_limit) so a trigger with
+	// millions of settled rows stays an index range read on
+	// (trigger_id, state). The handler used to count the newest 1,000 rows of
+	// every state together.
+	CountTriggerRecordsByState(ctx context.Context, db DBTX, arg CountTriggerRecordsByStateParams) (CountTriggerRecordsByStateRow, error)
 	CountTriggersByAccount(ctx context.Context, db DBTX, subject pgtype.UUID) (int64, error)
 	CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountUDPListenersForApp(ctx context.Context, db DBTX, appID string) (int64, error)

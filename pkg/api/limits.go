@@ -1616,6 +1616,11 @@ const (
 	TriggerRetentionPassesMax = 10
 )
 
+// TriggerMetricsCountLimit is where GET /v1/triggers/{id}/metrics stops
+// counting each state's records, so a trigger with millions of settled
+// records answers from a bounded index read (ADR-20261101104512).
+const TriggerMetricsCountLimit = 100000
+
 // RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
 // realtime trigger may bind (ADR-1322): one GatewaySynthDispatchTimeout
 // invocation plus wake and queueing margin. A longer run keeps its claim
