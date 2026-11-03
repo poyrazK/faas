@@ -338,6 +338,7 @@
       "routes": [
         "/dashboard/account/keys",
         "/v1/account/keys",
+        "/v1/agent-connections",
         "/v1/keys",
         "/v1/orgs/{}/keys"
       ],
@@ -826,6 +827,7 @@
       "description": "Grant other apps access to a bucket.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -845,6 +847,7 @@
       "description": "Let browsers on your own sites use a bucket's signed URLs and upload grants.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -867,6 +870,7 @@
       "description": "Encrypt buckets with customer-chosen keys.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3344,6 +3348,7 @@
       "description": "Upload large objects in parts.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3409,6 +3414,7 @@
       "description": "Expire or transition objects by rule.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3431,6 +3437,7 @@
       "description": "Lock objects, protect writes and keep write receipts.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3462,6 +3469,7 @@
       "description": "Use private managed object buckets and signed URLs from an API.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3519,6 +3527,7 @@
       "description": "Keep and restore earlier versions of objects.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -5112,6 +5121,7 @@
       "description": "Mint S3-compatible credentials for a bucket.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -5406,6 +5416,7 @@
       "description": "Share objects with signed URLs and accept browser uploads.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"

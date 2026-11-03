@@ -416,7 +416,7 @@ gregale deploy --path packages/api --source=worktree
 
 Check local source, an image or project prerequisites before deploying
 
-`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
+`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -425,24 +425,25 @@ Check local source, an image or project prerequisites before deploying
 | `--registry-user <USER>` | without --project: registry username; requires --registry-password-stdin |  |
 | `--registry-password-stdin` | without --project: read the registry password or token from stdin |  |
 | `--strict` | without --project: exit 1 on warnings |  |
-| `--project-slug <SLUG>` | project slug (defaults to linked context or selected directory) |  |
+| `--app <SLUG>` | without --project: app whose env and secret names count as declared (defaults to linked context) |  |
+| `--project-slug <SLUG>` | with --project: project slug (defaults to linked context or selected directory) |  |
 | `--path <DIR>` | selected source directory |  |
-| `--source <MODE>` | local source policy (default auto) | one of `auto` · `head` · `worktree` |
-| `--worktree` | check local working tree changes |  |
-| `--env <ENV>` | destination environment (default production) (also --environment) |  |
-| `--from <ENV>` | source environment for a promotion check |  |
-| `--expected-state <SHA256>` | compare a previous check&#39;s state hash |  |
-| `--atomic` | check atomic source release prerequisites |  |
-| `--add-services` | check HTTP service addition prerequisites |  |
-| `--verify` | check critical health verification prerequisites |  |
-| `--workers` | check push worker release prerequisites |  |
-| `--worker-health` | require worker delivery health during deployment |  |
-| `--migrate` | check one backward-compatible migration |  |
-| `--progressive` | check progressive rollout prerequisites |  |
-| `--stabilize` | check post-success monitoring prerequisites |  |
-| `--sync-config` | check synchronized promotion configuration |  |
-| `--config-file <PATH>` | proposed non-secret paired configuration |  |
-| `--secrets-file <PATH>` | proposed secret input; only key names leave this machine |  |
+| `--source <MODE>` | with --project: local source policy (default auto) | one of `auto` · `head` · `worktree` |
+| `--worktree` | with --project: check local working tree changes |  |
+| `--env <ENV>` | with --project: destination environment (default production) (also --environment) |  |
+| `--from <ENV>` | with --project: source environment for a promotion check |  |
+| `--expected-state <SHA256>` | with --project: compare a previous check&#39;s state hash |  |
+| `--atomic` | with --project: check atomic source release prerequisites |  |
+| `--add-services` | with --project: check HTTP service addition prerequisites |  |
+| `--verify` | with --project: check critical health verification prerequisites |  |
+| `--workers` | with --project: check push worker release prerequisites |  |
+| `--worker-health` | with --project: require worker delivery health during deployment |  |
+| `--migrate` | with --project: check one backward-compatible migration |  |
+| `--progressive` | with --project: check progressive rollout prerequisites |  |
+| `--stabilize` | with --project: check post-success monitoring prerequisites |  |
+| `--sync-config` | with --project: check synchronized promotion configuration |  |
+| `--config-file <PATH>` | with --project: proposed non-secret paired configuration |  |
+| `--secrets-file <PATH>` | with --project: proposed secret input; only key names leave this machine |  |
 
 Examples:
 
@@ -455,6 +456,10 @@ gregale deploy check --project --project-slug shop --from staging --env producti
 ```
 
 Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project&#39;s release prerequisites against current state.
+
+Flags marked &#34;with --project&#34; are refused without --project.
+
+Without --project, a variable the source reads but .env, .gregale/env.json and the app&#39;s env and secrets do not declare is an error; when the app&#39;s env cannot be read (no linked app or --app, or logged out), it is a warning.
 
 
 ## logs
@@ -1067,10 +1072,11 @@ Open the account dashboard in your browser
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale rollback [<subcommand>] <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
+`gregale rollback [<subcommand>] <slug> [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional) |  |
 | `--interactive` | choose and review a historical release, confirm, and follow rollback progress |  |
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--expected-current <deployment_id|vN>` | exact completed serving deployment; requires --to |  |
@@ -1089,6 +1095,7 @@ Examples:
 gregale rollback my-api --interactive
 gregale rollback my-api
 gregale rollback my-api --to v41
+gregale rollback --app my-api --to v41
 gregale rollback my-api --to v41 --expected-current v42 --wait
 gregale rollback my-api --to v41 --restore-databases
 ```
@@ -1718,10 +1725,11 @@ gregale release runtime v42 --app my-function --target RELEASE_ID --json
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale release rollback <status|switches> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
+`gregale release rollback <status|switches> [--app <SLUG>] [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional) |  |
 | `--interactive` | choose and review a historical release, confirm, and follow rollback progress |  |
 | `--to <deployment_id|vN>` | target deployment id or vN revision (e.g. v41) |  |
 | `--expected-current <deployment_id|vN>` | exact completed serving deployment; requires --to |  |
@@ -1740,6 +1748,7 @@ Examples:
 gregale release rollback my-api --interactive
 gregale release rollback my-api
 gregale release rollback my-api --to v41
+gregale release rollback --app my-api --to v41
 gregale release rollback my-api --to v41 --expected-current v42 --wait
 gregale release rollback my-api --to v41 --restore-databases
 ```
@@ -10554,7 +10563,7 @@ Show one cron rule
 
 Update one cron rule
 
-`gregale cron update [--interactive] [--app <SLUG>] [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [<id>]`
+`gregale cron update [--interactive] [--app <SLUG>] [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [--clear-schedule-policy] [--clear-failure-rules] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10571,6 +10580,8 @@ Update one cron rule
 | `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | replace versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | replace versioned failure and outcome-code rules JSON |  |
+| `--clear-schedule-policy` | remove the schedule policy |  |
+| `--clear-failure-rules` | remove the failure rules |  |
 
 Examples:
 
@@ -10695,7 +10706,7 @@ Create a broker trigger
 | `--enabled` | enable the trigger |  |
 | `--disabled` | disable the trigger |  |
 | `--batch-size <N>` | maximum records per dispatch batch |  |
-| `--batch-window-ms <N>` | maximum batch dwell time in milliseconds |  |
+| `--batch-window-ms <N>` | accepted but not applied: a batch is what one poll returns |  |
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
@@ -10713,7 +10724,7 @@ Update one trigger
 | `--disabled` | disable the trigger |  |
 | `--config <JSON>` | replace JSON config (inline \| @file \| -) |  |
 | `--batch-size <N>` | maximum records per dispatch batch |  |
-| `--batch-window-ms <N>` | maximum batch dwell time in milliseconds |  |
+| `--batch-window-ms <N>` | accepted but not applied: a batch is what one poll returns |  |
 | `--max-attempts <N>` | maximum delivery attempts |  |
 | `--payload-max-bytes <N>` | maximum broker payload size |  |
 | `--broker-poison-strategy <commit|seek-to-offset>` | kafka poison strategy | one of `commit` · `seek-to-offset` |
@@ -14954,7 +14965,7 @@ Break down past requests by route, country, referrer or status
 |---|---|---|
 | `--since <WINDOW>` | lookback window |  |
 | `--until <TIMESTAMP>` | exclusive RFC3339 end |  |
-| `--by <DIMENSION>` | grouping dimension | one of `route` · `country` · `referrer_host` · `ua_family` · `status` |
+| `--by <DIMENSION>` | grouping dimension | one of `route` · `country` · `referrer_host` · `ua_family` · `status` · `consumer_id` |
 
 
 ## debug
@@ -19203,17 +19214,19 @@ Show subscription status
 
 Explain retained usage costs and source coverage
 
-`gregale billing costs [--month <YYYY-MM>] [--json]`
+`gregale billing costs [--month <YYYY-MM>] [--org <SLUG>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--month <YYYY-MM>` | UTC usage month (defaults to current) |  |
+| `--org <SLUG>` | Read the costs of an organization that owns its resources |  |
 | `--json` | Print the machine-readable cost report |  |
 
 Examples:
 
 ```sh
 gregale billing costs --month 2026-10 --json
+gregale billing costs --org acme
 ```
 
 ### billing forecast
@@ -19241,31 +19254,40 @@ Manage monitored alerts, preview stopping and budget drafts
 
 List account budget policies and monitoring status
 
-`gregale billing budgets list [--json]`
+`gregale billing budgets list [--org <SLUG>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--json` | Print JSON |  |
+
+Examples:
+
+```sh
+gregale billing budgets list --org acme
+```
 
 #### billing budgets get
 
 Read a budget, including a deletion tombstone
 
-`gregale billing budgets get [--json] ID`
+`gregale billing budgets get [--org <SLUG>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--json` | Print JSON |  |
 
 #### billing budgets create
 
 Save a draft or activate monitored alerts or preview stopping
 
-`gregale billing budgets create [--file <PATH>] [--key <KEY>] [--json]`
+`gregale billing budgets create [--file <PATH>] [--org <SLUG>] [--key <KEY>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--file <PATH>` | Budget spec JSON file (required) |  |
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--key <KEY>` | Stable operation key for retries |  |
 | `--json` | Print JSON |  |
 
@@ -19279,12 +19301,13 @@ gregale billing budgets create --file budget.json --key previews-october --json
 
 Replace a budget policy at its expected revision
 
-`gregale billing budgets update [--file <PATH>] [--expected-revision <N>] [--key <KEY>] [--json] ID`
+`gregale billing budgets update [--file <PATH>] [--expected-revision <N>] [--org <SLUG>] [--key <KEY>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--file <PATH>` | Budget spec JSON file (required) |  |
 | `--expected-revision <N>` | Current revision (required) |  |
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--key <KEY>` | Stable operation key for retries |  |
 | `--json` | Print JSON |  |
 
@@ -19292,11 +19315,12 @@ Replace a budget policy at its expected revision
 
 Tombstone a policy and retain its audit
 
-`gregale billing budgets delete [--expected-revision <N>] [--key <KEY>] [--json] ID`
+`gregale billing budgets delete [--expected-revision <N>] [--org <SLUG>] [--key <KEY>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--expected-revision <N>` | Current revision (required) |  |
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--key <KEY>` | Stable operation key for retries |  |
 | `--json` | Print JSON |  |
 
@@ -19304,12 +19328,13 @@ Tombstone a policy and retain its audit
 
 Page through immutable policy revisions
 
-`gregale billing budgets history [--after-revision <N>] [--limit <N>] [--json] ID`
+`gregale billing budgets history [--after-revision <N>] [--limit <N>] [--org <SLUG>] [--json] ID`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--after-revision <N>` | Continue after this revision |  |
 | `--limit <N>` | Page size (1..100) |  |
+| `--org <SLUG>` | Use the budgets of an organization that owns its resources |  |
 | `--json` | Print JSON |  |
 
 #### billing budgets channels

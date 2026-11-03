@@ -452,6 +452,14 @@ const (
 	// stores more than the target plan's storage ceiling (ADR-20261101214152).
 	CodePlanLimitObjectStorage = "plan_limit_object_storage"
 	CodePlanLimitConcur        = "plan_limit_concurrency"
+	// CodeBillingEmailInUse refuses a billing email another billing subject
+	// already pays with: the billing provider keeps one customer per email
+	// (ADR-20261103131742).
+	CodeBillingEmailInUse = "billing_email_in_use"
+	// CodeBillingContactMember refuses removing the member whose email an
+	// organization bills to until the organization moves its billing email
+	// (ADR-20261103131742).
+	CodeBillingContactMember   = "billing_contact_member"
 	CodeInvalidAppCPU          = "invalid_cpu_millicores"
 	CodeInvalidAppRAM          = "invalid_ram_mb"
 	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
@@ -2154,7 +2162,8 @@ const MaxOrgSlugLen = 32
 func StatusForCode(code string) int {
 	switch code {
 	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict,
-		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired:
+		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired,
+		CodeBillingEmailInUse, CodeBillingContactMember:
 		return http.StatusConflict
 	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
 		return http.StatusForbidden
@@ -2177,7 +2186,8 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy, CodeAgentCallbackRateLimited:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy, CodeAgentCallbackRateLimited,
+		CodeWebhookOutboxFull, CodeInboundWebhookBacklogFull, CodeInboundWebhookRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -2751,6 +2761,29 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		WithDocs(docsBase + "/plans#ram")
 }
 
+// ErrBillingEmailInUse refuses a billing email that another Gregale account or
+// organization already pays with. organization is true when the refused
+// subject is an organization, which can move to its own billing email.
+func ErrBillingEmailInUse(organization bool) *Problem {
+	detail := "this email already pays for another Gregale account or organization, and the billing provider keeps one customer per email; " +
+		"if it pays for an organization, give that organization its own billing email with PUT /v1/orgs/{slug}/billing/email"
+	if organization {
+		detail = "this organization bills to an email that already pays for another Gregale account or organization; " +
+			"set the organization's own billing email with PUT /v1/orgs/{slug}/billing/email, then upgrade"
+	}
+	return NewProblem(http.StatusConflict, CodeBillingEmailInUse, "Billing email in use", detail).
+		WithDocs(docsBase + "/billing#billing-email")
+}
+
+// ErrBillingContactMember refuses removing the organization member whose
+// email the organization bills to: the billing provider sends that address
+// the organization's invoices and lets it manage the subscription.
+func ErrBillingContactMember() *Problem {
+	return NewProblem(http.StatusConflict, CodeBillingContactMember, "Member is the billing contact",
+		"this member's email is the organization's billing email; set another billing email with PUT /v1/orgs/{slug}/billing/email first").
+		WithDocs(docsBase + "/billing#billing-email")
+}
+
 // ErrInvalidAppRAM rejects an explicit update that cannot satisfy the
 // database and Firecracker memory contracts. Creation may omit ram_mb (zero)
 // to select the plan default; an update pointer is always explicit.
@@ -3109,10 +3142,25 @@ func ErrAlertPresetTestRateLimited(limit, retryAfterS int) *Problem {
 // destination of rules, which would fire into nothing (ADR-20261029203000).
 // rules names them as "name (id)".
 func ErrNotificationChannelInUse(rules []string) *Problem {
-	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse,
-		"Notification channel in use",
-		fmt.Sprintf("This channel is the only destination of %d alert rule(s): %s. Give them a webhook or another channel, or delete them, before deleting the channel.",
-			len(rules), strings.Join(rules, ", "))).
+	return ErrNotificationChannelInUseBy(rules, nil)
+}
+
+// ErrNotificationChannelInUseBy refuses deleting the last channel of alert
+// rules, release approval policies or pending scheduled releases: rules would
+// fire into nothing, and releases would wait for approval, start or be blocked
+// without anyone being told.
+func ErrNotificationChannelInUseBy(rules, releases []string) *Problem {
+	var parts []string
+	if len(rules) > 0 {
+		parts = append(parts, fmt.Sprintf("This channel is the only destination of %d alert rule(s): %s. Give them a webhook or another channel, or delete them.",
+			len(rules), strings.Join(rules, ", ")))
+	}
+	if len(releases) > 0 {
+		parts = append(parts, fmt.Sprintf("It is the last channel told about %s. Name another channel there, or remove the policy or schedule.",
+			strings.Join(releases, ", ")))
+	}
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Notification channel in use",
+		strings.Join(parts, " ")+" Then delete the channel.").
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
@@ -3965,7 +4013,74 @@ const (
 	CodeInboundWebhookInvalid         = "inbound_webhook_invalid"
 	CodeInboundWebhookBadSignature    = "inbound_webhook_bad_signature"
 	CodeInboundWebhookTooLarge        = "inbound_webhook_too_large"
+	// CodeInboundWebhookBacklogFull refuses a verified delivery while the
+	// app's pending webhook work or the account's backlog is at its plan
+	// cap (ADR-20261101093517). 429 with Retry-After, so the provider
+	// retries the same event later.
+	CodeInboundWebhookBacklogFull = "inbound_webhook_backlog_full"
+	// CodeInboundWebhookRateLimited refuses a verified delivery past the
+	// account's InboundWebhookAcceptsPerMinute (ADR-20261101093517).
+	CodeInboundWebhookRateLimited = "inbound_webhook_rate_limited"
+	// CodeWebhookOutboxFull refuses an application outbox delivery while
+	// the account's undelivered webhook deliveries are at a plan cap
+	// (ADR-20261101093517).
+	CodeWebhookOutboxFull = "webhook_outbox_full"
 )
+
+// WebhookBacklogCap names which backlog cap refused a webhook.
+type WebhookBacklogCap string
+
+const (
+	// WebhookBacklogCapCount is a cap on pending items.
+	WebhookBacklogCapCount WebhookBacklogCap = "count"
+	// WebhookBacklogCapBytes is a cap on pending payload bytes.
+	WebhookBacklogCapBytes WebhookBacklogCap = "bytes"
+)
+
+func webhookBacklogRetryAfter() string {
+	return strconv.Itoa(int(WebhookBacklogRetryAfter.Seconds()))
+}
+
+// ErrWebhookOutboxFull refuses an application outbox delivery while the
+// account's undelivered webhook deliveries are at the plan cap named by
+// which. Nothing was queued; the backlog drains as receivers answer.
+func ErrWebhookOutboxFull(which WebhookBacklogCap, limit, observed int64) *Problem {
+	detail := fmt.Sprintf("this account already holds %d undelivered webhook deliveries; the plan allows %d. Nothing was queued: retry once receivers have drained the backlog.", observed, limit)
+	if which == WebhookBacklogCapBytes {
+		detail = fmt.Sprintf("this account's undelivered webhook deliveries hold %d payload bytes; the plan allows %d. Nothing was queued: retry once receivers have drained the backlog.", observed, limit)
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeWebhookOutboxFull, "Webhook outbox full", detail).
+		WithLimit(limit, observed).
+		WithHeader("Retry-After", webhookBacklogRetryAfter()).
+		WithDocs(docsBase + "/event-driven#outbox-backlog")
+}
+
+// ErrInboundWebhookBacklogFull refuses a verified inbound delivery while the
+// app's pending webhook work (count) or the account's queue backlog (bytes)
+// is at its plan cap. The provider should retry the same event.
+func ErrInboundWebhookBacklogFull(which WebhookBacklogCap, limit, observed int64) *Problem {
+	detail := fmt.Sprintf("this app already holds %d pending inbound webhook deliveries; the plan allows %d. Nothing was accepted: retry the same event later.", observed, limit)
+	if which == WebhookBacklogCapBytes {
+		detail = fmt.Sprintf("this account's pending queue backlog holds %d bytes; the plan allows %d. Nothing was accepted: retry the same event later.", observed, limit)
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeInboundWebhookBacklogFull, "Inbound webhook backlog full", detail).
+		WithLimit(limit, observed).
+		WithHeader("Retry-After", webhookBacklogRetryAfter()).
+		WithDocs(docsBase + "/event-driven#inbound-webhook-backlog")
+}
+
+// ErrInboundWebhookRateLimited refuses a verified inbound delivery past the
+// account's per-minute accept budget. Nothing was accepted.
+func ErrInboundWebhookRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeInboundWebhookRateLimited, "Inbound webhook rate limited",
+		fmt.Sprintf("this account's plan accepts %d inbound webhook deliveries a minute. Nothing was accepted: retry the same event after %d seconds.", limit, retryAfterS)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/event-driven#inbound-webhook-rate-limit")
+}
 
 // Managed realtime endpoint errors (ADR-156). Realtime is an opt-in
 // connection service; Free is gated, while paid plans have bounded endpoint
@@ -4455,6 +4570,15 @@ func ErrCronSuspendedRun(reason string) *Problem {
 	}
 	return NewProblem(http.StatusConflict, CodeConflict, "Cron suspended", detail).
 		WithDocs(docsBase + "/crons#suspension")
+}
+
+// ErrCronDisabledRun is the 409 for a manual run of a disabled cron. The
+// scheduler refuses the run, so the request used to be accepted and fail a
+// moment later (crons audit 2026-11-03).
+func ErrCronDisabledRun() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron disabled",
+		"this cron is disabled; enable it with `gregale cron update CRON_ID --enable` before running it").
+		WithDocs(docsBase + "/crons#run-a-cron-now")
 }
 
 // ErrCronFireNowBusy is the 429 for a manual run of a cron that already

@@ -353,6 +353,8 @@ jobs:
           bash scripts/ci/check_edge_store_test.sh
           bash scripts/ci/seal_domain_vars_test.sh
           bash scripts/ci/edge_challenge_key_vars_test.sh
+          bash scripts/ci/edgednsd_vars_test.sh
+          bash scripts/ci/postgres_runtime_roles_vars_test.sh
           bash scripts/ci/verify_unit_release_test.sh
       - name: release binaries link no forbidden package
         run: make daemon-deps-check

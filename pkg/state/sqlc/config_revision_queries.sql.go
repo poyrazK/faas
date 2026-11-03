@@ -14,7 +14,9 @@ import (
 const appConfigGuardTelemetry = `-- name: AppConfigGuardTelemetry :one
 WITH scoped AS (
     SELECT d.id FROM deployments d
-    WHERE d.app_id = $1::uuid AND COALESCE(NULLIF(d.scope, ''), 'default') = $2::text
+    WHERE d.app_id = $1::uuid
+      AND (COALESCE(NULLIF(d.scope, ''), 'default') = $2::text
+           OR ($2::text = 'default' AND d.scope = 'production'))
       AND d.created_at <= $3::timestamptz
 ), rows AS (
     SELECT t.count::bigint AS weight, t.status,
@@ -60,6 +62,8 @@ type AppConfigGuardTelemetryRow struct {
 // minute. Only deployments that existed when the guard opened count: a
 // release deployed during the guard is judged by its own rollout, not
 // blamed on the config. Uses request_telemetry_app_dep_received_idx.
+// A default-scope value overlays every environment, so its guard also judges
+// the project production lane (ADR-1451 amendment 1).
 func (q *Queries) AppConfigGuardTelemetry(ctx context.Context, db DBTX, arg AppConfigGuardTelemetryParams) (AppConfigGuardTelemetryRow, error) {
 	row := db.QueryRow(ctx, appConfigGuardTelemetry,
 		arg.AppID,

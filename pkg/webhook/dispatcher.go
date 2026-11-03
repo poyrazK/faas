@@ -68,6 +68,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -94,6 +95,13 @@ const (
 	// Receiver-requested delays are honored up to one day. This prevents
 	// an endpoint from leaving a retry pending indefinitely.
 	maxReceiverRetryAfter = 24 * time.Hour
+	// DefaultTimeoutCooldown pauses a subscription whose receiver let an
+	// attempt time out (ADR-20261101093517), like a 429/503 Retry-After.
+	// Without it a receiver that hangs held every slot it could claim for
+	// DefaultPerAttempt each, again on every retry. After the pause one
+	// recovery probe runs; a success reopens the subscription, another
+	// timeout pauses it again.
+	DefaultTimeoutCooldown = time.Minute
 	// DefaultDrainTimeout is the budget for in-flight goroutines to
 	// finish on ctx.Done(). Matches the cmd/schedd/main.go 10s
 	// shutdown pattern; the HTTP graceful stop timeout is 5s and the
@@ -292,11 +300,13 @@ type Dispatcher struct {
 	// short schedules here so a 7-attempt path runs in <1s wall.
 	Backoffs map[state.AppWebhookRetryPolicy][]time.Duration
 
-	// HTTPClient is shared across deliveries; nil resolves to
-	// oci.NewEgressHTTPClientAllowLoopback (the SSRF-guarded
-	// dialer) so production egress rules apply on every POST. The
-	// e2e test sets FAAS_EGRESS_ALLOW_LOOPBACK=1 to permit
-	// loopback; that flag is read by oci.NewEgressHTTPClientAllowLoopback.
+	// HTTPClient overrides the delivery client (tests). Production
+	// leaves it nil: every delivery then sends through
+	// webhookout.SharedHTTPClient, the process-wide SSRF-guarded client
+	// with a bounded idle pool, with PerAttempt as its timeout. One
+	// pool for the process is the point: a client per delivery left a
+	// keep-alive connection idling per delivery. The e2e sets
+	// FAAS_EGRESS_ALLOW_LOOPBACK=1 to permit loopback.
 	HTTPClient    *http.Client
 	HealthMetrics *DeliveryHealthMetrics
 
@@ -368,20 +378,6 @@ func (d *Dispatcher) WithBackoffs(b map[state.AppWebhookRetryPolicy][]time.Durat
 // Run's "ctx.Done() returns nil" contract: a cancelled context is a
 // clean exit, not an error.
 func (d *Dispatcher) Run(ctx context.Context) error {
-	if d.HTTPClient == nil {
-		// SSRF-guarded dialer with loopback escape hatch for the e2e
-		// (mirrors pkg/webhookout.NewDispatcher pattern).
-		if hc := oci.NewEgressHTTPClientAllowLoopback(); hc != nil {
-			d.HTTPClient = hc
-		} else {
-			d.HTTPClient = oci.NewEgressHTTPClient()
-		}
-		// Apply PerAttempt as the client-level timeout only when we
-		// built the client ourselves (oci returns no-timeout
-		// clients). Mirrors pkg/webhookout.NewDispatcher.
-		d.HTTPClient.Timeout = d.PerAttempt
-	}
-
 	d.loadMu.Lock()
 	d.wake = make(chan struct{}, 1)
 	d.loadMu.Unlock()
@@ -740,7 +736,9 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	// Per-delivery dispatcher. We construct one per call so the
 	// HeaderSet is locked in (issue #476's wire is HeaderSetWebhook)
 	// and the Sleeper is the dispatcher-level injection (tests
-	// fast-forward 7.5h of backoff in <1s).
+	// fast-forward 7.5h of backoff in <1s). It is cheap: with a nil
+	// HTTPClient it sends through the process-wide shared client, so
+	// constructing one per delivery opens no transport of its own.
 	disp := webhookout.NewDispatcher(webhookout.DispatcherOptions{
 		MaxAttempts: 1, // the dispatcher owns the retry ladder
 		// The ledger attempt numbers the request: X-Faas-Webhook-Attempt
@@ -756,18 +754,13 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 	})
 	startedAt := d.Now()
 	res := disp.Dispatch(ctx, webhookout.Target{
-		URL:    hook.TargetURL,
-		Signer: webhookout.NewSigner(secret),
+		URL:            hook.TargetURL,
+		Signer:         webhookout.NewSigner(secret),
+		PreviousSigner: d.previousSigner(ctx, hook, openIdents, startedAt),
 	}, evt)
 
 	now := d.Now()
-	meta := state.AppWebhookAttemptMetadata{StartedAt: startedAt, FinishedAt: now, ResponseCode: res.StatusCode}
-	if res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable {
-		if until, ok := receiverRetryAfterAt(res.RetryAfter, now); ok && until.After(now) {
-			meta.ReceiverCooldownUntil = &until
-			meta.ReceiverCooldownTargetURL = hook.TargetURL
-		}
-	}
+	meta := attemptMetadata(ctx, hook, res, startedAt, now)
 	if res.Err == nil {
 		if err := d.store.MarkAppWebhookDeliverySucceeded(ctx, row.ID, res.StatusCode, row.Attempt, row.NextAttemptAt, now, meta); d.markRecorded(row, err) {
 			d.emitAudit(ctx, "webhook.delivered", row, hook, nil, res.StatusCode)
@@ -814,6 +807,69 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		row.NextAttemptAt, fmt.Sprintf("webhook: %v", singleAttemptError(res.Err)), nextAttemptAt, meta); d.markRecorded(row, err) {
 		d.emitAudit(ctx, "webhook.failed", row, hook, res.Err, res.StatusCode)
 	}
+}
+
+// previousSigner returns a signer for the secret a rotation replaced while
+// its overlap window lasts (ADR-20261101093517), or nil. A store without the
+// lookup, a failed read or a secret that does not open sends the current
+// signature alone: the overlap helps receivers switch secrets and is never a
+// reason to hold a delivery. Datadog deliveries carry an API key, not a
+// signature, so they skip the lookup.
+func (d *Dispatcher) previousSigner(ctx context.Context, hook state.AppWebhook, idents []*age.X25519Identity, now time.Time) *webhookout.Signer {
+	store, ok := d.store.(state.AppWebhookPreviousSecretStore)
+	if !ok || hook.DeliveryFormat == state.AppWebhookDeliveryFormat(webhookout.DeliveryFormatDatadog) {
+		return nil
+	}
+	sealed, err := store.PreviousAppWebhookSecret(ctx, hook.ID, now)
+	if err != nil {
+		d.log.WarnContext(ctx, "webhook: previous secret lookup failed", "webhook_id", hook.ID, "err", err)
+		return nil
+	}
+	if len(sealed) == 0 {
+		return nil
+	}
+	ns, plaintext, err := secretbox.OpenBytesMulti(idents, sealed)
+	if err != nil || ns != api.AppWebhookSecretNamespace || len(plaintext) == 0 {
+		d.log.WarnContext(ctx, "webhook: previous secret did not open; signing with the current secret only", "webhook_id", hook.ID)
+		return nil
+	}
+	return webhookout.NewSigner(plaintext)
+}
+
+// attemptMetadata records an attempt's interval and the receiver
+// backpressure it showed: a 429/503 Retry-After deadline, or, for an attempt
+// that timed out, DefaultTimeoutCooldown (ADR-20261101093517). The store
+// applies the cooldown to the subscription, so one slow receiver holds at
+// most one recovery probe instead of its whole per-subscription share of
+// the delivery pool for a full timeout each.
+func attemptMetadata(ctx context.Context, hook state.AppWebhook, res webhookout.Result, startedAt, now time.Time) state.AppWebhookAttemptMetadata {
+	meta := state.AppWebhookAttemptMetadata{StartedAt: startedAt, FinishedAt: now, ResponseCode: res.StatusCode}
+	var until time.Time
+	ok := false
+	switch {
+	case res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusServiceUnavailable:
+		until, ok = receiverRetryAfterAt(res.RetryAfter, now)
+	case ctx.Err() == nil && isAttemptTimeout(res.Err):
+		until, ok = now.Add(DefaultTimeoutCooldown), true
+	}
+	if ok && until.After(now) {
+		meta.ReceiverCooldownUntil = &until
+		meta.ReceiverCooldownTargetURL = hook.TargetURL
+	}
+	return meta
+}
+
+// isAttemptTimeout reports whether an attempt ran out of its PerAttempt
+// budget (the client timeout) rather than failing outright.
+func isAttemptTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // singleAttemptError drops webhookout's retry-budget wrapper. This dispatcher

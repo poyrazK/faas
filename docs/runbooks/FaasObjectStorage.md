@@ -1,6 +1,7 @@
 # FaasObjectStorage
 
-Alerts: `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
+Alerts: `FaasObjectStorageProviderRefusingCredentials`,
+`FaasObjectStorageBucketOperationsStalled`, `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
 `FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`,
 `FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`,
@@ -10,7 +11,9 @@ Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 `s3-gatewayd` (`pkg/s3gateway`), apid's provider usage exporter
 (`pkg/apid/object/usage_export.go`), and public bucket reads in `gatewayd-public`
 (`pkg/objectstorage/public_read.go`).
-Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
+Metrics: `faas_object_storage_provider_refusing_credentials`,
+`faas_object_storage_recovery_attempts_total{operation,outcome}`,
+`faas_object_storage_inventory_scans_total{outcome}`,
 `faas_object_storage_inventory_provider_requests_total`,
 `s3_gateway_ops_total{op="s3_request",code}`,
 `faas_object_storage_usage_export_last_success_timestamp_seconds{backend}`,
@@ -38,6 +41,13 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
 
 ## Symptom
 
+- **Provider refusing credentials.** A provider answered 401/403 to a bucket
+  operation. apid withdraws object storage for an hour: capabilities report
+  it off, `gregale feature list` shows it disabled, and bucket creates answer
+  `503 object_storage_unavailable`. On 2026-11-02 the cause was a storage
+  project billed to a closed billing account.
+- **Bucket operations stalled.** Creates or deletes keep retrying and none
+  succeed. Customers see buckets stuck in `provisioning` or `deleting`.
 - **Inventory failing.** Customers see `503 Object storage accounting is
   temporarily unavailable` on one bucket while the account's other buckets
   work. A bucket needs a successful inventory every 900 s, or a listing that
@@ -83,6 +93,12 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
 
 ## Check
 
+0. Provider refusal or stalled operations:
+   `journalctl -u faas-apid | grep "object storage operation deferred"` gives
+   each bucket's backend, operation and `error_code` (`configuration` is a
+   401/403). Then check the provider account itself: credentials, project and
+   billing (on GCP: `gcloud billing projects describe <project>`; a closed
+   billing account returns 403 on every write).
 1. Inventory failures: `journalctl -u faas-apid | grep "object storage inventory failed"`
    lists the bucket and backend IDs and how many pages its listing has. A
    large bucket is listed over several attempts (`outcome="partial"`); its
@@ -126,6 +142,9 @@ Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
 
 ## Recover
 
+0. Provider refusal: fix the account (credentials, billing link, project),
+   then restart apid on releases before the one-hour refusal lapse, or wait
+   up to an hour; the next retry clears the mark.
 1. Provider outage: wait for the provider. Do not raise ceilings.
 2. One bucket whose listing does not advance: check the provider for that
    bucket's backend first. A listing that fails every page keeps restarting;

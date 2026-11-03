@@ -7,8 +7,9 @@
 # gatewayd_edge_challenge_key and gatewayd_edge_challenge_key_required: true
 # to VARS_FILE (created when missing), so every gateway the environment
 # deploys signs challenges with the same key, and a gateway host that would
-# get none fails the play. Without the secret nothing changes and each
-# gateway keeps signing with its own host's session key.
+# get none fails the play. The key is the gateway fleet key
+# (ADR-20261102191500): it also signs managed deadlines, and a deploy without
+# the secret fails here.
 #
 # The key is a secret, so it is not kept in the environment's Ansible
 # variables (COMPUTE_ANSIBLE_VARS_B64); with the secret set, those variables
@@ -21,7 +22,10 @@ set -euo pipefail
 }
 vars=$1
 key=${GATEWAYD_EDGE_CHALLENGE_KEY:-}
-[[ -n "$key" ]] || exit 0
+if [[ -z "$key" ]]; then
+  echo "::error::GATEWAYD_EDGE_CHALLENGE_KEY is not set for this environment; every gateway needs the shared gateway fleet key (ADR-20261102191500). Create it: openssl rand -hex 32 | gh secret set GATEWAYD_EDGE_CHALLENGE_KEY --env <environment>" >&2
+  exit 1
+fi
 
 if ! [[ "$key" =~ ^[0-9a-fA-F]{64}$ ]]; then
   echo "::error::GATEWAYD_EDGE_CHALLENGE_KEY must be 64 hex digits (openssl rand -hex 32)" >&2

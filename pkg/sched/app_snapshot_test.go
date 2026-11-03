@@ -57,7 +57,7 @@ func newVersionedListingStore() *versionedListingStore {
 			apps:  map[string][]state.App{"": {snapshotApp("a"), snapshotApp("b")}, "node-1": {snapshotApp("a")}},
 			reads: map[string]int{},
 		},
-		versions: map[string]state.AppsListVersion{"": {Count: 2, RowVersions: 10}, "node-1": {Count: 1, RowVersions: 4}},
+		versions: map[string]state.AppsListVersion{"": {Count: 2, Generations: 10}, "node-1": {Count: 1, Generations: 4}},
 	}
 }
 
@@ -82,7 +82,7 @@ func TestAppSnapshotRereadsOnlyWhenTheVersionChanges(t *testing.T) {
 	}
 
 	store.apps[""] = append(store.apps[""], snapshotApp("c"))
-	store.versions[""] = state.AppsListVersion{Count: 3, RowVersions: 17}
+	store.versions[""] = state.AppsListVersion{Count: 3, Generations: 17}
 	apps, err := snap.ListAllApps(ctx)
 	if err != nil || len(apps) != 3 {
 		t.Fatalf("ListAllApps after a change = %d apps (err %v), want 3", len(apps), err)
@@ -115,6 +115,48 @@ func TestAppSnapshotCallersShareNoMemory(t *testing.T) {
 	got := second[0]
 	if got.Slug != "a" || !got.LastScaleOutAt.Equal(*want.LastScaleOutAt) || got.EgressPorts[0] != 5432 || got.Manifest.Env["MODE"] != "prod" {
 		t.Fatalf("second caller saw the first caller's writes: %+v", got)
+	}
+}
+
+// rowStampStore also reads one app, with a scale-out stamp newer than the
+// list's (ADR 20261103094355: the version skips scale stamps).
+type rowStampStore struct {
+	*versionedListingStore
+	rowStamp time.Time
+}
+
+func (s *rowStampStore) AppByID(_ context.Context, id string) (state.App, error) {
+	for _, app := range s.apps[""] {
+		if app.ID == id {
+			app.LastScaleOutAt = &s.rowStamp
+			return app, nil
+		}
+	}
+	return state.App{}, state.ErrNotFound
+}
+
+// AppsByID copies only the requested apps from the cached list, and the
+// scale-out stamp is read from the row rather than the list.
+func TestAppSnapshotAppsByIDAndRowScaleOutStamp(t *testing.T) {
+	ctx := context.Background()
+	store := &rowStampStore{versionedListingStore: newVersionedListingStore(), rowStamp: time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)}
+	snap := sched.NewAppSnapshot(store)
+
+	apps, err := snap.AppsByID(ctx, "", []string{"b-id", "missing-id"})
+	if err != nil || len(apps) != 1 || apps["b-id"].Slug != "b" {
+		t.Fatalf("AppsByID = %+v (err %v), want only b", apps, err)
+	}
+	apps["b-id"].Manifest.Env["MODE"] = "changed"
+	if again, _ := snap.AppsByID(ctx, "", []string{"b-id"}); again["b-id"].Manifest.Env["MODE"] != "prod" {
+		t.Fatalf("a caller's write reached the cached list: %+v", again["b-id"].Manifest.Env)
+	}
+	if _, err := snap.ListAllApps(ctx); err != nil || store.reads[""] != 1 {
+		t.Fatalf("full reads = %d (err %v), want the one list shared by every call", store.reads[""], err)
+	}
+
+	stamp, err := snap.AppScaleOutStamp(ctx, "a-id")
+	if err != nil || stamp == nil || !stamp.Equal(store.rowStamp) {
+		t.Fatalf("AppScaleOutStamp = %v (err %v), want the row's %v", stamp, err, store.rowStamp)
 	}
 }
 

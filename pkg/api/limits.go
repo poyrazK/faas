@@ -62,8 +62,9 @@ const (
 )
 
 // Request bodies one gateway holds at once. Uploads spooled to disk share
-// RequestBodySpoolNodeBytes and one client IP (an IPv6 /64) holds at most
-// RequestBodySpoolPerClient of them; validate-rule bodies read into the heap
+// RequestBodySpoolNodeBytes, one app owner holds at most a quarter of it, and
+// one client IP (an IPv6 /56) holds at most RequestBodySpoolPerClient of
+// them; validate-rule bodies read into the heap
 // share RequestBodyMemoryNodeBytes. A request that would pass a budget gets
 // 503 with Retry-After RequestBodyBudgetRetryAfter.
 // gatewayd-internal keeps verified and definitely-invalid API key lookups for
@@ -129,9 +130,40 @@ const AgentKeyLifetime = 90 * 24 * time.Hour
 // before it gets 429 without a lookup.
 const InboundWebhookFailuresPerIPPerMinute = 30
 
+// AppWebhookMaxInFlightPerAccount bounds one account's concurrent outbound
+// webhook requests across every scheduler (ADR-20261101093517). Each
+// scheduler runs 64 delivery slots and each subscription may hold 4, so an
+// account with many subscriptions could otherwise fill a scheduler's pool
+// with slow receivers. 16 leaves at least three quarters of every pool to
+// other accounts. Two schedulers claiming for one account at the same
+// instant can pass it by one claim batch; it is a fairness bound, not a
+// quota.
+const AppWebhookMaxInFlightPerAccount = 16
+
+// WebhookSecretRotationOverlap is how long a rotated webhook secret stays
+// valid beside its replacement (ADR-20261101093517): outbound deliveries
+// carry a second signature made with it, and inbound generic endpoints
+// accept signatures made with it, so a receiver or sender can switch
+// secrets without failing deliveries in between.
+const WebhookSecretRotationOverlap = 24 * time.Hour
+
+// WebhookBacklogRetryAfter is the Retry-After a refusal for a full webhook
+// backlog carries. The dispatcher drains a healthy backlog within seconds;
+// a minute keeps retrying senders from polling a stuck one.
+const WebhookBacklogRetryAfter = 60 * time.Second
+
 // PasswordHashConcurrency caps the Argon2id password hashes (64 MiB each)
 // one process computes at once; the rest wait for a slot.
 const PasswordHashConcurrency = 3
+
+// PasswordHashQueueMax caps the callers waiting for a hash slot: about half
+// a second of work at ~60 hashes a second. Past it a password attempt gets
+// 429 with Retry-After PasswordHashBusyRetryAfter instead of joining an
+// unbounded queue (H96).
+const (
+	PasswordHashQueueMax       = 32
+	PasswordHashBusyRetryAfter = 2 * time.Second
+)
 
 // GatewayRouteRecheckInterval is how long a warm custom-domain route trusts
 // its last registry recheck (domain verified, tenant surface binding) before
@@ -148,10 +180,16 @@ const (
 )
 
 const (
-	RequestBodySpoolNodeBytes   int64 = 2 << 30
-	RequestBodySpoolPerClient         = 4
-	RequestBodyMemoryNodeBytes  int64 = 96 << 20
-	RequestBodyBudgetRetryAfter       = 5 * time.Second
+	RequestBodySpoolNodeBytes int64 = 4 << 30
+	RequestBodySpoolPerClient       = 4
+	// One app owner holds at most 1/RequestBodySpoolOwnerShareDivisor of
+	// the node spool (1 GiB: four of Scale's 250 MiB bodies), and the
+	// per-client cap keys IPv6 clients by /RequestBodySpoolClientIPv6Prefix
+	// (H94).
+	RequestBodySpoolOwnerShareDivisor       = 4
+	RequestBodySpoolClientIPv6Prefix        = 56
+	RequestBodyMemoryNodeBytes        int64 = 96 << 20
+	RequestBodyBudgetRetryAfter             = 5 * time.Second
 )
 
 // The project scan reads Kubernetes manifests under k8s/, kubernetes/,
@@ -933,6 +971,10 @@ const (
 	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
 	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
 	ProfileCaptureMaxConcurrentPerScheduler = 4
+	// ProfileCaptureMaxRunningPerPool bounds the captures of one pool (an
+	// account, or an organization's apps) running at once, so one customer
+	// cannot hold every scheduler's capture workers; the rest stay queued.
+	ProfileCaptureMaxRunningPerPool = 2
 	// ProfileCaptureMaxListed bounds GET /profiles/captures.
 	ProfileCaptureMaxListed = 50
 	// ProfileCaptureRetention is how long stored capture results remain.
@@ -1560,7 +1602,10 @@ const QueuePushDispatchSlotsPerNode = 32
 
 // BrokerTriggerDispatchSlotsPerNode bounds the external broker triggers
 // (Kafka, NATS, Redis Streams, SQS-compatible) one schedd polls and delivers
-// at once, one batch per trigger (ADR-20261027162741).
+// at once, one batch per trigger (ADR-20261027162741). Each account with
+// broker triggers on the node is owed an even share, at least one and no more
+// than its triggers; idle lanes are lent but never re-lent while an account
+// waits for its share (ADR-20261101093015).
 const BrokerTriggerDispatchSlotsPerNode = 16
 
 // Trigger ledger retention: terminal trigger_records rows without an explicit
@@ -1574,6 +1619,11 @@ const (
 	TriggerRetentionBatchMax  = 1000
 	TriggerRetentionPassesMax = 10
 )
+
+// TriggerMetricsCountLimit is where GET /v1/triggers/{id}/metrics stops
+// counting each state's records, so a trigger with millions of settled
+// records answers from a bounded index read (ADR-20261101104512).
+const TriggerMetricsCountLimit = 100000
 
 // RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
 // realtime trigger may bind (ADR-1322): one GatewaySynthDispatchTimeout
@@ -2389,6 +2439,71 @@ const (
 const (
 	RealtimeResumeCommandsPerSecond = 20
 	RealtimeResumeCommandBurst      = 40
+)
+
+// A realtime node reads a subscription ticket a new connection presents from
+// the control plane before it can tell a real ticket from a made-up one, so
+// these reads are bounded per endpoint and per node; a connection past them
+// gets 503 with Retry-After. Known tickets come from the node's access cache,
+// and an endpoint holds at most RealtimeTicketMaxPerEndpoint (1,024) live
+// tickets, so the endpoint burst admits all of them reconnecting at once
+// within seconds (ADR-1117, amendment of 2026-11-02).
+const (
+	RealtimeTicketReadsPerEndpointPerSecond = 50
+	RealtimeTicketReadBurstPerEndpoint      = 500
+	RealtimeTicketReadsPerNodePerSecond     = 200
+	RealtimeTicketReadBurstPerNode          = 1_000
+)
+
+// A client message on a plain (v1) realtime WebSocket is written to the
+// node's callback spool, with two fsyncs, and delivered to the endpoint's
+// message callback. A connection may send RealtimeClientMessagesPerSecond
+// (bursts of RealtimeClientMessageBurst), and a node writes at most
+// RealtimeNodeClientMessagesPerSecond: past either, the node stops reading
+// the socket until it may, so TCP slows the client and nothing is dropped
+// (ADR-1323, amendment of 2026-11-02).
+const (
+	RealtimeClientMessagesPerSecond     = 20
+	RealtimeClientMessageBurst          = 40
+	RealtimeNodeClientMessagesPerSecond = 2_000
+	RealtimeNodeClientMessageBurst      = 4_000
+)
+
+// Signals, presence updates and read receipts reach the other realtime nodes
+// through apid, one control-plane call each. A node relays at most
+// RealtimeNodeEphemeralRelaysPerSecond (bursts of
+// RealtimeNodeEphemeralRelayBurst), and one endpoint at most
+// RealtimeEndpointEphemeralRelaysPerSecond of them on a node; past either,
+// the frame is refused with its rate-limited code and nothing is relayed
+// (ADR-1323, amendment of 2026-11-03).
+const (
+	RealtimeNodeEphemeralRelaysPerSecond     = 500
+	RealtimeNodeEphemeralRelayBurst          = 1_000
+	RealtimeEndpointEphemeralRelaysPerSecond = 200
+	RealtimeEndpointEphemeralRelayBurst      = 400
+)
+
+// A realtime node accepts at most RealtimeNodeHandshakesPerSecond new
+// connections (bursts of RealtimeNodeHandshakeBurst); past that a handshake
+// gets 503 with a Retry-After of 1-5 seconds. A restarting node closes its
+// sockets with 1012, and clients spread their reconnects over a few seconds
+// (ADR-1323, amendment of 2026-11-03).
+const (
+	RealtimeNodeHandshakesPerSecond = 1_000
+	RealtimeNodeHandshakeBurst      = 5_000
+)
+
+// Live query frames live.subscribe and live.renew start or change a
+// subscription on the database's live hub. A connection may send
+// RealtimeLiveFramesPerSecond (bursts of RealtimeLiveFrameBurst) and a node
+// RealtimeNodeLiveFramesPerSecond (bursts of RealtimeNodeLiveFrameBurst); past
+// either, the frame is answered with live.error code "live_query_limit"
+// (ADR-1323, amendment of 2026-11-03).
+const (
+	RealtimeLiveFramesPerSecond     = 10
+	RealtimeLiveFrameBurst          = 40
+	RealtimeNodeLiveFramesPerSecond = 1_000
+	RealtimeNodeLiveFrameBurst      = 2_000
 )
 
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
@@ -3472,6 +3587,10 @@ func EventSettledRetentionMax() time.Duration {
 // before month-close pricing. A zero field changes nothing: the operator
 // policy applies unchanged and no usage is included.
 type ObjectStoragePlanLimits struct {
+	// MaxAccountBytes is the plan's storage ceiling (ADR-20261101214152):
+	// Free 1 GiB, Hobby 2× its included storage, Pro and Scale 5×. Support can
+	// grant a paid account another (ObjectStorageLimitsFor), and the account's
+	// spend cap tightens it (WithSpendCap).
 	MaxAccountBytes       int64
 	MaxMonthlyRequests    int64
 	MaxMonthlyEgressBytes int64
@@ -3557,12 +3676,40 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
-// WithSpendCap returns the limits with the storage ceiling a paid account's
-// spend cap pays for: the plan's included storage plus the GiB-months the cap
-// buys at ObjectStorageMillicentsPerGiBMonth (ADR-20261101214152). Hobby's
-// default $2 cap gives 76 GiB, Pro's $10 383 GiB, Scale's $30 1,200 GiB. A nil
-// cap (none, or a cleared one) keeps the limits; a plan ceiling that is
-// already tighter, as Free's, stays.
+// ObjectStoragePlanLimitsMax is the largest storage ceiling and monthly egress
+// any plan sells. An installation's safety policy (ObjectStoragePolicy) must
+// allow at least these, because apid enforces the tighter of the two and a
+// smaller policy value silently sells every plan less.
+func ObjectStoragePlanLimitsMax() ObjectStoragePlanLimits {
+	var most ObjectStoragePlanLimits
+	for _, p := range Plans {
+		l := MustLimitsFor(p).ObjectStorage
+		most.MaxAccountBytes = max(most.MaxAccountBytes, l.MaxAccountBytes)
+		most.MaxMonthlyEgressBytes = max(most.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
+	}
+	return most
+}
+
+// ObjectStorageLimitsFor returns a billing subject's object-storage limits on
+// plan (ADR-20261101214152): the plan's, with the ceiling support granted the
+// subject (grantBytes, nil for none) in place of a paid plan's, tightened by
+// what the subject's spend cap pays for. Free ignores a grant: its storage is
+// never billed.
+func ObjectStorageLimitsFor(plan Plan, grantBytes, capCents *int64) ObjectStoragePlanLimits {
+	limits, _ := LimitsFor(plan)
+	l := limits.ObjectStorage
+	if grantBytes != nil && *grantBytes > 0 && plan.IsPaid() {
+		l.MaxAccountBytes = *grantBytes
+	}
+	return l.WithSpendCap(capCents)
+}
+
+// WithSpendCap returns the limits with the storage ceiling tightened to what
+// a paid account's spend cap pays for: the plan's included storage plus the
+// GiB-months the cap buys at ObjectStorageMillicentsPerGiBMonth
+// (ADR-20261101214152). The default caps pay for more than the plan
+// ceilings, so they only bind when the customer lowers them: a $0 cap stops at
+// the included storage. A nil cap (none, or a cleared one) keeps the limits.
 func (l ObjectStoragePlanLimits) WithSpendCap(capCents *int64) ObjectStoragePlanLimits {
 	if capCents == nil || *capCents < 0 || l.IncludedBytes <= 0 {
 		return l
@@ -3836,6 +3983,14 @@ type Limits struct {
 
 	// Networking (spec §7).
 	EgressMbit int // per-instance egress bandwidth cap via tc
+	// MonthlyEgressGiB is the application egress a month includes: the
+	// host-interface bytes the subject's instances send (state.Usage
+	// NetTxBytes, the egress meter's source). While egress is not billed for
+	// the plan, meterd stops the subject's apps at it until the month ends or
+	// the plan grows; once the egress meter bills live it is the included
+	// allowance and usage above it is overage under the spend cap
+	// (ADR-20261103131742). It matches the plan's object storage egress.
+	MonthlyEgressGiB int64
 	// EgressNewConnPerSecond / EgressNewConnBurst cap the rate at which a
 	// guest may open new outbound flows (ADR-361). Excess new flows are
 	// dropped in the per-instance forward chain and counted in
@@ -4016,7 +4171,10 @@ type Limits struct {
 	// bounds what a backlog costs the control-plane database.
 	// QueueMessageRetentionSeconds is how long a pending queue message
 	// waits for a worker before schedd moves it to the dead letter,
-	// counted from its enqueue. A message a worker holds does not expire.
+	// counted from its enqueue or, once replayed from the dead letter, from
+	// its last replay (ADR-20261101093812). A message a worker holds does
+	// not expire. A replay meets MaxQueueDepth and
+	// MaxQueueBacklogBytesPerAccount as a send does.
 	MaxQueueBacklogBytesPerAccount int64
 	QueueMessageRetentionSeconds   int
 
@@ -4106,7 +4264,7 @@ type Limits struct {
 	// publish is matched against each enabled subscription of its account,
 	// so the count bounds the routing work one event can cause. Enforced
 	// after every manifest apply that adds or re-enables a subscription, by
-	// checkSourceRefEventSubscriptionLimits in pkg/apid/apidserver.
+	// checkSourceRefEventSubscriptionQuota in pkg/apid/apidserver.
 	EventSubscriptionsPerApp     int
 	EventSubscriptionsPerAccount int
 
@@ -4580,6 +4738,22 @@ type Limits struct {
 	// InboundWebhookPerAccount prevents the N-apps-times-cap bypass. Creation
 	// is serialized under the owning app and account rows in the state store.
 	InboundWebhookPerAccount int
+	// WebhookOutboxMaxPending caps the outbound webhook deliveries one
+	// account may hold undelivered (pending or in flight) when it adds one
+	// through the application outbox (ADR-20261101093517). Platform events
+	// fan out without it; they count towards it.
+	// Free 1,000 · Hobby 5,000 · Pro 25,000 · Scale 50,000.
+	WebhookOutboxMaxPending int
+	// WebhookOutboxMaxBacklogBytes caps the payload bytes of those
+	// undelivered deliveries (ADR-20261101093517).
+	// Free 16 MiB · Hobby 64 MiB · Pro 256 MiB · Scale 512 MiB.
+	WebhookOutboxMaxBacklogBytes int64
+	// InboundWebhookAcceptsPerMinute caps the signature-verified deliveries
+	// one account's inbound webhook endpoints accept a minute, as a token
+	// bucket of this capacity refilled over a minute, per apid process
+	// (ADR-20261101093517). Only failed deliveries per client IP were
+	// limited. Free 60 · Hobby 1,200 · Pro 3,000 · Scale 6,000.
+	InboundWebhookAcceptsPerMinute int
 	// LogDrainPerApp caps the number of customer runtime log destinations
 	// on one app. It follows the same plan gate as outbound webhooks.
 	LogDrainPerApp int
@@ -4631,14 +4805,15 @@ type Limits struct {
 	// pkg/state/pgstore.go). The SQL CHECK [1, 25] is the hard
 	// ceiling. 0 with TriggersAllowed=false (Free).
 	TriggerMaxAttemptsMax int
-	// TriggerRecordsPerSecondPerApp caps the per-app steady-state
-	// dispatch rate schedd permits to a single trigger. The cap is
-	// enforced by WakeRateLimiter (pkg/sched/rate_limit.go) — the
-	// same bucket the wake path drains. Hobby 100 / Pro 1000 /
-	// Scale 10000. Above the cap, records transition to dead_letter
-	// with reason='rate_limited' rather than back-pressuring the
-	// broker (back-pressure on Kafka consumer groups breaks the
-	// group-rebalance contract). 0 with TriggersAllowed=false (Free).
+	// TriggerRecordsPerSecondPerApp caps the records per second an
+	// app's external broker triggers (Kafka, NATS, Redis Streams,
+	// SQS-compatible) take from their brokers, enforced by
+	// TriggerRecordRateLimiter (pkg/sched/trigger_record_rate.go): a
+	// bucket per app on each schedd holding one second of the rate.
+	// Hobby 100 / Pro 1000 / Scale 10000. A poll asks the broker for
+	// at most the app's budget, so records over the cap stay on the
+	// broker for a later poll; none is dead-lettered or acknowledged
+	// (ADR-20261101093015). 0 with TriggersAllowed=false (Free).
 	TriggerRecordsPerSecondPerApp int
 	// TriggerPayloadMaxBytes (migration 00274 / audit #7) caps the
 	// per-trigger `payload_max_bytes` the customer may set. SQL
@@ -5306,6 +5481,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
 		EgressMbit:                     10,
+		MonthlyEgressGiB:               10,
 		EgressNewConnPerSecond:         10,
 		EgressNewConnBurst:             40,
 		EgressNewDestinationsPerMinute: 120,
@@ -5511,8 +5687,12 @@ var planLimits = map[Plan]Limits{
 		WebhookPerAccount:        0,
 		InboundWebhookPerApp:     0,
 		InboundWebhookPerAccount: 0,
-		LogDrainPerApp:           0,
-		LogDrainPerAccount:       0,
+		// ADR-20261101093517: outbound outbox backlog and inbound accept rate.
+		WebhookOutboxMaxPending:        1_000,
+		WebhookOutboxMaxBacklogBytes:   16 << 20,
+		InboundWebhookAcceptsPerMinute: 60,
+		LogDrainPerApp:                 0,
+		LogDrainPerAccount:             0,
 		// Trigger primitive (issue #757 / ADR-0NN): Free is the
 		// abuse-floor tier — TriggersAllowed=false so a POST on a
 		// Free account gets 402 CodePlanTriggersNotAllowed before the
@@ -5712,7 +5892,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -5720,6 +5900,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:                   20,
 		RateLimitBurst:                 100,
 		EgressMbit:                     25,
+		MonthlyEgressGiB:               100,
 		EgressNewConnPerSecond:         20,
 		EgressNewConnBurst:             80,
 		EgressNewDestinationsPerMinute: 240,
@@ -5941,8 +6122,12 @@ var planLimits = map[Plan]Limits{
 		WebhookPerAccount:        10,
 		InboundWebhookPerApp:     3,
 		InboundWebhookPerAccount: 10,
-		LogDrainPerApp:           3,
-		LogDrainPerAccount:       10,
+		// ADR-20261101093517: outbound outbox backlog and inbound accept rate.
+		WebhookOutboxMaxPending:        5_000,
+		WebhookOutboxMaxBacklogBytes:   64 << 20,
+		InboundWebhookAcceptsPerMinute: 1_200,
+		LogDrainPerApp:                 3,
+		LogDrainPerAccount:             10,
 		// Trigger primitive (issue #757 / ADR-0NN): Hobby is the
 		// entry paid tier — unlocks the in-platform queue kind and
 		// the sqs_compat kind (the two no-external-broker shapes).
@@ -6153,7 +6338,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -6163,6 +6348,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:                   100,
 		RateLimitBurst:                 500,
 		EgressMbit:                     100,
+		MonthlyEgressGiB:               500,
 		EgressNewConnPerSecond:         50,
 		EgressNewConnBurst:             200,
 		EgressNewDestinationsPerMinute: 1200,
@@ -6371,8 +6557,12 @@ var planLimits = map[Plan]Limits{
 		WebhookPerAccount:        30,
 		InboundWebhookPerApp:     10,
 		InboundWebhookPerAccount: 30,
-		LogDrainPerApp:           10,
-		LogDrainPerAccount:       30,
+		// ADR-20261101093517: outbound outbox backlog and inbound accept rate.
+		WebhookOutboxMaxPending:        25_000,
+		WebhookOutboxMaxBacklogBytes:   256 << 20,
+		InboundWebhookAcceptsPerMinute: 3_000,
+		LogDrainPerApp:                 10,
+		LogDrainPerAccount:             30,
 		// Trigger primitive (issue #757 / ADR-0NN): Pro is the first
 		// tier where the external-broker kinds unlock (Kafka, NATS,
 		// Redis-streams) — the egress-allowlist tier (ADR-031) is
@@ -6559,7 +6749,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -6571,6 +6761,7 @@ var planLimits = map[Plan]Limits{
 		RateLimitRPS:                   500,
 		RateLimitBurst:                 2000,
 		EgressMbit:                     250,
+		MonthlyEgressGiB:               2000,
 		EgressNewConnPerSecond:         100,
 		EgressNewConnBurst:             400,
 		EgressNewDestinationsPerMinute: 3000,
@@ -6796,8 +6987,12 @@ var planLimits = map[Plan]Limits{
 		WebhookPerAccount:        100,
 		InboundWebhookPerApp:     25,
 		InboundWebhookPerAccount: 100,
-		LogDrainPerApp:           25,
-		LogDrainPerAccount:       100,
+		// ADR-20261101093517: outbound outbox backlog and inbound accept rate.
+		WebhookOutboxMaxPending:        50_000,
+		WebhookOutboxMaxBacklogBytes:   512 << 20,
+		InboundWebhookAcceptsPerMinute: 6_000,
+		LogDrainPerApp:                 25,
+		LogDrainPerAccount:             100,
 		// Trigger primitive (issue #757 / ADR-0NN): Scale is the upper
 		// tier — caps align with the SQL CHECK ceilings (5000 records
 		// / 5 min window / 25 attempts) so a Scale customer's
@@ -11811,13 +12006,11 @@ func (p Plan) TriggerMaxAttemptsMax() int {
 	return l.TriggerMaxAttemptsMax
 }
 
-// TriggerRecordsPerSecondPerApp returns the per-app
-// steady-state dispatch rate schedd permits to a single trigger.
-// The cap is enforced by WakeRateLimiter (pkg/sched/rate_limit.go)
-// — the same bucket the wake path drains. Hobby 100 / Pro 1000
-// / Scale 10 000. Above the cap, records transition to
-// dead_letter with reason='rate_limited' rather than
-// back-pressuring the broker. Unknown plans fail closed
+// TriggerRecordsPerSecondPerApp returns the records per second an
+// app's external broker triggers may take from their brokers,
+// enforced by pkg/sched's TriggerRecordRateLimiter. Hobby 100 / Pro
+// 1000 / Scale 10 000. Records over the cap stay on the broker for a
+// later poll (ADR-20261101093015). Unknown plans fail closed
 // (return 0).
 func (p Plan) TriggerRecordsPerSecondPerApp() int {
 	l, ok := LimitsFor(p)
@@ -12924,6 +13117,27 @@ const (
 	// for an app whose invocations run longer may take one whole record
 	// instead (ADR-1180).
 	TriggerBatchTimeout = 5 * time.Minute
+	// TriggerRecordClaimLease is how long a trigger record claim lasts
+	// without renewal. The claim queries in pkg/state set the same ten
+	// minutes; schedd renews the claims of a batch whose dispatch is still
+	// running, because a long-timeout app's batch may wait 16.5 minutes
+	// (ADR-20261101093512).
+	TriggerRecordClaimLease = 10 * time.Minute
+	// TriggerRecordClaimRenewInterval is how often schedd renews the claims
+	// of a running trigger batch. It is well inside the lease, so one missed
+	// renewal does not let another dispatcher take the records.
+	TriggerRecordClaimRenewInterval = 2 * time.Minute
+	// TriggerClaimSettleAttempts bounds how often schedd writes a claimed
+	// record's outcome (succeeded, retry, dead letter) through transient
+	// store errors before it hands the broker delivery back unsettled.
+	TriggerClaimSettleAttempts = 5
+	// TriggerClaimSettleBackoff is the first wait between those attempts;
+	// each later wait doubles it (3 s in all).
+	TriggerClaimSettleBackoff = 200 * time.Millisecond
+	// TriggerBrokerEarlyRedeliveryDelay is how long NATS waits before
+	// redelivering a record that came back while its retry was still
+	// cooling and schedd does not know when the retry is due.
+	TriggerBrokerEarlyRedeliveryDelay = 2 * time.Second
 )
 
 // AsyncInvocationTimeout is how long one async, queue, cron or replay
@@ -14007,10 +14221,22 @@ const (
 )
 
 // RouteAnalyticsQueryTimeout bounds each routes analytics read over retained
-// request telemetry (route advice, the awake report and the insights
-// evaluator that reuses them): Postgres cancels the statement past it and the
-// caller is told to narrow the window (ADR-20261026143210).
+// request telemetry (route advice, the awake report, the insights evaluator
+// that reuses them, request analytics, its timeseries and route customers):
+// Postgres cancels the statement past it and the caller is told to narrow the
+// window (ADR-20261026143210).
 const RouteAnalyticsQueryTimeout = 10 * time.Second
+
+// DashboardRequestAnalyticsTimeout bounds the whole request analytics panel
+// on the dashboard app page, which runs several of those reads on every
+// render; past it the panel is left out and the page renders without it.
+const DashboardRequestAnalyticsTimeout = 5 * time.Second
+
+// RequestAnalyticsSettleLag is how far before now request analytics stops
+// judging telemetry completeness: gateways hold a minute's rows until it
+// closes and flush every few seconds, so the newest minutes are always still
+// arriving. Route removal excludes the same two minutes.
+const RequestAnalyticsSettleLag = 2 * time.Minute
 
 // RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
@@ -14353,6 +14579,9 @@ const (
 	AppHealthWorkerRecordScan       = 1000
 	AppHealthWorkerBacklogAgeWarn   = 10 * time.Minute
 	AppHealthWorkerDeadLetterWindow = time.Hour
+	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
+	// app health counts the guest's reports within it (ADR-20261102124306).
+	AppHealthMemoryPressureWindow = 24 * time.Hour
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost

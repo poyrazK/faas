@@ -26,6 +26,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -193,7 +194,19 @@ func cmdEdgeRulesList(args []string) int {
 			it.ID, it.Kind, it.Priority, terminalSafe(truncate(it.MatchHost, 32)), terminalSafe(it.MatchPath), enabled, label)
 	}
 	warnTemplatedEdgeRulePaths(osStderr, items)
+	warnUnenforceableEdgeRules(osStderr, items)
 	return 0
+}
+
+// warnUnenforceableEdgeRules flags rules the gateway cannot enforce: it
+// refuses every request to the hosts they cover with HTTP 503 naming the
+// rule (ADR-091 amendment 2026-11-03, review round 9).
+func warnUnenforceableEdgeRules(w io.Writer, items []api.EdgeRuleResponse) {
+	for _, it := range items {
+		if problem := api.EdgeRuleEnforcementProblem(it.Kind, it.Enabled, it.Action); problem != "" {
+			_, _ = fmt.Fprintf(w, "warning: edge rule %s cannot be enforced (%s); the gateway refuses its hosts' requests until you fix or delete it\n", it.ID, terminalSafe(problem))
+		}
+	}
 }
 
 // warnTemplatedEdgeRulePaths flags rules whose match path holds an OpenAPI
@@ -599,7 +612,48 @@ func cmdEdgeRulesCreate(args []string) int {
 	PrintOK(osStdout, "Edge rule %s created for app %s (kind=%s, priority=%d).", out.ID, *slug, out.Kind, out.Priority)
 	warnRootOnlyProtectiveRule(*kind, visited["match-path"])
 	warnSingleHostProtectiveRule(*kind, *matchHost, *slug)
+	warnClientScopedProtectiveRule(*kind, matchHeaderMap, condition)
 	return 0
+}
+
+// warnClientScopedProtectiveRule flags a gate scoped by request headers,
+// cookies or query parameters. The client chooses those, so a rule that
+// applies only when one is present (or absent, or has some value) is skipped
+// by a client that sends otherwise (ADR-091 amendment 2026-11-02, later).
+func warnClientScopedProtectiveRule(kind string, matchHeaders map[string]string, condition *api.EdgeRuleMatchExpr) {
+	if !api.EdgeRuleKindUsesProtectivePathMatch(kind) {
+		return
+	}
+	fields := make([]string, 0, len(matchHeaders))
+	for name := range matchHeaders {
+		fields = append(fields, "header "+name)
+	}
+	fields = append(fields, clientChosenMatchFields(condition)...)
+	if len(fields) == 0 {
+		return
+	}
+	slices.Sort(fields)
+	fields = slices.Compact(fields)
+	PrintWarn(osStderr, "This %s rule is scoped by %s, which the client chooses: a client that sends different values is not checked. Scope it by path, method, client_ip, country or asn instead.", kind, strings.Join(fields, ", "))
+}
+
+// clientChosenMatchFields lists the header:, cookie: and query: fields a
+// match condition reads.
+func clientChosenMatchFields(e *api.EdgeRuleMatchExpr) []string {
+	if e == nil {
+		return nil
+	}
+	var out []string
+	if prefix, name, ok := strings.Cut(e.Field, ":"); ok && (prefix == "header" || prefix == "cookie" || prefix == "query") {
+		out = append(out, prefix+" "+name)
+	}
+	for i := range e.All {
+		out = append(out, clientChosenMatchFields(&e.All[i])...)
+	}
+	for i := range e.Any {
+		out = append(out, clientChosenMatchFields(&e.Any[i])...)
+	}
+	return append(out, clientChosenMatchFields(e.Not)...)
 }
 
 // warnSingleHostProtectiveRule flags a gate written for one exact host. An

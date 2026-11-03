@@ -156,9 +156,9 @@ customers out until the owner has tested production
    `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
    maild). Create the [SQL probe](#sql-availability-probe) canary databases.
-   Keep `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` at `shadow` until
-   [databases past a lowered plan](#databases-past-a-lowered-plan) are shown
-   to the customer, then set it `on`.
+   Set `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT=on` once the release
+   shows [databases past a lowered plan](#databases-past-a-lowered-plan) to
+   the customer.
 4. Approve the production backend ([Production](#production)) with fleet
    ceilings sized to the Neon plan.
 5. Run the customer journey with the owner's account:
@@ -989,6 +989,10 @@ choice, `{"enabled": true|false}`:
 - Off is the default, and the databases are suspended at the allowance.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
+- A suspended, abuse-held or pending-deletion account's databases are
+  suspended whatever their usage, as its apps are stopped. Their data is kept,
+  and the next cap sweep after the account is reactivated resumes them
+  ([ADR-20261025094915 amendment](adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)).
 - Compute above the allowance costs $0.2331 per CU-hour
   (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`): Neon Scale's
   $0.222 plus 5% ([ADR-20261102072425](adr/20261102072425-managed-postgres-overage-at-provider-price-plus-5.md)).
@@ -1016,6 +1020,13 @@ apid delivers the charge after each compute cap sweep
 - The month's total is cumulative. Each step sends only the difference from
   the last delivered total, keyed by that total, so a retry is a duplicate,
   never a second charge.
+- A step is reserved in `managed_postgres_overage_pending` before it is sent
+  and recorded with the reservation cleared in one transaction. A step that
+  was sent but not recorded, after a failed write, a crash or a second apid,
+  is sent again unchanged rather than replaced by a new one, so the provider's
+  duplicate holds exactly what is recorded and usage that grew meanwhile is
+  charged by the next step
+  ([ADR-20261101143527](adr/20261101143527-billing-settles-free-hours-and-reserves-postgres-steps.md)).
 - For seven days after a month ends
   (`api.ManagedPostgresOverageCloseWindow`), late provider usage windows still
   add to that month.
@@ -1188,8 +1199,13 @@ sweep. The same sweep suspends the databases the plan no longer includes
   `on` too; it logs `managed postgres plan excess suspended` when it does.
 - `off` does nothing.
 
-Keep it at `shadow` in production until customers are told: the database view
-field and the owner's email are the ADR's step 2. Metrics:
+While it is `on`, `GET /v1/postgres/databases` and the read show
+`plan_excess` (`database_limit` or `service_class`) on each such database, as do
+`gregale postgres list` and `get` and the dashboard. With
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1` on apid and
+maild, the account that owns each suspended database is mailed once per
+suspension ([internal mail](ops/internal-mail.md#managed-postgresql-plan-excess-notices)).
+Turn both on in the release that publishes this. Metrics:
 
 - `apid_managed_postgres_plan_excess_databases`
 - `apid_managed_postgres_plan_excess_scopes{state}`, where `state` is

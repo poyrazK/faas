@@ -636,9 +636,10 @@ type OpsMetrics struct {
 	issueEventsRecorded *prometheus.CounterVec
 	// requestTelemetryRecorded (ADR-127 PR-B) — counter the
 	// apid gRPC handler (cmd/apid/grpc_server_request_telemetry.go)
-	// increments per outcome. outcome ∈ {inserted, rate_limited,
-	// db_error}. `inserted` is the §12 customer-telemetry-ingest
-	// panel (rate over 5m). `rate_limited` is the per-account
+	// increments per outcome. outcome ∈ {inserted, not_retained,
+	// rate_limited, db_error}. `inserted` is the §12 customer-telemetry-ingest
+	// panel (rate over 5m). `not_retained` is a row whose plan keeps no
+	// request telemetry (usage only). `rate_limited` is the per-account
 	// token-bucket overflow path (DebugTelemetryRequestsPerMinute
 	// exceeded). `db_error` is the per-row INSERT failure path.
 	// The closed label set keeps cardinality bounded.

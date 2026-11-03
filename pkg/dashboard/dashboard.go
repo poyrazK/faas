@@ -1668,6 +1668,7 @@ type AppDetailData struct {
 	// dashboard cron fire-now POST. Values:
 	//   "ok"    — handler redirected with ?fired=1
 	//   "error" — handler redirected with ?fired=error
+	//   "disabled", "busy", "suspended", "plan" — a refusal with its reason
 	// Empty string → no banner. The template's empty-state branch
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
@@ -2455,6 +2456,9 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+	// TelemetryGaps lists why the window may be missing requests; empty
+	// when every gateway delivered it or when it could not be judged.
+	TelemetryGaps []string
 }
 
 type RequestAnalyticsComputeCostView struct {
@@ -3436,8 +3440,12 @@ type UpgradeData struct {
 	Provider      string
 	ProviderLabel string
 	// PortalURL is the fallback for accounts that already have a
-	// subscription (the provider portal owns product changes).
+	// subscription when the provider cannot change it through its API.
 	PortalURL string
+	// SubscriptionChange is true when the account already has a
+	// subscription: the form upgrades it in place and the provider charges
+	// the prorated difference now (ADR-20261103131742).
+	SubscriptionChange bool
 	// ConfirmToken is the (action="upgrade_plan", account_id) CSRF
 	// envelope minted by renderUpgrade.
 	ConfirmToken string
@@ -3646,6 +3654,9 @@ type ManagedPostgresDatabaseItem struct {
 	// RestoreSlotUntil is set while a restored copy is past the plan's
 	// database limit (ADR-20261031123259).
 	RestoreSlotUntil string
+	// PlanExcess is database_limit or service_class while the plan no
+	// longer includes the database and it is suspended (ADR-20261102125208).
+	PlanExcess string
 	// Labels are the database's labels (ADR-20261031100025); nil while the
 	// account does not have resource labels.
 	Labels map[string]string

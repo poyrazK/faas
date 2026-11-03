@@ -88,6 +88,11 @@ paths under the callback URL:
 | `/realtime/disconnect` | a connection closes | any 2xx |
 | `/realtime/authorize-channel` | a resumable client subscribes, or sets presence on a channel | any 2xx grants; 401 or 403 refuses |
 
+A client on the original protocol may send 20 frames a second (bursts of 40).
+Past that, Gregale reads its next frame only when the rate allows, so the
+client's sends slow down and nothing is dropped; a client that would wait more
+than 5 seconds is closed with code 1013.
+
 Check the callback token on every request. Each callback body is JSON with the
 event `type`, `endpoint_id`, `connection_id`, `principal` and, for
 `authorize-channel`, the `channel` and the `permission` asked for: `read` to
@@ -160,11 +165,23 @@ at least once, so deduplicate by `message_id` or `sequence`.
   unsubscribe, reset, read state, inbox and preference frames. Acks, presence
   and signals have their own limits. A command past the budget gets
   `command_rate_limited` and is dropped.
+- Signals, presence updates and read receipts reach clients on every node, so
+  an endpoint may send at most 200 of them a second on one realtime node
+  (bursts of 400). Past that, the frame gets `signal_rate_limited`,
+  `presence_rate_limited` or `read_rate_limited` and nobody receives it;
+  retry after a moment.
+- A connection may send 10 `live.subscribe` or `live.renew` frames a second
+  (bursts of 40). Past that, the frame gets `live.error` with code
+  `live_query_limit`; subscribe again after a moment.
 - Refusals arrive as `{"type":"error","code":...}` frames with the channel,
   for example `not_authorized` or `subscription_limit`; the connection stays
   open.
 - Code 1008 closes a connection whose token expired or changed: reconnect with
   a fresh token. Code 1013 means try again: reconnect from the saved cursor.
+  Code 1012 means the realtime node restarted: reconnect after a random delay
+  of up to a few seconds (the Node SDK waits up to 5 s), so clients do not all
+  return at once. A handshake answered 503 with `Retry-After` means the node is
+  accepting connections more slowly for a moment; retry after that delay.
 
 ## Declare endpoints in gregale.yaml
 
@@ -328,8 +345,9 @@ and they trigger no connect or authorize callbacks.
 Store the `ticket_id`, not the ticket. Revoke one ticket with
 `DELETE …/tickets/{ticket_id}` (204, or 404 once it has expired), or every
 ticket of a user at logout with `DELETE …/tickets?principal=…` (`{"revoked":
-n}`). Connections using a revoked ticket close within about a second, and
-reconnecting with it gets 401.
+n}`). Connections using a revoked ticket close within about two seconds, and
+reconnecting with it gets 401. A connection whose ticket Gregale cannot check
+right now gets 503 with `Retry-After`; retry it.
 
 ## Presence
 
@@ -494,7 +512,9 @@ Content-Type: application/json
 
 `GET` on the same path returns `denied_channels`, `sessions_revoked_before`,
 `revision` (0 means no controls) and `updated_at`. Changes reach every node
-within about a second. An endpoint keeps controls for at most 1,024 users and
+within about two seconds. If Gregale cannot check a connection's access, for
+example during a control-plane restart, the connection keeps its last checked
+access for up to two minutes and is then closed with code 1013. An endpoint keeps controls for at most 1,024 users and
 64 denied channels per user; they stay until the endpoint is deleted. The Node
 SDK has `revokeRealtimeChannelAccess`, `restoreRealtimeChannelAccess` and
 `revokeRealtimeSessions`.

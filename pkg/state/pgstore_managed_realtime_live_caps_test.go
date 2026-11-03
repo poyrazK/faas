@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -110,5 +111,95 @@ func TestPgStoreManagedRealtimeNotificationPreferencesPerAccount(t *testing.T) {
 	}
 	if err := s.PutManagedRealtimeNotificationPreferences(ctx, first.ID, "bob", quiet); err != nil {
 		t.Fatalf("user after another's reset = %v, want admitted", err)
+	}
+}
+
+// adr: 1323 (amendment of 2026-11-03) — advancing a read marker that already
+// counts toward the endpoint's cap, or repeating its sequence, does not wait
+// for the endpoint row lock; only a new marker takes it.
+func TestPgStoreManagedRealtimeReadMarkerAdvanceSkipsTheEndpointLock(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-realtime-marker-lock", "realtime-marker-lock")
+	endpoint, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := s.AppendManagedRealtimeChannelMessage(ctx, endpoint.ID, "orders", []byte("x"), false, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.AdvanceManagedRealtimeReadProgress(ctx, endpoint.ID, "bob", "orders", false, 1); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if _, err := holder.Exec(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	quick, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if progress, err := s.AdvanceManagedRealtimeReadProgress(quick, endpoint.ID, "bob", "orders", false, 1); err != nil || progress.Sequence != 1 {
+		t.Fatalf("repeated advance = (%+v, %v)", progress, err)
+	}
+	if progress, err := s.AdvanceManagedRealtimeReadProgress(quick, endpoint.ID, "bob", "orders", false, 3); err != nil || progress.Sequence != 3 || progress.Unread != 0 {
+		t.Fatalf("advance of a live marker = (%+v, %v)", progress, err)
+	}
+	blocked, cancelBlocked := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancelBlocked()
+	if _, err := s.AdvanceManagedRealtimeReadProgress(blocked, endpoint.ID, "carol", "orders", false, 1); err == nil {
+		t.Fatal("a new marker did not wait for the endpoint lock that keeps the cap exact")
+	}
+}
+
+// adr: 1323 (amendment of 2026-11-03) — loading a live durable cursor (every
+// reconnect) and renewing a presence lease do not wait for the endpoint row
+// lock; creating a cursor still does.
+func TestPgStoreManagedRealtimeReconnectPathsSkipTheEndpointLock(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-realtime-reconnect-lock", "realtime-reconnect-lock")
+	endpoint, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LoadManagedRealtimeDurableCursor(ctx, endpoint.ID, "bob", "phone", "orders", 0); err != nil {
+		t.Fatal(err)
+	}
+	node, err := s.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertManagedRealtimePresenceLease(ctx, state.ManagedRealtimePresenceLease{
+		EndpointID: endpoint.ID, Channel: "orders", NodeID: node.ID, ConnectionID: "conn-1", MemberID: "m-1",
+		State: []byte(`{}`), ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if _, err := holder.Exec(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	quick, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if _, err := s.LoadManagedRealtimeDurableCursor(quick, endpoint.ID, "bob", "phone", "orders", 0); err != nil {
+		t.Fatalf("loading a live cursor = %v", err)
+	}
+	if renewed, err := s.RenewManagedRealtimePresenceLease(quick, endpoint.ID, "orders", node.ID, "conn-1", time.Now().Add(time.Minute)); err != nil || !renewed {
+		t.Fatalf("renewing a live lease = (%v, %v)", renewed, err)
+	}
+	if renewed, err := s.RenewManagedRealtimePresenceLease(quick, endpoint.ID, "orders", node.ID, "conn-gone", time.Now().Add(time.Minute)); err != nil || renewed {
+		t.Fatalf("renewing a missing lease = (%v, %v), want false", renewed, err)
+	}
+	blocked, cancelBlocked := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancelBlocked()
+	if _, err := s.LoadManagedRealtimeDurableCursor(blocked, endpoint.ID, "carol", "phone", "orders", 0); err == nil {
+		t.Fatal("creating a cursor did not wait for the endpoint lock that keeps the cap exact")
 	}
 }

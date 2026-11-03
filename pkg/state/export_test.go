@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -1154,3 +1155,13 @@ var (
 	AcknowledgmentDigest     = acknowledgmentDigest
 	ObjectUploadGrantLookups = objectUploadGrantLookups
 )
+
+// BeginTrafficBindingForTest opens the app binding transaction a deploy uses,
+// so a test can time its analysis bound (Hunt 31 H31-11).
+func (s *PgStore) BeginTrafficBindingForTest(ctx context.Context, account, appID string) (pgx.Tx, error) {
+	tx, err := s.beginTrafficBinding(ctx, TrafficPolicyWriterAppBinding, account, nil, appID)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}

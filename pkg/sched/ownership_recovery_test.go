@@ -234,7 +234,7 @@ func exerciseOwnershipRecoveryHostLoss(t *testing.T, store state.Store, reopen f
 	if err != nil {
 		t.Fatal(err)
 	}
-	account, err := store.CreateAccount(ctx, "host-loss@example.com", api.PlanHobby)
+	account, err := store.CreateAccount(ctx, "host-loss@example.com", api.PlanScale)
 	if err != nil {
 		t.Fatal(err)
 	}

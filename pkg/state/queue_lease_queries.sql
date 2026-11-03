@@ -54,8 +54,32 @@ RETURNING i.*;
 -- name: QueueLeaseExhaustInvocation :execrows
 -- A message whose leases kept expiring has no attempts left to lease.
 UPDATE invocations SET state='dead_letter', outcome='dead_letter', completed_at=clock_timestamp(),
-    last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL
+    last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL,
+    outcome_code='queue_lease_attempts_exhausted'
 WHERE id=sqlc.arg(id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND state='pending' AND attempts=sqlc.arg(attempt)::integer;
+
+-- name: ExpiredQueueLeases :many
+-- ADR-20261101093812: pull leases that lapsed, with what their attempt budget
+-- comes from. A lease on the message's last attempt dead-letters when it
+-- lapses instead of waiting, pending, for a lease call that may never come.
+SELECT i.id, i.attempts, i.retry_policy, coalesce(a.plan, o.plan, '')::text AS plan
+FROM invocations i
+JOIN invocation_queue_lease_receipts r ON r.invocation_id = i.id AND r.attempt = i.attempts
+    AND r.replay_generation = i.replay_generation
+LEFT JOIN accounts a ON a.id = i.account_id
+LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE i.state = 'dispatching' AND i.source = 'queue' AND i.environment_id IS NULL AND NOT i.quota_reserved
+    AND i.lease_expires_at IS NOT NULL AND i.lease_expires_at <= sqlc.arg(now_at)::timestamptz
+ORDER BY i.lease_expires_at, i.id
+LIMIT sqlc.arg(batch_limit)::integer
+FOR UPDATE OF i SKIP LOCKED;
+
+-- name: ExhaustExpiredQueueLease :execrows
+UPDATE invocations SET state='dead_letter', outcome='dead_letter', completed_at=clock_timestamp(),
+    last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL,
+    outcome_code='queue_lease_attempts_exhausted'
+WHERE id=sqlc.arg(id)::uuid AND state='dispatching' AND NOT quota_reserved AND attempts=sqlc.arg(attempt)::integer
+    AND lease_expires_at <= sqlc.arg(now_at)::timestamptz;
 
 -- name: UpsertQueueLeaseReceipt :exec
 INSERT INTO invocation_queue_lease_receipts(invocation_id, attempt, replay_generation, token_hash, issued_at, lease_expires_at)

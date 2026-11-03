@@ -173,6 +173,13 @@ type CapLimits struct {
 	// are suspended (ADR-20261102125208). A zero database limit means the
 	// plan is unknown, and nothing is suspended for it.
 	Entitlement api.ManagedPostgresPlanLimits
+
+	// Inactive marks a subject that may not run workloads: suspended,
+	// abuse-held or pending deletion (ADR-20261025094915 amendment
+	// 2026-11-03). Its computes are suspended whatever its ceiling, as its
+	// apps are parked; data is kept, and the next sweep after reactivation
+	// lifts the suspension. No cap threshold is recorded or mailed for it.
+	Inactive bool
 }
 
 // CapCeiling returns a usage subject's limits: an account, or an
@@ -258,6 +265,11 @@ type CapEnforcerOptions struct {
 	// (ADR-20261102125208): off (the zero value), shadow or on. On writes
 	// only while Mode is on too.
 	PlanExcessMode CapEnforcementMode
+	// NotifyPlanExcess queues the email for a database the sweep suspended
+	// past its plan (ADR-20261102125208 step 3). It is retried each sweep
+	// until it links an email to the notice or the notice is a day old, so
+	// it must mail a notice at most once. Nil sends no email.
+	NotifyPlanExcess func(ctx context.Context, notice PlanExcessNotice) error
 }
 
 // CapSweepSummary counts one enforcement sweep. Scopes are provider quota
@@ -296,6 +308,8 @@ type CapSweepSummary struct {
 	PlanExcessScopesSuspended int
 	PlanExcessScopesShadowed  int
 	PlanExcessScopesShared    int
+	PlanExcessNoticed         int
+	PlanExcessNotifyFailed    int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
@@ -311,6 +325,7 @@ type CapEnforcer struct {
 	notify      func(context.Context, CapEvent) error
 	batchSize   int
 	planExcess  CapEnforcementMode
+	planNotify  func(context.Context, PlanExcessNotice) error
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -369,7 +384,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	return &CapEnforcer{
 		registry: registry, store: store, mode: options.Mode, storageMode: options.StorageMode, ceiling: options.Ceiling,
 		now: options.Now, logger: options.Logger, observe: options.Observe, notify: options.Notify,
-		batchSize: options.BatchSize, planExcess: options.PlanExcessMode,
+		batchSize: options.BatchSize, planExcess: options.PlanExcessMode, planNotify: options.NotifyPlanExcess,
 	}, nil
 }
 
@@ -423,6 +438,7 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 			}
 		}
 	}
+	e.mailPlanExcessNotices(ctx, &summary)
 	return summary, errors.Join(failures...)
 }
 
@@ -488,7 +504,12 @@ func capEnforceable(database Database) bool {
 
 func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, limits CapLimits, summary *CapSweepSummary) error {
 	ceiling := limits.Ceiling
-	if ceiling <= 0 {
+	switch {
+	case limits.Inactive:
+		// One compute-unit second: nothing remains once any is used, and a
+		// quiet database is held to a single second.
+		ceiling = 1
+	case ceiling <= 0:
 		summary.Uncapped++
 		return nil
 	}
@@ -511,9 +532,9 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	if plan.suspended() {
 		summary.SuspendedAccounts++
 	}
-	e.suspendPlanExcess(accountID, databases, limits, &plan, summary)
+	suspended := e.suspendPlanExcess(accountID, databases, limits, &plan, summary)
 	var failures []error
-	if e.mode == CapEnforcementOn {
+	if e.mode == CapEnforcementOn && !limits.Inactive {
 		if err := e.recordCapEvents(ctx, accountID, now, plan.used, limits, plan.ceiling, summary); err != nil {
 			failures = append(failures, err)
 		}
@@ -539,8 +560,11 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		summary.ScopesApplied++
 		e.logger.Info("managed postgres compute cap applied", attrs...)
 	}
-	if e.mode == CapEnforcementOn && len(failures) == 0 {
+	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive {
 		e.notifyCapEvent(ctx, accountID, now, summary)
+	}
+	if e.planExcessEnforced() && len(failures) == 0 {
+		e.recordPlanExcessNotices(ctx, databases, suspended, now, summary)
 	}
 	return errors.Join(failures...)
 }

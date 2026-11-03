@@ -55,7 +55,7 @@ func TestManagedWorkflowOperationPreservesTrafficSecurityHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := internalsvc.Mint("schedd", 30*time.Second, nil, priv, internalsvc.KidFromPub(pub))
+	token, err := internalsvc.Mint("schedd", 30*time.Second, map[string]any{"app_id": appID}, priv, internalsvc.KidFromPub(pub))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestManagedOperationResultTransportPreservesByteBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := internalsvc.Mint("schedd", 30*time.Second, nil, priv, internalsvc.KidFromPub(pub))
+	token, err := internalsvc.Mint("schedd", 30*time.Second, map[string]any{"app_id": "app-1"}, priv, internalsvc.KidFromPub(pub))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestCustomerOperationResultTransportPreservesByteBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := internalsvc.Mint("schedd", 30*time.Second, nil, priv, internalsvc.KidFromPub(pub))
+	token, err := internalsvc.Mint("schedd", 30*time.Second, map[string]any{"app_id": "app"}, priv, internalsvc.KidFromPub(pub))
 	if err != nil {
 		t.Fatal(err)
 	}

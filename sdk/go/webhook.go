@@ -14,6 +14,10 @@ import (
 const (
 	// WebhookSignatureHeader contains the SHA-256 HMAC for a delivery.
 	WebhookSignatureHeader = "X-Faas-Webhook-Signature"
+	// WebhookPreviousSignatureHeader carries a second HMAC, made with the
+	// secret a rotation replaced, for 24 hours after the rotation. A
+	// receiver still holding the old secret verifies against it.
+	WebhookPreviousSignatureHeader = "X-Faas-Webhook-Signature-Previous"
 	// WebhookTimestampHeader contains the Unix timestamp used in the signature.
 	WebhookTimestampHeader = "X-Faas-Webhook-Timestamp"
 	// WebhookDeliveryIDHeader is stable across automatic retries of a delivery.
@@ -118,18 +122,16 @@ func VerifyWebhookWithOptions(secret []byte, headers http.Header, body []byte, o
 		return VerifiedWebhook{}, webhookVerificationError(WebhookVerificationStaleTimestamp)
 	}
 
-	if !strings.HasPrefix(signatureHeader, "sha256=") {
-		return VerifiedWebhook{}, webhookVerificationError(WebhookVerificationMalformedSig)
-	}
-	got, err := hex.DecodeString(strings.TrimPrefix(signatureHeader, "sha256="))
-	if err != nil || len(got) != sha256.Size {
+	got, ok := parseWebhookSignature(signatureHeader)
+	if !ok {
 		return VerifiedWebhook{}, webhookVerificationError(WebhookVerificationMalformedSig)
 	}
 
 	mac := hmac.New(sha256.New, secret)
 	_, _ = fmt.Fprintf(mac, "%d.%s.", timestamp, deliveryID)
 	_, _ = mac.Write(body)
-	if !hmac.Equal(got, mac.Sum(nil)) {
+	want := mac.Sum(nil)
+	if !hmac.Equal(got, want) && !previousWebhookSignatureMatches(headers, want) {
 		return VerifiedWebhook{}, webhookVerificationError(WebhookVerificationBadSignature)
 	}
 	return VerifiedWebhook{DeliveryID: deliveryID, Timestamp: time.Unix(timestamp, 0).UTC()}, nil
@@ -158,4 +160,29 @@ func timestampWithinTolerance(timestamp int64, now time.Time, tolerance time.Dur
 
 func webhookVerificationError(code WebhookVerificationErrorCode) error {
 	return &WebhookVerificationError{Code: code}
+}
+
+// parseWebhookSignature decodes a "sha256=<hex>" signature header.
+func parseWebhookSignature(header string) ([]byte, bool) {
+	if !strings.HasPrefix(header, "sha256=") {
+		return nil, false
+	}
+	sig, err := hex.DecodeString(strings.TrimPrefix(header, "sha256="))
+	if err != nil || len(sig) != sha256.Size {
+		return nil, false
+	}
+	return sig, true
+}
+
+// previousWebhookSignatureMatches reports whether the delivery's
+// previous-secret signature, sent for 24 hours after a secret rotation,
+// equals want. A receiver that has not installed the new secret yet keeps
+// verifying deliveries during that window.
+func previousWebhookSignatureMatches(headers http.Header, want []byte) bool {
+	header, err := oneWebhookHeader(headers, WebhookPreviousSignatureHeader)
+	if err != nil {
+		return false
+	}
+	got, ok := parseWebhookSignature(header)
+	return ok && hmac.Equal(got, want)
 }

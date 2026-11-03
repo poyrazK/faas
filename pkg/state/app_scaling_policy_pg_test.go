@@ -77,4 +77,55 @@ func TestPgAppScalingPolicyObservationTracksLiveUpdatesWithoutDeployment(t *test
 	}
 }
 
+// The periodic pass records every app in one statement and rewrites a row
+// only for a new revision or once it is due a refresh (ADR 20261103094355).
+func TestPgAppScalingPolicyObservationsBatchSkipsFreshRows(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	suffix := uuid.NewString()[:8]
+	account, err := store.CreateAccount(ctx, "scaling-batch-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	apps := make([]state.App, 2)
+	for i := range apps {
+		apps[i], err = store.CreateApp(ctx, state.App{
+			AccountID: account.ID, Slug: "scaling-batch-" + suffix + "-" + string(rune('a'+i)),
+			Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 4,
+		})
+		if err != nil {
+			t.Fatalf("create app: %v", err)
+		}
+	}
+	observations := []state.AppScalingPolicyObservation{{AppID: apps[0].ID, Revision: 1}, {AppID: apps[1].ID, Revision: 1}}
+	record := func(want int64, why string) {
+		t.Helper()
+		wrote, err := store.RecordAppScalingPolicyObservations(ctx, "", observations)
+		if err != nil || wrote != want {
+			t.Fatalf("%s: wrote %d rows (err %v), want %d", why, wrote, err, want)
+		}
+	}
+	record(2, "first pass")
+	record(0, "second pass while both rows are fresh")
+
+	if _, err := pool.Exec(ctx, `update app_scaling_policy_scheduler_status set observed_at = now() - interval '50 seconds' where app_id = $1`, apps[0].ID); err != nil {
+		t.Fatalf("age observation: %v", err)
+	}
+	record(1, "pass after one row aged past the refresh age")
+	status, err := store.GetAppScalingPolicyStatus(ctx, apps[0].ID)
+	if err != nil || status.ObservedRevision != 1 || status.ObservedAt.Before(time.Now().Add(-10*time.Second)) {
+		t.Fatalf("refreshed status = %+v, %v; want revision 1 observed just now", status, err)
+	}
+
+	policy := &state.ScalingPolicy{MinInstances: 1, MaxInstances: 3}
+	if _, err := store.UpdateApp(ctx, apps[1].ID, state.UpdateAppParams{ScalingPolicy: policy, SetScalingPolicy: true}); err != nil {
+		t.Fatalf("update scaling policy: %v", err)
+	}
+	record(0, "a stale revision is not acknowledged")
+	observations[1].Revision = 2
+	record(1, "the new revision is recorded at once")
+	if status, err := store.GetAppScalingPolicyStatus(ctx, apps[1].ID); err != nil || status.ObservedRevision != 2 {
+		t.Fatalf("status after the new revision = %+v, %v; want observed 2", status, err)
+	}
+}
+
 func scalingIntPtr(value int) *int { return &value }

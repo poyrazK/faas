@@ -1637,6 +1637,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if err != nil {
 				return fmt.Errorf("encode in-guest event publish: %w", err)
 			}
+			if err := checkGuestEventEnvelope(publishCtx, store, accountID, payload); err != nil {
+				return err
+			}
 			if err := store.AppendEvent(publishCtx, "vmmd", "event.published", &accountID, payload); err != nil {
 				return fmt.Errorf("persist in-guest event publish: %w", err)
 			}
@@ -1723,6 +1726,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if relayRecvErr != nil {
 		log.Warn("vmmd: outbound relay receiver unavailable", "err", relayRecvErr, "goos", runtime.GOOS)
 	} else {
+		if store != nil {
+			relayRecv.UseDeployments(store)
+		}
 		defer relayRecv.Close()
 	}
 	// ADR-990: Runs stream through the relay only when this vmmd serves it.

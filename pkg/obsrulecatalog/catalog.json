@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "331db55b032ae07e77e9ad5133877c8bd4b8eb1487615c551a834514ad98acb1",
+      "revision": "615aec3af7b1a44a4442f15f99d3b53deed0bb2b3f94afc540d779158a518fa2",
       "files": [
         "faas.rules.yml"
       ],
@@ -1518,6 +1518,19 @@
           }
         },
         {
+          "id": "355ba9fd8246059f272c4c8bd69c242c4ff29d7f7963ab9e08d47191166b20b7",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageBucketOperationsStalled",
+          "definition": {
+            "expression_hash": "4eb1950f0bb0dce22b41f0cef5782d6bf1b2757c8b717c05b313b6380759ca13",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "0ef93f470a1068b73f929cc36b4898cafd80de87d9753df8f14d0bd27cb9e7c1"
+          }
+        },
+        {
           "id": "357cd8dbc1e1d45640aec48313da04468ad2720b8c830a2ebd0db9a4f7f3ad89",
           "file_name": "faas.rules.yml",
           "group_name": "faas_release_guards",
@@ -2815,6 +2828,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "ed61c704709d7ad2c969b199c41db9553562dffc6a2f836cad8f3018da741e08"
+          }
+        },
+        {
+          "id": "65a755a4d8524cc5d7f94bd633caeb79fea6fce664df9d53583803fd5b7140a6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasGeoIPDatabaseStale",
+          "definition": {
+            "expression_hash": "db21d27ad869ff126acf8b85534779efb151db3e5371d42f785cc9d85ddad998",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b950ec082afa47b55ee388ba591d8ec5a16d121c06b170f10252223d00637429"
           }
         },
         {
@@ -4375,6 +4401,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "53b0e7aebdbc003bc25160b98e548b51f17b47cc31adb0e80eec5b3763c2351f"
+          }
+        },
+        {
+          "id": "a5b55a8699250a33a487e60c36d111b76915ef6b2114bc409c32ad93e2103b65",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageProviderRefusingCredentials",
+          "definition": {
+            "expression_hash": "8e3f91b7e8f358d0dcc8e6db09190a7e3afb810c3d653ca5c5e5960567f9b4f3",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c1a6bd8d4288dc550f21d555d7ebfaa0fc9a762c9b24b67f6b7444e173760a53"
           }
         },
         {
@@ -6682,7 +6721,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "de13a349ff9631aa3f74e99dc3501261f01090f5689f5c3f80adc3f5b11f0aa2",
+      "revision": "a5b52095cd7f186d102cddc1a428fb90eb6aed936c8f6b9f9052f8c77bcd6faf",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8278,6 +8317,19 @@
           }
         },
         {
+          "id": "355ba9fd8246059f272c4c8bd69c242c4ff29d7f7963ab9e08d47191166b20b7",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageBucketOperationsStalled",
+          "definition": {
+            "expression_hash": "4eb1950f0bb0dce22b41f0cef5782d6bf1b2757c8b717c05b313b6380759ca13",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "0ef93f470a1068b73f929cc36b4898cafd80de87d9753df8f14d0bd27cb9e7c1"
+          }
+        },
+        {
           "id": "357cd8dbc1e1d45640aec48313da04468ad2720b8c830a2ebd0db9a4f7f3ad89",
           "file_name": "faas.rules.yml",
           "group_name": "faas_release_guards",
@@ -9601,6 +9653,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "ed61c704709d7ad2c969b199c41db9553562dffc6a2f836cad8f3018da741e08"
+          }
+        },
+        {
+          "id": "65a755a4d8524cc5d7f94bd633caeb79fea6fce664df9d53583803fd5b7140a6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasGeoIPDatabaseStale",
+          "definition": {
+            "expression_hash": "db21d27ad869ff126acf8b85534779efb151db3e5371d42f785cc9d85ddad998",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b950ec082afa47b55ee388ba591d8ec5a16d121c06b170f10252223d00637429"
           }
         },
         {
@@ -11252,6 +11317,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "53b0e7aebdbc003bc25160b98e548b51f17b47cc31adb0e80eec5b3763c2351f"
+          }
+        },
+        {
+          "id": "a5b55a8699250a33a487e60c36d111b76915ef6b2114bc409c32ad93e2103b65",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageProviderRefusingCredentials",
+          "definition": {
+            "expression_hash": "8e3f91b7e8f358d0dcc8e6db09190a7e3afb810c3d653ca5c5e5960567f9b4f3",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c1a6bd8d4288dc550f21d555d7ebfaa0fc9a762c9b24b67f6b7444e173760a53"
           }
         },
         {

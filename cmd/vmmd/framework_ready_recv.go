@@ -116,12 +116,19 @@ const (
 	VsockFrameworkReadyHostTypeEventPublishVerdict byte = 0x0B
 )
 
-// memoryPressureWire is the type=0x0A JSON body. Values are MiB.
+// memoryPressureWire is the type=0x0A JSON body. Values are MiB. Profiling
+// is absent from a guest-init that reported only while profiling, so absent
+// means true (ADR-20261102124306).
 type memoryPressureWire struct {
-	AvailableMB int `json:"available_mb"`
-	TotalMB     int `json:"total_mb"`
-	AnonMB      int `json:"anon_mb"`
+	AvailableMB int   `json:"available_mb"`
+	TotalMB     int   `json:"total_mb"`
+	AnonMB      int   `json:"anon_mb"`
+	Profiling   *bool `json:"profiling,omitempty"`
 }
+
+// profilingActive reports whether a profile collector was active when the
+// guest reported.
+func (w memoryPressureWire) profilingActive() bool { return w.Profiling == nil || *w.Profiling }
 
 // vsockMemoryPressureMaxBody bounds the type=0x0A envelope.
 const vsockMemoryPressureMaxBody = 256
@@ -252,7 +259,8 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 		r.dispatchWorkloadOOM(instance, msg.WorkloadOOM)
 	case parseFWReadyKindMemoryPressure:
 		if r.mgr != nil {
-			r.mgr.ReportMemoryPressure(r.ctx, instance, msg.MemoryPressure.AvailableMB, msg.MemoryPressure.TotalMB, msg.MemoryPressure.AnonMB)
+			p := msg.MemoryPressure
+			r.mgr.ReportMemoryPressure(r.ctx, instance, p.AvailableMB, p.TotalMB, p.AnonMB, p.profilingActive())
 		}
 	case parseFWReadyKindDisk:
 		r.dispatchDiskUsage(instance, msg.Disk)

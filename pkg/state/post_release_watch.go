@@ -82,7 +82,11 @@ func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time
 			if other.AppID != d.AppID || normalizedDeploymentScope(other.Scope) != scope || other.ID == d.ID {
 				continue
 			}
-			if other.CreatedAt.After(d.CreatedAt) && other.Status != DeployFailed && other.Status != DeployCancelled {
+			// Only a newer release that served makes d a rollback target; one
+			// staged with no traffic, parked for its schedule or still
+			// building does not stop the watch (ADR-1445 amendment 5).
+			if other.CreatedAt.After(d.CreatedAt) && other.Status != DeployFailed && other.Status != DeployCancelled &&
+				(deploymentServing(other) || m.deploymentServedLocked(other.ID)) {
 				newest = false
 			}
 			// The release a plain rollback returns to: the most recently

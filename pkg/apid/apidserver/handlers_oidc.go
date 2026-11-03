@@ -26,8 +26,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/apid/oidcrepo"
+	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -179,12 +181,12 @@ func (s *server) oidcAccountLookup() oidc.AccountLookup {
 	if _, stub := s.githubd.(stubGithubdClient); stub || s.githubd == nil {
 		return newOIDCAccountLookup(s.store, nil)
 	}
-	return newOIDCAccountLookup(s.store, githubdRepoLister{s.githubd})
+	return newOIDCAccountLookup(s.store, githubdRepoLookup{s.githubd})
 }
 
 // newOIDCAccountLookup confirms project repository bindings through repos;
 // nil repos confirms none.
-func newOIDCAccountLookup(store state.Store, repos oidcrepo.RepoLister) accountLookupAdapter {
+func newOIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) accountLookupAdapter {
 	adapter := accountLookupAdapter{store: store}
 	if projects, ok := store.(state.OIDCProjectRepositoryResolver); ok && repos != nil {
 		adapter.projects = oidcrepo.Resolver{Store: projects, Repos: repos}
@@ -250,19 +252,41 @@ func (a accountLookupAdapter) GitHubRepositoryIDsForOIDCSubject(ctx context.Cont
 	return 0, repoID, err
 }
 
-// githubdRepoLister lists an installation's repositories through githubd.
-type githubdRepoLister struct{ client GithubdClient }
+// githubdRepositoryClient is the single-repository lookup a githubd from
+// ADR-20261101160300 amendment 2 answers; it is kept off GithubdClient so
+// existing fakes need not implement it.
+type githubdRepositoryClient interface {
+	GetInstallationRepository(ctx context.Context, accountID string, installationID int64, repoFullName string) (githubdgrpc.InstallationRepository, bool, error)
+}
 
-func (l githubdRepoLister) ListInstallableRepos(ctx context.Context, accountID string, installationID int64) ([]oidcrepo.Repo, error) {
+// githubdRepoLookup finds a repository an installation sees through githubd:
+// one GitHub request, so the OIDC exchange stays inside apid's request
+// budget. An older githubd lists the installation's repositories instead.
+type githubdRepoLookup struct{ client GithubdClient }
+
+func (l githubdRepoLookup) InstallationRepositoryID(ctx context.Context, accountID string, installationID int64, fullName string) (int64, error) {
+	if lookup, ok := l.client.(githubdRepositoryClient); ok {
+		repo, found, err := lookup.GetInstallationRepository(ctx, accountID, installationID, fullName)
+		switch {
+		case errors.Is(err, githubdgrpc.ErrInstallationRepositoryUnsupported):
+		case err != nil:
+			return 0, err
+		case !found:
+			return 0, nil
+		default:
+			return repo.ID, nil
+		}
+	}
 	repos, err := l.client.ListInstallableRepos(ctx, accountID, installationID)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	out := make([]oidcrepo.Repo, 0, len(repos))
 	for _, repo := range repos {
-		out = append(out, oidcrepo.Repo{ID: repo.ID, FullName: repo.FullName})
+		if repo.ID > 0 && strings.EqualFold(repo.FullName, fullName) {
+			return repo.ID, nil
+		}
 	}
-	return out, nil
+	return 0, nil
 }
 
 // OIDCDeployTargetForSubject satisfies oidc.DeployTargetLookup. A store that

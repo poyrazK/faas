@@ -144,3 +144,45 @@ func TestGithubSetupForAppWithoutProject(t *testing.T) {
 		t.Fatalf("workflow = %s, %v; want the trunk branch", workflow, err)
 	}
 }
+
+// `gregale github status` lists the events that reached the app and why one
+// deployed nothing (ADR-20261101160300, amendment 2). The client type used to
+// drop the activity the API returns.
+func TestGithubStatusShowsWhyAnEventDeployedNothing(t *testing.T) {
+	fake := &githubAPI{status: `{"state":"bound","health":"healthy","connected":true,"installation_id":43,"repo_full_name":"acme/api","production_branch":"main",
+		"activity":{"webhook_deliveries":[
+			{"event_type":"push","status":"succeeded","commit_sha":"0123456789abcdef0123456789abcdef01234567","received_at":"2026-11-02T10:00:00Z","updated_at":"2026-11-02T10:00:01Z","skip_reason":"actions_trigger"},
+			{"event_type":"push","status":"succeeded","commit_sha":"fedcba9876543210fedcba9876543210fedcba98","received_at":"2026-11-02T09:00:00Z","updated_at":"2026-11-02T09:00:01Z"}],
+		"check_updates":[]}}`}
+	fake.serve(t)
+	stdout, restore := main.CaptureStdout(t)
+	code := main.CmdGithub([]string{"status", "api"})
+	restore()
+	out := stdout.String()
+	for _, want := range []string{
+		"recent_events:",
+		"2026-11-02T10:00:00Z push 0123456 succeeded (deployed nothing: Production deploys come from your GitHub Actions workflow",
+		"2026-11-02T09:00:00Z push fedcba9 succeeded\n",
+	} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Fatalf("exit = %d, status output lacks %q:\n%s", code, want, out)
+		}
+	}
+}
+
+// A --wait-for workflow the repository does not have would never start a
+// deploy, so setup refuses it before binding or changing the trigger.
+func TestGithubSetupRefusesUnknownWaitFor(t *testing.T) {
+	fake := &githubAPI{status: `{"state":"bound","health":"healthy","connected":true,"installation_id":43,"repo_full_name":"acme/api","production_branch":"main"}`, projectID: "proj-1"}
+	fake.serve(t)
+	githubSetupRepo(t)
+	stderr, restore := main.CaptureStderr(t)
+	code := main.CmdGithub([]string{"setup", "api", "--repo", "acme/api", "--wait-for", "CI"})
+	restore()
+	if code == 0 || !strings.Contains(stderr.String(), `no workflow in .github/workflows is named "CI"`) {
+		t.Fatalf("exit = %d, stderr = %s; want the unknown workflow refused", code, stderr.String())
+	}
+	if len(fake.binds) != 0 || len(fake.patches) != 0 {
+		t.Fatalf("setup changed remote state: binds %v, patches %v", fake.binds, fake.patches)
+	}
+}

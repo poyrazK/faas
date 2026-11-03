@@ -115,11 +115,7 @@ func (h *Handler) authenticateMCPResource(w http.ResponseWriter, r *http.Request
 	if rule.PlatformTenantExternalRefClaim != "" {
 		verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, rule.PlatformTenantExternalRefClaim)
 	}
-	if h.edgeRules != nil {
-		if throttle := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method); throttle != nil && throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
-			verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, throttle.JWTClaimName)
-		}
-	}
+	verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, h.throttleJWTClaimNames(r, app)...)
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, &verifyRule)
 	if err != nil || claims == nil || claims.Subject == "" || claims.Exp.IsZero() || !claims.Exp.After(time.Now()) {
 		h.jwtEmit(r.Context(), "jwt", "failed", rule.ID, r.Host, nil, nil)

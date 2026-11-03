@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestEventWorkflowInputSizeUsesCompactJSON(t *testing.T) {
+	appID := uuid.NewString()
+	recipient := PublishedEventRecipient{AppID: appID, ID: workflowEventRecipientID(appID, "paid"), Workflow: json.RawMessage(`{"name":"paid","trigger":{"type":"event","source":"orders","event_type":"paid"},"steps":[{"name":"main","path":"/paid"}]}`)}
+	// PostgreSQL jsonb may add whitespace to an envelope that was below the
+	// input limit at publication; that formatting is not workflow data.
+	payload := []byte(`{"data":` + strings.Repeat(" ", int(api.WorkflowRunInputMaxBytes)) + `null}`)
+	run, err := eventWorkflowRun(recipient, payload, api.PlanHobby)
+	if err != nil || string(run.Input) != `{"data":null}` {
+		t.Fatalf("compacted event input: run=%+v err=%v", run, err)
+	}
+}
 
 func seedEventWorkflow(t *testing.T, store Store) (App, Deployment) {
 	t.Helper()

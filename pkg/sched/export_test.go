@@ -11,6 +11,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -29,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -88,6 +90,7 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const DueWalkHeadPages = dueWalkHeadPages
 const WorkAppReconcile = workAppReconcile
 const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
@@ -99,6 +102,7 @@ var RouterCloseGrace = &routerCloseGrace
 
 // Package-level funcs
 var AppTaskFailureStage = appTaskFailureStage
+var DeploymentStaticEgressIP = deploymentStaticEgressIP
 var AppTaskGRPCCode = appTaskGRPCCode
 var AppTaskResultFromResponse = appTaskResultFromResponse
 var AppendEnvironmentGitOpsJobServiceBindings = appendEnvironmentGitOpsJobServiceBindings
@@ -183,10 +187,14 @@ type NATSBroker = natsBroker
 // NewNATSBrokerPool is a broker pool that dials with dial instead of
 // connecting to NATS.
 func NewNATSBrokerPool(dial func(rawURL string) (*NATSBroker, error)) *natsBrokerPool {
-	return &natsBrokerPool{dial: dial, brokers: map[string]*natsBroker{}}
+	return newNATSBrokerPool(dial, time.Hour)
 }
 
-func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) { return p.forURL(rawURL) }
+// ForURL acquires rawURL's broker and keeps the reference.
+func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) {
+	broker, _, err := p.acquire(rawURL)
+	return broker, err
+}
 
 // NewRedisStreamPoller wraps an already connected client, as newRedisPoller
 // does after its ping and group creation; the egress dialer refuses the
@@ -224,7 +232,11 @@ var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
 var ReaperAbortedCanary = reaperAbortedCanary
 var RequireWorkerBlocker = requireWorkerBlocker
-var ResolvePriority = resolvePriority
+
+func ResolvePriority(snapshot []InstanceInfo, instanceID string) (string, bool) {
+	return resolvePriority(indexInstanceInfos(snapshot), instanceID)
+}
+
 var RowState = rowState
 var RunningInstance = runningInstance
 var RunningTransitions = runningTransitions
@@ -302,6 +314,7 @@ var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+var SeedForkTarget = seedForkTarget
 var ReadWakeRPC = readWakeRPC
 
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
@@ -322,6 +335,23 @@ func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep
 // XRunTriggerTick runs one trigger tick as the loop's trigger work does.
 // adr: 20261027162741 — broker triggers run on lanes of their own.
 func (l *Loop) XRunTriggerTick(ctx context.Context) { l.runTriggerTick(ctx) }
+
+// XBrokerLanesHeld is how many broker trigger lanes the account holds.
+// adr: 20261101093015 — the lanes are shared between accounts.
+func (l *Loop) XBrokerLanesHeld(accountID string) int {
+	l.brokerLanes.mu.Lock()
+	defer l.brokerLanes.mu.Unlock()
+	return l.brokerLanes.held[accountID]
+}
+
+// XBrokerTriggerLaneSlots is the node's broker trigger lanes.
+const XBrokerTriggerLaneSlots = api.BrokerTriggerDispatchSlotsPerNode
+
+// XNewTriggerRecordRateLimiter returns a record rate limiter on a fake clock.
+// adr: 20261101093015 — the per-plan record rate defers, never drops.
+func XNewTriggerRecordRateLimiter(now func() time.Time) *TriggerRecordRateLimiter {
+	return newTriggerRecordRateLimiter(now)
+}
 
 // XWaitDispatches waits for every dispatch the drain started, including those
 // that outlived their tick.
@@ -420,7 +450,6 @@ func (r *Engine) AdmitAndDispatchWithOptions(p0 context.Context, p1 string, p2 s
 func (r *Engine) AppMustPark(p0 context.Context, p1 state.App, p2 state.Account) bool {
 	return r.appMustPark(p0, p1, p2)
 }
-func (r *Engine) AppMutex(p0 string) *sync.Mutex { return r.appMutex(p0) }
 func (r *Engine) ApplyLiveCapacityMB(p0 context.Context, p1 string) int64 {
 	return r.applyLiveCapacityMB(p0, p1)
 }
@@ -557,10 +586,14 @@ func (r *Loop) ProcessFireNowRequest(p0 context.Context, p1 state.FireNowRequest
 func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time) error {
 	return r.recoverPrimeCandidate(p0, p1, p2)
 }
-func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
-func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
-func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
-func (r *Loop) RunCronTick(p0 context.Context)      { r.runCronTick(p0) }
+func (r *Loop) RunInstanceStats(p0 context.Context)     { r.runInstanceStats(p0) }
+func (r *Loop) RunPrimeRecovery(p0 context.Context)     { r.runPrimeRecovery(p0) }
+func (r *Loop) RunReaper(p0 context.Context)            { r.runReaper(p0) }
+func (r *Loop) RunCronTick(p0 context.Context)          { r.runCronTick(p0) }
+func (r *Loop) RunScheduledJobsTick(p0 context.Context) { r.runScheduledJobsTick(p0) }
+
+// DrainEngine is the engine a drain wakes apps through.
+func DrainEngine(d *Drain) *Engine { return d.engine }
 func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
 	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
 }
@@ -1078,6 +1111,33 @@ func (e *Engine) MarkRestartInFlight(appID string) func() {
 	}
 }
 
+// Broker trigger delivery (ADR-20261101093512).
+func (r *Loop) TriggerClaimRenewInterval() *time.Duration { return &r.triggerClaimRenewInterval }
+
+var WriteTriggerClaimOutcome = writeTriggerClaimOutcome
+var NATSConsumerConfig = natsConsumerConfig
+var NATSRecordID = natsRecordID
+
+type NATSConfig = natsConfig
+type NATSMsg = natsMsg
+
+const TriggerReasonPayloadTooLarge = triggerReasonPayloadTooLarge
+const TriggerReasonRateLimited = triggerReasonRateLimited
+
+// NewNATSPollerWithMessages is a NATS poller holding msgs in flight, keyed
+// by record ID, without a JetStream consumer.
+func NewNATSPollerWithMessages(msgs map[string]NATSMsg) TriggerSource {
+	return &natsPoller{stream: "events", inFlight: msgs}
+}
+
+// RedeliverNATS puts msg back in flight under id, as a Poll would.
+func RedeliverNATS(src TriggerSource, id string, msg NATSMsg) {
+	p := src.(*natsPoller)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inFlight[id] = msg
+}
+
 // WithCronSweepSlice sets how long one pass of the cron sweep may dispatch.
 func (r *Loop) WithCronSweepSlice(d time.Duration) *Loop { r.cronSweepSlice = d; return r }
 
@@ -1111,6 +1171,50 @@ func DrainLeaseRecoveryDue(every time.Duration, nows ...time.Time) []bool {
 	return due
 }
 
+// ReconcileFinancialBudgetStopsForTick runs the reaper tick's strict compute
+// sweep over apps: one bulk read, then each app (ADR 20261102160622).
+func (r *Engine) ReconcileFinancialBudgetStopsForTick(ctx context.Context, apps []state.App) error {
+	pre := r.loadStrictComputePreload(ctx, apps)
+	if pre == nil {
+		return errors.New("the store cannot preload the strict compute sweep")
+	}
+	var errs []error
+	for _, app := range apps {
+		errs = append(errs, r.reconcileFinancialBudgetStops(ctx, app.ID, pre))
+	}
+	return errors.Join(errs...)
+}
+
+// ReconcileFinancialBudgetStopsWithPreload runs one app's sweep with a given
+// tick preload.
+func (r *Engine) ReconcileFinancialBudgetStopsWithPreload(ctx context.Context, appID string, rows []state.Instance, leases map[string]financial.ComputeLease) error {
+	return r.reconcileFinancialBudgetStops(ctx, appID, &strictComputePreload{rows: map[string][]state.Instance{appID: rows}, leases: leases})
+}
+
+// RecordRunningReasonObservations runs the reaper's "why is it running"
+// recorder (ADR 20261102205122).
+func (l *Loop) RecordRunningReasonObservations(ctx context.Context, apps []state.App, snapshot []InstanceInfo, now time.Time) {
+	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
+}
+
+// StrictComputeSweepIdle reports whether the reaper tick's strict compute
+// sweep skips app (ADR 20261102205122).
+func (r *Engine) StrictComputeSweepIdle(ctx context.Context, apps []state.App, app state.App) bool {
+	return r.loadStrictComputePreload(ctx, apps).idle(app, r.financialBudgetNow())
+}
+
+// LockApp, TryLockApp and AppLocks reach the per-app serialisation locks
+// (ADR 20261102160622).
+func (r *Engine) LockApp(appID string) func() { return r.lockApp(appID) }
+func (r *Engine) TryLockApp(appID string) (func(), bool) {
+	return r.tryLockApp(appID)
+}
+func (r *Engine) AppLocks() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.appMu)
+}
+
 // OpenWorkflowDueGate is one dispatch tick's workflow due gate over read.
 func OpenWorkflowDueGate(read state.WorkflowRunDueReader) func(context.Context) bool {
 	g := &workflowDueGate{read: read}
@@ -1129,4 +1233,18 @@ func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
 		due[i] = c.recoveryDue(now)
 	}
 	return due
+}
+
+// NextLogFollowPoll exposes the follow stream's discovery backoff (O20).
+var NextLogFollowPoll = nextLogFollowPoll
+
+// Bounds of the follow stream's discovery poll.
+const (
+	LogFollowPollMin = logFollowPollMin
+	LogFollowPollMax = logFollowPollMax
+)
+
+// FailInterruptedFireNowRequests runs the interrupted manual-run sweep once.
+func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
+	r.failInterruptedFireNowRequests(ctx)
 }

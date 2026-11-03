@@ -2072,6 +2072,43 @@ func (q *Queries) ApplyDeploymentRuntimeUpgradeCutover(ctx context.Context, db D
 	return result.RowsAffected(), nil
 }
 
+const applyEventSubscriptionIntent = `-- name: ApplyEventSubscriptionIntent :many
+UPDATE event_subscriptions SET enabled = (id = ANY($1::uuid[])), updated_at = now()
+WHERE app_id = $2::uuid AND enabled IS DISTINCT FROM (id = ANY($1::uuid[]))
+RETURNING id::text AS id, enabled
+`
+
+type ApplyEventSubscriptionIntentParams struct {
+	Declared []pgtype.UUID
+	AppID    pgtype.UUID
+}
+
+type ApplyEventSubscriptionIntentRow struct {
+	ID      string
+	Enabled bool
+}
+
+// Enable exactly the declared subscriptions of the app.
+func (q *Queries) ApplyEventSubscriptionIntent(ctx context.Context, db DBTX, arg ApplyEventSubscriptionIntentParams) ([]ApplyEventSubscriptionIntentRow, error) {
+	rows, err := db.Query(ctx, applyEventSubscriptionIntent, arg.Declared, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplyEventSubscriptionIntentRow{}
+	for rows.Next() {
+		var i ApplyEventSubscriptionIntentRow
+		if err := rows.Scan(&i.ID, &i.Enabled); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
 select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
@@ -8002,6 +8039,17 @@ func (q *Queries) ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX
 	return err
 }
 
+const clearManagedPostgresPlanExcessNotices = `-- name: ClearManagedPostgresPlanExcessNotices :exec
+DELETE FROM managed_postgres_plan_excess_notices WHERE database_id=ANY($1::uuid[])
+`
+
+// ADR-20261102125208: a database back inside its plan loses its notice, so a
+// later suspension is noticed again.
+func (q *Queries) ClearManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearManagedPostgresPlanExcessNotices, databaseIds)
+	return err
+}
+
 const clearManagedPostgresRestoreSlot = `-- name: ClearManagedPostgresRestoreSlot :execrows
 UPDATE managed_postgres_databases SET restore_slot_until=NULL,updated_at=$1::timestamptz
 WHERE id=$2::uuid AND restore_slot_until IS NOT NULL
@@ -8018,6 +8066,15 @@ func (q *Queries) ClearManagedPostgresRestoreSlot(ctx context.Context, db DBTX, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const clearObjectStorageCeilingGrant = `-- name: ClearObjectStorageCeilingGrant :exec
+DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1
+`
+
+func (q *Queries) ClearObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearObjectStorageCeilingGrant, ownerID)
+	return err
 }
 
 const clearObsoleteDeploymentsRetainingRecovery = `-- name: ClearObsoleteDeploymentsRetainingRecovery :execrows
@@ -11243,6 +11300,18 @@ WHERE status IN ('pending','capturing','copying','publishing','compensating')
 
 func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperations(ctx context.Context, db DBTX) (int64, error) {
 	row := db.QueryRow(ctx, countUnfinishedProjectEnvironmentCloneOperations)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countUnfinishedProjectEnvironmentCloneOperationsForProject = `-- name: CountUnfinishedProjectEnvironmentCloneOperationsForProject :one
+SELECT count(*)::bigint FROM project_environment_clone_operations
+WHERE project_id = $1::uuid AND status IN ('pending','capturing','copying','publishing','compensating')
+`
+
+func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx context.Context, db DBTX, projectID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countUnfinishedProjectEnvironmentCloneOperationsForProject, projectID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -15786,6 +15855,27 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 		&i.EnvironmentID,
 	)
 	return i, err
+}
+
+const dropTriggerRecordByOperator = `-- name: DropTriggerRecordByOperator :execrows
+delete from trigger_records r using triggers t
+where r.id=$1::uuid and r.trigger_id=$2::uuid
+  and t.id=r.trigger_id and t.app_id=$3::uuid
+`
+
+type DropTriggerRecordByOperatorParams struct {
+	ID        pgtype.UUID
+	TriggerID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// Deletes one record of the addressed trigger on the caller's app.
+func (q *Queries) DropTriggerRecordByOperator(ctx context.Context, db DBTX, arg DropTriggerRecordByOperatorParams) (int64, error) {
+	result, err := db.Exec(ctx, dropTriggerRecordByOperator, arg.ID, arg.TriggerID, arg.AppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const dueManagedPostgresLifecycleDatabases = `-- name: DueManagedPostgresLifecycleDatabases :many
@@ -20856,7 +20946,7 @@ WITH plan_retention AS (
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
       AND i.created_at < $3::timestamptz - make_interval(secs => $4::bigint)
-      AND i.created_at < $3::timestamptz - make_interval(secs => r.seconds)
+      AND coalesce(i.last_replayed_at, i.created_at) < $3::timestamptz - make_interval(secs => r.seconds)
     ORDER BY i.created_at
     LIMIT $5::integer
     FOR UPDATE OF i SKIP LOCKED
@@ -20886,6 +20976,10 @@ type ExpirePendingQueueMessagesRow struct {
 // ADR-20261022105723: a pending queue message past its plan's retention
 // moves to the dead letter. A message a worker holds (dispatching) is not
 // touched. The plan resolves as StampDefaultInvocationRetention's does.
+// ADR-20261101093812: retention counts from the message's last replay, so a
+// message replayed from the dead letter gets the whole retention again. A
+// replay is never earlier than the send, so the created_at bound still
+// narrows invocations_queue_pending_created_idx.
 func (q *Queries) ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error) {
 	rows, err := db.Query(ctx, expirePendingQueueMessages,
 		arg.Plans,
@@ -32931,6 +33025,25 @@ func (q *Queries) InsertDeploymentArtifactScan(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const insertDeploymentEventSubscriptionIntent = `-- name: InsertDeploymentEventSubscriptionIntent :exec
+INSERT INTO deployment_event_subscription_intents (deployment_id, app_id, declared_subscription_ids)
+VALUES ($1::uuid, $2::uuid, $3::uuid[])
+ON CONFLICT (deployment_id) DO NOTHING
+`
+
+type InsertDeploymentEventSubscriptionIntentParams struct {
+	DeploymentID            pgtype.UUID
+	AppID                   pgtype.UUID
+	DeclaredSubscriptionIds []pgtype.UUID
+}
+
+// ADR-20261101030512: the event subscriptions a production manifest deploy
+// declares, applied once the deployment serves all production traffic.
+func (q *Queries) InsertDeploymentEventSubscriptionIntent(ctx context.Context, db DBTX, arg InsertDeploymentEventSubscriptionIntentParams) error {
+	_, err := db.Exec(ctx, insertDeploymentEventSubscriptionIntent, arg.DeploymentID, arg.AppID, arg.DeclaredSubscriptionIds)
+	return err
+}
+
 const insertDeploymentRegistryRootfs = `-- name: InsertDeploymentRegistryRootfs :one
 WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
 INSERT INTO deployment_registry_rootfs(id,registry_verification_id,deployment_id,workload_name,input_snapshot,input_hash,published_at,expires_at)
@@ -33246,7 +33359,19 @@ INSERT INTO environment_desired_revisions
 VALUES ($1::uuid, $2::text,
         $3::text, $4::jsonb, $5::text)
 ON CONFLICT (source_id, commit_sha, definition_digest) DO UPDATE
-    SET source_id = excluded.source_id
+    SET source_id = excluded.source_id,
+        approved_by = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                            AND NOT EXISTS (SELECT 1 FROM environment_git_sources g
+                                             WHERE g.id = environment_desired_revisions.source_id
+                                               AND g.approval_policy = 'protected_branch')
+                           THEN excluded.approved_by ELSE environment_desired_revisions.approved_by END,
+        approved_at = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                            AND NOT EXISTS (SELECT 1 FROM environment_git_sources g
+                                             WHERE g.id = environment_desired_revisions.source_id
+                                               AND g.approval_policy = 'protected_branch')
+                           THEN now() ELSE environment_desired_revisions.approved_at END
 RETURNING id, source_id, commit_sha, definition_digest, definition, approved_by, approved_at
 `
 
@@ -33258,6 +33383,11 @@ type InsertEnvironmentDesiredRevisionParams struct {
 	ApprovedBy       string
 }
 
+// Approving the same revision again keeps its row. A person's approval
+// replaces a key's ("api_key:<id>"), never the reverse, so a person can stand
+// in for the apps' release approvals after CI approved the revision
+// (ADR-20261020085706 amendment 8). A protected-branch source's revisions are
+// immutable (their approval is the merge provenance), so they keep theirs.
 func (q *Queries) InsertEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg InsertEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error) {
 	row := db.QueryRow(ctx, insertEnvironmentDesiredRevision,
 		arg.SourceID,
@@ -48919,7 +49049,8 @@ func (q *Queries) ListExpiredCustomerOperationExecutions(ctx context.Context, db
 
 const listFairTenantWorkflowScheduleCandidates = `-- name: ListFairTenantWorkflowScheduleCandidates :many
 SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
-       jsonb_build_array(w.definition)::jsonb AS workflows
+       jsonb_build_array(w.definition)::jsonb AS workflows,
+       coalesce(w.definition->>'name', '')::text AS fair_workflow_name, c.last_admitted_at AS fair_last_admitted_at
 FROM apps a
 JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
@@ -48938,28 +49069,46 @@ WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND a.platform_tenant_req
   AND (NOT coalesce((w.definition->'trigger'->>'tenant_configurable')::boolean, false)
        OR coalesce((c.trigger_snapshot->'tenant_configuration'->'trigger'->>'enabled')::boolean, true))
   AND (c.last_evaluated_at IS NULL OR c.last_evaluated_at < $2::timestamptz)
+  AND ($3::uuid IS NULL OR
+       (coalesce(c.last_admitted_at, '-infinity'::timestamptz), a.id, t.id, coalesce(w.definition->>'name', '')) >
+       (coalesce($4::timestamptz, '-infinity'::timestamptz), $3::uuid,
+        $5::uuid, $6::text))
   AND (EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id = a.account_id AND c.app_id = a.id
        AND c.platform_tenant_id = t.id AND c.status = 'active' AND c.revoked_at IS NULL)
        OR EXISTS (SELECT 1 FROM tenant_surfaces s WHERE s.account_id = a.account_id AND s.app_id = a.id
        AND s.platform_tenant_id = t.id AND s.status = 'active'))
-ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, w.definition->>'name' LIMIT $3
+ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, coalesce(w.definition->>'name', '') LIMIT $7
 `
 
 type ListFairTenantWorkflowScheduleCandidatesParams struct {
-	OwnerNodeID      pgtype.UUID
-	EvaluationMinute pgtype.Timestamptz
-	BatchLimit       int32
+	OwnerNodeID       pgtype.UUID
+	EvaluationMinute  pgtype.Timestamptz
+	AfterAppID        pgtype.UUID
+	AfterAdmittedAt   pgtype.Timestamptz
+	AfterTenantID     pgtype.UUID
+	AfterWorkflowName string
+	BatchLimit        int32
 }
 
 type ListFairTenantWorkflowScheduleCandidatesRow struct {
-	AppID            pgtype.UUID
-	PlatformTenantID pgtype.UUID
-	DeploymentID     pgtype.UUID
-	Workflows        []byte
+	AppID              pgtype.UUID
+	PlatformTenantID   pgtype.UUID
+	DeploymentID       pgtype.UUID
+	Workflows          []byte
+	FairWorkflowName   string
+	FairLastAdmittedAt pgtype.Timestamptz
 }
 
 func (q *Queries) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListFairTenantWorkflowScheduleCandidatesParams) ([]ListFairTenantWorkflowScheduleCandidatesRow, error) {
-	rows, err := db.Query(ctx, listFairTenantWorkflowScheduleCandidates, arg.OwnerNodeID, arg.EvaluationMinute, arg.BatchLimit)
+	rows, err := db.Query(ctx, listFairTenantWorkflowScheduleCandidates,
+		arg.OwnerNodeID,
+		arg.EvaluationMinute,
+		arg.AfterAppID,
+		arg.AfterAdmittedAt,
+		arg.AfterTenantID,
+		arg.AfterWorkflowName,
+		arg.BatchLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -48972,6 +49121,8 @@ func (q *Queries) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, 
 			&i.PlatformTenantID,
 			&i.DeploymentID,
 			&i.Workflows,
+			&i.FairWorkflowName,
+			&i.FairLastAdmittedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -51773,6 +51924,31 @@ func (q *Queries) ListPlatformTenantCustomerOperationsBySubject(ctx context.Cont
 	return items, nil
 }
 
+const listPreparedEventSubscriptionIntents = `-- name: ListPreparedEventSubscriptionIntents :many
+SELECT deployment_id::text AS deployment_id FROM deployment_event_subscription_intents
+WHERE status = 'prepared' ORDER BY updated_at, deployment_id LIMIT 64
+`
+
+func (q *Queries) ListPreparedEventSubscriptionIntents(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, listPreparedEventSubscriptionIntents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var deployment_id string
+		if err := rows.Scan(&deployment_id); err != nil {
+			return nil, err
+		}
+		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductionDeadLetterEvents = `-- name: ListProductionDeadLetterEvents :many
 WITH anchor AS (SELECT last_failed_at,id FROM production_dead_letter_events
     WHERE id=$3::uuid AND ($1::uuid IS NULL OR account_id=$1::uuid)
@@ -53989,41 +54165,6 @@ func (q *Queries) ListTenantWorkflowScheduleCursors(ctx context.Context, db DBTX
 	return items, nil
 }
 
-const listTerminalTriggerRecordItems = `-- name: ListTerminalTriggerRecordItems :many
-SELECT item_identifier FROM trigger_records
-WHERE trigger_id = $1
-  AND item_identifier = ANY($2::text[])
-  AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
-`
-
-type ListTerminalTriggerRecordItemsParams struct {
-	TriggerID       pgtype.UUID
-	ItemIdentifiers []string
-}
-
-// A broker may redeliver after Gregale commits a terminal receipt but before
-// the broker acknowledges it. The current delivery handle can be Acked
-// without dispatching the application again.
-func (q *Queries) ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error) {
-	rows, err := db.Query(ctx, listTerminalTriggerRecordItems, arg.TriggerID, arg.ItemIdentifiers)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var item_identifier string
-		if err := rows.Scan(&item_identifier); err != nil {
-			return nil, err
-		}
-		items = append(items, item_identifier)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listTriggerDeadLetter = `-- name: ListTriggerDeadLetter :many
 select record_id, trigger_id, reason, routed_to, detail, created_at, failure_history
 from trigger_dead_letter
@@ -54235,6 +54376,56 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 			&i.Enabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnmailedManagedPostgresPlanExcessNotices = `-- name: ListUnmailedManagedPostgresPlanExcessNotices :many
+SELECT n.database_id,n.reason,n.recorded_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.mail_intent_id IS NULL AND n.recorded_at>$1::timestamptz AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.recorded_at,n.database_id LIMIT $2
+`
+
+type ListUnmailedManagedPostgresPlanExcessNoticesParams struct {
+	Since     pgtype.Timestamptz
+	BatchSize int32
+}
+
+type ListUnmailedManagedPostgresPlanExcessNoticesRow struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	AccountID    pgtype.UUID
+	Name         string
+	ServiceClass string
+}
+
+// The notices still to mail: recorded after since, not yet linked to an
+// intent, for databases not being deleted.
+func (q *Queries) ListUnmailedManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresPlanExcessNoticesParams) ([]ListUnmailedManagedPostgresPlanExcessNoticesRow, error) {
+	rows, err := db.Query(ctx, listUnmailedManagedPostgresPlanExcessNotices, arg.Since, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnmailedManagedPostgresPlanExcessNoticesRow{}
+	for rows.Next() {
+		var i ListUnmailedManagedPostgresPlanExcessNoticesRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Reason,
+			&i.RecordedAt,
+			&i.AccountID,
+			&i.Name,
+			&i.ServiceClass,
 		); err != nil {
 			return nil, err
 		}
@@ -57601,6 +57792,56 @@ func (q *Queries) LockEnvironmentQueueProducer(ctx context.Context, db DBTX, arg
 	return id, err
 }
 
+const lockEventSubscriptionIntentDeployment = `-- name: LockEventSubscriptionIntentDeployment :one
+SELECT i.app_id::text AS app_id, i.declared_subscription_ids::text[] AS declared,
+ d.id::text AS deployment_id, d.status, d.scope, d.traffic_percent, d.traffic_percent_explicit,
+ d.canary_total_steps, d.rollout_state,
+ coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id
+ AND coalesce(nullif(n.scope,''),'default')='default'
+ AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
+ ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
+ EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
+ AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+FROM deployment_event_subscription_intents i JOIN deployments d ON d.id = i.deployment_id
+WHERE i.deployment_id = $1::uuid AND i.status = 'prepared'
+FOR UPDATE OF i
+`
+
+type LockEventSubscriptionIntentDeploymentRow struct {
+	AppID                  string
+	Declared               []string
+	DeploymentID           string
+	Status                 string
+	Scope                  string
+	TrafficPercent         int32
+	TrafficPercentExplicit bool
+	CanaryTotalSteps       int32
+	RolloutState           string
+	LatestID               string
+	CompetingTraffic       bool
+}
+
+// The same disposition inputs as ReadCronActivationDeployment, so event
+// subscriptions and staged crons go live under one rule.
+func (q *Queries) LockEventSubscriptionIntentDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockEventSubscriptionIntentDeploymentRow, error) {
+	row := db.QueryRow(ctx, lockEventSubscriptionIntentDeployment, deploymentID)
+	var i LockEventSubscriptionIntentDeploymentRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Declared,
+		&i.DeploymentID,
+		&i.Status,
+		&i.Scope,
+		&i.TrafficPercent,
+		&i.TrafficPercentExplicit,
+		&i.CanaryTotalSteps,
+		&i.RolloutState,
+		&i.LatestID,
+		&i.CompetingTraffic,
+	)
+	return i, err
+}
+
 const lockEventWorkflowRecipient = `-- name: LockEventWorkflowRecipient :one
 SELECT o.payload, (SELECT r.recipient FROM jsonb_array_elements(o.recipient_snapshot) r(recipient)
     WHERE r.recipient->>'id' = $1::text AND r.recipient ? 'workflow')::jsonb AS recipient
@@ -58825,6 +59066,39 @@ func (q *Queries) LockProductionQueueTriggerInvocationRow(ctx context.Context, d
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockProjectEnvironmentCloneAdmissionSwitches = `-- name: LockProjectEnvironmentCloneAdmissionSwitches :many
+SELECT config_key, desired_value FROM runtime_config_entries
+WHERE scope = 'global' AND scope_id = '' AND config_key = ANY($1::text[])
+FOR SHARE
+`
+
+type LockProjectEnvironmentCloneAdmissionSwitchesRow struct {
+	ConfigKey    string
+	DesiredValue []byte
+}
+
+// Admission holds every switch it decides on until it commits, so turning one
+// off waits for the admissions already reading it.
+func (q *Queries) LockProjectEnvironmentCloneAdmissionSwitches(ctx context.Context, db DBTX, configKeys []string) ([]LockProjectEnvironmentCloneAdmissionSwitchesRow, error) {
+	rows, err := db.Query(ctx, lockProjectEnvironmentCloneAdmissionSwitches, configKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockProjectEnvironmentCloneAdmissionSwitchesRow{}
+	for rows.Next() {
+		var i LockProjectEnvironmentCloneAdmissionSwitchesRow
+		if err := rows.Scan(&i.ConfigKey, &i.DesiredValue); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockProjectEnvironmentCloneApps = `-- name: LockProjectEnvironmentCloneApps :many
@@ -60892,7 +61166,7 @@ func (q *Queries) LockUDPListenerAppOwner(ctx context.Context, db DBTX, appID st
 }
 
 const lockWebhookAutomationEndpoint = `-- name: LockWebhookAutomationEndpoint :one
-SELECT id, app_id, account_id, name, provider, token_hash, signing_secret_sealed, delivery_path, enabled, created_at, updated_at FROM inbound_webhook_endpoints
+SELECT id, app_id, account_id, name, provider, token_hash, signing_secret_sealed, delivery_path, enabled, created_at, updated_at, previous_signing_secret_sealed, previous_signing_secret_expires_at FROM inbound_webhook_endpoints
 WHERE id=$1 AND app_id=$2 AND account_id=$3 FOR UPDATE
 `
 
@@ -60917,6 +61191,8 @@ func (q *Queries) LockWebhookAutomationEndpoint(ctx context.Context, db DBTX, ar
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PreviousSigningSecretSealed,
+		&i.PreviousSigningSecretExpiresAt,
 	)
 	return i, err
 }
@@ -69621,6 +69897,23 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 	return items, nil
 }
 
+const objectStorageCeilingGrant = `-- name: ObjectStorageCeilingGrant :one
+SELECT owner_id, max_bytes, reason, granted_by, granted_at FROM object_storage_ceiling_grants WHERE owner_id=$1
+`
+
+func (q *Queries) ObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ObjectStorageCeilingGrant, error) {
+	row := db.QueryRow(ctx, objectStorageCeilingGrant, ownerID)
+	var i ObjectStorageCeilingGrant
+	err := row.Scan(
+		&i.OwnerID,
+		&i.MaxBytes,
+		&i.Reason,
+		&i.GrantedBy,
+		&i.GrantedAt,
+	)
+	return i, err
+}
+
 const objectStorageGatewayStorageAdvance = `-- name: ObjectStorageGatewayStorageAdvance :execrows
 UPDATE object_storage_gateway_storage g
 SET stored_byte_hours = LEAST(1152921504606846976::numeric, g.stored_byte_hours
@@ -71047,22 +71340,27 @@ func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype
 }
 
 const objectUsageAccountPlanCap = `-- name: ObjectUsageAccountPlanCap :one
-SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+SELECT a.plan, a.overage_cap_cents, g.max_bytes AS ceiling_grant_bytes FROM accounts a
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = a.id WHERE a.id=$1
 UNION ALL
-SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
+SELECT o.plan, o.overage_cap_cents, g.max_bytes FROM orgs o
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = o.id
+WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
 `
 
 type ObjectUsageAccountPlanCapRow struct {
-	Plan            string
-	OverageCapCents pgtype.Int8
+	Plan              string
+	OverageCapCents   pgtype.Int8
+	CeilingGrantBytes pgtype.Int8
 }
 
-// The plan and spend cap that set an account's object-storage ceilings
-// (ADR-1320, ADR-20261101214152). A null cap is no cap.
+// The plan, spend cap and support grant that set an account's object-storage
+// ceilings (ADR-1320, ADR-20261101214152). A null cap is no cap; a null grant
+// keeps the plan's ceiling.
 func (q *Queries) ObjectUsageAccountPlanCap(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectUsageAccountPlanCapRow, error) {
 	row := db.QueryRow(ctx, objectUsageAccountPlanCap, id)
 	var i ObjectUsageAccountPlanCapRow
-	err := row.Scan(&i.Plan, &i.OverageCapCents)
+	err := row.Scan(&i.Plan, &i.OverageCapCents, &i.CeilingGrantBytes)
 	return i, err
 }
 
@@ -79407,11 +79705,11 @@ const readCronActivationDeployment = `-- name: ReadCronActivationDeployment :one
 SELECT d.id::text AS deployment_id,d.status,d.scope,d.traffic_percent,d.traffic_percent_explicit,
  d.canary_total_steps,d.rollout_state,
  coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id
- AND coalesce(nullif(n.scope,''),'default')='default'
+ AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default')
  AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
  ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
  EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
- AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+ AND n.status='live' AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default') AND n.traffic_percent>0) AS competing_traffic
 FROM deployments d JOIN deployment_cron_activations c ON c.app_id=d.app_id
 JOIN apps a ON a.id=c.app_id
 LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
@@ -79920,9 +80218,9 @@ func (q *Queries) ReadDeploySettingsLatest(ctx context.Context, db DBTX, appID s
 const readDeploymentConfiguration = `-- name: ReadDeploymentConfiguration :one
 SELECT d.id::text AS deployment_id,d.app_id::text AS app_id,d.status AS release_status,d.scope,d.rollout_state,d.traffic_percent,d.traffic_percent_explicit,d.canary_total_steps,
  coalesce(o.session_id,'')::text AS session_id,coalesce(o.revision,0)::bigint AS revision,coalesce(o.status,'')::text AS activation_status,coalesce(o.reason,'')::text AS reason,
- coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id AND coalesce(nullif(n.scope,''),'default')='default'
+ coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default')
  AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0) ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
- EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+ EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id AND n.status='live' AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default') AND n.traffic_percent>0) AS competing_traffic
 FROM deployments d JOIN apps a ON a.id=d.app_id
 LEFT JOIN LATERAL (
  SELECT x.status,x.reason,x.session_id,x.revision FROM (
@@ -86447,6 +86745,31 @@ func (q *Queries) ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg Rea
 	return items, nil
 }
 
+const readQueueReplayAdmission = `-- name: ReadQueueReplayAdmission :one
+SELECT p.app_id, p.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM production_invocation_work p
+LEFT JOIN accounts a ON a.id = p.account_id
+LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE p.id = $1::uuid AND p.source = 'queue' AND p.state = 'dead_letter'
+`
+
+type ReadQueueReplayAdmissionRow struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Plan      string
+}
+
+// ADR-20261101093812: a production queue message replayed from the dead
+// letter re-enters its app's queue under the caps a send meets. The plan
+// resolves as ExpirePendingQueueMessages' does. Environment-owned messages
+// are not production work and keep their own caps.
+func (q *Queries) ReadQueueReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadQueueReplayAdmissionRow, error) {
+	row := db.QueryRow(ctx, readQueueReplayAdmission, id)
+	var i ReadQueueReplayAdmissionRow
+	err := row.Scan(&i.AppID, &i.AccountID, &i.Plan)
+	return i, err
+}
+
 const readReleaseWorkerRunningProof = `-- name: ReadReleaseWorkerRunningProof :many
 SELECT i.id::text AS id,p.secret_fingerprint,p.config_fingerprint,coalesce(p.environment_id::text,'')::text AS environment_id,p.scope
 FROM instances i JOIN deployments d ON d.id=i.deployment_id AND d.status='live'
@@ -87943,10 +88266,28 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 	return i, err
 }
 
+const readServicePolicyCallerScope = `-- name: ReadServicePolicyCallerScope :one
+SELECT scope FROM deployments
+WHERE id = $1::uuid AND app_id = $2::uuid
+`
+
+type ReadServicePolicyCallerScopeParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) ReadServicePolicyCallerScope(ctx context.Context, db DBTX, arg ReadServicePolicyCallerScopeParams) (string, error) {
+	row := db.QueryRow(ctx, readServicePolicyCallerScope, arg.DeploymentID, arg.AppID)
+	var scope string
+	err := row.Scan(&scope)
+	return scope, err
+}
+
 const readServicePolicyDeploymentOverride = `-- name: ReadServicePolicyDeploymentOverride :one
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.id = $1::uuid AND d.app_id = $2::uuid AND d.status = 'live'
+      AND d.scope = ANY($3::text[])
       AND (d.traffic_percent > 0 OR d.traffic_percent_explicit
            OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
                AND EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())))
@@ -87956,33 +88297,37 @@ SELECT EXISTS (
 type ReadServicePolicyDeploymentOverrideParams struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
+	Scopes       []string
 }
 
 func (q *Queries) ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error) {
-	row := db.QueryRow(ctx, readServicePolicyDeploymentOverride, arg.DeploymentID, arg.AppID)
+	row := db.QueryRow(ctx, readServicePolicyDeploymentOverride, arg.DeploymentID, arg.AppID, arg.Scopes)
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err
 }
 
 const readServicePolicyDeploymentWeights = `-- name: ReadServicePolicyDeploymentWeights :many
-SELECT id, traffic_percent FROM deployments
+SELECT id, traffic_percent, scope FROM deployments
 WHERE app_id = $1::uuid AND status = 'live' AND traffic_percent > 0
-ORDER BY id LIMIT $2::integer
+  AND scope = ANY($2::text[])
+ORDER BY id LIMIT $3::integer
 `
 
 type ReadServicePolicyDeploymentWeightsParams struct {
 	AppID    pgtype.UUID
+	Scopes   []string
 	RowLimit int32
 }
 
 type ReadServicePolicyDeploymentWeightsRow struct {
 	ID             pgtype.UUID
 	TrafficPercent int32
+	Scope          string
 }
 
 func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentWeightsParams) ([]ReadServicePolicyDeploymentWeightsRow, error) {
-	rows, err := db.Query(ctx, readServicePolicyDeploymentWeights, arg.AppID, arg.RowLimit)
+	rows, err := db.Query(ctx, readServicePolicyDeploymentWeights, arg.AppID, arg.Scopes, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -87990,7 +88335,7 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 	items := []ReadServicePolicyDeploymentWeightsRow{}
 	for rows.Next() {
 		var i ReadServicePolicyDeploymentWeightsRow
-		if err := rows.Scan(&i.ID, &i.TrafficPercent); err != nil {
+		if err := rows.Scan(&i.ID, &i.TrafficPercent, &i.Scope); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -90871,6 +91216,27 @@ func (q *Queries) RecordManagedPostgresLifecycleResource(ctx context.Context, db
 	return result.RowsAffected(), nil
 }
 
+const recordManagedPostgresPlanExcessNotice = `-- name: RecordManagedPostgresPlanExcessNotice :execrows
+INSERT INTO managed_postgres_plan_excess_notices(database_id,reason,recorded_at)
+VALUES($1::uuid,$2::text,$3::timestamptz)
+ON CONFLICT (database_id) DO NOTHING
+`
+
+type RecordManagedPostgresPlanExcessNoticeParams struct {
+	DatabaseID pgtype.UUID
+	Reason     string
+	RecordedAt pgtype.Timestamptz
+}
+
+// One notice per suspension; later sweeps leave it alone.
+func (q *Queries) RecordManagedPostgresPlanExcessNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresPlanExcessNoticeParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresPlanExcessNotice, arg.DatabaseID, arg.Reason, arg.RecordedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordManagedPostgresProviderResource = `-- name: RecordManagedPostgresProviderResource :execrows
 UPDATE managed_postgres_databases
 SET provider_resource_id = $1::text, accounting_required = true, updated_at = $2::timestamptz
@@ -93217,15 +93583,17 @@ func (q *Queries) ReleaseProductionNamedQueueClaims(ctx context.Context, db DBTX
 const releaseProjectEnvironmentCloneWorkerLease = `-- name: ReleaseProjectEnvironmentCloneWorkerLease :execrows
 UPDATE project_environment_clone_operations
 SET lease_token = NULL, lease_until = NULL, revision = revision + 1, updated_at = clock_timestamp(),
-    next_attempt_at = clock_timestamp() + $1::bigint * interval '1 microsecond'
-WHERE id = $2::uuid AND account_id = $3::uuid AND project_id = $4::uuid
-  AND lease_token = $5::uuid AND lease_until > clock_timestamp()
-  AND revision = $6::bigint AND status = $7::text
+    next_attempt_at = clock_timestamp() + $1::bigint * interval '1 microsecond',
+    attempt_count = CASE WHEN $2::int BETWEEN 1 AND attempt_count THEN $2::int ELSE attempt_count END
+WHERE id = $3::uuid AND account_id = $4::uuid AND project_id = $5::uuid
+  AND lease_token = $6::uuid AND lease_until > clock_timestamp()
+  AND revision = $7::bigint AND status = $8::text
   AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
 `
 
 type ReleaseProjectEnvironmentCloneWorkerLeaseParams struct {
 	RetryMicroseconds int64
+	KeepAttempts      int32
 	OperationID       pgtype.UUID
 	AccountID         pgtype.UUID
 	ProjectID         pgtype.UUID
@@ -93234,9 +93602,12 @@ type ReleaseProjectEnvironmentCloneWorkerLeaseParams struct {
 	Status            string
 }
 
+// keep_attempts may only lower the count, never below 1: zero with no lease
+// would readmit unleased legacy writers.
 func (q *Queries) ReleaseProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg ReleaseProjectEnvironmentCloneWorkerLeaseParams) (int64, error) {
 	result, err := db.Exec(ctx, releaseProjectEnvironmentCloneWorkerLease,
 		arg.RetryMicroseconds,
+		arg.KeepAttempts,
 		arg.OperationID,
 		arg.AccountID,
 		arg.ProjectID,
@@ -93682,6 +94053,45 @@ func (q *Queries) RenewProjectEnvironmentCloneWorkerLease(ctx context.Context, d
 	var i RenewProjectEnvironmentCloneWorkerLeaseRow
 	err := row.Scan(&i.LeaseUntil, &i.AttemptCount)
 	return i, err
+}
+
+const renewTriggerRecordClaims = `-- name: RenewTriggerRecordClaims :execrows
+WITH claims AS (
+    SELECT unnest($3::uuid[]) AS id,
+           unnest($4::bigint[]) AS claim_generation
+)
+UPDATE trigger_records r
+   SET claim_expires_at = greatest(r.claim_expires_at,
+       now() + make_interval(secs => $1::double precision))
+  FROM claims
+ WHERE r.id = claims.id AND r.claim_generation = claims.claim_generation
+   AND r.trigger_id = $2::uuid
+   AND r.state = 'claimed' AND r.claim_expires_at > now()
+`
+
+type RenewTriggerRecordClaimsParams struct {
+	LeaseSeconds     float64
+	TriggerID        pgtype.UUID
+	Ids              []pgtype.UUID
+	ClaimGenerations []int64
+}
+
+// Keeps the claims of a batch whose dispatch is still running. A claim lasts
+// ten minutes, but a long-timeout app's batch may wait 16.5; an expired claim
+// could be taken and run again, and its outcome could not be recorded. Only
+// the claim generation the dispatcher holds is renewed, and never one that
+// has already lapsed.
+func (q *Queries) RenewTriggerRecordClaims(ctx context.Context, db DBTX, arg RenewTriggerRecordClaimsParams) (int64, error) {
+	result, err := db.Exec(ctx, renewTriggerRecordClaims,
+		arg.LeaseSeconds,
+		arg.TriggerID,
+		arg.Ids,
+		arg.ClaimGenerations,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const reopenSkippedWorkflowStepsForRetry = `-- name: ReopenSkippedWorkflowStepsForRetry :execrows
@@ -101079,6 +101489,32 @@ func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvo
 	return err
 }
 
+const setObjectStorageCeilingGrant = `-- name: SetObjectStorageCeilingGrant :exec
+INSERT INTO object_storage_ceiling_grants (owner_id, max_bytes, reason, granted_by, granted_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (owner_id) DO UPDATE SET max_bytes = EXCLUDED.max_bytes, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at
+`
+
+type SetObjectStorageCeilingGrantParams struct {
+	OwnerID   pgtype.UUID
+	MaxBytes  int64
+	Reason    string
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+}
+
+func (q *Queries) SetObjectStorageCeilingGrant(ctx context.Context, db DBTX, arg SetObjectStorageCeilingGrantParams) error {
+	_, err := db.Exec(ctx, setObjectStorageCeilingGrant,
+		arg.OwnerID,
+		arg.MaxBytes,
+		arg.Reason,
+		arg.GrantedBy,
+		arg.GrantedAt,
+	)
+	return err
+}
+
 const setObservedAppWorkloadClass = `-- name: SetObservedAppWorkloadClass :execrows
 UPDATE apps SET workload_class=$1::text
 WHERE id=$2::uuid AND account_id=$3::uuid AND status<>'deleted'
@@ -101394,6 +101830,23 @@ func (q *Queries) SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const settleEventSubscriptionIntent = `-- name: SettleEventSubscriptionIntent :exec
+UPDATE deployment_event_subscription_intents
+SET status = $1::text, reason = $2::text, updated_at = now()
+WHERE deployment_id = $3::uuid AND status = 'prepared'
+`
+
+type SettleEventSubscriptionIntentParams struct {
+	Status       string
+	Reason       string
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error {
+	_, err := db.Exec(ctx, settleEventSubscriptionIntent, arg.Status, arg.Reason, arg.DeploymentID)
+	return err
 }
 
 const shareRuntimeUpgradeExternalFenceAuthority = `-- name: ShareRuntimeUpgradeExternalFenceAuthority :one
@@ -103822,6 +104275,90 @@ func (q *Queries) TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const triggerRecordInScope = `-- name: TriggerRecordInScope :one
+select exists(select 1 from trigger_records r join triggers t on t.id=r.trigger_id
+  where r.id=$1::uuid and r.trigger_id=$2::uuid
+    and t.app_id=$3::uuid)
+`
+
+type TriggerRecordInScopeParams struct {
+	ID        pgtype.UUID
+	TriggerID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// The operator record verbs (POST /v1/triggers/{id}/records/{rid}/retry and
+// /drop) address a record through its trigger's URL. The record must belong
+// to that trigger and the trigger to the caller's app; any other record
+// answers "no such record". A record's trigger and a trigger's app never
+// change, so the check needs no row lock and keeps the replay lock order.
+func (q *Queries) TriggerRecordInScope(ctx context.Context, db DBTX, arg TriggerRecordInScopeParams) (bool, error) {
+	row := db.QueryRow(ctx, triggerRecordInScope, arg.ID, arg.TriggerID, arg.AppID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const triggerRecordStatesByItems = `-- name: TriggerRecordStatesByItems :many
+SELECT r.item_identifier, r.state, r.next_fire_at, r.claim_expires_at,
+       coalesce(r.metadata->>'topic', '')::text AS topic,
+       coalesce(d.reason, '')::text AS dead_letter_reason
+FROM trigger_records r
+LEFT JOIN trigger_dead_letter d ON d.record_id = r.id
+WHERE r.trigger_id = $1::uuid
+  AND r.item_identifier = ANY($2::text[])
+`
+
+type TriggerRecordStatesByItemsParams struct {
+	TriggerID       pgtype.UUID
+	ItemIdentifiers []string
+}
+
+type TriggerRecordStatesByItemsRow struct {
+	ItemIdentifier   string
+	State            string
+	NextFireAt       pgtype.Timestamptz
+	ClaimExpiresAt   pgtype.Timestamptz
+	Topic            string
+	DeadLetterReason string
+}
+
+// The stored state of the records one broker poll handed back. A broker may
+// redeliver after Gregale commits a terminal receipt (succeeded, ended by a
+// work policy, or dead-lettered) but before the broker settles it; the
+// dispatcher settles that delivery without dispatching the application
+// again. dead_letter_reason lets a Kafka seek-to-offset trigger keep holding
+// a poison record while an exhausted one commits; next_fire_at and
+// claim_expires_at tell a broker that redelivers on its own when a cooling
+// retry, or a record another dispatcher holds, can run; topic maps a record
+// stored under an earlier release's item identifier (ADR-20261101093512).
+func (q *Queries) TriggerRecordStatesByItems(ctx context.Context, db DBTX, arg TriggerRecordStatesByItemsParams) ([]TriggerRecordStatesByItemsRow, error) {
+	rows, err := db.Query(ctx, triggerRecordStatesByItems, arg.TriggerID, arg.ItemIdentifiers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TriggerRecordStatesByItemsRow{}
+	for rows.Next() {
+		var i TriggerRecordStatesByItemsRow
+		if err := rows.Scan(
+			&i.ItemIdentifier,
+			&i.State,
+			&i.NextFireAt,
+			&i.ClaimExpiresAt,
+			&i.Topic,
+			&i.DeadLetterReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const tryEdgeRuleAccountMutationLock = `-- name: TryEdgeRuleAccountMutationLock :one

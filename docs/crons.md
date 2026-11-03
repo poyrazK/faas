@@ -73,9 +73,18 @@ match the file exactly: crons missing from the file are removed. An empty
 `triggers: []` removes them all. If the file has no `triggers:` key, or none
 of its cron triggers name the app, the app's crons are left alone.
 
+On a company app, any member who may deploy it can deploy its crons; the
+company's plan sets how many it may have, not the deployer's own plan. The
+file's paths and timezones follow the same rules as `gregale cron create`.
+
 A deploy from a GitHub push, or through the source API, only adds the file's
 crons the app does not have yet, with their timezone and `skip_if_running`; it
-never changes or removes a cron. Declared crons take effect when the
+never changes or removes a cron.
+
+Crons are app settings, not part of a release: a rollback leaves them as they
+are. `gregale rollback` warns when crons were added after the deployment it
+returns to, so you can update or delete any whose path that deployment does
+not serve. Declared crons take effect when the
 deployment goes live. PR previews, deploys to another environment and releases
 staged without traffic leave crons alone.
 
@@ -121,7 +130,10 @@ cron is still queued or running.
 
 If Gregale could not reach a scheduled time at all, for example during
 maintenance, the cron runs once as soon as it can. It does not replay every
-time it missed.
+time it missed. The same holds while a strict compute budget holds the app:
+its crons queue nothing, and each runs once when the hold lifts.
+`gregale cron status` reports such a cron as `budget_held`, and a manual run
+is refused with `402 financial_budget_held` instead of waiting for the hold.
 
 ### Schedule changes take effect from the next time
 
@@ -132,8 +144,10 @@ It never runs immediately because of the change, and it does not catch up on
 the times it passed while it was off.
 
 Disabling a cron stops future runs. It does not cancel a run that is already
-queued or in progress. Deleting a cron also cancels its runs that have not
-started, including runs waiting to retry; a run already in progress finishes.
+queued or in progress. Removing a cron, whether you delete it, a deploy's
+`gregale.yaml` drops it or its app is deleted, also cancels its runs that have
+not started, including runs waiting to retry; a run already in progress
+finishes.
 
 ### Suspension
 
@@ -157,11 +171,17 @@ schedule. A suspended cron cannot be run (`409 conflict`); deploy the app to
 resume it. The request goes `pending`, then `running` while the run is queued
 and delivered, then `succeeded` or `failed` with the run's error. A cron can
 have five manual runs waiting or running at once; another request gets
-`429 cron_fire_now_busy` until one finishes.
+`429 cron_fire_now_busy` until one finishes. A disabled cron cannot be run
+(`409 conflict`); enable it first.
+
+If the scheduler restarts while it handles a request, the request fails with
+a reason that says so; check `gregale cron runs` before running the cron
+again, since the run may already have been queued.
 
 Without `--wait`, `gregale cron run` exits 0 as soon as the run is queued. In
 scripts and CI use `--wait`: it exits 1 when the run fails or is cancelled and
-3 when `--timeout` (default 2m) passes first.
+3 when `--timeout` (default 2m) passes first. A `deploy:write` key can both
+start a run and follow it, so CI needs no `apps:read` key for `--wait`.
 
 Crons are not part of `gregale triggers`, which covers message-broker and
 queue triggers; list and edit crons with `gregale cron`.
@@ -184,8 +204,10 @@ decision that is still waiting or running is kept until it settles.
 
 A run that fails with `application returned HTTP 404` reached your app, but
 the app has no handler for `POST` at the cron's path. This is the most common
-cron failure. `gregale cron runs` points it out; serve the route in the app or
-change the cron's path with `gregale cron update ID --path /...`.
+cron failure. A handler that serves only `GET` answers `405` instead: crons
+always send `POST`. `gregale cron runs` points both out; serve `POST` on the
+route in the app or change the cron's path with
+`gregale cron update ID --path /...`.
 
 To be told when runs fail, add an alert rule on failed cron invocations:
 
@@ -217,6 +239,11 @@ need more control:
   so a cron with failure rules can run more than once for one scheduled time;
   make such handlers idempotent. Without failure rules, a cron with a schedule
   policy is delivered once per scheduled time, like any other cron.
+
+`gregale cron update CRON_ID --clear-schedule-policy` and
+`--clear-failure-rules` remove them again (`clear_schedule_policy` and
+`clear_failure_rules` in the API). In Terraform, removing `schedule_policy` or
+`failure_rules_json` from a `gregale_cron` removes them from the cron.
 
 ## Command crons (preview)
 

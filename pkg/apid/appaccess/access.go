@@ -201,7 +201,7 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 		if app.AccountID != actor.ID || key != nil && key.OrgID != "" && !personalKey(r.Context(), store, key.OrgID, actor.ID) {
 			return state.Account{}, notFound(r)
 		}
-		return actor, nil
+		return actor, personalSuspension(r, actor)
 	}
 	org, err := store.OrgByID(r.Context(), app.OrgID)
 	if err != nil {
@@ -211,7 +211,7 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 		if app.AccountID != actor.ID || org.PersonalOwnerAccountID == nil || *org.PersonalOwnerAccountID != actor.ID {
 			return state.Account{}, notFound(r)
 		}
-		return actor, nil
+		return actor, personalSuspension(r, actor)
 	}
 	return authorizeShared(r, store, audit, actor, key, app, org)
 }
@@ -290,6 +290,20 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 	}
 	*r = *r.WithContext(managedpostgres.WithOwnership(context.WithValue(r.Context(), grantKey{}, Grant{App: app, Actor: actor, Owner: owner, Fence: fence}), org.ID, owner.ResourceOwnerID()))
 	return owner, nil
+}
+
+// personalSuspension refuses a personal app to its suspended owner. The auth
+// middleware lets a billing-suspended caller through to app-addressed routes
+// so the app's owner decides (H87); for a personal app that owner is the
+// caller, so the suspension applies here exactly as it did at sign-in.
+func personalSuspension(r *http.Request, actor state.Account) *api.Problem {
+	if actor.Active() || authmw.InactiveAccountMayReach(actor, r.Method, r.URL.Path) {
+		return nil
+	}
+	if actor.AbuseHeld() {
+		return actor.InactiveProblem()
+	}
+	return authmw.SuspendedProblem()
 }
 
 func personalKey(ctx context.Context, store Store, orgID, actorID string) bool {

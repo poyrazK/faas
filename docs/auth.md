@@ -10,13 +10,18 @@ gregale logout
 
 Browser-approved logins mint a 30-day CLI key tied to this device. The CLI
 stores that key's non-secret id and `gregale logout` revokes exactly that key
-before clearing the local keychain. Use `gregale key list` and
-`gregale key delete <id>` to remove a session from a lost device; CLI sessions are
-labelled `cli-login` and never expose their plaintext after creation.
+before clearing the local keychain. Logging in again, or removing a connection
+profile, revokes the CLI key of the login it replaces. Use `gregale key list`
+(its ID column) and `gregale key delete <id>` to remove a session from a lost
+device; CLI sessions are labelled `cli-login` and never expose their plaintext
+after creation.
 
 For CI, create a scoped project or organization token and expose it as `FAAS_TOKEN`, or pass it once with `gregale login --token "$FAAS_TOKEN"`. Prefer the narrowest scope and a short expiration. Do not commit tokens or pass them as command-line arguments where process listings can expose them.
 Tokens supplied through `FAAS_TOKEN` or `gregale login --token` remain
 non-owning: logout clears local state but does not revoke a shared CI key.
+`FAAS_TOKEN` outranks a saved login, so `gregale login` and `gregale start`
+refuse to run while it is set (unless `--token` passes the same value), and
+`gregale logout` says when `FAAS_TOKEN` is still active.
 
 For a Runs-only agent, mint an account key with `runs:write` instead of the
 default full-access `admin` key:
@@ -99,6 +104,11 @@ available and defaults to the same deploy-only bearer. Its optional closed
 environment-preflight GitHub Action uses that profile to qualify a source
 release set and check promotion policy without receiving deployment or secret
 permissions; see [the Action guide](../.github/actions/environment-preflight/README.md).
+`capability: preview-read` grants only `previews:read`: the status of one app's
+PR previews (`GET /v1/preview/{slug}` and its environment), and nothing else.
+Under a policy Gregale created it is issued to any run of the repository,
+pull request runs included, for an app bound to it
+([ADR-20261102203228](adr/20261102203228-ci-reads-its-preview-status.md)).
 
 For GitHub Actions, first-use account lookup accepts both the legacy
 `repo:OWNER/REPO:...` subject and GitHub's immutable

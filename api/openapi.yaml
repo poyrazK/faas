@@ -12711,8 +12711,14 @@ paths:
         Switch the account between `free`, `hobby`, `pro`, and `scale`. The
         local account moves to a paid tier only after the configured billing
         provider confirms payment. If a new subscription is required, the
-        `payment_required` response includes `checkout_url`; if an existing
-        subscription must be changed, it includes `billing_portal_url`.
+        `payment_required` response includes `checkout_url`. An existing
+        subscription changes in place: an upgrade is charged the prorated
+        difference now and answers 202 until the provider confirms it; a
+        declined charge answers 402 with `billing_portal_url` to update the
+        payment method, and the plan stays. A downgrade answers 202 and takes
+        effect at the end of the billing period. A billing email that already
+        pays for another account or organization answers 409
+        `billing_email_in_use`.
       requestBody:
         required: true
         description: "Plan change payload."
@@ -22524,7 +22530,7 @@ paths:
           in: query
           required: false
           schema: { type: string, format: date-time }
-          description: "Optional RFC3339 upper-bound timestamp for the historical window."
+          description: "Optional RFC3339 upper-bound timestamp for the historical window. It must be within the plan's telemetry retention, counted back from now."
         - name: group_by
           in: query
           required: false
@@ -22656,7 +22662,7 @@ paths:
           in: query
           required: false
           schema: { type: string, format: date-time }
-          description: "Exclusive end timestamp; omitted means current server time."
+          description: "Exclusive end timestamp; omitted means current server time. It must be within the plan's telemetry retention, counted back from now."
         - name: route
           in: query
           required: false
@@ -57678,7 +57684,10 @@ paths:
         Owner-only (`org.remove_members`). Stamps `removed_at` on
         the row (the row stays for audit; live-cap count drops).
         Self-removal is rejected at the boundary; the last-owner
-        invariant surfaces as 409 `org_last_owner`.
+        invariant surfaces as 409 `org_last_owner`. The member whose email
+        the organization bills to cannot be removed while the organization
+        has a billing customer (409 `billing_contact_member`); set another
+        billing email with `PUT /v1/orgs/{slug}/billing/email` first.
       responses:
         '204': { description: Member removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -64301,7 +64310,10 @@ paths:
         Requires the organization owner, admin credential scope, verified email,
         MFA and recent step-up. Paid entitlements activate only after provider
         confirmation. Existing personal subscriptions are never reassigned.
-        A payment-required response carries checkout_url or billing_portal_url.
+        A payment-required response carries checkout_url, or billing_portal_url
+        when the upgrade charge of an existing subscription is declined. The
+        first checkout bills the acting owner's email until
+        `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -64377,6 +64389,283 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{slug}/billing/costs:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgFinancialCosts
+      summary: Read the organization's attributable usage costs.
+      description: |
+        Requires current organization membership, usage:read and session MFA.
+        An organization that owns its resources pays for its apps, so their
+        usage evidence is recorded under it rather than under the members who
+        created them. Same report as GET /v1/billing/costs, for the organization.
+      parameters:
+        - name: month
+          in: query
+          description: UTC usage month of the organization's report; defaults to the current month.
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+      responses:
+        '200':
+          description: Organization-owned cost breakdown, coverage, forecasts, and separate invoice facts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialCostsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{slug}/billing/budgets:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgFinancialBudgets
+      summary: List the organization's budget policies.
+      description: Requires current organization membership, usage:read and session MFA. Deleted policies are omitted. Drafts do not enforce limits.
+      responses:
+        '200':
+          description: Organization-owned policies, bounded to 128.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [orgs]
+      operationId: createOrgFinancialBudget
+      summary: Save an organization budget policy.
+      description: |
+        Requires the organization owner or billing role, admin scope, session MFA
+        and an Idempotency-Key (1..255 bytes). A budget covers what the
+        organization pays for: its apps, projects and environments, and its
+        whole account scope. The organization must own its resources. Monitored
+        notify and compute-only stop_previews policies can activate; alerts go
+        to the organization's billing contact. Strict policies return 422
+        financial_budget_activation_unavailable.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Stable identity of this organization budget creation, required for retries.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateFinancialBudgetRequest' }
+      responses:
+        '201':
+          description: Saved policy with revision 1; retries retain its identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Invalid organization policy count, or a strict or unsupported activation; nothing was written.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{slug}/billing/budgets/preview:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    post:
+      tags: [orgs]
+      operationId: previewOrgFinancialBudget
+      summary: Preview an organization budget and its workload consequences without writes.
+      description: Requires current organization membership, usage:read and session MFA. Same preview as POST /v1/billing/budgets/preview, over the apps the organization pays for. No policies, holds or decisions are written.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FinancialBudgetPreviewRequest' }
+      responses:
+        '200':
+          description: The organization's financial observation, affected workloads and readiness.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{slug}/billing/budgets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - name: id
+        in: path
+        required: true
+        description: Stable identity of an organization-owned budget policy.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [orgs]
+      operationId: getOrgFinancialBudget
+      summary: Read an organization budget, including its deletion tombstone.
+      description: Requires current organization membership, usage:read and session MFA. Foreign or missing policies return 404.
+      responses:
+        '200':
+          description: The organization budget's saved intent and enforcement readiness.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [orgs]
+      operationId: updateOrgFinancialBudget
+      summary: Replace an organization budget at its expected revision.
+      description: Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision must match the current policy; stale edits return 409. Strict policies return 422 financial_budget_activation_unavailable.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry key for replacing this organization budget at its expected revision.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateFinancialBudgetRequest' }
+      responses:
+        '200':
+          description: Updated policy and incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Strict or unsupported activation for an organization; its current revision is kept.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [orgs]
+      operationId: deleteOrgFinancialBudget
+      summary: Tombstone an organization budget while retaining its revision history.
+      description: Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision prevents stale deletion.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry identity for tombstoning this organization budget.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteFinancialBudgetRequest' }
+      responses:
+        '200':
+          description: The organization budget's tombstone at its next revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{slug}/billing/budgets/{id}/revisions:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgFinancialBudgetRevisions
+      summary: Page through an organization budget's immutable revisions.
+      description: Requires current organization membership, usage:read and session MFA. Use next_revision as after_revision for continuation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Organization budget whose immutable revision audit is listed.
+          schema: { type: string, format: uuid }
+        - name: after_revision
+          in: query
+          description: Exclusive cursor over the organization budget's revisions; pass the last next_revision.
+          schema: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991, default: 0 }
+        - name: limit
+          in: query
+          description: Maximum organization budget revisions returned in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: The organization budget's revisions, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/orgs/{slug}/billing/email:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    put:
+      tags: [orgs]
+      operationId: setOrgBillingEmail
+      summary: Set the email the organization bills to.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. The billing provider sends this address the
+        organization's invoices and signs it in to the organization's billing
+        portal, so use an address the organization controls rather than a
+        member's. The first organization checkout bills the member who starts
+        it until this is set. When the organization already has a billing
+        customer, the customer moves to the new email first and nothing changes
+        if the provider refuses. The provider keeps one customer per email: an
+        email another Gregale account or organization already pays with is
+        refused with 409 `billing_email_in_use`. While a member's email is the
+        billing email, that member cannot be removed (409
+        `billing_contact_member`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrgBillingEmailRequest' }
+            example: {"billing_email": "billing@example.com"}
+      responses:
+        '200':
+          description: The organization's billing email after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgBillingEmailResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: The billing provider could not move the customer (`billing_email_change_failed`); the billing email is unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/orgs/{organization}/projects:
     parameters:
@@ -83554,6 +83843,10 @@ components:
           type: string
           format: date-time
           description: "Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time."
+        plan_excess:
+          type: string
+          enum: [database_limit, service_class]
+          description: "Set while the plan no longer includes this database, for example after a subscription ended, and it is suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept), service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or resizing to an included class resumes it."
         restore_range:
           $ref: '#/components/schemas/ManagedPostgresRestoreRange'
     ManagedPostgresRestoreRange:
@@ -85745,6 +86038,14 @@ components:
         received_at: { type: string, format: date-time }
         processed_at: { type: [string, "null"], format: date-time }
         updated_at: { type: string, format: date-time }
+        skip_reason:
+          type: string
+          description: >-
+            Why a processed event deployed nothing: actions_trigger (production
+            deploys come from a GitHub Actions workflow), branch_not_deployed,
+            superseded (a newer commit reached the branch first), not_enabled,
+            tag_not_branch_head, no_binding, skip_marker, invalid_release_tag,
+            release_tag_moved or ignored. Absent when the event did its work.
 
     GitHubCheckActivity:
       description: Redacted Check Run synchronization activity for the bound GitHub app.
@@ -85953,6 +86254,25 @@ components:
           type: [integer, 'null']
           format: int64
           minimum: 0
+
+    OrgBillingEmailRequest:
+      description: The email an organization bills to; invoices and the billing portal sign-in go to it.
+      type: object
+      required: [billing_email]
+      properties:
+        billing_email:
+          type: string
+          format: email
+          maxLength: 254
+
+    OrgBillingEmailResponse:
+      description: The email an organization bills to.
+      type: object
+      required: [billing_email]
+      properties:
+        billing_email:
+          type: string
+          format: email
 
     AccountRateLimitsResponse:
       description: Account-wide operation rate limits.
@@ -104315,6 +104635,8 @@ components:
         retry_backoff_seconds: { type: [integer, "null"], minimum: 1, maximum: 3600, description: "Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed attempt." }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
+        clear_schedule_policy: { type: boolean, description: "Remove the cron's schedule policy. An omitted schedule_policy keeps it; cannot be sent with schedule_policy." }
+        clear_failure_rules: { type: boolean, description: "Remove the cron's failure rules. An omitted failure_rules keeps them; cannot be sent with failure_rules." }
 
     SchedulePolicy:
       description: >-
@@ -105315,7 +105637,8 @@ components:
 
     TriggerMetricsResponse:
       description: |
-        Aggregated counters per state for one trigger. NOT a Prometheus
+        Aggregated counters per state for one trigger, and the scheduler's
+        last observation of its broker consumer. NOT a Prometheus
         scrape — /v1/metrics is the Prometheus surface.
       type: object
       required:
@@ -105328,6 +105651,40 @@ components:
         succeeded_count: { type: integer }
         retry_count: { type: integer }
         dead_letter_count: { type: integer }
+        count_limit:
+          type: integer
+          description: Where each count stops; a count equal to it means at least that many.
+        consumer: { $ref: '#/components/schemas/TriggerConsumerStatus' }
+
+    TriggerConsumerStatus:
+      description: |
+        The scheduler's last observation of a trigger's broker consumer.
+        Absent until the trigger's first poll.
+      type: object
+      required: [liveness]
+      properties:
+        liveness:
+          type: string
+          enum: [healthy, degraded, stale, not_observed, unknown]
+          description: |
+            `degraded`: the last poll failed (see last_error). `stale`: no
+            poll for 30 s (the trigger is disabled, its app cannot run, or
+            no scheduler polls it).
+        last_poll_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        last_error_at: { type: string, format: date-time }
+        last_error: { type: string }
+        lag_messages:
+          type: integer
+          format: int64
+          description: |
+            The broker's backlog for the consumer. Kafka: high watermark
+            less the group's committed offset, summed over partitions.
+            NATS JetStream: the consumer's pending messages. Redis Streams:
+            the group's lag.
+        lag_age_seconds:
+          type: number
+          description: Age of the oldest record the last poll returned.
 
     CreateTriggerBatchRequest:
       description: |
@@ -114756,6 +115113,24 @@ components:
         deployment_costs:
           $ref: '#/components/schemas/RequestAnalyticsDeploymentCostBreakdown'
         as_of: { type: string, format: date-time, description: "RFC3339Nano UTC assembly timestamp." }
+        telemetry_complete:
+          type: boolean
+          description: |
+            True when every gateway delivered this window's request telemetry, so the totals include every request.
+            Judged up to two minutes before `as_of`, because the newest minutes are still arriving. Absent when it could not be judged.
+        telemetry_gaps:
+          type: array
+          description: "Why requests in this window may be missing from the totals. Empty or absent when the window is complete."
+          items: { $ref: '#/components/schemas/RequestAnalyticsTelemetryGap' }
+
+    RequestAnalyticsTelemetryGap:
+      type: string
+      description: |
+        One reason request analytics may be missing requests: a gateway with no or a stale delivery report
+        (`telemetry_coverage_missing`, `telemetry_coverage_stale`), telemetry switched off or sampled
+        (`telemetry_disabled`, `telemetry_sampled`), requests still waiting to be delivered
+        (`telemetry_ingestion_pending`), or requests lost or a gateway restarted during the window (`telemetry_window_incomplete`).
+      enum: [telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
 
     RequestAnalyticsTimeseriesPoint:
       type: object
@@ -114806,6 +115181,13 @@ components:
           type: array
           items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesSeries' }
         as_of: { type: string, format: date-time, description: "UTC time when the series response was assembled." }
+        telemetry_complete:
+          type: boolean
+          description: "Same as on the analytics overview: true when every gateway delivered the series window, judged up to two minutes before `as_of`."
+        telemetry_gaps:
+          type: array
+          description: "Why requests in the series window may be missing. Empty or absent when the window is complete."
+          items: { $ref: '#/components/schemas/RequestAnalyticsTelemetryGap' }
 
     AppSLOResponse:
       description: |
@@ -122127,8 +122509,8 @@ components:
         webhook_id: "fedcba9876543210fedcba9876543210"
         app_id: "8b1f5e5d273e5a18ae0058fceba4fe6c"
         account_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c"
-        event: "cron.fired"
-        payload: {"cron_name": "nightly-rollup"}
+        event: "app.parked"
+        payload: {"reason": "idle_timeout_300s"}
         attempt: 0
         status: "pending"
         next_attempt_at: "2026-08-06T10:00:00Z"

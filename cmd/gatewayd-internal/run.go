@@ -90,7 +90,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
-	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/trafficdeadline"
@@ -1307,14 +1306,9 @@ type runDeps struct {
 	// internet-facing traffic; apid's bucket is the loopback-only
 	// counter for management plane traffic). nil in tests.
 	apiAuthLimiter *middleware.Limiter
-	// sessions is the *session.Manager that issues + verifies the
-	// session cookie. cmd/apid shares the same construct; the two
-	// daemons are independent processes so the AEAD keys are loaded
-	// separately per daemon. nil in tests.
-	sessions *session.Manager
-	// edgeChallengeSecret signs kind=challenge tokens and passes, and
-	// edgeChallengeKeySource says where it came from (ADR-831 amendment 17).
-	// runWithDeps signs with the session key when it is nil.
+	// edgeChallengeSecret signs kind=challenge tokens and passes: the
+	// gateway fleet key (ADR-20261102191500), and edgeChallengeKeySource
+	// says where it came from. nil in tests leaves challenges unsigned.
 	edgeChallengeSecret    []byte
 	edgeChallengeKeySource string
 	trafficDeadlines       *trafficdeadline.Signer
@@ -2329,22 +2323,20 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// Issue #254 / Move 4 PR-2: pkg/auth.Middleware construction.
 	// AppLogsHandler (cmd/gatewayd-internal/app_logs.go) shares the auth chain
 	// with cmd/apid via ADR-046 — same bearer / session / MFA / scope
-	// / IDOR-safe LoadApp, same per-IP AuthLimit bucket family. The
-	// session manager is loaded from FAAS_SESSION_KEY (see
-	// session_key.go); the auditor is the same pkg/audit.Auditor
+	// / IDOR-safe LoadApp, same per-IP AuthLimit bucket family. Session
+	// cookies are opened by apid (ADR-20261102191500): opening one takes
+	// the key that seals one, and a gateway must not be able to mint
+	// dashboard sessions. The auditor is the same pkg/audit.Auditor
 	// gatewayd already uses for githubd replay-dedupe audit rows
-	// (cmd/gatewayd-internal/audit.go). nil-safe when the env is unset so
-	// the e2e harness + these dev-mode paths still boot.
-	sessions := loadSessionManager(osGetenv, log)
-	if sessions == nil {
-		return fmt.Errorf("gatewayd: session manager init failed")
-	}
-	deps.sessions = sessions
-	deps.edgeChallengeSecret, deps.edgeChallengeKeySource, err = edgeChallengeSecret(osGetenv, sessions.BindingKey())
+	// (cmd/gatewayd-internal/audit.go). The gateway fleet key keys edge
+	// challenges and traffic deadlines; without it the gateway refuses to
+	// start.
+	fleetKey, err := loadGatewayFleetKey(osGetenv)
 	if err != nil {
 		return fmt.Errorf("gatewayd: %w", err)
 	}
-	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(osGetenv)
+	deps.edgeChallengeSecret, deps.edgeChallengeKeySource = fleetKey, gatewayFleetKeyFleet
+	deps.trafficDeadlines, err = newTrafficDeadlineSigner(fleetKey)
 	if err != nil {
 		return fmt.Errorf("gatewayd: traffic deadline signer init: %w", err)
 	}
@@ -2352,17 +2344,15 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	deps.audit = audit.New(pgStore, log, nil, "gatewayd")
 	deps.authMw = authmw.New(
 		storeAsAuthenticator(pgStore, apidgrpc.CredentialLookup{Apid: credentialAuth, Fallback: pgStore, Log: log}),
-		sessions,
+		apidgrpc.SessionVerifier{Auth: credentialAuth},
 		storeAsSessionLookup(pgStore),
 		auditorAsAuthAuditor(deps.audit),
 		log,
 		deps.apiAuthLimiter,
-		// gatewayd-internal has no need for the binding-hash
-		// cross-check (it's a Unix-socket-only daemon in the
-		// ADR-070 split; the cookie branch it serves — public
-		// requests that come back through gatewayd-public — has
-		// already been validated upstream at the public edge).
-		// nil ⇒ the cross-check is a no-op.
+		// No binding-hash cross-check (ADR-076): the hash is keyed
+		// by the session key, which gatewayd-internal does not hold
+		// for cookies, and gatewayd-public in front of it holds none
+		// either. nil ⇒ the cross-check is a no-op.
 		nil,
 	)
 	// Issue #560: per-deployment require_authn (pro/Scale opt-in).
@@ -2432,10 +2422,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				"err", gerr)
 		} else {
 			deps.geoReader = reader
+			deps.metrics.TrackGeoIPDatabase(reader.BuildTime)
 			log.Info("geoip: loaded",
 				"path", geoipDBPath,
 				"source", string(geoip.SourceDBIP),
 				"attribution", geoip.DBIPAttribution,
+				"built", reader.BuildTime().UTC().Format(time.DateOnly),
 			)
 			if geoipAutoRefresh == "1" {
 				// 168h = 7 days. DB-IP publishes a monthly
@@ -2571,6 +2563,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// resolved verifier now, after the cluster-key and environment fallback
 	// paths have run. Attaching the pre-load nil interface left workflow
 	// admission permanently unconfigured and made every step return HTTP 500.
+	if deps.internalSvcVerifier == nil {
+		// ADR-20261103090000: the synth routes require a schedd token
+		// only when one can be verified.
+		log.Warn("gatewayd-internal: no internal-service verifier; synth routes accept requests without a scheduler token, guarded only by the public edge")
+	}
 	deps.synth.WithInternalSvcVerifier(deps.internalSvcVerifier)
 	// The scheddClient reference is needed by AppLogsHandler (PR-2).
 	// It outlives `run` because we want the AppLogsHandler to keep a
@@ -3117,14 +3114,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-831 amendment 7 — kind=challenge. Tokens and passes are signed
 	// with a key every gateway must share, so a pass issued by one gateway
-	// is honoured by all: the fleet key, else this host's session key
-	// (amendment 17). gateway_edge_challenge_key_info lets the fleet check
-	// that they agree.
-	if deps.sessions != nil {
-		secret, source := deps.edgeChallengeSecret, deps.edgeChallengeKeySource
-		if secret == nil {
-			secret, source = deps.sessions.BindingKey(), edgeChallengeKeySession
-		}
+	// is honoured by all: the gateway fleet key (ADR-20261102191500).
+	// gateway_edge_challenge_key_info lets the fleet check that they agree.
+	if secret, source := deps.edgeChallengeSecret, deps.edgeChallengeKeySource; secret != nil {
 		key := gateway.DeriveEdgeChallengeKey(secret)
 		handler.WithEdgeChallengeKey(key)
 		deps.metrics.SetEdgeChallengeKey(gateway.EdgeChallengeKeyID(key), source)
@@ -3553,8 +3545,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return fmt.Errorf("close request_telemetry stream: %w", err)
 			}
 			if err := acknowledgeTelemetryRows(stream, rows); err != nil {
-				_ = rtCli.Close()
-				rtCli = nil
+				if errors.Is(err, errTelemetryStream) {
+					_ = rtCli.Close()
+					rtCli = nil
+				}
 				return err
 			}
 

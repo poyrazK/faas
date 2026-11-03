@@ -151,6 +151,29 @@ type Sessions interface {
 	Verify(value string) (session.Envelope, error)
 }
 
+// ContextSessions is a Sessions that opens cookies somewhere else, such as
+// gatewayd-internal asking apid (ADR-20261102191500): the request's
+// context bounds the call. An error other than session.ErrInvalid means
+// the cookie could not be checked, and the request gets a retryable 503
+// with the cookie kept.
+type ContextSessions interface {
+	Sessions
+	VerifyContext(ctx context.Context, value string) (session.Envelope, error)
+}
+
+// verifySession opens a session cookie, through VerifyContext when the
+// Sessions supports it. unavailable reports that a ContextSessions could
+// not check the cookie; any other error means the cookie is invalid.
+func (m *Middleware) verifySession(ctx context.Context, value string) (env session.Envelope, unavailable bool, err error) {
+	remote, ok := m.Sessions.(ContextSessions)
+	if !ok {
+		env, err = m.Sessions.Verify(value)
+		return env, false, err
+	}
+	env, err = remote.VerifyContext(ctx, value)
+	return env, err != nil && !errors.Is(err, session.ErrInvalid), err
+}
+
 // SessionLookup is the live-session-row check IAM-3 (ADR-039)
 // requires. The seal accepts AEAD-bound envelopes regardless of DB
 // state; the cross-check against the sessions table is the load-
@@ -571,7 +594,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// bearer" through the legacy 401 path.
 			} else {
 				if !acct.Active() {
-					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
@@ -680,7 +703,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					return
 				}
 				if !acct.Active() {
-					if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 							"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 						return
@@ -719,7 +742,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						return
 					}
 					if !acct.Active() {
-						if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+						if !inactiveCallerMayReach(r, acct) {
 							api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 								"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 							return
@@ -758,7 +781,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		//     live row, stamp principal.
 		if m.Sessions != nil && m.Lookups != nil {
 			if c, err := m.sessionCookie(r); err == nil && c.Value != "" {
-				env, err := m.Sessions.Verify(c.Value)
+				env, unavailable, err := m.verifySession(r.Context(), c.Value)
+				if unavailable {
+					m.credentialStoreUnavailable(w, r, err)
+					return
+				}
 				if err == nil {
 					sess, handled, cookieErr := m.RequireSessionCookie(w, r, env)
 					if cookieErr != nil {
@@ -789,7 +816,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
 						if !acct.Active() {
-							if !InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+							if !inactiveCallerMayReach(r, acct) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 									"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
 								return
@@ -1169,6 +1196,46 @@ func InactiveAccountMayReach(acct state.Account, method, path string) bool {
 		return isBillingRecoveryRoute(method, path)
 	}
 	return false
+}
+
+// inactiveCallerMayReach is InactiveAccountMayReach for the authenticated
+// caller. A caller whose personal account is suspended for billing alone (a
+// Free quota stop or dunning; not an abuse hold or a pending deletion) also
+// reaches the routes that address an application, because appaccess decides
+// those by the application's owner: the caller's own personal apps still
+// answer 402 there, and a company's apps follow the company's status. A
+// member's personal Free stop or failed card no longer locks them, and the
+// organization keys they created, out of a company in good standing
+// (bug hunt H87).
+func inactiveCallerMayReach(r *http.Request, acct state.Account) bool {
+	if InactiveAccountMayReach(acct, r.Method, r.URL.Path) {
+		return true
+	}
+	return acct.Status == state.AccountSuspended && !acct.AbuseHeld() && appAddressedPattern(r.Pattern)
+}
+
+// appAddressedPattern reports a route pattern whose application appaccess
+// resolves and authorizes before the handler runs (appaccess.Wrap): an app
+// by slug, a company app under its organization, or a deployment or build
+// by ID.
+func appAddressedPattern(pattern string) bool {
+	_, path, ok := strings.Cut(pattern, " ")
+	if !ok {
+		path = pattern
+	}
+	for _, prefix := range []string{"/v1/apps/{slug}", "/v1/orgs/{organization}/apps/{slug}", "/v1/deployments/{id}", "/v1/builds/{id}"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// SuspendedProblem is the 402 a billing-suspended account gets on a route it
+// may not reach.
+func SuspendedProblem() *api.Problem {
+	return api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
+		"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL)
 }
 
 func isBillingRecoveryRoute(method, path string) bool {
@@ -1623,9 +1690,12 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	// A deploy follows the deployment it created; the route
 	// is bound by the deployment's app, not a path slug.
 	deploymentRead := deployTokenDeploymentReads[r.Pattern]
-	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead {
+	// CI waits for its app's PR previews; the route is bound by the
+	// preview's production app (ADR-20261102203228).
+	previewStatusRead := appBoundPreviewStatusReads[r.Pattern]
+	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead && !previewStatusRead {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments"))
+			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments and preview status"))
 		return true
 	}
 	var bound bool
@@ -1633,6 +1703,8 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	switch {
 	case uploadRoute:
 		bound = key.AppID != ""
+	case previewStatusRead:
+		bound, bindErr = m.credentialBoundToPreview(r, key)
 	case deploymentRead:
 		bound, bindErr = m.deployTokenBoundToDeployment(r, key)
 	default:
@@ -1654,6 +1726,37 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 		return true
 	}
 	return false
+}
+
+// appBoundPreviewStatusReads are the PR preview status reads an app-bound
+// credential may make for its own app's previews.
+var appBoundPreviewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// credentialBoundToPreview reports whether the {slug} of a preview status read
+// names a preview of the app the credential is bound to.
+func (m *Middleware) credentialBoundToPreview(r *http.Request, key state.APIKey) (bool, error) {
+	slug := r.PathValue("slug")
+	if slug == "" || key.AppID == "" {
+		return false, nil
+	}
+	preview, err := m.Authn.AppBySlug(r.Context(), slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil || preview.PreviewOfSlug == "" {
+		return false, err
+	}
+	parent, err := m.Authn.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return parent.ID == key.AppID && parent.AccountID == preview.AccountID, nil
 }
 
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {
