@@ -54,6 +54,12 @@ func (s *Service) writeObjectBucketNotifications(w http.ResponseWriter, r *http.
 			BucketProblem(w, ErrObjectStorageDisabled)
 			return
 		}
+		// Notifications run app code, which Free does not include (the
+		// object-storage-compute capability is paid-only).
+		if len(rules) > 0 && !acct.Plan.TriggersAllowed() {
+			api.WriteProblem(w, api.ErrPlanTriggersNotAllowed(acct.Plan))
+			return
+		}
 	}
 	out, err := st.SetObjectBucketNotifications(r.Context(), b.AccountID, b.AppID, b.ID, rules)
 	if errors.Is(err, state.ErrObjectNotificationInvalid) {

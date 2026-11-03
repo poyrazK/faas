@@ -16,6 +16,17 @@ or malformed header values, compare signatures in constant time, and enforce
 a five-minute timestamp tolerance by default. Each retry gets a fresh
 timestamp; the delivery ID remains stable across retries.
 
+## Rotate a secret without failing deliveries
+
+Rotating a webhook's secret (`gregale webhook rotate-secret`, the API's
+rotate endpoints) keeps the old secret for 24 hours. During that window each
+delivery carries the new secret's signature in `X-Faas-Webhook-Signature`
+and the old secret's in `X-Faas-Webhook-Signature-Previous`. The SDK
+verifiers accept a match in either header, so a receiver keeps verifying
+while you install the new secret, and only the new secret verifies after the
+window. A receiver that verifies by hand can check both headers the same way.
+Rotating again within the window keeps only the secret just replaced.
+
 ## Go
 
 Read and bound the raw body before verification:

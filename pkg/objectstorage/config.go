@@ -109,6 +109,9 @@ type Registry struct {
 	backends          map[string]Backend
 	defaults          map[string]string
 	pools             map[string][]string
+	// production is FAAS_ENVIRONMENT=production, where a policy that sells a
+	// plan less than it promises closes provisioning (PlanShortfalls).
+	production bool
 }
 
 type Factory func(BackendConfig, func(string) string) (Provider, error)
@@ -321,6 +324,9 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	if _, ok := r.defaults[r.DefaultRegion]; !ok {
 		return nil, errors.New("object storage: default_region is not configured")
 	}
+	// Read only once the configuration is valid: a rejected one reads nothing
+	// from the environment.
+	r.production = productionEnvironment(getenv)
 	return r, nil
 }
 
@@ -424,7 +430,7 @@ func (r *Registry) Default(region string) (Backend, error) {
 // provider report or inventory is fresh; admission checks that separately.
 // Existing buckets must remain accessible for cleanup when this is false.
 func (r *Registry) CanProvision(region string) bool {
-	if r == nil || !r.Accounting.Valid() {
+	if r == nil || !r.Accounting.Valid() || r.production && len(r.PlanShortfalls()) > 0 {
 		return false
 	}
 	backends, err := r.Placements(region)
@@ -437,6 +443,39 @@ func (r *Registry) CanProvision(region string) bool {
 		}
 	}
 	return true
+}
+
+// PlanShortfalls names, as stable codes, the safety-policy limits below what
+// a plan sells (ADR-20261101214152): the largest plan's storage ceiling, in
+// one bucket or across an account, its monthly egress, and the million
+// objects every plan gets. apid enforces the tighter of the policy and the
+// plan (api.ObjectStoragePlanLimits.Policy), so production-us's 16 MiB pilot
+// policy held every plan, Scale's 1,000 GiB included, to 16 MiB. In
+// production a shortfall closes provisioning; elsewhere apid logs it.
+func (r *Registry) PlanShortfalls() []string {
+	if r == nil {
+		return nil
+	}
+	most := api.ObjectStoragePlanLimitsMax()
+	var codes []string
+	for _, c := range []struct {
+		code       string
+		have, want int64
+	}{
+		{"max_account_bytes_below_plan", r.Accounting.MaxAccountBytes, most.MaxAccountBytes},
+		{"max_bucket_bytes_below_plan", r.Accounting.MaxBucketBytes, most.MaxAccountBytes},
+		{"max_monthly_egress_bytes_below_plan", r.Accounting.MaxMonthlyEgressBytes, most.MaxMonthlyEgressBytes},
+		{"max_account_keys_below_plan", r.Accounting.MaxAccountKeys, api.MaxObjectStorageAccountKeys},
+	} {
+		if c.have < c.want {
+			codes = append(codes, c.code)
+		}
+	}
+	return codes
+}
+
+func productionEnvironment(getenv func(string) string) bool {
+	return getenv != nil && strings.EqualFold(strings.TrimSpace(getenv("FAAS_ENVIRONMENT")), "production")
 }
 
 // CanProvisionAllRegions is the conservative customer-facing availability

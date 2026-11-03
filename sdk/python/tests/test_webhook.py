@@ -11,6 +11,7 @@ import pytest
 from faas_sdk import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
     WEBHOOK_DELIVERY_ID_HEADER,
+    WEBHOOK_PREVIOUS_SIGNATURE_HEADER,
     WEBHOOK_SIGNATURE_HEADER,
     WEBHOOK_TIMESTAMP_HEADER,
     WebhookVerificationError,
@@ -158,3 +159,18 @@ def test_tracker_sync_notification_event_filters_round_trip() -> None:
         {"target_url": "https://example.com/sync", "webhook_secret": "secret", "event_filter": events}
     )
     assert subscription.to_dict()["event_filter"] == events
+
+
+def test_verify_webhook_accepts_the_previous_secret_during_rotation() -> None:
+    rotated = "whsec_rotated_456"
+    canonical = f"{TIMESTAMP}.{DELIVERY_ID}.".encode() + BODY
+    current = "sha256=" + hmac.new(rotated.encode(), canonical, hashlib.sha256).hexdigest()
+    headers = _headers(**{WEBHOOK_SIGNATURE_HEADER: current, WEBHOOK_PREVIOUS_SIGNATURE_HEADER: SIGNATURE})
+
+    assert verify_webhook(rotated, headers, BODY, now=NOW).delivery_id == DELIVERY_ID
+    assert verify_webhook(SECRET, headers, BODY, now=NOW).delivery_id == DELIVERY_ID
+    with pytest.raises(WebhookVerificationError) as raised:
+        verify_webhook("other", headers, BODY, now=NOW)
+    assert raised.value.code == "bad_signature"
+    malformed = _headers(**{WEBHOOK_SIGNATURE_HEADER: current, WEBHOOK_PREVIOUS_SIGNATURE_HEADER: "garbage"})
+    assert verify_webhook(rotated, malformed, BODY, now=NOW).delivery_id == DELIVERY_ID

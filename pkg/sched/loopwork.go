@@ -81,6 +81,19 @@ const (
 	// workInvocationsRetention is the minute's invocation retention pass. It
 	// repeats full batches, so it runs off the loop (ADR-20261029012000).
 	workInvocationsRetention workKind = "invocations_retention"
+	// workTargets, workFloor and workPrewarm are the one-second scaling
+	// triggers. Their admissions wait on vmmd's restore or boot, which held
+	// the loop (the stats tick, cron, the other triggers) for that long
+	// (ADR 20261103131546). Scale-up already ran off the loop.
+	workTargets workKind = "targets"
+	workFloor   workKind = "floor"
+	workPrewarm workKind = "prewarm"
+	// workRetention is the hourly instance, dead-letter and cron-history
+	// retention; workWorkflowRetention and workTriggersRetention are their
+	// siblings (ADR 20261103131546).
+	workRetention         workKind = "retention"
+	workWorkflowRetention workKind = "workflow_retention"
+	workTriggersRetention workKind = "triggers_retention"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -90,6 +103,7 @@ var workKinds = []workKind{
 	workWorkflowDispatch, workWorkflowSchedules, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
 	workAppWake, workRuntimeConfigRestart, workWatchdog, workInvocationsRetention,
+	workTargets, workFloor, workPrewarm, workRetention, workWorkflowRetention, workTriggersRetention,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -183,6 +197,18 @@ var workSpecs = map[workKind]workSpec{
 	// One retention pass at a time; a tick while one runs coalesces, and
 	// the next minute's tick carries on where it stopped.
 	workInvocationsRetention: {slots: 1, overflow: overflowDrop},
+	// One tick of each scaling trigger at a time; a tick while one runs
+	// coalesces, and the next second's tick reads the ledger again. Their
+	// admissions go through the engine's per-app locks and caps, as
+	// scale-up's off-loop ticks already do.
+	workTargets: {slots: 1, overflow: overflowDrop},
+	workFloor:   {slots: 1, overflow: overflowDrop},
+	workPrewarm: {slots: 1, overflow: overflowDrop},
+	// One pass of each retention at a time; a tick while one runs
+	// coalesces, and the next pass carries on where it stopped.
+	workRetention:         {slots: 1, overflow: overflowDrop},
+	workWorkflowRetention: {slots: 1, overflow: overflowDrop},
+	workTriggersRetention: {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

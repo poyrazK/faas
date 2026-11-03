@@ -520,6 +520,11 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		} else if len(active) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
 		}
+		// ADR-20261019071733 amendment 9: a push does not release into a
+		// protected environment other than production.
+		if p := protectedEnvironmentReleaseProblem(ctx, g.store, app, req.DeploymentScope); p != nil {
+			return nil, status.Error(codes.FailedPrecondition, p.Detail)
+		}
 		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, resource.Plan, req.DeploymentScope, &params)
 		// ADR-20261020085706: a push to an app that requires approvals must
 		// wait in a canary; githubd reports the refusal on the commit.
