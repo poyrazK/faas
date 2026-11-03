@@ -549,6 +549,9 @@ func (s *server) updateProjectEnvironment(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, r.PathValue("environment")))
+		} else if errors.Is(err, state.ErrProjectEnvironmentCloneUnfinished) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Environment clone unfinished",
+				"the environment is still being cloned; protect it once its clone is ready"))
 		} else {
 			api.WriteProblem(w, api.ErrCapacity("could not update project environment"))
 		}

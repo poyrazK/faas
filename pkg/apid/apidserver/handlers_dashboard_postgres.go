@@ -33,6 +33,7 @@ func (s *server) renderManagedPostgres(w http.ResponseWriter, r *http.Request, l
 			data.Error = "Managed PostgreSQL status is temporarily unavailable."
 		} else {
 			data.Databases = projectManagedPostgresDashboard(databases)
+			attachDashboardDatabasePlanExcess(data.Databases, s.managedPostgresPlanExcess(databases, acct.Plan))
 			attachDashboardDatabaseLabels(data.Databases, s.dashboardResourceLabels(r, acct, state.LabelKindDatabase, dashboardDatabaseIDs(data.Databases)))
 			s.attachManagedPostgresBindings(r, log, acct.ID, &data)
 		}
@@ -70,6 +71,14 @@ func projectManagedPostgresDashboard(databases []managedpostgres.Database) []das
 		items = append(items, item)
 	}
 	return items
+}
+
+// attachDashboardDatabasePlanExcess marks the databases the plan no longer
+// includes (ADR-20261102125208).
+func attachDashboardDatabasePlanExcess(items []dashboard.ManagedPostgresDatabaseItem, excess map[string]string) {
+	for i := range items {
+		items[i].PlanExcess = excess[items[i].ID]
+	}
 }
 
 func formatManagedPostgresStorage(bytes int64) string {

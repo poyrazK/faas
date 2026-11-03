@@ -205,7 +205,7 @@ func (s *server) approveEnvironmentGitRevision(w http.ResponseWriter, r *http.Re
 		writeEnvironmentGitOpsError(w, state.ErrConflict)
 		return
 	}
-	current, revision, err := s.store.(state.EnvironmentGitOpsStore).ApproveEnvironmentDesiredRevision(r.Context(), state.ApproveEnvironmentRevision{AccountID: acct.ID, SourceID: source.ID, ExpectedGeneration: request.ExpectedGeneration, CommitSHA: request.CommitSHA, Desired: desired, ApprovedBy: acct.ID})
+	current, revision, err := s.store.(state.EnvironmentGitOpsStore).ApproveEnvironmentDesiredRevision(r.Context(), state.ApproveEnvironmentRevision{AccountID: acct.ID, SourceID: source.ID, ExpectedGeneration: request.ExpectedGeneration, CommitSHA: request.CommitSHA, Desired: desired, ApprovedBy: gitRevisionApprover(r, acct)})
 	if err != nil {
 		writeEnvironmentGitOpsError(w, err)
 		return

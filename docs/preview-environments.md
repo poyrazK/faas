@@ -411,6 +411,7 @@ A preview gets the rest of its configuration from two places
   previews. `pr-preview` cannot be the name of a project environment.
 
 Previews keep their production app's access and egress gates: password,
+API key (`require_authn` and bearer public auth),
 IP allowlist, signed-request, consumer-auth and platform-tenant requirements,
 the egress allowlist, the security posture policy for deploys, the app's
 visibility, and its declared-route contract: when
@@ -475,5 +476,6 @@ preview-to-preview and preview-to-production counters.
 ## Builds, lifetime and indexing
 
 - **Builds.** A pull request's preview builds use at most half of the account's hourly deploy limit, so production deploys keep the other half. Builders take every other queued build before a preview build.
-- **Lifetime.** Deleting a production app tears down its PR previews on the preview janitor's next pass, within five minutes.
+- **Lifetime.** Deleting a production app tears down its PR previews on the preview janitor's next pass, within five minutes. So does uninstalling the GitHub App or removing the repository from it, for every service of the repository's PR environments ([ADR-20261102100001](adr/20261102100001-previews-withhold-gate-credentials.md)). The project is then disconnected from the installation; reconnecting one of its apps to the same repository reconnects the project.
+- **Credentials.** A preview runs the pull request's code, so the credential a password or API-key gate verifies does not reach it: the gateway removes the `Authorization` header before the request reaches a preview. Production apps still receive it.
 - **Indexing.** Previews answer every request with `X-Robots-Tag: noindex, nofollow` and serve a `robots.txt` that disallows everything.

@@ -6,10 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 var (
@@ -183,11 +184,11 @@ func normalizeCloneBindingDefinitions(appID, scope string, values projectCloneWo
 }
 
 var (
-	cloneBindingNameRE           = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	cloneBindingPublicPathRE     = regexp.MustCompile(`^/[A-Za-z0-9][A-Za-z0-9._~/-]*$`)
-	cloneBindingFingerprintRE    = regexp.MustCompile(`^[a-f0-9]{64}$`)
-	cloneBindingPrefixRE         = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,47}$`)
-	cloneBindingEnvironmentKeyRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,126}$`)
+	cloneBindingNameRE           = lazyregexp.New(`^[a-z][a-z0-9-]{0,62}$`)
+	cloneBindingPublicPathRE     = lazyregexp.New(`^/[A-Za-z0-9][A-Za-z0-9._~/-]*$`)
+	cloneBindingFingerprintRE    = lazyregexp.New(`^[a-f0-9]{64}$`)
+	cloneBindingPrefixRE         = lazyregexp.New(`^[A-Z][A-Z0-9_]{0,47}$`)
+	cloneBindingEnvironmentKeyRE = lazyregexp.New(`^[A-Z_][A-Z0-9_]{0,126}$`)
 )
 
 func validClonePostgresBinding(b ProjectEnvironmentClonePostgresBinding) bool {

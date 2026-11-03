@@ -185,7 +185,8 @@ For teams that want explicit-CI deploys (workflow run, not push
 listener), the first-party `poyrazK/faas/.github/actions/deploy`
 action wraps this same endpoint. The action is a composite that
 vendors the `gregale` CLI per release. The public-beta `@v0` moving tag
-resolves to that release bundle, and the `cli-version` output surfaces the
+resolves to the newest stable release bundle (prereleases do not move it),
+and the `cli-version` output surfaces the
 exact version for drift detection. CLI-generated workflows use an immutable
 40-character Action SHA by default; direct Action users can pin the resolved
 SHA when their workflow must be immutable.

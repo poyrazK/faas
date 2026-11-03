@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Compute caps on running databases (ADR-20261025094915). After each usage
@@ -162,6 +164,15 @@ type CapLimits struct {
 	Ceiling     int64
 	Overage     bool
 	StoragePool int64
+
+	// StorageAllowance is the plan's pool in bytes, before overage doubles
+	// it: storage past it is charged (ADR-20261031110037 amendment 2).
+	StorageAllowance int64
+
+	// Entitlement is the subject's plan: databases it no longer includes
+	// are suspended (ADR-20261102125208). A zero database limit means the
+	// plan is unknown, and nothing is suspended for it.
+	Entitlement api.ManagedPostgresPlanLimits
 }
 
 // CapCeiling returns a usage subject's limits: an account, or an
@@ -243,6 +254,15 @@ type CapEnforcerOptions struct {
 	// subject's quotas are written, and again on later sweeps until the
 	// threshold is mailed or a day has passed. Nil sends no email.
 	Notify func(ctx context.Context, event CapEvent) error
+	// PlanExcessMode suspends databases past the subject's plan
+	// (ADR-20261102125208): off (the zero value), shadow or on. On writes
+	// only while Mode is on too.
+	PlanExcessMode CapEnforcementMode
+	// NotifyPlanExcess queues the email for a database the sweep suspended
+	// past its plan (ADR-20261102125208 step 3). It is retried each sweep
+	// until it links an email to the notice or the notice is a day old, so
+	// it must mail a notice at most once. Nil sends no email.
+	NotifyPlanExcess func(ctx context.Context, notice PlanExcessNotice) error
 }
 
 // CapSweepSummary counts one enforcement sweep. Scopes are provider quota
@@ -272,6 +292,17 @@ type CapSweepSummary struct {
 	StorageScopesUnchanged int
 	StorageScopesShadowed  int
 	StorageScopesApplied   int
+
+	// Databases past their subject's plan (ADR-20261102125208). Shared
+	// counts scopes left running because a database inside the plan shares
+	// them.
+	PlanExcessMode            CapEnforcementMode
+	PlanExcessDatabases       int
+	PlanExcessScopesSuspended int
+	PlanExcessScopesShadowed  int
+	PlanExcessScopesShared    int
+	PlanExcessNoticed         int
+	PlanExcessNotifyFailed    int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
@@ -286,6 +317,8 @@ type CapEnforcer struct {
 	observe     func(CapSweepSummary)
 	notify      func(context.Context, CapEvent) error
 	batchSize   int
+	planExcess  CapEnforcementMode
+	planNotify  func(context.Context, PlanExcessNotice) error
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -322,6 +355,13 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	default:
 		return nil, ErrInvalid
 	}
+	switch options.PlanExcessMode {
+	case "":
+		options.PlanExcessMode = CapEnforcementOff
+	case CapEnforcementOff, CapEnforcementShadow, CapEnforcementOn:
+	default:
+		return nil, ErrInvalid
+	}
 	if options.BatchSize == 0 {
 		options.BatchSize = defaultUsageBatchSize
 	}
@@ -337,7 +377,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	return &CapEnforcer{
 		registry: registry, store: store, mode: options.Mode, storageMode: options.StorageMode, ceiling: options.Ceiling,
 		now: options.Now, logger: options.Logger, observe: options.Observe, notify: options.Notify,
-		batchSize: options.BatchSize,
+		batchSize: options.BatchSize, planExcess: options.PlanExcessMode, planNotify: options.NotifyPlanExcess,
 	}, nil
 }
 
@@ -345,7 +385,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 // the returned error joins them.
 func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err error) {
 	ctx = WithBackgroundRequests(ctx)
-	summary.Mode, summary.StorageMode = e.mode, e.storageMode
+	summary.Mode, summary.StorageMode, summary.PlanExcessMode = e.mode, e.storageMode, e.planExcess
 	defer func() {
 		summary.CompletedAt = e.now().UTC()
 		if e.observe != nil {
@@ -391,6 +431,7 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 			}
 		}
 	}
+	e.mailPlanExcessNotices(ctx, &summary)
 	return summary, errors.Join(failures...)
 }
 
@@ -479,6 +520,7 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	if plan.suspended() {
 		summary.SuspendedAccounts++
 	}
+	suspended := e.suspendPlanExcess(accountID, databases, limits, &plan, summary)
 	var failures []error
 	if e.mode == CapEnforcementOn {
 		if err := e.recordCapEvents(ctx, accountID, now, plan.used, limits, plan.ceiling, summary); err != nil {
@@ -508,6 +550,9 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	}
 	if e.mode == CapEnforcementOn && len(failures) == 0 {
 		e.notifyCapEvent(ctx, accountID, now, summary)
+	}
+	if e.planExcessEnforced() && len(failures) == 0 {
+		e.recordPlanExcessNotices(ctx, databases, suspended, now, summary)
 	}
 	return errors.Join(failures...)
 }

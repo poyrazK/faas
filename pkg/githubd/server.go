@@ -635,13 +635,20 @@ func (s *Server) writeWebhookResult(w http.ResponseWriter, result reconcile.Resu
 			return
 		}
 		if IsIgnored(err) {
-			// Feature-branch push — the production-branch guard
-			// tripped. Same 200-ignored shape as no_binding, but
-			// with reason=feature_branch so dashboards can group
-			// these together.
+			// The push deploys nothing. Same 200-ignored shape as
+			// no_binding; a typed skip names its reason, and the bare
+			// sentinel keeps reason=feature_branch so dashboards can
+			// group those together.
+			reason := SkipReason(err)
+			if reason == SkipReasonIgnored {
+				reason = "feature_branch"
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"status":"ignored","reason":"feature_branch"}`))
+			_, _ = w.Write(safetext.JSONObject(struct {
+				Status string `json:"status"`
+				Reason string `json:"reason"`
+			}{Status: "ignored", Reason: reason}))
 			observe(nil)
 			return
 		}

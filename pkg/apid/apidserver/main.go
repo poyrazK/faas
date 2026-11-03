@@ -1709,7 +1709,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
 		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired,
-			NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot}, ops.Registry())
+			NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot, NotifyPlanExcess: srv.noticeManagedPostgresPlanExcess}, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
@@ -1933,10 +1933,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return api.DeploymentResponseCheckTimeout
 			}
 			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || reqbudget.IsAccountExportRequest(r) ||
+				reqbudget.IsAppLifecycleRequest(r) ||
 				managedrealtime.IsRealtimeGroupClaimRequest(r) || reqbudget.IsLongWaitRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait, a deploy
 				// commit scans its source archive (H9-157), an account
-				// export assembles the whole account (H14-120), realtime
+				// export assembles the whole account (H14-120), app delete
+				// and restore wait for the account's traffic lock behind
+				// deploys (H31-13), realtime
 				// group claims and queue leases long-poll, and the other
 				// long-wait routes scale with the source (B35); all get the
 				// platform ceiling instead of the 5 s default.
@@ -2222,9 +2225,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//      requiring operator action. The file path is gated on
 	//      FAAS_AUDIT_HMAC_KEY_FILE for tests / non-standard
 	//      deployments.
-	//   3. nil (zero-key fallback) — only if both above paths fail.
-	//      pkg/auth logs a Warn; HashEmail still produces a stable
-	//      join key, just without rainbow-table resistance.
+	//   3. FAIL — boot refuses, as for the recovery-code key below. A
+	//      zero key would make every audit email hash reversible.
 	auditHMACKey, err := loadOrGenerateAuditHMACKey(deps.getenv, log)
 	if err != nil {
 		return fmt.Errorf("apid: load or generate audit HMAC key: %w", err)
@@ -2235,15 +2237,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// threat on a leaked PG blob (logical change 7 of the IAM-hardening
 	// mega-PR, ADR-035 §"Rejected alternatives" #4). The recovery-code
 	// hash column is bytea; the digest algorithm is HMAC-SHA256 keyed
-	// by a per-box secret. The audit-hmac.key path above uses a
-	// Warn-and-continue zero-key fallback because HashEmail joins
-	// can degrade gracefully to "this row's join key is rainbow-
-	// reversible" — there is no service-level outage. The recovery-
-	// code path is different: the recovery code IS the only fallback
-	// when the customer's TOTP device is lost. A zero-key HMAC gives
-	// exactly the same threat surface as bare SHA-256, so refusing
-	// to start is the correct tradeoff — "no service" beats "no
-	// defence" for the recovery fall-back path.
+	// by a per-box secret. Like the audit-hmac.key path above, it
+	// refuses to start without a key: the recovery code IS the only
+	// fallback when the customer's TOTP device is lost, and a zero-key
+	// HMAC gives exactly the same threat surface as bare SHA-256 —
+	// "no service" beats "no defence".
 	//
 	// Loading precedence (mirrors the audit-HMAC loader, with one
 	// difference: there is no precedence 3 zero-key fallback):
@@ -2255,10 +2253,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//      recovery-code store — every customer would have to re-enroll).
 	//      The path is gated on FAAS_RECOVERY_HMAC_KEY_FILE for tests
 	//      and non-standard state dirs.
-	//   3. FAIL — boot refuses. The audit-hmac.key loader returns nil
-	//      when no key is configured; this loader returns an error
-	//      instead. The error propagates as a top-level run() error and
-	//      systemd brings apid back into the failed-state pattern.
+	//   3. FAIL — boot refuses, as the audit-hmac.key loader does. The
+	//      error propagates as a top-level run() error and systemd
+	//      brings apid back into the failed-state pattern.
 	recoveryHMACKey, err := loadOrGenerateRecoveryHMACKey(deps.getenv, log)
 	if err != nil {
 		return fmt.Errorf("apid: load or generate recovery HMAC key: %w", err)
@@ -2656,9 +2653,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// node hold a lookup stream on whichever listener carries their request
 	// telemetry; one hub serves both and the debug request lookup.
 	srv.requestIDLookups = receivers.NewRequestIDLookupHub(log)
+	// One access change feed serves realtime nodes on every listener
+	// (ADR-1113, amendment of 2026-11-02).
+	realtimeAccessFeed := receivers.StartRealtimeAccessFeed(ctx, srv.store, log)
 	{
 		rtTarget := envOrFrom(deps.getenv, "FAAS_APID_REQUEST_TELEMETRY_SOCKET", "/run/faas/request_telemetry.sock")
-		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, spans, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		rtSrv, rtLis, err := runRequestTelemetryServer(ctx, rtTarget, srv.store, srv.ops, log, sharedLimiter, spans, deps.getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest, srv.realtime.RegisterRealtimePush, realtimeAccessFeed, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: request telemetry server: %w", err)
@@ -2684,7 +2684,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, spans, log, true, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, spans, log, true, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, realtimeAccessFeed, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2749,7 +2749,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
 		}
 		var listenErr error
-		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, spans, log, false, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, spans, log, false, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, realtimeAccessFeed, srv.realtime.Owner)
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
@@ -2968,12 +2968,10 @@ const auditHMACKeyEnvVar = "FAAS_AUDIT_HMAC_KEY"
 const auditHMACKeyFileEnvVar = "FAAS_AUDIT_HMAC_KEY_FILE"
 
 // loadOrGenerateAuditHMACKey returns the per-daemon audit HMAC key
-// per the precedence documented at the call site. Returns nil with
-// no error if neither the env var nor the fallback file path yields
-// a key — pkg/auth.SetHMACSecret accepts nil and logs a Warn, so the
-// daemon still boots (in dev mode) with the zero-key fallback.
+// per the precedence documented at the call site. It never returns a
+// nil key without an error: apid does not boot on a zero key.
 //
-// Errors are returned only when:
+// Errors are returned when:
 //   - FAAS_AUDIT_HMAC_KEY is set but is not valid hex / wrong length.
 //     A malformed key is a hard error: silently using a partial key
 //     would let the operator think they have rainbow-table
@@ -3019,15 +3017,15 @@ func loadOrGenerateAuditHMACKey(getenv func(string) string, log *slog.Logger) ([
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	// Precedence 3: generate + persist (dev-mode first boot). Skip
-	// silently if /var/lib/faas doesn't exist (typical for tests
-	// running as non-root) — the zero-key fallback in pkg/auth
-	// will catch it.
+	// Precedence 3: generate + persist (dev-mode first boot). Like the
+	// recovery-HMAC loader, apid refuses to start without a key it can
+	// keep: a zero key makes every audit email hash reversible by
+	// guessing emails, and an in-process key would change the join key
+	// on the next restart.
 	dir := filepath.Dir(path)
 	if _, statErr := os.Stat(dir); statErr != nil {
-		log.Warn("audit HMAC key file dir unavailable; running on zero-key fallback (HashEmail is rainbow-table-reversible)",
-			"path", path, "err", statErr)
-		return nil, nil
+		return nil, fmt.Errorf("stat %s (refusing to start without an audit HMAC key; set %s, %s, or symlink %s into a writable dir): %w",
+			dir, auditHMACKeyEnvVar, auditHMACKeyFileEnvVar, auditHMACKeyFile, statErr)
 	}
 	key, err := auth.GenerateHMACSecret()
 	if err != nil {
@@ -3035,9 +3033,8 @@ func loadOrGenerateAuditHMACKey(getenv func(string) string, log *slog.Logger) ([
 	}
 	encoded := hex.EncodeToString(key)
 	if err := os.WriteFile(path, []byte(encoded+"\n"), 0o600); err != nil {
-		log.Warn("audit HMAC key auto-persist failed; running on in-process key (HashEmail joins break on restart)",
-			"path", path, "err", err)
-		return key, nil
+		return nil, fmt.Errorf("persist %s (refusing to start with an in-process-only key — the next restart would change every audit email hash): %w",
+			path, err)
 	}
 	log.Info("audit HMAC key generated and persisted", "path", path)
 	return key, nil
@@ -3124,10 +3121,8 @@ func loadOrGenerateRecoveryHMACKey(getenv func(string) string, log *slog.Logger)
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	// Precedence 3: generate + persist (dev-mode first boot). The
-	// audit-HMAC loader tolerates /var/lib/faas being missing
-	// (test runs as non-root); the recovery-HMAC loader does NOT
-	// — refusing to start is the correct strict-mode behaviour.
+	// Precedence 3: generate + persist (dev-mode first boot). Like the
+	// audit-HMAC loader, refuse to start when /var/lib/faas is missing.
 	dir := filepath.Dir(path)
 	if _, statErr := os.Stat(dir); statErr != nil {
 		return nil, fmt.Errorf("stat %s (refusing to start without a recovery HMAC key; set %s, %s, or symlink %s into a writable dir): %w",
@@ -3318,7 +3313,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, spans spansIngest, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -3347,9 +3342,9 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 		receivers.RegisterAuthReceiver(srv, store, spans.tracing)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
-			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
+			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
 		} else {
-			receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush)
+			receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush, accessFeed)
 		}
 	}
 	// Split-box deployments reuse the same private mTLS listener for both
@@ -3381,7 +3376,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 // here are non-fatal: the caller logs and continues without the
 // request_telemetry gRPC server (the apid HTTP listener still
 // serves).
-func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runRequestTelemetryServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, spans spansIngest, enabled bool, ingest receivers.IngestGate, registerPush receivers.PushRegistrar, accessFeed *receivers.RealtimeAccessFeed, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
@@ -3394,9 +3389,9 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 	receivers.RegisterRealtimeHistoryReceiver(srv, store)
 	receivers.RegisterAuthReceiver(srv, store, spans.tracing)
 	if len(fleetRouter) > 0 {
-		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)
+		receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush, accessFeed)
 	} else {
-		receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush)
+		receivers.RegisterRealtimeFleetReceiver(srv, store, nil, registerPush, accessFeed)
 	}
 	return srv, lis, nil
 }

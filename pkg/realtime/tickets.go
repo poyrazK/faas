@@ -2,6 +2,8 @@ package realtime
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -26,10 +28,15 @@ func (c *connection) ticketAllows(ctx context.Context, channel string) bool {
 		return false
 	}
 	if time.Since(c.ticketChecked) >= realtimeAccessRefreshInterval {
-		claims, err := c.m.readTicket(ctx, c.info.EndpointID, c.ticketToken)
+		claims, err := c.m.cachedTicket(ctx, c.info.EndpointID, c.ticketToken, false)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			c.ticketChecked = time.Time{}
+			_ = c.close(websocket.CloseTryAgainLater, "ticket check unavailable")
+			return false
+		}
 		if err != nil || claims.Principal != c.info.Principal {
 			c.ticketChecked = time.Time{}
-			_ = c.close(websocket.ClosePolicyViolation, "ticket expired, revoked or unavailable")
+			_ = c.close(websocket.ClosePolicyViolation, "ticket expired or revoked")
 			return false
 		}
 		c.ticketClaims = claims
@@ -94,4 +101,16 @@ func (m *Manager) startTicketSubscription(ctx context.Context, c *connection, fr
 	m.watchSubscriptionOccupancy(ctx, c, frame)
 	go m.pumpResumeSubscription(subCtx, c, frame.Channel, sub, page)
 	return true
+}
+
+// writeTicketRefusal answers a new connection whose ticket was not admitted:
+// an unknown, expired or malformed ticket is 401; a busy or unreachable
+// control plane is 503, so the client retries.
+func writeTicketRefusal(w http.ResponseWriter, err error) {
+	if errors.Is(err, state.ErrNotFound) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "ticket check unavailable", http.StatusServiceUnavailable)
 }

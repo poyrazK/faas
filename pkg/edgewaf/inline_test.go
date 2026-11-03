@@ -1,10 +1,13 @@
 package edgewaf
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -221,5 +224,40 @@ func TestCheckInlineMarksCookieOnlyDetections(t *testing.T) {
 				t.Fatalf("CookiesOnly = %v, want %v (rules %v)", res.CookiesOnly, tc.cookiesOnly, res.RuleIDs)
 			}
 		})
+	}
+}
+
+// adr: 831 — amendment 19: a check scores at most a bounded amount of header
+// bytes, so one client's large headers cannot hold a check slot for long.
+func TestBoundHeaders(t *testing.T) {
+	small := http.Header{"User-Agent": {"Mozilla/5.0"}, "Accept": {"*/*"}}
+	if got := boundHeaders(small); len(got) != 2 || got.Get("User-Agent") != "Mozilla/5.0" {
+		t.Fatalf("headers within the bounds changed: %v", got)
+	}
+	long := http.Header{"Cookie": {strings.Repeat("x", 3*api.EdgeWAFMaxInspectHeaderValueBytes)}, "User-Agent": {"sqlmap/1.7"}}
+	got := boundHeaders(long)
+	if n := len(got.Get("Cookie")); n != api.EdgeWAFMaxInspectHeaderValueBytes {
+		t.Fatalf("long value scored %d bytes, want %d", n, api.EdgeWAFMaxInspectHeaderValueBytes)
+	}
+	if got.Get("User-Agent") != "sqlmap/1.7" {
+		t.Fatal("a short header next to a long one was dropped")
+	}
+	many := http.Header{}
+	for i := range 64 {
+		many.Set(fmt.Sprintf("X-Pad-%02d", i), strings.Repeat("y", 1024))
+	}
+	total := 0
+	for name, values := range boundHeaders(many) {
+		for _, v := range values {
+			total += len(name) + len(v)
+		}
+	}
+	if total > api.EdgeWAFMaxInspectHeaderBytes || total < api.EdgeWAFMaxInspectHeaderBytes/2 {
+		t.Fatalf("scored %d header bytes, want close to but at most %d", total, api.EdgeWAFMaxInspectHeaderBytes)
+	}
+	// A cut value never ends inside a multi-byte character.
+	utf := http.Header{"X-Name": {strings.Repeat("é", api.EdgeWAFMaxInspectHeaderValueBytes)}}
+	if v := boundHeaders(utf).Get("X-Name"); !utf8.ValidString(v) {
+		t.Fatal("a cut value is not valid UTF-8")
 	}
 }

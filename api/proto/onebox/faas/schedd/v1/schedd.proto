@@ -1336,6 +1336,11 @@ message ReportMemoryPressureRequest {
   uint32 available_mb = 3;
   uint32 total_mb = 4;
   uint32 anon_mb = 5;
+  // profiling_active says whether a profile collector was active in the
+  // guest (ADR-20261102124306); schedd queues a heap capture only then. An
+  // older vmmd leaves it unset, which means true: its guests reported only
+  // while profiling.
+  optional bool profiling_active = 6;
 }
 
 message ReportMemoryPressureAck {

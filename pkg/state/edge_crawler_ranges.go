@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // EdgeCrawlerRanges is one crawler operator's published IP ranges as last
@@ -44,7 +44,7 @@ type EdgeCrawlerRangesStore interface {
 // ErrInvalidEdgeCrawlerRanges wraps a refused feed.
 var ErrInvalidEdgeCrawlerRanges = errors.New("state: invalid edge crawler ranges")
 
-var edgeCrawlerNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+var edgeCrawlerNameRE = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 // ValidateEdgeCrawlerRanges checks a feed before it is stored: a known
 // crawler name shape, an https source, 1 to EdgeCrawlerRangesMaxPrefixes

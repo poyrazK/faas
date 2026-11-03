@@ -214,6 +214,25 @@ func TestGitOpsActivationIntoProductionMeetsTheReleaseGuards(t *testing.T) {
 	if got := hold(lease("production", "manual")); got != "" {
 		t.Fatalf("a revision approved in Gregale stands in for the policy: %q", got)
 	}
+	// ADR-20261020085706 amendment 8: a key's approval of the revision does
+	// not stand in for the policy, nor does one approval where it asks for two.
+	keyApproved := lease("production", "manual")
+	keyApproved.Revision.ApprovedBy = state.EnvironmentRevisionKeyApproverPrefix + "ci-key"
+	if got := hold(keyApproved); !strings.Contains(got, "an API key approved the revision") {
+		t.Fatalf("a revision a CI key approved = %q, want an approvals hold", got)
+	}
+	setPolicy := func(required int) {
+		t.Helper()
+		if _, err := store.SetReleaseApprovalPolicy(t.Context(), state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+			RequiredApprovals: required, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setPolicy(2)
+	if got := hold(lease("production", "manual")); !strings.Contains(got, "requires 2 release approvals") {
+		t.Fatalf("a policy asking for two approvals = %q, want a hold naming them", got)
+	}
+	setPolicy(1)
 	now := time.Now().UTC()
 	if _, err := store.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
 		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now); err != nil {
