@@ -148,10 +148,36 @@ booting. Rules:
 - **Instance setup.** ADR-732's restore-into-new-instance placement and drive secret
   scrub (`pkg/fcvm/fork_scrub.go`) apply. Each restore also gets a fresh IP, network
   namespace, jail user and RNG reseed, as today.
-- **Ship gate (slice 5).** This path ships only once the parent environment's managed
-  binding credentials are refused from branch instances. A hook that acknowledges
-  without reloading must not be able to reach the parent's data with the parent's
-  credentials.
+- **Ship gate: a credential-free capture** (decided 2026-11-03). A hook that
+  acknowledges without reloading must not be able to reach the parent's data with the
+  parent's credentials. Refusing those credentials on the network is not possible today:
+  guests reach Neon endpoints directly, Neon endpoints share proxy addresses, guest egress
+  filters by IP only, and the S3 gateway cannot tell which instance calls. So a branch
+  never restores memory that held them:
+  - Branches restore only from a **credential-free capture** of the parent deployment.
+    It is an init-tier capture of a boot that receives placeholder values for every
+    managed binding secret (database URLs, bucket keys): syntactically valid, pointing
+    at a `.invalid` host, never a real credential. That boot also runs under a
+    non-production workload environment (`branch-capture`), so any identity token it
+    holds is refused by production-only integrations (#6044). Customer secrets keep
+    their values; a branch copies them anyway (section 6).
+  - The capture is a snapshot row of the parent deployment marked
+    `identity = credential_free`. **Production never restores it:** every non-branch
+    snapshot lookup and restore check excludes it, so a production wake cannot come up
+    with placeholder credentials. A branch restores from no other capture.
+  - **Made lazily** (decided 2026-11-03). The first branch wake of an opted-in app
+    cold-boots as on the default path and queues the credential-free capture of the
+    lineage parent. Later wakes, in any branch of that parent deployment, restore from
+    it. No capture is made for an app nobody branches, and a new parent deployment
+    starts without one.
+  - Opting in (`restore_identity: reload`) therefore also means the app does not need
+    working managed connections during init: it connects after the after-restore
+    reload, or lazily. An app whose init needs its database fails the capture boot's
+    readiness; the capture is then marked failed for that deployment and its branches
+    keep cold-booting.
+  - What this does not cover: a customer secret that itself holds a production
+    credential reaches the branch by value, on either path. That is section 6's rule for
+    every branch and stage.
 
 ### 4. PostgreSQL: Neon branches now, our own storage later
 
@@ -338,7 +364,7 @@ or `production` (refused for branches).
 | 2 | PostgreSQL branches: branch data reconciler (restore at T, bind into the branch, data-gated activation), orphaned-copy deletion. A separate database allowance is a follow-up. | The copy is restored at T and bound with new credentials. Workloads stay dark until it exists. The copy and its binding are gone after delete. |
 | 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and read-through copy are follow-ups. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
 | 4 | Network and identity scoping. Service calls, egress and identity come from #6034 and #6044, which key on the deployment scope. Built here: branches and private networks refuse each other per project. Branch instances without the parent's attachments are a follow-up. | A branch caller never reaches a production service or private network. |
-| 5 | Restore with a new identity (opt-in), after the credential gate in section 3. | Identity digest acknowledged. A wrong or missing digest cold-boots. Parent credentials are refused from the branch. |
+| 5 | Restore with a new identity (opt-in) from a lazily made credential-free capture of the parent deployment (section 3). Splits into 5a, the capture (placeholder managed secrets, `branch-capture` identity, `identity = credential_free` rows that production lookups exclude), and 5b, the restore (tmpfs identity file, digest acknowledgement, lineage checks). Both need `test-metal`. | No real parent credential in any memory a branch restores. Production never restores a credential-free capture. Identity digest acknowledged; a wrong or missing digest cold-boots. |
 | 6 | `contained` and `simulated` egress. | Rehearsal conformance against a branch. |
 
 ## Consequences
