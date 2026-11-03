@@ -19119,6 +19119,18 @@
     "kind": "operational"
   },
   {
+    "table": "workflow_event_archive",
+    "columns": [
+      "app_id",
+      "event_name",
+      "id",
+      "payload",
+      "received_at",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "workflow_event_code_refs",
     "columns": [
       "app_id",

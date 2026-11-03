@@ -71,7 +71,8 @@ func (l *Loop) workflowSchedulePolicyAllowed(ctx context.Context, appID, name st
 		checks[key] = workflowSchedulePolicyCheck{err: err, checked: time.Now()}
 		return false, err
 	}
-	allowed := !policy.Paused && !(policy.Policy.Enabled && policy.ObservedFailures >= int64(policy.Policy.FailureThreshold) && policy.ObservedCompletedRuns >= int64(policy.Policy.MinCompletedRuns))
+	thresholdReached := policy.Policy.Enabled && policy.ObservedFailures >= int64(policy.Policy.FailureThreshold) && policy.ObservedCompletedRuns >= int64(policy.Policy.MinCompletedRuns)
+	allowed := !policy.Paused && !thresholdReached
 	checks[key] = workflowSchedulePolicyCheck{allowed: allowed, checked: time.Now()}
 	return allowed, nil
 }

@@ -35321,7 +35321,11 @@ paths:
       summary: Deliver an external event to this tenant's waiting workflow run.
       description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404. A matching retained event may be retried after the run finishes; reusing its key with different content conflicts.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: Reuse the same key and event content to retry while the event is retained.
       requestBody:
         required: true
         content:
@@ -35842,7 +35846,11 @@ paths:
       summary: Deliver an external event to a waiting workflow run.
       description: A matching retained event may be retried after the run finishes. Reusing an event key with different content conflicts.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: Reuse the same key and event content to retry while the event is retained.
       requestBody:
         required: true
         content:
