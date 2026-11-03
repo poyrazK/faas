@@ -702,6 +702,29 @@ func TestRenderManifestAnsibleFiles_EdgeWithNoFront(t *testing.T) {
 			t.Errorf("%s rendered on the control plane:\n%s", line, controlVars)
 		}
 	}
+
+	// On GCP the forwarding rule's address is the entry address.
+	forwarded := strings.Replace(yaml, "      entry_ipv4: 198.51.100.2\n", "      public_ipv4_forwarded: true\n", 1)
+	m, err = manifest.Parse([]byte(forwarded))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err = renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var rendered strings.Builder
+	for _, file := range files {
+		rendered.Write(file.Body)
+	}
+	for _, want := range []string{"faas_public_entry_addrs: [\"203.0.113.2\"]\n", "faas_edgednsd_node_addresses: [\"fsn-2.faas=203.0.113.2\"]\n"} {
+		if !strings.Contains(rendered.String(), want) {
+			t.Errorf("forwarded public_ipv4 render missing %q:\n%s", want, rendered.String())
+		}
+	}
 }
 
 // ADR-1141 amendment 2026-10-24: workload_identity.source_dir reaches both

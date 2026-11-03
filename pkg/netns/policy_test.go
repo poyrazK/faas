@@ -1105,6 +1105,19 @@ func TestHostPolicyPublicEntryAddrsTakeOnly443(t *testing.T) {
 	}
 }
 
+// The vmmd drop-in sends Cloudflare's ranges beside the entry addresses, so a
+// vmmd that predates them stays Cloudflare-only; this one renders the entry
+// rules alone, as the nftables role does.
+func TestHostPolicyPublicEntryAddrsTakePrecedenceOverCloudflareSources(t *testing.T) {
+	entry := DefaultHostPolicy
+	entry.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
+	both := entry
+	both.PublicInputSourceCIDRs = []netip.Prefix{netip.MustParsePrefix("173.245.48.0/20")}
+	if got, want := both.Render(), entry.Render(); got != want {
+		t.Fatalf("with Cloudflare's sources beside the entry addresses the policy changed:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestHostPolicyPublicEntryAddrsRejectBadInput(t *testing.T) {
 	for name, mutate := range map[string]func(*HostPolicy){
 		"invalid address": func(p *HostPolicy) { p.PublicEntryAddrs = []netip.Addr{{}} },
@@ -1113,10 +1126,6 @@ func TestHostPolicyPublicEntryAddrsRejectBadInput(t *testing.T) {
 		},
 		"IPv4-mapped address": func(p *HostPolicy) {
 			p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("::ffff:203.0.113.10")}
-		},
-		"beside Cloudflare's sources": func(p *HostPolicy) {
-			p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
-			p.PublicInputSourceCIDRs = []netip.Prefix{netip.MustParsePrefix("173.245.48.0/20")}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
