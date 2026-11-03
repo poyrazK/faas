@@ -94,6 +94,12 @@ const (
 	workRetention         workKind = "retention"
 	workWorkflowRetention workKind = "workflow_retention"
 	workTriggersRetention workKind = "triggers_retention"
+	// workAppPark parks a whole app (an evicted app, a suspended or
+	// abuse-held account, a spend cap) and workAppDelete destroys a deleted
+	// app's VMs. Both snapshot or destroy every live instance, so they run
+	// off the loop and off the reaper (ADR 20261103164725).
+	workAppPark   workKind = "app_park"
+	workAppDelete workKind = "app_delete"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -104,6 +110,7 @@ var workKinds = []workKind{
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
 	workAppWake, workRuntimeConfigRestart, workWatchdog, workInvocationsRetention,
 	workTargets, workFloor, workPrewarm, workRetention, workWorkflowRetention, workTriggersRetention,
+	workAppPark, workAppDelete,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -209,6 +216,12 @@ var workSpecs = map[workKind]workSpec{
 	workRetention:         {slots: 1, overflow: overflowDrop},
 	workWorkflowRetention: {slots: 1, overflow: overflowDrop},
 	workTriggersRetention: {slots: 1, overflow: overflowDrop},
+	// Whole-app parks and deleted-app cleanups, one per app (the key) and
+	// four apps at once. A dropped park is retried by the next reaper tick; a
+	// dropped cleanup by the reaper's lifecycle reconciliation, which lists
+	// deleted apps' live instances every tick.
+	workAppPark:   {slots: 4, overflow: overflowDrop},
+	workAppDelete: {slots: 4, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.
