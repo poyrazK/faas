@@ -195,13 +195,18 @@ What Cloudflare absorbed now reaches the node. The layers:
     Every node takes every app host, so a flood on one app reaches every
     edge; this ceiling answers that app `429` and keeps its neighbours
     served.
-- **Unknown hosts never reach Postgres.** A gateway caches only routes it
-  found (`pkg/gateway/pgbackend.go`); concurrent requests share one lookup
-  only for the same name. So every request to a new random name under the
-  wildcard is a read on the control plane's Postgres, and only Cloudflare's
-  HTTP DDoS rules stood in front of that. Gateways keep the set of routed
-  names in memory, current through the route notifications they already
-  receive, and answer any other name `404` without a read.
+- **Unknown hosts do not cost a Postgres read per request.** A gateway
+  cached only routes it found (`pkg/gateway/pgbackend.go`); concurrent
+  requests shared one lookup only for the same name. So every request to a
+  new random name under the wildcard was a read on the control plane's
+  Postgres, and only Cloudflare's HTTP DDoS rules stood in front of that.
+  Each gateway now remembers the store's "no such route" for a short time
+  and answers it `404` from memory; every route invalidation forgets those
+  answers, so a new app is never hidden. A read of a host the gateway has
+  never seen route spends a per-gateway budget, and past it the request is
+  answered `503` with `Retry-After` instead of read; hosts seen routing
+  skip it (#6491). The compute edge's public-read check
+  (`pkg/objectstorage`) gets the same budget.
 - **Requests the edge forwards.** The compute edge sends object-storage
   uploads and public reads on to the control plane's private listener
   (`newControlPlaneForwarder` in `cmd/gatewayd-public/edge_mode.go`). The
@@ -267,7 +272,8 @@ move too. This is a later step with its own switch, off by default.
 1. **Edge:** optional client certificate, peer address as client, the
    server-name check, HTTP/2 with its limits, the per-address and
    per-hostname limits, the cap on forwarded requests and the minimum body
-   rate, all off by default. Gateways answer unknown hosts from memory.
+   rate, all off by default. Gateways remember misses and budget reads of
+   unseen hosts (#6491, on by default).
 2. **Certificates:** issuance in `edgednsd` with an ECDSA key, the table,
    in-memory loading in the edge, the expiry alert, the CAA records and the
    Certificate Transparency watch. Let's Encrypt's staging CA first.
