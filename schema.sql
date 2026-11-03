@@ -73866,6 +73866,13 @@ CREATE INDEX events_at_brin_idx ON public.events USING brin (at);
 
 
 --
+-- Name: events_at_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX events_at_id_idx ON public.events USING btree (at DESC, id DESC);
+
+
+--
 -- Name: events_data_app_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
