@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS request_analytics_minutes (
     requests bigint NOT NULL CHECK (requests >= 1),
     error_requests bigint NOT NULL CHECK (error_requests BETWEEN 0 AND requests),
     cold_boots bigint NOT NULL CHECK (cold_boots BETWEEN 0 AND requests),
+    -- Sum of latency_ms x requests, for analytics' request-time allocation.
+    request_time_ms bigint NOT NULL CHECK (request_time_ms >= 0),
     latency_max_ms integer NOT NULL CHECK (latency_max_ms >= 0),
     -- Counts per api.RequestAnalyticsLatencyBoundsMS bucket, plus one
     -- overflow bucket. The width is fixed; the writer and readers check it.
@@ -53,8 +55,49 @@ AS $$
     SELECT array_agg(x + y ORDER BY i) FROM unnest(a, b) WITH ORDINALITY AS u(x, y, i)
 $$;
 
+-- Element-wise sum aggregate for readers: one merged histogram per group.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION request_analytics_hist_acc(acc bigint[], v bigint[])
+RETURNS bigint[]
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+BEGIN
+    IF v IS NULL THEN
+        RETURN acc;
+    END IF;
+    IF acc IS NULL THEN
+        RETURN v;
+    END IF;
+    IF cardinality(acc) <> cardinality(v) THEN
+        RAISE EXCEPTION 'request analytics histograms differ in width: % and %', cardinality(acc), cardinality(v);
+    END IF;
+    FOR i IN 1 .. cardinality(v) LOOP
+        acc[i] := acc[i] + v[i];
+    END LOOP;
+    RETURN acc;
+END
+$$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+DO $hist_sum$
+BEGIN
+    IF to_regprocedure('request_analytics_hist_sum(bigint[])') IS NULL THEN
+        CREATE AGGREGATE request_analytics_hist_sum(bigint[]) (
+            SFUNC = request_analytics_hist_acc,
+            STYPE = bigint[]
+        );
+    END IF;
+END
+$hist_sum$;
+-- +goose StatementEnd
+
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
 DROP TABLE IF EXISTS request_analytics_rollup_coverage;
 DROP TABLE IF EXISTS request_analytics_minutes;
+DROP AGGREGATE IF EXISTS request_analytics_hist_sum(bigint[]);
+DROP FUNCTION IF EXISTS request_analytics_hist_acc(bigint[], bigint[]);
 DROP FUNCTION IF EXISTS request_analytics_hist_add(bigint[], bigint[]);

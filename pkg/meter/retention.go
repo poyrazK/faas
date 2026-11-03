@@ -305,7 +305,7 @@ func RetentionOnceRequestAnalyticsMinutes(ctx context.Context, db retentionExece
 	return total, ErrRetentionBatchCap
 }
 
-const retentionRequestIDJournalBatchSQL =`DELETE FROM public.request_id_journal
+const retentionRequestIDJournalBatchSQL = `DELETE FROM public.request_id_journal
                                           WHERE ctid IN (
                                               SELECT ctid FROM public.request_id_journal
                                               WHERE expires_at <= now()

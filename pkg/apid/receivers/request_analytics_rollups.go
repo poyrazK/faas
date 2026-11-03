@@ -164,7 +164,9 @@ func (a *RequestAnalyticsRollups) Add(row RequestAnalyticsRollupRow) bool {
 		if row.ColdBoot {
 			r.ColdBoots += n
 		}
-		r.LatencyMaxMS = max(r.LatencyMaxMS, int32(max(row.LatencyMS, 0)))
+		latency := int64(max(row.LatencyMS, 0))
+		r.RequestTimeMS += latency * n
+		r.LatencyMaxMS = max(r.LatencyMaxMS, int32(latency))
 		r.LatencyHist[bucket] += n
 	}
 	if _, ok := a.covered[row.AppID]; !ok {
@@ -307,6 +309,7 @@ func (a *RequestAnalyticsRollups) restore(pending map[rollupKey]*state.RequestAn
 		cur.Requests += r.Requests
 		cur.ErrorRequests += r.ErrorRequests
 		cur.ColdBoots += r.ColdBoots
+		cur.RequestTimeMS += r.RequestTimeMS
 		cur.LatencyMaxMS = max(cur.LatencyMaxMS, r.LatencyMaxMS)
 		for i := range cur.LatencyHist {
 			cur.LatencyHist[i] += r.LatencyHist[i]

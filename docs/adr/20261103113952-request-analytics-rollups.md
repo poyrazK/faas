@@ -1,6 +1,6 @@
 # ADR 20261103113952 · Request analytics from per-minute rollups
 
-- **Status:** accepted (slice 1: write path).
+- **Status:** accepted.
 - **Date:** 2026-11-03
 - **Amends:** ADR-127 (production debugger request telemetry), ADR
   20261026143210 (per-plan telemetry ingest caps)
@@ -33,8 +33,9 @@ store. Three properties make it the wrong source for traffic totals:
 
 apid aggregates every request telemetry row it receives for a plan that keeps
 telemetry into per-minute rollups, before the ingest cap is applied. The
-rollups go to a Postgres table, and analytics reads move to it in slice 2.
-Raw `request_telemetry` rows stay the debugger's evidence and keep their cap.
+rollups go to a Postgres table, and analytics reads use them for every window
+they cover. Raw `request_telemetry` rows stay the debugger's evidence and keep
+their cap.
 
 ### What a rollup row holds
 
@@ -84,14 +85,34 @@ far smaller than today's loss above the cap. The design accepts them instead
 of a durable per-row ledger, which would reintroduce the per-row write this
 change removes.
 
+### Reads
+
+The analytics summary, its groups (route, status, country, referrer host, UA
+family, consumer) and the hourly timeseries, grouped or not, read the
+rollups in one query per answer (`RequestAnalyticsRollupGroups`). It sums the
+measures and merges the histograms (`request_analytics_hist_sum`) per group,
+keeps the top groups and folds the rest into `__other__`, as the raw queries
+do. apid turns the merged histograms into percentiles. A minute counts when
+it starts inside the window, so a window edge that is not on a minute moves
+by less than a minute.
+
+The sampled measures (cold request and wake boot p95, guest execution, CPU,
+RSS) still come from raw rows. They are read for the same groups within
+`RequestAnalyticsSampledMeasuresTimeout` (3 s). Past that they are left out,
+and the counts and latencies are still answered. Dependency spans, the
+per-deployment cost split and the route deployment observations stay on raw
+rows. A grouped timeseries that filters by route but groups by a dimension
+other than route or status also stays on raw rows, because only route rows
+carry a route.
+
 ### Coverage
 
 `request_analytics_rollup_coverage` stores, per app, the first minute the
-rollups hold. Slice 2 reads rollups only for windows that start at or after
+rollups hold. Reads use the rollups only for windows that start at or after
 that minute plus `RequestAnalyticsSettleLag`. Older windows fall back to raw
 rows. The coverage minute never moves, and the row goes with the app. During a
-rolling upgrade an old apid replica does not write rollups, so slice 2 starts
-coverage only after the first flush, and the settle lag covers the upgrade.
+rolling upgrade an old apid replica does not write rollups, so coverage starts
+only after the first flush, and the settle lag covers the upgrade.
 
 ### Retention
 
@@ -112,9 +133,9 @@ match `(tableoid, ctid)`, as the raw sweep does.
 - apid writes one rollup statement per flush, not one per request.
 - Rollup percentiles are coarser than raw percentiles. The analytics guidance
   text says latencies are bucketed.
-- Slice 2 moves the summary, by-route, by-dimension and timeseries reads to
-  the rollups, keeps the raw fallback, and documents the source in the
-  response.
+- A long window on a busy app no longer scans its raw rows for counts and
+  latencies, so it stops failing on the analytics statement budget. The
+  response shape is unchanged.
 
 ## Alternatives considered
 

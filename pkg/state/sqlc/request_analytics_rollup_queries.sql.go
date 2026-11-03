@@ -14,10 +14,10 @@ import (
 const addRequestAnalyticsMinutes = `-- name: AddRequestAnalyticsMinutes :exec
 INSERT INTO request_analytics_minutes AS m (
     app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id,
-    account_id, requests, error_requests, cold_boots, latency_max_ms, latency_hist
+    account_id, requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist
 )
 SELECT r.app_id, r.bucket_start, r.dimension_kind, r.dimension, r.method, r.status, r.deployment_id,
-       r.account_id, r.requests, r.error_requests, r.cold_boots, r.latency_max_ms,
+       r.account_id, r.requests, r.error_requests, r.cold_boots, r.request_time_ms, r.latency_max_ms,
        ($1::bigint[])[(r.ord - 1) * 45 + 1 : r.ord * 45]
 FROM (
     SELECT unnest($2::uuid[]) AS app_id,
@@ -31,13 +31,15 @@ FROM (
            unnest($10::bigint[]) AS requests,
            unnest($11::bigint[]) AS error_requests,
            unnest($12::bigint[]) AS cold_boots,
-           unnest($13::int[]) AS latency_max_ms,
+           unnest($13::bigint[]) AS request_time_ms,
+           unnest($14::int[]) AS latency_max_ms,
            generate_series(1, cardinality($2::uuid[])) AS ord
 ) AS r
 ON CONFLICT (app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id) DO UPDATE
 SET requests = m.requests + EXCLUDED.requests,
     error_requests = m.error_requests + EXCLUDED.error_requests,
     cold_boots = m.cold_boots + EXCLUDED.cold_boots,
+    request_time_ms = m.request_time_ms + EXCLUDED.request_time_ms,
     latency_max_ms = GREATEST(m.latency_max_ms, EXCLUDED.latency_max_ms),
     latency_hist = request_analytics_hist_add(m.latency_hist, EXCLUDED.latency_hist)
 `
@@ -55,6 +57,7 @@ type AddRequestAnalyticsMinutesParams struct {
 	Requests       []int64
 	ErrorRequests  []int64
 	ColdBoots      []int64
+	RequestTimeMs  []int64
 	LatencyMaxMs   []int32
 }
 
@@ -76,6 +79,7 @@ func (q *Queries) AddRequestAnalyticsMinutes(ctx context.Context, db DBTX, arg A
 		arg.Requests,
 		arg.ErrorRequests,
 		arg.ColdBoots,
+		arg.RequestTimeMs,
 		arg.LatencyMaxMs,
 	)
 	return err
@@ -116,4 +120,113 @@ type RecordRequestAnalyticsRollupCoverageParams struct {
 func (q *Queries) RecordRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupCoverageParams) error {
 	_, err := db.Exec(ctx, recordRequestAnalyticsRollupCoverage, arg.AppIds, arg.CoveredSince)
 	return err
+}
+
+const requestAnalyticsRollupGroups = `-- name: RequestAnalyticsRollupGroups :many
+WITH filtered AS (
+    SELECT CASE WHEN $1::bool THEN date_bin('1 hour', bucket_start, 'epoch'::timestamptz)
+                ELSE 'epoch'::timestamptz END AS bucket,
+           CASE WHEN $2::text = 'status' THEN status::text ELSE dimension END AS dimension,
+           CASE WHEN $2::text = 'route' THEN method ELSE '' END AS method,
+           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist
+    FROM request_analytics_minutes
+    WHERE app_id = $3
+      AND account_id = $4
+      AND dimension_kind = CASE WHEN $2::text = 'status' THEN 'route' ELSE $2::text END
+      AND bucket_start >= $5::timestamptz
+      AND bucket_start <  $6::timestamptz
+      AND ($7::text = '' OR dimension = $7::text)
+      AND ($8::text = '' OR method = $8::text)
+), top_groups AS (
+    SELECT dimension, method
+    FROM filtered
+    GROUP BY dimension, method
+    ORDER BY SUM(requests) DESC, dimension ASC, method ASC
+    LIMIT $9::int
+)
+SELECT f.bucket::timestamptz AS bucket,
+       COALESCE(t.dimension, '__other__')::text AS dimension,
+       COALESCE(t.method, '')::text AS method,
+       SUM(f.requests)::bigint AS requests,
+       SUM(f.error_requests)::bigint AS error_requests,
+       SUM(f.cold_boots)::bigint AS cold_boots,
+       SUM(f.request_time_ms)::bigint AS request_time_ms,
+       MAX(f.latency_max_ms)::int AS latency_max_ms,
+       request_analytics_hist_sum(f.latency_hist)::bigint[] AS latency_hist
+FROM filtered AS f
+LEFT JOIN top_groups AS t ON t.dimension = f.dimension AND t.method = f.method
+GROUP BY f.bucket, t.dimension, t.method
+ORDER BY 1 ASC, 4 DESC, 2 ASC, 3 ASC
+`
+
+type RequestAnalyticsRollupGroupsParams struct {
+	Hourly      bool
+	GroupBy     string
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+	Route       string
+	Method      string
+	GroupLimit  int32
+}
+
+type RequestAnalyticsRollupGroupsRow struct {
+	Bucket        pgtype.Timestamptz
+	Dimension     string
+	Method        string
+	Requests      int64
+	ErrorRequests int64
+	ColdBoots     int64
+	RequestTimeMs int64
+	LatencyMaxMs  int32
+	LatencyHist   []int64
+}
+
+// ADR-20261103113952: analytics totals from the rollups. Groups are
+// (dimension, method) over the window, top sqlc.arg(group_limit) by
+// requests, the rest folded into one __other__ group; with hourly they are
+// also split by UTC hour (callers zero-fill). group_by 'status' groups the
+// route rows by HTTP status. The route/method filter applies to route
+// rows only, so callers pass group_by 'route' or 'status' with it. A
+// minute counts when it starts inside the window. latency_hist is the
+// groups' merged histogram; callers turn it into percentiles.
+func (q *Queries) RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg RequestAnalyticsRollupGroupsParams) ([]RequestAnalyticsRollupGroupsRow, error) {
+	rows, err := db.Query(ctx, requestAnalyticsRollupGroups,
+		arg.Hourly,
+		arg.GroupBy,
+		arg.AppID,
+		arg.AccountID,
+		arg.WindowFrom,
+		arg.WindowUntil,
+		arg.Route,
+		arg.Method,
+		arg.GroupLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestAnalyticsRollupGroupsRow{}
+	for rows.Next() {
+		var i RequestAnalyticsRollupGroupsRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.Dimension,
+			&i.Method,
+			&i.Requests,
+			&i.ErrorRequests,
+			&i.ColdBoots,
+			&i.RequestTimeMs,
+			&i.LatencyMaxMs,
+			&i.LatencyHist,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

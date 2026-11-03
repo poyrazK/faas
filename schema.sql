@@ -25197,6 +25197,31 @@ END $$;
 
 
 --
+-- Name: request_analytics_hist_acc(bigint[], bigint[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.request_analytics_hist_acc(acc bigint[], v bigint[]) RETURNS bigint[]
+    LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE
+    AS $$
+BEGIN
+    IF v IS NULL THEN
+        RETURN acc;
+    END IF;
+    IF acc IS NULL THEN
+        RETURN v;
+    END IF;
+    IF cardinality(acc) <> cardinality(v) THEN
+        RAISE EXCEPTION 'request analytics histograms differ in width: % and %', cardinality(acc), cardinality(v);
+    END IF;
+    FOR i IN 1 .. cardinality(v) LOOP
+        acc[i] := acc[i] + v[i];
+    END LOOP;
+    RETURN acc;
+END
+$$;
+
+
+--
 -- Name: request_analytics_hist_add(bigint[], bigint[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -28648,6 +28673,16 @@ CREATE FUNCTION public.workflow_tenant_event_recipients(target_account uuid, tar
    AND event_fanout_pattern_matches(definition->'trigger'->>'source', event_source)
    AND event_fanout_pattern_matches(definition->'trigger'->>'event_type', event_type);
 $$;
+
+
+--
+-- Name: request_analytics_hist_sum(bigint[]); Type: AGGREGATE; Schema: public; Owner: -
+--
+
+CREATE AGGREGATE public.request_analytics_hist_sum(bigint[]) (
+    SFUNC = public.request_analytics_hist_acc,
+    STYPE = bigint[]
+);
 
 
 --
@@ -53600,6 +53635,7 @@ CREATE TABLE public.request_analytics_minutes (
     requests bigint NOT NULL,
     error_requests bigint NOT NULL,
     cold_boots bigint NOT NULL,
+    request_time_ms bigint NOT NULL,
     latency_max_ms integer NOT NULL,
     latency_hist bigint[] NOT NULL,
     CONSTRAINT request_analytics_minutes_bucket_start_check CHECK ((isfinite(bucket_start) AND (bucket_start = date_bin('00:01:00'::interval, bucket_start, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
@@ -53610,6 +53646,7 @@ CREATE TABLE public.request_analytics_minutes (
     CONSTRAINT request_analytics_minutes_dimension_kind_check CHECK ((dimension_kind = ANY (ARRAY['route'::text, 'country'::text, 'referrer_host'::text, 'ua_family'::text, 'consumer_id'::text]))),
     CONSTRAINT request_analytics_minutes_latency_hist_check CHECK (((cardinality(latency_hist) = 45) AND (array_ndims(latency_hist) = 1) AND (array_position(latency_hist, NULL::bigint) IS NULL))),
     CONSTRAINT request_analytics_minutes_latency_max_ms_check CHECK ((latency_max_ms >= 0)),
+    CONSTRAINT request_analytics_minutes_request_time_ms_check CHECK ((request_time_ms >= 0)),
     CONSTRAINT request_analytics_minutes_requests_check CHECK ((requests >= 1)),
     CONSTRAINT request_analytics_minutes_status_check CHECK (((status >= 100) AND (status <= 599)))
 );

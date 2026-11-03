@@ -14103,6 +14103,12 @@ const (
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )
 
+// RequestAnalyticsSampledMeasuresTimeout bounds the raw telemetry read that
+// adds sampled measures (guest execution, CPU, RSS, cold request and wake
+// boot p95) to analytics answered from rollups; past it they are left out
+// and the response still carries its counts and latencies.
+const RequestAnalyticsSampledMeasuresTimeout = 3 * time.Second
+
 // RequestAnalyticsLatencyBoundsMS are the upper bounds of the rollup latency
 // histogram (ADR-20261103113952); latency_hist has one bucket per bound plus
 // an overflow bucket, whose percentile is the rollup's latency_max_ms. Up to

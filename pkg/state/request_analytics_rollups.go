@@ -26,6 +26,7 @@ type RequestAnalyticsRollup struct {
 	Requests      int64
 	ErrorRequests int64
 	ColdBoots     int64
+	RequestTimeMS int64
 	LatencyMaxMS  int32
 	LatencyHist   [api.RequestAnalyticsLatencyBuckets]int64
 }
@@ -111,6 +112,7 @@ func requestAnalyticsMinutesParams(rows []RequestAnalyticsRollup) sqlc.AddReques
 		Requests:       make([]int64, n),
 		ErrorRequests:  make([]int64, n),
 		ColdBoots:      make([]int64, n),
+		RequestTimeMs:  make([]int64, n),
 		LatencyMaxMs:   make([]int32, n),
 	}
 	for i, r := range rows {
@@ -125,8 +127,51 @@ func requestAnalyticsMinutesParams(rows []RequestAnalyticsRollup) sqlc.AddReques
 		arg.Requests[i] = r.Requests
 		arg.ErrorRequests[i] = r.ErrorRequests
 		arg.ColdBoots[i] = r.ColdBoots
+		arg.RequestTimeMs[i] = r.RequestTimeMS
 		arg.LatencyMaxMs[i] = r.LatencyMaxMS
 		arg.LatencyHists = append(arg.LatencyHists, r.LatencyHist[:]...)
 	}
 	return arg
+}
+
+// RequestAnalyticsRollupReader reads the analytics rollups.
+type RequestAnalyticsRollupReader interface {
+	RequestAnalyticsRollupCoverage(ctx context.Context, appID uuid.UUID) (time.Time, bool, error)
+	RequestAnalyticsRollupGroups(ctx context.Context, arg sqlc.RequestAnalyticsRollupGroupsParams) ([]sqlc.RequestAnalyticsRollupGroupsRow, error)
+}
+
+var _ RequestAnalyticsRollupReader = (*PgStore)(nil)
+
+// RequestAnalyticsRollupGroups reads rollup groups under the analytics
+// statement budget, as the raw analytics reads do.
+func (s *PgStore) RequestAnalyticsRollupGroups(ctx context.Context, arg sqlc.RequestAnalyticsRollupGroupsParams) ([]sqlc.RequestAnalyticsRollupGroupsRow, error) {
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestAnalyticsRollupGroupsRow, error) {
+		return sqlc.New().RequestAnalyticsRollupGroups(ctx, db, arg)
+	})
+}
+
+// RequestAnalyticsHistPercentile is the q-quantile of a rollup latency
+// histogram: the upper bound of the first bucket whose cumulative count
+// reaches q of the total, as the raw queries take the first latency
+// representative that does. It never exceeds maxMS, the largest latency
+// the histogram holds, which also stands for the overflow bucket.
+func RequestAnalyticsHistPercentile(hist []int64, maxMS int32, q float64) int {
+	var total int64
+	for _, c := range hist {
+		total += c
+	}
+	if total == 0 {
+		return 0
+	}
+	var cumulative int64
+	for i, c := range hist {
+		cumulative += c
+		if float64(cumulative) >= float64(total)*q {
+			if i < len(api.RequestAnalyticsLatencyBoundsMS) {
+				return min(api.RequestAnalyticsLatencyBoundsMS[i], int(maxMS))
+			}
+			break
+		}
+	}
+	return int(maxMS)
 }

@@ -13677,6 +13677,7 @@ type RequestAnalyticsMinute struct {
 	Requests      int64
 	ErrorRequests int64
 	ColdBoots     int64
+	RequestTimeMs int64
 	LatencyMaxMs  int32
 	LatencyHist   []int64
 }

@@ -6383,6 +6383,15 @@ type Querier interface {
 	// Lock the node before its epoch, matching registration and FK deletion order.
 	ReportGatewayPolicyProgress(ctx context.Context, db DBTX, arg ReportGatewayPolicyProgressParams) (int64, error)
 	ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg ReportGatewayTrafficRuntimeParams) (int64, error)
+	// ADR-20261103113952: analytics totals from the rollups. Groups are
+	// (dimension, method) over the window, top sqlc.arg(group_limit) by
+	// requests, the rest folded into one __other__ group; with hourly they are
+	// also split by UTC hour (callers zero-fill). group_by 'status' groups the
+	// route rows by HTTP status. The route/method filter applies to route
+	// rows only, so callers pass group_by 'route' or 'status' with it. A
+	// minute counts when it starts inside the window. latency_hist is the
+	// groups' merged histogram; callers turn it into percentiles.
+	RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg RequestAnalyticsRollupGroupsParams) ([]RequestAnalyticsRollupGroupsRow, error)
 	RequestEnvironmentGitOpsRuntimeRefresh(ctx context.Context, db DBTX, arg RequestEnvironmentGitOpsRuntimeRefreshParams) error
 	RequestEventExecutionReconciliation(ctx context.Context, db DBTX, arg RequestEventExecutionReconciliationParams) error
 	// gatewayd-internal, after a serving instance answered 5xx. Succeeds only
