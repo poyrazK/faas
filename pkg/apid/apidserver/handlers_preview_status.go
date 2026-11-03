@@ -13,7 +13,7 @@ import (
 )
 
 func (s *server) getPreviewStatus(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	preview, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	preview, ok := s.loadPreviewForStatus(w, r, acct, r.PathValue("slug"))
 	if !ok {
 		return
 	}

@@ -10640,7 +10640,7 @@ Show one cron rule
 
 Update one cron rule
 
-`gregale cron update [--interactive] [--app <SLUG>] [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [<id>]`
+`gregale cron update [--interactive] [--app <SLUG>] [--schedule <EXPR>] [--path <PATH>] [--timezone <TZ>] [--enable] [--disable] [--skip-if-running] [--allow-overlap] [--retry-max] [--retry-backoff-seconds <N>] [--schedule-policy <JSON>] [--failure-rules <JSON>] [--clear-schedule-policy] [--clear-failure-rules] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10657,6 +10657,8 @@ Update one cron rule
 | `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | replace versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | replace versioned failure and outcome-code rules JSON |  |
+| `--clear-schedule-policy` | remove the schedule policy |  |
+| `--clear-failure-rules` | remove the failure rules |  |
 
 Examples:
 

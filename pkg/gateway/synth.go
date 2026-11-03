@@ -437,6 +437,9 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "app_id + path required", http.StatusBadRequest)
 		return
 	}
+	if s.requireSchedulerToken(w, r, req.AppID, "synth") {
+		return
+	}
 	method := req.Method
 	if method == "" {
 		method = http.MethodPost
@@ -526,6 +529,9 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	}
 	if err := validateInvocationAttemptMetadata(req); err != nil {
 		http.Error(w, "invocation attempt metadata invalid", http.StatusBadRequest)
+		return
+	}
+	if s.requireSchedulerToken(w, r, req.AppID, "synth_dispatch") {
 		return
 	}
 	if req.SecuritySnapshot != "" {
@@ -876,6 +882,9 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 	}
 	if req.AppID == "" || req.InvocationID == "" {
 		http.Error(w, "app_id + invocation_id required", http.StatusBadRequest)
+		return
+	}
+	if s.requireSchedulerToken(w, r, req.AppID, "synth_batch") {
 		return
 	}
 	// ADR-119 — per-app 'internal_only' gate runs BEFORE the

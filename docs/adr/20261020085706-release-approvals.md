@@ -252,3 +252,7 @@ A rollback to a superseded release skipped every guard on the grounds that it ha
 - when the release never served (`deployments.serving_ended_at` unset), meets the break-glass pause, the active freezes (`409 release_frozen`, no override on a rollback) and the approvals (`release_approval_required`) a new release meets.
 
 A release that served before stays a rollback target that freezes and the pause never hold.
+
+## Amendment 11 (2026-11-03): a rejection aborts the rejected release
+
+A rejected or timed-out release was aborted with the app-level rollout abort, which refuses when another environment of the app is also rolling out, so the rejected release kept serving its canary share until that other rollout ended (release review 2026-11-03). The abort now names the rejected release and the serving predecessor it returns traffic to; it falls back to the app-level abort only when no serving predecessor is found.

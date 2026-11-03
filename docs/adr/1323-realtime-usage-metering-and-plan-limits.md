@@ -316,3 +316,42 @@ ticket connections keep their own per-second recheck.
   5 seconds (about 25/s, below one Scale account's 200/s write rate). A pass
   now publishes 8 channels at once, each channel's schedules in due order,
   and a full list is followed at once by the next, up to 20 lists per tick.
+
+## Amendment (2026-11-03): spool, push token, presence and reconnect costs
+
+- **Callback spool.** Writing a v1 message's callback file (two fsyncs) and
+  rewriting a failed one happened under the spool's node-wide lock, so every
+  enqueue, claim, ack and metrics read on the node waited behind one disk
+  flush at a time. The bytes are now reserved under the lock and the file is
+  written and fsynced without it; the event joins its connection's queue once
+  it is on disk. Retries and dead letters are rewritten the same way while
+  the event stays claimed.
+- **Callback replay share.** Replay workers took the oldest ready event
+  node-wide, so an endpoint whose callback hangs for the 30-second timeout
+  could hold all eight. While another endpoint has an event ready, one
+  endpoint holds at most a quarter of the workers (two of eight); with nothing
+  else ready it may use more, but a quarter always stays free for events that
+  arrive later. Idle workers wait for work instead of ending the pass, so one
+  held worker does not stop the others.
+- **Push provider tokens.** APNs provider tokens were signed for every send
+  (APNs throttles keys whose token changes more often than every 20 minutes)
+  and FCM access tokens fetched from Google for every send. apid now reuses an
+  APNs token for 30 minutes and an FCM token until a minute before it
+  expires, and drops a token the provider refuses with 401 or 403.
+- **Presence renewals.** Every 15 seconds each present connection renewed its
+  lease with a full upsert: a per-channel lock, a member count and the whole
+  member list (up to 512 rows) read back. A renewal is now one row update
+  through apid's cached endpoint and node lookups; a lease apid no longer
+  holds falls back to the upsert, and so does an apid without renewals.
+- **Cursor loads.** Loading a durable or inbox cursor (every reconnect) locked
+  the endpoint row and deleted the endpoint's expired cursors. A live cursor
+  now loads under its own row; only creating one takes the endpoint lock that
+  keeps the cap exact. Direct-message receipts keep the endpoint lock: each
+  send creates a receipt, and API rate limits already bound sends.
+- **Reconnects after a restart.** A restarting realtimed closed every socket
+  at once and clients returned within 100 ms. It now closes with 1012
+  (service restart); the Node SDK spreads reconnects after 1001 or 1012 over
+  up to 5 seconds. A node accepts at most
+  `api.RealtimeNodeHandshakesPerSecond` (1,000, bursts of 5,000) new
+  connections; past that a handshake gets 503 with a `Retry-After` of 1-5
+  seconds. Counter: `realtimed_handshakes_throttled_total`.

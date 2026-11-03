@@ -404,6 +404,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeOrgInvitationInvalid, CodeOrgInvitationExpired,
 		CodeOrgLastOwner, CodeOrgPersonalImmutable, CodeOrgAPIKeyRequiresOrg,
 		CodeOrgFreeLimitExceeded,
+		CodeBillingEmailInUse, CodeBillingContactMember,
 	}
 	seen := make(map[string]bool)
 	for _, c := range codes {
@@ -1199,5 +1200,19 @@ func TestErrTrafficPolicyTooComplexHintByUnit(t *testing.T) {
 				t.Fatalf("TrafficPolicyCheckTimedOut = %v, want %v", !tc.wantRetryFirst, tc.wantRetryFirst)
 			}
 		})
+	}
+}
+
+// Billing identity conflicts are 409s that name the organization billing
+// email route, so a client can move the email and retry.
+// adr: 20261103131742
+func TestBillingIdentityProblems(t *testing.T) {
+	for _, p := range []*Problem{ErrBillingEmailInUse(false), ErrBillingEmailInUse(true), ErrBillingContactMember()} {
+		if p.Status != http.StatusConflict || StatusForCode(p.Code) != http.StatusConflict {
+			t.Fatalf("%s: status %d, StatusForCode %d; want 409", p.Code, p.Status, StatusForCode(p.Code))
+		}
+		if !strings.Contains(p.Detail, "PUT /v1/orgs/{slug}/billing/email") {
+			t.Fatalf("%s detail %q does not name the billing email route", p.Code, p.Detail)
+		}
 	}
 }

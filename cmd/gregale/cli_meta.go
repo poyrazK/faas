@@ -2268,6 +2268,8 @@ var cliCommands = []cliCommand{
 				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt", Value: "N"},
 				{Name: "schedule-policy", Short: "replace versioned schedule policy JSON", Value: "JSON"},
 				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
+				{Name: "clear-schedule-policy", Short: "remove the schedule policy", Bool: true},
+				{Name: "clear-failure-rules", Short: "remove the failure rules", Bool: true},
 			}},
 			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "yes", Short: "accepted for scripts; crons rm does not prompt", Bool: true}}},
 			{Name: "run", Short: "Fire one cron immediately or choose and follow a manual request", Positionals: []string{"[<cron-id>]"}, Examples: []string{"gregale cron run --app my-api --interactive", "gregale cron run <cron-id>", "gregale cron run <cron-id> --wait"}, Flags: []cliFlag{

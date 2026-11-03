@@ -73,7 +73,11 @@ type PgStore struct {
 // close it on shutdown so daemons can share a single pool across a Store and
 // their LISTEN goroutine.
 func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
-	return &PgStore{pgCore: newPgCore(pool), trafficAppsSuffix: configuredTrafficAppsSuffix(options),
+	core := newPgCore(pool)
+	if core.pool != nil {
+		core.pool.Background = configuredBackgroundPool(options)
+	}
+	return &PgStore{pgCore: core, trafficAppsSuffix: configuredTrafficAppsSuffix(options),
 		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache()}
 }
 
@@ -3422,7 +3426,10 @@ func (s *PgStore) ListOwnedCronsByNodeID(ctx context.Context, nodeID string) ([]
 	sel := `select c.id, c.app_id, c.schedule, c.path, c.enabled, c.suspended_reason, c.timezone, c.skip_if_running, c.last_fired_at, c.created_at, c.command, c.command_shell, c.command_timeout_seconds, c.command_max_output_bytes, c.retry_max, c.retry_backoff_seconds, c.schedule_policy, c.failure_rules, c.schedule_revision, c.schedule_anchor_at
 		   from crons c
 		   join apps a on a.id = c.app_id
-		  where a.node_id = $1 and c.suspended_reason = ''
+		  where a.node_id = $1 and c.suspended_reason = '' and c.enabled
+		    -- A disabled cron never fires; listing it cost the sweep an app
+		    -- read and a budget check every minute (crons audit 2026-11-03).
+		    -- MemStore already filtered it.
 		    -- A rehearsal fires crons only from its recipe, never from the
 		    -- clock (ADR-20261020200000).
 		    and not exists (select 1 from scenario_test_action_policies p where p.app_id = c.app_id)`
@@ -14695,8 +14702,13 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		createdAtArg = createdAt.UTC()
 	}
 	var retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg any
+	clearPolicy, clearRules := false, false
 	if len(retryOptions) > 0 {
 		opts := normalizeCronOptions(retryOptions[0])
+		if opts.ClearSchedulePolicy && opts.SchedulePolicy != nil || opts.ClearFailureRules && opts.FailureRules != nil {
+			return Cron{}, ErrInvalidArgument
+		}
+		clearPolicy, clearRules = opts.ClearSchedulePolicy, opts.ClearFailureRules
 		if opts.SchedulePolicy != nil || opts.FailureRules != nil {
 			var commandCron bool
 			if err := s.pool.QueryRow(ctx, `select cardinality(command) > 0 from crons where id = $1::uuid`, id).Scan(&commandCron); err != nil {
@@ -14736,11 +14748,11 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		   created_at = coalesce($7, created_at),
 		   retry_max = coalesce($8, retry_max),
 		   retry_backoff_seconds = coalesce($9, retry_backoff_seconds),
-		   schedule_policy = coalesce($10::jsonb, schedule_policy),
-		   failure_rules = coalesce($11::jsonb, failure_rules)
+		   schedule_policy = case when $12::boolean then null else coalesce($10::jsonb, schedule_policy) end,
+		   failure_rules = case when $13::boolean then null else coalesce($11::jsonb, failure_rules) end
 		 where id = $1
 		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at`,
-		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg, retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg)
+		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg, retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg, clearPolicy, clearRules)
 	c, err := scanCronRow(row)
 	if err != nil {
 		return Cron{}, mapErr(err)

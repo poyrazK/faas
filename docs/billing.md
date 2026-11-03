@@ -12,6 +12,24 @@ Usage is measured in GB-RAM-hours for running app instances. The plan also sets 
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
 
+## Changing plan
+
+`gregale billing plan PLAN` (or `PATCH /v1/account/plan`) changes plan. Your first paid plan starts with a hosted checkout. On an existing subscription an upgrade happens in place: the billing provider charges the prorated difference for the rest of the billing period to the card on the subscription, and the new plan applies once that charge succeeds. If the charge is declined nothing changes; update the card in the billing portal and try again. A downgrade applies at the end of the billing period, and is refused until your apps, databases and stored objects fit the lower plan. The billing portal shows invoices and payment methods but does not switch plans.
+
+If a plan ends without a downgrade, for example when a subscription lapses, its limits still bind: see [after a plan ends or shrinks](plans.md#what-each-limit-means).
+
+## Billing email
+
+The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it, so give the organization its own address:
+
+```bash
+curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
+  -H "Authorization: Bearer $GREGALE_TOKEN" -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"billing_email":"billing@acme.example"}'
+```
+
+Only the owner can change it, with MFA and a recent step-up. When the organization already has a subscription, its billing customer moves to the new address first. An address that already pays for another Gregale account or organization is refused with `409 billing_email_in_use`, and so is an upgrade from an organization whose billing email is in use that way. While a member's email is the organization's billing email, that member cannot be removed or delete their account (`409 billing_contact_member`); move the billing email first.
+
 ## Spend cap
 
 A spend cap is a hard ceiling on the overage an account is billed in a UTC
@@ -42,7 +60,9 @@ When the month's overage reaches the cap:
   warm pools are parked within one scheduler tick;
 - new wakes are refused with HTTP 402 `admission_refused`; the problem body
   carries the observed overage and the cap;
-- queued job tasks wait in the queue; they are not failed;
+- queued job tasks wait in the queue; they are not failed. A task already
+  running finishes within the plan's task timeout;
+- new forks are refused;
 - pending invocations (crons, delayed tasks, webhooks, async invokes and event
   deliveries) wait too, without spending their retry attempts;
 - crons and recurring jobs stay due instead of queueing a run for every

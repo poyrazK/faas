@@ -20,10 +20,10 @@ package apidserver_test
 //   - bad id: 400 cron_invalid
 //   - idempotency: same Idempotency-Key twice → identical body, one row
 //
-// Why no 410 (disabled) test at the API: the API surface accepts the
-// fire regardless of enabled. schedd's RunCronNow re-checks enabled
-// on claim and stamps ErrCronDisabled onto the row. The 410
-// behaviour lives in pkg/sched/fire_now_test.go (covered there).
+// A disabled cron's manual run is refused with 409 at the API
+// (cron_policy_clear_test.go); schedd's RunCronNow still re-checks enabled
+// on claim for a cron disabled after the request, covered in
+// pkg/sched/fire_now_test.go.
 
 import (
 	"context"

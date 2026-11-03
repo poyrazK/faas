@@ -4290,6 +4290,18 @@ type AccountOverageCapResponse struct {
 	OverageCapCents *int64 `json:"overage_cap_cents"`
 }
 
+// OrgBillingEmailRequest sets the email an organization bills to. The billing
+// provider sends this address the organization's invoices and lets it sign in
+// to the organization's billing portal (ADR-20261103131742).
+type OrgBillingEmailRequest struct {
+	BillingEmail string `json:"billing_email"`
+}
+
+// OrgBillingEmailResponse reports the email an organization bills to.
+type OrgBillingEmailResponse struct {
+	BillingEmail string `json:"billing_email"`
+}
+
 // AccountRateLimitsResponse reports account-wide rate windows that affect
 // customer operations.
 type AccountRateLimitsResponse struct {
@@ -4730,6 +4742,12 @@ type UpdateCronRequest struct {
 	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
 	RetryMax            *int                       `json:"retry_max,omitempty"`
 	RetryBackoffSeconds *int                       `json:"retry_backoff_seconds,omitempty"`
+	// ClearSchedulePolicy and ClearFailureRules remove the cron's schedule
+	// policy or failure rules; an omitted schedule_policy or failure_rules
+	// leaves them as they are. Each refuses the matching field in the same
+	// request.
+	ClearSchedulePolicy bool `json:"clear_schedule_policy,omitempty"`
+	ClearFailureRules   bool `json:"clear_failure_rules,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).

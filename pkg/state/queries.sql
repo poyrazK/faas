@@ -3073,14 +3073,41 @@ WITH due AS MATERIALIZED (
 )
 SELECT * FROM claimed ORDER BY next_fire_at, id;
 
--- name: ListTerminalTriggerRecordItems :many
--- A broker may redeliver after Gregale commits a terminal receipt but before
--- the broker acknowledges it. The current delivery handle can be Acked
--- without dispatching the application again.
-SELECT item_identifier FROM trigger_records
-WHERE trigger_id = $1
-  AND item_identifier = ANY(sqlc.arg(item_identifiers)::text[])
-  AND state IN ('succeeded', 'superseded', 'cancelled', 'expired');
+-- name: TriggerRecordStatesByItems :many
+-- The stored state of the records one broker poll handed back. A broker may
+-- redeliver after Gregale commits a terminal receipt (succeeded, ended by a
+-- work policy, or dead-lettered) but before the broker settles it; the
+-- dispatcher settles that delivery without dispatching the application
+-- again. dead_letter_reason lets a Kafka seek-to-offset trigger keep holding
+-- a poison record while an exhausted one commits; next_fire_at and
+-- claim_expires_at tell a broker that redelivers on its own when a cooling
+-- retry, or a record another dispatcher holds, can run; topic maps a record
+-- stored under an earlier release's item identifier (ADR-20261101093512).
+SELECT r.item_identifier, r.state, r.next_fire_at, r.claim_expires_at,
+       coalesce(r.metadata->>'topic', '')::text AS topic,
+       coalesce(d.reason, '')::text AS dead_letter_reason
+FROM trigger_records r
+LEFT JOIN trigger_dead_letter d ON d.record_id = r.id
+WHERE r.trigger_id = sqlc.arg(trigger_id)::uuid
+  AND r.item_identifier = ANY(sqlc.arg(item_identifiers)::text[]);
+
+-- name: RenewTriggerRecordClaims :execrows
+-- Keeps the claims of a batch whose dispatch is still running. A claim lasts
+-- ten minutes, but a long-timeout app's batch may wait 16.5; an expired claim
+-- could be taken and run again, and its outcome could not be recorded. Only
+-- the claim generation the dispatcher holds is renewed, and never one that
+-- has already lapsed.
+WITH claims AS (
+    SELECT unnest(sqlc.arg(ids)::uuid[]) AS id,
+           unnest(sqlc.arg(claim_generations)::bigint[]) AS claim_generation
+)
+UPDATE trigger_records r
+   SET claim_expires_at = greatest(r.claim_expires_at,
+       now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision))
+  FROM claims
+ WHERE r.id = claims.id AND r.claim_generation = claims.claim_generation
+   AND r.trigger_id = sqlc.arg(trigger_id)::uuid
+   AND r.state = 'claimed' AND r.claim_expires_at > now();
 
 -- name: MarkClaimedTriggerRecordSucceeded :execrows
 UPDATE trigger_records
@@ -14872,8 +14899,10 @@ WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR (sql
 ORDER BY retry_at,id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: CountManagedPostgresLifecycleDatabases :one
+-- A delete that can no longer be undone frees the database, including a source
+-- kept for its restore copies (ADR-20261103091657).
 SELECT ((SELECT count(*) FROM managed_postgres_databases d
- WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted')
+ WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
  JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=sqlc.arg(account_id)::uuid
@@ -27320,7 +27349,8 @@ SELECT * FROM managed_postgres_databases WHERE id=$1;
 SELECT * FROM managed_postgres_bindings WHERE id=$1;
 
 -- name: CountManagedPostgresOrgDatabases :one
-SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted')
+-- Counts as CountManagedPostgresLifecycleDatabases does.
+SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE p.org_id=sqlc.arg(org_id)::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
 
