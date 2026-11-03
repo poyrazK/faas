@@ -177,3 +177,21 @@ already staged, keep the rules they were written under.
 The dashboard's manual run refuses a disabled cron before queuing a request,
 as the scheduler refuses its run, and names each refusal (disabled, too many
 manual runs waiting, suspended, over the plan) instead of a generic failure.
+
+## Amendment 2026-11-03 (2): removable policies, held manual runs
+
+A cron's schedule policy and failure rules could be set but never removed:
+`PATCH /v1/crons/{id}` keeps an omitted field, and the store wrote only a
+value that was present. `clear_schedule_policy` and `clear_failure_rules`
+(`gregale cron update --clear-schedule-policy`, `--clear-failure-rules`)
+remove them; each is refused alongside the field it clears. The Terraform
+`gregale_cron` plans null for either when the configuration drops it and
+sends the clear, where it planned no change before.
+
+A compute budget holds only preview apps. On one, the sweep leaves crons due
+(amendment 2026-11-02 (2)), but `gregale cron status` reported the cron
+firing on schedule and a manual run was accepted, then deferred by the drain
+until the hold lifted. Status now reports `budget_held`, and a manual run is
+refused with `402 financial_budget_held`. A manual run of a disabled cron is
+refused with `409` instead of failing in the scheduler a moment later. The
+scheduler's PostgreSQL cron listing drops disabled crons, as MemStore did.

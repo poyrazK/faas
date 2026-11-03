@@ -6,8 +6,11 @@ package cronrun
 
 import (
 	"context"
+	"errors"
 	"math"
+	"net/http"
 	"sort"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -43,7 +46,28 @@ func OverPlan(ctx context.Context, store Store, app state.App, c state.Cron) *ap
 const (
 	PausedAccountSuspended = "account_suspended"
 	PausedPlanLimit        = "plan_limit"
+	// PausedBudgetHeld is a preview app held by a compute budget: the
+	// scheduler leaves its crons due and each runs once when the hold lifts.
+	PausedBudgetHeld = "budget_held"
 )
+
+// BudgetHeld reports an app a compute budget holds, the hold the scheduler's
+// cron sweep and the invocation drain apply. A read error reports false, as
+// the sweep admits on one.
+func BudgetHeld(ctx context.Context, store state.Store, app state.App, now time.Time) bool {
+	return errors.Is(state.CheckFinancialBudgetAdmissionForScope(ctx, store, app, "", "", now), state.ErrFinancialBudgetHeld)
+}
+
+// BudgetHeldProblem is the refusal of a manual run on an app a compute budget
+// holds: the run would wait, unstarted, until the hold lifts (crons audit
+// 2026-11-03).
+func BudgetHeldProblem() *api.Problem {
+	var problem *api.Problem
+	if errors.As(state.FinancialBudgetHeldProblem(), &problem) {
+		return problem
+	}
+	return api.NewProblem(http.StatusPaymentRequired, "financial_budget_held", "Preview compute budget reached", "This app is held by a compute budget.")
+}
 
 // Paused reports why the scheduler skips c although it is enabled and not
 // suspended, or "": the app's owner is suspended, or a downgrade left c over
