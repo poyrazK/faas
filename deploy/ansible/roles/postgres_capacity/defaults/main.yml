@@ -3,7 +3,7 @@
 # complete [compute_nodes] inventory; it never assumes a two-node ceiling.
 # Includes optional data planes, the private APID clone worker and the hosted
 # management MCP server.
-faas_postgres_control_plane_pool_budget: 55
+faas_postgres_control_plane_pool_budget: 61
 faas_postgres_per_compute_pool_budget: 34
 # ADR-1027: pgproxyd on each [database_nodes] host reads role verifiers on
 # the direct DSN (db.DaemonMaxConnections["pgproxyd"]); pgbouncer does not
