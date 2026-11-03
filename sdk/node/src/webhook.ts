@@ -1,6 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export const WEBHOOK_SIGNATURE_HEADER = 'X-Faas-Webhook-Signature';
+/**
+ * Carries a second signature, made with the secret a rotation replaced, for
+ * 24 hours after the rotation. A receiver still holding the old secret
+ * verifies against it.
+ */
+export const WEBHOOK_PREVIOUS_SIGNATURE_HEADER = 'X-Faas-Webhook-Signature-Previous';
 export const WEBHOOK_TIMESTAMP_HEADER = 'X-Faas-Webhook-Timestamp';
 export const WEBHOOK_DELIVERY_ID_HEADER = 'X-Faas-Delivery-Id';
 export const DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
@@ -86,11 +92,27 @@ export function verifyWebhook(
     .update(`${timestampSeconds}.${deliveryId}.`, 'utf8')
     .update(body)
     .digest();
-  if (supplied.byteLength !== expected.byteLength || !timingSafeEqual(supplied, expected)) {
+  if (!signatureMatches(supplied, expected) && !previousSignatureMatches(headers, expected)) {
     throw new WebhookVerificationError('bad_signature');
   }
 
   return { deliveryId, timestamp: new Date(timestampMs) };
+}
+
+function signatureMatches(supplied: Buffer, expected: Buffer): boolean {
+  return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
+}
+
+/** True when the previous-secret signature sent during a rotation's overlap equals expected. */
+function previousSignatureMatches(headers: WebhookHeaders, expected: Buffer): boolean {
+  let header: string;
+  try {
+    header = readSingleHeader(headers, WEBHOOK_PREVIOUS_SIGNATURE_HEADER);
+  } catch {
+    return false;
+  }
+  const match = /^sha256=([0-9a-fA-F]{64})$/.exec(header);
+  return match?.[1] !== undefined && signatureMatches(Buffer.from(match[1], 'hex'), expected);
 }
 
 function readSingleHeader(headers: WebhookHeaders, name: string): string {

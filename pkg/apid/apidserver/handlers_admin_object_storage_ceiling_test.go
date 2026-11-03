@@ -68,3 +68,24 @@ func TestObsObjectStorageCeiling(t *testing.T) {
 	apidserver.AssertProblem(t, e.DoAdmin(t, http.MethodPost, "/v1/admin/ops/accounts/"+free.ID+"/object-storage-ceiling?confirm=true&reason=support_ticket&gib=50", nil, nil), http.StatusConflict, api.CodeConflict)
 	apidserver.AssertProblem(t, e.DoAdmin(t, http.MethodPost, "/v1/admin/ops/accounts/00000000-0000-0000-0000-00000000abcd/object-storage-ceiling?confirm=true&reason=support_ticket&gib=50", nil, nil), http.StatusNotFound, api.CodeNotFound)
 }
+
+// A grant above the installation's max_account_bytes would never take effect,
+// because every account is held to the tighter of the two, so it is refused.
+func TestObsObjectStorageCeilingAboveInstallationLimit(t *testing.T) {
+	ctx := context.Background()
+	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	// ObjectRegistry's safety policy holds every account to 1,000 bytes.
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, &apidserver.FakeObjectProvider{}, &apidserver.FakeObjectProvider{}, "external"))
+	pro, err := (*e.Store()).CreateAccount(ctx, "tenant-big-storage@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "/v1/admin/ops/accounts/" + pro.ID + "/object-storage-ceiling?confirm=true&reason=support_ticket"
+	apidserver.AssertProblem(t, e.DoAdmin(t, http.MethodPost, base+"&gib=500", nil, nil), http.StatusConflict, api.CodeConflict)
+	if got, err := (*e.Store()).ObjectStorageCeilingGrant(ctx, pro.ID); err != nil || got != nil {
+		t.Fatalf("refused grant was stored: %+v, %v", got, err)
+	}
+	if rec := e.DoAdmin(t, http.MethodPost, base+"&gib=plan", nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("returning to the plan's ceiling is always allowed: %d %s", rec.Code, rec.Body.String())
+	}
+}

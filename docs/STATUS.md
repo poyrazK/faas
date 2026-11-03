@@ -451,6 +451,16 @@ than 75 days old. The challenge-pass docs now say a pass is shared by its
 /24 or /48 and User-Agent, and the CLI warns when a gate is scoped by
 headers, cookies or query values the client chooses.
 
+2026-11-03: a fifth review found the scheduler's synth routes
+(`/v1/synthesize`, `/v1/invocations:dispatch`, `:dispatch_batch`) reachable
+from the internet on every app host: anyone with an app ID could wake it or
+invoke it and read the response, past its public auth and edge rules. schedd
+now sends an app-bound scheduler token on every synth request, the gateway
+refuses one without it, and the public edge refuses these paths unless the
+local scheduler sent them (ADR-20261103090000). The same record has
+`validate` check bodies sent with `Connection: Upgrade`, and keeps requests
+with `X-API-Key` or `Proxy-Authorization` out of the shared cache.
+
 ## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the
