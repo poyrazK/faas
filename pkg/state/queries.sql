@@ -14899,8 +14899,10 @@ WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR (sql
 ORDER BY retry_at,id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: CountManagedPostgresLifecycleDatabases :one
+-- A delete that can no longer be undone frees the database, including a source
+-- kept for its restore copies (ADR-20261103091657).
 SELECT ((SELECT count(*) FROM managed_postgres_databases d
- WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted')
+ WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
  JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=sqlc.arg(account_id)::uuid
@@ -27347,7 +27349,8 @@ SELECT * FROM managed_postgres_databases WHERE id=$1;
 SELECT * FROM managed_postgres_bindings WHERE id=$1;
 
 -- name: CountManagedPostgresOrgDatabases :one
-SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted')
+-- Counts as CountManagedPostgresLifecycleDatabases does.
+SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE p.org_id=sqlc.arg(org_id)::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
 
