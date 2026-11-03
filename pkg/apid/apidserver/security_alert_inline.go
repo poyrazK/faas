@@ -21,9 +21,9 @@ const (
 // paths that run while the durable alert outboxes are off (bug hunt H99).
 // Those paths used to write only an audit row, so a takeover (new password,
 // attacker's authenticator, MFA switched off) sent the owner nothing. The
-// send is best effort and detached from the request, like the password
-// reset mail: the change has committed, and a mail failure is logged, not
-// returned. The body is the same frozen template the outbox sends.
+// send is best effort, like the password reset mail: the change has
+// committed, and a mail failure is logged, not returned. The body is the
+// same frozen template the outbox sends.
 func (s *server) sendInlineSecurityAlert(ctx context.Context, acct state.Account, kind string, render func(at time.Time) (subject, body string)) {
 	if s.mailer == nil || acct.Email == "" {
 		return
@@ -33,14 +33,13 @@ func (s *server) sendInlineSecurityAlert(ctx context.Context, acct state.Account
 	}
 	subject, body := render(time.Now().UTC())
 	s.audit.Emit(ctx, "account.security_alert_sent", &acct.ID, map[string]any{"kind": kind, "path": "inline"})
-	mailer := s.mailer // the sender in effect for this request, not a later one
-	go func() {
-		mailCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		if err := mailer.Send(mailCtx, Message{To: []string{acct.Email}, Subject: subject, TextBody: body}); err != nil {
-			s.log.Error("security_alert.inline_send_failed", "account", acct.ID, "kind", kind, "err", err)
-		}
-	}()
+	// Sent on the request, as the password reset mail is, with a bounded
+	// timeout that a client disconnect does not cut short.
+	mailCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := s.mailer.Send(mailCtx, Message{To: []string{acct.Email}, Subject: subject, TextBody: body}); err != nil {
+		s.log.Error("security_alert.inline_send_failed", "account", acct.ID, "kind", kind, "err", err)
+	}
 }
 
 // alertPasswordChangedInline: method is "dashboard" or "password_reset", as
