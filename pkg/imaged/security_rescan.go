@@ -36,7 +36,7 @@ func (l *Loop) reconcileSecurityScans(ctx context.Context, now time.Time, every 
 		return
 	}
 	defer l.securityScanRunning.Store(false)
-	deployments, err := l.store.ListAllDeployments(ctx)
+	deployments, err := l.deploymentsWithStatus(ctx, state.DeployLive)
 	if err != nil {
 		l.log.Warn("imaged: list deployments for security re-scan", "err", err)
 		return
@@ -158,7 +158,7 @@ func (l *Loop) reconcileSecurityLeases(ctx context.Context, now time.Time, scanE
 	if scanEvery <= 0 {
 		scanEvery = securityScanSweepEvery
 	}
-	deployments, err := l.store.ListAllDeployments(ctx)
+	deployments, err := l.deploymentsWithStatus(ctx, state.DeployLive)
 	if err != nil {
 		l.log.Warn("imaged: list deployments for security evidence lease", "err", err)
 		return
@@ -210,7 +210,7 @@ func (l *Loop) reconcileSecuritySignatures(ctx context.Context, now time.Time) {
 	if l == nil || l.store == nil || l.handler == nil {
 		return
 	}
-	deployments, err := l.store.ListAllDeployments(ctx)
+	deployments, err := l.deploymentsWithStatus(ctx, state.DeployLive)
 	if err != nil {
 		l.log.Warn("imaged: list deployments for signature revalidation", "err", err)
 		return
