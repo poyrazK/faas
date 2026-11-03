@@ -145,8 +145,12 @@ type Loop struct {
 	flowCounts            FlowCounter
 	flowReaderUnavailable sync.Once
 	ops                   *wire.OpsMetrics // issue #171 shared registry; nil safe
-	primeMetrics          *snapshotPrimeMetrics
-	cronMetrics           *commandCronMetrics
+	// ownedApps is the previous reaper tick's owned app set, for
+	// forgetDepartedApps (ADR 20261103131546).
+	ownedAppsMu  sync.Mutex
+	ownedApps    map[string]struct{}
+	primeMetrics *snapshotPrimeMetrics
+	cronMetrics  *commandCronMetrics
 	// cronResume asks the main loop to continue a cron sweep that used its
 	// slice; cronSweepTried holds the crons the minute's sweep already
 	// dispatched (runCronSweep).
@@ -1360,11 +1364,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-scaleupTick(scaleupT):
 			l.runScaleUp(ctx)
 		case <-targetsTick(targetsT):
-			l.runTargets(ctx)
+			l.submitWork(workTargets, "tick", func() { l.runTargets(ctx) })
 		case <-floorTick(floorT):
-			l.runFloor(ctx)
+			l.submitWork(workFloor, "tick", func() { l.runFloor(ctx) })
 		case <-prewarmTick(prewarmT):
-			l.runPrewarm(ctx)
+			l.submitWork(workPrewarm, "tick", func() { l.runPrewarm(ctx) })
 		case <-recentLoadTick(recentLoadT):
 			l.runRecentLoad(ctx)
 		case <-migratingWatchdogTick(migratingWatchdogT):
@@ -1382,28 +1386,24 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-jobsTick(workflowsDispatchT):
 			l.runWorkflowsDispatchTick(ctx)
 		case <-workflowRetentionFirst:
-			l.runWorkflowRetention(ctx)
+			l.submitWork(workWorkflowRetention, "tick", func() { l.runWorkflowRetention(ctx) })
 			workflowRetentionFirst = nil
 		case <-workerRecoveryT.C:
 			l.dispatchWorkerRecovery(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
-			l.runWorkflowRetention(ctx)
+			l.submitWork(workWorkflowRetention, "tick", func() { l.runWorkflowRetention(ctx) })
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
 			// exclusively come from retentionT (the 1h ticker).
-			l.runRetention(ctx)
-			l.runDeadLetterRetention(ctx)
-			l.runCronHistoryRetention(ctx)
+			l.dispatchRetention(ctx)
 			retentionFirst = nil
 		case <-retentionTick(retentionT):
-			l.runRetention(ctx)
-			l.runDeadLetterRetention(ctx)
-			l.runCronHistoryRetention(ctx)
+			l.dispatchRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
 			l.submitWork(workInvocationsRetention, "tick", func() { l.runInvocationsRetention(ctx) })
 		case <-triggersRetentionTick(triggersRetentionT):
-			l.runTriggersRetention(ctx)
+			l.submitWork(workTriggersRetention, "tick", func() { l.runTriggersRetention(ctx) })
 		case <-fireNowT.C:
 			// PR-D / issue #791: safety sweep. Picks up rows that
 			// missed a NotifyCronRunNow delivery (Postgres bounce,
@@ -1795,6 +1795,41 @@ func (l *Loop) runRetention(ctx context.Context) {
 
 // runDeadLetterRetention dispatches one unified Failed Events projection
 // retention sweep. Errors are logged and retried on the next hourly tick.
+// forgetDepartedApps deletes the metric series of every app that was in the
+// previous reaper tick's owned list and is not in apps: deleted, or now owned
+// by another scheduler (ADR 20261103131546). Series an app still emits come
+// back on its next observation.
+func (l *Loop) forgetDepartedApps(apps []state.App) {
+	if l.ops == nil {
+		return
+	}
+	current := make(map[string]struct{}, len(apps))
+	for _, app := range apps {
+		current[app.ID] = struct{}{}
+	}
+	l.ownedAppsMu.Lock()
+	previous := l.ownedApps
+	l.ownedApps = current
+	l.ownedAppsMu.Unlock()
+	for id := range previous {
+		if _, ok := current[id]; !ok {
+			l.ops.ForgetApp(id)
+		}
+	}
+}
+
+// dispatchRetention runs the hourly instance, dead-letter and cron-history
+// retention off the loop (ADR 20261103131546). They delete in repeated
+// batches; inline, a large backlog held the stats tick, cron and the
+// triggers behind them.
+func (l *Loop) dispatchRetention(ctx context.Context) {
+	l.submitWork(workRetention, "tick", func() {
+		l.runRetention(ctx)
+		l.runDeadLetterRetention(ctx)
+		l.runCronHistoryRetention(ctx)
+	})
+}
+
 func (l *Loop) runDeadLetterRetention(ctx context.Context) {
 	if l.deadLetterRetention == nil {
 		return
@@ -2604,6 +2639,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	apps = owned
+	l.forgetDepartedApps(apps)
 	accounts := newReaperAccounts(store)
 	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps,
 	// suspended accounts and accounts at their spend cap (ADR-1162) from the
