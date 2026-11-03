@@ -4381,11 +4381,15 @@
         "=/v1/projects/{}",
         "/v1/projects/{}/delete-preview",
         "/v1/projects/{}/deployment-readiness",
+        "/v1/projects/{}/environments/{}/config",
+        "/v1/projects/{}/environments/{}/secrets",
         "/v1/projects/{}/exclusions",
         "/v1/projects/{}/release-secrets"
       ],
       "cli": [
-        "projects"
+        "projects",
+        "projects environments config",
+        "projects environments secrets"
       ]
     },
     {

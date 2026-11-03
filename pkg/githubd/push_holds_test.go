@@ -142,3 +142,49 @@ func mustProjectID(t *testing.T, rig *testRig) string {
 	}
 	return project.ID
 }
+
+// A deleted app keeps its slug through the restore window (apps_slug_key).
+// A push that brought its service back failed the whole reconcile on the slug
+// conflict; it now holds that service, says how to restore it, and deploys
+// the rest.
+func TestPushHoldsServiceWhoseSlugADeletedAppHolds(t *testing.T) {
+	scan := reposcan.Result{Tier: reposcan.TierCompose, Workloads: []reposcan.Workload{
+		{Class: reposcan.ClassHTTP, Name: "api", RootDir: "services/auth/api", DetectedBy: reposcan.Detection{Detector: "compose"}},
+		{Class: reposcan.ClassHTTP, Name: "billing", RootDir: "services/billing", DetectedBy: reposcan.Detection{Detector: "compose"}},
+	}}
+	rig, svc, rec, checks := pushRig(t, &scan, nil)
+	push(t, svc, "c0ffee01")
+	ctx := context.Background()
+	apps, err := rig.mem.AppsForProject(ctx, rig.acct, mustProjectID(t, rig))
+	if err != nil || len(apps) != 2 {
+		t.Fatalf("first push apps = %d, %v", len(apps), err)
+	}
+	var billing, api state.App
+	for _, app := range apps {
+		switch app.WorkloadName {
+		case "billing":
+			billing = app
+		case "api":
+			api = app
+		}
+	}
+	if _, err := rig.mem.SoftDeleteAppCascade(ctx, billing.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec.calls = nil
+	push(t, svc, "c0ffee02")
+	if !failedCheck(*checks, billing.Slug, "gregale apps restore "+billing.Slug) {
+		t.Fatalf("no restore check for %s: %+v", billing.Slug, *checks)
+	}
+	deployed := false
+	for _, call := range rec.calls {
+		deployed = deployed || call.appID == api.ID
+	}
+	if !deployed {
+		t.Fatalf("api not deployed beside the held service: %+v checks %+v", rec.calls, *checks)
+	}
+	apps, err = rig.mem.AppsForProject(ctx, rig.acct, mustProjectID(t, rig))
+	if err != nil || len(apps) != 1 || apps[0].ID != api.ID {
+		t.Fatalf("apps after the held push = %+v, %v", apps, err)
+	}
+}
