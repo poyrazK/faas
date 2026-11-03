@@ -45,7 +45,7 @@ func newRouteLabelPins(store routeLabelPinStore, log *slog.Logger) *routeLabelPi
 		now: time.Now, log: log, entries: make(map[string]routeLabelPinEntry), loading: make(map[string]bool)}
 }
 
-func (p *routeLabelPins) RouteLabelPinned(_ context.Context, app gateway.App, label string) bool {
+func (p *routeLabelPins) RouteLabelPinned(ctx context.Context, app gateway.App, label string) bool {
 	if p == nil || p.store == nil || app.ID == "" {
 		return false
 	}
@@ -54,15 +54,16 @@ func (p *routeLabelPins) RouteLabelPinned(_ context.Context, app gateway.App, la
 	entry, ok := p.entries[app.ID]
 	p.mu.RUnlock()
 	if !ok || !now.Before(entry.expires) {
-		p.refresh(app.ID, now)
+		p.refresh(ctx, app.ID, now)
 	}
 	_, pinned := entry.labels[label]
 	return pinned
 }
 
 // refresh starts one background read for appID unless one is running or a
-// concurrent read already renewed it.
-func (p *routeLabelPins) refresh(appID string, now time.Time) {
+// concurrent read already renewed it. The read keeps ctx's values but not its
+// cancellation, so it outlives the request that started it.
+func (p *routeLabelPins) refresh(ctx context.Context, appID string, now time.Time) {
 	p.mu.Lock()
 	entry, ok := p.entries[appID]
 	if p.loading[appID] || ok && now.Before(entry.expires) {
@@ -71,15 +72,16 @@ func (p *routeLabelPins) refresh(appID string, now time.Time) {
 	}
 	p.loading[appID] = true
 	p.mu.Unlock()
+	ctx = context.WithoutCancel(ctx)
 	p.reads.Add(1)
 	go func() {
 		defer p.reads.Done()
-		p.load(appID)
+		p.load(ctx, appID)
 	}()
 }
 
-func (p *routeLabelPins) load(appID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+func (p *routeLabelPins) load(ctx context.Context, appID string) {
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 	labels, err := p.store.RouteLabelPins(ctx, appID)
 	if err != nil && p.log != nil {
