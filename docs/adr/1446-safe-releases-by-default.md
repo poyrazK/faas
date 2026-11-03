@@ -253,3 +253,7 @@ Enable in staging first, then run and record, under `docs/drills/`:
 
 Promote progressive rollouts toward `beta` in the product registry only with
 that evidence, per the capability promotion rule.
+
+## Amendment 1 (2026-11-03): a project's production environment and project apply get the default
+
+The default filled in a canary and `rollback_on_5xx` only for a release into the default scope, and not at all for `gregale project apply`. A release into a project's `production` environment, which freezes and approvals already treat as production, so got no canary, no first-wake 5xx guard and no post-release watch, and an apply into production got none either (release review 2026-11-03). The default now applies to every production scope: the default scope and the project `production` environment, with the predecessor looked up in the release's own scope. A first release into a scope still deploys at once. A project apply into production gets it per app, as a GitHub push does. An atomic project release (`safe_release`) stages dark and cuts every app over together, so it keeps its own coordinated rollout.

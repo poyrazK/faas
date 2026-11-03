@@ -64,12 +64,16 @@ func dialAuthBufconn(t *testing.T, store authStore) apidpb.AuthClient {
 }
 
 // dialAuthBufconnWith is dialAuthBufconn with a tracing release gate.
-func dialAuthBufconnWith(t *testing.T, store authStore, tracing TracingReleased) apidpb.AuthClient {
+func dialAuthBufconnWith(t *testing.T, store authStore, tracing TracingReleased, sessions ...SessionOpener) apidpb.AuthClient {
 	t.Helper()
 	const bufSize = 1 << 20
 	lis := bufconn.Listen(bufSize)
 	srv := grpc.NewServer()
-	RegisterAuthReceiver(srv, store, tracing)
+	var opener SessionOpener
+	if len(sessions) > 0 {
+		opener = sessions[0]
+	}
+	RegisterAuthReceiver(srv, store, tracing, opener)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
 

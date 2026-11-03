@@ -231,6 +231,26 @@ func ErrReleaseApprovalPromotionSelf(app, environment string) *Problem {
 		WithDocs(docsBase + "/deploys#release-approvals")
 }
 
+// ErrReleaseApprovalPromotionSessionRequired refuses a protected production
+// promotion's approval sent with an API key or token while it stands in for
+// app's release approval policy (ADR-20261020085706 amendment 9).
+func ErrReleaseApprovalPromotionSessionRequired(app, environment string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSessionRequired, "Approve as a person",
+		fmt.Sprintf("%s requires release approvals, so a person signed in to Gregale approves this promotion into %s; an API key or token cannot.", app, environment)).
+		WithHint("Approve the promotion signed in as yourself, not with an API key or token, then promote with that approval.").
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
+// ErrReleaseApprovalPromotionApprover refuses a protected production
+// promotion's approval given by someone app's release approval policy does
+// not let approve its releases (ADR-20261020085706 amendment 9).
+func ErrReleaseApprovalPromotionApprover(app, environment string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgRoleForbidden, "Approver not allowed",
+		fmt.Sprintf("The person who approved this promotion into %s may not approve releases of %s under its approval policy.", environment, app)).
+		WithHint("Ask a teammate the policy lets approve to approve this promotion, then promote with their approval.").
+		WithDocs(docsBase + "/deploys#release-approvals")
+}
+
 // ErrReleaseApprovalSelf refuses the deployer's own approval.
 func ErrReleaseApprovalSelf() *Problem {
 	return NewProblem(http.StatusForbidden, CodeReleaseApprovalSelf, "Self-approval not allowed",
