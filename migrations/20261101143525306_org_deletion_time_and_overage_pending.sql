@@ -1,23 +1,16 @@
 -- filename: 20261101143525306_org_deletion_time_and_overage_pending.sql
 
 -- ADR-20261101143527 (billing audit round 4).
---
--- 1. orgs.deletion_requested_at records when an organization was marked for
---    deletion, so meterd keeps delivering the usage it ran before then, as it
---    already does for accounts. A trigger stamps it whenever deleted_pending
---    turns on, on every path and for the previous release's writes too.
---    Organizations already pending deletion are not backfilled: their usage
---    from before the request was already past delivery, as before.
--- 2. managed_postgres_overage_pending holds a managed PostgreSQL overage step
---    apid reserved before sending it to the billing provider. A step that was
---    sent but not recorded is sent again with the same target, which the
---    provider deduplicates, instead of a new one charged on top of it.
---    apid is the only writer. A new table; the previous release never reads it.
+-- 1. orgs.deletion_requested_at: when an organization was marked for deletion,
+--    so meterd delivers its usage from before then, as for accounts. A trigger
+--    stamps it whenever deleted_pending turns on, on every path and for the
+--    previous release's writes. Orgs already pending deletion are not backfilled.
+-- 2. managed_postgres_overage_pending: an overage step apid reserved before
+--    sending it; a step sent but not recorded is resent unchanged (deduplicated)
+--    instead of a new one charged on top. apid is the only writer; a new table.
 -- migration-compat: expand
---
--- The CHECK is added NOT VALID and validated in its own statement; a VALIDATE
--- takes SHARE UPDATE EXCLUSIVE, so orgs keep being written during the scan.
--- Every step is re-runnable.
+-- The CHECK is added NOT VALID and validated separately (SHARE UPDATE
+-- EXCLUSIVE), so orgs keep being written. Every step is re-runnable.
 -- +goose NO TRANSACTION
 
 -- +goose Up
