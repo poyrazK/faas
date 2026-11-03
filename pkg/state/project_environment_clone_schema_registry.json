@@ -9501,6 +9501,7 @@
       "input_manifest_version",
       "job_id",
       "latest_start_at",
+      "logs_cleared_finished_at",
       "occurrence_id",
       "operation_id",
       "parallelism",
