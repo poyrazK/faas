@@ -97,11 +97,25 @@ const (
 // a botnet guessing one account's password; past this budget every password
 // sign-in for the address answers 429 until failures age out or a password
 // reset succeeds, and a bound account's owner is emailed once. One apid
-// tracks at most LoginFailureEmailsTrackedMax addresses at a time.
+// tracks at most LoginFailureEmailsTrackedMax addresses at a time; when full
+// it forgets the address with the fewest failures among
+// LoginFailureEvictionSample random entries, so filling the table with random
+// addresses does not stop a targeted one from being counted.
 const (
 	LoginFailuresPerEmail        = 20
 	LoginFailureEmailWindow      = time.Hour
 	LoginFailureEmailsTrackedMax = 100_000
+	LoginFailureEvictionSample   = 32
+)
+
+// PasswordResetMailInFlightMax caps the forgot-password requests one apid
+// handles off the request path at once (H86). The account lookup, token and
+// mail run in the background so the response time is the same whether or not
+// the address has an account; past the cap a request is dropped and logged,
+// answering the same 200.
+const (
+	PasswordResetMailInFlightMax = 64
+	PasswordResetMailTimeout     = 30 * time.Second
 )
 
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one

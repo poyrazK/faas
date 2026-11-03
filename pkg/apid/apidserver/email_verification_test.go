@@ -171,6 +171,7 @@ func TestForgotPasswordSkipsUnverifiedAccount(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("forgot status = %d", rec.Code)
 	}
+	srv.WaitPasswordResetMail()
 	if got := len(mailer.Snapshot()); got != 0 {
 		t.Fatalf("password reset emails = %d, want 0", got)
 	}

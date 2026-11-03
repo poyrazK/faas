@@ -317,24 +317,56 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 // customer. The plaintext never lands in the DB.
 func (s *server) postForgotPassword(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(strings.ToLower(extractEmailFromRequest(r)))
-	// Lookup may fail because the email is unbound, the store is
-	// unreachable, or the email is empty. We don't care which — the
-	// response is identical and the mailer only fires on a real
-	// account hit.
+	// The lookup, token and mail run in the background (H86): done on the
+	// request, a bound address took a mail send longer than an unbound
+	// one, so the response time told which addresses have accounts. The
+	// request only reads the link's scheme and host.
 	if email != "" && looksLikeEmail(email) {
-		if acct, err := s.store.AccountByEmail(r.Context(), email); err == nil && acct.EmailVerified() {
-			s.sendPasswordResetEmail(r.Context(), r, acct, email)
+		base := s.passwordResetLinkBase(r)
+		//nolint:contextcheck // The work outlives the request; it keeps the request values and has its own timeout.
+		ctx := context.WithoutCancel(r.Context())
+		if !s.resetMail.try(func() {
+			ctx, cancel := context.WithTimeout(ctx, api.PasswordResetMailTimeout)
+			defer cancel()
+			s.forgotPasswordFor(ctx, base, email)
+		}) {
+			s.log.Warn("forgot_password.busy")
 		}
 	}
 	// Always 200 with the same body. Anti-enumeration.
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
+// forgotPasswordFor mails a reset link when email belongs to a verified
+// account. Lookup may fail because the email is unbound or the store is
+// unreachable; either way nothing is sent and nothing surfaces.
+func (s *server) forgotPasswordFor(ctx context.Context, base, email string) {
+	if acct, err := s.store.AccountByEmail(ctx, email); err == nil && acct.EmailVerified() {
+		s.sendPasswordResetEmail(ctx, base, acct, email)
+	}
+}
+
+// passwordResetLinkBase is the scheme and host a reset link points at: the
+// configured platform host, else the host the request arrived on.
+func (s *server) passwordResetLinkBase(r *http.Request) string {
+	if platform := s.platformHost(); platform != "" && platform != domainUnset {
+		// Use the configured domain verbatim — the email link should
+		// always point at the canonical hostname, not the loopback
+		// the request arrived on.
+		return schemeHTTPS + "://" + platform
+	}
+	scheme := schemeHTTP
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
+		scheme = schemeHTTPS
+	}
+	return scheme + "://" + r.Host
+}
+
 // sendPasswordResetEmail mints a 32-byte token, persists SHA-256(token),
 // and emails the base64url-encoded plaintext to the customer. Errors
 // at any step are logged but never surface — the calling public
 // endpoint remains a constant 200.
-func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, acct state.Account, email string) {
+func (s *server) sendPasswordResetEmail(ctx context.Context, base string, acct state.Account, email string) {
 	if !s.allowSecurityMail(ctx, acct, "password_reset") {
 		return
 	}
@@ -353,19 +385,7 @@ func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, ac
 		s.log.Error("forgot_password.issue_token", "err", err)
 		return
 	}
-	scheme := schemeHTTP
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
-		scheme = schemeHTTPS
-	}
-	host := r.Host
-	if platform := s.platformHost(); platform != "" && platform != domainUnset {
-		// Use the configured domain verbatim — the email link should
-		// always point at the canonical hostname, not the loopback
-		// the request arrived on.
-		host = platform
-		scheme = schemeHTTPS
-	}
-	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, resetTokenPath, base64.RawURLEncoding.EncodeToString(raw))
+	link := fmt.Sprintf("%s%s?token=%s", base, resetTokenPath, base64.RawURLEncoding.EncodeToString(raw))
 	subject, body := mailpkg.PasswordResetBodyV1(link)
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{email},
