@@ -5295,6 +5295,11 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			"from", logsanitize.Field(string(acct.Plan)),
 			"to", logsanitize.Field(string(plan)),
 		)
+		// ADR-20261103131742: the customer portal no longer switches plans,
+		// so an existing subscription is upgraded through the provider API.
+		if acct.Plan.RequiresBillingUpgradeTo(plan) && s.upgradeSubscription(w, r, acct, plan) {
+			return
+		}
 		prob := &api.Problem{
 			Status: http.StatusPaymentRequired,
 			Code:   api.CodePayment,
@@ -5324,6 +5329,10 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			// through to the portal URL; any other error is a provider
 			// or store failure the customer should retry.
 			txID, checkoutURL, err := s.beginHostedCheckout(r.Context(), acct, plan)
+			if errors.Is(err, billing.ErrCustomerEmailInUse) {
+				api.WriteProblem(w, api.ErrBillingEmailInUse(acct.ResourceOrgID != ""))
+				return
+			}
 			if err != nil && !errors.Is(err, errNoHostedCheckout) {
 				api.WriteProblem(w, api.ErrCapacity("upgrade unavailable"))
 				return
@@ -5377,36 +5386,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, prob)
 			return
 		}
-		effectiveAt, err := changer.ChangeSubscriptionPlan(r.Context(), billingAcct, plan)
-		if err != nil {
-			s.log.Error("schedule plan change failed",
-				"account", acct.ID,
-				"from", logsanitize.Field(string(acct.Plan)),
-				"to", logsanitize.Field(string(plan)),
-				"err", logsanitize.FieldAny(err))
-			if errors.Is(err, billing.ErrAlreadyCancelled) {
-				api.WriteProblem(w, api.NewProblem(http.StatusConflict,
-					api.CodeConflict, "billing subscription unavailable",
-					"the billing subscription is no longer active; refresh billing and try again"))
-				return
-			}
-			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,
-				"billing_plan_change_failed", "billing plan change failed",
-				"the provider could not schedule this plan change; the current plan remains active"))
-			return
-		}
-		updated, err := state.BillingResourceAccount(r.Context(), s.store, acct.ID)
-		if err != nil {
-			updated = acct
-		}
-		status := "pending_provider_confirmation"
-		response := s.accountResponse(r.Context(), updated, r)
-		response.PlanChangeStatus = status
-		response.RequestedPlan = string(plan)
-		if !effectiveAt.IsZero() {
-			response.EffectiveAt = &effectiveAt
-		}
-		writeJSON(w, http.StatusAccepted, orgbilling.PlanResponse(updated, response))
+		s.scheduleProviderPlanChange(w, r, acct, billingAcct, changer, plan)
 		return
 	}
 	if err := s.setAccountPlan(r.Context(), acct, plan); err != nil {

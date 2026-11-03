@@ -42,6 +42,8 @@ import type { ListOrgAPIKeysResponse } from '../models/ListOrgAPIKeysResponse.js
 import type { ListReleaseFreezesResponse } from '../models/ListReleaseFreezesResponse.js';
 import type { MemberListResponse } from '../models/MemberListResponse.js';
 import type { OrgAppListResponse } from '../models/OrgAppListResponse.js';
+import type { OrgBillingEmailRequest } from '../models/OrgBillingEmailRequest.js';
+import type { OrgBillingEmailResponse } from '../models/OrgBillingEmailResponse.js';
 import type { OrgInvitationResponse } from '../models/OrgInvitationResponse.js';
 import type { OrgListResponse } from '../models/OrgListResponse.js';
 import type { OrgMemberResponse } from '../models/OrgMemberResponse.js';
@@ -2300,7 +2302,10 @@ export class OrgsService {
    * Owner-only (`org.remove_members`). Stamps `removed_at` on
    * the row (the row stays for audit; live-cap count drops).
    * Self-removal is rejected at the boundary; the last-owner
-   * invariant surfaces as 409 `org_last_owner`.
+   * invariant surfaces as 409 `org_last_owner`. The member whose email
+   * the organization bills to cannot be removed while the organization
+   * has a billing customer (409 `billing_contact_member`); set another
+   * billing email with `PUT /v1/orgs/{slug}/billing/email` first.
    *
    * @returns void
    * @throws ApiError
@@ -2860,7 +2865,10 @@ export class OrgsService {
    * Requires the organization owner, admin credential scope, verified email,
    * MFA and recent step-up. Paid entitlements activate only after provider
    * confirmation. Existing personal subscriptions are never reassigned.
-   * A payment-required response carries checkout_url or billing_portal_url.
+   * A payment-required response carries checkout_url, or billing_portal_url
+   * when the upgrade charge of an existing subscription is declined. The
+   * first checkout bills the acting owner's email until
+   * `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
    *
    * @returns OrgPlanResponse The confirmed organization plan.
    * @throws ApiError
@@ -3002,6 +3010,70 @@ export class OrgsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Set the email the organization bills to.
+   * Requires the organization owner, admin credential scope, verified email,
+   * MFA and recent step-up. The billing provider sends this address the
+   * organization's invoices and signs it in to the organization's billing
+   * portal, so use an address the organization controls rather than a
+   * member's. The first organization checkout bills the member who starts
+   * it until this is set. When the organization already has a billing
+   * customer, the customer moves to the new email first and nothing changes
+   * if the provider refuses. The provider keeps one customer per email: an
+   * email another Gregale account or organization already pays with is
+   * refused with 409 `billing_email_in_use`. While a member's email is the
+   * billing email, that member cannot be removed (409
+   * `billing_contact_member`).
+   *
+   * @returns OrgBillingEmailResponse The organization's billing email after the change.
+   * @throws ApiError
+   */
+  public static setOrgBillingEmail({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: OrgBillingEmailRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<OrgBillingEmailResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/billing/email',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        502: `The billing provider could not move the customer (\`billing_email_change_failed\`); the billing email is unchanged.`,
       },
     });
   }

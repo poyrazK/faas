@@ -1984,6 +1984,18 @@ func (r *server) RequestBillingMailOutboxesForTest() {
 	r.paymentFailedOutboxRequested, r.accountRestoredOutboxRequested, r.subscriptionEndedOutboxRequested = on, on, on
 }
 
+// CreateProviderCustomerForTest creates acct's billing customer, replacing a
+// deleted subject's leftover customer that holds the email (ADR-20261103131742).
+func (r *server) CreateProviderCustomerForTest(ctx context.Context, acct state.Account) (string, error) {
+	return r.createProviderCustomer(ctx, acct)
+}
+
+// BillingContactBlocksDeletionForTest is the account-deletion billing
+// contact guard (ADR-20261103131742).
+func (r *server) BillingContactBlocksDeletionForTest(ctx context.Context, acct state.Account) *api.Problem {
+	return r.billingContactBlocksDeletion(ctx, acct)
+}
+
 var AppRestartRefusal = appRestartRefusal
 
 // SecurityMailAllow is a fresh per-account sign-in mail limiter on clock now.

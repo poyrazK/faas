@@ -2060,6 +2060,8 @@ export type { OrgAccountID } from './models/OrgAccountID.js';
 export type { OrgActivityResponse } from './models/OrgActivityResponse.js';
 export type { OrgAppListResponse } from './models/OrgAppListResponse.js';
 export type { OrgAppSummary } from './models/OrgAppSummary.js';
+export type { OrgBillingEmailRequest } from './models/OrgBillingEmailRequest.js';
+export type { OrgBillingEmailResponse } from './models/OrgBillingEmailResponse.js';
 export type { OrgInvitationResponse } from './models/OrgInvitationResponse.js';
 export type { OrgListResponse } from './models/OrgListResponse.js';
 export type { OrgMemberResponse } from './models/OrgMemberResponse.js';

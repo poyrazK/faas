@@ -3439,8 +3439,12 @@ type UpgradeData struct {
 	Provider      string
 	ProviderLabel string
 	// PortalURL is the fallback for accounts that already have a
-	// subscription (the provider portal owns product changes).
+	// subscription when the provider cannot change it through its API.
 	PortalURL string
+	// SubscriptionChange is true when the account already has a
+	// subscription: the form upgrades it in place and the provider charges
+	// the prorated difference now (ADR-20261103131742).
+	SubscriptionChange bool
 	// ConfirmToken is the (action="upgrade_plan", account_id) CSRF
 	// envelope minted by renderUpgrade.
 	ConfirmToken string

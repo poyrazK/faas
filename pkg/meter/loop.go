@@ -648,7 +648,9 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 		} else if CheckQuota(acct.Plan, used).Action != "" {
 			used = l.freePeriodUsageGB(ctx, acct, now, used)
 		}
-		if _, err := (QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands}).Enforce(ctx, acct, used, now); err != nil {
+		params := QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands,
+			EgressBytes: MonthlyEgressBytes(usages), EgressCeilingBytes: EgressCeilingBytes(l.pusher, acct.Plan)}
+		if _, err := params.Enforce(ctx, acct, used, now); err != nil {
 			// EnforceQuota already logged + skipped parked-instance failures;
 			// only status/structural errors reach here.
 			if errors.Is(err, state.ErrNotFound) {

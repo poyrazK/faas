@@ -241,6 +241,9 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		if prob := s.sharedOrgOwnershipBlocksDeletion(ctx, acct.ID); prob != nil {
 			return acct, prob
 		}
+		if prob := s.billingContactBlocksDeletion(ctx, acct); prob != nil {
+			return acct, prob
+		}
 		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID, state.IncludingManagedPostgres(includeDatabases))
 		if err != nil {
 			return acct, deletionRefusedProblem(err)

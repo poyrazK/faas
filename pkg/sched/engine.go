@@ -769,6 +769,10 @@ type Engine struct {
 	// billing subject, so the spend cap gate reads the right cap without a
 	// store read per wake (ADR-20261030093512).
 	capSubjects spendCapSubjects
+	// planFits remembers, per billing subject, which of its apps are
+	// outside its plan, so wakes refuse them without a store read per wake
+	// (ADR-20261103131742).
+	planFits planFitCache
 	// (obs, cap) cents ride on the (outcome, obs, cap) tuple
 	// admitGate returns. The earlier field-on-Engine shape was
 	// racy across goroutines hitting the cap-reached branch.
@@ -3245,6 +3249,19 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			release()
 			e.IncAtCapacity(appID, "rate_limit")
 			return WakeResult{AtCapacity: true}, nil
+		}
+	}
+
+	// ADR-20261103131742: an app outside its subject's plan (past the
+	// deployed-app limit, oldest kept, or above the plan's RAM) does not
+	// wake, on the request path or an explicit deployment, so a plan that
+	// ended or shrank does not keep the higher plan's entitlements.
+	// Deployment smoke verifies a release and mirror instances are never
+	// metered, as for the spend cap.
+	if !deploymentSmoke && mode != string(state.InstanceModeMirror) {
+		if problem := e.planFitProblem(ctx, app, acct); problem != nil {
+			release()
+			return WakeResult{}, errors.Join(ErrPermanentWake, problem)
 		}
 	}
 
@@ -7297,12 +7314,17 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 // owns its resources, its ID is the creator's and the organization's cap
 // governs (ADR-20261030093512, as spendCapSubject). The cap check is cached
 // and fails open (OverageChecker), so a transient read error never parks an
-// app.
+// app. An app outside its subject's plan parks too (ADR-20261103131742),
+// with the same cached, fail-open read.
 func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.Account) bool {
 	if app.Status == state.AppEvictedCold || account.Status == state.AccountSuspended || account.AbuseHeld() {
 		return true
 	}
-	return e.spendCapReached(ctx, account.ResourceOwnerID())
+	if e.spendCapReached(ctx, account.ResourceOwnerID()) {
+		return true
+	}
+	_, _, over := e.planOverage(ctx, app, account)
+	return over
 }
 
 // ParkApp tears down every live instance of an app whose lifecycle has already
