@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -87,7 +89,13 @@ func TestCallbackReplayKeepsWorkersForOtherEndpoints(t *testing.T) {
 func TestHandshakesAreBounded(t *testing.T) {
 	m := NewManager(Config{}, nil)
 	defer m.Close()
-	for i := range api.RealtimeNodeHandshakeBurst {
+	if m.handshakes.Limit() != rate.Limit(api.RealtimeNodeHandshakesPerSecond) || m.handshakes.Burst() != api.RealtimeNodeHandshakeBurst {
+		t.Fatalf("handshake rate = %v burst %d", m.handshakes.Limit(), m.handshakes.Burst())
+	}
+	// A limiter that does not refill during the test keeps it independent
+	// of how fast the runner is.
+	m.handshakes = rate.NewLimiter(rate.Every(time.Hour), 3)
+	for i := range 3 {
 		if !m.allowHandshake() {
 			t.Fatalf("handshake %d within the burst was refused", i)
 		}
