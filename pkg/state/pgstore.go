@@ -4761,6 +4761,51 @@ func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
 	return err
 }
 
+// cancelDeletedAppPipelineTx cancels the deploys a deleted app still had in
+// progress, and their builds. The customer delete path (ScheduleAppDeletion)
+// left them running: a deploy caught mid-activation stayed "snapshotting" for
+// the whole restore window, imaged retried its snapshot every 10 minutes
+// against an app it could no longer load, and its builds kept a builder slot
+// (Hunt 31 H31-12). imaged acknowledges snapshots of cancelled deployments.
+// Restoring the app brings back its live deployment, not these.
+// The caller holds the app row lock (CreateDeployment's order).
+func cancelDeletedAppPipelineTx(ctx context.Context, tx pgx.Tx, appID string, now time.Time) error {
+	if _, err := tx.Exec(ctx, `
+		update deployments
+		   set status = 'cancelled',
+		       cancelled_at = $2,
+		       cancelled_by_principal = 'system:app-delete',
+		       cancel_reason = 'system'
+		 where app_id = $1
+		   and status in ('pending', 'building', 'imaging', 'snapshotting')`, appID, now); err != nil {
+		return fmt.Errorf("cancel deployments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		with candidates as (
+			select b.id, b.status
+			  from builds b
+			  join deployments d on d.id = b.deployment_id
+			 where d.app_id = $1 and b.status in ('queued', 'running')
+			 for update of b
+		), cancelled as (
+			update builds b
+			   set status = 'cancelled',
+			       cancelled_at = $2,
+			       cancelled_by_deployment_cascade = true
+			  from candidates c
+			 where b.id = c.id
+			returning b.id
+		), cleanup as (
+			insert into builder_vm_cleanup (build_id)
+			select c.id from candidates c where c.status = 'running'
+			on conflict (build_id) do nothing
+		)
+		select count(*) from cancelled`, appID, now); err != nil {
+		return fmt.Errorf("cancel builds: %w", err)
+	}
+	return nil
+}
+
 // ScheduleAppDeletion parks an app in a restorable tombstone. Repeated
 // requests preserve the original deletion timestamp and deadline.
 func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error) {
@@ -4771,6 +4816,9 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if graceUntil.IsZero() {
 		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
+	}
+	if err := cancelDeletedAppPipelineTx(ctx, tx, id, time.Now().UTC()); err != nil {
+		return App{}, fmt.Errorf("state: schedule app deletion: %w", err)
 	}
 	var a App
 	row := tx.QueryRow(ctx, `
@@ -5141,15 +5189,8 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 	}
 	now := time.Now().UTC()
 	deadline := now.Add(AppDeleteGraceDuration())
-	if _, err := tx.Exec(ctx, `
-		update deployments
-		   set status = 'cancelled',
-		       cancelled_at = $2,
-		       cancelled_by_principal = 'system:app-delete',
-		       cancel_reason = 'system'
-		 where app_id = $1
-		   and status in ('pending', 'building', 'imaging', 'snapshotting')`, id, now); err != nil {
-		return App{}, fmt.Errorf("state: soft delete app cancel deployments: %w", err)
+	if err := cancelDeletedAppPipelineTx(ctx, tx, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, id); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app remove crons: %w", err)
@@ -5165,29 +5206,6 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 		       updated_at = $2
 		 where app_id = $1 and status in ('queued', 'restoring', 'running')`, id, now); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app cancel app tasks: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		with candidates as (
-			select b.id, b.status
-			  from builds b
-			  join deployments d on d.id = b.deployment_id
-			 where d.app_id = $1 and b.status in ('queued', 'running')
-			 for update of b
-		), cancelled as (
-			update builds b
-			   set status = 'cancelled',
-			       cancelled_at = $2,
-			       cancelled_by_deployment_cascade = true
-			  from candidates c
-			 where b.id = c.id
-			returning b.id
-		), cleanup as (
-			insert into builder_vm_cleanup (build_id)
-			select c.id from candidates c where c.status = 'running'
-			on conflict (build_id) do nothing
-		)
-		select count(*) from cancelled`, id, now); err != nil {
-		return App{}, fmt.Errorf("state: soft delete app cancel builds: %w", err)
 	}
 	var a App
 	if err := scanAppInto(&a, tx.QueryRow(ctx, `
