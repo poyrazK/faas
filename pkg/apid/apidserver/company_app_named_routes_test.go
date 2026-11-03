@@ -125,6 +125,76 @@ func TestCompanyMembersReadCronStatusAndRunRequests(t *testing.T) {
 	}
 }
 
+// A company app's crons are listed by slug for its members, not only its
+// creator: the creator-only lookup answered 404, which also failed a
+// member's deploy of a gregale.yaml that declares crons, since the deploy
+// lists them first. A deploy:write key follows the manual run it starts
+// (crons audit 2026-11-03).
+//
+// adr: 20261026151103
+func TestCompanyMembersListCronsBySlugAndFollowRuns(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	ctx := t.Context()
+	creator := *e.Acct()
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "list-crons", Name: "List Crons", Plan: api.PlanPro, ResourceOwnershipEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember(ctx, org.ID, creator.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: creator.ID, OrgID: org.ID, Slug: "company-cron-app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cron, err := store.CreateCron(ctx, app.ID, "0 3 * * *", "/nightly", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, asViewer := sharedAppMember(t, store, org, state.OrgRoleViewer, api.ScopesAdminOnly)
+	_, asDeployer := sharedAppMember(t, store, org, state.OrgRoleDeveloper, []string{api.ScopeDeployWrite})
+	other, err := store.CreateOrg(ctx, state.Org{Slug: "other-co", Name: "Other Co", Plan: api.PlanPro, ResourceOwnershipEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, asOutsider := sharedAppMember(t, store, other, state.OrgRoleAdmin, api.ScopesAdminOnly)
+
+	for _, c := range []struct {
+		name    string
+		headers map[string]string
+		want    int
+	}{
+		{"viewer", asViewer, http.StatusOK},
+		{"deploy:write developer", asDeployer, http.StatusOK},
+		{"another company's admin", asOutsider, http.StatusNotFound},
+	} {
+		r := e.Do(t, http.MethodGet, "/v1/crons?slug="+app.Slug, nil, c.headers)
+		if r.Code != c.want {
+			t.Fatalf("%s lists the app's crons = %d, want %d: %s", c.name, r.Code, c.want, r.Body)
+		}
+		if c.want != http.StatusOK {
+			continue
+		}
+		var crons []api.CronResponse
+		if err := json.Unmarshal(r.Body.Bytes(), &crons); err != nil || len(crons) != 1 || crons[0].ID != cron.ID {
+			t.Fatalf("%s listed %s: %v", c.name, r.Body, err)
+		}
+	}
+
+	r := e.Do(t, http.MethodPost, "/v1/crons/"+cron.ID+"/run", nil, asDeployer)
+	if r.Code != http.StatusAccepted {
+		t.Fatalf("deploy:write runs the cron = %d %s", r.Code, r.Body)
+	}
+	var run api.FireCronResponse
+	if err := json.Unmarshal(r.Body.Bytes(), &run); err != nil || run.RequestID == "" {
+		t.Fatalf("run response %s: %v", r.Body, err)
+	}
+	if r := e.Do(t, http.MethodGet, "/v1/cron-fire-now-requests/"+run.RequestID, nil, asDeployer); r.Code != http.StatusOK {
+		t.Fatalf("deploy:write follows its run = %d, want 200: %s", r.Code, r.Body)
+	}
+}
+
 // The company's plan also refuses: the Pro creator of a Free company's app
 // gets no crons on it.
 //

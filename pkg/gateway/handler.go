@@ -604,6 +604,10 @@ type RequireAuthnKey struct {
 	// Scopes are the key's authorization scopes. ADR-079: unlocking an app
 	// with a bearer key requires apps:read (or admin) on its account.
 	Scopes []string
+	// OrgID is the organization an org key was minted against ("" for a
+	// personal key), so a key_changed notification that names the
+	// organization drops only its keys from the gateway cache (H93).
+	OrgID string
 }
 
 // RequireAuthnAuditor is the narrow slice of cmd/gatewayd-internal/audit.go's
@@ -1512,7 +1516,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		preAuthLimiter: newPreAuthSourceLimiter(),
 		// The request bodies this gateway holds at once: spooled uploads
 		// on disk, validate-rule bodies in the heap.
-		bodySpoolBudget:  newRequestBodyBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
+		bodySpoolBudget:  newRequestBodySpoolBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
 		keyLookups:       newKeyLookupLimiter(),
 		bodyMemoryBudget: newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
@@ -4001,7 +4005,7 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 // The hold lasts until the request finishes, since the buffered bytes are
 // forwarded.
 func (h *Handler) holdValidateBody(r *http.Request, cap int64) (*requestBodyLease, bool) {
-	lease, _ := h.bodyMemoryBudget.lease("")
+	lease, _ := h.bodyMemoryBudget.lease("", "")
 	want := cap
 	if r.ContentLength >= 0 && r.ContentLength < cap {
 		want = r.ContentLength

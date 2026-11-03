@@ -31,11 +31,19 @@ func (s *server) tryPasswordChangedAlert(w http.ResponseWriter, r *http.Request,
 	ts, has := authmw.StepUpFrom(r)
 	fresh := has && !ts.IsZero() && time.Since(ts) <= setPasswordStepUpTTL
 	change, err := s.deletionMailOutbox.PreparePasswordChange(r.Context(), acct.ID, acct.Email, r.FormValue("current_password"), fresh)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return true
+	}
 	if err != nil {
 		s.writePasswordChangedAlertError(w, r, acct, err)
 		return true
 	}
-	phc, err := auth.Encode(plain)
+	phc, err := auth.EncodeContext(r.Context(), plain)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return true
+	}
 	if err != nil {
 		s.writePasswordChangedAlertError(w, r, acct, err)
 		return true

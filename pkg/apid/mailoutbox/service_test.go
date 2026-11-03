@@ -124,7 +124,8 @@ ADD COLUMN abuse_hold_reason text,
 ADD COLUMN billing_email text NOT NULL DEFAULT '',
 ADD COLUMN business_name text NOT NULL DEFAULT '',
 ADD COLUMN billing_address text NOT NULL DEFAULT '',
-ADD COLUMN tax_id text NOT NULL DEFAULT ''`); err != nil {
+ADD COLUMN tax_id text NOT NULL DEFAULT '',
+ADD COLUMN deletion_requested_at timestamptz`); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -31,7 +31,11 @@ func (s *Service) DisableMFAPasswordWithAlert(ctx context.Context, id, email, pa
 	if err != nil {
 		return err
 	}
-	matched, err := auth.Verify(proof.Hash, password)
+	matched, err := auth.VerifyContext(ctx, proof.Hash, password)
+	if errors.Is(err, auth.ErrPasswordHashBusy) || ctx.Err() != nil {
+		// Not checked (H96): the caller answers 429, not "invalid".
+		return errors.Join(err, ctx.Err())
+	}
 	if err != nil || !matched {
 		return ErrMFADisableInvalid
 	}

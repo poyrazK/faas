@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,7 +31,9 @@ type nodeDeadlineFixture struct {
 }
 
 func newNodeDeadlineFixture() *nodeDeadlineFixture {
-	master, _ := hex.DecodeString(os.Getenv("FAAS_SESSION_KEY"))
+	// Deadlines are signed under the gateway fleet key (ADR-20261102191500).
+	raw, _ := os.ReadFile(os.Getenv("FAAS_GATEWAY_FLEET_KEY_FILE"))
+	master, _ := hex.DecodeString(strings.TrimSpace(string(raw)))
 	signer, _ := trafficdeadline.New(master, nil)
 	return &nodeDeadlineFixture{signer: signer, seen: nodeDeadlineObservation{
 		Claims: make(map[string]trafficdeadline.Claims), ClaimErrors: make(map[string]string)}}
