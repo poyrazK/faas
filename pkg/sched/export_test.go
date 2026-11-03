@@ -90,6 +90,7 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const DueWalkHeadPages = dueWalkHeadPages
 const WorkAppReconcile = workAppReconcile
 const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
