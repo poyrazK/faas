@@ -131,6 +131,17 @@ ADR-20261026201726 amendment 2026-11-03, ADR-20261031162858 amendment 2):
 - Deployment cron staging applies the cron API's path and timezone rules.
 - The dashboard refuses a disabled cron's manual run and names each refusal.
 
+Audit round 5, 2026-11-03 (branch `fix/crons-audit-round5`,
+ADR-20261026201726 amendment 2026-11-03 (2)):
+
+- A cron's schedule policy and failure rules can be removed
+  (`clear_schedule_policy`, `clear_failure_rules`, the matching CLI flags, and
+  Terraform when the configuration drops them).
+- On a preview app a compute budget holds, `gregale cron status` reports
+  `budget_held` and a manual run is refused (`402`) instead of waiting.
+- A disabled cron's manual run is refused (`409`); the scheduler no longer
+  lists disabled crons from PostgreSQL.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of

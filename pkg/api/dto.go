@@ -4742,6 +4742,12 @@ type UpdateCronRequest struct {
 	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
 	RetryMax            *int                       `json:"retry_max,omitempty"`
 	RetryBackoffSeconds *int                       `json:"retry_backoff_seconds,omitempty"`
+	// ClearSchedulePolicy and ClearFailureRules remove the cron's schedule
+	// policy or failure rules; an omitted schedule_policy or failure_rules
+	// leaves them as they are. Each refuses the matching field in the same
+	// request.
+	ClearSchedulePolicy bool `json:"clear_schedule_policy,omitempty"`
+	ClearFailureRules   bool `json:"clear_failure_rules,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
