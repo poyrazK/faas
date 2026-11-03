@@ -8268,7 +8268,8 @@ haveApp:
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
-				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
+				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
+				defer endTracking()
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -8285,7 +8286,8 @@ haveApp:
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
-				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
+				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
+				defer endTracking()
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}

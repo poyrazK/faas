@@ -949,6 +949,10 @@ const (
 	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
 	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
 	ProfileCaptureMaxConcurrentPerScheduler = 4
+	// ProfileCaptureMaxRunningPerPool bounds the captures of one pool (an
+	// account, or an organization's apps) running at once, so one customer
+	// cannot hold every scheduler's capture workers; the rest stay queued.
+	ProfileCaptureMaxRunningPerPool = 2
 	// ProfileCaptureMaxListed bounds GET /profiles/captures.
 	ProfileCaptureMaxListed = 50
 	// ProfileCaptureRetention is how long stored capture results remain.
@@ -1593,6 +1597,11 @@ const (
 	TriggerRetentionBatchMax  = 1000
 	TriggerRetentionPassesMax = 10
 )
+
+// TriggerMetricsCountLimit is where GET /v1/triggers/{id}/metrics stops
+// counting each state's records, so a trigger with millions of settled
+// records answers from a bounded index read (ADR-20261101104512).
+const TriggerMetricsCountLimit = 100000
 
 // RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
 // realtime trigger may bind (ADR-1322): one GatewaySynthDispatchTimeout
