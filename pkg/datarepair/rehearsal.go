@@ -137,13 +137,19 @@ func WriteRehearsalInput(w io.Writer, in RehearsalInput) error {
 		in.Plan.Items[i].ObservedVersion = ""
 		in.Plan.Items[i].ObservedValues = nil
 		in.Plan.Items[i].ObservationOmitted = false
+		in.Plan.Items[i].KeyJSON = ""
+		in.Plan.Items[i].BeforeJSON = ""
+		in.Plan.Items[i].AfterJSON = ""
 		in.Plan.Items[i].ObservedValuesJSON = ""
 		in.Plan.Items[i].PreviousStatus = ""
 	}
-	header, err := json.Marshal(in)
-	if err != nil || len(header) > api.DataRepairMaxPlanBytes+api.DataRepairMaxRequestBytes {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(in); err != nil || encoded.Len() > api.DataRepairMaxPlanBytes+api.DataRepairMaxRequestBytes {
 		return ErrInvalid
 	}
+	header := encoded.Bytes()
 	var lengths [12]byte
 	binary.BigEndian.PutUint32(lengths[:4], uint32(len(header)))
 	binary.BigEndian.PutUint64(lengths[4:], uint64(len(in.Dump)))

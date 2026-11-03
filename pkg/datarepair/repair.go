@@ -394,6 +394,10 @@ func runCheck(ctx context.Context, tx pgx.Tx, query string) bool {
 		return false
 	}
 	defer rows.Close()
+	fields := rows.FieldDescriptions()
+	if len(fields) != 1 || fields[0].DataTypeOID != 16 {
+		return false
+	}
 	var passed *bool
 	if !rows.Next() || rows.Scan(&passed) != nil || passed == nil || !*passed {
 		return false
