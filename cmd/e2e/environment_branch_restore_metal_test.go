@@ -70,7 +70,7 @@ func TestEnvironmentBranchIdentityReloadMetal(t *testing.T) {
 	falsy := false
 	if status := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{
 		Slug: slug, Type: "app", RequireAuthn: &falsy,
-		AfterRestore: &api.AfterRestoreHook{Path: "/internal/after-restore", TimeoutMS: 3000, Identity: api.AfterRestoreIdentityReload},
+		AfterRestore: &api.AfterRestoreHook{Path: "/internal/after-restore", TimeoutMS: api.AfterRestoreHookMaxTimeoutMS, Identity: api.AfterRestoreIdentityReload},
 	}); status != http.StatusCreated {
 		t.Fatalf("create app: status=%d", status)
 	}
