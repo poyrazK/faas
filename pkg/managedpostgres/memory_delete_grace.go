@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
@@ -130,10 +131,23 @@ func (s *MemoryStore) trackUsageWaiverLocked(before, after Database) {
 }
 
 // usageWaivedLocked reports whether a usage window lies wholly inside one of
-// its database's waivers.
+// its database's waivers. Only a waiver with no earlier one for the database
+// in the api.ManagedPostgresUsageWaiverPeriod before it counts (H106), as
+// ManagedPostgresUsageForSubject does.
 func (s *MemoryStore) usageWaivedLocked(record UsageRecord) bool {
-	for _, waiver := range s.usageWaivers[record.DatabaseID] {
-		if !record.WindowFrom.Before(waiver.from) && (waiver.until.IsZero() || !record.WindowTo.After(waiver.until)) {
+	waivers := s.usageWaivers[record.DatabaseID]
+	for i, waiver := range waivers {
+		if !record.WindowFrom.Before(waiver.from) && (waiver.until.IsZero() || !record.WindowTo.After(waiver.until)) &&
+			!earlierUsageWaiver(waivers[:i], waiver.from) {
+			return true
+		}
+	}
+	return false
+}
+
+func earlierUsageWaiver(earlier []usageWaiver, from time.Time) bool {
+	for _, prior := range earlier {
+		if prior.from.Before(from) && prior.from.After(from.Add(-api.ManagedPostgresUsageWaiverPeriod)) {
 			return true
 		}
 	}

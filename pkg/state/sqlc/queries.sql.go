@@ -61503,7 +61503,9 @@ FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.databa
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid
 AND u.window_from>=$2::timestamptz AND u.window_from<$3::timestamptz
 AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
- AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until))
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until)
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers p WHERE p.database_id=w.database_id
+  AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'))
 `
 
 type ManagedPostgresUsageForSubjectParams struct {

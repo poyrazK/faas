@@ -69,9 +69,11 @@ func testUsageWaiver(t *testing.T, store usageWaiverTestStore, accountID string)
 		t.Fatal(err)
 	}
 
-	// Waived: 14–16 (inside 13:30–16:30) and 18–20 (inside 18:00–20:00). The
-	// windows that straddle a schedule or an undo still count.
-	const customer = 1<<0 + 1<<1 + 1<<4 + 1<<5 + 1<<8
+	// Waived: 14–16 (inside 13:30–16:30). The second schedule, 18:00–20:00,
+	// came within ManagedPostgresUsageWaiverPeriod of the first, so its
+	// windows count (H106: delete-undelete cycling parked usage for free).
+	// The windows that straddle a schedule or an undo still count.
+	const customer = 1<<0 + 1<<1 + 1<<4 + 1<<5 + 1<<6 + 1<<7 + 1<<8
 	snapshot, err := store.UsageSnapshot(ctx, accountID, start)
 	if err != nil || snapshot.ComputeUnitSeconds != customer || snapshot.CostMillicents != customer {
 		t.Fatalf("customer usage = %d units, %d millicents, %v; want %d", snapshot.ComputeUnitSeconds, snapshot.CostMillicents, err, customer)
