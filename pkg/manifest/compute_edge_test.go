@@ -179,6 +179,9 @@ func TestPublicEdgeFront(t *testing.T) {
 		{name: "no entry address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "" }), wantErr: "fleet.hosts[1].entry_ipv4"},
 		{name: "the managed address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "10.42.0.2" }), wantErr: "drops SSH"},
 		{name: "the public address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = h.PublicIPv4 }), wantErr: "drops SSH"},
+		{name: "a forwarded public address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4, h.PublicIPv4Forwarded = "", true })},
+		{name: "a forwarded public address named again", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4, h.PublicIPv4Forwarded = h.PublicIPv4, true })},
+		{name: "forwarded without an address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.PublicIPv4, h.PublicIPv4Forwarded = "", true }), wantErr: "public_ipv4_forwarded"},
 		{name: "not canonical", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "198.51.100.02" }), wantErr: "canonical form"},
 		{name: "IPv6", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "2001:db8::2" }), wantErr: "canonical form"},
 		{name: "an entry address behind Cloudflare", edge: direct, hosts: []Host{control, entered}, wantErr: "under public_edge.front: none"},
@@ -199,5 +202,23 @@ func TestPublicEdgeFront(t *testing.T) {
 				t.Fatalf("NoFront = %v, want %v", got, want)
 			}
 		})
+	}
+}
+
+// adr: 20261103163954 — a forwarded public_ipv4 (a GCP forwarding rule) is the
+// entry address unless entry_ipv4 names another.
+func TestHostEntryAddress(t *testing.T) {
+	for _, tc := range []struct {
+		host Host
+		want string
+	}{
+		{Host{PublicIPv4: "203.0.113.2"}, ""},
+		{Host{PublicIPv4: "203.0.113.2", PublicIPv4Forwarded: true}, "203.0.113.2"},
+		{Host{PublicIPv4: "203.0.113.2", PublicIPv4Forwarded: true, EntryIPv4: "198.51.100.2"}, "198.51.100.2"},
+		{Host{PublicIPv4: "203.0.113.2", EntryIPv4: "198.51.100.2"}, "198.51.100.2"},
+	} {
+		if got := tc.host.EntryAddress(); got != tc.want {
+			t.Errorf("%+v.EntryAddress() = %q, want %q", tc.host, got, tc.want)
+		}
 	}
 }

@@ -540,12 +540,30 @@ type Host struct {
 	// edge under direct entry (ADR-20261102081618): its own on bare metal,
 	// an inbound-only forwarding rule on GCP. Unused elsewhere.
 	PublicIPv4 string `yaml:"public_ipv4,omitempty"`
+	// PublicIPv4Forwarded says public_ipv4 is an inbound-only forwarding
+	// rule to the host that carries TCP 443 alone
+	// (deploy/scripts/gcp-compute-edge-address.sh), not an address anyone
+	// manages the host on. Under public_edge.front: none it is then the
+	// host's entry address unless entry_ipv4 names another
+	// (ADR-20261103163954 §2: on GCP the forwarding-rule address already
+	// carries only 443).
+	PublicIPv4Forwarded bool `yaml:"public_ipv4_forwarded,omitempty"`
 	// EntryIPv4 is a compute host's public entry address under
-	// public_edge.front: none (ADR-20261103163954 §2): an additional IP, not
-	// the address operators manage the host on, because the firewall admits
-	// 443 to it from everyone and drops everything else sent to it,
-	// including SSH. The DNS-only records point at it. Unused elsewhere.
+	// public_edge.front: none (ADR-20261103163954 §2): on bare metal an
+	// additional IP, not the address operators manage the host on, because
+	// the firewall admits 443 to it from everyone and drops everything else
+	// sent to it, including SSH. The DNS-only records point at it. Unused
+	// elsewhere.
 	EntryIPv4 string `yaml:"entry_ipv4,omitempty"`
+}
+
+// EntryAddress is the host's public entry address under public_edge.front:
+// none: entry_ipv4, or a forwarded public_ipv4. "" when it has neither.
+func (h Host) EntryAddress() string {
+	if h.EntryIPv4 == "" && h.PublicIPv4Forwarded {
+		return h.PublicIPv4
+	}
+	return h.EntryIPv4
 }
 
 // Daemons is the per-daemon configuration. Keys are daemon names;
@@ -886,29 +904,33 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 	return append(errs, e.validateDNS(hosts)...)
 }
 
-// validateEntryAddrs checks the compute hosts' entry_ipv4: each needs one
-// under front: none, apart from the addresses it is managed on, and no host
-// takes one otherwise.
+// validateEntryAddrs checks the compute hosts' entry addresses: each needs
+// one under front: none, apart from the addresses it is managed on, and no
+// host takes one otherwise.
 func (e PublicEdge) validateEntryAddrs(hosts []Host) Errors {
 	var errs Errors
 	for i, h := range hosts {
 		field := fmt.Sprintf("fleet.hosts[%d].entry_ipv4", i)
+		if h.PublicIPv4Forwarded && h.PublicIPv4 == "" {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].public_ipv4_forwarded", i), "needs public_ipv4, the forwarding rule's address"})
+		}
+		entry := h.EntryAddress()
 		switch {
 		case !e.NoFront() || h.Role != "compute-only":
 			if h.EntryIPv4 != "" {
 				errs = append(errs, Error{field, "is for a compute-only host under public_edge.front: none"})
 			}
-		case h.EntryIPv4 == "":
-			errs = append(errs, Error{field, "is required under public_edge.front: none: the address clients reach, apart from the one the host is managed on"})
+		case entry == "":
+			errs = append(errs, Error{field, "is required under public_edge.front: none (or public_ipv4_forwarded): the address clients reach, apart from the one the host is managed on"})
 		default:
-			addr, err := netip.ParseAddr(h.EntryIPv4)
-			if err != nil || !addr.Is4() || addr.String() != h.EntryIPv4 {
-				errs = append(errs, Error{field, fmt.Sprintf("%q is not an IPv4 address in canonical form", h.EntryIPv4)})
+			addr, err := netip.ParseAddr(entry)
+			if err != nil || !addr.Is4() || addr.String() != entry {
+				errs = append(errs, Error{field, fmt.Sprintf("%q is not an IPv4 address in canonical form", entry)})
 				continue
 			}
 			managed, _, _ := ParseHostPort(h.Address)
-			if h.EntryIPv4 == h.PublicIPv4 || h.EntryIPv4 == managed {
-				errs = append(errs, Error{field, "must not be the host's public_ipv4 or address: the firewall drops SSH and every port but 443 on it"})
+			if entry == managed || (entry == h.PublicIPv4 && !h.PublicIPv4Forwarded) {
+				errs = append(errs, Error{field, "must not be the host's address, or its public_ipv4 unless that is an inbound-only forwarding rule (public_ipv4_forwarded): the firewall drops SSH and every port but 443 on it"})
 			}
 		}
 	}

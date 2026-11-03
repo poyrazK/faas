@@ -453,7 +453,9 @@ type ComputeNodeConfig struct {
 	// PublicEntryAddrs, when set, are this compute edge's public entry
 	// addresses with no proxy in front, as the nftables role renders for
 	// faas_public_entry_addrs (ADR-20261103163954 §2): 443 from every source
-	// to them only, nothing else to them. Exclusive with PublicIngressCIDRs.
+	// to them only, nothing else to them. Takes precedence over
+	// PublicIngressCIDRs, which the drop-in sends beside it for a vmmd that
+	// predates this field.
 	PublicEntryAddrs []string `toml:"public_entry_addrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
@@ -1214,9 +1216,6 @@ func LoadConfig(path string) (*Config, error) {
 // role writes verbatim, so the boot policy and vmmd's runtime policy stay
 // byte-identical.
 func validatePublicEntryAddrs(cfg ComputeNodeConfig) error {
-	if len(cfg.PublicEntryAddrs) > 0 && len(cfg.PublicIngressCIDRs) > 0 {
-		return fmt.Errorf("vmmd: public_entry_addrs and public_ingress_cidrs are exclusive: an edge either has Cloudflare in front or takes 443 from everyone on its entry addresses")
-	}
 	for i, raw := range cfg.PublicEntryAddrs {
 		addr, err := netip.ParseAddr(raw)
 		if err != nil {
