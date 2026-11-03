@@ -2654,6 +2654,7 @@ export type { RequestAnalyticsGroup } from './RequestAnalyticsGroup.js';
 export type { RequestAnalyticsResponse } from './RequestAnalyticsResponse.js';
 export type { RequestAnalyticsRoute } from './RequestAnalyticsRoute.js';
 export type { RequestAnalyticsRouteDeploymentObservation } from './RequestAnalyticsRouteDeploymentObservation.js';
+export type { RequestAnalyticsTelemetryGap } from './RequestAnalyticsTelemetryGap.js';
 export type { RequestAnalyticsTimeseriesPoint } from './RequestAnalyticsTimeseriesPoint.js';
 export type { RequestAnalyticsTimeseriesResponse } from './RequestAnalyticsTimeseriesResponse.js';
 export type { RequestAnalyticsTimeseriesSeries } from './RequestAnalyticsTimeseriesSeries.js';
