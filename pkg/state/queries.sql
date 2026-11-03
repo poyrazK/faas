@@ -10553,25 +10553,34 @@ WITH candidate_issues AS MATERIALIZED (
       AND (sqlc.arg(tag_filter)::jsonb='{}'::jsonb OR EXISTS(
         SELECT 1 FROM issue_events tagged JOIN issue_group_assignments assigned ON assigned.original_issue_id=tagged.issue_id
         WHERE assigned.canonical_issue_id=i.id AND tagged.app_id=sqlc.arg(app_id)
-          AND tagged.occurred_at>=sqlc.arg(since)::timestamptz AND tagged.occurred_at<=sqlc.arg(until)::timestamptz
+          AND tagged.occurred_at>=sqlc.arg(since)::timestamptz - interval '1 second' AND tagged.occurred_at<=sqlc.arg(until)::timestamptz + interval '1 second'
+          AND issue_window_weight(tagged.occurred_at,tagged.occurrence_count,tagged.http_time_buckets,sqlc.arg(since)::timestamptz,sqlc.arg(until)::timestamptz,true,true)>0
           AND (tagged.payload->'tags') @> sqlc.arg(tag_filter)::jsonb
       ))
-), issue_impact AS (
-    SELECT a.canonical_issue_id AS issue_id,
-           count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
-           count(*) AS observed_events,
-           count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
+), impact_events AS MATERIALIZED (
+    SELECT a.canonical_issue_id AS issue_id, CASE WHEN e.occurred_at >= sqlc.arg(since)::timestamptz AND e.occurred_at <= sqlc.arg(until)::timestamptz THEN e.verified_platform_tenant_id END AS verified_platform_tenant_id, CASE WHEN e.occurred_at >= sqlc.arg(since)::timestamptz AND e.occurred_at <= sqlc.arg(until)::timestamptz THEN e.verified_consumer_id END AS verified_consumer_id, issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,sqlc.arg(since)::timestamptz,sqlc.arg(until)::timestamptz,true,true)::bigint AS occurrence_count
       FROM candidate_issues i
       JOIN issue_group_assignments a ON a.canonical_issue_id = i.id
       JOIN issue_events e ON e.issue_id = a.original_issue_id
-     WHERE e.occurred_at >= sqlc.arg(since)::timestamptz
-       AND e.occurred_at <= sqlc.arg(until)::timestamptz
-     GROUP BY a.canonical_issue_id
+     WHERE e.occurred_at >= sqlc.arg(since)::timestamptz - interval '1 second' AND e.occurred_at <= sqlc.arg(until)::timestamptz + interval '1 second'
+       AND issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,sqlc.arg(since)::timestamptz,sqlc.arg(until)::timestamptz,true,true)>0
+), linked_customers AS (
+    SELECT DISTINCT issue_id, verified_consumer_id FROM impact_events
+     WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+), issue_impact AS (
+    SELECT e.issue_id,
+           (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+             FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS identified_customers,
+           sum(e.occurrence_count)::bigint AS observed_events,
+           sum(e.occurrence_count - CASE WHEN e.verified_platform_tenant_id IS NOT NULL OR e.verified_consumer_id IS NOT NULL THEN 1 ELSE 0 END)::bigint AS unattributed_events
+      FROM impact_events e LEFT JOIN linked_customers l ON l.issue_id=e.issue_id AND l.verified_consumer_id=e.verified_consumer_id
+     GROUP BY e.issue_id
 )
 SELECT i.*,
        COALESCE(impact.identified_customers,0)::bigint AS identified_customers,
        COALESCE(impact.observed_events,0)::bigint AS observed_events,
-       COALESCE(impact.unattributed_events,0)::bigint AS unattributed_events
+       COALESCE(impact.unattributed_events,0)::bigint AS unattributed_events,
+       (SELECT count(*) FROM issue_events legacy JOIN issue_group_assignments la ON la.original_issue_id=legacy.issue_id WHERE la.canonical_issue_id=i.id AND legacy.occurred_at >= sqlc.arg(since)::timestamptz AND legacy.occurred_at <= sqlc.arg(until)::timestamptz AND NOT legacy.occurrence_weight_known AND legacy.occurrence_count=1 AND legacy.payload->>'source_kind'='http')::bigint AS unknown_http_batches
   FROM candidate_issues i
   LEFT JOIN issue_impact impact ON impact.issue_id = i.id
  WHERE COALESCE(impact.identified_customers,0) >= sqlc.arg(min_customers)::bigint
@@ -10589,14 +10598,22 @@ SELECT i.*,
           i.last_seen_at DESC,i.id DESC
  LIMIT sqlc.arg(page_limit);
 -- name: IssueImpactSummaries :many
-SELECT a.canonical_issue_id AS issue_id,
- count(*) AS observed_events,
- count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
- count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
-FROM issue_group_assignments a JOIN issue_events e ON e.issue_id=a.original_issue_id
-WHERE a.canonical_issue_id = ANY(sqlc.arg(issue_ids)::uuid[])
- AND e.occurred_at >= sqlc.arg(since)::timestamptz AND e.occurred_at <= sqlc.arg(until)::timestamptz
-GROUP BY a.canonical_issue_id;
+WITH impact_events AS MATERIALIZED (
+ SELECT a.canonical_issue_id AS issue_id,CASE WHEN e.occurred_at >= sqlc.arg(since)::timestamptz AND e.occurred_at <= sqlc.arg(until)::timestamptz THEN e.verified_platform_tenant_id END AS verified_platform_tenant_id, CASE WHEN e.occurred_at >= sqlc.arg(since)::timestamptz AND e.occurred_at <= sqlc.arg(until)::timestamptz THEN e.verified_consumer_id END AS verified_consumer_id, issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,sqlc.arg(since)::timestamptz,sqlc.arg(until)::timestamptz,true,true)::bigint AS occurrence_count
+ FROM issue_group_assignments a JOIN issue_events e ON e.issue_id=a.original_issue_id
+ WHERE a.canonical_issue_id = ANY(sqlc.arg(issue_ids)::uuid[])
+ AND e.occurred_at >= sqlc.arg(since)::timestamptz - interval '1 second' AND e.occurred_at <= sqlc.arg(until)::timestamptz + interval '1 second'
+ AND issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,sqlc.arg(since)::timestamptz,sqlc.arg(until)::timestamptz,true,true)>0
+), linked_customers AS (
+ SELECT DISTINCT issue_id,verified_consumer_id FROM impact_events WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+)
+SELECT e.issue_id, sum(e.occurrence_count)::bigint AS observed_events,
+ (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+   FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS identified_customers,
+ sum(e.occurrence_count - CASE WHEN e.verified_platform_tenant_id IS NOT NULL OR e.verified_consumer_id IS NOT NULL THEN 1 ELSE 0 END)::bigint AS unattributed_events,
+ (SELECT count(*) FROM issue_events legacy JOIN issue_group_assignments la ON la.original_issue_id=legacy.issue_id WHERE la.canonical_issue_id=e.issue_id AND legacy.occurred_at >= sqlc.arg(since)::timestamptz AND legacy.occurred_at <= sqlc.arg(until)::timestamptz AND NOT legacy.occurrence_weight_known AND legacy.occurrence_count=1 AND legacy.payload->>'source_kind'='http')::bigint AS unknown_http_batches
+FROM impact_events e LEFT JOIN linked_customers l ON l.issue_id=e.issue_id AND l.verified_consumer_id=e.verified_consumer_id
+GROUP BY e.issue_id;
 -- name: IssueCount :one
 SELECT count(*) FROM app_issues WHERE app_id = sqlc.arg(app_id);
 -- name: IssueCountEvents :one
@@ -10605,20 +10622,34 @@ SELECT count(*) FROM issue_events WHERE app_id = sqlc.arg(app_id);
 SELECT count(*) FROM issue_events WHERE app_id = sqlc.arg(app_id) AND received_at >= sqlc.arg(since);
 -- name: IssuePurgeEvents :exec
 DELETE FROM issue_events WHERE app_id = sqlc.arg(app_id) AND received_at < sqlc.arg(before);
+-- name: IssuePurgeEventsBounded :execrows
+WITH expired AS (
+ SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e
+ WHERE e.app_id=sqlc.arg(app_id) AND e.received_at<sqlc.arg(before)
+ ORDER BY e.received_at LIMIT sqlc.arg(batch_limit) FOR UPDATE OF e SKIP LOCKED
+)
+DELETE FROM issue_events e USING expired x WHERE e.app_id=x.app_id AND e.deployment_id=x.deployment_id AND e.event_id=x.event_id;
+-- name: IssueCreateEventUsage :exec
+INSERT INTO issue_event_usage(app_id) VALUES(sqlc.arg(app_id)) ON CONFLICT (app_id) DO NOTHING;
+-- name: IssueLockEventUsage :one
+SELECT retained_count, initialized FROM issue_event_usage WHERE app_id=sqlc.arg(app_id) FOR UPDATE;
+-- name: IssueInitializeEventUsage :exec
+UPDATE issue_event_usage SET retained_count=sqlc.arg(retained_count), initialized=true
+WHERE app_id=sqlc.arg(app_id) AND NOT initialized;
 -- name: IssueFindEvent :one
 SELECT issue_id,payload_hash FROM issue_events WHERE app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND event_id=sqlc.arg(event_id);
 -- name: IssueInsertEvent :exec
-INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,original_issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
-VALUES(sqlc.arg(app_id),sqlc.arg(deployment_id),sqlc.arg(event_id),sqlc.arg(issue_id),sqlc.narg(original_issue_id),sqlc.arg(payload_hash),sqlc.arg(payload),sqlc.arg(occurred_at),sqlc.arg(received_at),sqlc.narg(consumer_id),sqlc.narg(tenant_id));
+INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,original_issue_id,payload_hash,payload,occurred_at,received_at,attribution_checked_at,verified_consumer_id,verified_platform_tenant_id,occurrence_count,attribution_version,occurrence_weight_known,http_time_buckets)
+VALUES(sqlc.arg(app_id),sqlc.arg(deployment_id),sqlc.arg(event_id),sqlc.arg(issue_id),sqlc.narg(original_issue_id),sqlc.arg(payload_hash),sqlc.arg(payload),sqlc.arg(occurred_at),sqlc.arg(received_at),sqlc.arg(received_at),sqlc.narg(consumer_id),sqlc.narg(tenant_id),sqlc.arg(occurrence_count),2,true,sqlc.arg(http_time_buckets));
 -- name: IssueObserve :one
-UPDATE app_issues SET event_count=event_count+1,first_seen_at=LEAST(first_seen_at,sqlc.arg(occurred_at)),last_seen_at=GREATEST(last_seen_at,sqlc.arg(occurred_at)),
+UPDATE app_issues SET event_count=event_count+sqlc.arg(occurrence_count)::bigint,first_seen_at=LEAST(first_seen_at,sqlc.arg(occurred_at)),last_seen_at=GREATEST(last_seen_at,COALESCE(sqlc.narg(last_occurred_at)::timestamptz,sqlc.arg(occurred_at))),
 state=CASE WHEN sqlc.arg(regressed)::boolean THEN 'open' ELSE state END,
 regression_count=regression_count+CASE WHEN sqlc.arg(regressed)::boolean THEN 1 ELSE 0 END
 WHERE id=sqlc.arg(id) RETURNING *;
 -- name: IssueObserveRelease :exec
 INSERT INTO issue_releases(issue_id,deployment_id,commit_sha,image_digest,event_count,first_seen_at,last_seen_at)
-VALUES(sqlc.arg(issue_id),sqlc.arg(deployment_id),sqlc.arg(commit_sha),sqlc.arg(image_digest),1,sqlc.arg(occurred_at),sqlc.arg(occurred_at))
-ON CONFLICT(issue_id,deployment_id) DO UPDATE SET event_count=issue_releases.event_count+1,
+VALUES(sqlc.arg(issue_id),sqlc.arg(deployment_id),sqlc.arg(commit_sha),sqlc.arg(image_digest),sqlc.arg(occurrence_count),sqlc.arg(occurred_at),COALESCE(sqlc.narg(last_occurred_at)::timestamptz,sqlc.arg(occurred_at)))
+ON CONFLICT(issue_id,deployment_id) DO UPDATE SET event_count=issue_releases.event_count+excluded.event_count,
 first_seen_at=LEAST(issue_releases.first_seen_at,excluded.first_seen_at),last_seen_at=GREATEST(issue_releases.last_seen_at,excluded.last_seen_at);
 -- name: IssueListEvents :many
 SELECT e.*,COALESCE(e.original_issue_id,e.issue_id) AS provenance_issue_id,i.fingerprint,i.grouping_version FROM issue_events e
@@ -10646,15 +10677,31 @@ AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (t.created_at,t.id) < (sqlc.
 ORDER BY t.created_at DESC,t.id DESC LIMIT sqlc.arg(page_limit);
 
 -- name: IssueImpact :one
-SELECT count(*) AS observed_events,count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
-count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
-FROM issue_events e
-WHERE e.issue_id IN (SELECT sqlc.arg(issue_id)::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=sqlc.arg(issue_id)) AND e.occurred_at >= sqlc.arg(since) AND e.occurred_at <= sqlc.arg(until);
+WITH impact_events AS MATERIALIZED (
+ SELECT CASE WHEN e.occurred_at >= sqlc.arg(since)::timestamptz AND e.occurred_at <= sqlc.arg(until)::timestamptz THEN e.verified_platform_tenant_id END AS verified_platform_tenant_id, CASE WHEN e.occurred_at >= sqlc.arg(since)::timestamptz AND e.occurred_at <= sqlc.arg(until)::timestamptz THEN e.verified_consumer_id END AS verified_consumer_id, issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,sqlc.arg(since)::timestamptz,sqlc.arg(until)::timestamptz,true,true)::bigint AS occurrence_count FROM issue_events e
+ WHERE e.issue_id IN (SELECT sqlc.arg(issue_id)::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=sqlc.arg(issue_id))
+ AND e.occurred_at >= sqlc.arg(since)::timestamptz - interval '1 second' AND e.occurred_at <= sqlc.arg(until)::timestamptz + interval '1 second'
+ AND issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,sqlc.arg(since)::timestamptz,sqlc.arg(until)::timestamptz,true,true)>0
+), linked_customers AS (
+ SELECT DISTINCT verified_consumer_id FROM impact_events WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+)
+SELECT COALESCE(sum(e.occurrence_count),0)::bigint AS observed_events, (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+ FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS identified_customers,
+ COALESCE(sum(e.occurrence_count - CASE WHEN e.verified_platform_tenant_id IS NOT NULL OR e.verified_consumer_id IS NOT NULL THEN 1 ELSE 0 END),0)::bigint AS unattributed_events,
+ (SELECT count(*) FROM issue_events legacy WHERE legacy.issue_id IN (SELECT sqlc.arg(issue_id)::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=sqlc.arg(issue_id)) AND legacy.occurred_at >= sqlc.arg(since)::timestamptz AND legacy.occurred_at <= sqlc.arg(until)::timestamptz AND NOT legacy.occurrence_weight_known AND legacy.occurrence_count=1 AND legacy.payload->>'source_kind'='http')::bigint AS unknown_http_batches
+FROM impact_events e LEFT JOIN linked_customers l ON l.verified_consumer_id=e.verified_consumer_id;
 
 -- name: IssueImpactCustomerCount :one
-SELECT count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id))
-FROM issue_events e
-WHERE e.issue_id IN (SELECT sqlc.arg(issue_id)::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=sqlc.arg(issue_id)) AND e.occurred_at >= sqlc.arg(since) AND e.occurred_at <= sqlc.arg(until);
+WITH impact_events AS MATERIALIZED (
+ SELECT e.verified_platform_tenant_id,e.verified_consumer_id FROM issue_events e
+ WHERE e.issue_id IN (SELECT sqlc.arg(issue_id)::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=sqlc.arg(issue_id))
+ AND e.occurred_at >= sqlc.arg(since) AND e.occurred_at <= sqlc.arg(until)
+), linked_customers AS (
+ SELECT DISTINCT verified_consumer_id FROM impact_events WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+)
+SELECT (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+ FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS customer_count
+FROM impact_events e LEFT JOIN linked_customers l ON l.verified_consumer_id=e.verified_consumer_id;
 
 -- name: IssueGetImpactAlertPolicy :one
 SELECT COALESCE((SELECT minimum_customers FROM app_issue_impact_alert_policies WHERE app_id=sqlc.arg(app_id)),0)::integer AS minimum_customers;
@@ -10715,9 +10762,14 @@ SELECT sqlc.arg(activity_id),sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(payl
 FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING;
 
 -- name: IssueRequestAttribution :many
-SELECT DISTINCT consumer_key,platform_tenant_id FROM request_audit_events
+SELECT consumer_key,platform_tenant_id,trace_id FROM request_audit_events
 WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id)
-AND request_id=sqlc.arg(request_id) LIMIT 2;
+AND request_id=sqlc.arg(request_id) AND occurred_at >= sqlc.arg(since) AND occurred_at <= sqlc.arg(until) LIMIT 2;
+
+-- name: IssueRequestTraceJournal :many
+SELECT trace_id FROM request_id_journal WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id)
+AND request_id=sqlc.arg(request_id) AND received_at >= sqlc.arg(since) AND received_at <= sqlc.arg(until)
+AND expires_at>now() LIMIT 2;
 
 -- name: IssueTokenStillValid :one
 SELECT EXISTS(SELECT 1 FROM issue_ingest_tokens WHERE id=sqlc.arg(id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND revoked_at IS NULL AND expires_at>sqlc.arg(now));
@@ -10735,19 +10787,68 @@ AND NOT EXISTS (SELECT 1 FROM issue_group_links l WHERE l.issue_id=i.id)
 ORDER BY ignored_until LIMIT sqlc.arg(batch_limit);
 
 -- name: IssueDebugRequest :many
-SELECT id FROM request_telemetry WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id)
-AND count=1 AND received_at BETWEEN sqlc.arg(since) AND sqlc.arg(until)
-AND (id=sqlc.narg(request_id)::uuid OR (sqlc.arg(trace_id)::text<>'' AND trace_id=sqlc.arg(trace_id))) LIMIT 2;
+-- Both correlation hints must agree with any retained request evidence.
+WITH matching_journal AS MATERIALIZED (
+ SELECT j.trace_id FROM request_id_journal j
+ WHERE j.account_id=sqlc.arg(account_id) AND j.app_id=sqlc.arg(app_id)
+ AND j.request_id=sqlc.arg(request_id)::text AND sqlc.arg(request_id)::text<>''
+ AND j.received_at BETWEEN sqlc.arg(since) AND sqlc.arg(until) AND j.expires_at>now()
+ LIMIT 2
+), matching_audit AS MATERIALIZED (
+ SELECT a.trace_id FROM request_audit_events a
+ WHERE a.account_id=sqlc.arg(account_id) AND a.app_id=sqlc.arg(app_id) AND a.deployment_id=sqlc.arg(deployment_id)
+ AND a.request_id=sqlc.arg(request_id)::text AND sqlc.arg(request_id)::text<>''
+ AND a.occurred_at BETWEEN sqlc.arg(since) AND sqlc.arg(until)
+ LIMIT 2
+)
+SELECT t.id FROM request_telemetry t WHERE t.account_id=sqlc.arg(account_id) AND t.app_id=sqlc.arg(app_id) AND t.deployment_id=sqlc.arg(deployment_id)
+AND t.count=1 AND t.received_at BETWEEN sqlc.arg(since) AND sqlc.arg(until)
+AND (SELECT count(*) FROM matching_journal)<=1 AND (SELECT count(*) FROM matching_audit)<=1
+AND (NOT EXISTS(SELECT 1 FROM matching_journal WHERE trace_id IS NOT NULL AND trace_id<>t.trace_id))
+AND (NOT EXISTS(SELECT 1 FROM matching_audit WHERE (trace_id<>'' AND trace_id<>t.trace_id)
+ OR (sqlc.arg(trace_id)::text<>'' AND trace_id='')))
+AND ((sqlc.arg(trace_id)::text<>'' AND t.trace_id=sqlc.arg(trace_id)) OR
+ (sqlc.arg(trace_id)::text='' AND (SELECT count(*) FROM matching_journal)=1 AND t.trace_id=(SELECT trace_id FROM matching_journal LIMIT 1))) LIMIT 2;
 
 -- name: IssueUnattributedEvents :many
+-- Use the partial and complete indexes separately so old complete rows do not
+-- crowd out first checks or force an unbounded scan after deployment.
+WITH eligible AS MATERIALIZED (
+ (SELECT e.* FROM issue_events e
+  WHERE (e.verified_consumer_id IS NULL OR e.verified_platform_tenant_id IS NULL)
+  AND NOT (e.app_id = ANY(COALESCE(sqlc.arg(excluded_app_ids)::uuid[], ARRAY[]::uuid[])))
+  AND e.attribution_checked_at < sqlc.arg(before)
+  AND (e.attribution_checked_at <= e.received_at + interval '1 minute'
+       OR e.received_at < sqlc.arg(window_start)
+       OR e.attribution_checked_at < sqlc.arg(verified_before))
+  ORDER BY e.attribution_checked_at LIMIT sqlc.arg(batch_limit))
+ UNION ALL
+ (SELECT e.* FROM issue_events e
+  WHERE e.verified_consumer_id IS NOT NULL AND e.verified_platform_tenant_id IS NOT NULL
+  AND NOT (e.app_id = ANY(COALESCE(sqlc.arg(excluded_app_ids)::uuid[], ARRAY[]::uuid[])))
+  AND e.attribution_checked_at <> 'infinity'::timestamptz
+  AND (e.received_at >= sqlc.arg(full_oldest) OR e.attribution_checked_at >= sqlc.arg(full_oldest))
+  AND e.attribution_checked_at < sqlc.arg(verified_before)
+  ORDER BY e.attribution_checked_at LIMIT sqlc.arg(batch_limit))
+)
+SELECT e.*,i.account_id,i.environment FROM eligible e JOIN app_issues i ON i.id=e.issue_id
+ORDER BY e.attribution_checked_at LIMIT sqlc.arg(batch_limit);
+
+-- name: IssueHistoricalAttributionEvents :many
 SELECT e.*,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i.id=e.issue_id
-WHERE e.verified_consumer_id IS NULL AND e.verified_platform_tenant_id IS NULL
-AND e.attribution_checked_at < sqlc.arg(before) ORDER BY e.attribution_checked_at LIMIT sqlc.arg(batch_limit);
+WHERE e.attribution_version < 2 AND (e.verified_consumer_id IS NOT NULL OR e.verified_platform_tenant_id IS NOT NULL)
+AND NOT (e.app_id = ANY(COALESCE(sqlc.arg(excluded_app_ids)::uuid[], ARRAY[]::uuid[])))
+ORDER BY e.id LIMIT sqlc.arg(batch_limit);
+
+-- name: IssueMarkAttributionReviewed :exec
+UPDATE issue_events SET attribution_version=2 WHERE id=sqlc.arg(id) AND attribution_version<2;
 
 -- name: IssueEnrichAttribution :execrows
 UPDATE issue_events SET verified_consumer_id=sqlc.narg(consumer_id),verified_platform_tenant_id=sqlc.narg(tenant_id),attribution_checked_at=sqlc.arg(now)
 WHERE app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND event_id=sqlc.arg(event_id)
-AND verified_consumer_id IS NULL AND verified_platform_tenant_id IS NULL;
+AND verified_consumer_id IS NOT DISTINCT FROM sqlc.narg(previous_consumer_id)
+AND verified_platform_tenant_id IS NOT DISTINCT FROM sqlc.narg(previous_tenant_id)
+AND attribution_checked_at = sqlc.arg(previous_checked_at);
 
 -- name: CreateDevBridge :execrows
 INSERT INTO dev_bridge_sessions
@@ -25473,7 +25574,7 @@ AND details->>'canonical_issue_id'=sqlc.arg(canonical_id)::text);
 
 -- name: IssueSplitPreviewCounts :one
 WITH evidence AS MATERIALIZED (
- SELECT e.id,e.occurred_at,
+ SELECT e.id,e.occurred_at,e.occurrence_count,
   NOT EXISTS (SELECT 1 FROM issue_split_rules r WHERE r.source_issue_id=sqlc.arg(issue_id) AND r.enabled
    AND (r.exception_type='' OR r.exception_type=e.payload->>'exception_type')
    AND (r.error_code='' OR r.error_code=e.payload->>'error_code')
@@ -25485,10 +25586,10 @@ WITH evidence AS MATERIALIZED (
   AND (sqlc.arg(source_kind)::text = '' OR payload->>'source_kind' = sqlc.arg(source_kind)) AS matches
  FROM issue_events e WHERE e.issue_id = sqlc.arg(issue_id)
 )
-SELECT count(*)::bigint AS retained_event_count,
- count(*) FILTER (WHERE matches)::bigint AS matching_event_count,
- count(*) FILTER (WHERE matches AND eligible)::bigint AS eligible_event_count,
- count(*) FILTER (WHERE matches AND NOT eligible)::bigint AS shadowed_event_count,
+SELECT COALESCE(sum(occurrence_count),0)::bigint AS retained_event_count,
+ COALESCE(sum(occurrence_count) FILTER (WHERE matches),0)::bigint AS matching_event_count,
+ COALESCE(sum(occurrence_count) FILTER (WHERE matches AND eligible),0)::bigint AS eligible_event_count,
+ COALESCE(sum(occurrence_count) FILTER (WHERE matches AND NOT eligible),0)::bigint AS shadowed_event_count,
  ARRAY(SELECT id FROM evidence WHERE matches AND eligible ORDER BY occurred_at DESC,id DESC LIMIT sqlc.arg(sample_limit))::uuid[] AS eligible_event_ids,
  ARRAY(SELECT id FROM evidence WHERE matches ORDER BY occurred_at DESC,id DESC LIMIT sqlc.arg(sample_limit))::uuid[] AS matching_event_ids
 FROM evidence;
@@ -25519,7 +25620,10 @@ AND (source_kind='' OR source_kind=sqlc.arg(source_kind)::text)
 ORDER BY priority LIMIT 1;
 -- name: IssueApplySplitRule :one
 WITH selected AS MATERIALIZED (
- SELECT e.id,e.deployment_id,e.occurred_at FROM issue_events e WHERE e.issue_id=sqlc.arg(source_issue_id)
+ SELECT e.id,e.deployment_id,e.occurred_at,e.occurrence_count,
+  COALESCE(to_timestamp((e.http_time_buckets->0->>0)::double precision / 1000),e.occurred_at) AS first_at,
+  COALESCE(to_timestamp((e.http_time_buckets->(-1)->>0)::double precision / 1000),e.occurred_at) AS last_at
+ FROM issue_events e WHERE e.issue_id=sqlc.arg(source_issue_id)
  AND (sqlc.arg(exception_type)::text='' OR e.payload->>'exception_type'=sqlc.arg(exception_type))
  AND (sqlc.arg(error_code)::text='' OR e.payload->>'error_code'=sqlc.arg(error_code))
  AND (sqlc.arg(route)::text='' OR e.payload->>'route'=sqlc.arg(route))
@@ -25532,7 +25636,7 @@ WITH selected AS MATERIALIZED (
   AND (r.source_kind='' OR r.source_kind=e.payload->>'source_kind')
  )
 ), transferred AS MATERIALIZED (
- SELECT deployment_id,count(*)::bigint AS event_count,min(occurred_at) AS first_seen_at,max(occurred_at) AS last_seen_at FROM selected GROUP BY deployment_id
+ SELECT deployment_id,sum(occurrence_count)::bigint AS event_count,min(first_at) AS first_seen_at,max(last_at) AS last_seen_at FROM selected GROUP BY deployment_id
 ), moved AS (
  UPDATE issue_events e SET original_issue_id=COALESCE(e.original_issue_id,e.issue_id),issue_id=sqlc.arg(target_issue_id)
  WHERE e.id IN (SELECT s.id FROM selected s)
@@ -25546,12 +25650,12 @@ WITH selected AS MATERIALIZED (
  UPDATE issue_releases r SET event_count=r.event_count-t.event_count FROM transferred t
  WHERE r.issue_id=sqlc.arg(source_issue_id) AND r.deployment_id=t.deployment_id AND r.event_count>t.event_count
 ), reduce_source AS (
- UPDATE app_issues SET event_count=event_count-(SELECT count(*) FROM selected) WHERE id=sqlc.arg(source_issue_id)
+ UPDATE app_issues SET event_count=event_count-(SELECT COALESCE(sum(occurrence_count),0)::bigint FROM selected) WHERE id=sqlc.arg(source_issue_id)
 ), branch_counts AS (
- UPDATE app_issues SET event_count=(SELECT count(*) FROM selected),first_seen_at=COALESCE((SELECT min(occurred_at) FROM selected),first_seen_at),last_seen_at=COALESCE((SELECT max(occurred_at) FROM selected),last_seen_at)
+ UPDATE app_issues SET event_count=(SELECT COALESCE(sum(occurrence_count),0)::bigint FROM selected),first_seen_at=COALESCE((SELECT min(first_at) FROM selected),first_seen_at),last_seen_at=COALESCE((SELECT max(last_at) FROM selected),last_seen_at)
  WHERE id=sqlc.arg(target_issue_id)
 )
-SELECT count(*)::bigint AS moved_event_count FROM selected;
+SELECT COALESCE(sum(occurrence_count),0)::bigint AS moved_event_count FROM selected;
 
 
 

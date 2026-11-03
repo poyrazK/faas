@@ -108,8 +108,14 @@ type IncrementAppErrorRequest struct {
 	// request_row_omitted marks a record that only counts requests: the
 	// gateway already sent its sample of them, so apid stores no request row.
 	RequestRowOmitted bool `protobuf:"varint,21,opt,name=request_row_omitted,json=requestRowOmitted,proto3" json:"request_row_omitted,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Stable identity for this gateway record, independent of the public
+	// request ID. Empty on older gateways.
+	IssueEventId string `protobuf:"bytes,22,opt,name=issue_event_id,json=issueEventId,proto3" json:"issue_event_id,omitempty"`
+	// Counts for each millisecond in the sampled request's UTC second. Empty
+	// means an older gateway did not preserve the times of a folded batch.
+	IssueTimeBuckets []uint32 `protobuf:"varint,23,rep,packed,name=issue_time_buckets,json=issueTimeBuckets,proto3" json:"issue_time_buckets,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *IncrementAppErrorRequest) Reset() {
@@ -289,6 +295,20 @@ func (x *IncrementAppErrorRequest) GetRequestRowOmitted() bool {
 	return false
 }
 
+func (x *IncrementAppErrorRequest) GetIssueEventId() string {
+	if x != nil {
+		return x.IssueEventId
+	}
+	return ""
+}
+
+func (x *IncrementAppErrorRequest) GetIssueTimeBuckets() []uint32 {
+	if x != nil {
+		return x.IssueTimeBuckets
+	}
+	return nil
+}
+
 // IncrementAppErrorResponse is the per-record outcome the server
 // returns. outcome ∈ {inserted, merged, redaction_failed,
 // rate_limited, db_error}. `inserted` is a new row in
@@ -365,7 +385,7 @@ var File_onebox_faas_apid_v1_app_errors_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_app_errors_proto_rawDesc = "" +
 	"\n" +
-	"$onebox/faas/apid/v1/app_errors.proto\x12\x13onebox.faas.apid.v1\"\x89\x06\n" +
+	"$onebox/faas/apid/v1/app_errors.proto\x12\x13onebox.faas.apid.v1\"\xdd\x06\n" +
 	"\x18IncrementAppErrorRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -394,7 +414,9 @@ const file_onebox_faas_apid_v1_app_errors_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x13 \x01(\tR\trequestId\x12\x14\n" +
 	"\x05count\x18\x14 \x01(\x03R\x05count\x12.\n" +
-	"\x13request_row_omitted\x18\x15 \x01(\bR\x11requestRowOmitted\"|\n" +
+	"\x13request_row_omitted\x18\x15 \x01(\bR\x11requestRowOmitted\x12$\n" +
+	"\x0eissue_event_id\x18\x16 \x01(\tR\fissueEventId\x12,\n" +
+	"\x12issue_time_buckets\x18\x17 \x03(\rR\x10issueTimeBuckets\"|\n" +
 	"\x19IncrementAppErrorResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12 \n" +
 	"\vfingerprint\x18\x02 \x01(\tR\vfingerprint\x12#\n" +

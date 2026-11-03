@@ -46,7 +46,7 @@ func TestIssueNativeTrackerSDKKeepsExpectedSnapshot(t *testing.T) {
 }
 
 func TestIssueNativeCreationSDKRetainsRequestIdentity(t *testing.T) {
-	input := preview.CreateNativeIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", Repository: "owner/repo", Title: "Fix", RecoveryURL: "https://github.com/owner/repo/issues/42"}
+	input := preview.CreateNativeIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", Repository: "owner/repo", Title: "Fix", RecoveryURL: "https://github.com/owner/repo/issues/42", OriginalAppSlug: "old-payments"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.URL.Path != "/v1/apps/payments/issues/issue/native-tickets" {
 			t.Error("wrong creation route")
@@ -129,7 +129,7 @@ func TestIssueNativeLinearConnectionSDKPreservesDecisionAndRevision(t *testing.T
 }
 
 func TestIssueNativeLinearCreationSDKPreservesUUIDRecovery(t *testing.T) {
-	input := preview.CreateNativeLinearIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", TeamID: "22222222-2222-4222-8222-222222222222", Title: "Fix", Recover: true}
+	input := preview.CreateNativeLinearIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", TeamID: "22222222-2222-4222-8222-222222222222", Title: "Fix", Recover: true, OriginalAppSlug: "old-payments"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.URL.Path != "/v1/apps/payments/issues/issue/native-linear-tickets" {
 			t.Error("wrong Linear creation route")
@@ -222,5 +222,42 @@ func TestIssueNativeLinearCallbackSDKPreservesWriteOnlySecretAndMetadata(t *test
 	out, err := preview.Wrap(client).UpdateIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments", preview.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 2, APIKey: "key", TeamID: "team", WebhookSecret: secret})
 	if err != nil || !out.WebhookEnabled || out.CallbackPath != "/hooks/issue-trackers/linear/app" {
 		t.Fatal(out, err)
+	}
+}
+
+func TestIssueSDKPreservesCoverageAndExplicitTicketAbandonment(t *testing.T) {
+	var issue faas.Issue
+	if err := json.Unmarshal([]byte(`{"impact_24h":{"observed_events":5,"unknown_http_batches":1}}`), &issue); err != nil || issue.Impact24h == nil || issue.Impact24h.UnknownHTTPBatches != 1 {
+		t.Fatalf("impact coverage: %+v %v", issue, err)
+	}
+	var occurrence faas.IssueOccurrence
+	if err := json.Unmarshal([]byte(`{"occurrence_count":5,"occurrence_count_exact":true}`), &occurrence); err != nil || occurrence.OccurrenceCount != 5 || !occurrence.OccurrenceCountExact {
+		t.Fatalf("occurrence coverage: %+v %v", occurrence, err)
+	}
+	var health faas.IssueReleaseHealth
+	if err := json.Unmarshal([]byte(`{"unknown_http_batches":2}`), &health); err != nil || health.UnknownHTTPBatches != 2 {
+		t.Fatalf("release coverage: %+v %v", health, err)
+	}
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/apps/payments/issues/issue" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		if got := r.URL.Query().Get("abandon_unconfirmed_tickets"); (calls == 1 && got != "") || (calls == 2 && got != "true") {
+			t.Errorf("abandonment flag=%q call=%d", got, calls)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteIssue(context.Background(), "payments", "issue"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteIssueAbandonUnconfirmedTickets(context.Background(), "payments", "issue"); err != nil {
+		t.Fatal(err)
 	}
 }

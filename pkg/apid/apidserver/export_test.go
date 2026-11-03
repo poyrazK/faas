@@ -2083,6 +2083,11 @@ func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.Accoun
 	return newOIDCAccountLookup(store, repos)
 }
 
+// WriteIssueErrorForTest exercises the public issue quota response mapping.
+func WriteIssueErrorForTest(w http.ResponseWriter, err error) {
+	writeIssueError(w, err)
+}
+
 // Inline security alerts (bug hunt H99).
 func (r *server) AlertPasswordChangedInline(ctx context.Context, acct state.Account, method string) {
 	r.alertPasswordChangedInline(ctx, acct, method)

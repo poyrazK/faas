@@ -4098,7 +4098,7 @@ export class AppsService {
   /**
    * Ingest OTLP JSON exception events
    * Accepts bounded OTLP trace exception events or exception log records using a deployment-bound issue token. Unrelated telemetry is ignored. Deterministic event IDs permit safe retry after partial delivery. Protobuf encoding is not supported.
-   * @returns any Exceptions accepted, including exact retries
+   * @returns any Exceptions accepted, including exact retries. Partial success reports permanently rejected logs or spans.
    * @throws ApiError
    */
   public static ingestIssueOtlp({
@@ -4115,7 +4115,19 @@ export class AppsService {
      */
     signal: 'traces' | 'logs',
     requestBody: Record<string, any>,
-  }): CancelablePromise<Record<string, any>> {
+  }): CancelablePromise<{
+    partialSuccess?: {
+      /**
+       * Decimal count of rejected log records.
+       */
+      rejectedLogRecords?: string;
+      /**
+       * Decimal count of rejected spans.
+       */
+      rejectedSpans?: string;
+      errorMessage?: string;
+    };
+  }> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issue-events/otlp/{signal}',
@@ -5874,6 +5886,54 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Permanently delete a standalone issue and its retained history.
+   * Split linked groups and remove derived branches first. A later occurrence may create a new issue.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteIssue({
+    slug,
+    issueId,
+    abandonUnconfirmedTickets = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the durable issue within this app.
+     */
+    issueId: string,
+    /**
+     * Explicitly abandon expired unconfirmed ticket dispatches. The provider may still have created a ticket, and deleting the issue removes its recovery receipt. Confirmed unattached tickets still block deletion.
+     */
+    abandonUnconfirmedTickets?: boolean,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issues/{issue_id}',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      query: {
+        'abandon_unconfirmed_tickets': abandonUnconfirmedTickets,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
