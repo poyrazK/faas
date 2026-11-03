@@ -140,8 +140,10 @@ cannot mint one.
    - The audit HMAC key fell back to all zeros. Fixed: apid refuses to
      boot without a key it can keep.
    - gatewayd-internal holds `FAAS_SESSION_KEY`, which
-     `verify-secrets.sh` says it must not. Still open: removing it needs
-     a separate design.
+     `verify-secrets.sh` says it must not. Decided in
+     [ADR 20261102191500](20261102191500-gateways-hold-no-session-key.md):
+     apid opens session cookies for gateways, and a gateway fleet key
+     replaces the session key for deadlines and edge challenges.
 
 ## Consequences
 

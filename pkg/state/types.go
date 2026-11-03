@@ -1996,6 +1996,12 @@ type AppManifest struct {
 	// /run/secrets in its main workload (ADR-20261023090000). imaged copies
 	// them into the guest manifest; they name app secrets, never values.
 	ProjectSecretFiles []api.SecretFile `json:"project_secret_files,omitempty"`
+	// ProjectReleaseCommand is the command of the Compose service this app
+	// waits for with service_completed_successfully (ADR-20261102192943).
+	// A deploy whose source declares no release command (gregale.yaml
+	// release.command or Procfile release:) runs it as the release command.
+	ProjectReleaseCommand      []string `json:"project_release_command,omitempty"`
+	ProjectReleaseCommandShell bool     `json:"project_release_command_shell,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
