@@ -5,8 +5,26 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestIssueRouteActionsPreserveEvidenceAndIntegrationPolicy(t *testing.T) {
+	for pattern, want := range map[string]authz.OrgAction{
+		"GET /v1/apps/{slug}/issues":                                   authz.OrgActionReadAppLogs,
+		"GET /v1/apps/{slug}/issues/{issue_id}":                        authz.OrgActionReadAppLogs,
+		"POST /v1/apps/{slug}/issues/{issue_id}/actions":               authz.OrgActionConfigureApp,
+		"POST /v1/apps/{slug}/issues/{issue_id}/native-tickets":        authz.OrgActionManageAppSecurity,
+		"POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets": authz.OrgActionManageAppSecurity,
+		"PUT /v1/apps/{slug}/issue-frequency-alert-policy":             authz.OrgActionManageAppSecurity,
+		"PUT /v1/apps/{slug}/issue-tracker-linear-connection":          authz.OrgActionManageAppSecurity,
+		"DELETE /v1/apps/{slug}/issues/{issue_id}":                     authz.OrgActionDeployApp,
+	} {
+		if got := routeActions[pattern]; got != want {
+			t.Errorf("%s: got %q, want %q", pattern, got, want)
+		}
+	}
+}
 
 func TestCompanyIssueRoutesFollowRoles(t *testing.T) {
 	for _, tc := range []struct {
@@ -19,6 +37,8 @@ func TestCompanyIssueRoutesFollowRoles(t *testing.T) {
 		{state.OrgRoleViewer, "POST /v1/apps/{slug}/issues/{issue_id}/actions", "/v1/apps/team-api/issues/a/actions", 403},
 		{state.OrgRoleDeveloper, "PUT /v1/apps/{slug}/issue-frequency-alert-policy", "/v1/apps/team-api/issue-frequency-alert-policy", 403},
 		{state.OrgRoleAdmin, "PUT /v1/apps/{slug}/issue-frequency-alert-policy", "/v1/apps/team-api/issue-frequency-alert-policy", 204},
+		{state.OrgRoleDeveloper, "POST /v1/apps/{slug}/issues/{issue_id}/native-tickets", "/v1/apps/team-api/issues/a/native-tickets", 403},
+		{state.OrgRoleAdmin, "POST /v1/apps/{slug}/issues/{issue_id}/native-tickets", "/v1/apps/team-api/issues/a/native-tickets", 204},
 	} {
 		t.Run(string(tc.role)+"/"+tc.pattern, func(t *testing.T) {
 			store, owner, actor, org, app := fixture(t, tc.role)

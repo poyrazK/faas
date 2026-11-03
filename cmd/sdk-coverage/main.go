@@ -903,6 +903,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"DELETE /v1/apps/{slug}/issues/{issue_id}":                                 "DeleteIssue",
 	"GET /v1/apps/{slug}/issue-compound-alert-policy":                          "GetIssueCompoundAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-compound-alert-policy":                          "SetIssueCompoundAlertPolicy",
 	"POST /v1/apps/{slug}/issue-compound-alert-policy/preview":                 "PreviewIssueCompoundAlert",
