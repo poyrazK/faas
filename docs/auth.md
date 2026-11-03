@@ -104,6 +104,11 @@ available and defaults to the same deploy-only bearer. Its optional closed
 environment-preflight GitHub Action uses that profile to qualify a source
 release set and check promotion policy without receiving deployment or secret
 permissions; see [the Action guide](../.github/actions/environment-preflight/README.md).
+`capability: preview-read` grants only `previews:read`: the status of one app's
+PR previews (`GET /v1/preview/{slug}` and its environment), and nothing else.
+Under a policy Gregale created it is issued to any run of the repository,
+pull request runs included, for an app bound to it
+([ADR-20261102203228](adr/20261102203228-ci-reads-its-preview-status.md)).
 
 For GitHub Actions, first-use account lookup accepts both the legacy
 `repo:OWNER/REPO:...` subject and GitHub's immutable

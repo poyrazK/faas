@@ -202,3 +202,21 @@ func readManagedRealtimePresenceSnapshot(ctx context.Context, q managedRealtimeP
 	}
 	return result, nil
 }
+
+// RenewManagedRealtimePresenceLease extends one live lease. It takes no
+// channel lock and reads no snapshot: renewals of a channel's members do not
+// queue behind each other.
+func (s *PgStore) RenewManagedRealtimePresenceLease(ctx context.Context, endpointID, channel, nodeID, connectionID string, expiresAt time.Time) (bool, error) {
+	if validateManagedRealtimeHistoryRequest(endpointID, channel) != nil || nodeID == "" || connectionID == "" || len(connectionID) > 128 {
+		return false, ErrManagedRealtimePresenceInvalid
+	}
+	tag, err := s.pool.Exec(ctx, `
+		update managed_realtime_presence_leases set expires_at = $5
+		where endpoint_id = $1 and channel = $2 and node_id = $3 and connection_id = $4
+		  and expires_at > clock_timestamp()
+	`, endpointID, channel, nodeID, connectionID, expiresAt)
+	if err != nil {
+		return false, fmt.Errorf("state: renew managed realtime presence lease: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
