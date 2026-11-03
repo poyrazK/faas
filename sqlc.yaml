@@ -316,6 +316,7 @@ sql:
       - "pkg/state/operator_recovery_submission_queries.sql"
       - "pkg/state/operator_restart_queries.sql"
       - "pkg/state/org_object_ownership_queries.sql"
+      - "pkg/state/org_admission_queries.sql"
       - "pkg/state/org_queue_ownership_queries.sql"
       - "pkg/state/password_credential_queries.sql"
       - "pkg/state/plain_replay_queries.sql"

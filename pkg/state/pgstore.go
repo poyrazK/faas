@@ -30029,33 +30029,16 @@ func (s *PgStore) ConsumeOrgInvitation(ctx context.Context, hash []byte, accepti
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
 	}
 
-	// (3) Cap check. orgs.plan drives the limit; read inside the same tx.
-	//
-	// PR 7 cutover note: when plan / billing moves from accounts onto
-	// orgs, this step must run inside an explicit outer transaction with
-	// `SELECT … FROM orgs WHERE id = $1 FOR NO KEY UPDATE` to prevent a
-	// concurrent UpdateOrgPlan from racing a parallel accept. PR 2 uses
-	// the implicit FOR UPDATE on the invitation row plus the org-row
-	// implicit MVCC snapshot read, which is sufficient for the personal-org
-	// backfill path where plan changes are still serialized through the
-	// accounts table. The cutover PR will widen the lock surface here.
-	var planSlug string
-	if err := tx.QueryRow(ctx, `select plan from orgs where id = $1`, inv.OrgID).Scan(&planSlug); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return OrgMembership{}, OrgInvitation{}, ErrNotFound
-		}
-		return OrgMembership{}, OrgInvitation{}, fmt.Errorf("state: consume org invitation plan: %w", err)
+	// (3) Serialize status, plan and last-seat admission on the org row.
+	limit, err := lockOrgInvitationLimit(ctx, tx, inv.OrgID)
+	if err != nil {
+		return OrgMembership{}, OrgInvitation{}, err
 	}
-	var activeMembers int
-	if err := tx.QueryRow(ctx, `
-		select count(*) from org_memberships
-		 where org_id = $1 and removed_at is null
-	`, inv.OrgID).Scan(&activeMembers); err != nil {
+	activeMembers, err := sqlc.New().CountActiveOrgMembers(ctx, tx, mustPgUUID(inv.OrgID))
+	if err != nil {
 		return OrgMembership{}, OrgInvitation{}, fmt.Errorf("state: consume org invitation count: %w", err)
 	}
-	limits, _ := api.LimitsFor(api.Plan(planSlug))
-	limit := limits.OrgMembersMax
-	if limit > 0 && activeMembers >= limit {
+	if activeMembers >= int64(limit) {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgMemberCapExceeded
 	}
 
