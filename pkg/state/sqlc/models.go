@@ -11690,6 +11690,23 @@ type PrivateNetworkPeering struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type PrivateNetworkServiceOwner struct {
+	NetworkID        string
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	InstanceID       string
+	ServiceAddressID pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
+}
+
+type PrivateNetworkTransportIdentity struct {
+	NetworkID string
+	AccountID pgtype.UUID
+	Region    string
+	Vni       int32
+	CreatedAt pgtype.Timestamptz
+}
+
 type ProductControlBillingDocument struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -14900,6 +14917,13 @@ type SourceBuildRootf struct {
 type SourceBuildRootfsCurrent struct {
 	DeploymentID pgtype.UUID
 	ArtifactID   pgtype.UUID
+}
+
+type StaticEgressProvisioningGrant struct {
+	SourceID   string
+	AccountID  pgtype.UUID
+	CustomerIp netip.Addr
+	CreatedAt  pgtype.Timestamptz
 }
 
 type StatusIncident struct {

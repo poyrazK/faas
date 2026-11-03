@@ -43,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
+	"golang.org/x/sync/semaphore"
 )
 
 // builderVMCleanupErrorMaxBytes bounds the recorded cleanup failure for a
@@ -148,7 +149,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	trafficAppsSuffix string
+	privateNetworkScopes        map[string]*semaphore.Weighted
+	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
+	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
+	trafficAppsSuffix           string
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                              map[string]int64
@@ -566,7 +570,8 @@ type MemStore struct {
 	// provisionedStaticEgressIPs is the ADR-119 redesign gate.
 	// Keyed by (accountID, customerIP) — the same composite PK
 	// as the Postgres table. Test fixture only.
-	provisionedStaticEgressIPs map[string]map[string]netip.Addr // accountID → customerIP → Addr
+	staticEgressProvisioningSources map[string][]StaticEgressIPGrant
+	provisionedStaticEgressIPs      map[string]map[string]netip.Addr // accountID → customerIP → Addr
 	// githubBindings is keyed by appID. Holds the (install_id,
 	// repo_full_name, production_branch) tuple the /oauth/callback
 	// handler writes after verifying the install against api.github.com
@@ -28237,6 +28242,13 @@ func (m *MemStore) ProvisionedStaticEgressIPExists(_ context.Context, accountID 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, ok := m.provisionedStaticEgressIPs[accountID][ip.String()]
+	for _, grants := range m.staticEgressProvisioningSources {
+		for _, grant := range grants {
+			if grant.AccountID == accountID && grant.IP == ip {
+				return true, nil
+			}
+		}
+	}
 	return ok, nil
 }
 

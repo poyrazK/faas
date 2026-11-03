@@ -732,7 +732,12 @@ func (q *Queries) ActiveSafeProjectReleaseID(ctx context.Context, db DBTX, proje
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = $1 AND l.enabled
-  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  )
 `
 
 func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error) {
@@ -6843,6 +6848,34 @@ func (q *Queries) ClaimNotificationForNode(ctx context.Context, db DBTX, arg Cla
 		&i.ClaimToken,
 	)
 	return i, err
+}
+
+const claimPrivateNetworkService = `-- name: ClaimPrivateNetworkService :one
+INSERT INTO private_network_service_owners(network_id,account_id,app_id,instance_id,service_address_id)
+VALUES($1,$2,$3,$4,$5)
+ON CONFLICT (network_id,app_id) DO UPDATE SET instance_id=excluded.instance_id
+WHERE private_network_service_owners.instance_id=excluded.instance_id RETURNING instance_id
+`
+
+type ClaimPrivateNetworkServiceParams struct {
+	NetworkID        string
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	InstanceID       string
+	ServiceAddressID pgtype.UUID
+}
+
+func (q *Queries) ClaimPrivateNetworkService(ctx context.Context, db DBTX, arg ClaimPrivateNetworkServiceParams) (string, error) {
+	row := db.QueryRow(ctx, claimPrivateNetworkService,
+		arg.NetworkID,
+		arg.AccountID,
+		arg.AppID,
+		arg.InstanceID,
+		arg.ServiceAddressID,
+	)
+	var instance_id string
+	err := row.Scan(&instance_id)
+	return instance_id, err
 }
 
 const claimProductionLegacyQueueInvocations = `-- name: ClaimProductionLegacyQueueInvocations :many
@@ -15198,6 +15231,15 @@ func (q *Queries) DeleteGuardedCron(ctx context.Context, db DBTX, arg DeleteGuar
 	return err
 }
 
+const deleteLegacyStaticEgressProvisioning = `-- name: DeleteLegacyStaticEgressProvisioning :exec
+DELETE FROM provisioned_static_egress_ips
+`
+
+func (q *Queries) DeleteLegacyStaticEgressProvisioning(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, deleteLegacyStaticEgressProvisioning)
+	return err
+}
+
 const deleteLogArchiveErasure = `-- name: DeleteLogArchiveErasure :exec
 DELETE FROM log_archive_erasures WHERE account_id = $1::uuid
 `
@@ -15253,6 +15295,30 @@ func (q *Queries) DeleteOutboundBindingProbePolicy(ctx context.Context, db DBTX,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deletePrivateNetworkPeeringForRevocation = `-- name: DeletePrivateNetworkPeeringForRevocation :one
+DELETE FROM private_network_peerings
+WHERE account_id = $1 AND id = $2
+RETURNING region, left_network_id, right_network_id
+`
+
+type DeletePrivateNetworkPeeringForRevocationParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type DeletePrivateNetworkPeeringForRevocationRow struct {
+	Region         string
+	LeftNetworkID  string
+	RightNetworkID string
+}
+
+func (q *Queries) DeletePrivateNetworkPeeringForRevocation(ctx context.Context, db DBTX, arg DeletePrivateNetworkPeeringForRevocationParams) (DeletePrivateNetworkPeeringForRevocationRow, error) {
+	row := db.QueryRow(ctx, deletePrivateNetworkPeeringForRevocation, arg.AccountID, arg.ID)
+	var i DeletePrivateNetworkPeeringForRevocationRow
+	err := row.Scan(&i.Region, &i.LeftNetworkID, &i.RightNetworkID)
+	return i, err
 }
 
 const deleteProductionDeadLetterEvent = `-- name: DeleteProductionDeadLetterEvent :execrows
@@ -15342,6 +15408,16 @@ func (q *Queries) DeleteReadinessSubscription(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteStaticEgressProvisioningSource = `-- name: DeleteStaticEgressProvisioningSource :exec
+DELETE FROM static_egress_provisioning_grants
+WHERE source_id = $1::text
+`
+
+func (q *Queries) DeleteStaticEgressProvisioningSource(ctx context.Context, db DBTX, sourceID string) error {
+	_, err := db.Exec(ctx, deleteStaticEgressProvisioningSource, sourceID)
+	return err
 }
 
 const deleteSyntheticCheck = `-- name: DeleteSyntheticCheck :execrows
@@ -28084,6 +28160,25 @@ func (q *Queries) GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const getPrivateNetworkTransportIdentity = `-- name: GetPrivateNetworkTransportIdentity :one
+SELECT t.vni FROM private_network_transport_identities t JOIN private_networks n ON n.id=t.network_id
+WHERE t.network_id=$1 AND t.account_id=$2 AND t.region=$3
+  AND n.account_id=t.account_id AND n.region=t.region
+`
+
+type GetPrivateNetworkTransportIdentityParams struct {
+	NetworkID string
+	AccountID pgtype.UUID
+	Region    string
+}
+
+func (q *Queries) GetPrivateNetworkTransportIdentity(ctx context.Context, db DBTX, arg GetPrivateNetworkTransportIdentityParams) (int32, error) {
+	row := db.QueryRow(ctx, getPrivateNetworkTransportIdentity, arg.NetworkID, arg.AccountID, arg.Region)
+	var vni int32
+	err := row.Scan(&vni)
+	return vni, err
+}
+
 const getPublishedApplicationStandardInstance = `-- name: GetPublishedApplicationStandardInstance :one
 SELECT id,app_id,deployment_id,state,COALESCE(netns,'')::text AS netns,COALESCE(guest_uid,0)::integer AS guest_uid,
  COALESCE(host(host_ip),'')::text AS host_ip,ram_mb,started_at,last_request_at,parked_at,node_id,wake_id,
@@ -34829,6 +34924,30 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 	return i, err
 }
 
+const insertPrivateNetworkTransportIdentity = `-- name: InsertPrivateNetworkTransportIdentity :one
+INSERT INTO private_network_transport_identities(network_id,account_id,region,vni)
+VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING vni
+`
+
+type InsertPrivateNetworkTransportIdentityParams struct {
+	NetworkID string
+	AccountID pgtype.UUID
+	Region    string
+	Vni       int32
+}
+
+func (q *Queries) InsertPrivateNetworkTransportIdentity(ctx context.Context, db DBTX, arg InsertPrivateNetworkTransportIdentityParams) (int32, error) {
+	row := db.QueryRow(ctx, insertPrivateNetworkTransportIdentity,
+		arg.NetworkID,
+		arg.AccountID,
+		arg.Region,
+		arg.Vni,
+	)
+	var vni int32
+	err := row.Scan(&vni)
+	return vni, err
+}
+
 const insertProjectEnvironmentCloneCapturedEdgePolicy = `-- name: InsertProjectEnvironmentCloneCapturedEdgePolicy :exec
 INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
 VALUES($1::uuid, $2::uuid, $3::uuid, $4::text, $5::jsonb)
@@ -37390,6 +37509,23 @@ func (q *Queries) InsertSourceBuildRootfs(ctx context.Context, db DBTX, arg Inse
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const insertStaticEgressProvisioningGrant = `-- name: InsertStaticEgressProvisioningGrant :exec
+INSERT INTO static_egress_provisioning_grants(source_id, account_id, customer_ip)
+VALUES($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type InsertStaticEgressProvisioningGrantParams struct {
+	SourceID   string
+	AccountID  pgtype.UUID
+	CustomerIp netip.Addr
+}
+
+func (q *Queries) InsertStaticEgressProvisioningGrant(ctx context.Context, db DBTX, arg InsertStaticEgressProvisioningGrantParams) error {
+	_, err := db.Exec(ctx, insertStaticEgressProvisioningGrant, arg.SourceID, arg.AccountID, arg.CustomerIp)
+	return err
 }
 
 const insertSyntheticCheck = `-- name: InsertSyntheticCheck :one
@@ -42102,7 +42238,12 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 
 const listActiveTCPListeners = `-- name: ListActiveTCPListeners :many
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  )
 ORDER BY l.public_port
 `
 
@@ -47892,7 +48033,12 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 
 const listEnabledUDPListeners = `-- name: ListEnabledUDPListeners :many
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  ))
 ORDER BY public_port ASC
 `
 
@@ -51595,6 +51741,151 @@ func (q *Queries) ListPreparedEventSubscriptionIntents(ctx context.Context, db D
 			return nil, err
 		}
 		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrivateNetworkAttachmentPage = `-- name: ListPrivateNetworkAttachmentPage :many
+SELECT id, account_id, app_id, network_id, region,
+       coalesce(cidrs::text, '{}')::text AS cidrs_text, coalesce(allowed_cidrs::text, '{}')::text AS allowed_cidrs_text,
+       status, status_detail, created_at, updated_at
+FROM app_private_network_attachments
+WHERE account_id = $1
+  AND ($2::text = '' OR region = $2)
+  AND ($3::text = '' OR network_id = $3)
+  AND ($4::text[] IS NULL OR status = ANY($4::text[]))
+  AND ($5::uuid IS NULL OR app_id > $5::uuid)
+ORDER BY app_id
+LIMIT $6
+`
+
+type ListPrivateNetworkAttachmentPageParams struct {
+	AccountID  pgtype.UUID
+	Region     string
+	NetworkID  string
+	Statuses   []string
+	AfterAppID pgtype.UUID
+	PageSize   int32
+}
+
+type ListPrivateNetworkAttachmentPageRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	NetworkID        string
+	Region           string
+	CidrsText        string
+	AllowedCidrsText string
+	Status           string
+	StatusDetail     string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) ListPrivateNetworkAttachmentPage(ctx context.Context, db DBTX, arg ListPrivateNetworkAttachmentPageParams) ([]ListPrivateNetworkAttachmentPageRow, error) {
+	rows, err := db.Query(ctx, listPrivateNetworkAttachmentPage,
+		arg.AccountID,
+		arg.Region,
+		arg.NetworkID,
+		arg.Statuses,
+		arg.AfterAppID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPrivateNetworkAttachmentPageRow{}
+	for rows.Next() {
+		var i ListPrivateNetworkAttachmentPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.NetworkID,
+			&i.Region,
+			&i.CidrsText,
+			&i.AllowedCidrsText,
+			&i.Status,
+			&i.StatusDetail,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrivateNetworkInstanceNetworks = `-- name: ListPrivateNetworkInstanceNetworks :many
+SELECT DISTINCT network_id FROM private_network_addresses
+WHERE account_id=$1::uuid AND owner_type='instance' AND owner_id=$2::text
+UNION
+SELECT network_id FROM private_network_service_owners
+WHERE account_id=$1::uuid AND instance_id=$2::text
+`
+
+type ListPrivateNetworkInstanceNetworksParams struct {
+	AccountID  pgtype.UUID
+	InstanceID string
+}
+
+func (q *Queries) ListPrivateNetworkInstanceNetworks(ctx context.Context, db DBTX, arg ListPrivateNetworkInstanceNetworksParams) ([]string, error) {
+	rows, err := db.Query(ctx, listPrivateNetworkInstanceNetworks, arg.AccountID, arg.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var network_id string
+		if err := rows.Scan(&network_id); err != nil {
+			return nil, err
+		}
+		items = append(items, network_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrivateNetworkRuntimeMembers = `-- name: ListPrivateNetworkRuntimeMembers :many
+SELECT a.account_id, a.network_id, o.app_id
+FROM private_network_addresses a
+LEFT JOIN private_network_service_owners o ON o.network_id=a.network_id AND o.instance_id=a.owner_id
+WHERE a.owner_type='instance' AND a.owner_id=$1::text
+UNION
+SELECT account_id, network_id, app_id FROM private_network_service_owners
+WHERE instance_id=$1::text
+`
+
+type ListPrivateNetworkRuntimeMembersRow struct {
+	AccountID pgtype.UUID
+	NetworkID string
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ListPrivateNetworkRuntimeMembers(ctx context.Context, db DBTX, instanceID string) ([]ListPrivateNetworkRuntimeMembersRow, error) {
+	rows, err := db.Query(ctx, listPrivateNetworkRuntimeMembers, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPrivateNetworkRuntimeMembersRow{}
+	for rows.Next() {
+		var i ListPrivateNetworkRuntimeMembersRow
+		if err := rows.Scan(&i.AccountID, &i.NetworkID, &i.AppID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -58611,6 +58902,66 @@ func (q *Queries) LockOwnershipRecoveryNodes(ctx context.Context, db DBTX, arg L
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockPrivateNetworkMemberAttachment = `-- name: LockPrivateNetworkMemberAttachment :one
+SELECT app_id FROM app_private_network_attachments
+WHERE account_id=$1 AND app_id=$2 AND network_id=$3 FOR SHARE
+`
+
+type LockPrivateNetworkMemberAttachmentParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	NetworkID string
+}
+
+func (q *Queries) LockPrivateNetworkMemberAttachment(ctx context.Context, db DBTX, arg LockPrivateNetworkMemberAttachmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockPrivateNetworkMemberAttachment, arg.AccountID, arg.AppID, arg.NetworkID)
+	var app_id pgtype.UUID
+	err := row.Scan(&app_id)
+	return app_id, err
+}
+
+const lockPrivateNetworkRuntimeDefinition = `-- name: LockPrivateNetworkRuntimeDefinition :one
+SELECT id FROM private_networks WHERE account_id=$1 AND id=$2 FOR UPDATE
+`
+
+type LockPrivateNetworkRuntimeDefinitionParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+func (q *Queries) LockPrivateNetworkRuntimeDefinition(ctx context.Context, db DBTX, arg LockPrivateNetworkRuntimeDefinitionParams) (string, error) {
+	row := db.QueryRow(ctx, lockPrivateNetworkRuntimeDefinition, arg.AccountID, arg.ID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockPrivateNetworkTransportDefinition = `-- name: LockPrivateNetworkTransportDefinition :one
+SELECT id FROM private_networks WHERE id=$1 AND account_id=$2 AND region=$3 FOR KEY SHARE
+`
+
+type LockPrivateNetworkTransportDefinitionParams struct {
+	ID        string
+	AccountID pgtype.UUID
+	Region    string
+}
+
+func (q *Queries) LockPrivateNetworkTransportDefinition(ctx context.Context, db DBTX, arg LockPrivateNetworkTransportDefinitionParams) (string, error) {
+	row := db.QueryRow(ctx, lockPrivateNetworkTransportDefinition, arg.ID, arg.AccountID, arg.Region)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockPrivateNetworkTransportRegion = `-- name: LockPrivateNetworkTransportRegion :exec
+SELECT pg_advisory_xact_lock(hashtextextended('private-network-transport:' || $1::text,0))
+`
+
+func (q *Queries) LockPrivateNetworkTransportRegion(ctx context.Context, db DBTX, region string) error {
+	_, err := db.Exec(ctx, lockPrivateNetworkTransportRegion, region)
+	return err
 }
 
 const lockProductionDeadLetterEvent = `-- name: LockProductionDeadLetterEvent :one
@@ -73644,6 +73995,57 @@ func (q *Queries) PrepareMigrationContractRuntime(ctx context.Context, db DBTX, 
 	return result.RowsAffected(), nil
 }
 
+const privateNetworkAttachmentByAppID = `-- name: PrivateNetworkAttachmentByAppID :one
+SELECT id,account_id,app_id,network_id,region,
+  coalesce(cidrs::text,'{}')::text AS cidrs_text,coalesce(allowed_cidrs::text,'{}')::text AS allowed_cidrs_text,
+  status,status_detail,created_at,updated_at
+FROM app_private_network_attachments WHERE app_id = $1
+`
+
+type PrivateNetworkAttachmentByAppIDRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	NetworkID        string
+	Region           string
+	CidrsText        string
+	AllowedCidrsText string
+	Status           string
+	StatusDetail     string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) PrivateNetworkAttachmentByAppID(ctx context.Context, db DBTX, appID pgtype.UUID) (PrivateNetworkAttachmentByAppIDRow, error) {
+	row := db.QueryRow(ctx, privateNetworkAttachmentByAppID, appID)
+	var i PrivateNetworkAttachmentByAppIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.NetworkID,
+		&i.Region,
+		&i.CidrsText,
+		&i.AllowedCidrsText,
+		&i.Status,
+		&i.StatusDetail,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const privateNetworkTransportIdentityExists = `-- name: PrivateNetworkTransportIdentityExists :one
+SELECT EXISTS(SELECT 1 FROM private_network_transport_identities WHERE network_id=$1)
+`
+
+func (q *Queries) PrivateNetworkTransportIdentityExists(ctx context.Context, db DBTX, networkID string) (bool, error) {
+	row := db.QueryRow(ctx, privateNetworkTransportIdentityExists, networkID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const probeManagedPostgresCredential = `-- name: ProbeManagedPostgresCredential :one
 SELECT session_user::text AS login, current_user::text AS effective_user,
  current_database()::text AS database_name, current_setting('server_version_num')::integer AS version_num,
@@ -73925,6 +74327,28 @@ func (q *Queries) ProjectWorkerGraphAdmission(ctx context.Context, db DBTX, arg 
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err
+}
+
+const provisionedStaticEgressIPExists = `-- name: ProvisionedStaticEgressIPExists :one
+SELECT EXISTS (
+    SELECT 1 FROM provisioned_static_egress_ips AS legacy
+    WHERE legacy.account_id = $1::uuid AND legacy.customer_ip = $2::inet
+    UNION ALL
+    SELECT 1 FROM static_egress_provisioning_grants AS owned
+    WHERE owned.account_id = $1::uuid AND owned.customer_ip = $2::inet
+)
+`
+
+type ProvisionedStaticEgressIPExistsParams struct {
+	AccountID  pgtype.UUID
+	CustomerIp netip.Addr
+}
+
+func (q *Queries) ProvisionedStaticEgressIPExists(ctx context.Context, db DBTX, arg ProvisionedStaticEgressIPExistsParams) (bool, error) {
+	row := db.QueryRow(ctx, provisionedStaticEgressIPExists, arg.AccountID, arg.CustomerIp)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const pruneAccountCustomerOperationStreams = `-- name: PruneAccountCustomerOperationStreams :exec
@@ -93023,6 +93447,24 @@ func (q *Queries) ReleaseDatabaseStandby(ctx context.Context, db DBTX, arg Relea
 	return result.RowsAffected(), nil
 }
 
+const releaseDetachedPrivateNetworkServiceAddress = `-- name: ReleaseDetachedPrivateNetworkServiceAddress :exec
+DELETE FROM private_network_addresses a WHERE a.account_id=$1 AND a.network_id=$2
+ AND a.owner_type='app' AND a.owner_id=$3
+ AND NOT EXISTS(SELECT 1 FROM app_private_network_attachments x WHERE x.app_id::text=a.owner_id AND x.network_id=a.network_id)
+ AND NOT EXISTS(SELECT 1 FROM private_network_service_owners o WHERE o.app_id::text=a.owner_id AND o.network_id=a.network_id)
+`
+
+type ReleaseDetachedPrivateNetworkServiceAddressParams struct {
+	AccountID pgtype.UUID
+	NetworkID string
+	OwnerID   string
+}
+
+func (q *Queries) ReleaseDetachedPrivateNetworkServiceAddress(ctx context.Context, db DBTX, arg ReleaseDetachedPrivateNetworkServiceAddressParams) error {
+	_, err := db.Exec(ctx, releaseDetachedPrivateNetworkServiceAddress, arg.AccountID, arg.NetworkID, arg.OwnerID)
+	return err
+}
+
 const releaseEdgeRuleAccountMutationLock = `-- name: ReleaseEdgeRuleAccountMutationLock :one
 SELECT pg_advisory_unlock(hashtextextended('edge-rule-account:' || $1::text, 0))::boolean AS unlocked
 `
@@ -93225,6 +93667,44 @@ type ReleaseMirrorSlotLeaseParams struct {
 
 func (q *Queries) ReleaseMirrorSlotLease(ctx context.Context, db DBTX, arg ReleaseMirrorSlotLeaseParams) error {
 	_, err := db.Exec(ctx, releaseMirrorSlotLease, arg.RuleID, arg.LeaseID)
+	return err
+}
+
+const releasePrivateNetworkInstanceAddress = `-- name: ReleasePrivateNetworkInstanceAddress :exec
+DELETE FROM private_network_addresses WHERE account_id=$1 AND network_id=$2
+ AND owner_type='instance' AND owner_id=$3
+`
+
+type ReleasePrivateNetworkInstanceAddressParams struct {
+	AccountID pgtype.UUID
+	NetworkID string
+	OwnerID   string
+}
+
+func (q *Queries) ReleasePrivateNetworkInstanceAddress(ctx context.Context, db DBTX, arg ReleasePrivateNetworkInstanceAddressParams) error {
+	_, err := db.Exec(ctx, releasePrivateNetworkInstanceAddress, arg.AccountID, arg.NetworkID, arg.OwnerID)
+	return err
+}
+
+const releasePrivateNetworkService = `-- name: ReleasePrivateNetworkService :exec
+DELETE FROM private_network_service_owners WHERE account_id=$1 AND network_id=$2
+ AND app_id=$3 AND instance_id=$4
+`
+
+type ReleasePrivateNetworkServiceParams struct {
+	AccountID  pgtype.UUID
+	NetworkID  string
+	AppID      pgtype.UUID
+	InstanceID string
+}
+
+func (q *Queries) ReleasePrivateNetworkService(ctx context.Context, db DBTX, arg ReleasePrivateNetworkServiceParams) error {
+	_, err := db.Exec(ctx, releasePrivateNetworkService,
+		arg.AccountID,
+		arg.NetworkID,
+		arg.AppID,
+		arg.InstanceID,
+	)
 	return err
 }
 
@@ -104075,6 +104555,17 @@ func (q *Queries) TryLockTrafficPolicySessionShared(ctx context.Context, db DBTX
 	return column_1, err
 }
 
+const tryPrivateNetworkScopeLock = `-- name: TryPrivateNetworkScopeLock :one
+SELECT pg_try_advisory_lock(hashtextextended('private-network:' || $1::text, 0))::boolean
+`
+
+func (q *Queries) TryPrivateNetworkScopeLock(ctx context.Context, db DBTX, scopeKey string) (bool, error) {
+	row := db.QueryRow(ctx, tryPrivateNetworkScopeLock, scopeKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const uDPListenerByAppAndName = `-- name: UDPListenerByAppAndName :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
 WHERE app_id = $1::text::uuid AND listener_name = $2
@@ -104128,7 +104619,12 @@ func (q *Queries) UDPListenerByID(ctx context.Context, db DBTX, id string) (AppU
 const uDPListenerByPublicPort = `-- name: UDPListenerByPublicPort :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
 WHERE public_port = $1 AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal' AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(coalesce(a.manifest->'ports', '[]'::jsonb)) AS p
+    WHERE p->>'internal' = 'true'
+      AND coalesce(nullif(lower(p->>'protocol'), ''), 'tcp') = l.protocol
+      AND (p->>'port')::integer = l.guest_port
+  ))
 `
 
 func (q *Queries) UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error) {
@@ -104157,6 +104653,17 @@ WHERE managed_postgres_admission_cutover_id=$1::text::uuid
 func (q *Queries) UnfenceCancelledManagedPostgresCutover(ctx context.Context, db DBTX, cutoverID string) error {
 	_, err := db.Exec(ctx, unfenceCancelledManagedPostgresCutover, cutoverID)
 	return err
+}
+
+const unlockPrivateNetworkScope = `-- name: UnlockPrivateNetworkScope :one
+SELECT pg_advisory_unlock(hashtextextended('private-network:' || $1::text, 0))::boolean
+`
+
+func (q *Queries) UnlockPrivateNetworkScope(ctx context.Context, db DBTX, scopeKey string) (bool, error) {
+	row := db.QueryRow(ctx, unlockPrivateNetworkScope, scopeKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const unlockTrafficPolicySession = `-- name: UnlockTrafficPolicySession :one
@@ -104761,6 +105268,71 @@ type UpdateOrgStatusParams struct {
 func (q *Queries) UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgStatusParams) error {
 	_, err := db.Exec(ctx, updateOrgStatus, arg.ID, arg.Status)
 	return err
+}
+
+const updatePrivateNetworkAttachmentStatusForIntent = `-- name: UpdatePrivateNetworkAttachmentStatusForIntent :one
+UPDATE app_private_network_attachments SET status = $1, status_detail = $2, updated_at = now()
+WHERE account_id = $3 AND app_id = $4 AND id = $5
+  AND network_id = $6 AND region = $7
+  AND cidrs = coalesce($8::cidr[],'{}') AND allowed_cidrs = coalesce($9::cidr[],'{}')
+RETURNING id, account_id, app_id, network_id, region,
+  coalesce(cidrs::text,'{}')::text AS cidrs_text,coalesce(allowed_cidrs::text,'{}')::text AS allowed_cidrs_text,
+  status,status_detail,created_at,updated_at
+`
+
+type UpdatePrivateNetworkAttachmentStatusForIntentParams struct {
+	Status       string
+	StatusDetail string
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	ID           pgtype.UUID
+	NetworkID    string
+	Region       string
+	Cidrs        []netip.Prefix
+	AllowedCidrs []netip.Prefix
+}
+
+type UpdatePrivateNetworkAttachmentStatusForIntentRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	NetworkID        string
+	Region           string
+	CidrsText        string
+	AllowedCidrsText string
+	Status           string
+	StatusDetail     string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) UpdatePrivateNetworkAttachmentStatusForIntent(ctx context.Context, db DBTX, arg UpdatePrivateNetworkAttachmentStatusForIntentParams) (UpdatePrivateNetworkAttachmentStatusForIntentRow, error) {
+	row := db.QueryRow(ctx, updatePrivateNetworkAttachmentStatusForIntent,
+		arg.Status,
+		arg.StatusDetail,
+		arg.AccountID,
+		arg.AppID,
+		arg.ID,
+		arg.NetworkID,
+		arg.Region,
+		arg.Cidrs,
+		arg.AllowedCidrs,
+	)
+	var i UpdatePrivateNetworkAttachmentStatusForIntentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.NetworkID,
+		&i.Region,
+		&i.CidrsText,
+		&i.AllowedCidrsText,
+		&i.Status,
+		&i.StatusDetail,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updatePromotionFeatureFlagReceipt = `-- name: UpdatePromotionFeatureFlagReceipt :one

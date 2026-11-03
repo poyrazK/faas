@@ -1216,3 +1216,13 @@ const (
 func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
 	r.failInterruptedFireNowRequests(ctx)
 }
+
+func ProjectPrivateNetworkForTest(store state.Store, app state.App) AppSpec {
+	p := (&Engine{store: store}).privateNetworkProjection(context.Background(), app)
+	return AppSpec{PrivateNetworkCIDRs: p.CIDRs, PrivateNetworkAllowedCIDRs: p.AllowedCIDRs, PrivateNetworkFirewallRules: p.FirewallRules, PrivateNetworkID: p.NetworkID, PrivateNetworkAddress: p.Address}
+}
+
+func StaticEgressWirePolicyForTest(spec AppSpec) (string, bool) {
+	p := spec.toProto()
+	return p.GetStaticEgressIp(), p.GetStaticEgressExcluded()
+}

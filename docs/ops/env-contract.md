@@ -719,6 +719,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PRIVATE_NETWORK_FABRIC_ENABLED` | apid, schedd, shared | `default` |  |  | `` | dark-launch switch for Gregale-owned private network CRUD and attachment addresses; disabled by default until the fabric is deployed |
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_ENABLED` | vmmd | `default` |  |  | `` | opt-in node-to-node VXLAN over the operator-managed encrypted overlay; disabled until every regional peer is configured |
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE` | vmmd | `default` |  |  | `` | optional underlay interface for Gregale private-network VXLAN; falls back to FAAS_OVERLAY_INTERFACE |
+| `FAAS_PRIVATE_NETWORK_TRANSPORT_MTU` | vmmd | `default` |  |  | `` | common regional private-fabric MTU; defaults to 1230 and must fit every node's encrypted underlay plus VXLAN overhead |
 | `FAAS_PRIVATE_NETWORK_TRANSPORT_PEERS` | vmmd | `default` |  |  | `` | comma-separated IPv4 overlay addresses for the other compute nodes in this region |
 | `FAAS_PRODUCT_CONTROL_EMAIL_MODE` | apid | `default` |  | disabled | `` | internal Product Control email transport: disabled, local, or resend; ignored while Product Control is disabled |
 | `FAAS_PRODUCT_CONTROL_EMAIL_SEND_ENABLED` | apid | `default` |  | 0 | `` | separate exact 1 opt-in for the Product Control resend transport; never enables Product Control itself |

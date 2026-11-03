@@ -14759,6 +14759,29 @@
     }
   },
   {
+    "table": "private_network_service_owners",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "instance_id",
+      "network_id",
+      "service_address_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "private_network_transport_identities",
+    "columns": [
+      "account_id",
+      "created_at",
+      "network_id",
+      "region",
+      "vni"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "private_networks",
     "columns": [
       "account_id",
@@ -16941,6 +16964,21 @@
     "clone": {
       "owner": "project",
       "column": "id",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "static_egress_provisioning_grants",
+    "columns": [
+      "account_id",
+      "created_at",
+      "customer_ip",
+      "source_id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
       "strategy": "shared"
     }
   },

@@ -144,11 +144,13 @@ func (s *PgStore) AcquireDeploymentActivationLock(ctx context.Context, deploymen
 // sessionAdvisoryLock describes one session-scoped advisory lock: the
 // non-blocking try/unlock statements over the same key expression.
 type sessionAdvisoryLock struct {
-	what      string
-	tryLock   string
-	unlock    string
-	keyArg    string
-	retryWait time.Duration
+	what        string
+	tryLock     string
+	unlock      string
+	keyArg      string
+	tryQuery    func(context.Context, sqlc.DBTX, string) (bool, error)
+	unlockQuery func(context.Context, sqlc.DBTX, string) (bool, error)
+	retryWait   time.Duration
 }
 
 // acquireSessionAdvisoryLock takes a session-scoped advisory lock on a
@@ -179,7 +181,12 @@ func (s *PgStore) acquireSessionAdvisoryLockConn(ctx context.Context, l sessionA
 			return nil, nil, fmt.Errorf("state: acquire %s connection: %w", l.what, err)
 		}
 		var locked bool
-		if err = conn.QueryRow(ctx, l.tryLock, l.keyArg).Scan(&locked); err != nil {
+		if l.tryQuery != nil {
+			locked, err = l.tryQuery(ctx, conn, l.keyArg)
+		} else {
+			err = conn.QueryRow(ctx, l.tryLock, l.keyArg).Scan(&locked)
+		}
+		if err != nil {
 			// Cancellation can race a server-side lock grant. Closing the
 			// session is the only safe way to rule out an orphaned lock.
 			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
@@ -233,7 +240,12 @@ func releaseSessionAdvisoryLock(conn *pgxpool.Conn, l sessionAdvisoryLock) func(
 		once.Do(func() {
 			unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			var unlocked bool
-			unlockErr := conn.QueryRow(unlockCtx, l.unlock, l.keyArg).Scan(&unlocked)
+			var unlockErr error
+			if l.unlockQuery != nil {
+				unlocked, unlockErr = l.unlockQuery(unlockCtx, conn, l.keyArg)
+			} else {
+				unlockErr = conn.QueryRow(unlockCtx, l.unlock, l.keyArg).Scan(&unlocked)
+			}
 			cancel()
 			if unlockErr != nil || !unlocked {
 				// Never return a connection carrying an uncertain session lock
@@ -27247,6 +27259,9 @@ func mapErr(err error) error {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.ForeignKeyViolation:
+			if strings.HasPrefix(pgErr.ConstraintName, "private_network_service_owners_") {
+				return ErrConflict
+			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_fk" {
 				return ErrInvalidArgument
 			}
@@ -33581,24 +33596,18 @@ func (s *PgStore) MirrorSummary(ctx context.Context, ruleID string, since time.T
 // "not provisioned" surface the customer sees as 404 Not
 // Found (api.ErrStaticEgressIPNotProvisioned).
 //
-// Implementation note: the lookup is a single-row PK read
-// against the `(account_id, customer_ip)` composite index
-// declared by migration 00337. Sub-millisecond under realistic
-// load.
+// Both the legacy gate and current node-owned grants are indexed by
+// account/IP. Scoped publications retire the unowned legacy rows.
 func (s *PgStore) ProvisionedStaticEgressIPExists(ctx context.Context, accountID string, ip netip.Addr) (bool, error) {
 	if accountID == "" || !ip.Is4() {
 		return false, nil
 	}
-	var found bool
-	row := s.pool.QueryRow(ctx,
-		`select exists(
-		   select 1
-		     from provisioned_static_egress_ips
-		    where account_id = $1::uuid
-		      and customer_ip = $2::inet
-		)`,
-		accountID, ip.String())
-	if err := row.Scan(&found); err != nil {
+	var account pgtype.UUID
+	if err := account.Scan(accountID); err != nil {
+		return false, fmt.Errorf("state: ProvisionedStaticEgressIPExists account: %w", err)
+	}
+	found, err := sqlc.New().ProvisionedStaticEgressIPExists(ctx, s.pool, sqlc.ProvisionedStaticEgressIPExistsParams{AccountID: account, CustomerIp: ip})
+	if err != nil {
 		return false, fmt.Errorf("state: ProvisionedStaticEgressIPExists: %w", err)
 	}
 	return found, nil
