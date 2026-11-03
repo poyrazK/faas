@@ -7842,6 +7842,7 @@ type JobRun struct {
 	ExclusiveGeneration         pgtype.Int8
 	ProcessUser                 pgtype.Text
 	ProcessWorkdir              pgtype.Text
+	LogsClearedFinishedAt       pgtype.Timestamptz
 }
 
 type JobRunAttachSession struct {
