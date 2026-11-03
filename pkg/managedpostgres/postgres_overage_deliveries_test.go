@@ -13,7 +13,9 @@ func TestPostgresStoreOverageReservations(t *testing.T) {
 	store, _, ctx, accountID := postgresStoreFixture(t)
 	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	pending := OveragePendingStep{Provider: "polar", Live: true, Step: OverageChargeStep{SubjectID: accountID, PeriodStart: month,
-		At: month.Add(2 * time.Hour), UsedUnitSeconds: 93600, AllowanceSeconds: 90000, BilledUnitSeconds: 3600, TargetMillicents: 20_000}}
+		At: month.Add(2 * time.Hour), UsedUnitSeconds: 93600, AllowanceSeconds: 90000, BilledUnitSeconds: 3600, TargetMillicents: 20_000},
+		// The month's delivery row as OverageDelivered reads it before any delivery.
+		Previous: OverageDelivery{Provider: "polar", SubjectID: accountID, PeriodStart: month}}
 	if _, found, err := store.OveragePending(ctx, "polar", accountID, month); err != nil || found {
 		t.Fatalf("pending before any reservation: %v, %v", found, err)
 	}
