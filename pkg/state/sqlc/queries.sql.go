@@ -48729,7 +48729,8 @@ func (q *Queries) ListExpiredCustomerOperationExecutions(ctx context.Context, db
 
 const listFairTenantWorkflowScheduleCandidates = `-- name: ListFairTenantWorkflowScheduleCandidates :many
 SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
-       jsonb_build_array(w.definition)::jsonb AS workflows
+       jsonb_build_array(w.definition)::jsonb AS workflows,
+       coalesce(w.definition->>'name', '')::text AS fair_workflow_name, c.last_admitted_at AS fair_last_admitted_at
 FROM apps a
 JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
@@ -48748,28 +48749,46 @@ WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND a.platform_tenant_req
   AND (NOT coalesce((w.definition->'trigger'->>'tenant_configurable')::boolean, false)
        OR coalesce((c.trigger_snapshot->'tenant_configuration'->'trigger'->>'enabled')::boolean, true))
   AND (c.last_evaluated_at IS NULL OR c.last_evaluated_at < $2::timestamptz)
+  AND ($3::uuid IS NULL OR
+       (coalesce(c.last_admitted_at, '-infinity'::timestamptz), a.id, t.id, coalesce(w.definition->>'name', '')) >
+       (coalesce($4::timestamptz, '-infinity'::timestamptz), $3::uuid,
+        $5::uuid, $6::text))
   AND (EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id = a.account_id AND c.app_id = a.id
        AND c.platform_tenant_id = t.id AND c.status = 'active' AND c.revoked_at IS NULL)
        OR EXISTS (SELECT 1 FROM tenant_surfaces s WHERE s.account_id = a.account_id AND s.app_id = a.id
        AND s.platform_tenant_id = t.id AND s.status = 'active'))
-ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, w.definition->>'name' LIMIT $3
+ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, coalesce(w.definition->>'name', '') LIMIT $7
 `
 
 type ListFairTenantWorkflowScheduleCandidatesParams struct {
-	OwnerNodeID      pgtype.UUID
-	EvaluationMinute pgtype.Timestamptz
-	BatchLimit       int32
+	OwnerNodeID       pgtype.UUID
+	EvaluationMinute  pgtype.Timestamptz
+	AfterAppID        pgtype.UUID
+	AfterAdmittedAt   pgtype.Timestamptz
+	AfterTenantID     pgtype.UUID
+	AfterWorkflowName string
+	BatchLimit        int32
 }
 
 type ListFairTenantWorkflowScheduleCandidatesRow struct {
-	AppID            pgtype.UUID
-	PlatformTenantID pgtype.UUID
-	DeploymentID     pgtype.UUID
-	Workflows        []byte
+	AppID              pgtype.UUID
+	PlatformTenantID   pgtype.UUID
+	DeploymentID       pgtype.UUID
+	Workflows          []byte
+	FairWorkflowName   string
+	FairLastAdmittedAt pgtype.Timestamptz
 }
 
 func (q *Queries) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListFairTenantWorkflowScheduleCandidatesParams) ([]ListFairTenantWorkflowScheduleCandidatesRow, error) {
-	rows, err := db.Query(ctx, listFairTenantWorkflowScheduleCandidates, arg.OwnerNodeID, arg.EvaluationMinute, arg.BatchLimit)
+	rows, err := db.Query(ctx, listFairTenantWorkflowScheduleCandidates,
+		arg.OwnerNodeID,
+		arg.EvaluationMinute,
+		arg.AfterAppID,
+		arg.AfterAdmittedAt,
+		arg.AfterTenantID,
+		arg.AfterWorkflowName,
+		arg.BatchLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -48782,6 +48801,8 @@ func (q *Queries) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, 
 			&i.PlatformTenantID,
 			&i.DeploymentID,
 			&i.Workflows,
+			&i.FairWorkflowName,
+			&i.FairLastAdmittedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -60860,7 +60881,7 @@ func (q *Queries) LockUDPListenerAppOwner(ctx context.Context, db DBTX, appID st
 }
 
 const lockWebhookAutomationEndpoint = `-- name: LockWebhookAutomationEndpoint :one
-SELECT id, app_id, account_id, name, provider, token_hash, signing_secret_sealed, delivery_path, enabled, created_at, updated_at FROM inbound_webhook_endpoints
+SELECT id, app_id, account_id, name, provider, token_hash, signing_secret_sealed, delivery_path, enabled, created_at, updated_at, previous_signing_secret_sealed, previous_signing_secret_expires_at FROM inbound_webhook_endpoints
 WHERE id=$1 AND app_id=$2 AND account_id=$3 FOR UPDATE
 `
 
@@ -60885,6 +60906,8 @@ func (q *Queries) LockWebhookAutomationEndpoint(ctx context.Context, db DBTX, ar
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PreviousSigningSecretSealed,
+		&i.PreviousSigningSecretExpiresAt,
 	)
 	return i, err
 }

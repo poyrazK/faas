@@ -22132,7 +22132,8 @@ LOCK TABLE deployments, instances IN ROW EXCLUSIVE MODE;
 SELECT id FROM instances WHERE id=sqlc.arg(instance_id)::uuid FOR UPDATE;
 -- name: ListFairTenantWorkflowScheduleCandidates :many
 SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
-       jsonb_build_array(w.definition)::jsonb AS workflows
+       jsonb_build_array(w.definition)::jsonb AS workflows,
+       coalesce(w.definition->>'name', '')::text AS fair_workflow_name, c.last_admitted_at AS fair_last_admitted_at
 FROM apps a
 JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
@@ -22151,11 +22152,15 @@ WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND a.platform_tenant_req
   AND (NOT coalesce((w.definition->'trigger'->>'tenant_configurable')::boolean, false)
        OR coalesce((c.trigger_snapshot->'tenant_configuration'->'trigger'->>'enabled')::boolean, true))
   AND (c.last_evaluated_at IS NULL OR c.last_evaluated_at < sqlc.arg(evaluation_minute)::timestamptz)
+  AND (sqlc.narg(after_app_id)::uuid IS NULL OR
+       (coalesce(c.last_admitted_at, '-infinity'::timestamptz), a.id, t.id, coalesce(w.definition->>'name', '')) >
+       (coalesce(sqlc.narg(after_admitted_at)::timestamptz, '-infinity'::timestamptz), sqlc.narg(after_app_id)::uuid,
+        sqlc.narg(after_tenant_id)::uuid, sqlc.arg(after_workflow_name)::text))
   AND (EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id = a.account_id AND c.app_id = a.id
        AND c.platform_tenant_id = t.id AND c.status = 'active' AND c.revoked_at IS NULL)
        OR EXISTS (SELECT 1 FROM tenant_surfaces s WHERE s.account_id = a.account_id AND s.app_id = a.id
        AND s.platform_tenant_id = t.id AND s.status = 'active'))
-ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, w.definition->>'name' LIMIT sqlc.arg(batch_limit);
+ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, coalesce(w.definition->>'name', '') LIMIT sqlc.arg(batch_limit);
 
 
 -- name: InsertWorkflowScheduleOccurrence :exec
