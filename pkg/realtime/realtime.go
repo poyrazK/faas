@@ -15,9 +15,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -504,6 +506,7 @@ type Stats struct {
 	ClientMessagesThrottled            uint64  `json:"client_messages_throttled"`
 	EphemeralRelaysThrottled           uint64  `json:"ephemeral_relays_throttled,omitempty"`
 	LiveFramesThrottled                uint64  `json:"live_frames_throttled,omitempty"`
+	HandshakesThrottled                uint64  `json:"handshakes_throttled,omitempty"`
 	CallbackOutboxAdmissionErrors      uint64  `json:"callback_outbox_admission_errors"`
 	CallbackUnpersistedFailures        uint64  `json:"callback_unpersisted_failures"`
 	CallbackPending                    uint64  `json:"callback_pending"`
@@ -648,6 +651,10 @@ type Manager struct {
 	// and its live hub frames (ADR-1323, amendment of 2026-11-03).
 	ephemeralRelays *rate.Limiter
 	liveFrames      *rate.Limiter
+	// handshakes bounds new connections per second on the node, so the
+	// reconnects after a restart arrive spread out (ADR-1323, amendment of
+	// 2026-11-03).
+	handshakes *rate.Limiter
 
 	endpoints   sync.Map // map[string]*endpointState
 	endpointsMu sync.Mutex
@@ -692,31 +699,35 @@ type Manager struct {
 	usageDroppedHours   atomic.Uint64
 	usageHeldHours      atomic.Int64
 
-	acceptedConnections           atomic.Uint64
-	rejectedConnections           atomic.Uint64
-	receivedMessages              atomic.Uint64
-	receivedBytes                 atomic.Uint64
-	sentMessages                  atomic.Uint64
-	sentBytes                     atomic.Uint64
-	droppedMessages               atomic.Uint64
-	expiredWebSocketCheckpoints   atomic.Uint64
-	expiredInboxCheckpoints       atomic.Uint64
-	expiredSSECheckpoints         atomic.Uint64
-	expiredOutboundDrops          atomic.Uint64
-	outboundPendingBytes          atomic.Int64
-	outboundQueueCountDrops       atomic.Uint64
-	outboundQueueByteDrops        atomic.Uint64
-	outboundNodeBudgetDrops       atomic.Uint64
-	outboundShedDisconnects       atomic.Uint64
-	outboundShed                  chan struct{}
-	occupancy                     occupancyIndex
-	occupancyLive                 occupancyLive
-	callbackErrors                atomic.Uint64
-	callbackOutboxFull            atomic.Uint64
-	clientMessagesPaced           atomic.Uint64
-	clientMessagesThrottled       atomic.Uint64
-	ephemeralRelaysThrottled      atomic.Uint64
+	acceptedConnections         atomic.Uint64
+	rejectedConnections         atomic.Uint64
+	receivedMessages            atomic.Uint64
+	receivedBytes               atomic.Uint64
+	sentMessages                atomic.Uint64
+	sentBytes                   atomic.Uint64
+	droppedMessages             atomic.Uint64
+	expiredWebSocketCheckpoints atomic.Uint64
+	expiredInboxCheckpoints     atomic.Uint64
+	expiredSSECheckpoints       atomic.Uint64
+	expiredOutboundDrops        atomic.Uint64
+	outboundPendingBytes        atomic.Int64
+	outboundQueueCountDrops     atomic.Uint64
+	outboundQueueByteDrops      atomic.Uint64
+	outboundNodeBudgetDrops     atomic.Uint64
+	outboundShedDisconnects     atomic.Uint64
+	outboundShed                chan struct{}
+	occupancy                   occupancyIndex
+	occupancyLive               occupancyLive
+	callbackErrors              atomic.Uint64
+	callbackOutboxFull          atomic.Uint64
+	clientMessagesPaced         atomic.Uint64
+	clientMessagesThrottled     atomic.Uint64
+	ephemeralRelaysThrottled    atomic.Uint64
+	// presenceRenewUnsupported is set once apid answers that it has no
+	// presence renewals; renewals then upsert.
+	presenceRenewUnsupported      atomic.Bool
 	liveFramesThrottled           atomic.Uint64
+	handshakesThrottled           atomic.Uint64
 	callbackOutboxAdmissionErrors atomic.Uint64
 	callbackUnpersistedFailures   atomic.Uint64
 	authOutcomes                  authOutcomeCounters
@@ -739,6 +750,7 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		clientMessages:          rate.NewLimiter(rate.Limit(api.RealtimeNodeClientMessagesPerSecond), api.RealtimeNodeClientMessageBurst),
 		ephemeralRelays:         rate.NewLimiter(rate.Limit(api.RealtimeNodeEphemeralRelaysPerSecond), api.RealtimeNodeEphemeralRelayBurst),
 		liveFrames:              rate.NewLimiter(rate.Limit(api.RealtimeNodeLiveFramesPerSecond), api.RealtimeNodeLiveFrameBurst),
+		handshakes:              rate.NewLimiter(rate.Limit(api.RealtimeNodeHandshakesPerSecond), api.RealtimeNodeHandshakeBurst),
 		conns:                   make(map[string]*connection),
 		readerConns:             make(map[readerKey]map[*connection]struct{}),
 		subscribers:             make(map[channelKey]map[string]struct{}),
@@ -955,6 +967,11 @@ func (m *Manager) Handler() http.Handler { return m }
 func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if m == nil || m.closed.Load() {
 		http.Error(w, "realtime service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if !m.allowHandshake() {
+		w.Header().Set("Retry-After", strconv.Itoa(1+rand.IntN(5)))
+		http.Error(w, "realtime node busy", http.StatusServiceUnavailable)
 		return
 	}
 	if r.URL.Query().Get("transport") == "sse" {
@@ -2397,6 +2414,7 @@ func (m *Manager) Stats() Stats {
 		ClientMessagesThrottled:       m.clientMessagesThrottled.Load(),
 		EphemeralRelaysThrottled:      m.ephemeralRelaysThrottled.Load(),
 		LiveFramesThrottled:           m.liveFramesThrottled.Load(),
+		HandshakesThrottled:           m.handshakesThrottled.Load(),
 		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
 		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
 		UsageReports:                  m.usageReports.Load(),
@@ -2456,7 +2474,7 @@ func (m *Manager) Close() error {
 	}
 	m.mu.RUnlock()
 	for _, c := range connections {
-		_ = c.close(websocket.CloseGoingAway, "service shutdown")
+		_ = c.close(websocket.CloseServiceRestart, "service restart")
 	}
 	if m.usage != nil {
 		// Give the recorder its final report, bounded by its own timeout.
