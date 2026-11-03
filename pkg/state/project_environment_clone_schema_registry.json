@@ -12583,6 +12583,17 @@
     "kind": "operational"
   },
   {
+    "table": "object_storage_ceiling_grants",
+    "columns": [
+      "granted_at",
+      "granted_by",
+      "max_bytes",
+      "owner_id",
+      "reason"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "object_storage_capacity_reconciliations",
     "columns": [
       "after_bytes",

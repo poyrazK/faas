@@ -31,7 +31,10 @@ func ServicePolicyRoutingInputsFromContext(ctx context.Context) (ServicePolicyRo
 }
 
 type ServiceRoutingSnapshot struct {
-	CallerDeploymentID                 string
+	CallerDeploymentID string
+	// CallerEnvironment is "" for a production caller, otherwise the stage
+	// whose deployments are the only targets the call may reach.
+	CallerEnvironment                  string
 	ReleaseResolved                    bool
 	ReleaseID, ReleaseDeploymentID     string
 	RequestedReleaseID, ReleaseVerdict string
@@ -142,8 +145,20 @@ func (p *ServiceProxy) serviceSnapshotDeployment(ctx context.Context, app string
 	if !ok || policy.snapshot.Target.AppID != app || policy.snapshot.Routing == nil {
 		return "", ErrServiceProxyUnavailable
 	}
-	if policy.snapshot.Routing.SelectedDeploymentID == "" {
+	routing := policy.snapshot.Routing
+	if routing.SelectedDeploymentID == "" {
+		if routing.CallerEnvironment != "" && routing.ReleaseDeploymentID == "" && !routing.OverrideChecked && len(routing.Weights) == 0 {
+			return "", &ServiceEnvironmentMissingError{Environment: routing.CallerEnvironment}
+		}
 		return "", errors.New("service has no deployment in the admitted routing policy")
 	}
-	return policy.snapshot.Routing.SelectedDeploymentID, nil
+	return routing.SelectedDeploymentID, nil
+}
+
+// ServiceEnvironmentMissingError refuses a stage caller whose target has no
+// deployment in that stage. Stages never fall back to production services.
+type ServiceEnvironmentMissingError struct{ Environment string }
+
+func (e *ServiceEnvironmentMissingError) Error() string {
+	return "service has no deployment in environment " + e.Environment
 }
