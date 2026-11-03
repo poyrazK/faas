@@ -6282,6 +6282,8 @@ type Querier interface {
 	// earlier minute (a replica's late flush) moves it back; an app that is
 	// gone is skipped.
 	RecordRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupCoverageParams) error
+	// ADR-20261103113952 amendment 1: app minutes whose rollups apid lost.
+	RecordRequestAnalyticsRollupGaps(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsParams) error
 	// The request-ID journal is independent from sampled request telemetry. Only
 	// insert when the app is still owned by the authenticated account. The
 	// caller-generated record UUID makes an RPC retry idempotent without
@@ -6435,6 +6437,11 @@ type Querier interface {
 	// minute counts when it starts inside the window. latency_hist is the
 	// groups' merged histogram; callers turn it into percentiles.
 	RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg RequestAnalyticsRollupGroupsParams) ([]RequestAnalyticsRollupGroupsRow, error)
+	// Whether any minute starting inside the window lost rollups.
+	RequestAnalyticsRollupHasGap(ctx context.Context, db DBTX, arg RequestAnalyticsRollupHasGapParams) (bool, error)
+	// Requests per route, method and deployment from the rollups, for the
+	// analytics route and deployment cost splits.
+	RequestAnalyticsRollupRouteDeployments(ctx context.Context, db DBTX, arg RequestAnalyticsRollupRouteDeploymentsParams) ([]RequestAnalyticsRollupRouteDeploymentsRow, error)
 	RequestEnvironmentGitOpsRuntimeRefresh(ctx context.Context, db DBTX, arg RequestEnvironmentGitOpsRuntimeRefreshParams) error
 	RequestEventExecutionReconciliation(ctx context.Context, db DBTX, arg RequestEventExecutionReconciliationParams) error
 	// gatewayd-internal, after a serving instance answered 5xx. Succeeds only

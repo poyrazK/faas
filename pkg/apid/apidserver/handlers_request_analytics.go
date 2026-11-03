@@ -26,6 +26,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/analyticsrollup"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
@@ -82,7 +83,8 @@ func (s *server) requestAnalyticsCompleteness(ctx context.Context, appID string,
 	if !ok {
 		return nil, nil
 	}
-	return requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
+	complete, gaps := requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
+	return analyticsrollup.WithRollupGaps(ctx, s.store, s.log, appID, window.From, window.Until, complete, gaps)
 }
 
 func requestAnalyticsCompletenessFrom(ctx context.Context, reader requestAnalyticsCompletenessReader, log *slog.Logger, appID string, window requestAnalyticsWindow) (*bool, []string) {
@@ -433,6 +435,12 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			RequestCount:              requestCount,
 		}
 
+		// When rollups answer the window, the deployment splits take their
+		// request counts too, so they add up to the route totals above.
+		split, err := s.requestAnalyticsRollupSplit(ctx, app, acct, window)
+		if err != nil {
+			return api.RequestAnalyticsResponse{}, err
+		}
 		if deploymentStore, ok := s.store.(requestAnalyticsDeploymentReader); ok {
 			deploymentRows, err := deploymentStore.RequestTelemetryAnalyticsByDeployment(ctx, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
 				AppID:        params.AppID,
@@ -444,6 +452,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			if err != nil {
 				return api.RequestAnalyticsResponse{}, err
 			}
+			deploymentRows = split.deployments(deploymentRows, summary.Requests)
 			var totalDeploymentRequests int64
 			if len(deploymentRows) > 0 {
 				totalDeploymentRequests = deploymentRows[0].TotalRequests
@@ -513,7 +522,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			if err != nil {
 				return api.RequestAnalyticsResponse{}, err
 			}
-			attachRequestAnalyticsRouteDeploymentObservations(routes, routeDeploymentRows, summary.Requests)
+			attachRequestAnalyticsRouteDeploymentObservations(routes, split.routeDeployments(routeDeploymentRows), summary.Requests)
 		}
 	}
 

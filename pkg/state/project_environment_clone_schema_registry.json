@@ -17195,6 +17195,14 @@
     "kind": "operational"
   },
   {
+    "table": "request_analytics_rollup_gaps",
+    "columns": [
+      "app_id",
+      "bucket_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_rollup_coverage",
     "columns": [
       "app_id",

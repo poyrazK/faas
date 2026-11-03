@@ -232,8 +232,9 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	}
 }
 
-// tick drains one batch from the recorder, collapses it by
-// (app, deployment, route, status, minute), and ships via ShipFn.
+// tick drains batches from the recorder while a full one is waiting,
+// collapses each by (app, deployment, route, status, minute), and ships it
+// via ShipFn.
 // Errors are logged + retried with exponential backoff up to
 // MaxRetries; final failure increments droppedTotal.
 func (p *requestTelemetryPublisher) tick(ctx context.Context) {
@@ -245,21 +246,38 @@ func (p *requestTelemetryPublisher) tick(ctx context.Context) {
 		p.tickMinutes(ctx, false)
 		return
 	}
+	// Keep draining while a full batch is waiting. The recorder's wake hook
+	// re-arms only when a drain leaves it under half full, so one batch per
+	// tick under a backlog fell back to the FlushInterval ticker: 256 rows
+	// per 5 s, whatever apid could take. The bound is one pass over the ring.
+	for range p.recorder.cfg.RingSize/p.cfg.FlushBatchSize + 1 {
+		if !p.tickBatch(ctx) || p.recorder.PendingCount() < p.cfg.FlushBatchSize {
+			return
+		}
+	}
+}
+
+// tickBatch ships one batch: the pending retry or a fresh drain. It reports
+// whether the batch was delivered, so the caller may drain another.
+func (p *requestTelemetryPublisher) tickBatch(ctx context.Context) bool {
 	if len(p.pending) == 0 {
 		p.pending = collapseRequestTelemetry(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
 	}
 	if len(p.pending) == 0 {
-		return
+		return false
 	}
 	if p.ship == nil {
 		p.dropPending("request telemetry ship unavailable; dropping batch")
-		return
+		return false
 	}
 	if p.shipPending(ctx) {
 		p.pending = nil
-	} else if ctx.Err() == nil {
+		return ctx.Err() == nil
+	}
+	if ctx.Err() == nil {
 		p.dropPending("request telemetry ship exhausted retries; dropping batch")
 	}
+	return false
 }
 
 // tickMinutes drains everything queued into the open minutes, readies the

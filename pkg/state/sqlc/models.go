@@ -13718,6 +13718,12 @@ type RequestAnalyticsRollupCoverage struct {
 	CoveredSince pgtype.Timestamptz
 }
 
+// App minutes whose analytics rollups apid lost; written only by apid, swept only by meterd (ADR-20261103113952 amendment 1).
+type RequestAnalyticsRollupGap struct {
+	AppID       pgtype.UUID
+	BucketStart pgtype.Timestamptz
+}
+
 type RequestAuditEvent struct {
 	EventID          pgtype.UUID
 	AccountID        pgtype.UUID

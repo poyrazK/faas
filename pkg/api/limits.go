@@ -14264,9 +14264,15 @@ const RequestAnalyticsSettleLag = 2 * time.Minute
 // RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
 // Postgres is failing, new rows are dropped and counted.
 const (
-	RequestAnalyticsRollupFlushInterval  = 10 * time.Second
-	RequestAnalyticsRollupFlushRowsMax   = 1000
-	RequestAnalyticsRollupDimensionsMax  = 50
+	RequestAnalyticsRollupFlushInterval = 10 * time.Second
+	RequestAnalyticsRollupFlushRowsMax  = 1000
+	RequestAnalyticsRollupDimensionsMax = 50
+	// The buffer holds up to this many values of a kind per app minute
+	// before folding new ones into __other__; the flush keeps the
+	// RequestAnalyticsRollupDimensionsMax busiest of them.
+	RequestAnalyticsRollupDimensionsBufferMax = 4 * RequestAnalyticsRollupDimensionsMax
+	// App minutes whose lost rollups wait to be recorded as gaps.
+	RequestAnalyticsRollupPendingGapsMax = 100_000
 	RequestAnalyticsRollupSeenEventsMax  = 200_000
 	RequestAnalyticsRollupPendingRowsMax = 200_000
 )
