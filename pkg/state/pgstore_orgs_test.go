@@ -114,6 +114,12 @@ func TestPgStore_OrgSurface_RoundTripsAndLastOwnerGuard(t *testing.T) {
 	if !final.DeletedPending {
 		t.Errorf("DeletedPending false after soft delete")
 	}
+	// ADR-20261101143527: the trigger stamps the deletion time the billing
+	// subject carries, so meterd delivers the usage from before it.
+	subject, err := s.OrgResourceAccount(ctx, o.ID)
+	if err != nil || subject.DeletionRequestedAt == nil {
+		t.Errorf("billing subject after soft delete = %+v, %v; want its deletion time", subject, err)
+	}
 }
 
 func TestPgStore_ConsumeOrgInvitation_HappyPath(t *testing.T) {
