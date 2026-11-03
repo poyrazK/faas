@@ -935,6 +935,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// TABLE source of truth — the LISTEN is just a wakeup — so we
 	// sweep once on startup to bound the post-restart latency at ~1
 	// round-trip rather than waiting for the 60s safety tick.
+	l.failInterruptedFireNowRequests(ctx)
 	l.drainPendingFireNowRequests(ctx)
 
 	// PR #1099 P2 redesign: drain any operator_intents rows that
@@ -1408,6 +1409,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			// network blip). Same dispatcher as the notify arm —
 			// drainPendingFireNowRequests is the single owner of the
 			// claim + dispatch loop.
+			l.failInterruptedFireNowRequests(ctx)
 			l.drainPendingFireNowRequests(ctx)
 		case <-operatorIntentT.C:
 			// PR #1099 P2 redesign: safety sweep. Picks up rows
@@ -2592,9 +2594,16 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// table source of truth on every reaper tick so a restart or missed
 	// lifecycle notification cannot leave unbillable VMs live. This runs
 	// before the normal idle snapshot.
+	// ADR 20261102160622: one bulk read of the strict compute sweep's inputs
+	// for the tick, not a live listing and a lease read per instance per app.
+	budgetPreload := l.engine.loadStrictComputePreload(ctx, apps)
 	for _, app := range apps {
-		if err := l.engine.ReconcileFinancialBudgetStops(ctx, app.ID); err != nil {
-			l.log.Warn("reaper: preview budget stop", "app", app.ID, "err", err)
+		// ADR 20261102205122: an app the sweep has nothing to apply to
+		// costs no lock and no reads.
+		if !budgetPreload.idle(app, l.engine.financialBudgetNow()) {
+			if err := l.engine.reconcileFinancialBudgetStops(ctx, app.ID, budgetPreload); err != nil {
+				l.log.Warn("reaper: preview budget stop", "app", app.ID, "err", err)
+			}
 		}
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
@@ -2696,8 +2705,25 @@ func (l *Loop) runReaper(ctx context.Context) {
 	if candidate, ok := store.(state.PrewarmStore); ok {
 		prewarmStore = candidate
 	}
+	// ADR 20261102160622: every owned app's floor in one query when the store
+	// can; a failed or missing bulk read reads per app as before.
+	bulkFloors := false
+	if reader, ok := store.(state.PrewarmFloorsReader); ok && prewarmStore != nil && len(apps) > 0 {
+		ids := make([]string, 0, len(apps))
+		for _, a := range apps {
+			ids = append(ids, a.ID)
+		}
+		if floors, floorErr := reader.ActivePrewarmFloors(ctx, ids, now); floorErr != nil {
+			l.log.Warn("reaper: bulk prewarm floor lookup; reading per app", "err", floorErr)
+		} else {
+			for id, floor := range floors {
+				appPrewarmFloor[id] = max(floor, 0)
+			}
+			bulkFloors = true
+		}
+	}
 	for _, a := range apps {
-		if prewarmStore != nil {
+		if prewarmStore != nil && !bulkFloors {
 			if temporary, floorErr := prewarmStore.ActivePrewarmFloor(ctx, a.ID, now); floorErr != nil {
 				l.log.Warn("reaper: prewarm floor lookup", "app", a.ID, "err", floorErr)
 			} else {
@@ -4500,6 +4526,17 @@ func (l *Loop) runCronTick(ctx context.Context) {
 	l.runCronSweep(ctx)
 }
 
+// cronAppBudgetHeld reports an app a compute budget holds. The drain defers
+// its runs without spending them, so a cron firing through the hold queued a
+// run every scheduled time and all of them were delivered at once when the
+// hold lifted (crons audit 2026-11-02). The sweep leaves such a cron due
+// instead: it runs once after the hold, as after any time Gregale could not
+// reach. A read error is no hold; the drain still defers the run.
+func (l *Loop) cronAppBudgetHeld(ctx context.Context, app state.App) bool {
+	err := state.CheckFinancialBudgetAdmissionForScope(ctx, l.engine.Store(), app, "", "", l.engine.financialBudgetNow())
+	return errors.Is(err, state.ErrFinancialBudgetHeld)
+}
+
 // resumeCronSweep asks the main loop to run another pass of the sweep.
 func (l *Loop) resumeCronSweep() {
 	select {
@@ -4544,6 +4581,7 @@ func (l *Loop) runCronSweep(ctx context.Context) {
 	now := l.now()
 	plans := newCronPlanGate(store)
 	apps := map[string]state.App{}
+	budgetHeld := map[string]bool{}
 	for _, c := range crons {
 		if _, tried := l.cronSweepTried[c.ID]; tried {
 			continue
@@ -4584,6 +4622,14 @@ func (l *Loop) runCronSweep(ctx context.Context) {
 		// Crons switched off for the account do not fire (dispatchCronLocked);
 		// checking before the claim skips its rollback write every minute.
 		if !l.engine.appCapabilityAllowed(ctx, app, "crons") {
+			continue
+		}
+		held, checked := budgetHeld[app.ID]
+		if !checked {
+			held = l.cronAppBudgetHeld(ctx, app)
+			budgetHeld[app.ID] = held
+		}
+		if held {
 			continue
 		}
 		l.cronSweepTried[c.ID] = struct{}{}

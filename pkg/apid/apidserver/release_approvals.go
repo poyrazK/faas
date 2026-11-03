@@ -510,6 +510,9 @@ func (s *server) rollbackTargetApprovalProblem(ctx context.Context, app state.Ap
 }
 
 func (s *server) approvalTrafficProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
+	if p := s.darkReleasePauseProblem(d); p != nil {
+		return p
+	}
 	// ADR-20261021152201: a release waiting for its scheduled start takes
 	// no traffic by hand.
 	if p := s.scheduledTrafficProblem(ctx, d); p != nil {
@@ -697,20 +700,93 @@ func promotionAppsBySlug(plan projectEnvironmentPromotionPlan) []state.App {
 // security audit 2026-10-27): it is one decision, so it cannot meet a policy
 // of more than one approval, and a policy that forbids self-approval needs
 // it given by someone other than the promoter. approver is "" for an
-// approval made before approvers were recorded.
+// approval made before approvers were recorded. On a company app the
+// approver must hold a role the policy lets approve (amendment 9).
 func (s *server) protectedPromotionApprovalProblem(ctx context.Context, plan projectEnvironmentPromotionPlan, toEnvironment, approver, promoter string) *api.Problem {
-	if !plan.Preview.ApprovalRequired || !freeze.IsProductionScope(toEnvironment) {
+	policies, problem := s.promotionApprovalPolicies(ctx, plan, toEnvironment)
+	if problem != nil {
+		return problem
+	}
+	for _, p := range policies {
+		app, policy := p.app, p.policy
+		if policy.RequiredApprovals > 1 {
+			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+			return api.ErrReleaseApprovalPromotionInsufficient(app.Slug, toEnvironment, policy.RequiredApprovals)
+		}
+		if !policy.AllowSelfApproval && (approver == "" || approver == promoter) {
+			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+			return api.ErrReleaseApprovalPromotionSelf(app.Slug, toEnvironment)
+		}
+		if problem := s.promotionApproverRoleProblem(ctx, app, policy, toEnvironment, approver); problem != nil {
+			return problem
+		}
+	}
+	return nil
+}
+
+// promotionApproverRoleProblem refuses a promotion approval given by someone
+// a company app's policy does not let approve its releases: a member with
+// another role, or one who has left the organization (amendment 9).
+func (s *server) promotionApproverRoleProblem(ctx context.Context, app state.App, policy state.ReleaseApprovalPolicy, toEnvironment, approver string) *api.Problem {
+	shared, err := s.appSharedInOrg(ctx, app)
+	if err == nil && (!shared || approver == "") {
 		return nil
+	}
+	var member state.OrgMembership
+	if err == nil {
+		member, err = s.store.OrgMemberByAccount(ctx, app.OrgID, approver)
+	}
+	if errors.Is(err, state.ErrNotFound) || err == nil && (member.RemovedAt != nil || !approval.RoleAllowed(policy.Approvers, member.Role)) {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+		return api.ErrReleaseApprovalPromotionApprover(app.Slug, toEnvironment)
+	}
+	if err != nil {
+		logCustomerFailure(s.log, "read promotion approver role", err)
+		return api.ErrInternal("Gregale could not check who approved this promotion.").WithHint("Retry in a moment.")
+	}
+	return nil
+}
+
+// promotionApprovalKeyProblem refuses a protected production promotion's
+// approval sent with an API key or token when it would stand in for an app's
+// release approval policy: a person approves a release (amendment 4), and
+// CI holds keys (amendment 9).
+func (s *server) promotionApprovalKeyProblem(r *http.Request, plan projectEnvironmentPromotionPlan, toEnvironment string) *api.Problem {
+	if p, ok := principalFrom(r); !ok || p.Key == nil {
+		return nil
+	}
+	policies, problem := s.promotionApprovalPolicies(r.Context(), plan, toEnvironment)
+	if problem != nil {
+		return problem
+	}
+	if len(policies) > 0 {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+		return api.ErrReleaseApprovalPromotionSessionRequired(policies[0].app.Slug, toEnvironment)
+	}
+	return nil
+}
+
+type promotionApprovalPolicy struct {
+	app    state.App
+	policy state.ReleaseApprovalPolicy
+}
+
+// promotionApprovalPolicies lists the release approval policies a protected
+// production promotion's approval stands in for, by app slug.
+func (s *server) promotionApprovalPolicies(ctx context.Context, plan projectEnvironmentPromotionPlan, toEnvironment string) ([]promotionApprovalPolicy, *api.Problem) {
+	if !plan.Preview.ApprovalRequired || !freeze.IsProductionScope(toEnvironment) {
+		return nil, nil
 	}
 	store, ok := s.store.(state.ReleaseApprovalStore)
 	if !ok {
-		return nil
+		return nil, nil
 	}
+	var out []promotionApprovalPolicy
 	for _, app := range promotionAppsBySlug(plan) {
 		required, err := approval.CanaryRequired(ctx, s.store, app, toEnvironment, "")
 		if err != nil {
 			logCustomerFailure(s.log, "read release approval policy", err)
-			return api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
+			return nil, api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
 		}
 		if !required {
 			continue
@@ -721,18 +797,11 @@ func (s *server) protectedPromotionApprovalProblem(ctx context.Context, plan pro
 		}
 		if err != nil {
 			logCustomerFailure(s.log, "read release approval policy", err)
-			return api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
+			return nil, api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
 		}
-		if policy.RequiredApprovals > 1 {
-			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
-			return api.ErrReleaseApprovalPromotionInsufficient(app.Slug, toEnvironment, policy.RequiredApprovals)
-		}
-		if !policy.AllowSelfApproval && (approver == "" || approver == promoter) {
-			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
-			return api.ErrReleaseApprovalPromotionSelf(app.Slug, toEnvironment)
-		}
+		out = append(out, promotionApprovalPolicy{app: app, policy: policy})
 	}
-	return nil
+	return out, nil
 }
 
 // releaseApprovalCanaryProblem refuses a production release that would take

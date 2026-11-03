@@ -16,12 +16,14 @@ type projectEnvironmentManagedResourceCleanup struct {
 }
 
 // An unbound stage copy has no app or binding; only its database is removed.
+// cloneOperationID is set for a database a full clone restored for the stage.
 type projectEnvironmentPostgresCleanup struct {
-	app            state.App
-	scope          string
-	binding        managedpostgres.Binding
-	database       managedpostgres.Database
-	deleteDatabase bool
+	app              state.App
+	scope            string
+	binding          managedpostgres.Binding
+	database         managedpostgres.Database
+	deleteDatabase   bool
+	cloneOperationID string
 }
 
 type projectEnvironmentObjectStorageCleanup struct {
@@ -76,9 +78,13 @@ func (s *server) planProjectEnvironmentManagedResourceCleanup(
 			if err != nil {
 				return plan, fmt.Errorf("load managed PostgreSQL database for workload %q: %w", app.Slug, err)
 			}
+			cloneOperationID, err := s.fullCloneOperationOfEnvironment(ctx, acct, project, scope, database)
+			if err != nil {
+				return plan, err
+			}
 			plan.postgres = append(plan.postgres, projectEnvironmentPostgresCleanup{
-				app: app, scope: scope, binding: binding, database: database,
-				deleteDatabase: projectEnvironmentDatabaseClone(project, scope, []state.App{app}, database),
+				app: app, scope: scope, binding: binding, database: database, cloneOperationID: cloneOperationID,
+				deleteDatabase: cloneOperationID != "" || projectEnvironmentDatabaseClone(project, scope, []state.App{app}, database),
 			})
 		}
 		if bucketStore == nil {
@@ -170,14 +176,44 @@ func (s *server) planUnboundProjectEnvironmentDatabaseClones(ctx context.Context
 		planned[item.database.ID] = true
 	}
 	for _, database := range databases {
-		if planned[database.ID] || database.State == managedpostgres.StateDeleted || database.State == managedpostgres.StateDeleting ||
-			!projectEnvironmentDatabaseClone(project, scope, apps, database) {
+		if planned[database.ID] || database.State == managedpostgres.StateDeleted || database.State == managedpostgres.StateDeleting {
+			continue
+		}
+		cloneOperationID, err := s.fullCloneOperationOfEnvironment(ctx, acct, project, scope, database)
+		if err != nil {
+			return err
+		}
+		if cloneOperationID == "" && !projectEnvironmentDatabaseClone(project, scope, apps, database) {
 			continue
 		}
 		planned[database.ID] = true
-		plan.postgres = append(plan.postgres, projectEnvironmentPostgresCleanup{scope: scope, database: database, deleteDatabase: true})
+		plan.postgres = append(plan.postgres, projectEnvironmentPostgresCleanup{scope: scope, database: database, deleteDatabase: true, cloneOperationID: cloneOperationID})
 	}
 	return nil
+}
+
+// fullCloneOperationOfEnvironment names the full clone that restored database
+// for this stage, or "" when it is not such a copy. A full clone's database
+// name carries its operation, so the partial-clone name test never matches it.
+func (s *server) fullCloneOperationOfEnvironment(ctx context.Context, acct state.Account, project state.Project, scope string, database managedpostgres.Database) (string, error) {
+	if database.EnvironmentCloneOperationID == "" {
+		return "", nil
+	}
+	clones, ok := s.store.(state.ProjectEnvironmentCloneOperationStore)
+	if !ok {
+		return "", nil
+	}
+	op, err := clones.ProjectEnvironmentCloneOperationByID(ctx, acct.ID, project.ID, database.EnvironmentCloneOperationID)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("load environment clone %s: %w", database.EnvironmentCloneOperationID, err)
+	}
+	if op.TargetEnvironment != scope {
+		return "", nil
+	}
+	return op.ID, nil
 }
 
 func projectEnvironmentDatabaseClone(project state.Project, scope string, apps []state.App, database managedpostgres.Database) bool {
@@ -195,13 +231,43 @@ func projectEnvironmentDatabaseClone(project state.Project, scope string, apps [
 	return false
 }
 
+// A full clone's database is not customer-visible once its stage is deleted,
+// so its binding and the database itself are removed through the clone that
+// restored them. A copy something else still binds is kept.
+func (s *server) revokeFullCloneDatabaseBinding(ctx context.Context, acct state.Account, item state.ProjectEnvironmentPostgresCleanupResource) error {
+	if item.BindingID == "" {
+		return nil
+	}
+	if _, err := s.managedPostgresBindings.DeleteEnvironmentCloneTargetBinding(ctx, acct.ID, item.BindingID, item.CloneOperationID); err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
+		return fmt.Errorf("revoke cloned PostgreSQL binding %q: %w", item.BindingID, err)
+	}
+	return nil
+}
+
+func (s *server) deleteFullCloneDatabase(ctx context.Context, acct state.Account, resource state.ProjectEnvironmentPostgresCleanupResource) error {
+	bindings, err := s.managedPostgresBindings.ListEnvironmentCloneTargetBindings(ctx, acct.ID, resource.DatabaseID, resource.CloneOperationID)
+	if errors.Is(err, managedpostgres.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check remaining bindings for cloned database %q: %w", resource.DatabaseName, err)
+	}
+	if len(bindings) != 0 {
+		return nil
+	}
+	if _, err := s.managedPostgres.DeleteEnvironmentCloneTarget(ctx, acct.ID, resource.DatabaseID, resource.CloneOperationID); err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
+		return fmt.Errorf("delete cloned database %q: %w", resource.DatabaseName, err)
+	}
+	return nil
+}
+
 func projectEnvironmentCleanupResources(plan projectEnvironmentManagedResourceCleanup) state.ProjectEnvironmentCleanupResources {
 	resources := state.ProjectEnvironmentCleanupResources{}
 	for _, item := range plan.postgres {
 		resources.Postgres = append(resources.Postgres, state.ProjectEnvironmentPostgresCleanupResource{
 			AppID: item.app.ID, Scope: item.scope, BindingID: item.binding.ID, DatabaseID: item.database.ID,
 			DatabaseName: item.database.Name, RestoreSourceDatabaseID: item.database.RestoreSourceDatabaseID,
-			DeleteDatabase: item.deleteDatabase,
+			DeleteDatabase: item.deleteDatabase, CloneOperationID: item.cloneOperationID,
 		})
 	}
 	for _, item := range plan.objectStorage {
@@ -236,6 +302,16 @@ func (s *server) cleanupProjectEnvironmentManagedResourcePayload(
 			cleanupErr = errors.Join(cleanupErr, managedpostgres.ErrUnavailable)
 			continue
 		}
+		if item.CloneOperationID != "" {
+			if err := s.revokeFullCloneDatabaseBinding(ctx, acct, item); err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
+				continue
+			}
+			if item.DeleteDatabase {
+				cloneDatabases[item.DatabaseID] = item
+			}
+			continue
+		}
 		if item.BindingID == "" {
 			if item.DeleteDatabase {
 				cloneDatabases[item.DatabaseID] = item
@@ -265,6 +341,10 @@ func (s *server) cleanupProjectEnvironmentManagedResourcePayload(
 	for databaseID, resource := range cloneDatabases {
 		if s.managedPostgres == nil || s.managedPostgresBindings == nil {
 			cleanupErr = errors.Join(cleanupErr, managedpostgres.ErrUnavailable)
+			continue
+		}
+		if resource.CloneOperationID != "" {
+			cleanupErr = errors.Join(cleanupErr, s.deleteFullCloneDatabase(ctx, acct, resource))
 			continue
 		}
 		database, err := s.managedPostgres.Get(ctx, acct.ID, databaseID)

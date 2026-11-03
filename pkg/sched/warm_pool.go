@@ -161,12 +161,12 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if depErr != nil && !reaperProductionScope(scope) && app.Status == state.AppActive && acct.Active() && api.Plan(acct.Plan).WarmPoolAllowed() {
 		return e.reclaimWarmPool(ctx, obsolete, 0)
 	}
-	// A paused warm VM holds resident RAM and is billed, so a billing subject
-	// at its spend cap keeps no pool until the cap is raised or the month rolls
-	// over (ADR-1162). The subject is the organization billed for the app, not
-	// the creator's account (ADR-20261030093512).
+	// A paused warm VM holds resident RAM and is billed, so an app whose
+	// billing subject is at its spend cap keeps no pool until the cap is
+	// raised or the month rolls over (ADR-1162). A company app's subject is
+	// its organization (ADR-20261030093512); acct.ID is the creator's.
 	if desired == 0 || app.Status != state.AppActive || !acct.Active() || !api.Plan(acct.Plan).WarmPoolAllowed() ||
-		!instanceModeUsesSnapshots(instanceModeForApp(app)) || e.spendCapReached(ctx, e.spendCapSubject(ctx, app)) {
+		!instanceModeUsesSnapshots(instanceModeForApp(app)) || e.spendCapReached(ctx, acct.ResourceOwnerID()) {
 		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
 	}
 	if depErr != nil {

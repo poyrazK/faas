@@ -56,7 +56,7 @@ func TestMCPAccessConvergence(t *testing.T) {
 						return
 					}
 					main.WriteJSONTest(w, status)
-				case "/v1/edge-rules":
+				case "/v1/apps/my-mcp/edge-rules":
 					if scenario == "changed" {
 						rules[0].Enabled = false
 					}

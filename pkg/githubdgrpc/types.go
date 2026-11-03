@@ -98,6 +98,8 @@ type WebhookActivity struct {
 	ReceivedAt  time.Time
 	ProcessedAt *time.Time
 	UpdatedAt   time.Time
+	// SkipReason says why a delivery that succeeded deployed nothing.
+	SkipReason string
 }
 
 type CheckActivity struct {

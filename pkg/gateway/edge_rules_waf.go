@@ -202,7 +202,9 @@ func (h *Handler) matchEdgeRuleWAF(r *http.Request, app App) *EdgeRuleWAFResolve
 	if !ok {
 		return nil
 	}
-	rule := matcher.MatchWAF(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleWAFResolved {
+		return matcher.MatchWAF(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		h.metrics.ObserveEdgeRuleMatch("waf", "miss")
 		return nil

@@ -84,13 +84,18 @@ func (m *MemStore) EdgeRuleScopes(_ context.Context, appIDs []string) (map[strin
 		if !ok {
 			continue
 		}
-		scope := ""
-		if app.OrgID != "" {
-			if org, known := m.orgs[app.OrgID]; !known || !org.Personal {
-				scope = app.OrgID
-			}
-		}
-		out[id] = scope
+		out[id] = m.edgeRuleScopeLocked(app)
 	}
 	return out, nil
+}
+
+// edgeRuleScopeLocked is app's edge-rule scope: its company organization, or
+// "" for a personal app. Callers hold m.mu.
+func (m *MemStore) edgeRuleScopeLocked(app App) string {
+	if app.OrgID != "" {
+		if org, known := m.orgs[app.OrgID]; !known || !org.Personal {
+			return app.OrgID
+		}
+	}
+	return ""
 }

@@ -410,9 +410,9 @@ file is rejected.
 Publish a portable build manifest using an owner API key with deploy-write scope:
 
 ```sh
-gregale debug issue source-maps publish --app exports --deployment DEPLOYMENT_ID \
+gregale debug issue source-map publish --app exports --deployment DEPLOYMENT_ID \
   --directory /app/dist --manifest-file dist/.gregale-issue-maps.json
-gregale debug issue source-maps status --app exports --deployment DEPLOYMENT_ID
+gregale debug issue source-map get --app exports --deployment DEPLOYMENT_ID
 ```
 
 The REST equivalent is `PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps`
@@ -447,7 +447,7 @@ identity. Existing grouping explanations continue verifying saved fingerprints.
 At most 32 ready deployment sets per app are retained, each subject to the existing
 map count, byte, symbol, and decoded-entry bounds. Upload bodies are capped at
 4 MiB plus 64 KiB. Retire an obsolete set with
-`gregale debug issue source-maps retire --app exports --deployment DEPLOYMENT_ID`
+`gregale debug issue source-map retire --app exports --deployment DEPLOYMENT_ID`
 or `DELETE` on the artifact path. Retirement removes mapping blobs and frees ready-set
 capacity while preserving the immutable digest. The identical canonical manifest
 can be restored; different mapping metadata cannot replace it. Retained exact event
@@ -491,7 +491,7 @@ publication interruptions retry the same completion without another build or
 deployment; a lost image notification is recovered by the existing durable poll.
 Process death before that commit follows the existing build-reaper behavior.
 
-Inspect readiness with `gregale debug issue source-maps status --app APP --deployment ID`.
+Inspect readiness with `gregale debug issue source-map get --app APP --deployment ID`.
 The existing 32-ready-deployment cap and immutable-manifest conflicts still
 apply; retire obsolete sets to free capacity. Do not also use the prebuilt CLI
 publication flags for the same deployment. Automatic publication does not enable
@@ -752,9 +752,9 @@ is per canonical issue across all teams/channels, and starts only when a lifecyc
 alert enters the queue. Missing routes, full queues and previews consume nothing.
 
 ```sh
-gregale debug issue lifecycle-alerts get --app payments
-gregale debug issue lifecycle-alerts preview --app payments --issue ISSUE_UUID --event regressed --environments production --cooldown-seconds 1800
-gregale debug issue lifecycle-alerts save --app payments --expected-revision 0 --environments production --cooldown-seconds 1800
+gregale debug issue lifecycle-alert get --app payments
+gregale debug issue lifecycle-alert preview --app payments --issue ISSUE_UUID --event regressed --environments production --cooldown-seconds 1800
+gregale debug issue lifecycle-alert set --app payments --expected-revision 0 --environments production --cooldown-seconds 1800
 ```
 
 `GET|PUT /v1/apps/{slug}/issue-lifecycle-alert-policy` reads or replaces the policy.
@@ -785,10 +785,10 @@ For example, notify when a production issue records at least 20 accepted events 
 three verified customers in ten minutes:
 
 ```sh
-gregale debug issue compound-alerts get --app payments
-gregale debug issue compound-alerts save --app payments --expected-revision 0 --key production-impact --env production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
-gregale debug issue compound-alerts preview --app payments --issue ISSUE_UUID --key production-impact --env production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
-gregale debug issue compound-alerts remove --app payments --expected-revision 1 --key production-impact
+gregale debug issue compound-alert get --app payments
+gregale debug issue compound-alert set --app payments --expected-revision 0 --key production-impact --env production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale debug issue compound-alert preview --app payments --issue ISSUE_UUID --key production-impact --env production --minimum-events 20 --minimum-customers 3 --window-seconds 600 --cooldown-seconds 1800
+gregale debug issue compound-alert delete --app payments --expected-revision 1 --key production-impact
 ```
 
 The dashboard's **Compound alerts** page supports editing, removing and previewing

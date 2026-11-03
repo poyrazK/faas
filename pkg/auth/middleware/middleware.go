@@ -151,6 +151,29 @@ type Sessions interface {
 	Verify(value string) (session.Envelope, error)
 }
 
+// ContextSessions is a Sessions that opens cookies somewhere else, such as
+// gatewayd-internal asking apid (ADR-20261102191500): the request's
+// context bounds the call. An error other than session.ErrInvalid means
+// the cookie could not be checked, and the request gets a retryable 503
+// with the cookie kept.
+type ContextSessions interface {
+	Sessions
+	VerifyContext(ctx context.Context, value string) (session.Envelope, error)
+}
+
+// verifySession opens a session cookie, through VerifyContext when the
+// Sessions supports it. unavailable reports that a ContextSessions could
+// not check the cookie; any other error means the cookie is invalid.
+func (m *Middleware) verifySession(ctx context.Context, value string) (env session.Envelope, unavailable bool, err error) {
+	remote, ok := m.Sessions.(ContextSessions)
+	if !ok {
+		env, err = m.Sessions.Verify(value)
+		return env, false, err
+	}
+	env, err = remote.VerifyContext(ctx, value)
+	return env, err != nil && !errors.Is(err, session.ErrInvalid), err
+}
+
 // SessionLookup is the live-session-row check IAM-3 (ADR-039)
 // requires. The seal accepts AEAD-bound envelopes regardless of DB
 // state; the cross-check against the sessions table is the load-
@@ -758,7 +781,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		//     live row, stamp principal.
 		if m.Sessions != nil && m.Lookups != nil {
 			if c, err := m.sessionCookie(r); err == nil && c.Value != "" {
-				env, err := m.Sessions.Verify(c.Value)
+				env, unavailable, err := m.verifySession(r.Context(), c.Value)
+				if unavailable {
+					m.credentialStoreUnavailable(w, r, err)
+					return
+				}
 				if err == nil {
 					sess, handled, cookieErr := m.RequireSessionCookie(w, r, env)
 					if cookieErr != nil {

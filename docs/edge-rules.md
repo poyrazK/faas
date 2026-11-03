@@ -96,9 +96,21 @@ Rules that refuse or limit requests (`ip`, `geo`, `jwt`, `limit`, `throttle`,
 normalized form, with `.` and `..` segments and repeated slashes resolved, and
 compare it case-insensitively. `/public/../admin/x`, `//admin/x` and
 `/ADMIN/x` are all covered by a rule on `/admin/*`, because many frameworks
-serve them as `/admin/x`. For the same reason, such a rule that lists `GET` in
-`match_methods` also covers `HEAD`, which servers answer with the `GET`
-handler.
+serve them as `/admin/x`. They also match the path with each segment's `;`
+parameters removed, so `/admin;jsessionid=1/x` is covered too, as Java servlet
+containers and Spring serve it as `/admin/x`. For the same reason, such a rule
+that lists `GET` in `match_methods` also covers `HEAD`, which servers answer
+with the `GET` handler, and one that lists `DELETE`, `PUT` or `PATCH` also
+covers a request that asks the app to run it as that method through an
+`X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header or a
+`_method` query parameter. A `_method` field in a form body is not read at
+the edge: if your app honours one, leave `match_methods` off the rule.
+
+A gate scoped by `match_headers`, or by a `header:`, `cookie:` or `query:`
+field in `match`, applies only when the client sends that value, and the
+client chooses what it sends: one that leaves the header out is not checked.
+Scope gates by path, method, `client_ip`, `country` or `asn`;
+`gregale edge rule create` warns when a gate reads client-chosen fields.
 
 ### Conditions
 
@@ -185,6 +197,12 @@ ends it, and later kinds do not run.
 15. `cache` and `async`.
 16. `budget`, `retry` and `circuit_breaker` while the request is forwarded.
 
+`ip`, `geo`, `jwt`, `throttle`, `waf` and `challenge` match the path the
+client sent, and the rewritten path when a `rewrite` changed it: a gate on
+`/api/**` keeps applying after a rewrite takes `/api` away, and a gate written
+for the rewritten path still applies. The kinds after them (`limit`,
+`validate`, `respond`, `cache`, `async`) see the rewritten path.
+
 Refusals are ordered from cheapest to most expensive, so a request blocked by
 IP or country never costs a token check or a body read, and a request
 refused for its size never uses a throttle token.
@@ -237,7 +255,9 @@ The matched request is served by `target_app_slug`, which must be an app of
 the same account and owner: one of your personal apps for a rule on a personal
 app, or an app of the same organization for a rule on an organization's app.
 The path is unchanged; add a `rewrite` rule to change it.
-Renaming the target app updates the route rules that name it.
+Renaming the target app updates the route rules that name it. A deploy
+token, or another credential bound to one app, may write a route rule only
+to that app itself; routing to another app needs an account API key.
 
 The rest of a routed request runs as the target app's: its `@app` rules
 apply, and the source app's `@app` rules do not. Rules written for the host
@@ -255,7 +275,9 @@ put the gate on the host, or on the target app's `@app`.
 becomes `/v1/users`. A `to` of `/` strips the prefix (`/api/users` becomes
 `/users`, `/api` becomes `/`), and a `from` of `*` puts `to` in front of every
 path. The client still sees its original URL. `from` is a plain prefix, so
-pair it with a `match_path` that selects the requests you mean.
+pair it with a `match_path` that selects the requests you mean. Access gates
+(`ip`, `geo`, `jwt`, `throttle`, `waf`, `challenge`) match both the original
+and the rewritten path; see [Order of kinds](#order-of-kinds).
 
 ### redirect
 
@@ -340,6 +362,11 @@ and each of `required_claims` as a string claim with exactly that value. A missi
 gets 401. The key's `alg` must match the token's, and encryption keys are not
 used for signatures.
 
+A new or edited rule needs `audience` or at least one `required_claims`
+entry. Without one, every token the issuer signs would pass, and a shared
+issuer (GitHub Actions, Google) signs tokens for anyone who asks. Rules saved
+before this check keep working until you edit them.
+
 `require_exp` defaults to true: a token without an `exp` claim is rejected,
 because it never expires. Set `require_exp: false` to accept such tokens.
 Rules saved before this default keep their saved value.
@@ -377,8 +404,13 @@ the CDN does not store them; how browsers cache them is unchanged.
 ```
 
 `allow` and `deny` hold ISO 3166-1 alpha-2 codes and work like `ip`; refusals
-get 403 `geo_denied`. A request whose country cannot be resolved (a private
-address, an address in no country) passes: geo rules fail open.
+get 403 `geo_denied`. An address the country database places in no country
+(a reserved range, or one allocated after the database was built) is in no
+list: a rule with only `deny` lets it through, and a rule with `allow`
+refuses it with 403 `geo_denied`. If the database cannot be read, a matched
+geo rule answers 503 rather than skip the check. Countries come from the
+DB-IP country database the platform installs and updates monthly, not from
+headers the client or a CDN sends.
 
 ### limit
 

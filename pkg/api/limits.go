@@ -2391,6 +2391,34 @@ const (
 	RealtimeResumeCommandBurst      = 40
 )
 
+// A realtime node reads a subscription ticket a new connection presents from
+// the control plane before it can tell a real ticket from a made-up one, so
+// these reads are bounded per endpoint and per node; a connection past them
+// gets 503 with Retry-After. Known tickets come from the node's access cache,
+// and an endpoint holds at most RealtimeTicketMaxPerEndpoint (1,024) live
+// tickets, so the endpoint burst admits all of them reconnecting at once
+// within seconds (ADR-1117, amendment of 2026-11-02).
+const (
+	RealtimeTicketReadsPerEndpointPerSecond = 50
+	RealtimeTicketReadBurstPerEndpoint      = 500
+	RealtimeTicketReadsPerNodePerSecond     = 200
+	RealtimeTicketReadBurstPerNode          = 1_000
+)
+
+// A client message on a plain (v1) realtime WebSocket is written to the
+// node's callback spool, with two fsyncs, and delivered to the endpoint's
+// message callback. A connection may send RealtimeClientMessagesPerSecond
+// (bursts of RealtimeClientMessageBurst), and a node writes at most
+// RealtimeNodeClientMessagesPerSecond: past either, the node stops reading
+// the socket until it may, so TCP slows the client and nothing is dropped
+// (ADR-1323, amendment of 2026-11-02).
+const (
+	RealtimeClientMessagesPerSecond     = 20
+	RealtimeClientMessageBurst          = 40
+	RealtimeNodeClientMessagesPerSecond = 2_000
+	RealtimeNodeClientMessageBurst      = 4_000
+)
+
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (
@@ -13995,10 +14023,22 @@ const (
 )
 
 // RouteAnalyticsQueryTimeout bounds each routes analytics read over retained
-// request telemetry (route advice, the awake report and the insights
-// evaluator that reuses them): Postgres cancels the statement past it and the
-// caller is told to narrow the window (ADR-20261026143210).
+// request telemetry (route advice, the awake report, the insights evaluator
+// that reuses them, request analytics, its timeseries and route customers):
+// Postgres cancels the statement past it and the caller is told to narrow the
+// window (ADR-20261026143210).
 const RouteAnalyticsQueryTimeout = 10 * time.Second
+
+// DashboardRequestAnalyticsTimeout bounds the whole request analytics panel
+// on the dashboard app page, which runs several of those reads on every
+// render; past it the panel is left out and the page renders without it.
+const DashboardRequestAnalyticsTimeout = 5 * time.Second
+
+// RequestAnalyticsSettleLag is how far before now request analytics stops
+// judging telemetry completeness: gateways hold a minute's rows until it
+// closes and flush every few seconds, so the newest minutes are always still
+// arriving. Route removal excludes the same two minutes.
+const RequestAnalyticsSettleLag = 2 * time.Minute
 
 // RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
@@ -14341,6 +14381,9 @@ const (
 	AppHealthWorkerRecordScan       = 1000
 	AppHealthWorkerBacklogAgeWarn   = 10 * time.Minute
 	AppHealthWorkerDeadLetterWindow = time.Hour
+	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
+	// app health counts the guest's reports within it (ADR-20261102124306).
+	AppHealthMemoryPressureWindow = 24 * time.Hour
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost

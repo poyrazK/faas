@@ -7,10 +7,11 @@ import (
 )
 
 // pgJourneysDatabases is how many databases the PostgreSQL journeys hold at
-// once when they run together: TestManagedPostgres and
-// TestManagedPostgresRollbackRestore two each (a database and its restored
-// copy), TestStatelessAgent and the Data API journey one each.
-const pgJourneysDatabases = 6
+// once when they run together: TestManagedPostgres,
+// TestManagedPostgresRollbackRestore and TestManagedPostgresRollbackCancelled
+// two each (a database and its restored copy), TestStatelessAgent and the
+// Data API journey one each.
+const pgJourneysDatabases = 8
 
 // pgSwitchWait bounds a rollback that restores the database: the restore,
 // the drain (at most ten minutes) and the switch.
@@ -45,8 +46,91 @@ func TestManagedPostgresRollbackRestore(t *testing.T) {
 			j.purge(t, j.restored)
 		}
 	})
-	var v1, v2 map[string]any
 	s := newStory(t)
+	v1, v2 := j.badRelease(s)
+	s.step("rollback_restores_database", func(t *testing.T) { j.rollbackRestore(t, str(*v1, "id")) })
+	s.check("restored_copy", j.restoredCopy)
+	s.check("original_keeps_later_writes", func(t *testing.T) {
+		j.attach(t, j.db, "ORIGINAL_DATABASE_URL")
+		j.expectRows(t, "ORIGINAL_DATABASE_URL", "after-wipe")
+		j.expectRows(t, "DATABASE_URL", "first")
+	})
+	s.check("undone_release_refused", func(t *testing.T) {
+		res := tg.run(t, time.Minute, "rollback", j.app, "--to", str(*v2, "id"), "--acknowledge-releases", "--no-wait")
+		if code := res.problemCode(); res.exit == 0 || code != "rollback_target_database_restored" {
+			t.Errorf("a rollback to the release the switch undid answered exit %d %s, want rollback_target_database_restored", res.exit, res.problem())
+		}
+	})
+}
+
+// TestManagedPostgresRollbackCancelled cancels a restore-and-switch rollback
+// before it switches (#6146 PG-03, ADR-20261023181931): the app keeps
+// serving the release it served, on its original database with every write,
+// and the restored copy is kept for its owner to delete.
+func TestManagedPostgresRollbackCancelled(t *testing.T) {
+	tg := needs(t, tierFull, true)
+	t.Parallel()
+	j := &postgresJourney{tg: tg, bindings: map[string]string{}}
+	j.available(t)
+	hidden := hiddenCapabilities(t, tg)
+	skipHidden(t, hidden, "database-rollbacks")
+	skipHidden(t, hidden, "release-commands")
+	if j.databaseLimit < pgJourneysDatabases {
+		t.Skipf("the PostgreSQL journeys hold up to %d databases at once; this account's limit is %d", pgJourneysDatabases, j.databaseLimit)
+	}
+	j.app = tg.app(t, "pg-rc")
+	j.db = tg.slug("pg-rc")
+	t.Cleanup(func() { j.purge(t, j.db) })
+	t.Cleanup(func() {
+		if j.restored != "" {
+			j.purge(t, j.restored)
+		}
+	})
+	s := newStory(t)
+	v1, v2 := j.badRelease(s)
+	var sw map[string]any
+	s.step("cancel_switch", func(t *testing.T) {
+		start := object(t, tg.ok(t, time.Minute, "rollback", j.app, "--to", str(*v1, "id"),
+			"--restore-databases", "--acknowledge-releases", "--no-wait").stdout)
+		id := str(start, "id")
+		if id == "" {
+			t.Fatalf("the rollback did not start a switch: %s", compact(start))
+		}
+		res := tg.run(t, pgSwitchWait+5*time.Minute, "rollback", "status", j.app, id, "--cancel", "--wait", "--timeout", pgSwitchWait.String())
+		if res.problemCode() == "database_switch_not_cancellable" {
+			t.Skipf("switch %s reached switching before the cancel landed: %s", id, res.problem())
+		}
+		sw = object(t, res.stdout)
+		j.restored = str(sw, "target_name")
+		if str(sw, "phase") != "cancelled" {
+			t.Fatalf("the cancelled switch ended %q: %s", str(sw, "phase"), compact(sw))
+		}
+	})
+	s.check("current_release_keeps_serving", func(t *testing.T) {
+		// v2's code on the original database: the wipe stands and the
+		// write after it is there.
+		j.expectRows(t, "DATABASE_URL", "after-wipe")
+		if live := str(sw, "from_deployment_id"); live != str(*v2, "id") {
+			t.Errorf("the switch started from %s, want v2 %s", live, str(*v2, "id"))
+		}
+	})
+	s.check("restored_copy_kept", func(t *testing.T) {
+		if j.restored == "" {
+			t.Skip("the switch was cancelled before it named its copy")
+		}
+		res := tg.run(t, time.Minute, "postgres", "get", j.restored)
+		if res.exit != 0 {
+			t.Fatalf("the cancelled switch's copy %s is gone: %s", j.restored, res.problem())
+		}
+	})
+}
+
+// badRelease creates the database, deploys v1 with a row, and then v2,
+// whose release command deletes every row, with a write after it. It
+// returns v1 and v2 as their steps fill them.
+func (j *postgresJourney) badRelease(s *story) (*map[string]any, *map[string]any) {
+	tg := j.tg
+	v1, v2 := new(map[string]any), new(map[string]any)
 	s.step("create_database", func(t *testing.T) {
 		tg.ok(t, time.Minute, "postgres", "create", j.db, "--region", j.region)
 		j.waitReady(t, j.db)
@@ -65,28 +149,16 @@ func TestManagedPostgresRollbackRestore(t *testing.T) {
 		j.bind(t, j.db, "MIGRATION_DATABASE_URL", "--access", "migration")
 	})
 	s.step("release_v1", func(t *testing.T) {
-		v1 = tg.deploy(t, j.app, "--path", postgresProbeSource(t, "create"), "--rollout", "immediate")
+		*v1 = tg.deploy(t, j.app, "--path", postgresProbeSource(t, "create"), "--rollout", "immediate")
 		j.firstAt = j.write(t, "DATABASE_URL", "first")
 		j.expectRows(t, "DATABASE_URL", "first")
 	})
 	s.step("bad_release_v2", func(t *testing.T) {
-		v2 = tg.deploy(t, j.app, "--path", postgresProbeSource(t, "wipe"), "--rollout", "immediate")
+		*v2 = tg.deploy(t, j.app, "--path", postgresProbeSource(t, "wipe"), "--rollout", "immediate")
 		j.expectRows(t, "DATABASE_URL")
 		j.write(t, "DATABASE_URL", "after-wipe")
 	})
-	s.step("rollback_restores_database", func(t *testing.T) { j.rollbackRestore(t, str(v1, "id")) })
-	s.check("restored_copy", j.restoredCopy)
-	s.check("original_keeps_later_writes", func(t *testing.T) {
-		j.attach(t, j.db, "ORIGINAL_DATABASE_URL")
-		j.expectRows(t, "ORIGINAL_DATABASE_URL", "after-wipe")
-		j.expectRows(t, "DATABASE_URL", "first")
-	})
-	s.check("undone_release_refused", func(t *testing.T) {
-		res := tg.run(t, time.Minute, "rollback", j.app, "--to", str(v2, "id"), "--acknowledge-releases", "--no-wait")
-		if code := res.problemCode(); res.exit == 0 || code != "rollback_target_database_restored" {
-			t.Errorf("a rollback to the release the switch undid answered exit %d %s, want rollback_target_database_restored", res.exit, res.problem())
-		}
-	})
+	return v1, v2
 }
 
 // rollbackRestore rolls the app back to v1 with --restore-databases and

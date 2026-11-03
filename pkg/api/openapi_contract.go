@@ -40,6 +40,8 @@ type GitHubInstallStatus struct {
 	// Installations lists the account's connected installations when it
 	// has more than one; an unbound app then reports no installation_id.
 	Installations []GitHubInstallationSummary `json:"installations,omitempty"`
+	// Activity is the recent GitHub events that reached a bound app.
+	Activity *GitHubInstallActivity `json:"activity,omitempty"`
 }
 
 // GitHubInstallationSummary names one connected GitHub App installation.
@@ -64,6 +66,9 @@ type GitHubWebhookActivity struct {
 	ReceivedAt  time.Time  `json:"received_at"`
 	ProcessedAt *time.Time `json:"processed_at,omitempty"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+	// SkipReason says why a processed event deployed nothing; see
+	// GitHubSkipReasonDescription.
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 // GitHubCheckActivity is a customer-safe projection of Check Run syncing.

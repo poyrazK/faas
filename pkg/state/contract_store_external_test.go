@@ -79,6 +79,7 @@ type contractTestStore interface {
 	state.NodeLeaseStore
 	state.NodeLifecycleCompletionStore
 	state.NodeMemoryReportStore
+	state.AppMemoryPressureStore
 	state.ObjectBucketAccessStore
 	state.ObjectBucketPlacementStore
 	state.ObjectBucketReservationResultStore

@@ -1375,6 +1375,9 @@ type MemStore struct {
 	// nodeMemoryReports mirrors node_memory_reports by node id (ADR
 	// 20261101091815); nil until a scheduler first publishes.
 	nodeMemoryReports map[string]NodeMemoryReport
+	// appMemoryPressure mirrors app_memory_pressure by app id
+	// (ADR-20261102124306); nil until schedd records a report.
+	appMemoryPressure map[string]AppMemoryPressure
 	// edgeListenerHeartbeats mirrors compute_nodes.edge_listener_heartbeat_at,
 	// keyed by node name; nil until a gateway first reports.
 	edgeListenerHeartbeats map[string]time.Time
@@ -4182,6 +4185,14 @@ func (m *MemStore) UpdateProjectEnvironmentProtection(ctx context.Context, accou
 	}
 	for id, env := range m.projectEnvironments {
 		if env.ProjectID == projectID && env.Slug == slug {
+			if protected {
+				for _, op := range m.projectEnvironmentCloneOperations {
+					if op.AccountID == accountID && op.ProjectID == projectID && op.TargetEnvironment == slug &&
+						op.Status != CloneOperationReady && op.Status != CloneOperationCompensated {
+						return ProjectEnvironment{}, ErrProjectEnvironmentCloneUnfinished
+					}
+				}
+			}
 			env.Protected = protected
 			env.UpdatedAt = time.Now()
 			m.projectEnvironments[id] = env
@@ -7734,6 +7745,34 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 // SoftDeleteAppCascade marks the app deleted and atomically cancels
 // non-terminal deployment/build work. Child rows survive for history and
 // slug reuse, but no pipeline writer may resume work after acknowledgement.
+// cancelDeletedAppPipelineLocked mirrors cancelDeletedAppPipelineTx.
+func (m *MemStore) cancelDeletedAppPipelineLocked(id string, now time.Time) {
+	for deploymentID, d := range m.deployments {
+		if d.AppID != id || !d.Status.IsCancelEligible() {
+			continue
+		}
+		d.Status = DeployCancelled
+		d.CancelledAt = &now
+		d.CancelledByPrincipal = "system:app-delete"
+		d.CancelReason = string(CancelReasonSystem)
+		m.putDeploymentLocked(deploymentID, d)
+		m.markDeploymentSnapshotsStaleLocked(deploymentID)
+		for buildID, b := range m.builds {
+			if b.DeploymentID != deploymentID || (b.Status != BuildQueued && b.Status != BuildRunning) {
+				continue
+			}
+			wasRunning := b.Status == BuildRunning
+			b.Status = BuildCancelled
+			b.CancelledAt = &now
+			b.CancelledByDeploymentCascade = true
+			m.builds[buildID] = b
+			if wasRunning {
+				m.enqueueBuildVMCleanupLocked(buildID, now)
+			}
+		}
+	}
+}
+
 func (m *MemStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -7781,30 +7820,7 @@ func (m *MemStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, er
 			delete(m.crons, cronID)
 		}
 	}
-	for deploymentID, d := range m.deployments {
-		if d.AppID != id || !d.Status.IsCancelEligible() {
-			continue
-		}
-		d.Status = DeployCancelled
-		d.CancelledAt = &now
-		d.CancelledByPrincipal = "system:app-delete"
-		d.CancelReason = string(CancelReasonSystem)
-		m.putDeploymentLocked(deploymentID, d)
-		m.markDeploymentSnapshotsStaleLocked(deploymentID)
-		for buildID, b := range m.builds {
-			if b.DeploymentID != deploymentID || (b.Status != BuildQueued && b.Status != BuildRunning) {
-				continue
-			}
-			wasRunning := b.Status == BuildRunning
-			b.Status = BuildCancelled
-			b.CancelledAt = &now
-			b.CancelledByDeploymentCascade = true
-			m.builds[buildID] = b
-			if wasRunning {
-				m.enqueueBuildVMCleanupLocked(buildID, now)
-			}
-		}
-	}
+	m.cancelDeletedAppPipelineLocked(id, now)
 	// App deletion retires snapshot replicas immediately, but keeps the
 	// snapshot rows available to GC. The PostgreSQL lifecycle trigger uses
 	// the same split: deleted-app snapshots are not wake-eligible, yet their
@@ -26550,6 +26566,13 @@ func (m *MemStore) MarkDunningStep(_ context.Context, id string, from, to Accoun
 			a.PastDueAt = &now
 		}
 		org.Status = OrgStatus(to)
+		switch deleting := to == AccountDeletedPending; {
+		case deleting && !org.DeletedPending:
+			now := time.Now().UTC()
+			org.DeletionRequestedAt = &now
+		case !deleting:
+			org.DeletionRequestedAt = nil
+		}
 		org.DeletedPending = to == AccountDeletedPending
 		m.orgs[id] = org
 		m.saveOrgResourcePolicyLocked(a)
@@ -27167,9 +27190,13 @@ func (m *MemStore) SoftDeleteOrg(ctx context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	now := time.Now().UTC()
+	if !o.DeletedPending {
+		o.DeletionRequestedAt = &now
+	}
 	o.DeletedPending = true
 	o.Status = OrgStatusDeletedPending
-	o.UpdatedAt = time.Now().UTC()
+	o.UpdatedAt = now
 	m.orgs[id] = o
 	return nil
 }

@@ -31,8 +31,8 @@ class AppWebhookDeliveryResponse:
 
         Example:
             {'id': '0123456789abcdef0123456789abcdef', 'webhook_id': 'fedcba9876543210fedcba9876543210', 'app_id':
-                '8b1f5e5d273e5a18ae0058fceba4fe6c', 'account_id': '8b1f5e5d-273e-5a18-ae00-58fceba4fe6c', 'event': 'cron.fired',
-                'payload': {'cron_name': 'nightly-rollup'}, 'attempt': 0, 'status': 'pending', 'next_attempt_at':
+                '8b1f5e5d273e5a18ae0058fceba4fe6c', 'account_id': '8b1f5e5d-273e-5a18-ae00-58fceba4fe6c', 'event': 'app.parked',
+                'payload': {'reason': 'idle_timeout_300s'}, 'attempt': 0, 'status': 'pending', 'next_attempt_at':
                 '2026-08-06T10:00:00Z', 'created_at': '2026-08-06T10:00:00Z', 'updated_at': '2026-08-06T10:00:00Z'}
 
     """
