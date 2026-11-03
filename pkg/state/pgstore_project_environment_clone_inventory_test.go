@@ -113,8 +113,15 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 	if got := blockers("qualified-stage"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("qualified backend blockers = %+v, want %+v", got, want)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO object_bucket_versioning (bucket_id, desired_status, observed_status, state, versions_required, propagation_until)
-		VALUES ($1, 'Enabled', 'Enabled', 'ready', true, now() - interval '1 minute')`, bucket.ID); err != nil {
+	// Versioning is ready only after a verified all-versions inventory that
+	// started once the configuration had propagated.
+	inventory := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO object_storage_capacity_reconciliations (id, bucket_id, state, deadline_at, created_at, finished_at, inventory_scope, inventory_verified)
+		VALUES ($1, $2, 'completed', now() + interval '1 hour', now() - interval '30 seconds', now(), 'all_versions', true)`, inventory, bucket.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO object_bucket_versioning (bucket_id, desired_status, observed_status, state, versions_required, propagation_until, capacity_job_id)
+		VALUES ($1, 'Enabled', 'Enabled', 'ready', true, now() - interval '1 minute', $2)`, bucket.ID, inventory); err != nil {
 		t.Fatal(err)
 	}
 	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable}}
