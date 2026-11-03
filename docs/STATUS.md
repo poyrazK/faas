@@ -119,6 +119,18 @@ ADR-20261026201726 amendment 2026-11-02 (2)):
   `404`; the webhook delivery example no longer names the unemitted
   `cron.fired` event.
 
+Audit round 4, 2026-11-03 (branch `fix/crons-audit-round4`,
+ADR-20261026201726 amendment 2026-11-03, ADR-20261031162858 amendment 2):
+
+- Company members other than an app's creator list its crons by slug; the
+  404 also failed their `gregale.yaml` deploys, which list crons first.
+- A `gregale.yaml` deploy no longer checks its crons against the deployer's
+  own plan; the company's plan applies, checked by apid.
+- A `deploy:write` key can follow the manual run it starts
+  (`gregale cron run --wait`).
+- Deployment cron staging applies the cron API's path and timezone rules.
+- The dashboard refuses a disabled cron's manual run and names each refusal.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of

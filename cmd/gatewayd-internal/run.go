@@ -90,7 +90,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
-	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/trafficdeadline"
@@ -1307,14 +1306,9 @@ type runDeps struct {
 	// internet-facing traffic; apid's bucket is the loopback-only
 	// counter for management plane traffic). nil in tests.
 	apiAuthLimiter *middleware.Limiter
-	// sessions is the *session.Manager that issues + verifies the
-	// session cookie. cmd/apid shares the same construct; the two
-	// daemons are independent processes so the AEAD keys are loaded
-	// separately per daemon. nil in tests.
-	sessions *session.Manager
-	// edgeChallengeSecret signs kind=challenge tokens and passes, and
-	// edgeChallengeKeySource says where it came from (ADR-831 amendment 17).
-	// runWithDeps signs with the session key when it is nil.
+	// edgeChallengeSecret signs kind=challenge tokens and passes: the
+	// gateway fleet key (ADR-20261102191500), and edgeChallengeKeySource
+	// says where it came from. nil in tests leaves challenges unsigned.
 	edgeChallengeSecret    []byte
 	edgeChallengeKeySource string
 	trafficDeadlines       *trafficdeadline.Signer
@@ -2334,19 +2328,15 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// the key that seals one, and a gateway must not be able to mint
 	// dashboard sessions. The auditor is the same pkg/audit.Auditor
 	// gatewayd already uses for githubd replay-dedupe audit rows
-	// (cmd/gatewayd-internal/audit.go). The FAAS_SESSION_KEY manager
-	// below still keys edge challenges and traffic deadlines until the
-	// gateway fleet key replaces it.
-	sessions := loadSessionManager(osGetenv, log)
-	if sessions == nil {
-		return fmt.Errorf("gatewayd: session manager init failed")
-	}
-	deps.sessions = sessions
-	deps.edgeChallengeSecret, deps.edgeChallengeKeySource, err = edgeChallengeSecret(osGetenv, sessions.BindingKey())
+	// (cmd/gatewayd-internal/audit.go). The gateway fleet key keys edge
+	// challenges and traffic deadlines; without it the gateway refuses to
+	// start.
+	fleetKey, err := loadGatewayFleetKey(osGetenv)
 	if err != nil {
 		return fmt.Errorf("gatewayd: %w", err)
 	}
-	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(osGetenv)
+	deps.edgeChallengeSecret, deps.edgeChallengeKeySource = fleetKey, gatewayFleetKeyFleet
+	deps.trafficDeadlines, err = newTrafficDeadlineSigner(fleetKey)
 	if err != nil {
 		return fmt.Errorf("gatewayd: traffic deadline signer init: %w", err)
 	}
@@ -3124,14 +3114,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-831 amendment 7 — kind=challenge. Tokens and passes are signed
 	// with a key every gateway must share, so a pass issued by one gateway
-	// is honoured by all: the fleet key, else this host's session key
-	// (amendment 17). gateway_edge_challenge_key_info lets the fleet check
-	// that they agree.
-	if deps.sessions != nil {
-		secret, source := deps.edgeChallengeSecret, deps.edgeChallengeKeySource
-		if secret == nil {
-			secret, source = deps.sessions.BindingKey(), edgeChallengeKeySession
-		}
+	// is honoured by all: the gateway fleet key (ADR-20261102191500).
+	// gateway_edge_challenge_key_info lets the fleet check that they agree.
+	if secret, source := deps.edgeChallengeSecret, deps.edgeChallengeKeySource; secret != nil {
 		key := gateway.DeriveEdgeChallengeKey(secret)
 		handler.WithEdgeChallengeKey(key)
 		deps.metrics.SetEdgeChallengeKey(gateway.EdgeChallengeKeyID(key), source)

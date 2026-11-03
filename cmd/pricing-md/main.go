@@ -103,14 +103,13 @@ func render() string {
 }
 
 // renderObjectStorage lists each plan's included object storage, the
-// published rate beyond it (ADR-1430), the most it stores with the default
-// spend cap (ADR-20261101214152) and its monthly egress limit
-// (ADR-20261031122757).
+// published rate beyond it (ADR-1430), its storage ceiling (ADR-20261101214152)
+// and its monthly egress limit (ADR-20261031122757).
 func renderObjectStorage(b *strings.Builder) {
 	b.WriteString("\n## Object storage\n\n")
-	fmt.Fprintf(b, "Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs %s per GiB-month. Requests and egress are not charged. Free stops at its included storage; a paid plan stores its included storage plus what your spend cap buys. Each plan limits the data you read out of your buckets each month to %d times its included storage.\n\n",
+	fmt.Fprintf(b, "Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs %s per GiB-month, up to the plan's storage ceiling. Requests and egress are not charged. Free stops at its included storage. Each plan limits the data you read out of your buckets each month to %d times its included storage.\n\n",
 		formatPrice(api.ObjectStorageMillicentsPerGiBMonth), api.ObjectStorageEgressPerIncludedByte)
-	b.WriteString("| Plan | Included storage | Beyond the included storage | Most stored with the default spend cap | Egress each month |\n")
+	b.WriteString("| Plan | Included storage | Beyond the included storage | Most stored | Egress each month |\n")
 	b.WriteString("|---|---:|---|---:|---:|\n")
 	for _, plan := range api.Plans {
 		l, ok := api.LimitsFor(plan)
@@ -121,14 +120,9 @@ func renderObjectStorage(b *strings.Builder) {
 		if l.ObjectStorage.MaxAccountBytes > 0 && l.ObjectStorage.MaxAccountBytes <= l.ObjectStorage.IncludedBytes {
 			beyond = "stops at " + formatGiB(l.ObjectStorage.MaxAccountBytes)
 		}
-		var defaultCap *int64
-		if cents, ok := plan.DefaultOverageCapCents(); ok {
-			defaultCap = &cents
-		}
-		ceiling := formatGiB(l.ObjectStorage.WithSpendCap(defaultCap).MaxAccountBytes)
-		fmt.Fprintf(b, "| **%s** | %s | %s | %s | %s |\n", titlePlan(plan), formatGiB(l.ObjectStorage.IncludedBytes), beyond, ceiling, formatGiB(l.ObjectStorage.MaxMonthlyEgressBytes))
+		fmt.Fprintf(b, "| **%s** | %s | %s | %s | %s |\n", titlePlan(plan), formatGiB(l.ObjectStorage.IncludedBytes), beyond, formatGiB(l.ObjectStorage.MaxAccountBytes), formatGiB(l.ObjectStorage.MaxMonthlyEgressBytes))
 	}
-	fmt.Fprintf(b, "\nIncluded storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. Raising your spend cap raises how much a paid plan stores. Above that, uploads are refused and downloads stop until you delete objects, raise the cap or upgrade, and a downgrade waits until your data fits. Every plan stores up to %s objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends. See [object storage](object-storage.md#limits).\n",
+	fmt.Fprintf(b, "\nIncluded storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. A lower spend cap lowers how much a paid plan stores: a $0 cap stops at the included storage. Need more than the plan stores? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused, and downloads stop while you store more than it until you delete objects. A downgrade waits until your data fits. Every plan stores up to %s objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends. See [object storage](object-storage.md#limits).\n",
 		formatCount(api.MaxObjectStorageAccountKeys))
 }
 

@@ -68,6 +68,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -1105,21 +1106,22 @@ func (s *server) listTriggerRecords(w http.ResponseWriter, r *http.Request, acct
 // store method lands (PR-B scope), we synthesize the write
 // inline: this is a small one-line UPDATE that doesn't belong
 // on the dispatcher's interface.
+//
+// The record must belong to the trigger in the URL: the store call is
+// scoped by trigger and app, so another trigger's record is a 404.
 func (s *server) retryTriggerRecord(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	tID, ok := parseTriggerID(w, r)
+	trigger, recID, ok := s.triggerRecordForWrite(w, r, acct)
 	if !ok {
 		return
 	}
-	if !s.authoriseTriggerRead(w, r, acct, tID) {
-		return
-	}
-	recID, ok := parseTriggerRecordID(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.RetryTriggerRecordByOperator(r.Context(), recID); err != nil {
+	if err := s.store.RetryTriggerRecordByOperator(r.Context(), uuidFromPgtype(trigger.AppID).String(),
+		uuidFromPgtype(trigger.ID).String(), recID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such record")
+			return
+		}
+		if problem := appevents.QueueCapProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not retry record"))
@@ -1129,19 +1131,14 @@ func (s *server) retryTriggerRecord(w http.ResponseWriter, r *http.Request, acct
 }
 
 // dropTriggerRecord handles POST /v1/triggers/{id}/records/{rid}/drop.
+// Like retry, it acts only on a record of the trigger in the URL.
 func (s *server) dropTriggerRecord(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	tID, ok := parseTriggerID(w, r)
+	trigger, recID, ok := s.triggerRecordForWrite(w, r, acct)
 	if !ok {
 		return
 	}
-	if !s.authoriseTriggerRead(w, r, acct, tID) {
-		return
-	}
-	recID, ok := parseTriggerRecordID(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.DropTriggerRecordByOperator(r.Context(), recID); err != nil {
+	if err := s.store.DropTriggerRecordByOperator(r.Context(), uuidFromPgtype(trigger.AppID).String(),
+		uuidFromPgtype(trigger.ID).String(), recID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such record")
 			return
@@ -1184,11 +1181,11 @@ func (s *server) listTriggerDeadLetter(w http.ResponseWriter, r *http.Request, a
 
 // getTriggerMetrics handles GET /v1/triggers/{id}/metrics.
 //
-// Walks trigger_records for the trigger and counts by state. The
-// store layer is the future home of a CountTriggerRecordsByState
-// helper; this handler-side aggregation covers the dashboard until
-// then. A 1000-row ceiling keeps the cost bounded; the Prometheus
-// surface (`/v1/metrics`) is the authoritative counters path.
+// Counts the trigger's records by state, each count stopping at
+// api.TriggerMetricsCountLimit, and reports the scheduler's last
+// observation of its broker consumer: liveness, the last error and the
+// broker's lag (ADR-20261101104512). The Prometheus surface
+// (`/v1/metrics`) is the authoritative counters path.
 func (s *server) getTriggerMetrics(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id, ok := parseTriggerID(w, r)
 	if !ok {
@@ -1203,7 +1200,36 @@ func (s *server) getTriggerMetrics(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	metrics.TriggerID = id
+	if metrics.Consumer, err = s.triggerConsumerStatus(r.Context(), id); err != nil {
+		api.WriteProblem(w, api.ErrInternal("could not load trigger consumer health"))
+		return
+	}
 	writeJSON(w, http.StatusOK, metrics)
+}
+
+// triggerConsumerStatus is the scheduler's last observation of the
+// trigger's consumer, nil before its first poll.
+func (s *server) triggerConsumerStatus(ctx context.Context, id string) (*api.TriggerConsumerStatus, error) {
+	healthStore, ok := s.store.(state.TriggerConsumerHealthStore)
+	if !ok {
+		return nil, nil
+	}
+	health, err := healthStore.TriggerConsumerHealth(ctx, id)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("trigger consumer health: %w", err)
+	}
+	return &api.TriggerConsumerStatus{
+		Liveness:      queueBindingConsumerLiveness(time.Now().UTC(), health),
+		LastPollAt:    health.LastPollAt,
+		LastSuccessAt: health.LastSuccessAt,
+		LastErrorAt:   health.LastErrorAt,
+		LastError:     health.LastError,
+		LagMessages:   health.LagMessages,
+		LagAgeSeconds: health.LagAgeSeconds,
+	}, nil
 }
 
 // batchCreateTrigger handles POST /v1/triggers:batch_create.
@@ -1478,6 +1504,27 @@ func parseTriggerRecordID(w http.ResponseWriter, r *http.Request) (string, bool)
 	return uid.String(), true
 }
 
+// triggerRecordForWrite authorises a record mutation. Its routes require the
+// deploy-write scope (server.go), so a read-only key never gets here; the {id}
+// trigger must be the caller's (ownedTrigger) and {rid} a well-formed record
+// id. The store call that follows scopes the record by the returned trigger's
+// id and app, so a record of another trigger, app or account answers 404.
+func (s *server) triggerRecordForWrite(w http.ResponseWriter, r *http.Request, acct state.Account) (sqlc.Trigger, string, bool) {
+	tID, ok := parseTriggerID(w, r)
+	if !ok {
+		return sqlc.Trigger{}, "", false
+	}
+	trigger, ok := s.ownedTrigger(w, r, acct, tID)
+	if !ok {
+		return sqlc.Trigger{}, "", false
+	}
+	recID, ok := parseTriggerRecordID(w, r)
+	if !ok {
+		return sqlc.Trigger{}, "", false
+	}
+	return trigger, recID, true
+}
+
 // authoriseTriggerRead resolves the trigger + app + account and
 // emits a 404 (intentionally not 403 — see handlers_ext.go for
 // precedent) if either step fails. Both fail branches use
@@ -1485,17 +1532,24 @@ func parseTriggerRecordID(w http.ResponseWriter, r *http.Request) (string, bool)
 // "someone else's trigger". Returns true when the caller is
 // authorised; false when a response has already been written.
 func (s *server) authoriseTriggerRead(w http.ResponseWriter, r *http.Request, acct state.Account, id string) bool {
+	_, ok := s.ownedTrigger(w, r, acct, id)
+	return ok
+}
+
+// ownedTrigger returns the trigger when its app belongs to acct, and
+// otherwise writes the 404 authoriseTriggerRead documents.
+func (s *server) ownedTrigger(w http.ResponseWriter, r *http.Request, acct state.Account, id string) (sqlc.Trigger, bool) {
 	t, err := s.store.TriggerByID(r.Context(), id)
 	if err != nil {
 		s.notFound(w, "no such trigger")
-		return false
+		return sqlc.Trigger{}, false
 	}
 	app, err := s.store.AppByID(r.Context(), uuidFromPgtype(t.AppID).String())
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such trigger")
-		return false
+		return sqlc.Trigger{}, false
 	}
-	return true
+	return t, true
 }
 
 // intFrom returns *p when non-nil, 0 otherwise. Helper for the
@@ -1623,10 +1677,21 @@ func kafkaSkipVerifyRequested(kind api.TriggerKind, raw json.RawMessage) (bool, 
 	return cfg.TLS.SkipVerify, nil
 }
 
-// aggregateTriggerMetrics walks trigger_records for the trigger
-// and counts by state. A 1000-row ceiling keeps the cost bounded
-// (the dispatcher owns the authoritative counters via Prometheus).
+// aggregateTriggerMetrics counts the trigger's records by state, each
+// count stopping at api.TriggerMetricsCountLimit. A store without the
+// counter (narrow test stores) counts the newest 1000 rows instead.
 func (s *server) aggregateTriggerMetrics(ctx context.Context, id string) (api.TriggerMetricsResponse, error) {
+	if counter, ok := s.store.(state.TriggerRecordStateCounter); ok {
+		counts, err := counter.CountTriggerRecordsByState(ctx, id, api.TriggerMetricsCountLimit)
+		if err != nil {
+			return api.TriggerMetricsResponse{}, err
+		}
+		return api.TriggerMetricsResponse{
+			PendingCount: int(counts.Pending), ClaimedCount: int(counts.Claimed),
+			SucceededCount: int(counts.Succeeded), RetryCount: int(counts.Retry),
+			DeadLetterCount: int(counts.DeadLetter), CountLimit: api.TriggerMetricsCountLimit,
+		}, nil
+	}
 	rows, err := s.store.ListTriggerRecordsForTrigger(ctx, id, int32(1000))
 	if err != nil {
 		return api.TriggerMetricsResponse{}, err

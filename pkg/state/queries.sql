@@ -1514,6 +1514,44 @@ returning id, account_id, app_id, source, type, filter, enabled,
 delete from event_subscriptions
 where id = $1 and account_id = $2 and app_id = $3;
 
+-- name: InsertDeploymentEventSubscriptionIntent :exec
+-- ADR-20261101030512: the event subscriptions a production manifest deploy
+-- declares, applied once the deployment serves all production traffic.
+INSERT INTO deployment_event_subscription_intents (deployment_id, app_id, declared_subscription_ids)
+VALUES (sqlc.arg(deployment_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(declared_subscription_ids)::uuid[])
+ON CONFLICT (deployment_id) DO NOTHING;
+
+-- name: ListPreparedEventSubscriptionIntents :many
+SELECT deployment_id::text AS deployment_id FROM deployment_event_subscription_intents
+WHERE status = 'prepared' ORDER BY updated_at, deployment_id LIMIT 64;
+
+-- name: LockEventSubscriptionIntentDeployment :one
+-- The same disposition inputs as ReadCronActivationDeployment, so event
+-- subscriptions and staged crons go live under one rule.
+SELECT i.app_id::text AS app_id, i.declared_subscription_ids::text[] AS declared,
+ d.id::text AS deployment_id, d.status, d.scope, d.traffic_percent, d.traffic_percent_explicit,
+ d.canary_total_steps, d.rollout_state,
+ coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id
+ AND coalesce(nullif(n.scope,''),'default')='default'
+ AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
+ ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
+ EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
+ AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+FROM deployment_event_subscription_intents i JOIN deployments d ON d.id = i.deployment_id
+WHERE i.deployment_id = sqlc.arg(deployment_id)::uuid AND i.status = 'prepared'
+FOR UPDATE OF i;
+
+-- name: ApplyEventSubscriptionIntent :many
+-- Enable exactly the declared subscriptions of the app.
+UPDATE event_subscriptions SET enabled = (id = ANY(sqlc.arg(declared)::uuid[])), updated_at = now()
+WHERE app_id = sqlc.arg(app_id)::uuid AND enabled IS DISTINCT FROM (id = ANY(sqlc.arg(declared)::uuid[]))
+RETURNING id::text AS id, enabled;
+
+-- name: SettleEventSubscriptionIntent :exec
+UPDATE deployment_event_subscription_intents
+SET status = sqlc.arg(status)::text, reason = sqlc.arg(reason)::text, updated_at = now()
+WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND status = 'prepared';
+
 -- name: SetEventSubscriptionEnabled :execrows
 -- ADR-20261031130000: a deploy disables the subscriptions its manifest no
 -- longer declares; rolling the deploy back enables them again.
@@ -3175,6 +3213,22 @@ from trigger_records
 where trigger_id = $1
 order by received_at desc
 limit $2;
+
+-- name: TriggerRecordInScope :one
+-- The operator record verbs (POST /v1/triggers/{id}/records/{rid}/retry and
+-- /drop) address a record through its trigger's URL. The record must belong
+-- to that trigger and the trigger to the caller's app; any other record
+-- answers "no such record". A record's trigger and a trigger's app never
+-- change, so the check needs no row lock and keeps the replay lock order.
+select exists(select 1 from trigger_records r join triggers t on t.id=r.trigger_id
+  where r.id=sqlc.arg(id)::uuid and r.trigger_id=sqlc.arg(trigger_id)::uuid
+    and t.app_id=sqlc.arg(app_id)::uuid);
+
+-- name: DropTriggerRecordByOperator :execrows
+-- Deletes one record of the addressed trigger on the caller's app.
+delete from trigger_records r using triggers t
+where r.id=sqlc.arg(id)::uuid and r.trigger_id=sqlc.arg(trigger_id)::uuid
+  and t.id=r.trigger_id and t.app_id=sqlc.arg(app_id)::uuid;
 
 -- name: TriggerRecordIDByItemIdentifier :one
 -- Audit round 2 finding #1 (PR #910): deadLetterAll() is invoked
@@ -5423,11 +5477,27 @@ SELECT id FROM resource_namespaces WHERE id = $1 FOR UPDATE;
 SELECT a.plan FROM accounts a WHERE a.id=$1 UNION ALL SELECT o.plan FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
 
 -- name: ObjectUsageAccountPlanCap :one
--- The plan and spend cap that set an account's object-storage ceilings
--- (ADR-1320, ADR-20261101214152). A null cap is no cap.
-SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+-- The plan, spend cap and support grant that set an account's object-storage
+-- ceilings (ADR-1320, ADR-20261101214152). A null cap is no cap; a null grant
+-- keeps the plan's ceiling.
+SELECT a.plan, a.overage_cap_cents, g.max_bytes AS ceiling_grant_bytes FROM accounts a
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = a.id WHERE a.id=$1
 UNION ALL
-SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
+SELECT o.plan, o.overage_cap_cents, g.max_bytes FROM orgs o
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = o.id
+WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
+
+-- name: ObjectStorageCeilingGrant :one
+SELECT owner_id, max_bytes, reason, granted_by, granted_at FROM object_storage_ceiling_grants WHERE owner_id=$1;
+
+-- name: SetObjectStorageCeilingGrant :exec
+INSERT INTO object_storage_ceiling_grants (owner_id, max_bytes, reason, granted_by, granted_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (owner_id) DO UPDATE SET max_bytes = EXCLUDED.max_bytes, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at;
+
+-- name: ClearObjectStorageCeilingGrant :exec
+DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1;
 
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
@@ -7267,6 +7337,10 @@ WHERE h.environment_id=$1 ORDER BY h.app_id FOR SHARE OF h,s;
 -- name: ReadProjectEnvironmentCloneOperationIDByKey :one
 SELECT id FROM project_environment_clone_operations WHERE account_id=$1 AND project_id=$2 AND idempotency_key=$3;
 
+-- name: CountUnfinishedProjectEnvironmentCloneOperationsForProject :one
+SELECT count(*)::bigint FROM project_environment_clone_operations
+WHERE project_id = sqlc.arg(project_id)::uuid AND status IN ('pending','capturing','copying','publishing','compensating');
+
 -- name: CountUnfinishedProjectEnvironmentCloneOperations :one
 SELECT count(*)::bigint FROM project_environment_clone_operations
 WHERE status IN ('pending','capturing','copying','publishing','compensating');
@@ -8011,6 +8085,10 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
 -- ADR-20261022105723: a pending queue message past its plan's retention
 -- moves to the dead letter. A message a worker holds (dispatching) is not
 -- touched. The plan resolves as StampDefaultInvocationRetention's does.
+-- ADR-20261101093812: retention counts from the message's last replay, so a
+-- message replayed from the dead letter gets the whole retention again. A
+-- replay is never earlier than the send, so the created_at bound still
+-- narrows invocations_queue_pending_created_idx.
 WITH plan_retention AS (
     SELECT unnest(sqlc.arg(plans)::text[]) AS plan, unnest(sqlc.arg(retention_seconds)::bigint[]) AS seconds
 ), batch AS (
@@ -8021,7 +8099,7 @@ WITH plan_retention AS (
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
       AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => sqlc.arg(min_retention_seconds)::bigint)
-      AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
+      AND coalesce(i.last_replayed_at, i.created_at) < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
     ORDER BY i.created_at
     LIMIT sqlc.arg(batch_limit)::integer
     FOR UPDATE OF i SKIP LOCKED
@@ -8088,6 +8166,17 @@ SELECT i.* FROM invocations i JOIN production_invocation_work p ON p.id=i.id
 WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue' AND i.state='dead_letter'
     AND (sqlc.narg(cursor_id)::uuid IS NULL OR (i.created_at,i.id)<(SELECT created_at,id FROM anchor))
 ORDER BY i.created_at DESC,i.id DESC LIMIT sqlc.arg(page_limit)::bigint;
+
+-- name: ReadQueueReplayAdmission :one
+-- ADR-20261101093812: a production queue message replayed from the dead
+-- letter re-enters its app's queue under the caps a send meets. The plan
+-- resolves as ExpirePendingQueueMessages' does. Environment-owned messages
+-- are not production work and keep their own caps.
+SELECT p.app_id, p.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM production_invocation_work p
+LEFT JOIN accounts a ON a.id = p.account_id
+LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE p.id = sqlc.arg(id)::uuid AND p.source = 'queue' AND p.state = 'dead_letter';
 
 -- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
@@ -8899,15 +8988,21 @@ ORDER BY rs.created_at DESC LIMIT 2;
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid AND d.status = 'live'
+      AND d.scope = ANY(sqlc.arg(scopes)::text[])
       AND (d.traffic_percent > 0 OR d.traffic_percent_explicit
            OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
                AND EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())))
 )::boolean AS allowed;
 
 -- name: ReadServicePolicyDeploymentWeights :many
-SELECT id, traffic_percent FROM deployments
+SELECT id, traffic_percent, scope FROM deployments
 WHERE app_id = sqlc.arg(app_id)::uuid AND status = 'live' AND traffic_percent > 0
+  AND scope = ANY(sqlc.arg(scopes)::text[])
 ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadServicePolicyCallerScope :one
+SELECT scope FROM deployments
+WHERE id = sqlc.arg(deployment_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
 
 -- name: ReadPublicRoutingOwner :one
 SELECT EXISTS (
@@ -22030,7 +22125,8 @@ LOCK TABLE deployments, instances IN ROW EXCLUSIVE MODE;
 SELECT id FROM instances WHERE id=sqlc.arg(instance_id)::uuid FOR UPDATE;
 -- name: ListFairTenantWorkflowScheduleCandidates :many
 SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
-       jsonb_build_array(w.definition)::jsonb AS workflows
+       jsonb_build_array(w.definition)::jsonb AS workflows,
+       coalesce(w.definition->>'name', '')::text AS fair_workflow_name, c.last_admitted_at AS fair_last_admitted_at
 FROM apps a
 JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
@@ -22049,11 +22145,15 @@ WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND a.platform_tenant_req
   AND (NOT coalesce((w.definition->'trigger'->>'tenant_configurable')::boolean, false)
        OR coalesce((c.trigger_snapshot->'tenant_configuration'->'trigger'->>'enabled')::boolean, true))
   AND (c.last_evaluated_at IS NULL OR c.last_evaluated_at < sqlc.arg(evaluation_minute)::timestamptz)
+  AND (sqlc.narg(after_app_id)::uuid IS NULL OR
+       (coalesce(c.last_admitted_at, '-infinity'::timestamptz), a.id, t.id, coalesce(w.definition->>'name', '')) >
+       (coalesce(sqlc.narg(after_admitted_at)::timestamptz, '-infinity'::timestamptz), sqlc.narg(after_app_id)::uuid,
+        sqlc.narg(after_tenant_id)::uuid, sqlc.arg(after_workflow_name)::text))
   AND (EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id = a.account_id AND c.app_id = a.id
        AND c.platform_tenant_id = t.id AND c.status = 'active' AND c.revoked_at IS NULL)
        OR EXISTS (SELECT 1 FROM tenant_surfaces s WHERE s.account_id = a.account_id AND s.app_id = a.id
        AND s.platform_tenant_id = t.id AND s.status = 'active'))
-ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, w.definition->>'name' LIMIT sqlc.arg(batch_limit);
+ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, coalesce(w.definition->>'name', '') LIMIT sqlc.arg(batch_limit);
 
 
 -- name: InsertWorkflowScheduleOccurrence :exec
@@ -24735,11 +24835,11 @@ WHERE c.status='prepared' AND (r.deployment_id IS NOT NULL OR u.status='committe
 SELECT d.id::text AS deployment_id,d.status,d.scope,d.traffic_percent,d.traffic_percent_explicit,
  d.canary_total_steps,d.rollout_state,
  coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id
- AND coalesce(nullif(n.scope,''),'default')='default'
+ AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default')
  AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
  ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
  EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
- AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+ AND n.status='live' AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default') AND n.traffic_percent>0) AS competing_traffic
 FROM deployments d JOIN deployment_cron_activations c ON c.app_id=d.app_id
 JOIN apps a ON a.id=c.app_id
 LEFT JOIN deployment_submission_receipts r ON r.app_id=c.app_id AND r.attempt_id=c.session_id
@@ -24808,9 +24908,9 @@ WHERE deployment_cron_outcomes.revision<=EXCLUDED.revision;
 -- name: ReadDeploymentConfiguration :one
 SELECT d.id::text AS deployment_id,d.app_id::text AS app_id,d.status AS release_status,d.scope,d.rollout_state,d.traffic_percent,d.traffic_percent_explicit,d.canary_total_steps,
  coalesce(o.session_id,'')::text AS session_id,coalesce(o.revision,0)::bigint AS revision,coalesce(o.status,'')::text AS activation_status,coalesce(o.reason,'')::text AS reason,
- coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id AND coalesce(nullif(n.scope,''),'default')='default'
+ coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default')
  AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0) ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
- EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+ EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id AND n.status='live' AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default') AND n.traffic_percent>0) AS competing_traffic
 FROM deployments d JOIN apps a ON a.id=d.app_id
 LEFT JOIN LATERAL (
  SELECT x.status,x.reason,x.session_id,x.revision FROM (

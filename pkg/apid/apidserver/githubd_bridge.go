@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -519,6 +520,11 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		} else if len(active) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
 		}
+		// ADR-20261019071733 amendment 9: a push does not release into a
+		// protected environment other than production.
+		if p := protectedEnvironmentReleaseProblem(ctx, g.store, app, req.DeploymentScope); p != nil {
+			return nil, status.Error(codes.FailedPrecondition, p.Detail)
+		}
 		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, resource.Plan, req.DeploymentScope, &params)
 		// ADR-20261020085706: a push to an app that requires approvals must
 		// wait in a canary; githubd reports the refusal on the commit.
@@ -536,8 +542,16 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if cronProblem != nil {
 		return nil, grpcerr.ToStatus(cronProblem)
 	}
+	spooled, err := g.spoolSource(req.SourcePath)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: %v", err)
+	}
+	params.SourcePath = spooled
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
+		if spooled != req.SourcePath {
+			_ = os.Remove(spooled)
+		}
 		return nil, g.asGRPC("enqueue", err)
 	}
 
@@ -558,6 +572,46 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		DeploymentId: res.DeploymentID,
 		AppId:        app.ID,
 	}, nil
+}
+
+// spoolSource copies githubd's staged archive into apid's build spool and
+// returns the copy's path. builderd reads only sources under the spool root
+// (FAAS_SPOOL_ROOT), and a split-box builder materializes them there from
+// source storage; githubd's staging tree is outside it, so a build pointed
+// at the staged file failed with "outside spool root". A source already in
+// the spool is used as it is.
+func (g *githubdBridge) spoolSource(sourcePath string) (string, error) {
+	root := filepath.Clean(g.spool)
+	if strings.HasPrefix(filepath.Clean(sourcePath), root+string(filepath.Separator)) {
+		return sourcePath, nil
+	}
+	if err := os.MkdirAll(root, 0o770); err != nil {
+		return "", fmt.Errorf("create source spool: %w", err)
+	}
+	//nolint:forbidigo // sourcePath passed the staging-root allowlist above.
+	src, err := os.Open(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("open staged source: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+	dst := filepath.Join(root, randomToken(12)+".tar.gz")
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return "", fmt.Errorf("spool source: %w", err)
+	}
+	_, copyErr := io.Copy(out, src)
+	if closeErr := out.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr == nil {
+		copyErr = os.Rename(tmp, dst)
+	}
+	if copyErr != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("spool source: %w", copyErr)
+	}
+	return dst, nil
 }
 
 func (g *githubdBridge) newDeploymentActivity(ctx context.Context, acct state.Account, app state.App, req *githubdpb.EnqueueBuildRequest) *state.OrgActivity {

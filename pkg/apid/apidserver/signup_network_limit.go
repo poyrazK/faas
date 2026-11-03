@@ -90,6 +90,20 @@ func (s *server) createSignupAccount(r *http.Request, method, source string, par
 	return res, err
 }
 
+// signupNetworkCapped reports, before any account lookup, whether the
+// caller's address or network has used its daily sign-up share. Password
+// sign-up routes check it first so the capped answer is the same for bound
+// and unbound emails (H97); createSignupAccount still enforces the cap at
+// creation.
+func (s *server) signupNetworkCapped(r *http.Request) bool {
+	ip := clientIPFromRequest(r)
+	if s.signups.allow(ip) {
+		return false
+	}
+	s.audit.Emit(r.Context(), "auth.signup_network_cap", nil, map[string]any{"ip": ip})
+	return true
+}
+
 func writeSignupNetworkCap(w http.ResponseWriter) {
 	api.WriteProblem(w, api.ErrAuthRateLimited(int((24 * time.Hour).Seconds())))
 }

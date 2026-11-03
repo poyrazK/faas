@@ -28,6 +28,10 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //   - ReadWritePaths=/var/lib/faas: githubd writes /var/lib/faas
 //     attribution hmac key + the github-bot pool credentials.
 //
+//   - FAAS_APID_GITHUBD_BRIDGE_SOCK is apid's build-enqueue bridge, the
+//     same path UnitApid binds. Unset, githubd's stub refuses every push
+//     and preview build (bug hunt #8 H8-10).
+//
 // See ADR-078 for the migration that wiped these from the unit body.
 //
 // Issue #585 / ADR-127 — sealed.env is apid-only; githubd loads the
@@ -36,6 +40,10 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // root:root). Private identities, the public fleet recipient, and the App
 // PEM are delivered via LoadCredential= so User=faas never needs search
 // permission on the root-only /etc/faas/secrets directory.
+// GithubdBridgeSocket is the unix socket apid serves the githubd build-enqueue
+// bridge on and githubd dials. Both units set it to this one path.
+const GithubdBridgeSocket = "/run/faas/apid-githubd.sock"
+
 func UnitGithubd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "onebox-faas githubd — GitHub App integration",
@@ -71,6 +79,7 @@ func UnitGithubd() daemonunit.Unit {
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},
 			{Key: "FAAS_HOST_AGE_PUB", Value: "%d/faas_fleet_age_recipient"},
 			{Key: "FAAS_GITHUB_APP_KEY_PATH", Value: "%d/faas_github_app_key_unit"},
+			{Key: "FAAS_APID_GITHUBD_BRIDGE_SOCK", Value: GithubdBridgeSocket},
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},

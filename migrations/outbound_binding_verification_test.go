@@ -40,6 +40,7 @@ func TestOutboundBindingVerificationMigrationRollback(t *testing.T) {
 	if !ok {
 		t.Fatal("missing down")
 	}
+	execTriggerWhen(t, ctx, pool, true)
 	if _, err := pool.Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}
@@ -50,4 +51,5 @@ func TestOutboundBindingVerificationMigrationRollback(t *testing.T) {
 	if _, err := pool.Exec(ctx, up); err != nil {
 		t.Fatal(err)
 	}
+	execTriggerWhen(t, ctx, pool, false)
 }

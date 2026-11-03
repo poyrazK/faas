@@ -63,6 +63,9 @@ type realtimeFleetReceiver struct {
 	// occupancy reads the fleet for live channel occupancy (ADR-1324).
 	occupancy      RealtimeOccupancyReader
 	occupancyCache *realtimeOccupancyCache
+	// relayLookups caches the endpoint and node rows ephemeral relays
+	// check; nil reads them every time.
+	relayLookups *realtimeRelayLookups
 	// accessFeed relays access changes to realtime nodes; nil answers
 	// Unavailable, and nodes read access directly.
 	accessFeed *RealtimeAccessFeed
@@ -229,15 +232,9 @@ func (r *realtimeFleetReceiver) RelayEphemeral(ctx context.Context, envelope *wr
 	if err := decodeRealtimeFleetJSON(envelope.GetValue(), &req); err != nil || req.EndpointID == "" || !realtime.ValidateChannel(req.Channel) || !validEphemeralFrame(req.Frame) {
 		return nil, status.Error(codes.InvalidArgument, "invalid realtime ephemeral event")
 	}
-	if err := r.requireEnabledEndpoint(ctx, req.EndpointID); err != nil {
-		return nil, err
-	}
-	node, err := r.lookupNode(ctx, req.NodeName)
+	node, err := r.relayLookup(ctx, req.EndpointID, req.NodeName)
 	if err != nil {
 		return nil, err
-	}
-	if !node.Active {
-		return nil, status.Error(codes.FailedPrecondition, "realtime node inactive")
 	}
 	if err := r.router.RelayEphemeral(ctx, node.ID, req.EndpointID, req.Channel, req.Frame); err != nil {
 		return nil, status.Error(codes.Unavailable, "realtime ephemeral relay failed")
@@ -350,6 +347,42 @@ func (r *realtimeFleetReceiver) requireEnabledEndpoint(ctx context.Context, endp
 	default:
 		return nil
 	}
+}
+
+// relayLookup checks a relay's endpoint and node, through relayLookups.
+func (r *realtimeFleetReceiver) relayLookup(ctx context.Context, endpointID, nodeName string) (state.ComputeNode, error) {
+	if r.relayLookups == nil {
+		if err := r.requireEnabledEndpoint(ctx, endpointID); err != nil {
+			return state.ComputeNode{}, err
+		}
+		node, err := r.lookupNode(ctx, nodeName)
+		if err == nil && !node.Active {
+			err = status.Error(codes.FailedPrecondition, "realtime node inactive")
+		}
+		return node, err
+	}
+	enabled, err := r.relayLookups.endpointEnabled(ctx, endpointID, r.store.ManagedRealtimeEndpointByID)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return state.ComputeNode{}, status.Error(codes.NotFound, "realtime endpoint not found")
+	case err != nil:
+		return state.ComputeNode{}, status.Error(codes.Unavailable, "realtime endpoint lookup unavailable")
+	case !enabled:
+		return state.ComputeNode{}, status.Error(codes.FailedPrecondition, "realtime endpoint disabled")
+	}
+	if r.nodes == nil || nodeName == "" || strings.TrimSpace(nodeName) != nodeName {
+		return state.ComputeNode{}, status.Error(codes.InvalidArgument, "invalid realtime node name")
+	}
+	node, err := r.relayLookups.node(ctx, nodeName, r.nodes.ComputeNodeByName)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return node, status.Error(codes.NotFound, "realtime node not found")
+	case err != nil:
+		return node, status.Error(codes.Unavailable, "realtime node lookup unavailable")
+	case !node.Active:
+		return node, status.Error(codes.FailedPrecondition, "realtime node inactive")
+	}
+	return node, nil
 }
 
 func (r *realtimeFleetReceiver) lookupNode(ctx context.Context, name string) (state.ComputeNode, error) {
@@ -467,5 +500,5 @@ func RegisterRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner
 		feed = accessFeed[0]
 	}
 	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush, usage: usage, connections: connections,
-		occupancy: occupancy, occupancyCache: newRealtimeOccupancyCache(), accessFeed: feed})
+		occupancy: occupancy, occupancyCache: newRealtimeOccupancyCache(), accessFeed: feed, relayLookups: newRealtimeRelayLookups()})
 }

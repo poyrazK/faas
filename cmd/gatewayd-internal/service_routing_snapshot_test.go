@@ -16,11 +16,14 @@ import (
 func (s *serviceSnapshotAfterReadReader) ResolveServiceRelease(ctx context.Context, caller, source, target, requested string) (string, string, error) {
 	return s.ServicePolicyReader.(state.ServiceRoutingPolicyReader).ResolveServiceRelease(ctx, caller, source, target, requested)
 }
-func (s *serviceSnapshotAfterReadReader) ServiceDeploymentOverrideAllowed(ctx context.Context, app, deployment string) (bool, error) {
-	return s.ServicePolicyReader.(state.ServiceRoutingPolicyReader).ServiceDeploymentOverrideAllowed(ctx, app, deployment)
+func (s *serviceSnapshotAfterReadReader) ServiceCallerEnvironment(ctx context.Context, callerApp, callerDeployment string) (string, error) {
+	return s.ServicePolicyReader.(state.ServiceRoutingPolicyReader).ServiceCallerEnvironment(ctx, callerApp, callerDeployment)
 }
-func (s *serviceSnapshotAfterReadReader) ServiceDeploymentWeights(ctx context.Context, app string) ([]state.ServiceDeploymentWeight, error) {
-	return s.ServicePolicyReader.(state.ServiceRoutingPolicyReader).ServiceDeploymentWeights(ctx, app)
+func (s *serviceSnapshotAfterReadReader) ServiceDeploymentOverrideAllowed(ctx context.Context, app, deployment, environment string) (bool, error) {
+	return s.ServicePolicyReader.(state.ServiceRoutingPolicyReader).ServiceDeploymentOverrideAllowed(ctx, app, deployment, environment)
+}
+func (s *serviceSnapshotAfterReadReader) ServiceDeploymentWeights(ctx context.Context, app, environment string) ([]state.ServiceDeploymentWeight, error) {
+	return s.ServicePolicyReader.(state.ServiceRoutingPolicyReader).ServiceDeploymentWeights(ctx, app, environment)
 }
 
 func TestServiceRoutingSnapshotPostgresRetainsReleaseViewAcrossCutover(t *testing.T) {

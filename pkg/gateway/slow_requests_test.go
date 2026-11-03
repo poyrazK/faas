@@ -4,8 +4,11 @@ package gateway
 
 import (
 	"context"
+	"io"
 	"net/http/httptest"
 	"sort"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,7 +70,7 @@ func TestTrackSlowRequestGates(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h.slowRequests = tc.watcher
-			end := h.trackSlowRequest(req, tc.app, tc.target, tc.streaming)
+			_, end := h.trackSlowRequest(req, tc.app, tc.target, tc.streaming)
 			w.mu.Lock()
 			n := len(w.inflight)
 			var route string
@@ -88,5 +91,54 @@ func TestTrackSlowRequestGates(t *testing.T) {
 				t.Fatal("tracking did not end")
 			}
 		})
+	}
+}
+
+// A request whose response is under way or whose body is still arriving is
+// moving, not stuck in the app: it is reported only once it stops moving.
+func TestSlowRequestWatcherSkipsMovingRequests(t *testing.T) {
+	clock := time.Unix(1000, 0)
+	w := NewSlowRequestWatcher(func(context.Context, SlowRequestReport) error { return nil }, nil)
+	w.now = func() time.Time { return clock }
+	var downloading, uploading atomic.Bool
+	downloading.Store(true)
+	uploading.Store(true)
+	w.beginWithProgress(SlowRequestReport{AppID: "download", InstanceID: "i-d", RequestID: "d"}, requestProgress{responding: downloading.Load})
+	w.beginWithProgress(SlowRequestReport{AppID: "upload", InstanceID: "i-u", RequestID: "u"}, requestProgress{uploading: uploading.Load})
+	clock = clock.Add(api.ProfileCaptureSlowRequestAfter + time.Second)
+	if got := w.due(); len(got) != 0 {
+		t.Fatalf("moving requests reported as stuck: %+v", got)
+	}
+	uploading.Store(false) // the body arrived; the app has not answered
+	if got := w.due(); len(got) != 1 || got[0].RequestID != "u" {
+		t.Fatalf("due after the upload finished = %+v; want the upload", got)
+	}
+}
+
+func TestTrackSlowRequestWatchesTheBodyAndFirstByte(t *testing.T) {
+	w := NewSlowRequestWatcher(func(context.Context, SlowRequestReport) error { return nil }, nil)
+	h := &Handler{slowRequests: w}
+	rec := &firstByteRecorder{}
+	req := httptest.NewRequest("POST", "/upload", strings.NewReader("payload"))
+	req = req.WithContext(WithFirstByteRecorder(req.Context(), rec))
+	tracked, end := h.trackSlowRequest(req, App{ID: "app", Plan: api.PlanPro}, Target{InstanceID: "i"}, false)
+	defer end()
+	progress := func() requestProgress {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		for _, r := range w.inflight {
+			return r.progress
+		}
+		return requestProgress{}
+	}
+	if !progress().moving() {
+		t.Fatal("an unread body does not count as uploading")
+	}
+	if _, err := io.ReadAll(tracked.Body); err != nil || progress().moving() {
+		t.Fatalf("a fully read body still counts as uploading: %v", err)
+	}
+	rec.record(time.Now())
+	if !progress().moving() {
+		t.Fatal("a started response does not count as responding")
 	}
 }

@@ -136,11 +136,11 @@ func prepareWebhookAutomation(endpoint InboundWebhookEndpoint, binding WebhookAu
 	if err != nil {
 		return WebhookAutomationReceipt{}, envelope, nil, err
 	}
-	if int64(len(encoded)) > api.WorkflowRunInputMaxBytes {
-		return WebhookAutomationReceipt{}, envelope, nil, ErrWorkflowEventDefinitionInvalid
-	}
 	if reason == "" && !eventSubscriptionPatternMatches(binding.EventType, envelope.Type) {
 		reason = "event_filtered"
+	}
+	if reason == "" && !api.WorkflowEventEnvelopeFits(encoded) {
+		return WebhookAutomationReceipt{}, envelope, nil, ErrWorkflowEventInputTooLarge
 	}
 	receipt := WebhookAutomationReceipt{ReceiptID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:inbound-webhook:"+endpoint.ID+"\x00"+eventID)).String(), EndpointID: endpoint.ID, ProviderEventID: eventID, WorkflowName: binding.WorkflowName, Status: "ignored", IgnoredReason: reason, AcceptedAt: now, EventSource: envelope.Source, RoutingStatus: "ignored"}
 	receipt.bodyHash, err = webhookAutomationBodyHashForEvent(endpoint.Provider, eventType, body)

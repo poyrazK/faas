@@ -593,10 +593,22 @@ func (c *RegistryClient) openBlobWithAuth(ctx context.Context, r Reference, dige
 		}
 		c.blobGrants.Store(grant, struct{}{})
 	}
-	rc, err := c.blobCache.Open(ctx, digest, func(fetchCtx context.Context) (io.ReadCloser, error) {
+	fetch := func(fetchCtx context.Context) (io.ReadCloser, error) {
 		_, body, err := c.openBlobNetworkWithAuth(fetchCtx, r, digest, auth)
 		return body, err
-	})
+	}
+	// The HEAD above proves nothing against a registry the requester runs:
+	// it can answer 200 for any digest. So bytes pulled with credentials
+	// stay under this registry and repository and never enter the shared
+	// pool another tenant's manifest could name (H77). Only anonymous pulls
+	// fill the shared pool.
+	var rc io.ReadCloser
+	var err error
+	if auth != nil && (auth.Username != "" || auth.Password != "") {
+		rc, err = c.blobCache.OpenScoped(ctx, c.baseURL(r)+"/"+r.Repository, digest, fetch)
+	} else {
+		rc, err = c.blobCache.Open(ctx, digest, fetch)
+	}
 	if err != nil {
 		return "", nil, err
 	}
