@@ -153,7 +153,7 @@ func (s *server) deleteNotificationChannel(w http.ResponseWriter, r *http.Reques
 			for _, rule := range inUse.Rules {
 				rules = append(rules, rule.Name+" ("+rule.ID+")")
 			}
-			api.WriteProblem(w, api.ErrNotificationChannelInUse(rules))
+			api.WriteProblem(w, api.ErrNotificationChannelInUseBy(rules, inUse.Releases))
 		default:
 			api.WriteProblem(w, api.ErrCapacity("could not delete notification channel"))
 		}

@@ -147,7 +147,7 @@ func newStartProjectFixture(t *testing.T, private bool) *startProjectFixture {
 			if r.URL.Query().Get("scope") != scope {
 				t.Error("project update read configuration from another environment")
 			}
-			_ = json.NewEncoder(w).Encode(api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "FAAS_TEST_ALPHA", Scope: scope}}})
+			_ = json.NewEncoder(w).Encode(api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "APP_TEST_ALPHA", Scope: scope}}})
 		case "/v1/apps/first-app/env":
 			_ = json.NewEncoder(w).Encode(api.AppEnvListResponse{})
 		case "/v1/deployments/" + startProjectNewDeploymentID:
@@ -223,7 +223,7 @@ func TestStartProjectWalkthroughReviewsRedeploysAndVerifies(t *testing.T) {
 			runner := f.runner
 			runner.prompt.reader = bufio.NewReader(&startProjectInput{lines: []string{"2", "y", "1"}, before: func(index int) error {
 				if index == 0 {
-					return os.WriteFile(filepath.Join(runner.session.SourcePath, "new.js"), []byte("console.log(process.env.FAAS_TEST_ALPHA); // local-preview-content\n"), 0o644)
+					return os.WriteFile(filepath.Join(runner.session.SourcePath, "new.js"), []byte("console.log(process.env.APP_TEST_ALPHA); // local-preview-content\n"), 0o644)
 				}
 				return nil
 			}})

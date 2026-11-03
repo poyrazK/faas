@@ -184,21 +184,30 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 	var scope trafficBindingScope
 	var routes *trafficRouteScope
 	discover := time.Now()
-	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+	// Take the connection before the analysis bound starts. apid's pool can
+	// be empty for a second or two under concurrent writes, and that wait
+	// is not analysis: it refused a deploy as traffic_policy_too_complex at
+	// 2001 ms while the policy itself was small (Hunt 31 H31-11).
+	reader, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("state: acquire traffic binding discovery connection: %w", err)
+	}
+	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var claims trafficBindingClaims
 		var err error
 		if s.trafficScopedBinding {
-			if claims, scope, _, err = readTrafficBindingScopeClaims(bounded, s.pool, account, requested, appID, s.trafficAppsSuffix); err != nil {
+			if claims, scope, _, err = readTrafficBindingScopeClaims(bounded, reader, account, requested, appID, s.trafficAppsSuffix); err != nil {
 				return err
 			}
 			routes = newTrafficRouteScope(scope.Hosts, scope.Subtrees)
-		} else if claims, err = readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix); err != nil {
+		} else if claims, err = readTrafficBindingClaims(bounded, reader, s.trafficAppsSuffix); err != nil {
 			return err
 		}
 		hosts = trafficBindingAffectedHosts(claims, account, requested, appID)
-		accounts, err = trafficTenantBindingOwners(bounded, s.pool, claims, hosts, account, routes)
+		accounts, err = trafficTenantBindingOwners(bounded, reader, claims, hosts, account, routes)
 		return err
 	})
+	reader.Release()
 	observeTrafficPolicyPhase(writer, TrafficPolicyPhaseDiscover, time.Since(discover))
 	if err != nil {
 		return nil, false, err

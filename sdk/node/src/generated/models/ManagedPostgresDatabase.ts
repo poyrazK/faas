@@ -33,6 +33,10 @@ export type ManagedPostgresDatabase = {
    * Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time.
    */
   restore_slot_until?: string;
+  /**
+   * Set while the plan no longer includes this database, for example after a subscription ended, and it is suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept), service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or resizing to an included class resumes it.
+   */
+  plan_excess?: 'database_limit' | 'service_class';
   restore_range?: ManagedPostgresRestoreRange;
 };
 

@@ -2391,6 +2391,34 @@ const (
 	RealtimeResumeCommandBurst      = 40
 )
 
+// A realtime node reads a subscription ticket a new connection presents from
+// the control plane before it can tell a real ticket from a made-up one, so
+// these reads are bounded per endpoint and per node; a connection past them
+// gets 503 with Retry-After. Known tickets come from the node's access cache,
+// and an endpoint holds at most RealtimeTicketMaxPerEndpoint (1,024) live
+// tickets, so the endpoint burst admits all of them reconnecting at once
+// within seconds (ADR-1117, amendment of 2026-11-02).
+const (
+	RealtimeTicketReadsPerEndpointPerSecond = 50
+	RealtimeTicketReadBurstPerEndpoint      = 500
+	RealtimeTicketReadsPerNodePerSecond     = 200
+	RealtimeTicketReadBurstPerNode          = 1_000
+)
+
+// A client message on a plain (v1) realtime WebSocket is written to the
+// node's callback spool, with two fsyncs, and delivered to the endpoint's
+// message callback. A connection may send RealtimeClientMessagesPerSecond
+// (bursts of RealtimeClientMessageBurst), and a node writes at most
+// RealtimeNodeClientMessagesPerSecond: past either, the node stops reading
+// the socket until it may, so TCP slows the client and nothing is dropped
+// (ADR-1323, amendment of 2026-11-02).
+const (
+	RealtimeClientMessagesPerSecond     = 20
+	RealtimeClientMessageBurst          = 40
+	RealtimeNodeClientMessagesPerSecond = 2_000
+	RealtimeNodeClientMessageBurst      = 4_000
+)
+
 // Private PostgreSQL copy bounds, independent from data/storage entitlements.
 // An oversized inventory or archive fails capture; it is never truncated.
 const (
@@ -2523,6 +2551,12 @@ const (
 	// App metadata and deployment artifacts remain available during this
 	// period, after which the grace sweeper permanently removes the app.
 	AppDeleteGraceDays = 7
+	// AppSlugHoldDuration is how long a renamed or purged app's slug stays
+	// held for its account: other accounts cannot create or rename an app to
+	// it, so they cannot take over links, webhooks and OAuth redirects still
+	// pointing at the old host (bug hunt 2026-10-28 H80, ADR-20261101091049).
+	// The app_slug_holds triggers spell it "interval '90 days'".
+	AppSlugHoldDuration = 90 * 24 * time.Hour
 	// Bounds for operator-specified object-storage safety policies; no customer
 	// allowance or price is inferred when the policy is missing.
 	MaxObjectStoragePolicyValue         int64 = 1 << 60
@@ -7890,6 +7924,16 @@ const (
 	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
 	EdgeWAFInlineMsPerAppPerSecond = 500
 	EdgeWAFInlineMsPerAppBurst     = 1000
+	// EdgeWAFMaxInspectHeaderBytes and EdgeWAFMaxInspectHeaderValueBytes
+	// bound the request headers a WAF check scores. A check's cost grows
+	// faster than its input (a 32 KiB cookie measured about 1,000 times an
+	// empty request's), a check cannot be stopped once it holds a slot, and
+	// the edge accepts 1 MiB of headers, so one client sending large headers
+	// could hold every slot and leave other apps' checks to fail open. A
+	// longer value is cut, and headers past the total are not scored
+	// (ADR-831 amendment 19).
+	EdgeWAFMaxInspectHeaderBytes      = 16 << 10
+	EdgeWAFMaxInspectHeaderValueBytes = 4 << 10
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
@@ -7984,6 +8028,13 @@ const (
 	EdgePenaltyBoxMaxPerApp  = 10000
 	EdgePenaltyBoxMaxEntries = 200000
 	EdgePenaltyHitsMaxPerApp = 10000
+	// EdgePenaltyCrossSiteMaxSeconds caps a box every counted rejection of
+	// which said it came from a page on another site (Sec-Fetch-Site:
+	// cross-site). A browser sends that for requests another site's page
+	// makes it send, which must not box a real visitor for long; any other
+	// client can send it too, so it shortens the box instead of preventing
+	// it (ADR-20261022105846 amendment 3).
+	EdgePenaltyCrossSiteMaxSeconds = 60
 
 	// --- ADR-20261021220456: attack mode ------------------------------
 
@@ -14336,6 +14387,9 @@ const (
 	AppHealthWorkerRecordScan       = 1000
 	AppHealthWorkerBacklogAgeWarn   = 10 * time.Minute
 	AppHealthWorkerDeadLetterWindow = time.Hour
+	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
+	// app health counts the guest's reports within it (ADR-20261102124306).
+	AppHealthMemoryPressureWindow = 24 * time.Hour
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost

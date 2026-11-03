@@ -169,24 +169,43 @@ func (s *PgStore) RevokeRealtimeSubscriptionTicket(ctx context.Context, ep, id s
 	if !validTicketID(id) {
 		return ErrInvalidArgument
 	}
-	tag, err := s.pool.Exec(ctx, `delete from managed_realtime_subscription_tickets where endpoint_id=$1 and id=$2 and expires_at>clock_timestamp()`, ep, id)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer func() { _ = tx.Rollback(ctx) }()
+	var principal string
+	err = tx.QueryRow(ctx, `delete from managed_realtime_subscription_tickets where endpoint_id=$1 and id=$2 and expires_at>clock_timestamp() returning principal`, ep, id).Scan(&principal)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if err = notifyRealtimeAccessChangedPG(ctx, tx, ep, principal); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 func (s *PgStore) RevokeRealtimeSubscriptionTicketsForPrincipal(ctx context.Context, ep, principal string) (int, error) {
 	if api.ValidateRealtimePrincipal(principal) != nil {
 		return 0, ErrInvalidArgument
 	}
-	tag, err := s.pool.Exec(ctx, `delete from managed_realtime_subscription_tickets where endpoint_id=$1 and principal=$2 and expires_at>clock_timestamp()`, ep, principal)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return int(tag.RowsAffected()), nil
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `delete from managed_realtime_subscription_tickets where endpoint_id=$1 and principal=$2 and expires_at>clock_timestamp()`, ep, principal)
+	if err != nil {
+		return 0, err
+	}
+	if tag.RowsAffected() > 0 {
+		if err = notifyRealtimeAccessChangedPG(ctx, tx, ep, principal); err != nil {
+			return 0, err
+		}
+	}
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
 type storedRealtimeTicket struct {

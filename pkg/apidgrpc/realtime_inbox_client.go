@@ -8,6 +8,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -22,15 +24,17 @@ type realtimeInboxRequest struct {
 	Consumer   string          `json:"consumer,omitempty"`
 	Sequence   int64           `json:"sequence"`
 	Limit      int             `json:"limit,omitempty"`
+	Epoch      string          `json:"epoch,omitempty"`
 }
 
 type realtimeInboxResponse struct {
-	Ticket       *state.RealtimeSubscriptionTicket    `json:"ticket,omitempty"`
-	Access       *state.ManagedRealtimeAccess         `json:"access,omitempty"`
-	Preferences  *api.RealtimeNotificationPreferences `json:"preferences,omitempty"`
-	ReadProgress *state.ManagedRealtimeReadProgress   `json:"read_progress,omitempty"`
-	History      state.ManagedRealtimeChannelHistory  `json:"history"`
-	Sequence     int64                                `json:"sequence"`
+	AccessChanges *state.ManagedRealtimeAccessChanges  `json:"access_changes,omitempty"`
+	Ticket        *state.RealtimeSubscriptionTicket    `json:"ticket,omitempty"`
+	Access        *state.ManagedRealtimeAccess         `json:"access,omitempty"`
+	Preferences   *api.RealtimeNotificationPreferences `json:"preferences,omitempty"`
+	ReadProgress  *state.ManagedRealtimeReadProgress   `json:"read_progress,omitempty"`
+	History       state.ManagedRealtimeChannelHistory  `json:"history"`
+	Sequence      int64                                `json:"sequence"`
 }
 
 func (c *RealtimeHistoryClientImpl) inboxOperation(ctx context.Context, req realtimeInboxRequest) (realtimeInboxResponse, error) {
@@ -137,6 +141,11 @@ func (c *RealtimeHistoryClientImpl) ReadRealtimeAccess(ctx context.Context, ep, 
 
 func (c *RealtimeHistoryClientImpl) ReadSubscriptionTicket(ctx context.Context, ep, token string) (state.RealtimeSubscriptionTicket, error) {
 	out, err := c.inboxOperation(ctx, realtimeInboxRequest{Action: "ticket_read", EndpointID: ep, Consumer: token})
+	// apid answers an unknown, expired or revoked ticket Unauthenticated; a
+	// node closes those sockets, but keeps them through an outage.
+	if code := status.Code(err); code == codes.Unauthenticated || code == codes.NotFound {
+		return state.RealtimeSubscriptionTicket{}, state.ErrNotFound
+	}
 	if err != nil {
 		return state.RealtimeSubscriptionTicket{}, err
 	}
@@ -145,3 +154,17 @@ func (c *RealtimeHistoryClientImpl) ReadSubscriptionTicket(ctx context.Context, 
 	}
 	return *out.Ticket, nil
 }
+
+// ReadAccessChanges polls apid's access change feed after (epoch, after).
+func (c *RealtimeHistoryClientImpl) ReadAccessChanges(ctx context.Context, epoch string, after int64) (state.ManagedRealtimeAccessChanges, error) {
+	out, err := c.inboxOperation(ctx, realtimeInboxRequest{Action: "access_changes", Epoch: epoch, Sequence: after})
+	if err != nil {
+		return state.ManagedRealtimeAccessChanges{}, err
+	}
+	if out.AccessChanges == nil {
+		return state.ManagedRealtimeAccessChanges{}, fmt.Errorf("apidgrpc: missing realtime access changes")
+	}
+	return *out.AccessChanges, nil
+}
+
+var _ realtime.ManagedRealtimeAccessChangeReader = (*RealtimeHistoryClientImpl)(nil)

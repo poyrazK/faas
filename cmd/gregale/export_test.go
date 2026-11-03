@@ -859,6 +859,8 @@ var CmdDeliver = cmdDeliver
 var CmdDeployGithubSnippet = cmdDeployGithubSnippet
 var CmdDeployRepoSourceRef = cmdDeployRepoSourceRef
 var CmdDeployTarball = cmdDeployTarball
+var CmdDeployCheck = cmdDeployCheck
+var CredentialFileName = credentialFileName
 var CmdDeployTarballToExisting = cmdDeployTarballToExisting
 var CmdDeployment = cmdDeployment
 var CmdDeploymentAliasDelete = cmdDeploymentAliasDelete
@@ -1351,10 +1353,12 @@ var FormatSuspectedDependency = formatSuspectedDependency
 var FreezeRequestFromFlags = freezeRequestFromFlags
 var FunctionConcurrencyDeployHint = functionConcurrencyDeployHint
 var GeneratedTestCICompareCommand = generatedTestCICompareCommand
+var GeneratedTestCIInstallCommand = generatedTestCIInstallCommand
 var GeneratedTestCIRunCommand = generatedTestCIRunCommand
 var GeneratedTestCIVMConfigCommand = generatedTestCIVMConfigCommand
 var GeneratedTestCIVMRunCommand = generatedTestCIVMRunCommand
 var GitArchiveHEAD = gitArchiveHEAD
+var GithubSetupCheckWaitFor = githubSetupCheckWaitFor
 var GithubTarballURL = githubTarballURL
 var GithubWebhookSecretSet = githubWebhookSecretSet
 var GroupDigits = groupDigits
@@ -1403,6 +1407,7 @@ var LoadOrCreateDeveloperID = loadOrCreateDeveloperID
 var LoadTestStep = loadTestStep
 var LoadToken = loadToken
 var LoadWorkflowManifestForDeploy = loadWorkflowManifestForDeploy
+var LargestSourceTarballMB = largestSourceTarballMB
 var LocalTestConsumerEnv = localTestConsumerEnv
 var LockAutomationLiveSuite = lockAutomationLiveSuite
 var LockBucketUploadCheckpoint = lockBucketUploadCheckpoint
@@ -2081,6 +2086,7 @@ var WaitForTestOutputs = waitForTestOutputs
 var WaitMCPAccessConvergence = waitMCPAccessConvergence
 var WakeRecommendationTier = wakeRecommendationTier
 var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
+var WarnSingleHostProtectiveRule = warnSingleHostProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
 var WithBindingProgress = withBindingProgress
@@ -2088,6 +2094,7 @@ var WithBindingVerificationBudget = withBindingVerificationBudget
 var WithBindingVerificationSlot = withBindingVerificationSlot
 var WithCwd = withCwd
 var WithFixtureCronStaging = withFixtureCronStaging
+var WithFixturePolicyStaging = withFixturePolicyStaging
 var WithGetErr = withGetErr
 var WithRecorder = withRecorder
 var WithResetJSONOutput = withResetJSONOutput
@@ -2643,6 +2650,10 @@ func TierDiscoverableFlags(names, capabilities []string) []string {
 var BindExclusiveLock = bindExclusiveLock
 
 type ExclusiveLock = exclusiveLock
+
+// CLI audit 2026-10-31 (auth and credentials).
+var CmdLogin = cmdLogin
+var WithEntry = withEntry
 
 // GitHub connector commands (ADR-20261101160300).
 var CmdGithub = cmdGithub

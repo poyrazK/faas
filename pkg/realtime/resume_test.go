@@ -524,10 +524,21 @@ func TestResumeHandshakeRequiresPreviewAndOIDC(t *testing.T) {
 	}
 }
 
+// adr: 156 — history reads that keep failing past the outage window close the
+// connection with a retryable code (the window is two minutes by default).
 func TestResumeHistoryFailureClosesWithRetryableCode(t *testing.T) {
 	history := &testResumeHistory{failAfter: 2}
 	hooks := &testChannelHooks{allowed: true}
-	_, server := newResumeTestManager(t, history, hooks)
+	m := NewManager(Config{JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true, HistoryReader: history,
+		ResumePollInterval: 15 * time.Millisecond, ResumeHistoryOutageMax: 50 * time.Millisecond}, hooks)
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
+		AllowedOrigins: []string{"https://app.example"},
+		ClientAuth:     AuthPolicy{Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example", JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	t.Cleanup(func() { server.Close(); _ = m.Close() })
 	client := dialResumeTest(t, server)
 	sendResumeTestFrame(t, client, resumeClientFrame{Type: "subscribe", Channel: "updates"})
 	if frame := readResumeTestFrame(t, client); frame.Type != "subscribed" {

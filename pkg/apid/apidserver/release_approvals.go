@@ -510,6 +510,9 @@ func (s *server) rollbackTargetApprovalProblem(ctx context.Context, app state.Ap
 }
 
 func (s *server) approvalTrafficProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
+	if p := s.darkReleasePauseProblem(d); p != nil {
+		return p
+	}
 	// ADR-20261021152201: a release waiting for its scheduled start takes
 	// no traffic by hand.
 	if p := s.scheduledTrafficProblem(ctx, d); p != nil {
