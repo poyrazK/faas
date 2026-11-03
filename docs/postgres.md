@@ -42,10 +42,10 @@ Operators: see the [operator guide](managed-postgres.md).
   - one in a class the plan does not include shows
     `plan_excess: service_class`.
 
-  `get`, `list` and the dashboard show it. Its data, credentials and app
-  bindings are kept, but it does not start until you upgrade, delete a
-  database, or resize it to an included class. The next usage sweep, within
-  minutes, resumes it.
+  `get`, `list` and the dashboard show it, and you get an email. Its data,
+  credentials and app bindings are kept, but it does not start until you
+  upgrade, delete a database, or resize it to an included class. The next
+  usage sweep, within minutes, resumes it.
 - When the platform is near capacity, new databases on the Free plan pause
   first (`503 managed_postgres_new_databases_paused`); paid plans can still
   create them.

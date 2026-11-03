@@ -380,6 +380,26 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 	return nil
 }
 
+// darkReleasePauseProblem refuses the first traffic of a release deployed
+// without traffic, or parked for its schedule, while the break-glass release
+// pause is on (ADR 20261022140000 amendment 1). The pause refuses creating
+// releases, but one built before it could otherwise ship during it through
+// `traffic`, promote or a rollback to it. A release that served before is a
+// rollback target, which the pause never holds.
+func (s *server) darkReleasePauseProblem(d state.Deployment) *api.Problem {
+	if !neverServedDark(d) {
+		return nil
+	}
+	return s.platformReleasePauseProblem()
+}
+
+// neverServedDark reports whether d is live at 0% of traffic by choice and
+// has never completed a rollout: a release deployed with no traffic, or one
+// parked for its schedule.
+func neverServedDark(d state.Deployment) bool {
+	return d.Status == state.DeployLive && d.TrafficPercent == 0 && d.TrafficPercentExplicit && d.RolloutCompletedAt == nil
+}
+
 // darkReleaseFreezeProblem refuses traffic for a release deployed without
 // traffic before the active freeze began (ADR-20261019071733 amendment 3). A
 // freeze refuses creating production releases, but a release parked dark the
@@ -389,7 +409,7 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 // override, when it was created; one that completed a rollout served before
 // and is a rollback target, which freezes never refuse.
 func (s *server) darkReleaseFreezeProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
-	if d.Status != state.DeployLive || d.TrafficPercent != 0 || !d.TrafficPercentExplicit || d.RolloutCompletedAt != nil {
+	if !neverServedDark(d) {
 		return nil
 	}
 	now := time.Now().UTC()

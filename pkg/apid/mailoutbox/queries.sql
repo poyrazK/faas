@@ -86,6 +86,8 @@ WITH candidate AS (
           AND o.security_alert_key_id=ANY(sqlc.arg(managed_postgres_cap_keys)::text[]))
         OR (o.template='managed_postgres_restore_slot' AND sqlc.arg(managed_postgres_restore_slot_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(managed_postgres_restore_slot_keys)::text[]))
+        OR (o.template='managed_postgres_plan_excess' AND sqlc.arg(managed_postgres_plan_excess_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(managed_postgres_plan_excess_keys)::text[]))
         OR (o.template='account_restored' AND sqlc.arg(account_restored_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(account_restored_keys)::text[]))
         OR (o.template='payment_failed' AND sqlc.arg(payment_failed_enabled)::boolean
@@ -167,7 +169,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'agent_run_delivered' THEN 'agent-run-delivered:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'managed_postgres_cap' THEN 'managed-postgres-cap:' WHEN 'managed_postgres_restore_slot' THEN 'managed-postgres-restore-slot:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'agent_run_delivered' THEN 'agent-run-delivered:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'managed_postgres_cap' THEN 'managed-postgres-cap:' WHEN 'managed_postgres_restore_slot' THEN 'managed-postgres-restore-slot:' WHEN 'managed_postgres_plan_excess' THEN 'managed-postgres-plan-excess:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -1191,6 +1193,50 @@ WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
 -- name: ManagedPostgresRestoreSlotDeliveryReady :exec
 SELECT a.email,a.status,a.deletion_requested_at FROM accounts a
 JOIN platform_mail_producer_outbox o ON o.account_id=a.id WHERE o.template='managed_postgres_restore_slot' LIMIT 0;
+
+-- Managed PostgreSQL plan excess notices (ADR-20261102125208). The cap
+-- sweep records each notice once per suspension; its intent is linked in the
+-- same transaction, so a notice is mailed at most once. The account is
+-- locked with LockManagedPostgresCapAccount.
+
+-- name: ManagedPostgresPlanExcessReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('managed_postgres_plan_excess' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: ManagedPostgresPlanExcessSchemaReady :exec
+SELECT n.database_id,n.reason,n.mail_intent_id FROM managed_postgres_plan_excess_notices n LIMIT 0;
+
+-- name: ManagedPostgresPlanExcessKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='managed_postgres_plan_excess' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: CreateManagedPostgresPlanExcessIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'managed_postgres_plan_excess',1,$7,$8,$9,$10);
+
+-- name: LinkManagedPostgresPlanExcessNotice :execrows
+UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid
+WHERE database_id=sqlc.arg(database_id)::uuid AND mail_intent_id IS NULL;
+
+-- name: ShareManagedPostgresPlanExcessSubmissionAccount :one
+SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='managed-postgres-plan-excess:'||o.id::text AND o.template='managed_postgres_plan_excess'
+    AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
+
+-- name: ManagedPostgresPlanExcessDeliveryReady :exec
+SELECT a.email,a.status,a.deletion_requested_at FROM accounts a
+JOIN platform_mail_producer_outbox o ON o.account_id=a.id WHERE o.template='managed_postgres_plan_excess' LIMIT 0;
 
 -- Agent run summaries (ADR-20261027090010 §8). agent_deliveries belongs to agentd;
 -- capture reads it, sharing the row so agentd cannot end a delivery while it

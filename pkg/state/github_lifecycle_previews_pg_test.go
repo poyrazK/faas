@@ -98,7 +98,7 @@ func assertPreviewStates(t *testing.T, store *state.PgStore, wants ...previewSta
 
 // Uninstalling the GitHub App retired only the bound app's own preview: a PR
 // environment's other services kept serving PR code to the end of their lease
-// (ADR-20261102100000). Its project stayed on the gone installation, so
+// (ADR-20261102100001). Its project stayed on the gone installation, so
 // reconnecting the app did not bring the project back.
 func TestPgStoreRevokeGitHubInstallationRetiresPREnvironment(t *testing.T) {
 	store, ctx := pgStore(t)
