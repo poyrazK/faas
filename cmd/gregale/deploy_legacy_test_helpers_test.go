@@ -3,7 +3,6 @@ package main
 // Legacy deploy compatibility helpers are exercised by tests only.
 import (
 	"context"
-	"fmt"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"time"
