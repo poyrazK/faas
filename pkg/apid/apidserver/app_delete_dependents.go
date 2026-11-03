@@ -33,7 +33,7 @@ func (s *server) appDependentsProblem(ctx context.Context, app state.App) *api.P
 	return api.NewProblem(http.StatusConflict, "app_has_dependents", "Conflict",
 		fmt.Sprintf("Other services of this project depend on %s: %s.", app.WorkloadName, strings.Join(dependents, ", "))).
 		WithHint("Remove the service and its references from your Compose file, then run a reviewed deploy (gregale deploy), or delete the dependent apps first.").
-		WithDocs("https://gregale.dev/docs/multi-service-apps")
+		WithDocs("https://gregale.dev/docs/multi-service")
 }
 
 // projectServiceDependents lists the slugs of the live, non-preview project
