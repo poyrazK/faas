@@ -22,8 +22,9 @@ func (m *MemStore) financialPreviewCommandHeldLocked(task AppTask, now time.Time
 	if app.PreviewOfSlug == "" {
 		return false
 	}
+	payer := m.financialBudgetPayerLocked(app.AccountID, app.OrgID)
 	for _, stop := range m.financialBudgetStops {
-		if !financialBudgetStopActive(stop, m.financialBudgets[stop.PolicyID], now) {
+		if stop.AccountID != payer || !financialBudgetStopActive(stop, m.financialBudgets[stop.PolicyID], now) {
 			continue
 		}
 		if stop.Matches(app, "") {
@@ -36,7 +37,7 @@ func (m *MemStore) financialPreviewCommandHeldLocked(task AppTask, now time.Time
 			}
 			dep := m.deployments[task.DeploymentID]
 			env := m.projectEnvironments[stop.Spec.Scope.ID]
-			if m.deploymentRuntimeEnvironmentOwners[dep.ID] == "" && env.AccountID == app.AccountID && env.ProjectID == app.ProjectID && env.Slug == workloadEnvironmentSlug(normalizedDeploymentScope(dep.Scope)) {
+			if m.deploymentRuntimeEnvironmentOwners[dep.ID] == "" && env.ProjectID == app.ProjectID && env.Slug == workloadEnvironmentSlug(normalizedDeploymentScope(dep.Scope)) {
 				return true
 			}
 		}
