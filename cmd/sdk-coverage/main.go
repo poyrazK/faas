@@ -235,6 +235,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
 	"POST /v1/runtime/data-api/events":                  true,
+	"POST /v1/runtime/data-api/change-status":           true,
 
 	// ADR-1027 in-place major upgrades: a preview gated by
 	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered
@@ -1487,6 +1488,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/data-api/contract-tasks":                                    "CreateDataAPIContractTask",
 	"GET /v1/apps/{slug}/data-api/contract-tasks/{id}":                                "GetDataAPIContractTask",
 	"GET /v1/apps/{slug}/data-api/runtime":                                            "GetDataAPIRuntime",
+	"GET /v1/apps/{slug}/data-api/status":                                             "GetDataAPIStatus",
+	"GET /v1/apps/{slug}/postgres-bindings":                                           "ListAppPostgresBindings",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",

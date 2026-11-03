@@ -5823,6 +5823,8 @@ from .transfer_ownership_request import TransferOwnershipRequest
 from .trigger import Trigger
 from .trigger_broker_poison_strategy import TriggerBrokerPoisonStrategy
 from .trigger_config import TriggerConfig
+from .trigger_consumer_status import TriggerConsumerStatus
+from .trigger_consumer_status_liveness import TriggerConsumerStatusLiveness
 from .trigger_dead_letter import TriggerDeadLetter
 from .trigger_dead_letter_detail import TriggerDeadLetterDetail
 from .trigger_dead_letter_reason import TriggerDeadLetterReason
@@ -11747,6 +11749,8 @@ __all__ = (
     "Trigger",
     "TriggerBrokerPoisonStrategy",
     "TriggerConfig",
+    "TriggerConsumerStatus",
+    "TriggerConsumerStatusLiveness",
     "TriggerDeadLetter",
     "TriggerDeadLetterDetail",
     "TriggerDeadLetterReason",
