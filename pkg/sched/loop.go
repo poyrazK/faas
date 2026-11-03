@@ -1818,6 +1818,21 @@ func (l *Loop) forgetDepartedApps(apps []state.App) {
 	}
 }
 
+// dispatchAppPark parks every live instance of appID on the work pool (ADR
+// 20261103164725). ParkApp snapshots or destroys each instance and checks
+// again under the app lock that the app must still park, so a duplicate or
+// late submit is harmless. A dropped submit is retried by the next reaper
+// tick, which re-reads the app and account status.
+func (l *Loop) dispatchAppPark(ctx context.Context, appID, reason string) {
+	l.submitWork(workAppPark, appID, func() {
+		if acted, err := l.engine.ParkApp(ctx, appID); err != nil {
+			l.log.Warn("sched: park app failed", "app", appID, "reason", reason, "acted", acted, "err", err)
+		} else if acted > 0 {
+			l.log.Info("sched: parked app reconciled", "app", appID, "reason", reason, "instances", acted)
+		}
+	})
+}
+
 // dispatchRetention runs the hourly instance, dead-letter and cron-history
 // retention off the loop (ADR 20261103131546). They delete in repeated
 // batches; inline, a large backlog held the stats tick, cron and the
@@ -2405,11 +2420,9 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 				l.log.Warn("sched: park lifecycle notification missing app_id", "kind", p.Kind)
 				return
 			}
-			if acted, err := l.engine.ParkApp(ctx, p.AppID); err != nil {
-				l.log.Warn("sched: park app failed", "app", p.AppID, "acted", acted, "err", err)
-			} else {
-				l.log.Info("sched: parked app reconciled", "app", p.AppID, "kind", p.Kind, "instances", acted)
-			}
+			// ADR 20261103164725: parking snapshots or destroys every live
+			// instance; it runs on the work pool, not this select loop.
+			l.dispatchAppPark(ctx, p.AppID, p.Kind)
 			return
 		}
 		if p.Kind == "restart" {
@@ -2555,7 +2568,11 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			l.log.Warn("sched: app_delete missing app_id", "payload", n.Payload)
 			return
 		}
-		l.appDelete.evictApp(ctx, p.AppID)
+		// ADR 20261103164725: unwind in-flight wakes at once; destroying the
+		// deleted app's VMs runs on the work pool, not this select loop.
+		l.appDelete.forgetWakes(p.AppID)
+		appID := p.AppID
+		l.submitWork(workAppDelete, appID, func() { l.appDelete.reconcileApp(ctx, appID) })
 	case db.NotifyJobChanged:
 		var p struct {
 			Kind  string `json:"kind"`
@@ -2649,6 +2666,15 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// ADR 20261102160622: one bulk read of the strict compute sweep's inputs
 	// for the tick, not a live listing and a lease read per instance per app.
 	budgetPreload := l.engine.loadStrictComputePreload(ctx, apps)
+	// ADR 20261103164725: read the tick's spend caps in one query; most
+	// billing subjects have none and need no month total.
+	ownerIDs := make([]string, 0, len(apps))
+	for _, app := range apps {
+		if account, err := accounts.forApp(ctx, app); err == nil {
+			ownerIDs = append(ownerIDs, account.ResourceOwnerID())
+		}
+	}
+	l.engine.prefetchSpendCaps(ctx, ownerIDs)
 	for _, app := range apps {
 		// ADR 20261102205122: an app the sweep has nothing to apply to
 		// costs no lock and no reads.
@@ -2660,7 +2686,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
 			if account, accountErr := accounts.forApp(ctx, app); accountErr == nil {
-				mustPark = l.engine.appMustPark(ctx, app, account)
+				mustPark = l.engine.reaperAppMustPark(ctx, app, account)
 			} else {
 				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
 			}
@@ -2668,9 +2694,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 		if !mustPark {
 			continue
 		}
-		if acted, err := l.engine.ParkApp(ctx, app.ID); err != nil {
-			l.log.Warn("reaper: parked app reconcile", "app", app.ID, "acted", acted, "err", err)
-		}
+		// ADR 20261103164725: whole-app parks run on the work pool, so a
+		// suspended or capped account with many apps no longer holds this
+		// tick's idle parks and memory-pressure eviction behind them.
+		l.dispatchAppPark(ctx, app.ID, "reaper")
 	}
 	// Warm-pool capacity is a durable desired count, so a missed app_changed
 	// notification must not leave an app below its configured resident pool.

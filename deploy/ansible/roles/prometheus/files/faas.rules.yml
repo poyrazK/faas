@@ -7514,6 +7514,33 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "Object storage inventory scans are failing"
           description: "More than 20% of apid's bucket inventory attempts failed over 15m. A bucket whose inventory is older than 900 s, and whose listing is not advancing, refuses its own uploads and reads until a listing completes."
+      # Hunt 14 H14-14: a provider that refuses the credentials (here a closed
+      # billing account) withdraws object storage; every bucket create failed
+      # for three weeks with nothing paging.
+      - alert: FaasObjectStorageProviderRefusingCredentials
+        expr: max(faas_object_storage_provider_refusing_credentials) == 1
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "A storage provider is refusing Gregale's credentials"
+          description: "A provider answered 401/403 to a bucket operation, so apid withdrew object storage: capabilities report it off and bucket creates answer 503 object_storage_unavailable. Check the provider account (credentials, billing, project) before the next retry."
+      - alert: FaasObjectStorageBucketOperationsStalled
+        expr: |
+          sum(increase(faas_object_storage_recovery_attempts_total{operation=~"provisioning|deleting",outcome="deferred"}[2h])) > 0
+          unless sum(increase(faas_object_storage_recovery_attempts_total{operation=~"provisioning|deleting",outcome="success"}[2h])) > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Bucket creates and deletes keep failing"
+          description: "apid retried bucket creates or deletes over the last 2h and none succeeded. Customers see buckets stuck in provisioning or deleting. apid logs each attempt as 'object storage operation deferred' with its error_code."
       - alert: FaasS3GatewayErrorRateHigh
         expr: |
           sum(rate(s3_gateway_ops_total{op="s3_request",code="5xx"}[10m]))

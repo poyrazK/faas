@@ -83,8 +83,13 @@ type Worker struct {
 	// claim its due switches, false after a tick that could not and after
 	// each step that ended in a retry. nil reports nothing.
 	Report func(ok bool, at time.Time)
-	Log    *slog.Logger
-	Now    func() time.Time
+	// ReleaseGuard rechecks, just before the switch makes its rollback
+	// target live, the guards the rollback met when it was requested (the
+	// pause, freezes and approvals a release that never served meets). It
+	// returns why the target may not go live now, or "". nil checks nothing.
+	ReleaseGuard func(ctx context.Context, sw state.DatabaseSwitch) string
+	Log          *slog.Logger
+	Now          func() time.Time
 }
 
 func (w *Worker) ownership(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error) {

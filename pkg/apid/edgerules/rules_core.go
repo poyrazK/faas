@@ -350,10 +350,21 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if prob := s.RouteTargetProblem(ctx, acct.ID, row.AppID, string(row.Kind), *req.Action); prob != nil {
 			return m, prob
 		}
-	} else if req.MatchPath != nil && row.Action.Validate != nil && row.Action.Validate.Parameters != nil {
-		// A path-only update must keep the stored path parameters aligned.
-		if prob := row.Action.Validate.Parameters.Validate(matchPath); prob != nil {
-			return m, prob
+	} else {
+		if req.MatchPath != nil && row.Action.Validate != nil && row.Action.Validate.Parameters != nil {
+			// A path-only update must keep the stored path parameters aligned.
+			if prob := row.Action.Validate.Parameters.Validate(matchPath); prob != nil {
+				return m, prob
+			}
+		}
+		// An app-bound credential may not re-point, widen or re-enable a
+		// stored route rule to another app either (ADR-091 amendment
+		// 2026-11-03, review round 9): changing only match_path, methods,
+		// headers or enabled would carry an account credential's route on.
+		if row.Kind == state.EdgeRuleKindRoute && row.Action.Route != nil {
+			if prob := s.appBoundRouteTargetProblem(ctx, row.AppID, row.Action.Route.TargetAppSlug); prob != nil {
+				return m, prob
+			}
 		}
 	}
 	if row.Kind == state.EdgeRuleKindJWT {

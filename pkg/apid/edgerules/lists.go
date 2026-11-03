@@ -81,9 +81,17 @@ func (s *Service) ListEdgeRuleLists(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("could not read edge rule list references"))
 		return
 	}
+	v := listVisibility{s: s, scope: listScopeFor(r), refs: refs}
 	out := api.ListEdgeRuleListsResponse{Lists: make([]api.EdgeRuleListResponse, 0, len(lists))}
 	for _, l := range lists {
-		out.Lists = append(out.Lists, EdgeRuleListResponse(l, refs[l.Name], false))
+		visible, err := v.visible(r.Context(), l)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read the apps that use edge rule lists"))
+			return
+		}
+		if visible {
+			out.Lists = append(out.Lists, EdgeRuleListResponse(l, refs[l.Name], false))
+		}
 	}
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
@@ -94,26 +102,19 @@ func (s *Service) GetEdgeRuleList(w http.ResponseWriter, r *http.Request, acct s
 	if !ok {
 		return
 	}
-	name := r.PathValue("name")
-	lists, err := store.EdgeRuleListsByName(r.Context(), acct.ID, []string{name})
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not read edge rule lists"))
+	l, refs, prob := s.scopedEdgeRuleList(r.Context(), store, listScopeFor(r), acct.ID, r.PathValue("name"))
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
-	if len(lists) == 0 {
-		api.WriteProblem(w, api.ErrEdgeRuleListNotFound(name))
-		return
-	}
-	refs, err := store.EdgeRuleListReferences(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not read edge rule list references"))
-		return
-	}
-	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleListResponse(lists[0], refs[name], true))
+	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleListResponse(l, refs, true))
 }
 
 // validateEdgeRuleListItems normalizes items and enforces the plan's
-// per-list item cap.
+// per-list item cap. The plan is the one of the account the request acts as:
+// for a company app's list, the account its resources belong to, so the
+// organization's plan rather than its creator's personal one (ADR-091
+// amendment 2026-11-03, review round 9).
 func validateEdgeRuleListItems(plan api.Plan, kind string, items []string) ([]string, *api.Problem) {
 	normalized, err := api.NormalizeEdgeRuleListItems(kind, items)
 	if err != nil {
@@ -159,7 +160,7 @@ func (s *Service) CreateEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 	}
 	maxLists := api.MustLimitsFor(acct.Plan).EdgeRuleListsPerAccount
 	l, err := store.CreateEdgeRuleList(r.Context(), state.CreateEdgeRuleListParams{
-		AccountID: acct.ID, Name: req.Name, Kind: req.Kind, Description: req.Description, Items: items,
+		AccountID: acct.ID, OrgID: listScopeFor(r).orgID, Name: req.Name, Kind: req.Kind, Description: req.Description, Items: items,
 	}, maxLists)
 	switch {
 	case errors.Is(err, state.ErrEdgeRuleListQuota):
@@ -222,7 +223,7 @@ func (s *Service) UpdateEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	name := r.PathValue("name")
-	params, prob := s.edgeRuleListUpdateParams(r.Context(), store, acct, name, req)
+	params, prob := s.edgeRuleListUpdateParams(r.Context(), store, listScopeFor(r), acct, name, req)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -286,7 +287,7 @@ func (s *Service) edgeRuleListHosts(ctx context.Context, store state.EdgeRuleLis
 // edgeRuleListUpdateParams validates a PATCH body against the stored list.
 // Add / remove read the current items first; a concurrent edit between the
 // read and the write is last-writer-wins, as for every list field.
-func (s *Service) edgeRuleListUpdateParams(ctx context.Context, store state.EdgeRuleListStore, acct state.Account, name string, req api.UpdateEdgeRuleListRequest) (state.UpdateEdgeRuleListParams, *api.Problem) {
+func (s *Service) edgeRuleListUpdateParams(ctx context.Context, store state.EdgeRuleListStore, scope listScope, acct state.Account, name string, req api.UpdateEdgeRuleListRequest) (state.UpdateEdgeRuleListParams, *api.Problem) {
 	var params state.UpdateEdgeRuleListParams
 	if req.Description != nil {
 		if prob := validateEdgeRuleListDescription(*req.Description); prob != nil {
@@ -294,21 +295,18 @@ func (s *Service) edgeRuleListUpdateParams(ctx context.Context, store state.Edge
 		}
 		params.Description = req.Description
 	}
-	if req.Items == nil && len(req.Add) == 0 && len(req.Remove) == 0 {
-		return params, nil
-	}
-	lists, err := store.EdgeRuleListsByName(ctx, acct.ID, []string{name})
-	if err != nil {
-		return params, api.ErrCapacity("could not read edge rule lists")
-	}
-	if len(lists) == 0 {
-		return params, api.ErrEdgeRuleListNotFound(name)
-	}
-	edited, prob := editEdgeRuleListItems(lists[0].Items, req, lists[0].Kind)
+	list, _, prob := s.scopedEdgeRuleList(ctx, store, scope, acct.ID, name)
 	if prob != nil {
 		return params, prob
 	}
-	items, prob := validateEdgeRuleListItems(acct.Plan, lists[0].Kind, edited)
+	if req.Items == nil && len(req.Add) == 0 && len(req.Remove) == 0 {
+		return params, nil
+	}
+	edited, prob := editEdgeRuleListItems(list.Items, req, list.Kind)
+	if prob != nil {
+		return params, prob
+	}
+	items, prob := validateEdgeRuleListItems(acct.Plan, list.Kind, edited)
 	if prob != nil {
 		return params, prob
 	}
@@ -323,6 +321,10 @@ func (s *Service) DeleteEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	name := r.PathValue("name")
+	if _, _, prob := s.scopedEdgeRuleList(r.Context(), store, listScopeFor(r), acct.ID, name); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	err := store.DeleteEdgeRuleList(r.Context(), acct.ID, name)
 	var inUse *state.EdgeRuleListInUseError
 	switch {

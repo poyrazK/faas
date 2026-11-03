@@ -55,3 +55,12 @@ func (m *Manager) allowLiveFrame(c *connection) bool {
 	}
 	return true
 }
+
+// allowHandshake takes one new connection from the node's handshake rate.
+func (m *Manager) allowHandshake() bool {
+	if m.handshakes == nil || m.handshakes.Allow() {
+		return true
+	}
+	m.handshakesThrottled.Add(1)
+	return false
+}
