@@ -34,6 +34,8 @@ class AgentConnectionResponse:
     """The key's display prefix."""
     scopes: list[str]
     created_at: datetime.datetime
+    app_id: str | Unset = UNSET
+    """Immutable app boundary of an app_agent connection."""
     client_name: str | Unset = UNSET
     """The client name a hosted sign-in's consent page showed."""
     client_site: str | Unset = UNSET
@@ -59,6 +61,8 @@ class AgentConnectionResponse:
         scopes = self.scopes
 
         created_at = self.created_at.isoformat()
+
+        app_id = self.app_id
 
         client_name = self.client_name
 
@@ -91,6 +95,8 @@ class AgentConnectionResponse:
                 "created_at": created_at,
             }
         )
+        if app_id is not UNSET:
+            field_dict["app_id"] = app_id
         if client_name is not UNSET:
             field_dict["client_name"] = client_name
         if client_site is not UNSET:
@@ -120,6 +126,8 @@ class AgentConnectionResponse:
         scopes = cast(list[str], d.pop("scopes"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        app_id = d.pop("app_id", UNSET)
 
         client_name = d.pop("client_name", UNSET)
 
@@ -156,6 +164,7 @@ class AgentConnectionResponse:
             prefix=prefix,
             scopes=scopes,
             created_at=created_at,
+            app_id=app_id,
             client_name=client_name,
             client_site=client_site,
             label=label,

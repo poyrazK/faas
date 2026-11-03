@@ -539,11 +539,15 @@ func isShortCliAuthCode(raw string) bool {
 func normalizeCliAuthCode(raw string) ([]byte, bool) {
 	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ""))
 	if isMCPAuthCode(normalized) {
-		decoded, err := hex.DecodeString(normalized[4:])
+		prefixLen := 4
+		if strings.HasPrefix(normalized, "MC2") {
+			prefixLen = 5
+		}
+		decoded, err := hex.DecodeString(normalized[prefixLen:])
 		if err != nil || len(decoded) != 32 {
 			return nil, false
 		}
-		return api.HashToken(append([]byte(normalized[:4]+":"), decoded...)), true
+		return api.HashToken(append([]byte(normalized[:prefixLen]+":"), decoded...)), true
 	}
 	if len(normalized) != 8 && len(normalized) != 16 {
 		return nil, false

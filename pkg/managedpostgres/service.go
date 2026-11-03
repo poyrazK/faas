@@ -262,7 +262,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 	if err != nil {
 		return Database{}, quotaDetail(err, reservationLimit)
 	}
-	if database.Spec != request.Spec {
+	if database.Spec != request.Spec || database.Name != request.Name || reservedID != "" && database.ID != reservedID {
 		return Database{}, ErrConflict
 	}
 	if database.State == StateReady {

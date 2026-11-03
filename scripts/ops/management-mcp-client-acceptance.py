@@ -1158,7 +1158,7 @@ def main():
         command_args = ["--non-interactive"]
         if args.profile:
             command_args += ["--profile", args.profile]
-        command_args += ["mcp", "serve", "--transport", "stdio"]
+        command_args += ["mcp", "serve", "--transport", "stdio", "--tools", "all"]
         fields += ["command=" + toml_string(binary), "args=" + json.dumps(command_args)]
         fields.append('env_vars=["FAAS_TOKEN","FAAS_API","XDG_CONFIG_HOME"]')
         env_fields = []

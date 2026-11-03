@@ -411,7 +411,8 @@
       "parent": "billing",
       "routes": [
         "/dashboard/app-costs",
-        "/v1/billing/costs"
+        "/v1/billing/costs",
+        "/v1/apps/{}/costs"
       ],
       "cli": [
         "app costs",
@@ -548,6 +549,8 @@
         "/dashboard/apps/{}/restore",
         "=/v1/apps",
         "=/v1/apps/{}",
+        "/v1/apps/{}/operation-preview",
+        "/v1/apps/{}/resource-inventory",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
         "/v1/deleted-apps",

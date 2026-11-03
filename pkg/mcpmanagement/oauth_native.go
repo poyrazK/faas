@@ -121,12 +121,21 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		oauthError(w, 400, "invalid_request", err.Error())
 		return
 	}
+	toolsets, err := connectionToolsets(req.PostForm.Get("toolsets"), r.opts.Toolsets)
+	if err != nil {
+		oauthError(w, 400, "invalid_request", err.Error())
+		return
+	}
 	var code api.CliAuthCodeResponse
 	if len(capabilities) == 0 {
 		code, err = client.MintMCPAuthCode(ctx, writes)
 	} else {
 		// The code carries exactly these scopes (ADR-20261026195952).
-		code, err = client.MintScopedMCPAuthCode(ctx, append([]string{api.ScopeDeployWrite}, capabilities...))
+		scopes := append([]string(nil), capabilities...)
+		if writes {
+			scopes = append([]string{api.ScopeDeployWrite}, scopes...)
+		}
+		code, err = client.MintScopedMCPAuthCode(ctx, scopes)
 	}
 	login, parseErr := url.Parse(code.URL)
 	// The API controls its console origin; never render credential-bearing,
@@ -144,6 +153,7 @@ func (r *remoteServer) startNativeLogin(ctx context.Context, w http.ResponseWrit
 		return
 	}
 	active.NativeCode, active.NativeURL, active.Capabilities = code.Code, code.URL, capabilities
+	active.Toolsets = toolsets
 	r.opts.Telemetry.consentStep("sign_in_started")
 	if r.opts.Hosted {
 		// One tab: approval sends the browser back to continueLogin
@@ -208,8 +218,9 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 		oauthError(w, 500, "server_error", "Could not prepare account connection")
 		return
 	}
-	g := &oauthGrant{id: id, clientID: flow.ClientID, accountID: account.ID, scopes: grantScopes(flow.Scopes, account.KeyScopes), client: client, expires: minTime(expiry, flow.Expires), credentialExpires: expiry, renewable: renewable, credentialIssued: time.Now(), availableApps: apps, availableEnvironments: environments, capabilities: keyCapabilities(flow.Capabilities, account.KeyScopes), org: org, orgName: orgName}
+	g := &oauthGrant{id: id, clientID: flow.ClientID, accountID: account.ID, scopes: grantScopes(flow.Scopes, account.KeyScopes), client: client, expires: minTime(expiry, flow.Expires), credentialExpires: expiry, renewable: renewable, credentialIssued: time.Now(), availableApps: apps, availableEnvironments: environments, capabilities: keyCapabilities(flow.Capabilities, account.KeyScopes), org: org, orgName: orgName, toolsets: slices.Clone(flow.Toolsets)}
 	r.grants[id], active.GrantID = g, id
+	active.Toolsets = slices.Clone(g.toolsets)
 	r.opts.Telemetry.consentStep("signed_in")
 	active.NativeCode, active.NativeURL = "", ""
 	r.renderConsent(w, active, csrf, account.ID)

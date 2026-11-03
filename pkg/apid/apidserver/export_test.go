@@ -2101,6 +2101,10 @@ func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 	return resolved.command, resolved.shell, problem
 }
 
+var MintMCPAuthCodeForTest = mintMCPAuthCode
+var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
+var MCPCodeScopesForTest = mcpCodeScopes
+
 // WaitPasswordResetMail waits for forgot-password work started off the
 // request path (H86).
 func (r *server) WaitPasswordResetMail() { r.resetMail.wait() }

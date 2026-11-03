@@ -15,6 +15,7 @@ import (
 const (
 	ConfigSourceBaseline     = "baseline"
 	ConfigSourceEnvSet       = "env.set"
+	ConfigSourceEnvBatch     = "env.batch"
 	ConfigSourceEnvDelete    = "env.delete"
 	ConfigSourceSecretSet    = "secret.set"
 	ConfigSourceSecretDelete = "secret.delete"
@@ -168,7 +169,7 @@ type ConfigGuardTelemetryStore interface {
 }
 
 var configRevisionSources = map[string]bool{
-	ConfigSourceBaseline: true, ConfigSourceEnvSet: true, ConfigSourceEnvDelete: true,
+	ConfigSourceBaseline: true, ConfigSourceEnvSet: true, ConfigSourceEnvBatch: true, ConfigSourceEnvDelete: true,
 	ConfigSourceSecretSet: true, ConfigSourceSecretDelete: true, ConfigSourceSecretRotate: true,
 	ConfigSourceRollback: true, ConfigSourceGuardRestore: true,
 }
@@ -180,7 +181,7 @@ var configGuardClosedStatuses = map[string]bool{
 
 // configSourceHasKey reports whether a revision of this source names one key.
 func configSourceHasKey(source string) bool {
-	return source != ConfigSourceBaseline && source != ConfigSourceRollback && source != ConfigSourceGuardRestore
+	return source != ConfigSourceBaseline && source != ConfigSourceEnvBatch && source != ConfigSourceRollback && source != ConfigSourceGuardRestore
 }
 
 func configSourceRestores(source string) bool {

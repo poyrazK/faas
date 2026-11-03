@@ -4490,10 +4490,12 @@ List an app&#39;s deploy tokens
 
 Mint a deploy token (shown once)
 
-`gregale app deploy-token create --app <SLUG> [--label <LABEL>] [--expires-at <RFC3339>]`
+`gregale app deploy-token create [--agent] [--scopes <SCOPES>] --app <SLUG> [--label <LABEL>] [--expires-at <RFC3339>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--agent` | mint an app-bound headless MCP credential |  |
+| `--scopes <SCOPES>` | comma-separated app-agent scopes (requires --agent) |  |
 | `--app <SLUG>` | app the token deploys | required |
 | `--label <LABEL>` | label shown in the list, for example the CI system |  |
 | `--expires-at <RFC3339>` | expiry as an RFC3339 time (default 90 days) |  |
@@ -16649,7 +16651,7 @@ Expose Gregale management tools over stdio or OAuth HTTP
 | `--transport <TRANSPORT>` | management MCP transport (default stdio) | one of `stdio` · `streamable-http` |
 | `--timeout <DURATION>` | per-tool API timeout (default 30s, maximum 1m) |  |
 | `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
-| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision (default all) |  |
+| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision, operate or all (default core) |  |
 | `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
 | `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
