@@ -78,9 +78,10 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		platformTenantRequired    *bool
 		renamedFrom               string
 
-		schedules []CronSchedule
-		ports     []int
-		envKeys   []string
+		schedules     []CronSchedule
+		ports         []int
+		portsLoopback bool
+		envKeys       []string
 		// internalPorts follows the same first-declaration-wins rule.
 		internalPorts    []api.WorkloadPort
 		internalPortsSet bool
@@ -237,6 +238,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		}
 		if !b.portsSet && len(s.ports) > 0 {
 			b.ports = append([]int(nil), s.ports...)
+			b.portsLoopback = s.portsLoopback
 			b.portsSet = true
 		}
 		if !b.internalPortsSet && s.internalPorts != nil {
@@ -302,7 +304,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
 			RenamedFrom:               b.renamedFrom,
-			Unpublished:               b.det == detCompose && len(b.ports) == 0,
+			Unpublished:               b.det == detCompose && (len(b.ports) == 0 || b.portsLoopback),
 			InternalPorts:             b.internalPorts,
 
 			Class:                cls,

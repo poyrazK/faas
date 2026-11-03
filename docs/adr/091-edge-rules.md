@@ -1707,6 +1707,62 @@ A further edge-security review found two ways an access rule did not hold.
    setting that serves an app only on its custom domains is a separate
    decision.
 
+## Amendment (2026-11-02, later): method overrides, path parameters, unresolved countries, client-chosen scopes
+
+A fourth edge-security review found gates that a request could step around,
+and a geo rule that refused clients it had no reason to refuse.
+
+1. **Method overrides skipped method-scoped gates.** Express
+   (method-override), Laravel, Rails, Spring and ASP.NET run a POST that
+   carries `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override`,
+   or a `_method` query parameter, as the method it names. A gate scoped to
+   `DELETE` compared the request line's `POST` and let it through. A gate of
+   a kind that denies or constrains (`jwt`, `ip`, `geo`, `limit`, `throttle`,
+   `validate`, `maintenance`, `waf`, `challenge`) now also matches the
+   override method: the gateway selects the higher-priority of the request
+   method's match and the override's (the request method's on a tie), and
+   conditions see the method each selects for. Only the nine standard method
+   names count, an override equal to the request method is ignored, and the
+   headers and query are read before any rewrite runs. The trace simulator
+   applies the same rule and says when a rule matched through an override. A
+   `_method` field in a form body is not read: the edge does not parse request
+   bodies to select rules, and the docs say to leave `match_methods` off a
+   gate for an app that honours one.
+2. **`;` path parameters skipped path-scoped gates.** Servlet containers and
+   Spring drop each segment's `;` parameters before routing, so
+   `/admin;x/users` reaches the app's `/admin/users` while the gate on
+   `/admin/**` compared the raw path. Protective path matching now also
+   tries the normalized path with each segment cut at its first `;` (and that
+   form case-folded). As with the earlier forms, it only adds coverage.
+3. **A deny-only geo rule refused addresses with no country.** The hardening
+   in #1942 answered every lookup that produced no country with 503, so an
+   address the database places in no country (a reserved range, or one
+   allocated after the pinned database was built) could not reach an app
+   whose only geo rule denied two countries. The docs meanwhile said such
+   requests pass. Now only a failed lookup is unavailable (503, as before);
+   an address with no country is in no list, so a deny-only rule passes it
+   and an allow list refuses it with 403 `geo_denied`. The database is a
+   monthly DB-IP release pinned by checksum and never fetched by the daemon;
+   it had not been bumped since 2026-09, and the age gauge
+   (`geoip_db_age_seconds`) was registered but never set. That gauge is
+   replaced by `geoip_db_build_timestamp_seconds`, read at scrape time from
+   the database's `build_epoch`, and `FaasGeoIPDatabaseStale` warns when the
+   loaded database is more than 75 days old (two missed releases). The pin
+   moves to 2026-11. Countries still never come from `CF-IPCountry` or any
+   other request header.
+4. **The challenge pass docs overclaimed.** They said a pass "cannot be
+   copied to another machine". A pass is stateless and bound to the client's
+   IPv4 /24 or IPv6 /48 and User-Agent for up to its TTL (24 hours at most),
+   so every client in that range with that User-Agent can use it. The docs
+   now say so and point to short pass TTLs and an address-keyed `throttle`
+   rule for a range that keeps coming back.
+5. **Gates scoped by client-chosen values.** A gate scoped by
+   `match_headers`, or by a `header:`, `cookie:` or `query:` field in its
+   condition, applies only when the client sends that value. This stays
+   allowed (an app may want a gate only for one client), but
+   `gregale edge rule create` now warns, and the docs say to scope gates by
+   path, method, `client_ip`, `country` or `asn`.
+
 ## Amendment (2026-11-03): review round 9 — both paths' gates, route rule edits, rename reports, company lists, broken rules
 
 A review of main after round 8 found these gaps.

@@ -9501,6 +9501,7 @@
       "input_manifest_version",
       "job_id",
       "latest_start_at",
+      "logs_cleared_finished_at",
       "occurrence_id",
       "operation_id",
       "parallelism",
@@ -9787,6 +9788,27 @@
       "provider",
       "subject_id",
       "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "managed_postgres_overage_pending",
+    "columns": [
+      "allowance_unit_seconds",
+      "billed_storage_byte_seconds",
+      "billed_unit_seconds",
+      "from_millicents",
+      "live",
+      "period_start",
+      "previous_live",
+      "previous_millicents",
+      "provider",
+      "step_at",
+      "storage_pool_bytes",
+      "subject_id",
+      "target_millicents",
+      "used_storage_byte_seconds",
+      "used_unit_seconds"
     ],
     "kind": "account_identity"
   },
@@ -12562,6 +12584,17 @@
     "kind": "operational"
   },
   {
+    "table": "object_storage_ceiling_grants",
+    "columns": [
+      "granted_at",
+      "granted_by",
+      "max_bytes",
+      "owner_id",
+      "reason"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "object_storage_capacity_reconciliations",
     "columns": [
       "after_bytes",
@@ -13256,6 +13289,7 @@
       "business_name",
       "created_at",
       "deleted_pending",
+      "deletion_requested_at",
       "id",
       "last_quota_warning_at",
       "name",

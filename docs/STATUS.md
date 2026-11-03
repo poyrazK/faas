@@ -104,6 +104,21 @@ ADR-20261026201726 amendment 2026-11-02, ADR-20261026151103 amendment 5):
   cron's manual run is `409`; manual-run failures name their reason; timezone
   `Local` is refused.
 
+Audit round 3, 2026-11-02 (branch `fix/crons-audit-round3`,
+ADR-20261026201726 amendment 2026-11-02 (2)):
+
+- A strict compute budget hold no longer piles up a run per scheduled time:
+  the sweep leaves the cron due and it runs once after the hold.
+- The drain cancels runs of crons removed by `gregale.yaml`, a project apply
+  or an app's deletion, not only by `DeleteCron`.
+- Manual-run requests a scheduler restart interrupted are failed with a reason
+  instead of staying running forever.
+- Rollbacks warn (HTTP `Warning`, printed by the CLI) about crons added after
+  the deployment they return to; crons are not rolled back.
+- `gregale cron runs` explains `405` (crons always send `POST`) as it does
+  `404`; the webhook delivery example no longer names the unemitted
+  `cron.fired` event.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of
@@ -411,6 +426,18 @@ count, and only a box made of them alone is capped at a minute
 enough to hold every check slot; a check now scores at most 16 KiB of
 headers (ADR-831 amendment 19). Docs and a CLI warning now steer gates to
 `@app`, since a rule naming one host leaves the app's platform hostname open.
+
+2026-11-02, later: a fourth review fixed five more (ADR-091 amendment
+2026-11-02, later). Gates scoped to `DELETE`, `PUT` or `PATCH` now also cover
+a POST that asks the app to run it as that method (`X-HTTP-Method-Override`
+and similar headers, `?_method=`), and path gates also match the path without
+`;` parameters, which Java servers drop. A deny-only `geo` rule no longer
+answers 503 to an address the database places in no country (an allow list
+refuses it); a failed lookup still answers 503. The country database moves
+to the 2026-11 release, and `FaasGeoIPDatabaseStale` warns when it is more
+than 75 days old. The challenge-pass docs now say a pass is shared by its
+/24 or /48 and User-Agent, and the CLI warns when a gate is scoped by
+headers, cookies or query values the client chooses.
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

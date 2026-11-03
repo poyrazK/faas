@@ -22214,25 +22214,28 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
 	// missing durable checkpoint therefore means the whole reported value is
-	// new usage. Counter regression means vmmd or the interface restarted: move
-	// the baseline back without turning unsigned wraparound into a huge charge.
+	// new usage. A counter below its checkpoint means vmmd or the interface
+	// restarted and counts from zero again, so its whole value is new usage
+	// too; dropping it lost each restart's first reading of egress
+	// (ADR-20261101113742). The baseline moves to the new value either way, and
+	// a delta is never negative.
 	netTxDelta, netRxDelta := int64(0), int64(0)
 	nextTx, nextRx := previousTx, previousRx
 	nextTxValid, nextRxValid := previousTxValid, previousRxValid
 	if netTxValid {
-		if !previousTxValid {
-			netTxDelta = netTxCumulative
-		} else if netTxCumulative >= previousTx {
+		if previousTxValid && netTxCumulative >= previousTx {
 			netTxDelta = netTxCumulative - previousTx
+		} else {
+			netTxDelta = netTxCumulative
 		}
 		nextTx = netTxCumulative
 		nextTxValid = true
 	}
 	if netRxValid {
-		if !previousRxValid {
-			netRxDelta = netRxCumulative
-		} else if netRxCumulative >= previousRx {
+		if previousRxValid && netRxCumulative >= previousRx {
 			netRxDelta = netRxCumulative - previousRx
+		} else {
+			netRxDelta = netRxCumulative
 		}
 		nextRx = netRxCumulative
 		nextRxValid = true
@@ -31110,7 +31113,9 @@ func (s *PgStore) ListRequestTelemetryByPlatformTenant(ctx context.Context, arg 
 // dependency view. The handler performs all redaction and aggregation after
 // this tenant-scoped query returns.
 func (s *PgStore) ListRequestTelemetryDependencySpans(ctx context.Context, arg sqlc.ListRequestTelemetryDependencySpansParams) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {
-	return s.appErrorsQueries().ListRequestTelemetryDependencySpans(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {
+		return s.appErrorsQueries().ListRequestTelemetryDependencySpans(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryCoverage backs the debugger coverage endpoint. The
@@ -31182,44 +31187,58 @@ func (s *PgStore) RequestTelemetryErrorsByRoute(ctx context.Context, arg sqlc.Re
 // request analytics summary. The SQL weights collapsed telemetry rows by
 // their count column and is bounded by the caller's retention window.
 func (s *PgStore) RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsSummary(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsSummary(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByDimension backs the bounded top-N customer
 // analytics grouping surface.
 func (s *PgStore) RequestTelemetryAnalyticsByDimension(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByDimension(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByDimension(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByRoute backs the bounded top-route portion of
 // the customer-facing request analytics response.
 func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByDeployment returns a bounded request-weighted
 // deployment split for the caller's analytics window. TotalRequests is the
 // full pre-limit count used to calculate the visible __other__ share.
 func (s *PgStore) RequestTelemetryAnalyticsByDeployment(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByDeployment(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByDeployment(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByRouteDeployment backs the bounded per-route
 // deployment allocation and CPU-comparison surface.
 func (s *PgStore) RequestTelemetryAnalyticsByRouteDeployment(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByRouteDeployment(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByRouteDeployment(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsTimeseries backs the zero-filled hourly customer
 // analytics chart. The SQL query weights collapsed telemetry rows by count.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsTimeseriesGrouped backs zero-filled hourly series
 // for a bounded top-N analytics dimension.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseriesGrouped(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseriesGrouped(ctx, db, arg)
+	})
 }
 
 // --- ADR-127 PR-B — regression observation persistence + dashboard reads ---
@@ -32216,17 +32235,44 @@ func pgUUIDString(id pgtype.UUID) string {
 // exp-backoff): the operator verb has no exp-backoff and no
 // last_error carry-over — the operator is signalling "re-drive this
 // record from clean". Returns state.ErrNotFound when the row does
-// not exist so the handler can emit a 404.
-func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) error {
-	tx, err := s.pool.Begin(ctx)
+// not exist, or belongs to another trigger or app, so the handler
+// can emit a 404.
+func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error {
+	params, err := triggerRecordScopeParams(appID, triggerID, recordID)
 	if err != nil {
 		return err
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: retry trigger record begin: %w", err)
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := retryTriggerReceiptTx(ctx, tx, id, "", ""); err != nil {
+	owned, err := sqlc.New().TriggerRecordInScope(ctx, tx, params)
+	if err != nil {
+		return fmt.Errorf("state: retry trigger record scope: %w", err)
+	}
+	if !owned {
+		return ErrNotFound
+	}
+	if err := retryTriggerReceiptTx(ctx, tx, recordID, "", appID); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: retry trigger record commit: %w", err)
+	}
+	return nil
+}
+
+// triggerRecordScopeParams parses the ids an operator record verb is
+// scoped by. A malformed id names no record of the trigger.
+func triggerRecordScopeParams(appID, triggerID, recordID string) (sqlc.TriggerRecordInScopeParams, error) {
+	app, appErr := parsePgUUID(appID)
+	trigger, triggerErr := parsePgUUID(triggerID)
+	record, recordErr := parsePgUUID(recordID)
+	if appErr != nil || triggerErr != nil || recordErr != nil {
+		return sqlc.TriggerRecordInScopeParams{}, ErrNotFound
+	}
+	return sqlc.TriggerRecordInScopeParams{ID: record, TriggerID: trigger, AppID: app}, nil
 }
 
 // RetryQueueDeadLetter (ADR-134 PR-C) is the queue counterpart to
@@ -32485,14 +32531,19 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 // (which preserves history); this verb preserves no DLQ row. The
 // record's parent trigger is untouched; this is a record-level
 // operation only.
-func (s *PgStore) DropTriggerRecordByOperator(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`delete from trigger_records where id = $1`,
-		id)
+//
+// The record must belong to triggerID, a trigger of appID; any other
+// record answers ErrNotFound.
+func (s *PgStore) DropTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error {
+	scope, err := triggerRecordScopeParams(appID, triggerID, recordID)
 	if err != nil {
-		return fmt.Errorf("state: drop trigger_record %s: %w", id, err)
+		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().DropTriggerRecordByOperator(ctx, s.pool, sqlc.DropTriggerRecordByOperatorParams(scope))
+	if err != nil {
+		return fmt.Errorf("state: drop trigger_record %s: %w", recordID, err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil

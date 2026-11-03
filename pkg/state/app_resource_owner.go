@@ -101,7 +101,8 @@ func organizationAccount(org Org) Account {
 	}
 	return Account{ID: org.ID, ResourceOrgID: org.ID, ResourceOwnershipEnabled: org.ResourceOwnershipEnabled, Plan: org.Plan, Status: status,
 		ProviderCustomerID: org.ProviderCustomerID, StripeSubscriptionItem: org.StripeSubscriptionItem,
-		CreatedAt: org.CreatedAt, AbuseHoldAt: org.AbuseHoldAt, AbuseHoldReason: org.AbuseHoldReason}
+		CreatedAt: org.CreatedAt, AbuseHoldAt: org.AbuseHoldAt, AbuseHoldReason: org.AbuseHoldReason,
+		DeletionRequestedAt: org.DeletionRequestedAt}
 }
 
 // ListBillingResourceAccounts adds shared tenant subjects without adding human

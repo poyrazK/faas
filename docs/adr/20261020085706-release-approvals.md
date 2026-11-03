@@ -236,3 +236,10 @@ A production environment synced from Git with `approval_policy: manual` activate
   - asks for more than one approval, since a revision carries one;
   - on a company app, does not let the approver's role approve.
 - A revision's author is a Git identity, not a Gregale account, so self-approval is not judged, as for a protected-branch revision.
+
+## Amendment 9 (2026-11-03): a protected promotion's approval is held to who may approve
+
+A protected production environment's promotion approval stands in for each promoted app's release approval policy (amendment 2), but it could be given with an API key, and by any owner or admin of the project's organization whatever the policy's approvers (release review 2026-11-03). An owner's CI key could so approve and ship a production promotion with no person deciding. Now, when a promoted app's policy needs an approval:
+
+- an approval sent with an API key or token is refused (`403 release_approval_session_required`); a person signed in approves, as for a release (amendment 4). Promotions no policy covers, and plan approvals, still take keys;
+- on a company app, the approval stands in only when its approver is a current member whose role the policy lets approve (`403 org_role_forbidden` at promote time otherwise).

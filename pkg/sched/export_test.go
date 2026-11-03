@@ -101,6 +101,7 @@ var RouterCloseGrace = &routerCloseGrace
 
 // Package-level funcs
 var AppTaskFailureStage = appTaskFailureStage
+var DeploymentStaticEgressIP = deploymentStaticEgressIP
 var AppTaskGRPCCode = appTaskGRPCCode
 var AppTaskResultFromResponse = appTaskResultFromResponse
 var AppendEnvironmentGitOpsJobServiceBindings = appendEnvironmentGitOpsJobServiceBindings
@@ -1132,6 +1133,18 @@ func (r *Engine) ReconcileFinancialBudgetStopsWithPreload(ctx context.Context, a
 	return r.reconcileFinancialBudgetStops(ctx, appID, &strictComputePreload{rows: map[string][]state.Instance{appID: rows}, leases: leases})
 }
 
+// RecordRunningReasonObservations runs the reaper's "why is it running"
+// recorder (ADR 20261102205122).
+func (l *Loop) RecordRunningReasonObservations(ctx context.Context, apps []state.App, snapshot []InstanceInfo, now time.Time) {
+	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
+}
+
+// StrictComputeSweepIdle reports whether the reaper tick's strict compute
+// sweep skips app (ADR 20261102205122).
+func (r *Engine) StrictComputeSweepIdle(ctx context.Context, apps []state.App, app state.App) bool {
+	return r.loadStrictComputePreload(ctx, apps).idle(app, r.financialBudgetNow())
+}
+
 // LockApp, TryLockApp and AppLocks reach the per-app serialisation locks
 // (ADR 20261102160622).
 func (r *Engine) LockApp(appID string) func() { return r.lockApp(appID) }
@@ -1162,4 +1175,9 @@ func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
 		due[i] = c.recoveryDue(now)
 	}
 	return due
+}
+
+// FailInterruptedFireNowRequests runs the interrupted manual-run sweep once.
+func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
+	r.failInterruptedFireNowRequests(ctx)
 }

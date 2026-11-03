@@ -80,6 +80,18 @@ func (s *server) releaseFreezeOrSchedule(r *http.Request, acct state.Account, ap
 	if p != nil {
 		return nil, p
 	}
+	// A scheduled release is built, and its release command runs, now; only
+	// its traffic waits for release_at. A freeze active now refuses it as it
+	// refuses an immediate release (ADR-20261019071733 amendment 8).
+	nowProblem, overridden := s.checkReleaseFreeze(r, acct, app, req.Scope, req.OverrideFreeze)
+	if nowProblem != nil {
+		if nowProblem.Code == api.CodeReleaseFrozen {
+			nowProblem = nowProblem.WithHint("A scheduled release is built and runs its release command now; only its traffic waits for release_at. " +
+				"Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy with --override-freeze REASON; the override is audited.")
+		}
+		return nil, nowProblem
+	}
+	deferFreezeOverrideAudit(r, overridden)
 	override, overrideIDs, p := s.scheduledFreezeOverride(r, acct, app, req.Scope, req.OverrideFreeze, at)
 	if p != nil {
 		return nil, p

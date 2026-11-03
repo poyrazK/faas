@@ -26,6 +26,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -611,7 +612,48 @@ func cmdEdgeRulesCreate(args []string) int {
 	PrintOK(osStdout, "Edge rule %s created for app %s (kind=%s, priority=%d).", out.ID, *slug, out.Kind, out.Priority)
 	warnRootOnlyProtectiveRule(*kind, visited["match-path"])
 	warnSingleHostProtectiveRule(*kind, *matchHost, *slug)
+	warnClientScopedProtectiveRule(*kind, matchHeaderMap, condition)
 	return 0
+}
+
+// warnClientScopedProtectiveRule flags a gate scoped by request headers,
+// cookies or query parameters. The client chooses those, so a rule that
+// applies only when one is present (or absent, or has some value) is skipped
+// by a client that sends otherwise (ADR-091 amendment 2026-11-02, later).
+func warnClientScopedProtectiveRule(kind string, matchHeaders map[string]string, condition *api.EdgeRuleMatchExpr) {
+	if !api.EdgeRuleKindUsesProtectivePathMatch(kind) {
+		return
+	}
+	fields := make([]string, 0, len(matchHeaders))
+	for name := range matchHeaders {
+		fields = append(fields, "header "+name)
+	}
+	fields = append(fields, clientChosenMatchFields(condition)...)
+	if len(fields) == 0 {
+		return
+	}
+	slices.Sort(fields)
+	fields = slices.Compact(fields)
+	PrintWarn(osStderr, "This %s rule is scoped by %s, which the client chooses: a client that sends different values is not checked. Scope it by path, method, client_ip, country or asn instead.", kind, strings.Join(fields, ", "))
+}
+
+// clientChosenMatchFields lists the header:, cookie: and query: fields a
+// match condition reads.
+func clientChosenMatchFields(e *api.EdgeRuleMatchExpr) []string {
+	if e == nil {
+		return nil
+	}
+	var out []string
+	if prefix, name, ok := strings.Cut(e.Field, ":"); ok && (prefix == "header" || prefix == "cookie" || prefix == "query") {
+		out = append(out, prefix+" "+name)
+	}
+	for i := range e.All {
+		out = append(out, clientChosenMatchFields(&e.All[i])...)
+	}
+	for i := range e.Any {
+		out = append(out, clientChosenMatchFields(&e.Any[i])...)
+	}
+	return append(out, clientChosenMatchFields(e.Not)...)
 }
 
 // warnSingleHostProtectiveRule flags a gate written for one exact host. An
