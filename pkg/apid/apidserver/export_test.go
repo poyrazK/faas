@@ -2099,3 +2099,6 @@ func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key)
 func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 	return l.retryAfter(key)
 }
+
+// RouteProbeAccountQueues exposes the per-account probe ordering (H79).
+var RouteProbeAccountQueues = routeProbeAccountQueues

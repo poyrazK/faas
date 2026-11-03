@@ -710,6 +710,14 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
 
+// ManagedPostgresUsageWaiverPeriod bounds the usage waiver of a scheduled
+// delete (ADR-20261029174950 decision 6, amendment 1): a database's waiver
+// counts only when no earlier one for it began within this period. Deleting
+// and undeleting in a loop used to park a database's storage for free, billed
+// only for the short ready gaps (H106). ManagedPostgresUsageForSubject
+// spells the same 30 days in SQL.
+const ManagedPostgresUsageWaiverPeriod = 30 * 24 * time.Hour
+
 // ManagedPostgresRestoreSlots is how many databases a point-in-time restore
 // may hold past the plan's database limit, and ManagedPostgresRestoreSlotWindow
 // how long such a copy lasts before its delete is scheduled when the account
@@ -7475,6 +7483,10 @@ const (
 	// (DeploymentQueuedBuildTimeoutSeconds, anchored on enqueued_at) still
 	// fails a build that never finds capacity.
 	BuildDiskCapacityRetryDelay = 30 * time.Second
+	// BuildDiskCapacityMaxWait is how long after it was enqueued a build may
+	// keep waiting for build disk before it fails with the disk-full error
+	// instead of being requeued (H83).
+	BuildDiskCapacityMaxWait = 15 * time.Minute
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
@@ -13979,8 +13991,11 @@ const (
 	RouteHealthProbeChallengeTTL      = 2 * time.Minute
 	RouteHealthProbePollInterval      = 15 * time.Second
 	RouteHealthProbeRoundTimeout      = 55 * time.Second
-	RouteHealthProbePruneInterval     = time.Minute
-	RouteHealthProbeRetention         = 24 * time.Hour
+	// RouteHealthProbeWorkers is how many accounts one apid probes at once;
+	// each account's targets run in turn (H79).
+	RouteHealthProbeWorkers       = 8
+	RouteHealthProbePruneInterval = time.Minute
+	RouteHealthProbeRetention     = 24 * time.Hour
 	// A probe window is unknown when at least this share of responses were
 	// 401/403: customer auth gates stay in force for probes.
 	RouteHealthProbeUnauthenticatedShare = 0.5
