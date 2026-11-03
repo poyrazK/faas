@@ -7913,6 +7913,22 @@ groups:
           summary: "Published IP ranges for crawler {{ $labels.crawler }} have not refreshed in 36 h"
           description: "Every edge_crawler_ranges_refresh_total attempt for {{ $labels.crawler }} in 36h failed. Gateways keep the last good ranges for 7 days, then stop verifying {{ $labels.crawler }}, so verified_ai_crawler rules stop matching it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCrawlerRangesStale.md"
+      # ADR-091 amendment 2026-11-02 (later): the geo country database is a
+      # pinned monthly DB-IP release (faas_geoip_release) that nothing
+      # refreshes on its own. Addresses move between countries and new ones
+      # are allocated; 75 days is two missed monthly bumps.
+      - alert: FaasGeoIPDatabaseStale
+        expr: (time() - geoip_db_build_timestamp_seconds) > 75 * 86400
+        for: 1h
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} judges geo rules with a country database built more than 75 days ago"
+          description: "geoip_db_build_timestamp_seconds on {{ $labels.instance }} is more than 75 days old. Addresses reassigned since then resolve to their old country or to none, so kind=geo rules and country match conditions misjudge them. Bump faas_geoip_release and re-run the geoip role."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGeoIPDatabaseStale.md"
       # ADR-20261021220456: attack mode challenges every visitor to an
       # app. While it is preview, each use is reviewed (criterion A3).
       - alert: FaasEdgeAttackModeActive
