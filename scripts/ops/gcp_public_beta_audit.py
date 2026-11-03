@@ -181,6 +181,40 @@ def rule_allows_ports(rule: dict[str, Any], required: set[int]) -> bool:
     return admitted == required
 
 
+def custom_domain_tls_exceptions(policy: dict[str, Any], snap: dict[str, Any]) -> tuple[set[str], list[str]]:
+    """Only the dedicated control-plane edge may admit public HTTP/HTTPS."""
+    config = policy["access"].get("custom_domain_tls", {})
+    if not config.get("enabled"):
+        return set(), []
+    failures: list[str] = []
+    allowed: set[str] = set()
+    tag = config["target_tag"]
+    control = policy["control_plane"]["instance"]
+    tagged = {i["name"] for i in snap.get("instances", []) if tag in i.get("tags", {}).get("items", [])}
+    if tagged != {control}:
+        failures.append(f"custom-domain edge tag {tag} must belong only to {control}; observed {sorted(tagged)}")
+    firewalls = {r.get("name"): r for r in snap.get("firewalls", [])}
+    for family, name in config["firewall_rules"].items():
+        rule = firewalls.get(name, {})
+        entries = rule.get("allowed", [])
+        expected_source = "0.0.0.0/0" if family == "ipv4" else "::/0"
+        valid = (
+            not rule.get("disabled")
+            and rule.get("direction", "INGRESS") == "INGRESS"
+            and set(rule.get("sourceRanges", [])) == {expected_source}
+            and set(rule.get("targetTags", [])) == {tag}
+            and not rule.get("targetServiceAccounts")
+            and len(entries) == 1
+            and entries[0].get("IPProtocol", entries[0].get("ipProtocol")) == "tcp"
+            and set(entries[0].get("ports", [])) == {"80", "443"}
+        )
+        if valid:
+            allowed.add(name)
+        else:
+            failures.append(f"custom-domain firewall {name} must allow only public TCP/80,443 to tag {tag}")
+    return allowed, failures
+
+
 def pinned_cloudflare_ranges(path: Path) -> set[str]:
     return {line.strip() for line in path.read_text().splitlines() if line.strip()}
 
@@ -285,8 +319,10 @@ def audit(policy: dict[str, Any], snap: dict[str, Any], now: dt.datetime | None 
 
     origin_ports = set(policy["access"]["forbidden_direct_origin_tcp_ports"])
     firewalls = {str(rule.get("name")): rule for rule in snap.get("firewalls", [])}
+    custom_domain_rules, custom_domain_failures = custom_domain_tls_exceptions(policy, snap)
+    failures.extend(custom_domain_failures)
     for rule in firewalls.values():
-        if port_is_public(rule, origin_ports):
+        if port_is_public(rule, origin_ports) and rule.get("name") not in custom_domain_rules:
             failures.append(f"firewall {rule.get('name', '<unnamed>')} exposes the HTTP origin publicly")
     origin_tag = policy["access"]["origin_target_tag"]
     control_tags = set((control_instance or {}).get("tags", {}).get("items", []))

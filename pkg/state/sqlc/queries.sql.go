@@ -5357,6 +5357,33 @@ func (q *Queries) ClaimComputeNodeVMMDEpoch(ctx context.Context, db DBTX, arg Cl
 	return vmmd_epoch, err
 }
 
+const claimCustomDomainProbeFailureEmail = `-- name: ClaimCustomDomainProbeFailureEmail :execrows
+UPDATE custom_domains SET last_cert_issuance_failed_email_at=$1::timestamptz
+WHERE domain=$2::text::citext AND app_id=$3::text::uuid AND challenge_token=$4::text
+ AND cert_status='failed' AND cert_failed_at<=$1::timestamptz-interval '15 minutes'
+ AND (last_cert_issuance_failed_email_at IS NULL OR last_cert_issuance_failed_email_at<$1::timestamptz-interval '24 hours')
+`
+
+type ClaimCustomDomainProbeFailureEmailParams struct {
+	At     pgtype.Timestamptz
+	Domain string
+	AppID  string
+	Token  string
+}
+
+func (q *Queries) ClaimCustomDomainProbeFailureEmail(ctx context.Context, db DBTX, arg ClaimCustomDomainProbeFailureEmailParams) (int64, error) {
+	result, err := db.Exec(ctx, claimCustomDomainProbeFailureEmail,
+		arg.At,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimCustomerOperationBlobCleanup = `-- name: ClaimCustomerOperationBlobCleanup :one
 WITH candidate AS (
  SELECT b.id FROM customer_operation_result_blobs b
@@ -7981,6 +8008,15 @@ func (q *Queries) ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const clearCustomDomainProbeObservation = `-- name: ClearCustomDomainProbeObservation :exec
+DELETE FROM domain_doctor_observations WHERE domain=$1::text::citext AND surface_id IS NULL
+`
+
+func (q *Queries) ClearCustomDomainProbeObservation(ctx context.Context, db DBTX, domain string) error {
+	_, err := db.Exec(ctx, clearCustomDomainProbeObservation, domain)
+	return err
 }
 
 const clearDatabaseStandbySlotDrop = `-- name: ClearDatabaseStandbySlotDrop :execrows
@@ -13288,6 +13324,27 @@ func (q *Queries) CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronBy
 	return i, err
 }
 
+const customDomainTLSAdmissionAllowed = `-- name: CustomDomainTLSAdmissionAllowed :one
+SELECT ($1::boolean
+ OR NOT EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts h WHERE h.wildcard_domain=$2::text::citext)
+ OR EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts h WHERE h.wildcard_domain=$2::text::citext AND h.name=$3::text))::boolean AS allowed
+`
+
+type CustomDomainTLSAdmissionAllowedParams struct {
+	Probe  bool
+	Domain string
+	Name   string
+}
+
+// Run after locking the claim: an allowlist writer may have committed while
+// that lock was being acquired, so this read needs its own fresh snapshot.
+func (q *Queries) CustomDomainTLSAdmissionAllowed(ctx context.Context, db DBTX, arg CustomDomainTLSAdmissionAllowedParams) (bool, error) {
+	row := db.QueryRow(ctx, customDomainTLSAdmissionAllowed, arg.Probe, arg.Domain, arg.Name)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
 const customerOperationAccountPlan = `-- name: CustomerOperationAccountPlan :one
 SELECT plan::text FROM accounts WHERE id=$1::uuid
 `
@@ -15394,15 +15451,23 @@ func (q *Queries) DeleteTrafficAccountRedirectDomains(ctx context.Context, db DB
 
 const deleteTrafficCustomDomain = `-- name: DeleteTrafficCustomDomain :execrows
 DELETE FROM custom_domains WHERE domain=$1::text::citext AND app_id=$2::uuid
+ AND (NOT $3::boolean OR challenge_token=$4::text)
 `
 
 type DeleteTrafficCustomDomainParams struct {
-	Domain string
-	AppID  pgtype.UUID
+	Domain     string
+	AppID      pgtype.UUID
+	ClaimBound bool
+	Token      string
 }
 
 func (q *Queries) DeleteTrafficCustomDomain(ctx context.Context, db DBTX, arg DeleteTrafficCustomDomainParams) (int64, error) {
-	result, err := db.Exec(ctx, deleteTrafficCustomDomain, arg.Domain, arg.AppID)
+	result, err := db.Exec(ctx, deleteTrafficCustomDomain,
+		arg.Domain,
+		arg.AppID,
+		arg.ClaimBound,
+		arg.Token,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -21758,6 +21823,73 @@ func (q *Queries) FinalizeRetainedServiceRolloutAbortTarget(ctx context.Context,
 	return status, err
 }
 
+const findCustomDomainTenantOverlap = `-- name: FindCustomDomainTenantOverlap :one
+SELECT h.hostname::text FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+WHERE s.status <> 'deleted'
+ AND right(lower(h.hostname::text),length($1::text)+1)='.'||lower($1::text)
+ORDER BY h.hostname LIMIT 1
+`
+
+func (q *Queries) FindCustomDomainTenantOverlap(ctx context.Context, db DBTX, suffix string) (string, error) {
+	row := db.QueryRow(ctx, findCustomDomainTenantOverlap, suffix)
+	var h_hostname string
+	err := row.Scan(&h_hostname)
+	return h_hostname, err
+}
+
+const findForeignVerifiedDomainForTenantHostname = `-- name: FindForeignVerifiedDomainForTenantHostname :one
+SELECT d.domain::text FROM custom_domains d
+JOIN apps holder ON holder.id=d.app_id
+LEFT JOIN apps claimant ON claimant.id=nullif($1::text,'')::uuid
+LEFT JOIN orgs holder_org ON holder_org.id=holder.org_id
+LEFT JOIN orgs claimant_org ON claimant_org.id=claimant.org_id
+WHERE d.verified_at IS NOT NULL AND d.domain=$2::text::citext
+ AND (claimant.id IS NULL OR
+  (CASE WHEN holder.org_id IS NOT NULL AND NOT holder_org.personal_org
+    THEN 'org:'||holder.org_id::text ELSE 'account:'||holder.account_id::text END)
+  <> (CASE WHEN claimant.org_id IS NOT NULL AND NOT claimant_org.personal_org
+    THEN 'org:'||claimant.org_id::text ELSE 'account:'||claimant.account_id::text END))
+`
+
+type FindForeignVerifiedDomainForTenantHostnameParams struct {
+	AppID    string
+	Hostname string
+}
+
+func (q *Queries) FindForeignVerifiedDomainForTenantHostname(ctx context.Context, db DBTX, arg FindForeignVerifiedDomainForTenantHostnameParams) (string, error) {
+	row := db.QueryRow(ctx, findForeignVerifiedDomainForTenantHostname, arg.AppID, arg.Hostname)
+	var d_domain string
+	err := row.Scan(&d_domain)
+	return d_domain, err
+}
+
+const findForeignVerifiedWildcardForClaim = `-- name: FindForeignVerifiedWildcardForClaim :one
+SELECT d.domain::text FROM custom_domains d
+JOIN apps holder ON holder.id = d.app_id
+JOIN apps claimant ON claimant.id = $1::text::uuid
+LEFT JOIN orgs holder_org ON holder_org.id = holder.org_id
+LEFT JOIN orgs claimant_org ON claimant_org.id = claimant.org_id
+WHERE d.verified_at IS NOT NULL AND d.domain = ANY($2::text[]::citext[])
+  AND (CASE WHEN holder.org_id IS NOT NULL AND NOT holder_org.personal_org
+       THEN 'org:' || holder.org_id::text ELSE 'account:' || holder.account_id::text END)
+   <> (CASE WHEN claimant.org_id IS NOT NULL AND NOT claimant_org.personal_org
+       THEN 'org:' || claimant.org_id::text ELSE 'account:' || claimant.account_id::text END)
+ORDER BY length(d.domain) DESC, d.domain LIMIT 1
+`
+
+type FindForeignVerifiedWildcardForClaimParams struct {
+	AppID string
+	Names []string
+}
+
+// The caller holds the domain publication guard and destination app lock.
+func (q *Queries) FindForeignVerifiedWildcardForClaim(ctx context.Context, db DBTX, arg FindForeignVerifiedWildcardForClaimParams) (string, error) {
+	row := db.QueryRow(ctx, findForeignVerifiedWildcardForClaim, arg.AppID, arg.Names)
+	var d_domain string
+	err := row.Scan(&d_domain)
+	return d_domain, err
+}
+
 const findInvoiceIDsByProviderKey = `-- name: FindInvoiceIDsByProviderKey :many
 SELECT id FROM invoices
 WHERE account_id = $1::uuid
@@ -21964,6 +22096,20 @@ func (q *Queries) FindRuntimeRelease(ctx context.Context, db DBTX, arg FindRunti
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const findTenantHostnameWildcardOverlap = `-- name: FindTenantHostnameWildcardOverlap :one
+SELECT domain::text FROM custom_domains
+WHERE domain=ANY($1::citext[])
+ AND (verified_at IS NOT NULL OR verification_expires_at IS NULL OR verification_expires_at>clock_timestamp())
+ORDER BY length(domain::text) DESC,domain LIMIT 1
+`
+
+func (q *Queries) FindTenantHostnameWildcardOverlap(ctx context.Context, db DBTX, names []string) (string, error) {
+	row := db.QueryRow(ctx, findTenantHostnameWildcardOverlap, names)
+	var domain string
+	err := row.Scan(&domain)
+	return domain, err
 }
 
 const finishAppFork = `-- name: FinishAppFork :one
@@ -40765,6 +40911,40 @@ func (q *Queries) JobTaskLogTarget(ctx context.Context, db DBTX, arg JobTaskLogT
 	return i, err
 }
 
+const knownCustomDomainTLSHost = `-- name: KnownCustomDomainTLSHost :one
+SELECT EXISTS (
+ SELECT 1 FROM custom_domain_tls_hosts h JOIN custom_domains d ON d.domain=h.wildcard_domain
+ WHERE h.host=$1::text AND d.domain=$2::text::citext AND d.verified_at IS NOT NULL
+ AND ($3::text='' OR (d.app_id=nullif($3::text,'')::uuid AND d.challenge_token=$4::text))
+ AND ($5::boolean
+   OR NOT EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts a WHERE a.wildcard_domain=d.domain)
+   OR EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts a WHERE a.wildcard_domain=d.domain AND a.name=$6::text))
+)::boolean AS known
+`
+
+type KnownCustomDomainTLSHostParams struct {
+	Host          string
+	Domain        string
+	ExpectedApp   string
+	ExpectedToken string
+	Probe         bool
+	Name          string
+}
+
+func (q *Queries) KnownCustomDomainTLSHost(ctx context.Context, db DBTX, arg KnownCustomDomainTLSHostParams) (bool, error) {
+	row := db.QueryRow(ctx, knownCustomDomainTLSHost,
+		arg.Host,
+		arg.Domain,
+		arg.ExpectedApp,
+		arg.ExpectedToken,
+		arg.Probe,
+		arg.Name,
+	)
+	var known bool
+	err := row.Scan(&known)
+	return known, err
+}
+
 const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
 WITH changed AS (
  UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=$1::timestamptz
@@ -45317,6 +45497,70 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 			&i.SkipIfRunning,
 			&i.LastFiredAt,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomDomainsForActor = `-- name: ListCustomDomainsForActor :many
+select d.domain::text as domain, d.app_id::text as app_id, d.challenge_token,
+       d.verified_at, d.cert_status::text as cert_status, d.cert_expires_at,
+       coalesce(d.cert_last_error, '')::text as cert_last_error,
+       d.dns_last_checked_at, d.cert_failed_at, d.verification_next_check_at,
+       d.verification_expires_at, d.verification_attempts,
+       coalesce(d.environment_id::text, '')::text as environment_id
+from custom_domains d join apps a on a.id = d.app_id
+where a.account_id = $1 or exists (
+    select 1 from org_memberships m where m.org_id = a.org_id
+    and m.account_id = $1 and m.removed_at is null)
+order by d.domain
+`
+
+type ListCustomDomainsForActorRow struct {
+	Domain                  string
+	AppID                   string
+	ChallengeToken          string
+	VerifiedAt              pgtype.Timestamptz
+	CertStatus              string
+	CertExpiresAt           pgtype.Timestamptz
+	CertLastError           string
+	DnsLastCheckedAt        pgtype.Timestamptz
+	CertFailedAt            pgtype.Timestamptz
+	VerificationNextCheckAt pgtype.Timestamptz
+	VerificationExpiresAt   pgtype.Timestamptz
+	VerificationAttempts    int32
+	EnvironmentID           string
+}
+
+func (q *Queries) ListCustomDomainsForActor(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListCustomDomainsForActorRow, error) {
+	rows, err := db.Query(ctx, listCustomDomainsForActor, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomDomainsForActorRow{}
+	for rows.Next() {
+		var i ListCustomDomainsForActorRow
+		if err := rows.Scan(
+			&i.Domain,
+			&i.AppID,
+			&i.ChallengeToken,
+			&i.VerifiedAt,
+			&i.CertStatus,
+			&i.CertExpiresAt,
+			&i.CertLastError,
+			&i.DnsLastCheckedAt,
+			&i.CertFailedAt,
+			&i.VerificationNextCheckAt,
+			&i.VerificationExpiresAt,
+			&i.VerificationAttempts,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -56256,6 +56500,32 @@ func (q *Queries) LockCustomDomainQuotaAccount(ctx context.Context, db DBTX, acc
 	return id, err
 }
 
+const lockCustomDomainTLSAdmissionClaim = `-- name: LockCustomDomainTLSAdmissionClaim :one
+SELECT (d.verified_at IS NOT NULL)::boolean AS verified, d.app_id::text AS app_id,
+ d.challenge_token::text AS token, coalesce(a.org_id,a.account_id)::text AS owner_id
+FROM custom_domains d JOIN apps a ON a.id=d.app_id
+WHERE d.domain=$1::text::citext FOR NO KEY UPDATE OF d
+`
+
+type LockCustomDomainTLSAdmissionClaimRow struct {
+	Verified bool
+	AppID    string
+	Token    string
+	OwnerID  string
+}
+
+func (q *Queries) LockCustomDomainTLSAdmissionClaim(ctx context.Context, db DBTX, domain string) (LockCustomDomainTLSAdmissionClaimRow, error) {
+	row := db.QueryRow(ctx, lockCustomDomainTLSAdmissionClaim, domain)
+	var i LockCustomDomainTLSAdmissionClaimRow
+	err := row.Scan(
+		&i.Verified,
+		&i.AppID,
+		&i.Token,
+		&i.OwnerID,
+	)
+	return i, err
+}
+
 const lockCustomerOperationAccount = `-- name: LockCustomerOperationAccount :one
 SELECT plan::text FROM accounts WHERE id = $1::uuid FOR UPDATE
 `
@@ -61723,6 +61993,45 @@ func (q *Queries) MarkCrashCaptureEncrypted(ctx context.Context, db DBTX, arg Ma
 	return i, err
 }
 
+const markCustomDomainProbeDrifted = `-- name: MarkCustomDomainProbeDrifted :execrows
+UPDATE custom_domains SET
+ verified_at=NULL, cert_status='dns_drifted', cert_expires_at=NULL,
+ cert_last_error=nullif($1::text,''), dns_last_checked_at=$2::timestamptz,
+ cert_failed_at=NULL, last_cert_issuance_failed_email_at=NULL,
+ verification_next_check_at=CASE WHEN $3::boolean THEN now() ELSE verification_next_check_at END,
+ verification_attempts=CASE WHEN $3::boolean THEN 0 ELSE verification_attempts END,
+ verification_expires_at=CASE WHEN $3::boolean THEN now()+interval '7 days' ELSE verification_expires_at END
+WHERE domain=$4::text::citext AND app_id=$5::text::uuid
+ AND challenge_token=$6::text
+ AND (($3::boolean AND verified_at IS NOT NULL)
+   OR (NOT $3::boolean AND verified_at IS NULL AND cert_status='dns_drifted'))
+ AND (dns_last_checked_at IS NULL OR dns_last_checked_at<=$2::timestamptz)
+`
+
+type MarkCustomDomainProbeDriftedParams struct {
+	Reason     string
+	CheckedAt  pgtype.Timestamptz
+	Transition bool
+	Domain     string
+	AppID      string
+	Token      string
+}
+
+func (q *Queries) MarkCustomDomainProbeDrifted(ctx context.Context, db DBTX, arg MarkCustomDomainProbeDriftedParams) (int64, error) {
+	result, err := db.Exec(ctx, markCustomDomainProbeDrifted,
+		arg.Reason,
+		arg.CheckedAt,
+		arg.Transition,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markDatabaseStandbySynced = `-- name: MarkDatabaseStandbySynced :execrows
 UPDATE database_vms SET standby_synced = $1::boolean
 WHERE database_id = $2
@@ -61904,24 +62213,29 @@ func (q *Queries) MarkProjectEnvironmentCloneObjectManifestEntryCopied(ctx conte
 }
 
 const markTrafficDomainVerified = `-- name: MarkTrafficDomainVerified :execrows
-UPDATE custom_domains SET verified_at=now()
-WHERE domain=$1::text::citext AND app_id=$2::uuid
-  AND (NOT $3::boolean OR
+UPDATE custom_domains SET verified_at=now(),
+ cert_status=CASE WHEN $1::boolean THEN 'pending' ELSE cert_status END,
+ cert_expires_at=CASE WHEN $1::boolean THEN NULL ELSE cert_expires_at END,
+ cert_last_error=CASE WHEN $1::boolean THEN NULL ELSE cert_last_error END,
+ cert_failed_at=CASE WHEN $1::boolean THEN NULL ELSE cert_failed_at END,
+ dns_last_checked_at=CASE WHEN $1::boolean THEN clock_timestamp() ELSE dns_last_checked_at END
+WHERE domain=$2::text::citext AND app_id=$3::uuid
+  AND (NOT $1::boolean OR
     (challenge_token=$4::text AND verified_at IS NULL AND verification_expires_at>clock_timestamp()))
 `
 
 type MarkTrafficDomainVerifiedParams struct {
+	ChallengeBound bool
 	Domain         string
 	AppID          pgtype.UUID
-	ChallengeBound bool
 	Token          string
 }
 
 func (q *Queries) MarkTrafficDomainVerified(ctx context.Context, db DBTX, arg MarkTrafficDomainVerifiedParams) (int64, error) {
 	result, err := db.Exec(ctx, markTrafficDomainVerified,
+		arg.ChallengeBound,
 		arg.Domain,
 		arg.AppID,
-		arg.ChallengeBound,
 		arg.Token,
 	)
 	if err != nil {
@@ -79439,6 +79753,77 @@ func (q *Queries) ReadCronActivationDeployment(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readCustomDomainProbeAllowedHosts = `-- name: ReadCustomDomainProbeAllowedHosts :one
+SELECT coalesce(array_agg(h.name::text ORDER BY h.name) FILTER (WHERE h.name IS NOT NULL), '{}')::text[] AS names
+FROM custom_domains d LEFT JOIN custom_domain_tls_allowed_hosts h ON h.wildcard_domain=d.domain
+WHERE d.domain=$1::text::citext AND d.app_id=$2::text::uuid
+ AND d.challenge_token=$3::text GROUP BY d.domain
+`
+
+type ReadCustomDomainProbeAllowedHostsParams struct {
+	Domain string
+	AppID  string
+	Token  string
+}
+
+func (q *Queries) ReadCustomDomainProbeAllowedHosts(ctx context.Context, db DBTX, arg ReadCustomDomainProbeAllowedHostsParams) ([]string, error) {
+	row := db.QueryRow(ctx, readCustomDomainProbeAllowedHosts, arg.Domain, arg.AppID, arg.Token)
+	var names []string
+	err := row.Scan(&names)
+	return names, err
+}
+
+const readCustomDomainProbeClaim = `-- name: ReadCustomDomainProbeClaim :one
+SELECT (verified_at IS NOT NULL)::boolean AS verified, cert_status::text AS status, dns_last_checked_at
+FROM custom_domains WHERE domain=$1::text::citext
+AND app_id=$2::text::uuid AND challenge_token=$3::text
+`
+
+type ReadCustomDomainProbeClaimParams struct {
+	Domain string
+	AppID  string
+	Token  string
+}
+
+type ReadCustomDomainProbeClaimRow struct {
+	Verified         bool
+	Status           string
+	DnsLastCheckedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReadCustomDomainProbeClaim(ctx context.Context, db DBTX, arg ReadCustomDomainProbeClaimParams) (ReadCustomDomainProbeClaimRow, error) {
+	row := db.QueryRow(ctx, readCustomDomainProbeClaim, arg.Domain, arg.AppID, arg.Token)
+	var i ReadCustomDomainProbeClaimRow
+	err := row.Scan(&i.Verified, &i.Status, &i.DnsLastCheckedAt)
+	return i, err
+}
+
+const readCustomDomainProbeObservation = `-- name: ReadCustomDomainProbeObservation :one
+SELECT CASE WHEN o.domain IS NULL THEN NULL ELSE jsonb_build_object(
+ 'Domain',o.domain,'SurfaceID',coalesce(o.surface_id::text,''),'ObservedAt',o.observed_at,
+ 'DNSRecordFound',o.dns_record_found,'PointsToGregale',o.points_to_gregale,'CAAPermits',o.caa_permits,
+ 'IPv6Conflict',o.ipv6_conflict,'ObservedTarget',coalesce(o.observed_target,''),'ObservedAAAA',coalesce(o.observed_aaaa,''),
+ 'CAAObserved',coalesce(o.caa_observed,''),'CertState',o.cert_state,'CertNotAfter',o.cert_not_after,
+ 'LastError',coalesce(o.last_error,''),'DNSCheckedAt',o.dns_checked_at,'CertCheckedAt',o.cert_checked_at
+ ) END::jsonb AS data FROM custom_domains d
+ LEFT JOIN domain_doctor_observations o ON o.domain=d.domain
+ WHERE d.domain=$1::text::citext AND d.app_id=$2::text::uuid
+ AND d.challenge_token=$3::text
+`
+
+type ReadCustomDomainProbeObservationParams struct {
+	Domain string
+	AppID  string
+	Token  string
+}
+
+func (q *Queries) ReadCustomDomainProbeObservation(ctx context.Context, db DBTX, arg ReadCustomDomainProbeObservationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readCustomDomainProbeObservation, arg.Domain, arg.AppID, arg.Token)
+	var data []byte
+	err := row.Scan(&data)
+	return data, err
+}
+
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
 SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved FROM alert_rules WHERE id=$1
 `
@@ -88456,6 +88841,23 @@ func (q *Queries) ReadTenantSurfaceTrafficAccount(ctx context.Context, db DBTX, 
 	return account_id, err
 }
 
+const readTenantSurfaceTrafficOwner = `-- name: ReadTenantSurfaceTrafficOwner :one
+SELECT account_id, coalesce(app_id::text,'')::text AS app_id
+FROM tenant_surfaces WHERE id=$1::uuid
+`
+
+type ReadTenantSurfaceTrafficOwnerRow struct {
+	AccountID pgtype.UUID
+	AppID     string
+}
+
+func (q *Queries) ReadTenantSurfaceTrafficOwner(ctx context.Context, db DBTX, surfaceID pgtype.UUID) (ReadTenantSurfaceTrafficOwnerRow, error) {
+	row := db.QueryRow(ctx, readTenantSurfaceTrafficOwner, surfaceID)
+	var i ReadTenantSurfaceTrafficOwnerRow
+	err := row.Scan(&i.AccountID, &i.AppID)
+	return i, err
+}
+
 const readTrafficAliasHostnameConflict = `-- name: ReadTrafficAliasHostnameConflict :one
 SELECT EXISTS(SELECT 1 FROM apps WHERE slug=$1::text)::boolean AS conflict
 `
@@ -90254,6 +90656,33 @@ func (q *Queries) RecordClonePostgresMaintenance(ctx context.Context, db DBTX, a
 		&i.ReservedByCutoverID,
 	)
 	return i, err
+}
+
+const recordCustomDomainVerificationCheck = `-- name: RecordCustomDomainVerificationCheck :execrows
+UPDATE custom_domains SET dns_last_checked_at=$1::timestamptz
+WHERE domain=$2::text::citext AND app_id=$3::text::uuid
+ AND challenge_token=$4::text AND verified_at IS NULL
+ AND (dns_last_checked_at IS NULL OR dns_last_checked_at<=$1::timestamptz)
+`
+
+type RecordCustomDomainVerificationCheckParams struct {
+	CheckedAt pgtype.Timestamptz
+	Domain    string
+	AppID     string
+	Token     string
+}
+
+func (q *Queries) RecordCustomDomainVerificationCheck(ctx context.Context, db DBTX, arg RecordCustomDomainVerificationCheckParams) (int64, error) {
+	result, err := db.Exec(ctx, recordCustomDomainVerificationCheck,
+		arg.CheckedAt,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordDatabaseVMBackup = `-- name: RecordDatabaseVMBackup :execrows
@@ -93001,6 +93430,29 @@ func (q *Queries) ReleaseConfigurationCandidateOwner(ctx context.Context, db DBT
 	var i ReleaseConfigurationCandidateOwnerRow
 	err := row.Scan(&i.AccountID, &i.ProjectID)
 	return i, err
+}
+
+const releaseCustomDomainProbeFailureEmail = `-- name: ReleaseCustomDomainProbeFailureEmail :exec
+UPDATE custom_domains SET last_cert_issuance_failed_email_at=NULL
+WHERE domain=$1::text::citext AND app_id=$2::text::uuid
+ AND challenge_token=$3::text AND last_cert_issuance_failed_email_at=$4::timestamptz
+`
+
+type ReleaseCustomDomainProbeFailureEmailParams struct {
+	Domain string
+	AppID  string
+	Token  string
+	At     pgtype.Timestamptz
+}
+
+func (q *Queries) ReleaseCustomDomainProbeFailureEmail(ctx context.Context, db DBTX, arg ReleaseCustomDomainProbeFailureEmailParams) error {
+	_, err := db.Exec(ctx, releaseCustomDomainProbeFailureEmail,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+		arg.At,
+	)
+	return err
 }
 
 const releaseDatabaseStandby = `-- name: ReleaseDatabaseStandby :execrows
@@ -97437,6 +97889,32 @@ func (q *Queries) RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDat
 	return i, err
 }
 
+const retryCustomDomainVerificationClaim = `-- name: RetryCustomDomainVerificationClaim :execrows
+UPDATE custom_domains SET verification_next_check_at=now(),verification_attempts=0
+WHERE domain=$1::text::citext AND verified_at IS NULL AND verification_expires_at>now()
+ AND (NOT $2::boolean OR (app_id=nullif($3::text,'')::uuid AND challenge_token=$4::text))
+`
+
+type RetryCustomDomainVerificationClaimParams struct {
+	Domain     string
+	ClaimBound bool
+	AppID      string
+	Token      string
+}
+
+func (q *Queries) RetryCustomDomainVerificationClaim(ctx context.Context, db DBTX, arg RetryCustomDomainVerificationClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, retryCustomDomainVerificationClaim,
+		arg.Domain,
+		arg.ClaimBound,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retryCustomerOperationBlobCleanup = `-- name: RetryCustomerOperationBlobCleanup :execrows
 UPDATE customer_operation_result_blobs SET lease_token = '',lease_until = NULL,next_attempt_at = $1::timestamptz
 WHERE id = $2::uuid AND state = 'deleting' AND lease_token = $3::text
@@ -100715,6 +101193,34 @@ func (q *Queries) SetCrashSnapshotSettings(ctx context.Context, db DBTX, arg Set
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const setCustomDomainDefault = `-- name: SetCustomDomainDefault :one
+INSERT INTO app_default_domains(app_id,domain)
+SELECT $1::text::uuid,domain FROM custom_domains
+WHERE domain=$2::text::citext AND app_id=$1::text::uuid
+ AND environment_id IS NULL AND verified_at IS NOT NULL AND domain NOT LIKE '*.%'
+ AND (NOT $3::boolean OR challenge_token=$4::text)
+ON CONFLICT(app_id) DO UPDATE SET domain=excluded.domain,updated_at=now() RETURNING 1
+`
+
+type SetCustomDomainDefaultParams struct {
+	AppID      string
+	Domain     string
+	ClaimBound bool
+	Token      string
+}
+
+func (q *Queries) SetCustomDomainDefault(ctx context.Context, db DBTX, arg SetCustomDomainDefaultParams) (int32, error) {
+	row := db.QueryRow(ctx, setCustomDomainDefault,
+		arg.AppID,
+		arg.Domain,
+		arg.ClaimBound,
+		arg.Token,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const setCustomerOperationExecutionIdentity = `-- name: SetCustomerOperationExecutionIdentity :exec
@@ -104436,6 +104942,47 @@ func (q *Queries) UpdateCron(ctx context.Context, db DBTX, arg UpdateCronParams)
 	return i, err
 }
 
+const updateCustomDomainProbeCert = `-- name: UpdateCustomDomainProbeCert :execrows
+UPDATE custom_domains SET cert_status=$1::text,
+ cert_expires_at=$2::timestamptz,
+ cert_last_error=nullif($3::text,''),
+ dns_last_checked_at=$4::timestamptz,
+ cert_failed_at=CASE WHEN $1::text='failed' AND cert_status IS DISTINCT FROM 'failed'
+   THEN coalesce($4::timestamptz,now())
+   WHEN $1::text='failed' THEN cert_failed_at ELSE NULL END
+WHERE domain=$5::text::citext
+ AND (NOT $6::boolean OR (app_id=nullif($7::text,'')::uuid AND challenge_token=$8::text))
+ AND (NOT $6::boolean OR $4::timestamptz IS NULL OR dns_last_checked_at IS NULL OR dns_last_checked_at <= $4::timestamptz)
+`
+
+type UpdateCustomDomainProbeCertParams struct {
+	Status     string
+	ExpiresAt  pgtype.Timestamptz
+	LastError  string
+	CheckedAt  pgtype.Timestamptz
+	Domain     string
+	ClaimBound bool
+	AppID      string
+	Token      string
+}
+
+func (q *Queries) UpdateCustomDomainProbeCert(ctx context.Context, db DBTX, arg UpdateCustomDomainProbeCertParams) (int64, error) {
+	result, err := db.Exec(ctx, updateCustomDomainProbeCert,
+		arg.Status,
+		arg.ExpiresAt,
+		arg.LastError,
+		arg.CheckedAt,
+		arg.Domain,
+		arg.ClaimBound,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateCustomerAlertRule = `-- name: UpdateCustomerAlertRule :one
 UPDATE alert_rules SET mcp_min_calls=coalesce($1::integer,mcp_min_calls),
  mcp_for_minutes=coalesce($2::integer,mcp_for_minutes), name=coalesce($3::text,name),enabled=coalesce($4::boolean,enabled),
@@ -105227,6 +105774,55 @@ func (q *Queries) UpsertAutomationPublishReceipt(ctx context.Context, db DBTX, a
 		arg.Evidence,
 	)
 	return err
+}
+
+const upsertCustomDomainProbeObservation = `-- name: UpsertCustomDomainProbeObservation :execrows
+WITH claim AS (
+ SELECT domain FROM custom_domains WHERE domain=$2::text::citext
+ AND app_id=$3::text::uuid AND challenge_token=$4::text FOR SHARE
+)
+INSERT INTO domain_doctor_observations (domain,surface_id,observed_at,dns_record_found,points_to_gregale,
+ caa_permits,ipv6_conflict,observed_target,observed_aaaa,caa_observed,cert_state,cert_not_after,last_error,dns_checked_at,cert_checked_at)
+SELECT claim.domain,($1::jsonb->>'surface_id')::uuid,
+ ($1::jsonb->>'observed_at')::timestamptz,
+ ($1::jsonb->>'dns_record_found')::boolean,
+ ($1::jsonb->>'points_to_gregale')::boolean,
+ ($1::jsonb->>'caa_permits')::boolean,
+ ($1::jsonb->>'ipv6_conflict')::boolean,
+ $1::jsonb->>'observed_target',$1::jsonb->>'observed_aaaa',
+ $1::jsonb->>'caa_observed',$1::jsonb->>'cert_state',
+ ($1::jsonb->>'cert_not_after')::timestamptz,
+ $1::jsonb->>'last_error',($1::jsonb->>'dns_checked_at')::timestamptz,
+ ($1::jsonb->>'cert_checked_at')::timestamptz FROM claim
+ON CONFLICT (domain) DO UPDATE SET
+ surface_id=coalesce(excluded.surface_id,domain_doctor_observations.surface_id),
+ observed_at=excluded.observed_at,dns_record_found=excluded.dns_record_found,points_to_gregale=excluded.points_to_gregale,
+ caa_permits=excluded.caa_permits,ipv6_conflict=excluded.ipv6_conflict,
+ observed_target=excluded.observed_target,observed_aaaa=excluded.observed_aaaa,caa_observed=excluded.caa_observed,
+ cert_state=excluded.cert_state,cert_not_after=excluded.cert_not_after,last_error=excluded.last_error,
+ dns_checked_at=excluded.dns_checked_at,cert_checked_at=excluded.cert_checked_at
+`
+
+type UpsertCustomDomainProbeObservationParams struct {
+	Observation []byte
+	Domain      string
+	AppID       string
+	Token       string
+}
+
+// Hold the matching claim through the observation write, so a replacement
+// cannot be installed between the ownership check and the upsert.
+func (q *Queries) UpsertCustomDomainProbeObservation(ctx context.Context, db DBTX, arg UpsertCustomDomainProbeObservationParams) (int64, error) {
+	result, err := db.Exec(ctx, upsertCustomDomainProbeObservation,
+		arg.Observation,
+		arg.Domain,
+		arg.AppID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertCustomerOperationWorkflowState = `-- name: UpsertCustomerOperationWorkflowState :exec

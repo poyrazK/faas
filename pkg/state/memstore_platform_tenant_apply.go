@@ -122,6 +122,15 @@ func (m *MemStore) planPlatformTenantApplyLocked(ctx context.Context, in ApplyPl
 	if err := m.planPlatformTenantSurfaces(in, &result); err != nil {
 		return ApplyPlatformTenantResult{}, err
 	}
+	for _, item := range result.Surfaces {
+		for _, host := range item.Hostnames {
+			if host.Action == "create" {
+				if err := m.checkPublicTenantHostnameClaimLocked(ctx, host.Hostname.Hostname, item.Surface.AppID); err != nil {
+					return ApplyPlatformTenantResult{}, err
+				}
+			}
+		}
+	}
 	return result, nil
 }
 

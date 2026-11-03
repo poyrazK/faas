@@ -1346,7 +1346,7 @@ func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host str
 			b.rechecks.rememberTenant(host, binding, found)
 		}
 	}
-	if err != nil || (found && binding.Suspended) {
+	if err != nil || (found && binding.Verified && binding.Suspended) {
 		// A control-plane error cannot justify serving a possibly suspended
 		// customer. Do not enter the stale route tier for this host.
 		return false, true
