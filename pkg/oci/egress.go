@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/netns"
 )
@@ -257,10 +258,36 @@ func EgressDialContext(parent *net.Dialer) func(ctx context.Context, network, ad
 //	tr := &http.Transport{DialContext: oci.EgressDialContext(nil)}
 //	hc := &http.Client{Transport: tr, Timeout: 30*time.Second}
 func NewEgressHTTPClient() *http.Client {
-	tr := &http.Transport{
-		DialContext: EgressDialContext(nil),
+	return &http.Client{Transport: newEgressTransport(EgressDialContext(nil))}
+}
+
+// Connection-pool bounds for every egress transport. A bare
+// http.Transport keeps an idle keep-alive connection open until the far
+// end closes it (IdleConnTimeout zero means "never") and puts no ceiling
+// on the idle pool, so a process that talks to many customer-chosen hosts
+// (webhook receivers, log drains, JWKS URLs) held one parked connection,
+// two goroutines and a file descriptor per host for as long as each
+// receiver tolerated it. The values match http.DefaultTransport except
+// MaxIdleConnsPerHost, which is raised from 2 so a burst of deliveries to
+// one receiver can reuse its connections. Request deadlines stay with each
+// caller (client Timeout, or the registry's per-phase timeouts).
+const (
+	EgressIdleConnTimeout     = 90 * time.Second
+	EgressMaxIdleConns        = 100
+	EgressMaxIdleConnsPerHost = 4
+)
+
+// newEgressTransport is the one place the egress transports are built, so
+// the guarded client and its loopback test twin pool connections alike.
+// It never reads proxy settings from the environment: a proxy would carry
+// the request past the dial-time guard.
+func newEgressTransport(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {
+	return &http.Transport{
+		DialContext:         dial,
+		IdleConnTimeout:     EgressIdleConnTimeout,
+		MaxIdleConns:        EgressMaxIdleConns,
+		MaxIdleConnsPerHost: EgressMaxIdleConnsPerHost,
 	}
-	return &http.Client{Transport: tr}
 }
 
 // NewEgressHTTPClientAllowLoopback is the dev/test-only escape hatch
@@ -282,10 +309,7 @@ func NewEgressHTTPClientAllowLoopback() *http.Client {
 	if !EgressAllowLoopbackFromEnv() {
 		return nil
 	}
-	tr := &http.Transport{
-		DialContext: (&net.Dialer{}).DialContext,
-	}
-	return &http.Client{Transport: tr}
+	return &http.Client{Transport: newEgressTransport((&net.Dialer{}).DialContext)}
 }
 
 // EgressAllowLoopbackFromEnv reports whether the dial-time SSRF

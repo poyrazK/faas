@@ -7,9 +7,9 @@ import (
 )
 
 // TestPgAppsListVersionTracksListedRows checks the version schedd's app
-// snapshot compares: it holds while nothing changes and moves with every
-// write to a listed app, including columns the runtime-generation trigger
-// skips, a new app, an app joining a node and a soft delete.
+// snapshot compares: it holds while nothing changes and across scale stamps
+// (ADR 20261103094355), and moves with any other write to a listed app, a new
+// app, an app joining a node and a soft delete.
 func TestPgAppsListVersionTracksListedRows(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	node := resolveDefaultLocal(t, ctx, s)
@@ -27,12 +27,19 @@ func TestPgAppsListVersionTracksListedRows(t *testing.T) {
 		t.Fatalf("version moved without a write: %+v then %+v", all, again)
 	}
 
-	if _, err := pool.Exec(ctx, `update apps set last_scale_out_at = now() where id = $1`, a.ID); err != nil {
-		t.Fatalf("touch last_scale_out_at: %v", err)
+	if _, err := pool.Exec(ctx, `update apps set last_scale_out_at = now(), last_scale_in_at = now() where id = $1`, a.ID); err != nil {
+		t.Fatalf("touch scale stamps: %v", err)
+	}
+	if stamped := read(""); stamped != all {
+		t.Fatalf("version moved with the scale stamps alone: %+v then %+v", all, stamped)
+	}
+
+	if _, err := pool.Exec(ctx, `update apps set maintenance_mode = not maintenance_mode where id = $1`, a.ID); err != nil {
+		t.Fatalf("toggle maintenance_mode: %v", err)
 	}
 	scaled := read("")
 	if scaled == all {
-		t.Fatalf("version %+v did not move with last_scale_out_at", scaled)
+		t.Fatalf("version %+v did not move with maintenance_mode", scaled)
 	}
 
 	_, b := seedPgAccountAndApp(t, s, ctx)

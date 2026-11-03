@@ -311,6 +311,12 @@ type Trigger struct {
 	// (recordSuccess / recordFailure) likewise take it briefly.
 	mu      sync.Mutex
 	backoff map[string]*backoffEntry
+
+	// reuseMu guards the per-deployment sweep's reused resolutions and
+	// plans (ADR 20261103094355; deployment_reuse.go).
+	reuseMu     sync.Mutex
+	resolutions map[string]resolvedDeployment
+	plans       map[string]resolvedPlan
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -567,6 +573,8 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 		headroom = t.ledger.HeadroomMB()
 	}
 	serving := servingScopes(deps)
+	t.pruneReuse(now)
+	listed := t.listedApps(ctx, deps)
 	for _, d := range deps {
 		// A configured floor is serviceable only after the deployment is
 		// live. ListAllDeployments intentionally includes historical and
@@ -578,77 +586,35 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 			t.observe(d.AppID, OutcomeDisabled)
 			continue
 		}
-		app, appErr := state.AppForDeployment(ctx, t.deploymentStore, d)
+		// ADR 20261103094355: decide from the listed app, its resolution
+		// and plan reused for up to floorReuseMaxAge, and resolve all of it
+		// again before admitting. A floor that is met, the usual state,
+		// costs no read.
+		app, fresh, appErr := t.deploymentApp(ctx, d, listed, now)
 		if appErr != nil {
 			t.observe(d.AppID, OutcomeError)
 			continue
 		}
-		if !t.manages(app) || !floorRunsFor(app) {
+		ev := t.evaluateDeployment(ctx, d, app, serving, now, residentRAM, headroom, false)
+		if ev.decision.AdmitNow {
+			if !fresh {
+				t.forgetResolution(d.ID)
+				app, appErr = state.AppForDeployment(ctx, t.deploymentStore, d)
+				if appErr != nil {
+					t.observe(d.AppID, OutcomeError)
+					continue
+				}
+			}
+			ev = t.evaluateDeployment(ctx, d, app, serving, now, residentRAM, headroom, true)
+		}
+		if ev.skip {
 			continue
 		}
-		effective := app.EffectiveMinInstances()
-		if inheritsNoFloor(d, serving) {
-			effective = 0
-		}
-		if dFloor := d.EffectiveMinInstances(); dFloor > effective {
-			effective = dFloor
-		}
-		if effective <= 0 {
-			t.observe(d.AppID, OutcomeDisabled)
+		t.observe(d.AppID, ev.decision.Outcome)
+		if !ev.decision.AdmitNow {
 			continue
 		}
-		plan := t.resolvePlan(ctx, app)
-		if !plan.MinInstancesAllowed() {
-			t.observe(d.AppID, OutcomeDisabled)
-			continue
-		}
-		if app.WorkloadClass == state.WorkloadClassWorker {
-			t.observe(d.AppID, OutcomeDisabled)
-			continue
-		}
-		var conc int
-		if t.ledger != nil {
-			conc = t.ledger.ConcurrencyForDeployment(d.AppID, d.ID)
-		}
-		if conc >= effective {
-			t.observe(d.AppID, OutcomeFloorMet)
-			continue
-		}
-		if conc >= effectiveMaxConcurrency(app, plan) {
-			t.observe(d.AppID, OutcomeAtCapacity)
-			continue
-		}
-		// RAM ceiling pre-check (same as tickPerApp).
-		isRamCeiling := false
-		if t.ledger != nil && api.BillableRAMMB(app.RAMMB) > headroom {
-			isRamCeiling = true
-		}
-		var lastScaleOut time.Time
-		if app.LastScaleOutAt != nil {
-			lastScaleOut = *app.LastScaleOutAt
-		}
-		stats := AppStats{
-			AppID:             d.AppID,
-			AccountID:         app.AccountID,
-			Plan:              plan,
-			Floor:             effective,
-			Concurrency:       conc,
-			MaxConcurrency:    effectiveMaxConcurrency(app, plan),
-			ResidentRAMMB:     residentRAM,
-			HeadroomMB:        headroom,
-			RAMMB:             app.RAMMB,
-			WorkloadClass:     app.WorkloadClass,
-			LastScaleOutAt:    lastScaleOut,
-			ScaleOutCooldownS: scalingOutCooldownS(app),
-			Now:               now,
-			BackoffUntil:      t.peekBackoff(d.AppID),
-			IsRamCeiling:      isRamCeiling,
-		}
-		decision := decide(stats)
-		t.observe(d.AppID, decision.Outcome)
-		if !decision.AdmitNow {
-			continue
-		}
+		effective, conc := ev.effective, ev.conc
 		result, err := t.engine.AdmitInstanceForDeployment(ctx, d.AppID, d.ID, "", wakeBootTriggerFloorDep)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
