@@ -35,6 +35,7 @@ func TestDeploymentCronIntentValidation(t *testing.T) {
 		t.Fatal("invalid schedule accepted")
 	}
 }
+
 // Staged crons follow the cron API's path and timezone rules; a cron carried
 // unchanged, and an intent being undone, keep the rules they were stored
 // under (crons audit 2026-11-03).
