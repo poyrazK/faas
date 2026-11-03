@@ -1074,3 +1074,60 @@ func TestHostPolicyPublicInputSourceCIDRsReplaceTheOpenWebPorts(t *testing.T) {
 		t.Fatalf("input chain still admits 80/443 from anywhere:\n%s", input)
 	}
 }
+
+func TestHostPolicyPublicEntryAddrsTakeOnly443(t *testing.T) {
+	p := DefaultHostPolicy
+	p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("2001:db8::10")}
+	out := p.Render()
+	start, end := strings.Index(out, "chain input {"), strings.Index(out, "chain forward {")
+	if start < 0 || end < start {
+		t.Fatalf("input chain not found:\n%s", out)
+	}
+	input := out[start:end]
+	at := 0
+	for _, rule := range []string{
+		`ip daddr 203.0.113.10 tcp dport 443 accept comment "public entry"`,
+		`ip6 daddr 2001:db8::10 tcp dport 443 accept comment "public entry"`,
+		`ip daddr 203.0.113.10 drop comment "public entry carries 443 only"`,
+		`ip6 daddr 2001:db8::10 drop comment "public entry carries 443 only"`,
+		"tcp dport 22 accept",
+	} {
+		i := strings.Index(input[at:], rule)
+		if i < 0 {
+			t.Fatalf("input chain lacks %q after offset %d, in order:\n%s", rule, at, input)
+		}
+		at += i + len(rule)
+	}
+	for _, broad := range []string{"tcp dport { 22,80,443 } accept", "tcp dport { 80,443 } accept comment"} {
+		if strings.Contains(input, broad) {
+			t.Fatalf("input chain still has %q:\n%s", broad, input)
+		}
+	}
+}
+
+func TestHostPolicyPublicEntryAddrsRejectBadInput(t *testing.T) {
+	for name, mutate := range map[string]func(*HostPolicy){
+		"invalid address": func(p *HostPolicy) { p.PublicEntryAddrs = []netip.Addr{{}} },
+		"zoned address": func(p *HostPolicy) {
+			p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("fe80::1%eth0")}
+		},
+		"IPv4-mapped address": func(p *HostPolicy) {
+			p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("::ffff:203.0.113.10")}
+		},
+		"beside Cloudflare's sources": func(p *HostPolicy) {
+			p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
+			p.PublicInputSourceCIDRs = []netip.Prefix{netip.MustParsePrefix("173.245.48.0/20")}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := DefaultHostPolicy
+			mutate(&p)
+			defer func() {
+				if recover() == nil {
+					t.Fatal("Render did not panic")
+				}
+			}()
+			_ = p.Render()
+		})
+	}
+}
