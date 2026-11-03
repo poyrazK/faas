@@ -165,7 +165,7 @@ func (s *PgStore) ProfileCaptureBlobs(ctx context.Context, accountID, appID, id 
 }
 
 func (s *PgStore) ClaimProfileCapture(ctx context.Context, now time.Time) (ClaimedProfileCapture, error) {
-	row, err := sqlc.New().ClaimQueuedProfileCapture(ctx, s.pool, pgtypeFromTime(now))
+	row, err := sqlc.New().ClaimQueuedProfileCapture(ctx, s.pool, sqlc.ClaimQueuedProfileCaptureParams{Now: pgtypeFromTime(now), MaxRunning: api.ProfileCaptureMaxRunningPerPool})
 	if err != nil {
 		return ClaimedProfileCapture{}, routePolicyReadError(err)
 	}

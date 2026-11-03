@@ -949,6 +949,10 @@ const (
 	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
 	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
 	ProfileCaptureMaxConcurrentPerScheduler = 4
+	// ProfileCaptureMaxRunningPerPool bounds the captures of one pool (an
+	// account, or an organization's apps) running at once, so one customer
+	// cannot hold every scheduler's capture workers; the rest stay queued.
+	ProfileCaptureMaxRunningPerPool = 2
 	// ProfileCaptureMaxListed bounds GET /profiles/captures.
 	ProfileCaptureMaxListed = 50
 	// ProfileCaptureRetention is how long stored capture results remain.

@@ -122,6 +122,23 @@ log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), tracing.Handler(mux)))
 Pass the request's context to outgoing calls so they appear under the
 request. See [`docs/tracing.md`](../../docs/tracing.md#go).
 
+## Profiling
+
+The `preview/profiling` package (on-demand profile captures are a preview
+capability) answers CPU, heap, goroutine, block and mutex captures and, when
+the app sets `profiling.enabled`, sends continuous CPU and heap profiles,
+using only the standard library:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/preview/profiling"
+
+profiling.Start(appContext) // does nothing outside a profiled deployment
+log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), profiling.ServeMux(mux)))
+```
+
+`ServeMux` labels CPU with the matched route. See
+[`docs/profiling.md`](../../docs/profiling.md#capture-a-running-instance-on-demand).
+
 ## Gregale Issues exception reporting
 
 Create a deployment-bound issue ingest token with `gregale issues create-token`
