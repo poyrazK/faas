@@ -349,6 +349,7 @@ func appActivityToProto(activity AppActivity) *githubdpb.GetAppActivityResponse 
 			ReceivedAt:  formatRecoveryTime(item.ReceivedAt),
 			ProcessedAt: formatOptionalRecoveryTime(item.ProcessedAt),
 			UpdatedAt:   formatRecoveryTime(item.UpdatedAt),
+			SkipReason:  item.SkipReason,
 		})
 	}
 	for _, item := range activity.Checks {

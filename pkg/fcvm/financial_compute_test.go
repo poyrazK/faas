@@ -126,7 +126,15 @@ func TestFinancialComputeLocalDeadlineSurvivesAuthorityOutage(t *testing.T) {
 		v.mu.Lock()
 		killed := len(v.killed) > 0
 		v.mu.Unlock()
-		if killed {
+		authority.mu.Lock()
+		attempted := authority.settlements > 0
+		authority.mu.Unlock()
+		// Wait out the expiry's teardown too: a Destroy that joins it returns
+		// the failed settlement instead of settling again.
+		m.mu.Lock()
+		tearingDown := m.instanceStops[req.Instance] != nil
+		m.mu.Unlock()
+		if killed && attempted && !tearingDown {
 			break
 		}
 		if time.Now().After(deadline) {

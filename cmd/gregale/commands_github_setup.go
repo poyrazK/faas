@@ -178,6 +178,11 @@ func cmdGithubSetup(args []string) int {
 		if branch == "" {
 			branch = "main"
 		}
+		if *waitFor != "" {
+			if err := githubSetupCheckWaitFor(root, workflowPath, *waitFor, githubSetupWorkflowBranches(branch, parsedBranches)); err != nil {
+				return printErr("Invalid --wait-for", err)
+			}
+		}
 		desired := renderGithubSetupWorkflow(positional[0], repoName, branch, *rollout, parsedBranches, *pinnedSHA, false, *waitFor)
 		existing, exists, err := readGithubSetupFile(workflowFile)
 		if err != nil {
@@ -266,6 +271,11 @@ func cmdGithubSetup(args []string) int {
 	}
 	if err := validateGithubSetupDeployBranches(workflowBranches); err != nil {
 		return printErr("Invalid saved deploy branch mappings", err)
+	}
+	if *waitFor != "" {
+		if err := githubSetupCheckWaitFor(root, workflowPath, *waitFor, githubSetupWorkflowBranches(branch, workflowBranches)); err != nil {
+			return printErr("Invalid --wait-for", err)
+		}
 	}
 	actionSHA := *pinnedSHA
 	if *pinAction {

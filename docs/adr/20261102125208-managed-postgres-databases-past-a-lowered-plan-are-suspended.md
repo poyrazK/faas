@@ -41,21 +41,23 @@
    - `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` takes `off`, `shadow` (the default) or `on`.
    - Shadow logs each database it would suspend. `on` writes the quota, and only while the compute cap (`FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT`) is `on` too. With the compute cap off, nothing runs.
    - Each sweep counts databases past the plan, scopes suspended and shared scopes left running (`apid_managed_postgres_plan_excess_*`).
-5. **Telling the customer is step 2.**
-   - The database view gets a `plan_excess` reason (`database_limit` or `service_class`), shown by the CLI and the dashboard.
-   - The owner gets an email that lists the suspended databases and how to resume them.
+5. **Telling the customer (steps 2 and 3).**
+   - Step 2: the database view gets a `plan_excess` reason (`database_limit` or `service_class`), shown by the CLI and the dashboard.
+   - Step 3: the owner gets an email that lists the suspended databases and how to resume them.
    - Production keeps the switch at `shadow` until step 2 ships.
 
 ## Consequences
 
 - **Every way of losing a plan now reaches the databases, within one usage sweep:** an ended subscription, a portal change and an operator change.
-- **A suspended database's connections fail.** The application sees the provider's error until step 2 explains it.
+- **A suspended database's connections fail.** The application sees the provider's error; the view (step 2) and the email (step 3) explain it.
 - **Nothing a customer stored is lost by a downgrade.** Only the open item can change that.
 - **Mixed scopes are rare.** A restore that shares its source's project is the only case, and it stays counted toward the ceiling.
 
 ## Delivery
 
-1. **This change.**
+1. **The sweep (#6361).**
    - The ranking and the suspension in the cap sweep, behind the switch at `shadow`.
    - Metrics, the environment contract, and the operator guide.
-2. **Next.** The `plan_excess` field on the API, CLI and dashboard, and the owner's email. Then `on` in production.
+2. **The view.** `plan_excess` on the database list and read, the CLI's `list` and `get`, and the dashboard, shown while the switch and the compute cap are both `on`. It is ranked with the same `PlanExcess` the sweep uses.
+   Production can turn the switch `on` in the release that ships it.
+3. **The email.** The sweep records a notice per suspended database (`managed_postgres_plan_excess_notices`) and drops it once the database is back inside the plan. apid mails each notice once through the producer outbox (template `managed_postgres_plan_excess`), behind `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED` on apid and maild (off by default).

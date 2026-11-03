@@ -137,6 +137,15 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			return err
 		}
 	}
+	planGate, planBound := ctx.Value(managedPostgresPlanExcessSubmissionGateKey{}).(func() bool)
+	if planBound {
+		if planGate == nil || !planGate() {
+			return ErrDisabled
+		}
+		if err := s.shareManagedPostgresPlanExcessAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	restoredGate, restoredBound := ctx.Value(accountRestoredSubmissionGateKey{}).(func() bool)
 	if restoredBound {
 		if restoredGate == nil || !restoredGate() {
