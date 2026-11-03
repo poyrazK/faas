@@ -127,3 +127,7 @@ The switch ships with the migration that adds `release_database_switches`, the n
 `postgres-restore` (preview) owns the `database-switches` routes, but `restore_databases` on `POST /v1/apps/{slug}/rollback`, a GA route, started a switch for every account. While the capability is off for the caller, the field now answers `400` as the unknown field it is to them, like its hidden routes. The status is back to proposed until an end-to-end drill restores a real provider database.
 
 Operations: the worker reports each tick and each retried step (`faas_release_worker_*{worker="database_switches"}`), and each outcome (`faas_release_guard_decisions_total{guard="database_switch"}`). `FaasDatabaseSwitchAborting` and `FaasDatabaseSwitchFailed` alert. A failed switch has already undone itself: the previous release serves on the source database, and the restored copy is kept. See `docs/runbooks/FaasReleaseGuards.md`.
+
+## Amendment 2 (2026-11-03): the switch rechecks the release guards before the target goes live
+
+A rollback that restores the database was checked against the rollback guards (the pause, freezes and approvals a release that never served meets, ADR-20261020085706 amendment 10) only when requested, but its target goes live after the restore, which can take long enough for a pause or a freeze to begin. The switch now rechecks the same guards just before it makes the target live, and aborts, keeping the serving release and database, when the target may no longer go live.

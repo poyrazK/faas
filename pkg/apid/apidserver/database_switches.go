@@ -52,12 +52,32 @@ func (s *server) databaseSwitchWorker() *databaseswitch.Worker {
 			_, err := state.InvalidateAppSnapshots(ctx, s.store, appID)
 			return err
 		},
-		AppChanged: func(ctx context.Context, appID string) { _ = s.notif.Notify(ctx, db.NotifyAppChanged, appID) },
-		Ownership:  s.databaseSwitchOwnership,
-		Observe:    s.observeDatabaseSwitch,
-		Report:     s.reportDatabaseSwitchTick,
-		Log:        s.log,
+		AppChanged:   func(ctx context.Context, appID string) { _ = s.notif.Notify(ctx, db.NotifyAppChanged, appID) },
+		Ownership:    s.databaseSwitchOwnership,
+		Observe:      s.observeDatabaseSwitch,
+		Report:       s.reportDatabaseSwitchTick,
+		ReleaseGuard: s.databaseSwitchReleaseGuard,
+		Log:          s.log,
 	}
+}
+
+// databaseSwitchReleaseGuard holds a switch's rollback target, just before
+// it goes live, to the guards its rollback met when requested
+// (rollbackTargetApprovalProblem). It returns why the target may not go live
+// now, or "".
+func (s *server) databaseSwitchReleaseGuard(ctx context.Context, sw state.DatabaseSwitch) string {
+	app, err := s.store.AppByID(ctx, sw.AppID)
+	if err != nil {
+		return ""
+	}
+	target, err := s.store.DeploymentByID(ctx, sw.TargetDeploymentID)
+	if err != nil {
+		return ""
+	}
+	if p := s.rollbackTargetApprovalProblem(ctx, app, target); p != nil {
+		return "The rollback target may no longer go live: " + p.Detail
+	}
+	return ""
 }
 
 // databaseSwitchOwnership scopes a switch's managed PostgreSQL calls to the
