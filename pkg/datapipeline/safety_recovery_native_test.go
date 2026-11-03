@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -144,6 +145,10 @@ func TestReadOnlySourceFailsCompatibility(t *testing.T) {
 	if _, err := pool.Exec(ctx, `CREATE TABLE public.review_readonly(id integer PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
+	baseline, err := inspectSourceSettings(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
 	config := pool.Config()
 	config.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	source, err := pgxpool.NewWithConfig(ctx, config)
@@ -155,12 +160,17 @@ func TestReadOnlySourceFailsCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(checks) != len(baseline) {
+		t.Fatal("read-only session changed the inspected requirements")
+	}
 	found := false
-	for _, check := range checks {
+	for i, check := range checks {
 		if check.Code == "source_writable_required" {
-			found = check.State == "blocked" && check.Remediation != ""
-		} else if check.State != "passed" {
-			t.Fatal("unrelated source requirement failed", check)
+			found = baseline[i].State == "passed" && check.State == "blocked" && check.Remediation != ""
+		} else if check != baseline[i] {
+			// Ordinary CI databases need not enable logical replication or
+			// bounded WAL retention. Read-only mode must preserve their result.
+			t.Fatal("read-only session changed an unrelated requirement", baseline[i], check)
 		}
 	}
 	if !found {
@@ -173,10 +183,8 @@ func TestReadOnlySourceFailsCompatibility(t *testing.T) {
 	if checks, err = inspectSourceSettings(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	for _, check := range checks {
-		if check.State != "passed" {
-			t.Fatal("writable primary failed compatibility", check)
-		}
+	if !slices.Equal(checks, baseline) {
+		t.Fatal("read-only session changed the writable primary's settings", checks, baseline)
 	}
 
 }
