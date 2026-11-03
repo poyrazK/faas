@@ -183,7 +183,8 @@ type ProfileCaptureQueue interface {
 	// A ready automatic or OOM-linked capture enqueues profile.capture_ready
 	// in the same transaction.
 	FinishProfileCapture(ctx context.Context, id string, result api.ProfileCapture, blobs []ProfileCaptureBlob, now time.Time) error
-	// ExpireProfileCaptures fails interrupted captures and deletes expired ones.
+	// ExpireProfileCaptures fails interrupted captures and deletes expired ones
+	// and those of deleted apps.
 	ExpireProfileCaptures(ctx context.Context, now time.Time) (int64, error)
 	// StartProfileCapture records the instance a capturing row runs on, so
 	// an OOM kill during the window can find it.

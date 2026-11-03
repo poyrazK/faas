@@ -2072,6 +2072,43 @@ func (q *Queries) ApplyDeploymentRuntimeUpgradeCutover(ctx context.Context, db D
 	return result.RowsAffected(), nil
 }
 
+const applyEventSubscriptionIntent = `-- name: ApplyEventSubscriptionIntent :many
+UPDATE event_subscriptions SET enabled = (id = ANY($1::uuid[])), updated_at = now()
+WHERE app_id = $2::uuid AND enabled IS DISTINCT FROM (id = ANY($1::uuid[]))
+RETURNING id::text AS id, enabled
+`
+
+type ApplyEventSubscriptionIntentParams struct {
+	Declared []pgtype.UUID
+	AppID    pgtype.UUID
+}
+
+type ApplyEventSubscriptionIntentRow struct {
+	ID      string
+	Enabled bool
+}
+
+// Enable exactly the declared subscriptions of the app.
+func (q *Queries) ApplyEventSubscriptionIntent(ctx context.Context, db DBTX, arg ApplyEventSubscriptionIntentParams) ([]ApplyEventSubscriptionIntentRow, error) {
+	rows, err := db.Query(ctx, applyEventSubscriptionIntent, arg.Declared, arg.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplyEventSubscriptionIntentRow{}
+	for rows.Next() {
+		var i ApplyEventSubscriptionIntentRow
+		if err := rows.Scan(&i.ID, &i.Enabled); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
 select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
@@ -20909,7 +20946,7 @@ WITH plan_retention AS (
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
       AND i.created_at < $3::timestamptz - make_interval(secs => $4::bigint)
-      AND i.created_at < $3::timestamptz - make_interval(secs => r.seconds)
+      AND coalesce(i.last_replayed_at, i.created_at) < $3::timestamptz - make_interval(secs => r.seconds)
     ORDER BY i.created_at
     LIMIT $5::integer
     FOR UPDATE OF i SKIP LOCKED
@@ -20939,6 +20976,10 @@ type ExpirePendingQueueMessagesRow struct {
 // ADR-20261022105723: a pending queue message past its plan's retention
 // moves to the dead letter. A message a worker holds (dispatching) is not
 // touched. The plan resolves as StampDefaultInvocationRetention's does.
+// ADR-20261101093812: retention counts from the message's last replay, so a
+// message replayed from the dead letter gets the whole retention again. A
+// replay is never earlier than the send, so the created_at bound still
+// narrows invocations_queue_pending_created_idx.
 func (q *Queries) ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error) {
 	rows, err := db.Query(ctx, expirePendingQueueMessages,
 		arg.Plans,
@@ -32982,6 +33023,25 @@ func (q *Queries) InsertDeploymentArtifactScan(ctx context.Context, db DBTX, arg
 		&i.RegistryVerificationID,
 	)
 	return i, err
+}
+
+const insertDeploymentEventSubscriptionIntent = `-- name: InsertDeploymentEventSubscriptionIntent :exec
+INSERT INTO deployment_event_subscription_intents (deployment_id, app_id, declared_subscription_ids)
+VALUES ($1::uuid, $2::uuid, $3::uuid[])
+ON CONFLICT (deployment_id) DO NOTHING
+`
+
+type InsertDeploymentEventSubscriptionIntentParams struct {
+	DeploymentID            pgtype.UUID
+	AppID                   pgtype.UUID
+	DeclaredSubscriptionIds []pgtype.UUID
+}
+
+// ADR-20261101030512: the event subscriptions a production manifest deploy
+// declares, applied once the deployment serves all production traffic.
+func (q *Queries) InsertDeploymentEventSubscriptionIntent(ctx context.Context, db DBTX, arg InsertDeploymentEventSubscriptionIntentParams) error {
+	_, err := db.Exec(ctx, insertDeploymentEventSubscriptionIntent, arg.DeploymentID, arg.AppID, arg.DeclaredSubscriptionIds)
+	return err
 }
 
 const insertDeploymentRegistryRootfs = `-- name: InsertDeploymentRegistryRootfs :one
@@ -48663,7 +48723,8 @@ func (q *Queries) ListExpiredCustomerOperationExecutions(ctx context.Context, db
 
 const listFairTenantWorkflowScheduleCandidates = `-- name: ListFairTenantWorkflowScheduleCandidates :many
 SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
-       jsonb_build_array(w.definition)::jsonb AS workflows
+       jsonb_build_array(w.definition)::jsonb AS workflows,
+       coalesce(w.definition->>'name', '')::text AS fair_workflow_name, c.last_admitted_at AS fair_last_admitted_at
 FROM apps a
 JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
@@ -48682,28 +48743,46 @@ WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND a.platform_tenant_req
   AND (NOT coalesce((w.definition->'trigger'->>'tenant_configurable')::boolean, false)
        OR coalesce((c.trigger_snapshot->'tenant_configuration'->'trigger'->>'enabled')::boolean, true))
   AND (c.last_evaluated_at IS NULL OR c.last_evaluated_at < $2::timestamptz)
+  AND ($3::uuid IS NULL OR
+       (coalesce(c.last_admitted_at, '-infinity'::timestamptz), a.id, t.id, coalesce(w.definition->>'name', '')) >
+       (coalesce($4::timestamptz, '-infinity'::timestamptz), $3::uuid,
+        $5::uuid, $6::text))
   AND (EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id = a.account_id AND c.app_id = a.id
        AND c.platform_tenant_id = t.id AND c.status = 'active' AND c.revoked_at IS NULL)
        OR EXISTS (SELECT 1 FROM tenant_surfaces s WHERE s.account_id = a.account_id AND s.app_id = a.id
        AND s.platform_tenant_id = t.id AND s.status = 'active'))
-ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, w.definition->>'name' LIMIT $3
+ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, coalesce(w.definition->>'name', '') LIMIT $7
 `
 
 type ListFairTenantWorkflowScheduleCandidatesParams struct {
-	OwnerNodeID      pgtype.UUID
-	EvaluationMinute pgtype.Timestamptz
-	BatchLimit       int32
+	OwnerNodeID       pgtype.UUID
+	EvaluationMinute  pgtype.Timestamptz
+	AfterAppID        pgtype.UUID
+	AfterAdmittedAt   pgtype.Timestamptz
+	AfterTenantID     pgtype.UUID
+	AfterWorkflowName string
+	BatchLimit        int32
 }
 
 type ListFairTenantWorkflowScheduleCandidatesRow struct {
-	AppID            pgtype.UUID
-	PlatformTenantID pgtype.UUID
-	DeploymentID     pgtype.UUID
-	Workflows        []byte
+	AppID              pgtype.UUID
+	PlatformTenantID   pgtype.UUID
+	DeploymentID       pgtype.UUID
+	Workflows          []byte
+	FairWorkflowName   string
+	FairLastAdmittedAt pgtype.Timestamptz
 }
 
 func (q *Queries) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListFairTenantWorkflowScheduleCandidatesParams) ([]ListFairTenantWorkflowScheduleCandidatesRow, error) {
-	rows, err := db.Query(ctx, listFairTenantWorkflowScheduleCandidates, arg.OwnerNodeID, arg.EvaluationMinute, arg.BatchLimit)
+	rows, err := db.Query(ctx, listFairTenantWorkflowScheduleCandidates,
+		arg.OwnerNodeID,
+		arg.EvaluationMinute,
+		arg.AfterAppID,
+		arg.AfterAdmittedAt,
+		arg.AfterTenantID,
+		arg.AfterWorkflowName,
+		arg.BatchLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -48716,6 +48795,8 @@ func (q *Queries) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, 
 			&i.PlatformTenantID,
 			&i.DeploymentID,
 			&i.Workflows,
+			&i.FairWorkflowName,
+			&i.FairLastAdmittedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -51510,6 +51591,31 @@ func (q *Queries) ListPlatformTenantCustomerOperationsBySubject(ctx context.Cont
 			return nil, err
 		}
 		items = append(items, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPreparedEventSubscriptionIntents = `-- name: ListPreparedEventSubscriptionIntents :many
+SELECT deployment_id::text AS deployment_id FROM deployment_event_subscription_intents
+WHERE status = 'prepared' ORDER BY updated_at, deployment_id LIMIT 64
+`
+
+func (q *Queries) ListPreparedEventSubscriptionIntents(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, listPreparedEventSubscriptionIntents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var deployment_id string
+		if err := rows.Scan(&deployment_id); err != nil {
+			return nil, err
+		}
+		items = append(items, deployment_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -57393,6 +57499,56 @@ func (q *Queries) LockEnvironmentQueueProducer(ctx context.Context, db DBTX, arg
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockEventSubscriptionIntentDeployment = `-- name: LockEventSubscriptionIntentDeployment :one
+SELECT i.app_id::text AS app_id, i.declared_subscription_ids::text[] AS declared,
+ d.id::text AS deployment_id, d.status, d.scope, d.traffic_percent, d.traffic_percent_explicit,
+ d.canary_total_steps, d.rollout_state,
+ coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id
+ AND coalesce(nullif(n.scope,''),'default')='default'
+ AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
+ ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
+ EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
+ AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+FROM deployment_event_subscription_intents i JOIN deployments d ON d.id = i.deployment_id
+WHERE i.deployment_id = $1::uuid AND i.status = 'prepared'
+FOR UPDATE OF i
+`
+
+type LockEventSubscriptionIntentDeploymentRow struct {
+	AppID                  string
+	Declared               []string
+	DeploymentID           string
+	Status                 string
+	Scope                  string
+	TrafficPercent         int32
+	TrafficPercentExplicit bool
+	CanaryTotalSteps       int32
+	RolloutState           string
+	LatestID               string
+	CompetingTraffic       bool
+}
+
+// The same disposition inputs as ReadCronActivationDeployment, so event
+// subscriptions and staged crons go live under one rule.
+func (q *Queries) LockEventSubscriptionIntentDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockEventSubscriptionIntentDeploymentRow, error) {
+	row := db.QueryRow(ctx, lockEventSubscriptionIntentDeployment, deploymentID)
+	var i LockEventSubscriptionIntentDeploymentRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Declared,
+		&i.DeploymentID,
+		&i.Status,
+		&i.Scope,
+		&i.TrafficPercent,
+		&i.TrafficPercentExplicit,
+		&i.CanaryTotalSteps,
+		&i.RolloutState,
+		&i.LatestID,
+		&i.CompetingTraffic,
+	)
+	return i, err
 }
 
 const lockEventWorkflowRecipient = `-- name: LockEventWorkflowRecipient :one
@@ -86296,6 +86452,31 @@ func (q *Queries) ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg Rea
 	return items, nil
 }
 
+const readQueueReplayAdmission = `-- name: ReadQueueReplayAdmission :one
+SELECT p.app_id, p.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM production_invocation_work p
+LEFT JOIN accounts a ON a.id = p.account_id
+LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE p.id = $1::uuid AND p.source = 'queue' AND p.state = 'dead_letter'
+`
+
+type ReadQueueReplayAdmissionRow struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Plan      string
+}
+
+// ADR-20261101093812: a production queue message replayed from the dead
+// letter re-enters its app's queue under the caps a send meets. The plan
+// resolves as ExpirePendingQueueMessages' does. Environment-owned messages
+// are not production work and keep their own caps.
+func (q *Queries) ReadQueueReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadQueueReplayAdmissionRow, error) {
+	row := db.QueryRow(ctx, readQueueReplayAdmission, id)
+	var i ReadQueueReplayAdmissionRow
+	err := row.Scan(&i.AppID, &i.AccountID, &i.Plan)
+	return i, err
+}
+
 const readReleaseWorkerRunningProof = `-- name: ReadReleaseWorkerRunningProof :many
 SELECT i.id::text AS id,p.secret_fingerprint,p.config_fingerprint,coalesce(p.environment_id::text,'')::text AS environment_id,p.scope
 FROM instances i JOIN deployments d ON d.id=i.deployment_id AND d.status='live'
@@ -101317,6 +101498,23 @@ func (q *Queries) SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const settleEventSubscriptionIntent = `-- name: SettleEventSubscriptionIntent :exec
+UPDATE deployment_event_subscription_intents
+SET status = $1::text, reason = $2::text, updated_at = now()
+WHERE deployment_id = $3::uuid AND status = 'prepared'
+`
+
+type SettleEventSubscriptionIntentParams struct {
+	Status       string
+	Reason       string
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error {
+	_, err := db.Exec(ctx, settleEventSubscriptionIntent, arg.Status, arg.Reason, arg.DeploymentID)
+	return err
 }
 
 const shareRuntimeUpgradeExternalFenceAuthority = `-- name: ShareRuntimeUpgradeExternalFenceAuthority :one

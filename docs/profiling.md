@@ -85,13 +85,18 @@ application `sitecustomize` startup hook are preserved.
 The collectors use a local bridge and receive no backend credentials. Their
 failure does not prevent the application from starting.
 
-Go applications opt in during startup:
+Go applications opt in during startup with the Go SDK's collector, which
+uses only the standard library:
+
+```sh
+go get github.com/poyrazK/faas/sdk/go@latest
+```
 
 ```go
-import "github.com/onebox-faas/faas/pkg/guestprofiling"
+import "github.com/poyrazK/faas/sdk/go/preview/profiling"
 
 // appContext lasts until application shutdown.
-guestprofiling.Start(appContext)
+profiling.Start(appContext)
 ```
 
 Call it once, and cancel the context at shutdown. Do not run another Go CPU
@@ -113,11 +118,13 @@ guest-init then reads `/debug/pprof/profile`, `/debug/pprof/heap` and
 `/debug/pprof/goroutine` from `127.0.0.1:6060` inside the VM, for on-demand
 captures and, with `enabled: true`, for continuous collection. The port may be
 the application's own port when the handlers share its mux; 9191 and 4318
-belong to the platform. The endpoint is never exposed outside the VM by this
+belong to the platform. An application that itself listens on 9191, the
+collectors' bridge port, keeps its port and runs without collectors: captures
+of it report that it has none. The endpoint is never exposed outside the VM by this
 setting.
 
 Collection starts once `/debug/pprof/` answers. If the application also calls
-`guestprofiling.Start`, that collector is used and the endpoint is left alone,
+`profiling.Start`, that collector is used and the endpoint is left alone,
 because Go has one CPU profiler per process. Continuous profiles collected this
 way carry no route labels. A profile the endpoint cannot produce (an error
 status, no answer in time, or more than 1 MiB) is named in the capture's
@@ -290,12 +297,15 @@ with an earlier capture and deletes it.
 Captures only run on a RUNNING instance; a parked app is not woken, because a
 fresh process would not show the state you are investigating. Send a request
 first. While a capture runs the instance counts as busy and is not parked for
-idleness. One capture per app runs at a time, and an account can start 60 per
+idleness. One capture per app runs at a time, and at most two of an account's
+(or an organization's) captures run at once; the rest wait in the queue, so
+one customer cannot hold every capture worker. An account can start 60 per
 hour. Automatic captures (below) have their own limit of 30 per hour across the
 account's apps, so they never use up the 60, and captures you start run before
 automatic ones waiting in the queue. Captures are kept for 7 days; delete one
 sooner with `--delete`, the dashboard or
-`DELETE /v1/apps/{slug}/profiles/captures/{id}`.
+`DELETE /v1/apps/{slug}/profiles/captures/{id}`. Deleting an app deletes its
+captures within a minute, which frees the storage they used.
 
 An organization's apps count as the organization's: the organization's plan
 decides whether its apps can be captured, the hourly limits and the storage
@@ -338,7 +348,12 @@ What a heap capture shows depends on the runtime:
   end (V8 sampling heap profiler). `Buffer` contents live outside the V8 heap
   and appear as `(external)`.
 - **Python** — allocations made during the window that are still live at its
-  end (`tracemalloc`). Tracing slows allocation-heavy code while it runs.
+  end (`tracemalloc`). Tracing slows allocation-heavy code while it runs, and
+  costs memory for every block it records. So that a capture never causes the
+  OOM kill it is meant to explain, tracing stops (keeping the rest of the
+  capture) once the process has less than 16 MiB or 5% of its memory left,
+  and a heap profile is skipped when copying the traces would not fit.
+  Captures taken because memory runs low record 8 frames per allocation.
 
 Memory that is allocated during a capture and still held at its end is the
 shape of a leak. Repeat a capture later and compare the two.
@@ -410,7 +425,9 @@ gregale debug capture my-app --type stacks
 Values are counts: the flamegraph is as wide as the number of goroutines or
 threads parked on each path.
 
-When a request stays in flight for 10 seconds, the gateway reports it and
+When a request waits on the app for 10 seconds (its body has arrived and no
+response has started: a slow upload or download is not stuck), the gateway
+reports it and
 Gregale captures stacks and 5 seconds of CPU from the serving instance
 automatically (`trigger: slow_request`, at most once per app every 15
 minutes). The capture records the request id; its page links to the request,
@@ -440,7 +457,7 @@ Values are nanoseconds of delay; only the capture window counts, not the
 process's history. They are Go-only: Node and Python processes contribute
 nothing to these kinds.
 
-With `guestprofiling.Start`, sampling is on only for the window: one blocking
+With `profiling.Start`, sampling is on only for the window: one blocking
 event per 10 µs spent blocked, one in 10 mutex contentions. A mutex fraction
 the application set itself is left as it is. Go cannot report the block
 profile rate, so the first capture decides: if the process already has block
@@ -538,7 +555,7 @@ The REST API is `POST /v1/apps/{slug}/profiles/captures` with optional
 `GET …/captures/{id}/pprof?kind={kind}`. Compare two ready captures with
 `GET …/captures/{id}/diff?base={earlier-id}&kind={kind}`. A ready capture with zero
 `processes` means the instance has no collector: a custom image without an
-instrumented runtime, or a Go app that neither calls `guestprofiling.Start` nor
+instrumented runtime, or a Go app that neither calls `profiling.Start` nor
 sets `profiling.pprof_port`. With `pprof_port` set, the `reason` says when
 nothing answered on that port.
 
@@ -663,6 +680,7 @@ Portable checks:
 
 ```sh
 go test -race ./pkg/profiling ./pkg/profileproto ./pkg/guestprofiling ./guest/init
+(cd sdk/go && go test -race ./preview/profiling)
 npm ci --prefix guest/profiling/node
 python -m pip install --require-hashes --only-binary=:all: \
   -r guest/profiling/python/requirements.txt
@@ -967,9 +985,9 @@ snapshots do not extend retention for raw requests or CPU profile samples.
 Go applications can attach a static declared route label to handler execution:
 
 ```go
-import "github.com/onebox-faas/faas/pkg/guestprofiling"
+import "github.com/poyrazK/faas/sdk/go/preview/profiling"
 
-mux.Handle("GET /orders/{id}", guestprofiling.RouteHandler("GET /orders/{id}", handler))
+mux.Handle("GET /orders/{id}", profiling.RouteHandler("GET /orders/{id}", handler))
 ```
 
 Enable and start the existing Go profiling collector as described above. Configure
@@ -989,7 +1007,7 @@ For Go 1.22+ ServeMux routing, install one wrapper around the completed mux:
 ```go
 mux := http.NewServeMux()
 mux.HandleFunc("GET /orders/{id}", orderHandler)
-server := &http.Server{Addr: ":8080", Handler: guestprofiling.ServeMux(mux)}
+server := &http.Server{Addr: ":8080", Handler: profiling.ServeMux(mux)}
 ```
 
 The wrapper looks up the registered pattern and dispatches through the mux,
@@ -1010,9 +1028,9 @@ still needs to be enabled and the collector started; the middleware only adds
 labels. Host validation, unmatched-label handling and background-goroutine
 cautions remain the same.
 
-`guestprofiling.WithRoute(ctx, label, work)` provides equivalent scoped execution.
+`profiling.WithRoute(ctx, label, work)` provides equivalent scoped execution.
 Go child goroutines inherit pprof labels. Wrap asynchronous background work in
-`guestprofiling.WithoutRoute(ctx, work)` to clear inherited attribution. Route CPU
+`profiling.WithoutRoute(ctx, work)` to clear inherited attribution. Route CPU
 is sampled CPU associated with labeled execution; it does not measure the exact
 CPU of an individual request. Node and Python route attribution are not yet
 supported; their existing collectors continue to provide aggregate CPU.
@@ -1130,11 +1148,11 @@ in production. See ADR-822.
 
 ## Per-route request labeling consistency (Go)
 
-`guestprofiling.ServeMux` and `RouteHandler` now count labeled request entries
+`profiling.ServeMux` and `RouteHandler` now count labeled request entries
 while the Go CPU collector is active. For other routers, use:
 
 ```go
-guestprofiling.WithRouteRequest(r.Context(), "GET /orders/{id}", func(ctx context.Context) {
+profiling.WithRouteRequest(r.Context(), "GET /orders/{id}", func(ctx context.Context) {
     handler.ServeHTTP(w, r.WithContext(ctx))
 })
 ```

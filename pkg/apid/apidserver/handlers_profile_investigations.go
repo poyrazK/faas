@@ -177,7 +177,7 @@ func (s *server) profileInvestigationResponse(ctx context.Context, acct state.Ac
 }
 
 func (s *server) profileInvestigationWindow(ctx context.Context, acct state.Account, app state.App, q api.ProfileQuery) api.ProfileInvestigationWindowStatus {
-	limits := api.MustLimitsFor(acct.Plan).Profiling
+	limits := api.MustLimitsFor(s.profilePlan(ctx, acct.Plan, app)).Profiling
 	if !limits.Enabled {
 		return api.ProfileInvestigationWindowStatus{Status: "plan_unavailable", Detail: "Your plan does not include profile history. Saved notes remain available."}
 	}

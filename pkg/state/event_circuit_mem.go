@@ -170,3 +170,12 @@ const EventCapabilityWaitReason = "events_paused"
 func EventCapabilityWaitProgress(previous PublishedEventRecipientProgress, total int, next time.Time) PublishedEventRecipientProgress {
 	return eventSubscriptionControlProgress(previous, total, EventCapabilityWaitReason, next)
 }
+
+// EventWorkflowWaitProgress holds a workflow recipient without spending an
+// attempt while its capability or captured plan requirements are unavailable.
+func EventWorkflowWaitProgress(previous PublishedEventRecipientProgress, total int, reason string, next time.Time) PublishedEventRecipientProgress {
+	return eventSubscriptionControlProgress(previous, total, reason, next)
+}
+
+const EventWorkflowCapabilityWaitReason = "workflows_paused"
+const EventWorkflowPlanWaitReason = "workflow_plan_ineligible"

@@ -66,6 +66,8 @@ func TestBindingApplicationAdoptionMigrationPreservesReceipts(t *testing.T) {
 	if !ok {
 		t.Fatal("missing rollback")
 	}
+	execTriggerWhen(t, ctx, pool, true)
+	defer execTriggerWhen(t, ctx, pool, false)
 	for _, sql := range []string{down, up} {
 		if _, err := pool.Exec(ctx, sql); err != nil {
 			t.Fatal(err)

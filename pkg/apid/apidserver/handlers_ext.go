@@ -4425,12 +4425,11 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	var apps []state.App
 	if ref != "" {
-		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
-		if !ok {
-			s.notFound(w, "no such app")
-			return
-		}
-		if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		// A company app's members other than its creator read its crons too,
+		// as they create and fire them; the creator-only lookup answered 404
+		// and failed their gregale.yaml deploys (crons audit 2026-11-03).
+		app, _, prob := s.namedAppAs(r, acct, ref, true)
+		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -4485,17 +4484,6 @@ func (s *server) cronListResponse(r *http.Request, acct state.Account, crons []s
 		}
 	}
 	return out, nil
-}
-
-// ownedAppByRef resolves an app id or slug owned by accountID.
-func (s *server) ownedAppByRef(ctx context.Context, accountID, ref string) (state.App, bool) {
-	if app, err := s.store.AppByID(ctx, ref); err == nil && app.AccountID == accountID {
-		return app, true
-	}
-	if app, err := s.store.AppBySlug(ctx, ref); err == nil && app.AccountID == accountID {
-		return app, true
-	}
-	return state.App{}, false
 }
 
 func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.Account) {
