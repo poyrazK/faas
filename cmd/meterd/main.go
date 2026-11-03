@@ -582,6 +582,14 @@ type egressAggregator struct {
 	}
 }
 
+// CumulativeNetworkCounters implements meter.CumulativeNetworkSource: with the
+// schedd adapter wired, host-interface bytes are vmmd's cumulative counters,
+// which the Store checkpoints exactly once, so meterd can record a fully
+// rolled minute as egress-complete (ADR-20261101113742).
+func (a *egressAggregator) CumulativeNetworkCounters() bool {
+	return a != nil && a.schedd != nil
+}
+
 func (a *egressAggregator) ReadUsageDeltas(instanceID string) (meter.UsageDeltas, bool) {
 	if a == nil || instanceID == "" {
 		return meter.UsageDeltas{}, false

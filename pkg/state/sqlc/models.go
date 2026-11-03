@@ -8404,6 +8404,25 @@ type ManagedPostgresOverageDelivery struct {
 	BilledStorageByteSeconds int64
 }
 
+// A managed PostgreSQL overage step reserved before it is sent to the billing provider; written only by apid (ADR-20261101143527).
+type ManagedPostgresOveragePending struct {
+	Provider                 string
+	SubjectID                pgtype.UUID
+	PeriodStart              pgtype.Timestamptz
+	Live                     bool
+	StepAt                   pgtype.Timestamptz
+	UsedUnitSeconds          int64
+	AllowanceUnitSeconds     int64
+	BilledUnitSeconds        int64
+	FromMillicents           int64
+	TargetMillicents         int64
+	UsedStorageByteSeconds   int64
+	StoragePoolBytes         int64
+	BilledStorageByteSeconds int64
+	PreviousMillicents       int64
+	PreviousLive             bool
+}
+
 // Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
 type ManagedPostgresPlanExcessNotice struct {
 	DatabaseID   pgtype.UUID
@@ -9990,6 +10009,15 @@ type ObjectStorageCapacityReconciliation struct {
 	ScannedVersions   int64
 }
 
+// Object-storage ceilings support granted a billing subject in place of its paid plan's; written only by apid (ADR-20261101214152).
+type ObjectStorageCeilingGrant struct {
+	OwnerID   pgtype.UUID
+	MaxBytes  int64
+	Reason    string
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+}
+
 type ObjectStorageCustomerUsageReportsV2 struct {
 	AccountID          pgtype.UUID
 	BackendID          string
@@ -10458,6 +10486,8 @@ type Org struct {
 	AsyncQuotaPooledAt       pgtype.Timestamptz
 	// Monthly spend cap in cents for an organization that owns its resources; NULL = no cap (ADR-20261030093512).
 	OverageCapCents pgtype.Int8
+	// When the organization was marked for deletion; meterd delivers usage from before it (ADR-20261101143527).
+	DeletionRequestedAt pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only

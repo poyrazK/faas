@@ -4475,9 +4475,13 @@ func contentTypeAllowed(ct string, allowed []string) bool {
 // against the trusted XFF client IP via the configured
 // pkg/geoip.Reader.
 //
-// Failure mode: a missing/corrupt DB, an address outside the dataset, or a
-// decode error returns 503. A configured access rule must never disappear
-// because an optional runtime dependency is unavailable.
+// Failure mode: a missing/corrupt DB or a decode error returns 503. A
+// configured access rule must never disappear because an optional runtime
+// dependency is unavailable. An address the database places in no country
+// (a reserved range, or one allocated after the database was built) is
+// answered, not unavailable: it is in no deny list, so a deny-only rule
+// lets it through, and in no allow list, so an allow list refuses it with
+// 403 (ADR-091 amendment 2026-11-02, later).
 //
 // A nil matcher disables the feature; a matched rule with no reader fails
 // closed. Same-account posture mirrors applyEdgeRuleIP.
@@ -4544,9 +4548,12 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 			h.log.Debug("edge rule geo lookup no country", "ip", clientIP)
 		}
 	}
-	if lerr != nil || !found {
+	if lerr != nil {
 		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, geoFailReason(lerr, found))
 		return true
+	}
+	if !found {
+		country = ""
 	}
 	// Deny walks first.
 	if _, denied := rule.Deny[country]; denied {
@@ -6175,6 +6182,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
+	requestCtx = WithEdgeRuleMethodOverride(requestCtx, r)
 	// ADR-962: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
 	trustedIP, trustedIPOK := clientIPFromTrustedXFF(r)

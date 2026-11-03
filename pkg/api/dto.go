@@ -5244,8 +5244,8 @@ type ExecutionUsageSummaryResponse struct {
 type UsageSummaryResponse struct {
 	Month           string  `json:"month"`             // YYYY-MM
 	UsedGBHours     float64 `json:"used_gb_hours"`     // Σ mb_seconds / 1024 / 3600
-	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
-	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
+	IncludedGBHours int64   `json:"included_gb_hours"` // the month's allowance, following its plan history (ADR-20261101113742)
+	OverageGBHours  float64 `json:"overage_gb_hours"`  // compute billed beyond the allowance, hour by hour as the provider bills it
 	OverageCents    int64   `json:"overage_cents"`     // compute plus live egress overage, in integer cents
 	// QuietPausedGBHours is the month's quiet-paused time that was not
 	// billed: Σ usage_minutes.paused_mb_seconds / 1024 / 3600, in the same
@@ -7216,9 +7216,10 @@ type WakeTimelineApp struct {
 //   - PlanIncludedGBHours: echoed from acct.Plan.PlanIncludedGBHours()
 //     so the dashboard can render the included-band badge without
 //     a second round-trip.
-//   - OverageGBHours: max(0, gb_hours - plan_included). 0 when
-//     gb_hours ≤ plan_included. The dashboard renders this as the
-//     red overage chip; the Stripe pusher bills it at $0.01/GB-h.
+//   - OverageGBHours: always 0. Overage is billed per account: every
+//     app shares the plan allowance, so one app's usage has no overage
+//     of its own. Kept for older clients; GET /v1/usage/summary reports
+//     the account's billed overage (ADR-20261101113742).
 //   - Source: "usage_minutes" today (after the 30d retention cap).
 //     "usage_daily" / "mixed" land with the trail-period reader
 //     follow-up — same wire shape, no migration needed.
@@ -12431,6 +12432,12 @@ type RequestAnalyticsResponse struct {
 	ComputeCost           *RequestAnalyticsComputeCost             `json:"compute_cost,omitempty"`
 	DeploymentCosts       *RequestAnalyticsDeploymentCostBreakdown `json:"deployment_costs,omitempty"`
 	AsOf                  string                                   `json:"as_of"`
+	// TelemetryComplete says whether every gateway delivered the window's
+	// request telemetry, judged up to RequestAnalyticsSettleLag before as_of
+	// (the newest minutes are still arriving); nil when it was not judged.
+	// TelemetryGaps names each reason requests may be missing.
+	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
+	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
 }
 
 // RequestAnalyticsTimeseriesPoint is one UTC-aligned hourly bucket returned
@@ -12471,6 +12478,9 @@ type RequestAnalyticsTimeseriesResponse struct {
 	Points        []RequestAnalyticsTimeseriesPoint  `json:"points"`
 	Series        []RequestAnalyticsTimeseriesSeries `json:"series,omitempty"`
 	AsOf          string                             `json:"as_of"`
+	// TelemetryComplete and TelemetryGaps match RequestAnalyticsResponse.
+	TelemetryComplete *bool    `json:"telemetry_complete,omitempty"`
+	TelemetryGaps     []string `json:"telemetry_gaps,omitempty"`
 }
 
 // DebugRegressionItem is one row of debug_regression_observations

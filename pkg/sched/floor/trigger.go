@@ -172,6 +172,33 @@ type PlanResolver interface {
 	ResolvePlan(ctx context.Context, accountID string) (api.Plan, bool)
 }
 
+// AppPlanResolver resolves the plan of an app's billing subject: its
+// organization when the organization owns its resources, else its account.
+// A resolver that implements it decides the floor of a company app by the
+// organization's plan and status, the subject meterd bills the floor to
+// (ADR-20261101113742). cmd/schedd's resolver implements it.
+type AppPlanResolver interface {
+	ResolveAppPlan(ctx context.Context, app state.App) (api.Plan, bool)
+}
+
+// resolvePlan is the plan that gates app's floor: Free without a resolver
+// or when the subject cannot be resolved (fail-closed).
+func (t *Trigger) resolvePlan(ctx context.Context, app state.App) api.Plan {
+	if t.planResolver == nil {
+		return api.PlanFree
+	}
+	if byApp, ok := t.planResolver.(AppPlanResolver); ok {
+		if resolved, ok := byApp.ResolveAppPlan(ctx, app); ok {
+			return resolved
+		}
+		return api.PlanFree
+	}
+	if resolved, ok := t.planResolver.ResolvePlan(ctx, app.AccountID); ok {
+		return resolved
+	}
+	return api.PlanFree
+}
+
 // AppStats is the input to the pure decide() function. Tick
 // populates this struct per-app; the table-driven decide_test.go
 // drives it directly. Keeping the input a typed struct (rather
@@ -666,12 +693,7 @@ func (t *Trigger) tickPerApp(ctx context.Context) error {
 			t.observe(app.ID, OutcomeDisabled)
 			continue
 		}
-		plan := api.PlanFree
-		if t.planResolver != nil {
-			if resolved, ok := t.planResolver.ResolvePlan(ctx, app.AccountID); ok {
-				plan = resolved
-			}
-		}
+		plan := t.resolvePlan(ctx, app)
 		if !plan.MinInstancesAllowed() {
 			t.observe(app.ID, OutcomeDisabled)
 			continue

@@ -1968,6 +1968,7 @@ from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
 from .request_analytics_route import RequestAnalyticsRoute
 from .request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
+from .request_analytics_telemetry_gap import RequestAnalyticsTelemetryGap
 from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
 from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
@@ -4374,6 +4375,7 @@ __all__ = (
     "RequestAnalyticsRoute",
     "RequestAnalyticsRouteDeploymentObservation",
     "RequestAnalyticsRouteMethod",
+    "RequestAnalyticsTelemetryGap",
     "RequestAnalyticsTimeseriesPoint",
     "RequestAnalyticsTimeseriesResponse",
     "RequestAnalyticsTimeseriesResponseBucket",

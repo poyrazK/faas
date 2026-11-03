@@ -64,6 +64,14 @@ service Auth {
   // digest. Only columns gateways check are accepted (InvalidArgument
   // otherwise).
   rpc MatchCredential(MatchCredentialRequest) returns (MatchCredentialResponse);
+
+  // VerifySession opens a dashboard session cookie for a gateway that must
+  // not hold the session key: a process that can open a cookie can also
+  // seal one (ADR-20261102191500). apid answers with the envelope it sealed,
+  // or valid=false for a cookie that is malformed, forged or expired. The
+  // caller still checks the session row itself. Errors are InvalidArgument
+  // (empty cookie) and Unavailable (apid has no session manager).
+  rpc VerifySession(VerifySessionRequest) returns (VerifySessionResponse);
 }
 
 message MatchCredentialRequest {
@@ -77,6 +85,18 @@ message MatchCredentialRequest {
 
 message MatchCredentialResponse {
   bool match = 1;
+}
+
+message VerifySessionRequest {
+  // cookie is the session cookie's value as the browser sent it.
+  string cookie = 1;
+}
+
+message VerifySessionResponse {
+  bool valid = 1;
+  // envelope is the session envelope's JSON (pkg/session.Envelope), set
+  // when valid. JSON keeps new envelope fields off this message.
+  bytes envelope = 2;
 }
 
 // CredentialKind names which credential family a lookup is for.

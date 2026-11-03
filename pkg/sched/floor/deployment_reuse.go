@@ -150,30 +150,31 @@ func (t *Trigger) pruneReuse(now time.Time) {
 	}
 }
 
-// accountPlan resolves accountID's plan, reusing a resolution younger than
-// floorReuseMaxAge unless fresh. A failed resolution is not kept and counts
-// as Free, as before.
-func (t *Trigger) accountPlan(ctx context.Context, accountID string, now time.Time, fresh bool) api.Plan {
+// appPlan resolves the plan of app's billing subject (resolvePlan), reusing a
+// resolution younger than floorReuseMaxAge unless fresh. It is kept per app,
+// because a company app's subject is its organization, not its account. A
+// Free result, which is also what a failed resolution yields, is not kept.
+func (t *Trigger) appPlan(ctx context.Context, app state.App, now time.Time, fresh bool) api.Plan {
 	if t.planResolver == nil {
 		return api.PlanFree
 	}
 	if !fresh {
 		t.reuseMu.Lock()
-		entry, hit := t.plans[accountID]
+		entry, hit := t.plans[app.ID]
 		t.reuseMu.Unlock()
 		if hit && now.Sub(entry.at) < floorReuseMaxAge {
 			return entry.plan
 		}
 	}
-	plan, ok := t.planResolver.ResolvePlan(ctx, accountID)
-	if !ok {
-		return api.PlanFree
+	plan := t.resolvePlan(ctx, app)
+	if plan == api.PlanFree {
+		return plan
 	}
 	t.reuseMu.Lock()
 	if t.plans == nil {
 		t.plans = map[string]resolvedPlan{}
 	}
-	t.plans[accountID] = resolvedPlan{plan: plan, at: now}
+	t.plans[app.ID] = resolvedPlan{plan: plan, at: now}
 	t.reuseMu.Unlock()
 	return plan
 }
@@ -195,7 +196,7 @@ func (t *Trigger) evaluateDeployment(ctx context.Context, d state.Deployment, ap
 	if effective <= 0 {
 		return disabled
 	}
-	plan := t.accountPlan(ctx, app.AccountID, now, fresh)
+	plan := t.appPlan(ctx, app, now, fresh)
 	if !plan.MinInstancesAllowed() || app.WorkloadClass == state.WorkloadClassWorker {
 		return disabled
 	}
