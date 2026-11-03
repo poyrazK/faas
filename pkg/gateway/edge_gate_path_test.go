@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type edgeGateTestRule struct{ id, path string }
+type edgeGateTestRule struct{ id string }
 
 func (r *edgeGateTestRule) edgeGateRuleID() string { return r.id }
 
@@ -22,11 +22,11 @@ func (r *edgeGateTestRule) edgeGateRuleID() string { return r.id }
 // amendment 2026-11-03, review round 9).
 func TestMatchEdgeGatesReturnsTheClientAndTheRewrittenPathRules(t *testing.T) {
 	rules := map[string]*edgeGateTestRule{
-		"/api/users":      {"er_api", "/api/users"},
-		"/internal/users": {"er_internal", "/internal/users"},
-		"/legacy/users":   {"er_legacy", "/legacy/users"},
-		"/both":           {"er_both", "/both"},
-		"/both-rewritten": {"er_both", "/both-rewritten"},
+		"/api/users":      {"er_api"},
+		"/internal/users": {"er_internal"},
+		"/legacy/users":   {"er_legacy"},
+		"/both":           {"er_both"},
+		"/both-rewritten": {"er_both"},
 	}
 	match := func(_ context.Context, path string) *edgeGateTestRule { return rules[path] }
 	ids := func(got []*edgeGateTestRule) []string {
