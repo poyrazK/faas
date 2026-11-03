@@ -870,7 +870,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	if edgeTLS.enabled() {
-		if listeners.tls, err = openEdgeTLSListener(edgeTLS); err != nil {
+		appHost := func(name string) bool { return isAppHost(name, domains) }
+		if listeners.tls, err = openEdgeTLSListener(edgeTLS, appHost); err != nil {
 			listeners.close()
 			return err
 		}
