@@ -243,6 +243,14 @@ type server struct {
 	// cloneDataPointSettle is how old a clone's data point must be before its
 	// managed databases are restored (ADR-20261024224230).
 	cloneDataPointSettle time.Duration
+	// cloneTargetVersioning turns versioning on for a clone's target bucket
+	// and reports whether it is on; nil is ensureCloneTargetVersioning.
+	// Tests replace it to skip the bucket versioning job.
+	cloneTargetVersioning func(context.Context, state.ObjectBucket) (bool, error)
+	// cloneObjectCapacity checks a clone's exact copy totals against the
+	// account's storage limits; nil is the usage-snapshot check. Tests
+	// replace it where the fixture keeps no object usage.
+	cloneObjectCapacity func(ctx context.Context, acct state.Account, bytes, keys int64) error
 	// Installed only by private wiring for an independently qualified owner.
 	cloneWorkloadRetirementDriver cloneCheckpointWorkloadRetirementDriver
 	managedPostgresReconciler     *managedpostgres.Reconciler

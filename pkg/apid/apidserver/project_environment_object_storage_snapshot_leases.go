@@ -23,26 +23,20 @@ type cloneObjectSnapshotLeaseAdapter struct {
 	sourcePhysical string
 }
 
-func (s cloneObjectSnapshotLeaseAdapter) verifyRetention(ctx context.Context, manifest state.ProjectEnvironmentCloneObjectManifest) error {
-	observer, ok := s.provider.(objectstorage.ObjectVersionRetentionObserver)
-	if !ok {
-		return objectstorage.ErrObjectSnapshotRetentionUnavailable
-	}
+// verifyManifest checks a manifest against its hash before it is committed
+// or its uncopied versions are read. Pinned versions carry no provider
+// retention (ADR-20261103160000): each copy is verified against its pinned
+// version, and a version the source no longer holds fails the clone.
+func (s cloneObjectSnapshotLeaseAdapter) verifyManifest(manifest state.ProjectEnvironmentCloneObjectManifest) error {
 	all := make([]state.ProjectEnvironmentCloneObjectVersion, len(manifest.Objects))
-	remaining := make([]objectstorage.ObjectVersion, 0, len(manifest.Objects))
 	for i, checkpoint := range manifest.Objects {
-		item := checkpoint.Source
-		all[i] = item
-		if checkpoint.CopiedAt == nil {
-			remaining = append(remaining, objectstorage.ObjectVersion{Key: item.Key, VersionID: item.VersionID, MetadataVersion: item.MetadataVersion,
-				Size: item.Size, ETag: item.ETag, LastModified: item.LastModified, ValidUntil: item.ValidUntil, Deleted: item.Deleted})
-		}
+		all[i] = checkpoint.Source
 	}
 	hash, err := state.ProjectEnvironmentCloneObjectManifestHash(all)
 	if err != nil || hash != manifest.Hash {
 		return state.ErrConflict
 	}
-	return objectstorage.VerifyObjectManifestRetention(ctx, observer, s.sourcePhysical, remaining, s.lease.ExpiresAt)
+	return nil
 }
 
 func (s cloneObjectSnapshotLeaseAdapter) ProjectEnvironmentCloneObjectManifest(ctx context.Context, accountID, projectID, operationID, sourceBucketID string) (state.ProjectEnvironmentCloneObjectManifest, error) {
@@ -59,7 +53,7 @@ func (s cloneObjectSnapshotLeaseAdapter) ProjectEnvironmentCloneObjectManifest(c
 		}
 	}
 	if err == nil {
-		err = s.verifyRetention(ctx, manifest)
+		err = s.verifyManifest(manifest)
 	}
 	return manifest, err
 }
@@ -69,7 +63,7 @@ func (s cloneObjectSnapshotLeaseAdapter) PutProjectEnvironmentCloneObjectManifes
 	if accountID != op.AccountID || projectID != op.ProjectID || manifest.OperationID != op.ID {
 		return state.ProjectEnvironmentCloneObjectManifest{}, state.ErrNotFound
 	}
-	if err := s.verifyRetention(ctx, manifest); err != nil {
+	if err := s.verifyManifest(manifest); err != nil {
 		return state.ProjectEnvironmentCloneObjectManifest{}, err
 	}
 	return s.PutProjectEnvironmentCloneObjectManifestForLease(ctx, s.lease, manifest)

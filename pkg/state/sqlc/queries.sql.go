@@ -83128,6 +83128,11 @@ SELECT jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
+    'versioning_enabled', coalesce((
+        SELECT v.state = 'ready' AND v.observed_status = 'Enabled' AND v.propagation_until IS NOT NULL
+            AND v.propagation_until <= clock_timestamp()
+        FROM object_bucket_versioning v WHERE v.bucket_id = b.id
+    ), false),
     'credentials', coalesce((
         SELECT jsonb_agg(jsonb_build_object('id', c.id::text, 'label', c.label, 'permission', c.permission,
             'managed_app_id', coalesce(c.managed_app_id::text, ''), 'managed_scope', coalesce(c.managed_scope, ''),
