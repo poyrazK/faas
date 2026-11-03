@@ -37,7 +37,7 @@ func (s *PgStore) LoadManagedRealtimeDurableCursor(ctx context.Context, endpoint
 		return 0, fmt.Errorf("state: refresh realtime durable cursor: %w", err)
 	}
 	var lockedID string
-	if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpointID).Scan(&lockedID); err != nil {
+	if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for no key update`, endpointID).Scan(&lockedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, ErrNotFound
 		}

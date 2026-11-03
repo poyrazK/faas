@@ -262,6 +262,10 @@ func TestFullProjectEnvironmentCloneAdmissionMapsSourceRefusals(t *testing.T) {
 		{"work policies", state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.work_policies"},
 		{"missing source", state.ErrNotFound, http.StatusNotFound, "", ""},
 		{"transient", errors.New("connection reset"), http.StatusServiceUnavailable, "", ""},
+		{"unversioned bucket", &state.ProjectEnvironmentCloneInventoryError{Blockers: []state.ProjectEnvironmentCloneCoverageBlocker{
+			{Table: "object_buckets", Resource: "uploads", Code: state.CloneBlockerObjectVersioningRequired}}},
+			http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "resource_coverage.object_buckets.uploads"},
+		{"storage usage stale", state.ErrObjectUsageStale, http.StatusServiceUnavailable, "object_storage_usage_stale", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			problem := apidserver.FullProjectEnvironmentCloneAdmissionProblem("shop", "production", false, fmt.Errorf("capture: %w", tc.err))
@@ -272,5 +276,17 @@ func TestFullProjectEnvironmentCloneAdmissionMapsSourceRefusals(t *testing.T) {
 				t.Fatalf("errors = %+v, want one naming %s", problem.Errors, tc.field)
 			}
 		})
+	}
+}
+
+// A clone whose copied buckets would pass the account's storage limits names
+// the limit, the usage the copy would reach and the limits docs
+// (ADR-20261103160000).
+func TestFullProjectEnvironmentCloneAdmissionNamesStorageLimit(t *testing.T) {
+	err := fmt.Errorf("capture: %w", &state.ObjectStorageLimitError{Kind: "account_bytes", Limit: 100, Observed: 140, Cause: state.ErrObjectCapacity})
+	problem := apidserver.FullProjectEnvironmentCloneAdmissionProblem("shop", "production", false, err)
+	if problem.Status != http.StatusConflict || problem.Code != "object_storage_capacity_reserved" || problem.Limit == nil || *problem.Limit != 100 ||
+		problem.Observed == nil || *problem.Observed != 140 || problem.DocsURL != api.ObjectStorageLimitsDocsURL || !strings.Contains(problem.Detail, "account_bytes") {
+		t.Fatalf("problem = %+v", problem)
 	}
 }

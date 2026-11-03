@@ -5460,6 +5460,32 @@ $$;
 
 
 --
+-- Name: archive_workflow_events(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.archive_workflow_events() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Never wait for the parent while holding a run lock: an app purge can
+    -- already hold that parent and be waiting for this run's cascade.
+    PERFORM 1 FROM apps WHERE id = OLD.app_id FOR KEY SHARE SKIP LOCKED;
+    IF NOT FOUND THEN
+        IF EXISTS (SELECT 1 FROM apps WHERE id = OLD.app_id) THEN
+            RETURN NULL; -- A concurrent app mutation owns the parent; retry later.
+        END IF;
+        RETURN OLD; -- The parent is being deleted by this transaction's cascade.
+    END IF;
+    INSERT INTO workflow_event_archive (id, run_id, app_id, event_name, payload, received_at)
+    SELECT id, run_id, OLD.app_id, event_name, payload, received_at
+    FROM workflow_events WHERE run_id = OLD.id
+    ON CONFLICT (id) DO NOTHING;
+    RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: assert_clone_configuration_mutable(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -56957,6 +56983,20 @@ CREATE TABLE public.workflow_dispatch_cursors (
 
 
 --
+-- Name: workflow_event_archive; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_event_archive (
+    id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    event_name text NOT NULL,
+    payload jsonb NOT NULL,
+    received_at timestamp with time zone NOT NULL
+);
+
+
+--
 -- Name: workflow_event_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69980,6 +70020,14 @@ ALTER TABLE ONLY public.workflow_dispatch_cursors
 
 
 --
+-- Name: workflow_event_archive workflow_event_archive_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_archive
+    ADD CONSTRAINT workflow_event_archive_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: workflow_event_code_refs workflow_event_code_refs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80242,6 +80290,20 @@ CREATE INDEX workflow_code_pins_app_expiry_idx ON public.workflow_code_pins USIN
 
 
 --
+-- Name: workflow_event_archive_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_event_archive_retention_idx ON public.workflow_event_archive USING btree (received_at, id);
+
+
+--
+-- Name: workflow_event_archive_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_event_archive_run_idx ON public.workflow_event_archive USING btree (run_id, event_name, received_at, id);
+
+
+--
 -- Name: workflow_event_code_refs_deployment_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -80253,6 +80315,13 @@ CREATE INDEX workflow_event_code_refs_deployment_idx ON public.workflow_event_co
 --
 
 CREATE INDEX workflow_event_receipts_run_idx ON public.workflow_event_receipts USING btree (run_id) WHERE (run_id IS NOT NULL);
+
+
+--
+-- Name: workflow_events_retention_received_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_events_retention_received_idx ON public.workflow_events USING btree (received_at, id);
 
 
 --
@@ -80491,6 +80560,13 @@ CREATE INDEX workflow_runs_operation_due_idx ON public.workflow_runs USING btree
 --
 
 CREATE INDEX workflow_runs_platform_tenant_idx ON public.workflow_runs USING btree (platform_tenant_id, created_at DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: workflow_runs_retention_finished_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_retention_finished_idx ON public.workflow_runs USING btree (finished_at, id) WHERE (finished_at IS NOT NULL);
 
 
 --
@@ -87823,6 +87899,13 @@ CREATE TRIGGER workflow_event_due_trg AFTER INSERT ON public.workflow_events FOR
 --
 
 CREATE TRIGGER workflow_recovery_failure_evidence_capture AFTER INSERT OR UPDATE OF status, resume_count ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.record_workflow_recovery_failure();
+
+
+--
+-- Name: workflow_runs workflow_runs_archive_events; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_runs_archive_events BEFORE DELETE ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.archive_workflow_events();
 
 
 --
@@ -103136,6 +103219,14 @@ ALTER TABLE ONLY public.workflow_dispatch_cursors
 
 ALTER TABLE ONLY public.workflow_dispatch_cursors
     ADD CONSTRAINT workflow_dispatch_cursors_platform_tenant_id_fkey FOREIGN KEY (platform_tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_event_archive workflow_event_archive_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_archive
+    ADD CONSTRAINT workflow_event_archive_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

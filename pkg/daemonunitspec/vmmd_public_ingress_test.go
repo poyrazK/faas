@@ -40,7 +40,9 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 	}{
 		{name: "Cloudflare-only origin", on: true, want: `Environment="FAAS_PUBLIC_INGRESS_CIDRS=` + strings.Join(ranges, ",") + `"`},
 		{name: "open origin", on: false},
-		{name: "no proxy in front", on: true, entry: []string{"203.0.113.10", "2001:db8::10"}, entryWant: `Environment="FAAS_PUBLIC_ENTRY_ADDRS=203.0.113.10,2001:db8::10"`},
+		{name: "no proxy in front", on: true, entry: []string{"203.0.113.10", "2001:db8::10"},
+			want:      `Environment="FAAS_PUBLIC_INGRESS_CIDRS=` + strings.Join(ranges, ",") + `"`,
+			entryWant: `Environment="FAAS_PUBLIC_ENTRY_ADDRS=203.0.113.10,2001:db8::10"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values, err := json.Marshal(map[string]any{

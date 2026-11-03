@@ -849,6 +849,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Note: "maximum persistent callback retry delay; defaults to one minute and is capped at one hour"},
 	{Name: "FAAS_REALTIME_CALLBACK_TIMEOUT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_CHANNEL_ROUTING_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "0", Note: "enable recipient-aware realtime publish only after every apid replica runs a route-writing version"},
+	{Name: "FAAS_REALTIME_ENDPOINT_SNAPSHOT", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Note: "where realtimed saves endpoint registrations for the process that replaces it; default /run/faas/realtimed/endpoints.json (tmpfs, 0600)"},
 	{Name: "FAAS_REALTIME_FAIR_USE_ENABLED", Owners: []string{"apid", "realtimed"}, Source: EnvSourceUnit, Note: "the apid and realtimed units set 1: plan connection limits per account and the fleet-wide count, synced through apid, and the 6000 node connection default that keeps realtimed inside its 512 MB MemoryMax (ADR-1323); unset, apid sends no allowance and the node default is 10000"},
 	{Name: "FAAS_REALTIME_HEALTH_LISTEN", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HEARTBEAT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},

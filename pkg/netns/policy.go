@@ -102,8 +102,9 @@ type HostPolicy struct {
 	// admitted from anywhere to them only, everything else sent to them is
 	// dropped, and sshd stays on the node's other addresses behind the
 	// provider firewall, never on an address that public DNS names. It
-	// replaces the open web ports, and it cannot be combined with
-	// PublicInputSourceCIDRs.
+	// replaces the open web ports and takes precedence over
+	// PublicInputSourceCIDRs, which the vmmd drop-in sends beside it so that
+	// a vmmd without this field stays Cloudflare-only rather than open.
 	PublicEntryAddrs []netip.Addr
 
 	// MasqueradeCIDR is the source-address set the postrouting nat chain
@@ -640,9 +641,6 @@ func (h HostPolicy) Render() string {
 		if !a.IsValid() || a.Zone() != "" || a.Is4In6() {
 			panic("netns: HostPolicy.Render: PublicEntryAddrs has an invalid, zoned or IPv4-mapped address")
 		}
-	}
-	if len(h.PublicEntryAddrs) > 0 && len(h.PublicInputSourceCIDRs) > 0 {
-		panic("netns: HostPolicy.Render: PublicEntryAddrs and PublicInputSourceCIDRs are exclusive")
 	}
 	for _, r := range h.PrivateInputAllowRules {
 		if !r.Source.IsValid() {

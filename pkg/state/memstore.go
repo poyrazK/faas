@@ -730,6 +730,7 @@ type MemStore struct {
 	workflowStepAttempts              map[workflowStepAttemptKey]WorkflowStepAttempt
 	workflowOperationEffects          map[workflowStepAttemptKey][]workflowOperationStoredEffect
 	workflowEvents                    map[string][]WorkflowEvent // run_id → []WorkflowEvent
+	workflowEventApps                 map[string]string          // run_id → app_id, retained after run cleanup
 	// fireNowRequests mirrors cron_fire_now_requests (migrations/00193)
 	// for in-process handler tests. Keyed by request id (UUID);
 	// status transitions follow the production 5-state CHECK (pending
@@ -1784,6 +1785,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		workflowStepAttempts:            map[workflowStepAttemptKey]WorkflowStepAttempt{},
 		workflowOperationEffects:        map[workflowStepAttemptKey][]workflowOperationStoredEffect{},
 		workflowEvents:                  map[string][]WorkflowEvent{},
+		workflowEventApps:               map[string]string{},
 		appTasks:                        map[string]AppTask{},
 		fireNowRequests:                 map[string]FireNowRequest{},
 		operatorIntents:                 map[string]OperatorIntent{},
@@ -7743,6 +7745,12 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
+	for runID, appID := range m.workflowEventApps {
+		if appID == id {
+			delete(m.workflowEvents, runID)
+			delete(m.workflowEventApps, runID)
+		}
+	}
 	m.deleteEventExecutionLedgerAppLocked(id)
 	m.deleteScenarioWorkerFaultsForAppLocked(id)
 	if purged, ok := m.apps[id]; ok {

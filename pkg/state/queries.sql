@@ -7105,6 +7105,11 @@ SELECT jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
+    'versioning_enabled', coalesce((
+        SELECT v.state = 'ready' AND v.observed_status = 'Enabled' AND v.propagation_until IS NOT NULL
+            AND v.propagation_until <= clock_timestamp()
+        FROM object_bucket_versioning v WHERE v.bucket_id = b.id
+    ), false),
     'credentials', coalesce((
         SELECT jsonb_agg(jsonb_build_object('id', c.id::text, 'label', c.label, 'permission', c.permission,
             'managed_app_id', coalesce(c.managed_app_id::text, ''), 'managed_scope', coalesce(c.managed_scope, ''),
@@ -14671,7 +14676,7 @@ FOR UPDATE;
 -- name: RequeueFailedWorkflowStepForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,
-    finished_at=NULL,error=NULL
+    finished_at=NULL,error=NULL,retry_base=sqlc.arg(retry_base)::integer
 WHERE run_id=sqlc.arg(run_id)::text::uuid
   AND step_name=sqlc.arg(step_name)::text
   AND status IN ('failed','dead');
@@ -19759,11 +19764,21 @@ ORDER BY deadline_at,id LIMIT sqlc.arg(page_limit)::integer;
 UPDATE workflow_steps SET status='skipped',skip_reason='dependency_failed',finished_at=clock_timestamp()
 WHERE run_id=sqlc.arg(run_id)::uuid AND status IN ('pending','awaiting_event');
 
+-- name: PruneWorkflowEventArchive :execrows
+DELETE FROM workflow_event_archive WHERE id IN (
+ SELECT id FROM workflow_event_archive
+ WHERE received_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
+ ORDER BY received_at,id LIMIT sqlc.arg(batch_size)::integer FOR UPDATE SKIP LOCKED
+);
+
 -- name: PruneUnownedWorkflowRuns :execrows
-DELETE FROM workflow_runs r WHERE r.finished_at IS NOT NULL
-AND r.finished_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
-AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
-AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id);
+DELETE FROM workflow_runs WHERE id IN (
+ SELECT r.id FROM workflow_runs r WHERE r.finished_at IS NOT NULL
+ AND r.finished_at < clock_timestamp()-sqlc.arg(retention_seconds)::bigint*interval '1 second'
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
+ AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+ ORDER BY r.finished_at,r.id LIMIT sqlc.arg(batch_size)::integer FOR UPDATE OF r SKIP LOCKED
+);
 
 -- name: LockCustomerOperationArtifactQuota :exec
 SELECT pg_advisory_xact_lock(hashtextextended('operation-artifact-quota/' || sqlc.arg(account_id)::text, 0));
@@ -27384,7 +27399,9 @@ AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.ar
 -- ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
 -- waived. The fleet spend breaker (ManagedPostgresFleetTotals) still counts it.
 AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
- AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until));
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until)
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers p WHERE p.database_id=w.database_id
+  AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'));
 
 -- name: ManagedPostgresFleetTotals :one
 -- ADR-20261028103115: the fleet database cap counts what reservation limits

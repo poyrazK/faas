@@ -192,8 +192,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	proxy.Metrics = liveproxy.NewMetrics(ops.Registry())
 	defer proxy.Close()
+	endpointsChanged := make(chan struct{}, 1)
 	manager := realtime.NewManager(realtime.Config{
 		Live: liveproxy.ForRealtime(proxy),
+		EndpointsChanged: func() {
+			select {
+			case endpointsChanged <- struct{}{}:
+			default:
+			}
+		},
 		// Zero selects the package default, which depends on FairUse.
 		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 0),
 		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
@@ -235,6 +242,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		},
 	}, hooks)
 	defer func() { _ = manager.Close() }()
+	// A restart or hand-off serves the previous process's endpoints at once
+	// instead of refusing reconnects until apid's next reconcile.
+	snapshotPath := endpointSnapshotPath()
+	restoreEndpointSnapshot(manager, snapshotPath, log)
+	go saveEndpointSnapshots(ctx, manager, snapshotPath, endpointsChanged, log)
 	callbackReplayRestarts := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "realtimed_callback_replay_supervisor_restarts_total",
 		Help: "Callback replay loop restarts after unexpected exits since process start.",

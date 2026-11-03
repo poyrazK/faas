@@ -877,27 +877,23 @@ func uniqueStrings(values []string) []string {
 	return unique
 }
 
+// lockManagedRealtimeChannelRouteEndpoints serializes route changes per
+// endpoint with transaction advisory locks, taken in id order. They used to
+// lock the endpoint rows, which every first subscriber or last unsubscribe of
+// a channel and every node snapshot then held against the endpoint's cursor,
+// read-marker and history writes (ADR-1323, amendment of 2026-11-03). A route
+// insert still takes the foreign key's share lock, so it cannot outlive a
+// deleted endpoint.
 func lockManagedRealtimeChannelRouteEndpoints(ctx context.Context, tx pgx.Tx, endpointIDs []string) error {
 	if len(endpointIDs) == 0 {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `
-		select id from managed_realtime_endpoints
-		 where id = any($1::uuid[])
-	 order by id
-	 for update`, endpointIDs)
-	if err != nil {
+	ids := uniqueStrings(append([]string(nil), endpointIDs...))
+	sort.Strings(ids)
+	if _, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(hashtext('managed_realtime_channel_routes'), hashtext(id))
+		  from unnest($1::text[]) as locked(id)`, ids); err != nil {
 		return fmt.Errorf("state: lock realtime channel route endpoints: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var endpointID string
-		if err := rows.Scan(&endpointID); err != nil {
-			return fmt.Errorf("state: scan realtime channel route endpoint: %w", err)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("state: iterate realtime channel route endpoints: %w", err)
 	}
 	return nil
 }

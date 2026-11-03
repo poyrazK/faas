@@ -61474,7 +61474,9 @@ FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.databa
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid
 AND u.window_from>=$2::timestamptz AND u.window_from<$3::timestamptz
 AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
- AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until))
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until)
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers p WHERE p.database_id=w.database_id
+  AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'))
 `
 
 type ManagedPostgresUsageForSubjectParams struct {
@@ -74433,14 +74435,43 @@ func (q *Queries) PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64
 }
 
 const pruneUnownedWorkflowRuns = `-- name: PruneUnownedWorkflowRuns :execrows
-DELETE FROM workflow_runs r WHERE r.finished_at IS NOT NULL
-AND r.finished_at < clock_timestamp()-$1::bigint*interval '1 second'
-AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
-AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+DELETE FROM workflow_runs WHERE id IN (
+ SELECT r.id FROM workflow_runs r WHERE r.finished_at IS NOT NULL
+ AND r.finished_at < clock_timestamp()-$1::bigint*interval '1 second'
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
+ AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+ ORDER BY r.finished_at,r.id LIMIT $2::integer FOR UPDATE OF r SKIP LOCKED
+)
 `
 
-func (q *Queries) PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, retentionSeconds int64) (int64, error) {
-	result, err := db.Exec(ctx, pruneUnownedWorkflowRuns, retentionSeconds)
+type PruneUnownedWorkflowRunsParams struct {
+	RetentionSeconds int64
+	BatchSize        int32
+}
+
+func (q *Queries) PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, arg PruneUnownedWorkflowRunsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneUnownedWorkflowRuns, arg.RetentionSeconds, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneWorkflowEventArchive = `-- name: PruneWorkflowEventArchive :execrows
+DELETE FROM workflow_event_archive WHERE id IN (
+ SELECT id FROM workflow_event_archive
+ WHERE received_at < clock_timestamp()-$1::bigint*interval '1 second'
+ ORDER BY received_at,id LIMIT $2::integer FOR UPDATE SKIP LOCKED
+)
+`
+
+type PruneWorkflowEventArchiveParams struct {
+	RetentionSeconds int64
+	BatchSize        int32
+}
+
+func (q *Queries) PruneWorkflowEventArchive(ctx context.Context, db DBTX, arg PruneWorkflowEventArchiveParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneWorkflowEventArchive, arg.RetentionSeconds, arg.BatchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -83129,6 +83160,11 @@ SELECT jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
+    'versioning_enabled', coalesce((
+        SELECT v.state = 'ready' AND v.observed_status = 'Enabled' AND v.propagation_until IS NOT NULL
+            AND v.propagation_until <= clock_timestamp()
+        FROM object_bucket_versioning v WHERE v.bucket_id = b.id
+    ), false),
     'credentials', coalesce((
         SELECT jsonb_agg(jsonb_build_object('id', c.id::text, 'label', c.label, 'permission', c.permission,
             'managed_app_id', coalesce(c.managed_app_id::text, ''), 'managed_scope', coalesce(c.managed_scope, ''),
@@ -95927,19 +95963,20 @@ func (q *Queries) RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, a
 const requeueFailedWorkflowStepForRetry = `-- name: RequeueFailedWorkflowStepForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,
-    finished_at=NULL,error=NULL
-WHERE run_id=$1::text::uuid
-  AND step_name=$2::text
+    finished_at=NULL,error=NULL,retry_base=$1::integer
+WHERE run_id=$2::text::uuid
+  AND step_name=$3::text
   AND status IN ('failed','dead')
 `
 
 type RequeueFailedWorkflowStepForRetryParams struct {
-	RunID    string
-	StepName string
+	RetryBase int32
+	RunID     string
+	StepName  string
 }
 
 func (q *Queries) RequeueFailedWorkflowStepForRetry(ctx context.Context, db DBTX, arg RequeueFailedWorkflowStepForRetryParams) (int64, error) {
-	result, err := db.Exec(ctx, requeueFailedWorkflowStepForRetry, arg.RunID, arg.StepName)
+	result, err := db.Exec(ctx, requeueFailedWorkflowStepForRetry, arg.RetryBase, arg.RunID, arg.StepName)
 	if err != nil {
 		return 0, err
 	}

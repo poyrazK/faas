@@ -221,6 +221,9 @@ main() {
         # from everyone on its entry addresses and nothing else on them.
         "public-entry|eth0|10.100.0.0/16|||||||||203.0.113.10"
         "public-entry-dual-stack|ens5|10.101.0.0/16|203.0.113.0/24|fc00::/7||10.101.0.1|1|10.101.0.1|1||198.51.100.7,2001:db8::10"
+        # The vmmd drop-in sends Cloudflare's ranges beside the entry
+        # addresses (for a vmmd that predates them); the entry rules win.
+        "public-entry-over-cloudflare|eth0|10.100.0.0/16||||||||1|203.0.113.10"
       )
       ;;
     *)

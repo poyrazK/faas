@@ -28,6 +28,11 @@
       "ipv4": "gregale-cloudflare-origin-v4",
       "ipv6": "gregale-cloudflare-origin-v6"
     },
+    "direct_entry": {
+      "target_tag": "gregale-entry",
+      "firewall_rule": "gregale-direct-entry-v4",
+      "tcp_ports": [443]
+    },
     "required_metadata": {
       "enable-oslogin": "TRUE",
       "block-project-ssh-keys": "TRUE"

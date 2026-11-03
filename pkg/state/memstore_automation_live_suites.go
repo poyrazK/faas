@@ -119,7 +119,7 @@ func (m *MemStore) liveSuitesLocked(appID, name string) []automationLiveSuiteRec
 
 func (m *MemStore) pruneLiveSuitesLocked(appID, name string) {
 	records := m.liveSuitesLocked(appID, name)
-	cutoff := time.Now().Add(-api.AutomationLiveSuiteStartWindow)
+	cutoff := time.Now().Add(-api.AutomationLiveSuiteProtectedWindow)
 	// Preserve creation receipts throughout the only window in which a missing
 	// UUIDv7 could still be admitted. The remaining slots retain recent history.
 	sort.SliceStable(records, func(i, j int) bool {
@@ -135,7 +135,7 @@ func (m *MemStore) pruneLiveSuitesLocked(appID, name string) {
 }
 
 func (m *MemStore) liveSuiteRoomLocked(appID, name string) error {
-	cutoff := time.Now().Add(-api.AutomationLiveSuiteStartWindow)
+	cutoff := time.Now().Add(-api.AutomationLiveSuiteProtectedWindow)
 	count := 0
 	for _, record := range m.automationLiveSuites {
 		if record.AppID == appID && record.Name == name && (m.liveSuitePinnedLocked(record.ID) || record.Managed && record.CreatedAt.After(cutoff)) {

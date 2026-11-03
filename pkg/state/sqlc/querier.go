@@ -5373,7 +5373,8 @@ type Querier interface {
 	PruneRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneRuntimeUpgradeGatewayReceiptsParams) error
 	PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error)
 	PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64, error)
-	PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, retentionSeconds int64) (int64, error)
+	PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, arg PruneUnownedWorkflowRunsParams) (int64, error)
+	PruneWorkflowEventArchive(ctx context.Context, db DBTX, arg PruneWorkflowEventArchiveParams) (int64, error)
 	PruneWorkflowScheduleCursors(ctx context.Context, db DBTX, arg PruneWorkflowScheduleCursorsParams) error
 	PruneWorkflowScheduleOccurrences(ctx context.Context, db DBTX, arg PruneWorkflowScheduleOccurrencesParams) (int64, error)
 	PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPatchTriggerParams) (Trigger, error)
