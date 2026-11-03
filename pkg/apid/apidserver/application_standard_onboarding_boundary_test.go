@@ -241,6 +241,7 @@ func standardOnboardingWizard(t *testing.T, e standardOnboardingBoundaryEnv) api
 	// (ADR-20261101160300).
 	if err := e.store.UpsertGitHubInstall(t.Context(), state.GitHubInstall{
 		AccountID: e.owner.Account.ID, InstallationID: 42, AuditGithubLogin: "alice", SealedAt: time.Now(),
+		SealedToken: []byte("test-sealed-token"), TokenExpiresAt: time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("seed GitHub install: %v", err)
 	}
