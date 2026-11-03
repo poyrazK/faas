@@ -2329,12 +2329,14 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// Issue #254 / Move 4 PR-2: pkg/auth.Middleware construction.
 	// AppLogsHandler (cmd/gatewayd-internal/app_logs.go) shares the auth chain
 	// with cmd/apid via ADR-046 — same bearer / session / MFA / scope
-	// / IDOR-safe LoadApp, same per-IP AuthLimit bucket family. The
-	// session manager is loaded from FAAS_SESSION_KEY (see
-	// session_key.go); the auditor is the same pkg/audit.Auditor
+	// / IDOR-safe LoadApp, same per-IP AuthLimit bucket family. Session
+	// cookies are opened by apid (ADR-20261102191500): opening one takes
+	// the key that seals one, and a gateway must not be able to mint
+	// dashboard sessions. The auditor is the same pkg/audit.Auditor
 	// gatewayd already uses for githubd replay-dedupe audit rows
-	// (cmd/gatewayd-internal/audit.go). nil-safe when the env is unset so
-	// the e2e harness + these dev-mode paths still boot.
+	// (cmd/gatewayd-internal/audit.go). The FAAS_SESSION_KEY manager
+	// below still keys edge challenges and traffic deadlines until the
+	// gateway fleet key replaces it.
 	sessions := loadSessionManager(osGetenv, log)
 	if sessions == nil {
 		return fmt.Errorf("gatewayd: session manager init failed")
@@ -2352,17 +2354,15 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	deps.audit = audit.New(pgStore, log, nil, "gatewayd")
 	deps.authMw = authmw.New(
 		storeAsAuthenticator(pgStore, apidgrpc.CredentialLookup{Apid: credentialAuth, Fallback: pgStore, Log: log}),
-		sessions,
+		apidgrpc.SessionVerifier{Auth: credentialAuth},
 		storeAsSessionLookup(pgStore),
 		auditorAsAuthAuditor(deps.audit),
 		log,
 		deps.apiAuthLimiter,
-		// gatewayd-internal has no need for the binding-hash
-		// cross-check (it's a Unix-socket-only daemon in the
-		// ADR-070 split; the cookie branch it serves — public
-		// requests that come back through gatewayd-public — has
-		// already been validated upstream at the public edge).
-		// nil ⇒ the cross-check is a no-op.
+		// No binding-hash cross-check (ADR-076): the hash is keyed
+		// by the session key, which gatewayd-internal does not hold
+		// for cookies, and gatewayd-public in front of it holds none
+		// either. nil ⇒ the cross-check is a no-op.
 		nil,
 	)
 	// Issue #560: per-deployment require_authn (pro/Scale opt-in).
