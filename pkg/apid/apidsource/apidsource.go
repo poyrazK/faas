@@ -436,6 +436,9 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	if p.ImageRef != "" {
 		return enqueueProjectImage(ctx, store, notif, p)
 	}
+	if p.ImagePort < 0 || p.ImagePort > 65535 {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: port %d out of range", p.ImagePort)
+	}
 	sourceStorage, err := sourceBackendFromEnv(ctx)
 	if err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: %w", err)
@@ -661,6 +664,10 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		CanaryStages:             append(json.RawMessage(nil), p.CanaryStages...),
 		ReleaseCommand:           append([]string(nil), p.ReleaseCommand...),
 		ReleaseCommandShell:      p.ReleaseCommandShell,
+		// A Compose service built from source listens on its ports:
+		// target (ADR-20261103112845); without one the build's EXPOSE or
+		// PORT decides, as before.
+		OverridePort: p.ImagePort,
 	}
 	if p.ServiceRollout {
 		// Keep the predecessor live until schedd observes the new service

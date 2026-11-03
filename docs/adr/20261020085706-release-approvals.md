@@ -236,3 +236,19 @@ A production environment synced from Git with `approval_policy: manual` activate
   - asks for more than one approval, since a revision carries one;
   - on a company app, does not let the approver's role approve.
 - A revision's author is a Git identity, not a Gregale account, so self-approval is not judged, as for a protected-branch revision.
+
+## Amendment 9 (2026-11-03): a protected promotion's approval is held to who may approve
+
+A protected production environment's promotion approval stands in for each promoted app's release approval policy (amendment 2), but it could be given with an API key, and by any owner or admin of the project's organization whatever the policy's approvers (release review 2026-11-03). An owner's CI key could so approve and ship a production promotion with no person deciding. Now, when a promoted app's policy needs an approval:
+
+- an approval sent with an API key or token is refused (`403 release_approval_session_required`); a person signed in approves, as for a release (amendment 4). Promotions no policy covers, and plan approvals, still take keys;
+- on a company app, the approval stands in only when its approver is a current member whose role the policy lets approve (`403 org_role_forbidden` at promote time otherwise).
+
+## Amendment 10 (2026-11-03): a superseded release that never served is not a rollback target by right
+
+A rollback to a superseded release skipped every guard on the grounds that it had served. But a release staged without traffic, or waiting in its canary for approval, is superseded the moment a newer release goes live; a rejected release stays behind the same way. Rolling back to one shipped never-served or rejected code with no approval, freeze or pause check (release review 2026-11-03). Now a rollback to a superseded release:
+
+- is refused when the release was rejected (`403 release_approval_rejected`), whether or not its canary served;
+- when the release never served (`deployments.serving_ended_at` unset), meets the break-glass pause, the active freezes (`409 release_frozen`, no override on a rollback) and the approvals (`release_approval_required`) a new release meets.
+
+A release that served before stays a rollback target that freezes and the pause never hold.

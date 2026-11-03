@@ -1668,6 +1668,7 @@ type AppDetailData struct {
 	// dashboard cron fire-now POST. Values:
 	//   "ok"    — handler redirected with ?fired=1
 	//   "error" — handler redirected with ?fired=error
+	//   "disabled", "busy", "suspended", "plan" — a refusal with its reason
 	// Empty string → no banner. The template's empty-state branch
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
@@ -2455,6 +2456,9 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+	// TelemetryGaps lists why the window may be missing requests; empty
+	// when every gateway delivered it or when it could not be judged.
+	TelemetryGaps []string
 }
 
 type RequestAnalyticsComputeCostView struct {

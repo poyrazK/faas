@@ -61,7 +61,40 @@ func (r DeploymentCronStagingRequest) Validate() error {
 	if err := ValidateDeploymentCrons(r.Before); err != nil {
 		return err
 	}
-	return ValidateDeploymentCrons(r.Desired)
+	if err := ValidateDeploymentCrons(r.Desired); err != nil {
+		return err
+	}
+	if r.Operation != "stage" && r.Operation != "prepare" {
+		// Restoring, cancelling and tracking replay an intent already
+		// staged; one staged before the stricter rules must still undo.
+		return nil
+	}
+	return validateStagedCronChanges(r.Before, r.Desired)
+}
+
+// validateStagedCronChanges applies the cron API's path and timezone rules to
+// every desired cron the request adds or changes. Staging checked only a
+// leading "/" and a loadable zone, so it stored paths the cron API refuses
+// ("//host", spaces, "#", over CronPathMaxBytes) and the host-dependent
+// "Local" zone (crons audit 2026-11-03). A row kept with the path and zone
+// it had before stays valid, so a cron stored under older rules is carried.
+func validateStagedCronChanges(before, desired []DeploymentCronConfig) error {
+	kept := make(map[string]DeploymentCronConfig, len(before))
+	for _, row := range before {
+		kept[row.ID] = row
+	}
+	for _, row := range desired {
+		if old, ok := kept[row.ID]; ok && old.Path == row.Path && old.Timezone == row.Timezone {
+			continue
+		}
+		if problem := ValidateCronPath(row.Path); problem != nil {
+			return fmt.Errorf("invalid HTTP cron path %q: %s", row.Path, problem.Detail)
+		}
+		if _, err := cronexpr.NormalizeCustomerTimezone(row.Timezone); err != nil {
+			return fmt.Errorf("invalid cron timezone: %w", err)
+		}
+	}
+	return nil
 }
 
 func orderedDeploymentCrons(rows []DeploymentCronConfig) []DeploymentCronConfig {

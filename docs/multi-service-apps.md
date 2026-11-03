@@ -96,6 +96,50 @@ Other datastores, and `postgres` where managed PostgreSQL is not available, are
 listed under **Managed (not provisioned)** with the variable your services
 expect. Point that variable at a database you run elsewhere.
 
+Only a reviewed deploy (`gregale deploy`, the dashboard) creates the managed
+database. When a GitHub push adds a `postgres` service, the services that need
+its variable and have no value for it are not deployed by that push; their
+GitHub check says so. Run a reviewed deploy, or set the variable yourself, and
+the next push deploys them
+([ADR-20261103112845](adr/20261103112845-github-pushes-never-remove-or-strand-services.md)).
+
+### Start order and migrations
+
+`depends_on` keeps its Compose meaning where Gregale can honour it
+([ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md)):
+
+- `condition: service_healthy` on another service holds this service's new
+  release until that service's deployment is live.
+- `condition: service_healthy` on a datastore (`db: postgres:16`) is accepted as
+  a plain dependency, because Gregale does not run the datastore as a service.
+  The plan says so; have the service retry its connection until the database
+  answers, as it does when Compose restarts the database.
+- A step the others wait for with `condition: service_completed_successfully`,
+  such as a migration, runs as the **release command** of the waiting service
+  that shares its build:
+
+  ```yaml
+  services:
+    migrate:
+      build: ./api
+      command: npm run migrate
+    api:
+      build: ./api
+      ports: ["3000:3000"]
+      depends_on:
+        migrate:
+          condition: service_completed_successfully
+  ```
+
+  `npm run migrate` runs once before each `api` release goes live, in the `api`
+  image with its variables and secrets, and `migrate` is not deployed as a
+  service. Every deploy of `api` runs it, GitHub pushes included, unless the
+  `api` source declares its own `release.command` or Procfile `release:`. Other
+  services that waited for `migrate` no longer wait; the plan names them. The
+  step must use the same `build:` (context, Dockerfile, args) or `image:` as a
+  waiting service that serves requests, must have a `command:` and must not
+  publish ports; chained steps and two steps for one service fail the plan.
+
 Each service keeps its name inside the project. Its app slug is the same name,
 or `<project>-<name>` when the name is reserved (`api`, `admin`, …) or taken by
 another app, for example `shop-api`.
@@ -104,11 +148,20 @@ another app, for example `shop-api`.
 
 A Compose service that publishes `ports:` gets a public URL. One without
 `ports:` is **internal**: other services in the project can call it, and it has
-no public URL. Other services are public unless
+no public URL. So is one whose ports are all bound to a loopback address, such
+as `127.0.0.1:8081:8080`, which Docker publishes only on your own machine; the
+plan warns, and removing the address publishes it. Other services are public unless
 [`.gregale/project.yaml`](#without-a-compose-file) says `visibility: internal`.
 The plan lists every public service under **Public on the internet** and marks
 the rest `visibility=internal`. Visibility is set when the app is created; see
 [networking](networking.md) for changing it later.
+
+A service listens on the container side of its first `ports:` mapping: with
+`ports: ["8080:3000"]`, Gregale sends requests to port 3000 and, unless you set
+`PORT` yourself, sets it to 3000, whether the service is built from source or
+runs an `image:`. A built
+service without `ports:` uses its Dockerfile's single `EXPOSE`, or `PORT`
+(8080).
 
 A service without `ports:` serves requests (`class=http` in the plan) when
 another service calls it:
@@ -139,7 +192,13 @@ curl http://billing.internal:10081/invoices
 ```
 
 `http://billing.svc.gregale:10081` is the same service. Calls stay on
-Gregale's private network and wake a parked service when needed. During
+Gregale's private network and wake a parked service when needed.
+
+A call stays in its caller's environment: production reaches the production
+deployment of `billing`, and a `staging` workload reaches the `staging`
+deployment. When `billing` has no deployment in that environment, the call is
+refused with 403 rather than sent to production; deploy `billing` to the
+environment first. During
 development, `gregale dev --all` runs every service in its own developer
 environment, and the same names reach those environments instead of
 production ([gregale dev](gregale-dev.md#call-the-other-apps)).
@@ -244,8 +303,12 @@ See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
 Each deploy compares the repository with the project, and the plan shows every
 change before anything is applied:
 
-- **Removing** a service from Compose removes its app when the plan is applied.
-  A service that still lists it in `depends_on` fails the plan.
+- **Removing** a service from Compose removes its app when the plan of a
+  reviewed deploy (`gregale deploy`, the dashboard) is applied. A service that
+  still lists it in `depends_on` fails the plan. A GitHub push never removes a
+  service: the app keeps serving its last release, and the push's GitHub check
+  says a reviewed deploy removes it. A service hidden by an inactive Compose
+  `profiles:` entry counts as removed. A removed app can be restored for 7 days.
 - **Renaming** a service keeps its app when you say what it was called before:
 
   ```yaml

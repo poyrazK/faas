@@ -59,6 +59,11 @@ func (b *profileBridge) runCapture(req profileproto.CaptureRequest, sleep func(t
 		checkpoints: map[string]profileproto.CapturedProfile{}, stop: make(chan struct{}), replied: make(chan struct{})}
 	window := int((req.Duration() + time.Second - 1) / time.Second)
 	b.capture = c
+	if b.control.Enabled && !b.control.Capture {
+		// Continuous collectors end their window when the capture starts
+		// and send it under this epoch.
+		b.flushEpoch = b.control.Epoch
+	}
 	b.control = profileControl{Enabled: true, Epoch: c.epoch, WindowSeconds: window, Kinds: append([]string(nil), req.Kinds...), Capture: true,
 		CheckpointSeconds: int(req.Checkpoint() / time.Second)}
 	b.mu.Unlock()
@@ -99,6 +104,7 @@ func (b *profileBridge) runCapture(req profileproto.CaptureRequest, sleep func(t
 	b.finished = c
 	if b.capture == c {
 		b.capture = nil
+		b.flushEpoch = ""
 		// A checkpoint during the grace period keeps the bridge suspended;
 		// resume restores the base configuration.
 		if !b.control.Suspended {

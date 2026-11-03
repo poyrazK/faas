@@ -52,3 +52,9 @@ WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='
 -- name: ReadLiveTrafficSumInScope :one
 SELECT coalesce(sum(traffic_percent),0)::bigint FROM deployments
 WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='live';
+
+-- name: DeploymentServedBefore :one
+-- Whether a deployment ever took traffic: it serves now, or the
+-- deployment_serving_ended_at trigger stamped when it stopped.
+SELECT (serving_ended_at IS NOT NULL OR (status = 'live' AND traffic_percent > 0))::boolean AS served
+FROM deployments WHERE id = sqlc.arg(id)::uuid;

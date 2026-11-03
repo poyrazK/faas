@@ -2037,6 +2037,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
 		WithPrivateNetworkFabricDeletionSubscriber(privateNetworkFabricDeletionSubscriber).
 		WithTriggerSecretIdentities(deliveryReaders).
+		// Broker triggers take at most their plan's
+		// TriggerRecordsPerSecondPerApp; records over it stay on the
+		// broker for a later poll (ADR-20261101093015).
+		WithTriggerRecordRateLimiter(sched.NewTriggerRecordRateLimiter()).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).
@@ -3208,10 +3212,25 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 	if err != nil {
 		return api.PlanFree, false
 	}
-	if !acct.Active() {
-		return api.PlanFree, true
+	return floorPlan(acct), true
+}
+
+// ResolveAppPlan implements floor.AppPlanResolver: a company app's floor
+// follows its organization's plan and status, the subject meterd bills the
+// floor to, not its creator's account (ADR-20261101113742).
+func (s schedFloorPlanResolver) ResolveAppPlan(ctx context.Context, app state.App) (api.Plan, bool) {
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
+	if err != nil {
+		return api.PlanFree, false
 	}
-	return acct.Plan, true
+	return floorPlan(acct), true
+}
+
+func floorPlan(acct state.Account) api.Plan {
+	if !acct.Active() {
+		return api.PlanFree
+	}
+	return acct.Plan
 }
 
 // schedFloorLedger (issue #557 / ADR-071) adapts *sched.NodeLedger

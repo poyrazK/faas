@@ -630,6 +630,10 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			MatchHost: rule.MatchHost, MatchPath: rule.MatchPath,
 			MatchMethods: rule.MatchMethods, MatchHeaders: cloneStringMap(rule.MatchHeaders),
 		}
+		overridden := ""
+		if m, ok := ruleMatchMethod(rule, input, input.Path, matchMethod, input.Headers); ok && m != matchMethod {
+			matchMethod, overridden = m, m
+		}
 		switch {
 		case rule.ExpiresAt != nil && !time.Now().Before(*rule.ExpiresAt):
 			row.Status, row.Reason = "skipped", "rule expired at "+rule.ExpiresAt.UTC().Format(time.RFC3339)
@@ -682,6 +686,9 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		}
 		if rule.Kind == "cors" && row.Status != "skipped" && requestedMethod != "" {
 			row.Reason += fmt.Sprintf("; preflight requests %s", requestedMethod)
+		}
+		if overridden != "" && row.Status != "skipped" {
+			row.Reason += fmt.Sprintf("; matched as %s, the method the request asks the app to run it as (method override)", overridden)
 		}
 		row.Outcome, row.OutcomeReason, row.ActionPreview = previewAction(rule, row, input, input.Path)
 		result.Rules = append(result.Rules, row)
@@ -1372,10 +1379,10 @@ func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requ
 	var first *api.EdgeRuleResponse
 	for i := range rules {
 		rule := &rules[i]
-		if rule.Kind != kind || !rule.Enabled || unreleasedChallenge(*rule) || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+		if rule.Kind != kind || !rule.Enabled || unreleasedChallenge(*rule) || !HostMatches(rule.MatchHost, input.Host) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) || rule.Mode == api.EdgeRuleModeLog {
 			continue
 		}
-		if rule.Mode == api.EdgeRuleModeLog || !traceConditionMatches(*rule, input, requestPath, method, headers) {
+		if _, ok := ruleMatchMethod(*rule, input, requestPath, method, headers); !ok {
 			continue
 		}
 		matched, err := true, error(nil)
@@ -2854,6 +2861,28 @@ func MethodMatches(methods []string, method string) bool {
 		}
 	}
 	return false
+}
+
+// ruleMatchMethod returns the method under which rule's method selector and
+// condition cover the request: method itself or, for a kind that denies or
+// constrains requests, the method a method-override header or "_method"
+// query parameter asks the app to run it as, as the gateway's
+// MatchProtectiveEdgeRule does (ADR-091 amendment 2026-11-02, later).
+func ruleMatchMethod(rule api.EdgeRuleResponse, input Input, requestPath, method string, headers http.Header) (string, bool) {
+	if ruleMethodMatches(rule.Kind, rule.MatchMethods, method) && traceConditionMatches(rule, input, requestPath, method, headers) {
+		return method, true
+	}
+	if !api.EdgeRuleKindUsesProtectivePathMatch(rule.Kind) {
+		return "", false
+	}
+	override := api.EdgeRuleMethodOverride(input.Method, input.Headers, input.Query)
+	if override == "" || override == method {
+		return "", false
+	}
+	if ruleMethodMatches(rule.Kind, rule.MatchMethods, override) && traceConditionMatches(rule, input, requestPath, override, headers) {
+		return override, true
+	}
+	return "", false
 }
 
 // ruleMethodMatches uses the gateway's case-sensitive lookup for CORS methods.

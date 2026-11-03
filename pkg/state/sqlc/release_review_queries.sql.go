@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deploymentServedBefore = `-- name: DeploymentServedBefore :one
+SELECT (serving_ended_at IS NOT NULL OR (status = 'live' AND traffic_percent > 0))::boolean AS served
+FROM deployments WHERE id = $1::uuid
+`
+
+// Whether a deployment ever took traffic: it serves now, or the
+// deployment_serving_ended_at trigger stamped when it stopped.
+func (q *Queries) DeploymentServedBefore(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, deploymentServedBefore, id)
+	var served bool
+	err := row.Scan(&served)
+	return served, err
+}
+
 const listTrafficSiblingsInScope = `-- name: ListTrafficSiblingsInScope :many
 SELECT id::text,traffic_percent,
     (canary_total_steps > 0 AND rollout_state = 'aborted' AND rollout_completed_at IS NULL)::boolean AS aborted_canary,

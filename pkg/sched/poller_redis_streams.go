@@ -24,18 +24,15 @@ package sched
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -119,20 +116,7 @@ func newRedisPoller(t sqlc.Trigger) (triggerSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts := &redis.Options{
-		Addr:         cfg.Addr,
-		Username:     cfg.Username,
-		Password:     cfg.Password,
-		Dialer:       oci.EgressDialContext(&net.Dialer{Timeout: 5 * time.Second}),
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  3 * time.Second,
-		WriteTimeout: 3 * time.Second,
-		PoolSize:     4,
-	}
-	if cfg.TLS {
-		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-	client := redis.NewClient(opts)
+	client := redis.NewClient(redisTriggerOptions(cfg))
 	// Verify the connection up-front — a misconfigured addr is a
 	// startup failure, not a per-tick surprise.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

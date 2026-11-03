@@ -18,14 +18,14 @@ type PlanChangeStorage struct {
 }
 
 // PlanChangeStorage checks a downgrade against the target plan's storage
-// ceiling (ADR-20261101214152). The ceiling uses the spend cap the subject
-// would hold afterwards (ADR-20261029180000), since a default cap follows the
-// plan. Task is empty when the bytes fit, or when no object storage or no
-// ceiling applies.
+// ceiling (ADR-20261101214152): the plan's, or the one support granted the
+// subject, tightened by the spend cap the subject would hold afterwards
+// (ADR-20261029180000), since a default cap follows the plan. Task is empty
+// when the bytes fit, or when no object storage or no ceiling applies.
 func (s *Service) PlanChangeStorage(ctx context.Context, subject state.Account, target api.Plan) (PlanChangeStorage, error) {
 	registry := s.Host.ObjectStorage()
 	st, ok := s.Host.Store().(state.ObjectStorageAccountingStore)
-	limits, known := api.LimitsFor(target)
+	_, known := api.LimitsFor(target)
 	if registry == nil || !ok || !known {
 		return PlanChangeStorage{}, nil
 	}
@@ -36,7 +36,12 @@ func (s *Service) PlanChangeStorage(ctx context.Context, subject state.Account, 
 	} else if capped {
 		current = &cents
 	}
-	ceiling := limits.ObjectStorage.WithSpendCap(state.PlanChangeOverageCap(subject.Plan, target, current)).MaxAccountBytes
+	grant, err := objectStorageCeilingGrant(ctx, s.Host.Store(), owner)
+	if err != nil {
+		return PlanChangeStorage{}, err
+	}
+	planCeiling := api.ObjectStorageLimitsFor(target, grant, nil).MaxAccountBytes
+	ceiling := api.ObjectStorageLimitsFor(target, grant, state.PlanChangeOverageCap(subject.Plan, target, current)).MaxAccountBytes
 	if ceiling <= 0 {
 		return PlanChangeStorage{}, nil
 	}
@@ -50,10 +55,30 @@ func (s *Service) PlanChangeStorage(ctx context.Context, subject state.Account, 
 		return out, nil
 	}
 	out.Task = fmt.Sprintf("delete %s of object storage: the %s plan stores at most %s and you store %s", gibAtLeast(out.StoredBytes-ceiling), target, gibAtMost(ceiling), gibAtLeast(out.StoredBytes))
-	if target.IsPaid() {
+	switch {
+	case target.IsPaid() && ceiling < planCeiling:
 		out.Task += ", or raise your spend cap"
+	case target.IsPaid():
+		out.Task += ", or ask support for a higher storage ceiling"
 	}
 	return out, nil
+}
+
+// objectStorageCeilingGrant returns the ceiling support granted owner, nil
+// when it has none or the store keeps no grants.
+func objectStorageCeilingGrant(ctx context.Context, store state.Store, owner string) (*int64, error) {
+	grants, ok := store.(state.ObjectStorageCeilingGrantStore)
+	if !ok {
+		return nil, nil
+	}
+	grant, err := grants.ObjectStorageCeilingGrant(ctx, owner)
+	if err != nil {
+		return nil, fmt.Errorf("read storage ceiling grant: %w", err)
+	}
+	if grant == nil {
+		return nil, nil
+	}
+	return &grant.MaxBytes, nil
 }
 
 // gibAtLeast rounds bytes up to whole GiB, so a task never asks for too little.

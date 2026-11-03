@@ -98,6 +98,8 @@ type StatsCollector struct {
 	callbackOutboxFull              *prometheus.Desc
 	clientMessagesPaced             *prometheus.Desc
 	clientMessagesThrottled         *prometheus.Desc
+	ephemeralRelaysThrottled        *prometheus.Desc
+	liveFramesThrottled             *prometheus.Desc
 	callbackOutboxAdmissionErrors   *prometheus.Desc
 	callbackUnpersistedFailures     *prometheus.Desc
 	callbackPending                 *prometheus.Desc
@@ -222,6 +224,8 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		callbackOutboxFull:              prometheus.NewDesc(subsystem+"_callback_outbox_full_total", "Callback events rejected because the durable outbox remained full until their admission deadline.", nil, nil),
 		clientMessagesPaced:             prometheus.NewDesc(subsystem+"_client_messages_paced_total", "Plain-connection client messages that waited for the connection or node message rate.", nil, nil),
 		clientMessagesThrottled:         prometheus.NewDesc(subsystem+"_client_messages_throttled_total", "Plain connections closed with 1013 because their next message would wait longer than the message rate allows.", nil, nil),
+		ephemeralRelaysThrottled:        prometheus.NewDesc(subsystem+"_ephemeral_relays_throttled_total", "Signals, presence updates and read receipts refused because the endpoint's or node's relay budget was spent.", nil, nil),
+		liveFramesThrottled:             prometheus.NewDesc(subsystem+"_live_frames_throttled_total", "Live query subscribe and renew frames refused because the connection's or node's live frame rate was spent.", nil, nil),
 		callbackOutboxAdmissionErrors:   prometheus.NewDesc(subsystem+"_callback_outbox_admission_errors_total", "Callback events rejected because durable outbox admission failed for a reason other than capacity exhaustion.", nil, nil),
 		callbackUnpersistedFailures:     prometheus.NewDesc(subsystem+"_callback_unpersisted_failures_total", "Message or disconnect callbacks failed when no durable outbox was configured.", nil, nil),
 		callbackPending:                 prometheus.NewDesc(subsystem+"_callback_pending", "Pending durable realtime callbacks.", nil, nil),
@@ -314,6 +318,8 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.callbackOutboxFull, prometheus.CounterValue, float64(stats.CallbackOutboxFull))
 	ch <- prometheus.MustNewConstMetric(c.clientMessagesPaced, prometheus.CounterValue, float64(stats.ClientMessagesPaced))
 	ch <- prometheus.MustNewConstMetric(c.clientMessagesThrottled, prometheus.CounterValue, float64(stats.ClientMessagesThrottled))
+	ch <- prometheus.MustNewConstMetric(c.ephemeralRelaysThrottled, prometheus.CounterValue, float64(stats.EphemeralRelaysThrottled))
+	ch <- prometheus.MustNewConstMetric(c.liveFramesThrottled, prometheus.CounterValue, float64(stats.LiveFramesThrottled))
 	ch <- prometheus.MustNewConstMetric(c.callbackOutboxAdmissionErrors, prometheus.CounterValue, float64(stats.CallbackOutboxAdmissionErrors))
 	ch <- prometheus.MustNewConstMetric(c.callbackUnpersistedFailures, prometheus.CounterValue, float64(stats.CallbackUnpersistedFailures))
 	ch <- prometheus.MustNewConstMetric(c.callbackPending, prometheus.GaugeValue, float64(stats.CallbackPending))
@@ -368,6 +374,8 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.callbackOutboxFull,
 		c.clientMessagesPaced,
 		c.clientMessagesThrottled,
+		c.ephemeralRelaysThrottled,
+		c.liveFramesThrottled,
 		c.callbackOutboxAdmissionErrors,
 		c.callbackUnpersistedFailures,
 		c.callbackPending,

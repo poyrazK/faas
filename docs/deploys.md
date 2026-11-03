@@ -766,6 +766,8 @@ refused the same way:
 
 Protect the environment (`gregale environment protect <project>
 production`) and its promotion approval stands in for the app's policy.
+That approval comes from a person signed in, not an API key or token, and on
+a company app from someone whose role the policy lets approve.
 A GitOps source releases into `production` only once a person approved the
 revision in Gregale (approval policy `manual`); with `protected_branch` the
 sync waits until you remove the app's policy or switch the source to manual
@@ -826,6 +828,9 @@ with `release_frozen`, which names the freeze, its reason and its creator:
   began (`traffic`, promote, or a rollback to it): it has never served, so it
   waits like a new deploy. A release deployed during the freeze, or one that
   served before, is not refused.
+- a rollback to a release that never served, even after a newer release
+  replaced it. A rollback can't carry an override, and a rollback to a
+  rejected release is always refused.
 
 A GitOps source managing the `production` environment keeps its sync
 unconverged while a freeze covers one of its apps, and activates the new
@@ -901,6 +906,11 @@ traffic; production stays on the current release, and nothing wakes the
 waiting one. At its time, Gregale starts the rollout the deploy would have
 had: the same canary (`--rollout safe` or `fast`, or the app's release
 policy), or all traffic at once for `--rollout immediate`.
+
+Because the build and any release command (a migration) run as soon as you
+deploy, a freeze active right now refuses a scheduled release just as it
+refuses an immediate one, even when the scheduled time falls after the
+freeze. Wait for it to end, or deploy with `--override-freeze REASON`.
 
 Just before it starts, Gregale checks again:
 - **Freezes.** A freeze active at that moment stops the release, including a
@@ -1066,9 +1076,14 @@ on the serving release.
 A production release of an app that already serves traffic rolls out on the
 `adaptive` ladder with first-wake 5xx rollback even when the deploy names no
 rollout policy ([ADR-1446](adr/1446-safe-releases-by-default.md)). This covers
-`gregale deploy`, GitHub App pushes, the API, and Terraform. It does not
-apply to an app's first deploy, PR previews, named project environments, or
-service, worker, and job apps, which keep their own rollout behavior.
+`gregale deploy`, GitHub App pushes, `gregale project apply`, the API, and
+Terraform, into the default scope or a project's `production` environment.
+It does not apply to an app's first deploy into that scope, PR previews,
+other project environments, atomic project releases (which cut every app
+over together), or service, worker, and job apps, which keep their own
+rollout behavior. A promotion into `production` gets the first-wake 5xx
+rollback and the post-release watch but no canary: its protected approval
+already stands in for the app's approval policy.
 
 The adaptive ladder sends 1%, then 10%, then 50%, then 100% of traffic to the
 new revision. Each stage lasts at least a minute and advances as soon as both

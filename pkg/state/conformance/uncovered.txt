@@ -171,7 +171,6 @@ DeploymentRecordSnapshotMiss
 DeploymentSidecarRAMs
 DeploymentSnapshotBackoffActive
 DomainByName
-DropTriggerRecordByOperator
 EditPublicStatusEventTitle
 EditPublicStatusUpdateMessage
 ExpireCrashCapture
@@ -393,7 +392,6 @@ ListTenantHostnamesForSurface
 ListTenantSurfacesForAccount
 ListTenantSurfacesForApp
 ListTenantSurfacesNearingExpiry
-ListTriggerRecordsForTrigger
 ListUnplacedApps
 ListVerifiedTenantHostnamesForSurface
 ListWorkflowRuns
@@ -425,7 +423,6 @@ MarkRuntimeConfigOperationSucceeded
 MarkSnapshotStaleByAppProtocol
 MarkTenantHostnameCheckFailed
 MarkTenantHostnameVerified
-MarkTriggerRecordDeadLetter
 MarkTriggerRecordRetry
 MarkTriggerRecordSucceeded
 MarkUploadSessionCommitted
