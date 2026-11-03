@@ -16,11 +16,14 @@ run() { # VARS_FILE [VAR=VALUE...]
 key=0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789ABCDEF
 lower="$(printf '%s' "$key" | tr 'A-F' 'a-f')"
 
-# No secret: nothing is written, even over variables that set the key.
-run "$work/none.yml" || fail "no secret failed"
+# No secret: the deploy fails and nothing is written. Gateways share the key
+# for edge challenges and deadlines and hold no session key to fall back on
+# (ADR-20261102191500).
+if run "$work/none.yml" 2>/dev/null; then
+  fail "a deploy without the secret passed"
+fi
 [[ ! -e "$work/none.yml" ]] || fail "no secret still wrote a vars file"
 printf 'gatewayd_edge_challenge_key: "%s"\n' "$lower" > "$work/operator.yml"
-run "$work/operator.yml" || fail "no secret refused operator-set variables"
 
 # A secret appends the key, lower-cased, and makes it required; existing
 # variables are kept.
