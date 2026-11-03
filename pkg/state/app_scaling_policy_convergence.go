@@ -109,3 +109,70 @@ func (s *PgStore) GetAppScalingPolicyStatus(ctx context.Context, appID string) (
 	}
 	return status, nil
 }
+
+// AppScalingPolicyObservationRefreshAge is how old a scheduler's observation
+// of an unchanged revision may grow before the periodic pass writes it again
+// (ADR 20261103094355). The pass runs every
+// AppScalingPolicyObservationInterval, so a row is rewritten about every
+// 60 s, inside AppScalingPolicyObservationFreshness; it used to be rewritten
+// for every app on every pass.
+const AppScalingPolicyObservationRefreshAge = 45 * time.Second
+
+// AppScalingPolicyObservation is one app revision a scheduler loaded.
+type AppScalingPolicyObservation struct {
+	AppID    string
+	Revision int64
+}
+
+// AppScalingPolicyObservationBatchStore records a scheduler's periodic
+// observations in one statement (ADR 20261103094355). The periodic pass ran
+// one statement per app on schedd's main loop, which held the one-second
+// scale-up, targets and floor triggers for a round trip per app.
+type AppScalingPolicyObservationBatchStore interface {
+	RecordAppScalingPolicyObservations(ctx context.Context, schedulerNodeID string, observations []AppScalingPolicyObservation) (int64, error)
+}
+
+var _ AppScalingPolicyObservationBatchStore = (*PgStore)(nil)
+
+// RecordAppScalingPolicyObservations records each observation whose revision
+// is still the app's, for apps owned by schedulerNodeID ("" for every app),
+// as RecordAppScalingPolicyObserved does. A row already at that revision for
+// that scheduler is rewritten only once it is
+// AppScalingPolicyObservationRefreshAge old by the database clock, which
+// stamped it. It returns how many rows it wrote.
+func (s *PgStore) RecordAppScalingPolicyObservations(ctx context.Context, schedulerNodeID string, observations []AppScalingPolicyObservation) (int64, error) {
+	if s == nil || s.pool == nil {
+		return 0, fmt.Errorf("state: scaling policy has nil pool")
+	}
+	ids := make([]string, 0, len(observations))
+	revisions := make([]int64, 0, len(observations))
+	for _, o := range observations {
+		if id := strings.TrimSpace(o.AppID); validUUID(id) && o.Revision > 0 {
+			ids = append(ids, id)
+			revisions = append(revisions, o.Revision)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO app_scaling_policy_scheduler_status AS p
+		    (app_id, scheduler_node_id, observed_revision, observed_at)
+		SELECT a.id, a.node_id, a.scaling_policy_revision, now()
+		FROM unnest($2::uuid[], $3::bigint[]) AS o(app_id, revision)
+		JOIN apps a ON a.id = o.app_id AND a.scaling_policy_revision = o.revision
+		WHERE ($1 = '' OR a.node_id::text = $1)
+		ON CONFLICT (app_id) DO UPDATE SET
+		    scheduler_node_id = EXCLUDED.scheduler_node_id,
+		    observed_revision = EXCLUDED.observed_revision,
+		    observed_at = EXCLUDED.observed_at
+		WHERE EXCLUDED.observed_revision > p.observed_revision
+		   OR (EXCLUDED.observed_revision = p.observed_revision
+		       AND (p.scheduler_node_id IS DISTINCT FROM EXCLUDED.scheduler_node_id
+		            OR p.observed_at <= now() - make_interval(secs => $4::double precision)))
+	`, strings.TrimSpace(schedulerNodeID), ids, revisions, AppScalingPolicyObservationRefreshAge.Seconds())
+	if err != nil {
+		return 0, fmt.Errorf("state: record app scaling policy observations: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}

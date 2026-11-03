@@ -151,3 +151,21 @@ func TestApplyDefaultReleaseToEnqueue(t *testing.T) {
 }
 
 func ptrBool(v bool) *bool { return &v }
+
+func TestDefaultRollbackOn5xxForPromotions(t *testing.T) {
+	serving := releasePolicyFakeStore{live: true}
+	app := state.App{ID: "app"}
+	if !DefaultRollbackOn5xx(context.Background(), serving, slog.Default(), app, api.PlanFree, "production") {
+		t.Fatal("a promotion into a serving production environment gets rollback_on_5xx")
+	}
+	if DefaultRollbackOn5xx(context.Background(), serving, slog.Default(), app, api.PlanFree, "staging") {
+		t.Fatal("a promotion into staging is unchanged")
+	}
+	if DefaultRollbackOn5xx(context.Background(), releasePolicyFakeStore{}, slog.Default(), app, api.PlanFree, "production") {
+		t.Fatal("a first promotion into production has nothing to roll back to")
+	}
+	immediate := state.App{ID: "app", Manifest: state.AppManifest{ReleasePolicy: api.ReleasePolicyImmediate}}
+	if DefaultRollbackOn5xx(context.Background(), serving, slog.Default(), immediate, api.PlanFree, "production") {
+		t.Fatal("release_policy immediate opts out")
+	}
+}
