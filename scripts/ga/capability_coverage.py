@@ -390,6 +390,8 @@ INFRA_RULES = [
     r"^edge-local-first$",
     # ADR-20261102081618: the records that send Cloudflare to the compute edges.
     r"^edgednsd?(-.*)?$",
+    # ADR-20261103163954: what stands in front of a compute edge's TLS listener.
+    r"^edge-public-front$",
 ]
 
 
