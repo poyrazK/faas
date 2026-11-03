@@ -234,15 +234,27 @@ type keyLookupLimiter struct {
 	window  time.Time
 	failed  map[string]int
 	maxKeys int
+	// limit is how many failures one source may make per period.
+	limit  int
+	period time.Duration
 }
 
 func newKeyLookupLimiter() *keyLookupLimiter {
-	return &keyLookupLimiter{now: time.Now, failed: map[string]int{}, maxKeys: api.GatewayKeyLookupSourcesMax}
+	return &keyLookupLimiter{now: time.Now, failed: map[string]int{}, maxKeys: api.GatewayKeyLookupSourcesMax,
+		limit: api.GatewayFailedKeyLookupsPerSource, period: api.GatewayFailedKeyLookupWindow}
+}
+
+// newBasicAuthLimiter caps wrong basic-auth credentials per client source and
+// app (ADR-20261103172551). Without it a protected app's password could be
+// guessed at the edge's full request rate.
+func newBasicAuthLimiter() *keyLookupLimiter {
+	return &keyLookupLimiter{now: time.Now, failed: map[string]int{}, maxKeys: api.GatewayKeyLookupSourcesMax,
+		limit: api.GatewayFailedBasicAuthPerSourcePerApp, period: api.GatewayFailedBasicAuthWindow}
 }
 
 func (l *keyLookupLimiter) rollLocked() {
 	now := l.now()
-	if now.Sub(l.window) >= api.GatewayFailedKeyLookupWindow {
+	if now.Sub(l.window) >= l.period {
 		l.window = now
 		clear(l.failed)
 	}
@@ -256,7 +268,7 @@ func (l *keyLookupLimiter) allow(source string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.rollLocked()
-	return l.failed[source] < api.GatewayFailedKeyLookupsPerSource
+	return l.failed[source] < l.limit
 }
 
 // fail records a failed lookup by source.
@@ -302,6 +314,16 @@ func keyLookupSource(r *http.Request) string {
 		return throttleIPKey(ip)
 	}
 	return ""
+}
+
+// basicAuthFailureKey is the wrong-credential budget key for one client
+// source and app, or "" (no budget) when the hop set no trusted address.
+func basicAuthFailureKey(r *http.Request, appID string) string {
+	source := keyLookupSource(r)
+	if source == "" {
+		return ""
+	}
+	return source + "\x00" + appID
 }
 
 // writeKeyLookupThrottled answers a client past its failed-lookup budget.

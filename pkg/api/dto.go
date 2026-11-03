@@ -2483,9 +2483,11 @@ func (b *PublicAuthBlock) Validate() *Problem {
 		return NewProblem(422, CodeValidation, "Invalid public_auth.basic_user",
 			fmt.Sprintf("public_auth.basic_user must be 1..%d bytes when mode='basic'", AppPublicAuthBasicUserMaxBytes))
 	}
-	if p := strings.TrimSpace(b.BasicPass); p == "" || len(p) > AppPublicAuthBasicPassMaxBytes {
+	// The edge budgets wrong guesses per client (ADR-20261103172551); a
+	// short password would still fall to a distributed guesser.
+	if p := strings.TrimSpace(b.BasicPass); len(p) < AppPublicAuthBasicPassMinBytes || len(p) > AppPublicAuthBasicPassMaxBytes {
 		return NewProblem(422, CodeValidation, "Invalid public_auth.basic_pass",
-			fmt.Sprintf("public_auth.basic_pass must be 1..%d bytes when mode='basic'", AppPublicAuthBasicPassMaxBytes))
+			fmt.Sprintf("public_auth.basic_pass must be %d..%d bytes when mode='basic'", AppPublicAuthBasicPassMinBytes, AppPublicAuthBasicPassMaxBytes))
 	}
 	return nil
 }

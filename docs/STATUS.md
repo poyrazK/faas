@@ -461,6 +461,19 @@ local scheduler sent them (ADR-20261103090000). The same record has
 `validate` check bodies sent with `Connection: Upgrade`, and keeps requests
 with `X-API-Key` or `Proxy-Authorization` out of the shared cache.
 
+2026-11-03: a sixth review found that basic-auth passwords could be guessed
+at the edge's request rate, that the control plane's Caddy admitted every
+Cloudflare customer's zone (the origin-pull check was off and pointed at
+Cloudflare's shared CA), and that a platform site with no Cloudflare in front
+took the client's `CF-Connecting-IP`. Basic auth now allows 10 wrong
+credentials per client and app a minute and new passwords are 12+ bytes; the
+public_edge role refuses to deploy a Cloudflare-admitting site without the
+zone's own origin-pull certificate (opt-out
+`faas_public_edge_allow_any_cloudflare_zone`); and a site with no Cloudflare
+in front uses the peer address (ADR-20261103172551). The next control-plane
+deploy needs the origin-pull CA installed first (docs/runbooks/EdgeDirectEntry.md,
+"The control plane's Caddy").
+
 ## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the

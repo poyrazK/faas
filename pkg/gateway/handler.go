@@ -986,6 +986,7 @@ type Handler struct {
 	bodySpoolBudget          *requestBodyBudget
 	bodyMemoryBudget         *requestBodyBudget
 	keyLookups               *keyLookupLimiter
+	basicAuthFailures        *keyLookupLimiter
 	financialBudgetAdmission func(context.Context, App) error
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
@@ -1516,9 +1517,10 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		preAuthLimiter: newPreAuthSourceLimiter(),
 		// The request bodies this gateway holds at once: spooled uploads
 		// on disk, validate-rule bodies in the heap.
-		bodySpoolBudget:  newRequestBodySpoolBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
-		keyLookups:       newKeyLookupLimiter(),
-		bodyMemoryBudget: newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
+		bodySpoolBudget:   newRequestBodySpoolBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
+		keyLookups:        newKeyLookupLimiter(),
+		basicAuthFailures: newBasicAuthLimiter(),
+		bodyMemoryBudget:  newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
 		// cannot grow unboundedly; full-bucket-only eviction
@@ -5363,6 +5365,21 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
+	// A client past its wrong-credential budget for this app gets 429
+	// without a compare, so a password cannot be guessed at the edge's
+	// request rate (ADR-20261103172551).
+	failureKey := basicAuthFailureKey(r, app.ID)
+	if !h.basicAuthFailures.allow(failureKey) {
+		h.emitAuthnAudit(r, app, nil, "instances.public_auth_throttled", map[string]any{
+			"app_id": app.ID,
+			"slug":   r.Host,
+			"mode":   publicAuthModeBasic,
+		})
+		rec.status = http.StatusTooManyRequests
+		api.WriteProblem(w, api.ErrAuthRateLimited(int(api.GatewayFailedBasicAuthWindow.Seconds())))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	// (2) Look up the unsealed credential via the cache (60s
 	// TTL + per-key invalidation). A cache miss invokes
 	// PublicAuthUnsealer.UnsealBasicAuth on the
@@ -5397,6 +5414,7 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 	// lengths and || skipped the password compare on a wrong
 	// username, so timing revealed the username and both lengths.
 	if !basicCredentialsMatch(user, pass, expectedUser, expectedPass) {
+		h.basicAuthFailures.fail(failureKey)
 		h.emitAuthnAudit(r, app, nil, "instances.public_auth_invalid", map[string]any{
 			"app_id": app.ID,
 			"slug":   r.Host,

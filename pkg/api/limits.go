@@ -179,6 +179,17 @@ const (
 	GatewayKeyLookupSourcesMax       = 100_000
 )
 
+// A basic-auth protected app (ADR-079) lets one client source (IPv4 address or
+// IPv6 /64) present GatewayFailedBasicAuthPerSourcePerApp wrong credentials per
+// GatewayFailedBasicAuthWindow, then answers 429 without comparing. A newly set
+// basic-auth password is at least AppPublicAuthBasicPassMinBytes long
+// (ADR-20261103172551).
+const (
+	GatewayFailedBasicAuthWindow          = time.Minute
+	GatewayFailedBasicAuthPerSourcePerApp = 10
+	AppPublicAuthBasicPassMinBytes        = 12
+)
+
 const (
 	RequestBodySpoolNodeBytes int64 = 4 << 30
 	RequestBodySpoolPerClient       = 4
