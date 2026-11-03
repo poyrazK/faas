@@ -35,7 +35,7 @@ class IssueReleaseHealth:
     identified_customers: int
     unattributed_events: int
     unknown_http_batches: int | Unset = UNSET
-    """Legacy HTTP records with unknown folded weights; observed event counts are lower bounds."""
+    """Legacy HTTP batches in this release have unknown folded weights; release event counts are lower bounds."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

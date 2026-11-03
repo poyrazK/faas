@@ -31,7 +31,7 @@ export type CreateNativeLinearIssueTicketRequest = {
    */
   recovery_url?: string;
   /**
-   * Original slug for recovering a legacy receipt after an app rename.
+   * Slug used when recovering a legacy Linear receipt created before the app was renamed.
    */
   original_app_slug?: string;
 };

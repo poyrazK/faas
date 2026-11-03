@@ -20,7 +20,7 @@ export type IssueReleaseHealth = {
   identified_customers: number;
   unattributed_events: number;
   /**
-   * Legacy HTTP records with unknown folded weights; observed event counts are lower bounds.
+   * Legacy HTTP batches in this release have unknown folded weights; release event counts are lower bounds.
    */
   unknown_http_batches?: number;
 };

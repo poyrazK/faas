@@ -124670,7 +124670,7 @@ components:
         identified_customers: { type: integer }
         observed_events: { type: integer }
         unattributed_events: { type: integer }
-        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP records with unknown folded weights; observed event counts are lower bounds. }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP batches in this impact window have unknown folded weights; observed events are a lower bound. }
         coverage: { type: string }
 
     IssueLifecycleAlertPolicy:
@@ -124916,7 +124916,7 @@ components:
         description: { type: string, maxLength: 16384, description: Optional description bounded to 16 KiB; no telemetry is copied automatically. }
         recover: { type: boolean, default: false, description: Explicitly recover an unconfirmed dispatch by its stable request UUID after the dispatch lease expires. }
         recovery_url: { type: string, maxLength: 512, description: Optional known Linear issue URL that also requests recovery and must match the UUID lookup. }
-        original_app_slug: { type: string, maxLength: 512, description: Original slug for recovering a legacy receipt after an app rename. }
+        original_app_slug: { type: string, maxLength: 512, description: Slug used when recovering a legacy Linear receipt created before the app was renamed. }
     IssueTrackerLinearConnection:
       type: object
       description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.
@@ -125236,7 +125236,7 @@ components:
         regressed_issue_groups: { type: integer, format: int64, minimum: 0 }
         identified_customers: { type: integer, format: int64, minimum: 0 }
         unattributed_events: { type: integer, format: int64, minimum: 0 }
-        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP records with unknown folded weights; observed event counts are lower bounds. }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP batches in this release have unknown folded weights; release event counts are lower bounds. }
     IssueReleaseComparison:
       description: "Baseline and candidate deployment health with newly observed, recurring and resolved issue groups."
       type: object

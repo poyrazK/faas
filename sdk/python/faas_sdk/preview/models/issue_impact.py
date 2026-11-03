@@ -23,7 +23,7 @@ class IssueImpact:
     unattributed_events: int
     coverage: str
     unknown_http_batches: int | Unset = UNSET
-    """Legacy HTTP records with unknown folded weights; observed event counts are lower bounds."""
+    """Legacy HTTP batches in this impact window have unknown folded weights; observed events are a lower bound."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

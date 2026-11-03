@@ -12,7 +12,7 @@ export type IssueImpact = {
   observed_events: number;
   unattributed_events: number;
   /**
-   * Legacy HTTP records with unknown folded weights; observed event counts are lower bounds.
+   * Legacy HTTP batches in this impact window have unknown folded weights; observed events are a lower bound.
    */
   unknown_http_batches?: number;
   coverage: string;

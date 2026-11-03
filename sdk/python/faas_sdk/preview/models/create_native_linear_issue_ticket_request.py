@@ -29,7 +29,7 @@ class CreateNativeLinearIssueTicketRequest:
     recovery_url: str | Unset = UNSET
     """Optional known Linear issue URL that also requests recovery and must match the UUID lookup."""
     original_app_slug: str | Unset = UNSET
-    """Original slug for recovering a legacy receipt after an app rename."""
+    """Slug used when recovering a legacy Linear receipt created before the app was renamed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
