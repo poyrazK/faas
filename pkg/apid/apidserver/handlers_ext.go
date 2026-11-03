@@ -4497,6 +4497,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.ClearSchedulePolicy && req.SchedulePolicy != nil || req.ClearFailureRules && req.FailureRules != nil {
+		api.WriteProblem(w, api.ErrValidation("clear_schedule_policy and clear_failure_rules cannot be sent with the field they clear"))
+		return
+	}
 	if req.Schedule != nil {
 		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
 			api.WriteProblem(w, problem)
@@ -4550,9 +4554,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 			return
 		}
 	}
-	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil || req.ClearSchedulePolicy || req.ClearFailureRules {
 		opts := state.CronOptions{RetryMax: c.RetryMax, RetryBackoffSeconds: c.RetryBackoffSeconds,
-			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules}
+			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
+			ClearSchedulePolicy: req.ClearSchedulePolicy, ClearFailureRules: req.ClearFailureRules}
 		if req.RetryMax != nil {
 			opts.RetryMax = *req.RetryMax
 		}
@@ -4605,6 +4610,14 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.RetryMax != nil {
 		oldCron["retry_max"] = c.RetryMax
 		newCron["retry_max"] = updated.RetryMax
+	}
+	if req.ClearSchedulePolicy {
+		oldCron["schedule_policy"] = c.SchedulePolicy != nil
+		newCron["schedule_policy"] = updated.SchedulePolicy != nil
+	}
+	if req.ClearFailureRules {
+		oldCron["failure_rules"] = c.FailureRules != nil
+		newCron["failure_rules"] = updated.FailureRules != nil
 	}
 	if req.RetryBackoffSeconds != nil {
 		oldCron["retry_backoff_seconds"] = c.RetryBackoffSeconds
