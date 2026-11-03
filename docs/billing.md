@@ -42,7 +42,9 @@ When the month's overage reaches the cap:
   warm pools are parked within one scheduler tick;
 - new wakes are refused with HTTP 402 `admission_refused`; the problem body
   carries the observed overage and the cap;
-- queued job tasks wait in the queue; they are not failed;
+- queued job tasks wait in the queue; they are not failed. A task already
+  running finishes within the plan's task timeout;
+- new forks are refused;
 - pending invocations (crons, delayed tasks, webhooks, async invokes and event
   deliveries) wait too, without spending their retry attempts;
 - crons and recurring jobs stay due instead of queueing a run for every

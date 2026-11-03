@@ -1017,6 +1017,10 @@ choice, `{"enabled": true|false}`:
 - Off is the default, and the databases are suspended at the allowance.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
+- A suspended, abuse-held or pending-deletion account's databases are
+  suspended whatever their usage, as its apps are stopped. Their data is kept,
+  and the next cap sweep after the account is reactivated resumes them
+  ([ADR-20261025094915 amendment](adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)).
 - Compute above the allowance costs $0.2331 per CU-hour
   (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`): Neon Scale's
   $0.222 plus 5% ([ADR-20261102072425](adr/20261102072425-managed-postgres-overage-at-provider-price-plus-5.md)).
