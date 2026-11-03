@@ -177,9 +177,47 @@ func (s *server) projectDeletePreview(r *http.Request, acct state.Account, proje
 	return preview, nil
 }
 
+// projectStagesRemainProblem refuses deleting a project that still has stage
+// environments. Deleting the project row cascades its environments without
+// the managed-resource cleanup environment deletion runs, so stage databases,
+// buckets and credentials would be left behind.
+func (s *server) projectStagesRemainProblem(r *http.Request, acct state.Account, project state.Project) *api.Problem {
+	environments, err := s.store.ListProjectEnvironments(r.Context(), acct.ID, project.ID)
+	if err != nil {
+		return api.ErrCapacity("could not inspect project environments")
+	}
+	var stages []string
+	for _, environment := range environments {
+		if !state.IsProductionScope(environment.Slug) {
+			stages = append(stages, environment.Slug)
+		}
+	}
+	if len(stages) > 0 {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Project has stage environments",
+			"delete its stage environments first, which removes their managed resources: "+strings.Join(stages, ", "))
+	}
+	// An unfinished full clone may hold restored databases before its target
+	// environment exists; the cascade would orphan them.
+	if clones, ok := s.store.(state.ProjectEnvironmentCloneActivityStore); ok {
+		unfinished, err := clones.UnfinishedProjectEnvironmentClonesForProject(r.Context(), project.ID)
+		if err != nil {
+			return api.ErrCapacity("could not inspect project environment clones")
+		}
+		if unfinished > 0 {
+			return api.NewProblem(http.StatusConflict, api.CodeConflict, "Project has a running environment clone",
+				"wait until its full environment clones are ready or compensated, then delete their stages")
+		}
+	}
+	return nil
+}
+
 func (s *server) deleteProject(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, ok := s.loadProject(w, r, acct)
 	if !ok {
+		return
+	}
+	if problem := s.projectStagesRemainProblem(r, acct, project); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if err := s.store.DeleteProject(r.Context(), project.ID); err != nil {

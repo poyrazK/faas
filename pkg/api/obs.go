@@ -320,6 +320,19 @@ type ObsAccountMutationResponse struct {
 	RevokedSessions int          `json:"revoked_sessions"`
 }
 
+// ObsObjectStorageCeilingResponse is a billing subject's object-storage
+// ceiling after support set or cleared its grant (ADR-20261101214152).
+// GrantBytes is nil when the plan's ceiling applies; CeilingBytes is the
+// ceiling admission enforces, the plan's or the grant, tightened by the spend
+// cap.
+type ObsObjectStorageCeilingResponse struct {
+	OwnerID          string `json:"owner_id"`
+	Plan             Plan   `json:"plan"`
+	PlanCeilingBytes int64  `json:"plan_ceiling_bytes"`
+	GrantBytes       *int64 `json:"grant_bytes"`
+	CeilingBytes     int64  `json:"ceiling_bytes"`
+}
+
 // ObsInvocationRow is the safe operational projection of an invocation.
 type ObsInvocationRow struct {
 	ID          string     `json:"id"`
