@@ -59,6 +59,20 @@ func liveObjectStorageCharge(ctx context.Context, store state.Store, accountID s
 	return delivered, pending, nil
 }
 
+// SpendCapObjectStorageCents is the object-storage charge the spend-cap hold
+// counts for the month of at: the delivered charge, a part cent counting as a
+// whole one (ADR-20261027093220). A pending step's reservation is an upper
+// bound, not a charge, so it is not counted. Every view that compares the
+// month's spending with the cap uses it, so a page never shows headroom the
+// hold has already spent.
+func SpendCapObjectStorageCents(ctx context.Context, store state.Store, accountID string, at time.Time) (int64, error) {
+	delivered, _, err := liveObjectStorageCharge(ctx, store, accountID, at)
+	if err != nil {
+		return 0, err
+	}
+	return delivered/api.MillicentsPerCent + min(delivered%api.MillicentsPerCent, 1), nil
+}
+
 // liveObjectStorageReserved is the delivered and pending live object-storage
 // charge the cap reserves.
 func liveObjectStorageReserved(ctx context.Context, store state.Store, accountID string, at time.Time) (int64, error) {

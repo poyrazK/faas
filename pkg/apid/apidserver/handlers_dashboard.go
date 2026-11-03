@@ -1586,6 +1586,13 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		overageCents = 0
 	} else {
 		overageCents = combinedOverageCents(s.billingProvider, acct.Plan, eligibleEgressBytes, overageCents)
+		// The cap also counts the object-storage charge (ADR-20261027093220),
+		// so the bar reaches 100% when the apps park.
+		if storageCents, err := meter.SpendCapObjectStorageCents(ctx, s.store, acct.ID, time.Now()); err != nil {
+			log.Warn("dashboard renderBilling: object storage charge", "account_id", acct.ID, "err", err)
+		} else {
+			overageCents = saturatingAddCents(overageCents, storageCents)
+		}
 	}
 	var overageRatio float64
 	if capOK && capCents > 0 && overageCents > 0 {

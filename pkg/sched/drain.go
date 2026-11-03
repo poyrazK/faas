@@ -923,6 +923,16 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.log.Debug("drain: preview budget admission deferred", "inv", inv.ID, "app_id", app.ID)
 		return
 	}
+	// A billing subject at its monthly spend cap refuses the wake (HTTP 402).
+	// Its pending work waits, as its queued job tasks do (ADR-1162 amendment
+	// 2026-11-03): retrying the refusal spent the row's attempts and
+	// dead-lettered crons, delayed tasks and webhooks the customer had not
+	// lost. The row moves back by a minute without spending an attempt.
+	if d.engine.spendCapReached(ctx, d.engine.spendCapSubject(ctx, app)) {
+		_ = d.store.FailInvocation(ctx, inv.ID, "held by the spend cap", financialHoldDeferral, 0)
+		d.log.Debug("drain: spend cap reached; deferred", "inv", inv.ID, "app_id", app.ID)
+		return
+	}
 	// ADR-20261023115741: a capability switched off for the account holds
 	// its work. The row is deferred without spending its delivery budget, so
 	// it resumes intact when the flag is on again.

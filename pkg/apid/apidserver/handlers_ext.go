@@ -7301,6 +7301,15 @@ func combinedOverageCents(provider billing.Provider, plan api.Plan, usedEgressBy
 	return computeCents + egressCents
 }
 
+// saturatingAddCents adds two non-negative cent amounts, saturating at
+// math.MaxInt64.
+func saturatingAddCents(a, b int64) int64 {
+	if b > math.MaxInt64-a {
+		return math.MaxInt64
+	}
+	return a + b
+}
+
 // accountUsage serves the account-level usage projection. Compute remains
 // available when an optional service is not configured; configured service
 // accounting failures fail the whole projection so callers do not mistake a
