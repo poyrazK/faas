@@ -12,13 +12,17 @@ The manifest's `public_edge.dns` turns it on and renders its settings:
 | `faas_edgednsd_node_addresses` | each compute host's `public_ipv4`, under its registry name |
 | `faas_edgednsd_dry_run` | `public_edge.dns.live`, inverted: dry run until set |
 
-The operator provides two files on the controller, which the role installs at
-0400 root under `/etc/faas/secrets/edgednsd/`:
+The role installs two secrets at 0400 root under `/etc/faas/secrets/edgednsd/`:
 
-- `faas_edgednsd_env_src`: `DATABASE_URL` for a `faas_runtime` member that may
-  read `compute_nodes`;
-- `faas_edgednsd_cf_token_src`: the zone's Cloudflare token, Zone > DNS: Edit
-  and nothing else. edgednsd reads it through `LoadCredential`.
+- **The zone's Cloudflare token**, Zone > DNS: Edit and nothing else, as
+  `cf-token`. edgednsd reads it through `LoadCredential`. CD stages it from
+  the `EDGEDNSD_CF_TOKEN` environment secret into `faas_edgednsd_cf_token`
+  (`scripts/ci/edgednsd_vars.sh`). A workstation converge may set
+  `faas_edgednsd_cf_token_src` to a file on the controller instead.
+- **An optional env file**, `faas_edgednsd_env_src`, for example a
+  `DATABASE_URL` for another login. Without it, edgednsd logs in like the
+  other control-plane daemons: peer authentication as `faas` over the local
+  socket. It only reads `compute_nodes`.
 
 In dry run, edgednsd logs each change it would make and counts it in
 `edge_dns_changes_total{dry_run="true"}`. Read those before going live. See

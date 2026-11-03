@@ -3504,6 +3504,10 @@ func EventSettledRetentionMax() time.Duration {
 // before month-close pricing. A zero field changes nothing: the operator
 // policy applies unchanged and no usage is included.
 type ObjectStoragePlanLimits struct {
+	// MaxAccountBytes is the plan's storage ceiling (ADR-20261101214152):
+	// Free 1 GiB, Hobby 2× its included storage, Pro and Scale 5×. Support can
+	// grant a paid account another (ObjectStorageLimitsFor), and the account's
+	// spend cap tightens it (WithSpendCap).
 	MaxAccountBytes       int64
 	MaxMonthlyRequests    int64
 	MaxMonthlyEgressBytes int64
@@ -3589,12 +3593,26 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
-// WithSpendCap returns the limits with the storage ceiling a paid account's
-// spend cap pays for: the plan's included storage plus the GiB-months the cap
-// buys at ObjectStorageMillicentsPerGiBMonth (ADR-20261101214152). Hobby's
-// default $2 cap gives 76 GiB, Pro's $10 383 GiB, Scale's $30 1,200 GiB. A nil
-// cap (none, or a cleared one) keeps the limits; a plan ceiling that is
-// already tighter, as Free's, stays.
+// ObjectStorageLimitsFor returns a billing subject's object-storage limits on
+// plan (ADR-20261101214152): the plan's, with the ceiling support granted the
+// subject (grantBytes, nil for none) in place of a paid plan's, tightened by
+// what the subject's spend cap pays for. Free ignores a grant: its storage is
+// never billed.
+func ObjectStorageLimitsFor(plan Plan, grantBytes, capCents *int64) ObjectStoragePlanLimits {
+	limits, _ := LimitsFor(plan)
+	l := limits.ObjectStorage
+	if grantBytes != nil && *grantBytes > 0 && plan.IsPaid() {
+		l.MaxAccountBytes = *grantBytes
+	}
+	return l.WithSpendCap(capCents)
+}
+
+// WithSpendCap returns the limits with the storage ceiling tightened to what
+// a paid account's spend cap pays for: the plan's included storage plus the
+// GiB-months the cap buys at ObjectStorageMillicentsPerGiBMonth
+// (ADR-20261101214152). The default caps pay for more than the plan
+// ceilings, so they only bind when the customer lowers them: a $0 cap stops at
+// the included storage. A nil cap (none, or a cleared one) keeps the limits.
 func (l ObjectStoragePlanLimits) WithSpendCap(capCents *int64) ObjectStoragePlanLimits {
 	if capCents == nil || *capCents < 0 || l.IncludedBytes <= 0 {
 		return l
@@ -5744,7 +5762,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 20 << 30, MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -6185,7 +6203,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 250 << 30, MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -6591,7 +6609,7 @@ var planLimits = map[Plan]Limits{
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
 		// Egress capped at ten times the included storage (ADR-20261031122757).
-		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
+		ObjectStorage:   ObjectStoragePlanLimits{MaxAccountBytes: 1_000 << 30, MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue

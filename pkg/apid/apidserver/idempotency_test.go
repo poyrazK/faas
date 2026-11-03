@@ -234,7 +234,8 @@ func TestIdempotencyReplayable(t *testing.T) {
 }
 
 func TestIdempotencyBindingRefusalsAreRetryable(t *testing.T) {
-	for _, code := range []string{"bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged} {
+	for _, code := range []string{"bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged,
+		api.CodeFullEnvironmentCloneUnavailable} {
 		if apidserver.IdempotencyResponseReplayable(http.StatusConflict, []byte(`{"code":"`+code+`"}`)) {
 			t.Errorf("binding refusal %s would freeze the retry key", code)
 		}

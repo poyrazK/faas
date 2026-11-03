@@ -16,14 +16,15 @@ func TestObjectStoragePlanLimitsZeroChangesNothing(t *testing.T) {
 
 // adr: 1350 — plans include stored bytes from the October 2026 COGS report;
 // Free also stops at its allowance. ADR-20261031122757 caps each plan's
-// monthly egress at ten times its included storage.
+// monthly egress at ten times its included storage. ADR-20261101214152 stops
+// Hobby at twice its included storage, Pro and Scale at five times.
 func TestObjectStoragePlanLimitsFollowCOGSReport(t *testing.T) {
 	const gib = int64(1 << 30)
 	want := map[Plan]ObjectStoragePlanLimits{
 		PlanFree:  {MaxAccountBytes: gib, MaxMonthlyEgressBytes: 10 * gib, IncludedBytes: gib},
-		PlanHobby: {MaxMonthlyEgressBytes: 100 * gib, IncludedBytes: 10 * gib},
-		PlanPro:   {MaxMonthlyEgressBytes: 500 * gib, IncludedBytes: 50 * gib},
-		PlanScale: {MaxMonthlyEgressBytes: 2_000 * gib, IncludedBytes: 200 * gib},
+		PlanHobby: {MaxAccountBytes: 20 * gib, MaxMonthlyEgressBytes: 100 * gib, IncludedBytes: 10 * gib},
+		PlanPro:   {MaxAccountBytes: 250 * gib, MaxMonthlyEgressBytes: 500 * gib, IncludedBytes: 50 * gib},
+		PlanScale: {MaxAccountBytes: 1_000 * gib, MaxMonthlyEgressBytes: 2_000 * gib, IncludedBytes: 200 * gib},
 	}
 	for plan, limits := range want {
 		if got := MustLimitsFor(plan).ObjectStorage; got != limits {
@@ -90,9 +91,11 @@ func TestObjectStoragePlanLimitsAllowanceUnits(t *testing.T) {
 // adr: 20261101214152 — a paid account's storage ceiling is its included
 // storage plus what its spend cap buys at the published price; no cap keeps
 // the operator's ceiling, and Free keeps its own.
-func TestObjectStorageCeilingFollowsTheSpendCap(t *testing.T) {
+// ADR-20261101214152: each paid plan has its own storage ceiling, support can
+// grant an account another, and the spend cap tightens either.
+func TestObjectStorageCeilingFollowsThePlanGrantAndSpendCap(t *testing.T) {
 	const gib = int64(1 << 30)
-	capOf := func(cents int64) *int64 { return &cents }
+	bytesOf := func(n int64) *int64 { return &n }
 	defaultCap := func(plan Plan) *int64 {
 		cents, ok := plan.DefaultOverageCapCents()
 		if !ok {
@@ -101,33 +104,40 @@ func TestObjectStorageCeilingFollowsTheSpendCap(t *testing.T) {
 		return &cents
 	}
 	for _, tc := range []struct {
-		name string
-		plan Plan
-		cap  *int64
-		want int64
+		name  string
+		plan  Plan
+		grant *int64
+		cap   *int64
+		want  int64
 	}{
-		{"hobby default cap", PlanHobby, defaultCap(PlanHobby), 76 * gib},
-		{"pro default cap", PlanPro, defaultCap(PlanPro), 383 * gib},
-		{"scale default cap", PlanScale, defaultCap(PlanScale), 1_200 * gib},
-		{"a raised cap raises it", PlanHobby, capOf(30_000), 10*gib + 10_000*gib},
-		{"a zero cap stops at the included storage", PlanPro, capOf(0), 50 * gib},
-		{"no cap keeps the operator's ceiling", PlanScale, nil, 0},
-		{"free keeps its own ceiling", PlanFree, nil, gib},
-		{"free's ceiling is tighter than any cap", PlanFree, capOf(1_000_000), gib},
-		{"an absurd cap saturates", PlanScale, capOf(1 << 62), MaxObjectStoragePolicyValue},
+		{"hobby at its default cap", PlanHobby, nil, defaultCap(PlanHobby), 20 * gib},
+		{"pro at its default cap", PlanPro, nil, defaultCap(PlanPro), 250 * gib},
+		{"scale at its default cap", PlanScale, nil, defaultCap(PlanScale), 1_000 * gib},
+		{"no cap keeps the plan's ceiling", PlanScale, nil, nil, 1_000 * gib},
+		{"a raised cap does not raise the plan's ceiling", PlanHobby, nil, bytesOf(30_000), 20 * gib},
+		{"a zero cap stops at the included storage", PlanPro, nil, bytesOf(0), 50 * gib},
+		{"a low cap binds below the plan's ceiling", PlanHobby, nil, bytesOf(15), 15 * gib},
+		{"a support grant replaces the plan's ceiling", PlanPro, bytesOf(2_000 * gib), nil, 2_000 * gib},
+		{"the cap still tightens a grant", PlanPro, bytesOf(2_000 * gib), defaultCap(PlanPro), 383 * gib},
+		{"free keeps its own ceiling", PlanFree, nil, nil, gib},
+		{"free ignores a grant", PlanFree, bytesOf(100 * gib), nil, gib},
+		{"free's ceiling is tighter than any cap", PlanFree, nil, bytesOf(1_000_000), gib},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := MustLimitsFor(tc.plan).ObjectStorage.WithSpendCap(tc.cap)
+			got := ObjectStorageLimitsFor(tc.plan, tc.grant, tc.cap)
 			if got.MaxAccountBytes != tc.want {
 				t.Fatalf("ceiling = %d bytes (%d GiB), want %d (%d GiB)", got.MaxAccountBytes, got.MaxAccountBytes/gib, tc.want, tc.want/gib)
 			}
 			if got.IncludedBytes != MustLimitsFor(tc.plan).ObjectStorage.IncludedBytes || got.MaxMonthlyEgressBytes != MustLimitsFor(tc.plan).ObjectStorage.MaxMonthlyEgressBytes {
-				t.Fatalf("the cap changed more than the ceiling: %+v", got)
+				t.Fatalf("the grant or cap changed more than the ceiling: %+v", got)
 			}
 		})
 	}
+	if got := (ObjectStoragePlanLimits{IncludedBytes: 200 * gib}).WithSpendCap(bytesOf(1 << 62)); got.MaxAccountBytes != MaxObjectStoragePolicyValue {
+		t.Fatalf("an absurd cap must saturate: %+v", got)
+	}
 	operator := ObjectStoragePolicy{MaxAccountBytes: 100 * gib, MaxBucketBytes: 100 * gib}
-	if got := MustLimitsFor(PlanPro).ObjectStorage.WithSpendCap(defaultCap(PlanPro)).Policy(operator); got.MaxAccountBytes != 100*gib {
+	if got := ObjectStorageLimitsFor(PlanPro, nil, defaultCap(PlanPro)).Policy(operator); got.MaxAccountBytes != 100*gib {
 		t.Fatalf("a lower operator ceiling must still win: %+v", got)
 	}
 }
