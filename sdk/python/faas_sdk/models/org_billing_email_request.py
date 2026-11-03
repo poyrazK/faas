@@ -11,7 +11,7 @@ T = TypeVar("T", bound="OrgBillingEmailRequest")
 
 @_attrs_define
 class OrgBillingEmailRequest:
-    """The email an organization bills to (ADR-20261103131742)."""
+    """The email an organization bills to; invoices and the billing portal sign-in go to it."""
 
     billing_email: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

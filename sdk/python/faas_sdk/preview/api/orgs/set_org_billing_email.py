@@ -122,7 +122,8 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (OrgBillingEmailRequest): The email an organization bills to (ADR-20261103131742).
+        body (OrgBillingEmailRequest): The email an organization bills to; invoices and the
+            billing portal sign-in go to it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,7 +171,8 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (OrgBillingEmailRequest): The email an organization bills to (ADR-20261103131742).
+        body (OrgBillingEmailRequest): The email an organization bills to; invoices and the
+            billing portal sign-in go to it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -213,7 +215,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (OrgBillingEmailRequest): The email an organization bills to (ADR-20261103131742).
+        body (OrgBillingEmailRequest): The email an organization bills to; invoices and the
+            billing portal sign-in go to it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -259,7 +262,8 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (OrgBillingEmailRequest): The email an organization bills to (ADR-20261103131742).
+        body (OrgBillingEmailRequest): The email an organization bills to; invoices and the
+            billing portal sign-in go to it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

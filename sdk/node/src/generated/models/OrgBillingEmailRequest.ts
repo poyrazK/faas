@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The email an organization bills to (ADR-20261103131742).
+ * The email an organization bills to; invoices and the billing portal sign-in go to it.
  */
 export type OrgBillingEmailRequest = {
   billing_email: string;

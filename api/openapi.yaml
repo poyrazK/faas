@@ -86227,7 +86227,7 @@ components:
           minimum: 0
 
     OrgBillingEmailRequest:
-      description: The email an organization bills to (ADR-20261103131742).
+      description: The email an organization bills to; invoices and the billing portal sign-in go to it.
       type: object
       required: [billing_email]
       properties:

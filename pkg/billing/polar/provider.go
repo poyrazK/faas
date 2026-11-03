@@ -744,7 +744,7 @@ func (p *Provider) emailInUse(ctx context.Context, email string, cause error) er
 		Items []customerResponse `json:"items"`
 	}
 	if err := p.doJSON(ctx, http.MethodGet, "/v1/customers/?email="+url.QueryEscape(email), nil, &page, ""); err != nil {
-		return fmt.Errorf("polar: find customer holding a billing email: %w (after %v)", err, cause)
+		return fmt.Errorf("polar: find customer holding a billing email: %w (after %w)", err, cause)
 	}
 	if len(page.Items) > 0 {
 		inUse.CustomerID, inUse.ExternalID = page.Items[0].ID, page.Items[0].ExternalID
