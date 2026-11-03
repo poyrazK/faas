@@ -420,3 +420,18 @@ func (p *itemAliasPoller) NackUntil(ctx context.Context, t sqlc.Trigger, ids []s
 	}
 	return p.triggerSource.Nack(ctx, t, p.handles(ids), triggerReasonBrokerError)
 }
+
+// missingItemIDs returns the ids in all that completed does not hold.
+func missingItemIDs(all, completed []string) []string {
+	set := make(map[string]struct{}, len(completed))
+	for _, id := range completed {
+		set[id] = struct{}{}
+	}
+	var missing []string
+	for _, id := range all {
+		if _, ok := set[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	return missing
+}
