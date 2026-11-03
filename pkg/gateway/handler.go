@@ -96,6 +96,10 @@ type App struct {
 	ID              string
 	ResourceOwnerID string // aggregate policy subject; empty falls back to AccountID in older adapters
 	AccountID       string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// EdgeRuleScope is the organization owning a company app, "" for a
+	// personal app (state.AppEdgeRuleScope). A route rule may only send
+	// traffic to an app of its own scope (ADR-091 amendment 2026-10-31).
+	EdgeRuleScope string
 	// Private verifier inputs; only the effective fingerprint leaves the gateway.
 	PublicPolicySource     *PublicAppPolicySource   `json:",omitempty"`
 	PublicRouteSource      *PublicRouteSourcePolicy `json:",omitempty"`
@@ -192,6 +196,10 @@ type App struct {
 	// deliberately limited to these apps and the gateway rechecks this flag
 	// even when a rule was written through a non-HTTP path.
 	IsPreview bool
+	// ProductionAppID is a PR preview's production app, whose app-wide edge
+	// rules the preview applies too (ADR-091 amendment 2026-10-30). Empty
+	// for production apps.
+	ProductionAppID string
 	// MaintenanceMode (ADR-091 amendment / §4.1.2.0) is the
 	// coarse-grained per-app maintenance flag mirrored from
 	// apps.maintenance_mode. When true, every inbound request is
@@ -443,6 +451,14 @@ type DeclaredRouteMatcher interface {
 // discovery. Resolution is advisory and never changes request handling.
 type ObservedRouteResolver interface {
 	ResolveObservedRoute(ctx context.Context, app App, path, method string) (string, bool, error)
+}
+
+// RouteLabelPins reports whether an app's route health guard or production
+// monitor selects a route label ("METHOD /path"), so the label survives a
+// full route set and that route's evidence never folds into __route_other__
+// (ADR-20261028110044 amendment 4). It never changes request handling.
+type RouteLabelPins interface {
+	RouteLabelPinned(ctx context.Context, app App, label string) bool
 }
 
 // PublicAuthConfig (issue #477 / ADR-079 + ADR-118) is the
@@ -959,6 +975,7 @@ type Handler struct {
 	devBridgeForward         func(http.ResponseWriter, *http.Request, App) bool
 	backend                  Backend
 	declaredRoutes           DeclaredRouteMatcher
+	routeLabelPins           RouteLabelPins
 	limiter                  *Limiter
 	preAuthLimiter           *preAuthSourceLimiter
 	preAuthCentral           CentralBackend
@@ -1035,6 +1052,10 @@ type Handler struct {
 	// queue-depth budget remains fleet-wide. The guest listener stays runtime-
 	// agnostic while the edge accounts for streams and upgrades.
 	vmConcurrency *vmConcurrencyManager
+	// edgeLocalFirst, when set, makes requests a compute edge forwarded use
+	// this node's instances first (ADR-20261102081618 §5); nil keeps the
+	// global rotation.
+	edgeLocalFirst *edgeLocalFirst
 	// vmConcurrencyAudit emits vm.inflight_threshold_reached when a request
 	// observes a full instance slot set. It shares the gateway audit sink so
 	// operators can correlate saturation with wake and reaper events.
@@ -1050,6 +1071,9 @@ type Handler struct {
 	// origin response headers for parked-app HEAD / answers. It is process
 	// local; after restart the edge returns 204 until a live response lands.
 	headHeaders *edgeHeadHeaderCache
+	// appFreezes memoizes each request's app policy snapshot (ADR-570) by its
+	// encoding. nil freezes every request from scratch.
+	appFreezes *appFreezes
 	// headWakes is the process-wide opt-in for legacy HEAD wake behaviour;
 	// an App.HeadWakes value can enable it for one app.
 	headWakes bool
@@ -1276,6 +1300,7 @@ type Handler struct {
 	// legacy anonymous path for apps in optional mode; required mode fails
 	// closed when production wiring is missing.
 	consumerAuthStore ConsumerAuthStore
+	credentialMatcher CredentialMatcher
 	// consumerKeyTouches coalesces best-effort last_used_at writes so a hot
 	// customer key does not turn every request into a database update.
 	consumerKeyTouches *consumerKeyToucher
@@ -1523,6 +1548,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		retryBudget:        NewRetryBudget(0, nil),
 		metrics:            m,
 		headHeaders:        newEdgeHeadHeaderCache(),
+		appFreezes:         newAppFreezes(),
 		log:                log,
 		wakePageCycles:     make(map[string]*wakePageCycle),
 		consumerKeyTouches: newConsumerKeyToucher(),
@@ -1904,7 +1930,7 @@ func (h *Handler) WithWakeAdmissionAudit(audit RequireAuthnAuditor) *Handler {
 // gateway audit writer; nil keeps the limiter useful in tests and on boxes
 // without event persistence.
 func (h *Handler) WithVMConcurrencyAudit(audit RequireAuthnAuditor) *Handler {
-	h.vmConcurrencyAudit = audit
+	h.vmConcurrencyAudit = throttleRepeatedAudit(audit)
 	return h
 }
 
@@ -1996,6 +2022,21 @@ func (h *Handler) WithRequireAuthn(authn RequireAuthnAuthenticator, audit Requir
 	return h
 }
 
+// CredentialMatcher answers whether a stored credential hash is the one a
+// presented token may hold. Stored hashes are keyed by a secret only apid
+// holds (ADR 20261029202403), so the gateway asks apid
+// (apidgrpc.CredentialMatcher, which caches matches).
+type CredentialMatcher interface {
+	Match(ctx context.Context, column string, stored, sum []byte) (bool, error)
+}
+
+// WithCredentialMatcher routes consumer-key checks through apid. Without
+// one the gateway compares plain hashes itself (unit tests).
+func (h *Handler) WithCredentialMatcher(m CredentialMatcher) *Handler {
+	h.credentialMatcher = m
+	return h
+}
+
 // WithConsumerAuth arms the app consumer-key gate. store may be nil in unit
 // tests or in a legacy deployment; optional apps remain backwards-compatible,
 // while required apps fail closed with a service-unavailable response rather
@@ -2027,7 +2068,7 @@ func (h *Handler) WithConsumerAuth(store ConsumerAuthStore) *Handler {
 func (h *Handler) WithEdgeRules(matcher EdgeRuleMatcher, resolve ResolveTargetApp, audit EdgeRuleAuditor) *Handler {
 	h.edgeRules = matcher
 	h.resolveTargetApp = resolve
-	h.edgeRuleAudit = audit
+	h.edgeRuleAudit = throttleRepeatedAudit(audit)
 	return h
 }
 
@@ -2043,6 +2084,13 @@ func (h *Handler) WithAsyncRouteEnqueuer(enqueuer AsyncRouteEnqueuer) *Handler {
 // configuration error for apps that have OnlyAllowDeclaredRoutes enabled.
 func (h *Handler) WithDeclaredRouteMatcher(matcher DeclaredRouteMatcher) *Handler {
 	h.declaredRoutes = matcher
+	return h
+}
+
+// WithRouteLabelPins wires the selected-route lookup (ADR-20261028110044
+// amendment 4). Nil keeps every label evictable, as before.
+func (h *Handler) WithRouteLabelPins(pins RouteLabelPins) *Handler {
+	h.routeLabelPins = pins
 	return h
 }
 
@@ -2393,6 +2441,10 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 	h.requireAuthnAudit.Emit(r.Context(), kind, subject, data)
 }
 
+// errRouteTargetChangePending refuses a route whose target did not resolve
+// while an edge-rule change to the source host is pending.
+var errRouteTargetChangePending = errors.New("route target unresolved while an edge-rule change is pending")
+
 // matchAndSubstituteRoute (ADR-089 / issue #561 PR 3) consults
 // the per-host edge-rule matcher BEFORE Backend.Lookup. On a
 // `kind=route` hit, *app is overwritten with the target App
@@ -2420,7 +2472,9 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 //     is advisory; a stale read only widens the hit window.
 //     We do NOT emit audit/metric for a transient miss —
 //     the next request will hit the loader and the rule
-//     is naturally dropped once its app row is gone.
+//     is naturally dropped once its app row is gone. While an
+//     edge-rule change to the source host is pending, the miss
+//     refuses instead (errRouteTargetChangePending).
 //
 // Nil-safe: h.edgeRules == nil OR h.resolveTargetApp == nil
 // returns false and ServeHTTP proceeds with the legacy
@@ -2435,7 +2489,7 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	if _, _, ok := EnvironmentIDsFromHost(hostidentity.DeploySuffix(), hostname(r.Host)); ok {
 		return false
 	}
-	rule := h.routeRuleForHost(r, appHost)
+	rule, hostApp := h.routeRuleForHost(r, appHost)
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "miss")
@@ -2446,6 +2500,13 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	if !ok {
 		// Authoritative loaders retain a failure in the request context so the
 		// fallback lookup refuses. Legacy fixture loaders preserve a clean miss.
+		// While a change to this host's rules is pending, the cached rule may
+		// name a target the change renamed or removed (an app rename commits
+		// before the retargeted rules apply): refuse rather than serve the
+		// routed path from the source app (ADR-20261101141123).
+		if h.edgeRules.Converging(hostname(r.Host), hostApp.AccountID, hostApp.ID) {
+			*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, errRouteTargetChangePending))
+		}
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "miss")
 		}
@@ -2471,6 +2532,25 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 			// PR-B: cross-account is a defense-in-depth no-op, not an
 			// apply failure. Surface as success so the §12 apply-rate
 			// panel counts it as a successful (no-op) apply.
+			h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
+		}
+		return false
+	}
+	if target.EdgeRuleScope != hostApp.EdgeRuleScope {
+		// A company app keeps its creator's account, so the account check
+		// alone let a personal app's route rule serve a company app (or the
+		// reverse) on the personal host (ADR-091 amendment 2026-10-31).
+		if h.edgeRuleAudit != nil {
+			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.route_blocked", &target.AccountID, map[string]any{
+				"rule_id":       rule.ID,
+				"from_host":     r.Host,
+				"to_slug":       rule.TargetAppSlug,
+				"target_app_id": target.ID,
+				"reason":        "scope",
+			})
+		}
+		if h.metrics != nil {
+			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "blocked")
 			h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
 		}
 		return false
@@ -2532,25 +2612,33 @@ type RouteTargetPreparer interface {
 // The host's public policy source must also allow a substitution; a policy
 // lookup failure is retained in the request context so the fallback lookup
 // refuses the request too.
-func (h *Handler) routeRuleForHost(r *http.Request, appHost string) *EdgeRuleResolved {
+func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (*EdgeRuleResolved, App) {
 	hostApp, found, err := h.lookupAppPolicy(r, appHost)
 	if err != nil {
 		*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, err))
-		return nil
+		return nil, App{}
 	}
 	if !found {
-		return nil
+		return nil, App{}
 	}
 	if hostApp.PublicPolicySource != nil && !hostApp.PublicPolicySource.CanSubstitute {
-		return nil
+		return nil, App{}
 	}
 	rememberPublicRouteSourcePolicy(r, hostApp, found)
-	ctx := WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), hostApp.ID)
+	ctx := WithEdgeRuleScope(r.Context(), hostApp)
+	// The cached host pin predates the owner, so it holds only the host's own
+	// rules; the source app's app-wide rules (ADR-1191), its "@app" routes
+	// among them, join through its (host, app) pin (#6148).
+	ctx, err = h.pinAppEdgeHosts(ctx, hostApp.ID)
+	if err != nil {
+		*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, err))
+		return nil, App{}
+	}
 	rule := h.edgeRules.MatchRoute(ctx, hostname(r.Host), r.URL.Path, r.Method)
 	if rule == nil || rule.AccountID != hostApp.AccountID {
-		return nil
+		return nil, App{}
 	}
-	return rule
+	return rule, hostApp
 }
 
 // matchAndApplyRewrite (ADR-089 / issue #561 PR 4) consults the
@@ -2674,7 +2762,7 @@ func (h *Handler) matchAndApplyRedirect(w http.ResponseWriter, r *http.Request, 
 	// templated redirect renders its target and headers first (ADR-968).
 	target, redirectHeaders := expandRedirect(rule, r)
 	for k, v := range redirectHeaders {
-		w.Header().Set(k, v)
+		w.Header().Set(k, scopeTenantCookie(k, v))
 	}
 	status := rule.StatusCode
 	if status != http.StatusMovedPermanently &&
@@ -3067,7 +3155,9 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	if h.applyMCPAliasPolicy(w, r, app) {
 		return true
 	}
-	rule := h.edgeRules.MatchJWT(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleJWTResolved {
+		return h.edgeRules.MatchJWT(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule != nil && rule.Unavailable {
 		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_policy_unavailable")
 		return true
@@ -3092,6 +3182,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 		})
 		return false
 	}
+	keepFromSharedCaches(w)
 	if rule.MCP != nil {
 		return h.applyMCPResourcePolicy(w, r, app, rule)
 	}
@@ -3113,7 +3204,9 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// JWT rule before adding the extraction hint; matcher-owned values are
 	// immutable and shared across requests.
 	var extractClaims []string
-	if throttle := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method); throttle != nil &&
+	if throttle := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
+		return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
+	}); throttle != nil &&
 		throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
 		extractClaims = append(extractClaims, throttle.JWTClaimName)
 	}
@@ -3309,7 +3402,9 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchIP(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleIPResolved {
+		return h.edgeRules.MatchIP(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("ip", "miss")
@@ -3332,6 +3427,7 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 		}
 		return false
 	}
+	keepFromSharedCaches(w)
 	clientIP, ok := clientIPFromTrustedXFF(r)
 	if !ok {
 		// Defense-in-depth: gatewayd-public is required to set
@@ -3472,6 +3568,7 @@ func (h *Handler) applyIngressIPAllowlist(w http.ResponseWriter, r *http.Request
 	if app.PublicAuth.Mode != publicAuthModeIPAllowlist {
 		return false
 	}
+	keepFromSharedCaches(w)
 	if len(app.PublicAuth.IPAllowlist) == 0 {
 		// Operator misconfig: ip_allowlist mode without CIDRs.
 		// 500 makes the noise operator-loud — the cold-boot
@@ -4388,7 +4485,9 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchGeo(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleGeoResolved {
+		return h.edgeRules.MatchGeo(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("geo", "miss")
@@ -4409,6 +4508,7 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 		}
 		return false
 	}
+	keepFromSharedCaches(w)
 	if h.geoReader == nil {
 		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, "geo_reader_not_configured")
 		return true
@@ -4552,7 +4652,9 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	if h.edgeRules == nil || h.routeLimiter == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
+		return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("throttle", "miss")
@@ -4926,7 +5028,10 @@ func stampTrustedClientIP(r *http.Request) {
 // map. Action ∈ {add, set, remove}; Value is empty for "remove".
 // Blacklist (Host, Content-Length, Transfer-Encoding, Connection,
 // x-faas-*) is enforced at apid-Validate-time (PR 1) so this
-// helper trusts the input.
+// helper trusts the input. A Set-Cookie value goes through
+// scopeTenantCookie like the app's own: a rule could otherwise set a
+// cookie for the domain every tenant shares (ADR-091 amendment
+// 2026-10-31, round 6).
 func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 	switch op.Action {
 	case "remove":
@@ -4936,14 +5041,14 @@ func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 			hdr.Del(op.Name)
 			return
 		}
-		hdr.Set(op.Name, op.Value)
+		hdr.Set(op.Name, scopeTenantCookie(op.Name, op.Value))
 	case "vary":
 		// Platform-only (customer header ops validate to add/set/remove):
 		// add one field name to the list unless it is already covered.
 		addVaryField(hdr, op.Value)
 	default: // "add" and any unknown verb
 		if op.Value != "" {
-			hdr.Add(op.Name, op.Value)
+			hdr.Add(op.Name, scopeTenantCookie(op.Name, op.Value))
 		}
 	}
 }
@@ -6002,6 +6107,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The public edge's nonce for a not-dispatched marker lives in the
 	// request context from here on (ADR-20261022184531 step 5).
 	r = takeDispatchNonce(r)
+	// The compute edge's request for the instance's node, likewise
+	// (ADR-20261031105055).
+	r = takeEdgePlacement(r)
 	if h.devBridgeAuthorize != nil {
 		if problem := h.devBridgeAuthorize(r); problem != nil {
 			api.WriteProblem(w, problem)
@@ -6016,7 +6124,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// hold an application request slot or wake/parking lease for its lifetime.
 	if h.managedRealtime != nil && strings.HasPrefix(r.URL.Path, realtime.ManagedPathPrefix) {
 		w.Header().Set(trafficSecurityHeader, trafficSecurityRealtime)
-		h.managedRealtime.ServeHTTP(w, r)
+		if h.stampRealtimeHostAccount(w, r) {
+			h.managedRealtime.ServeHTTP(w, r)
+		}
 		return
 	}
 
@@ -6119,7 +6229,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set(api.RequestIDHeader, rid)
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) || strings.HasPrefix(strings.ToLower(name), "x-gregale-event-") {
+			if api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") {
 				delete(r.Header, name)
 			}
 		}
@@ -6185,24 +6295,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A two-phase edge-rule mutation fences this hostname before apid commits
-	// the new policy. Fail closed for the bounded convergence window so a
-	// request cannot slip through a gateway that still has the old generation.
-	// The fence is scoped to the host's owner (resolved above, before any
-	// route substitution or edge rule runs): another account's mutation,
-	// even on match_host "*", cannot change this host's policy.
-	var fenceAccount, fenceApp string
-	if ok {
-		fenceAccount, fenceApp = lookedApp.AccountID, lookedApp.ID
-	}
-	if h.edgeRules != nil && h.edgeRules.Converging(host, fenceAccount, fenceApp) {
-		w.Header().Set("Retry-After", "1")
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
-			api.CodeCapacity, "Edge policy update in progress",
-			"The serving fleet is converging on a new edge-rule generation; retry shortly."))
-		h.observe(r, rec.status, "", "", false, Target{})
-		return
-	}
+	// A pending edge-rule change does not hold this host (ADR-20261101141123):
+	// the request runs under the rules this gateway has until its apply, which
+	// apid waits for before the change returns.
+
 	// A source host under preparation cannot escape its readiness gate through
 	// a route rewrite to another workload or through an edge answer.
 	if ok && lookedApp.EnvironmentNotReady {
@@ -6226,6 +6322,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		markTrafficPhase(r.Context(), trafficOwnership)
+		// Cloudflare would otherwise keep serving this 404 for a while
+		// after the app is created.
+		w.Header().Set("Cache-Control", "no-store")
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", appHost)))
 		h.observe(r, rec.status, "", "", false, Target{})
@@ -6262,7 +6361,7 @@ haveApp:
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
-	r = r.WithContext(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), app.AccountID), app.ID))
+	r = r.WithContext(WithEdgeRuleScope(r.Context(), app))
 	r = r.WithContext(withRateAdmissionEvidence(r.Context()))
 	if h.applyTotalDeadline(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -6437,10 +6536,12 @@ haveApp:
 	// bucket. The label is empty when the app is not opted in
 	// (route metrics are disabled) — Handler.observe short-circuits
 	// the per-route emission on "". Request telemetry uses the same bounded
-	// route set for entitled apps even when the operator disables those series.
+	// route set whether or not the app opted into those series: route health,
+	// production monitoring and route removal read it (ADR-20261028110044
+	// amendment 4).
 	routeLabel := ""
 	set := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.routeMetricsEnabled)
-	telemetryRouteSet := h.routeSetFor(app.ID, app.RouteMetricsEnabled && h.requestTelemetry != nil)
+	telemetryRouteSet := h.routeSetFor(app.ID, h.requestTelemetry != nil)
 	// Consumer- and tenant-surface-attributed traffic always carries a
 	// bounded billing route so rate cards can weight routes (ADR-952,
 	// ADR-1310); consumer and surface attribution ran above. A JWT rule can
@@ -6475,6 +6576,13 @@ haveApp:
 		if !routeLabelMethodAllowed(r.Method) {
 			labelRoute = otherRouteLabel
 		}
+		pinned := !declared && labelRoute != otherRouteLabel && h.routeLabelPins != nil && h.routeLabelPins.RouteLabelPinned(r.Context(), app, labelRoute)
+		labelFor := func(s *routeLabelSet) string {
+			if pinned {
+				return s.admitPinned(labelRoute)
+			}
+			return s.labelBeforeResponse(labelRoute, declared)
+		}
 		pendingSet := set
 		if pendingSet == nil {
 			pendingSet = telemetryRouteSet
@@ -6482,7 +6590,7 @@ haveApp:
 		if h.requestTelemetry != nil {
 			telemetryRoute := otherRouteLabel
 			if telemetryRouteSet != nil {
-				telemetryRoute = telemetryRouteSet.labelBeforeResponse(labelRoute, declared)
+				telemetryRoute = labelFor(telemetryRouteSet)
 			}
 			r = withRequestTelemetryRoute(r, telemetryRoute)
 		}
@@ -6490,7 +6598,7 @@ haveApp:
 			// The histogram classes are pre-instantiated when
 			// Handler.observe first emits the route under the
 			// gateway's series budget (ADR-20261024154324).
-			routeLabel = set.labelBeforeResponse(labelRoute, declared)
+			routeLabel = labelFor(set)
 			r = withRouteLabel(r, routeLabel)
 		}
 		if pendingSet != nil {
@@ -6804,12 +6912,20 @@ haveApp:
 	if !h.enforcePublicAuth(w, r, rec, app) { //nolint:contextcheck // request ctx is the canonical inbound ctx; the helper uses r.Context() internally so passing ctx separately would shadow it.
 		return
 	}
+	// A preview runs unreviewed code: the credential a platform gate just
+	// verified does not reach it (ADR-20261102100001).
+	withholdPreviewGateCredential(r, app)
 	// The three verified identity sources have all run by this point. Keep
 	// operator-authorized deployment smoke available for rollout readiness.
 	if app.PlatformTenantRequired && !deploymentSmoke && authenticatedFrom(r.Context()).PlatformTenantID == "" {
 		api.WriteProblem(w, api.ErrPlatformTenantRequired())
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+	// An answer to a verified caller may depend on who asked; Cloudflare must
+	// not hand it to the next client (ADR-091 amendment 2026-11-02).
+	if authenticatedFrom(r.Context()).carriesVerifiedCredential() {
+		keepFromSharedCaches(w)
 	}
 	// ADR-831 amendment 7 / kind=challenge. After every auth gate, so a
 	// verified credential bypasses it, and before respond, cache and wake, so
@@ -7633,6 +7749,10 @@ haveApp:
 		attribute.String("instance_id", pick.Target.InstanceID),
 		attribute.Int("concurrency_per_vm", perVMConcurrency),
 	)
+	if preferredInstanceID == "" {
+		// An instance-affinity pick stays where the session is.
+		capacityCtx = h.localFirstContext(capacityCtx)
+	}
 	pick, vmRelease, vmWaited, err = h.acquireVMTarget(withRoutePriorityRequest(capacityCtx, r), app, pick, perVMConcurrency, exactDeploymentID, versionKey)
 	capacitySpan.SetAttributes(
 		attribute.Bool("waited", vmWaited),
@@ -7748,7 +7868,7 @@ haveApp:
 		attribute.Bool("cold", cold),
 	)
 	forwardCtx, forwardSpan := pkgtrace.StartSpan(r.Context(), "gateway.forward", forwardAttrs...)
-	r = r.WithContext(forwardCtx)
+	r = r.WithContext(h.instanceNodesContext(forwardCtx, app.ID))
 	defer func() {
 		forwardSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		forwardSpan.End()
@@ -8230,7 +8350,12 @@ haveApp:
 	// bytes that didn't egress would be wrong on both ends of the
 	// financial model. nil-safe for unit tests.
 	h.recordEgress(rec, completionTarget, app)
-	if cold && h.metrics != nil {
+	// A request that found no routable target went through wake admission:
+	// it admitted a wake (cold, with the scheduler's method) or joined one
+	// already in flight. The latter is cold on the pinned path but admitted
+	// nothing, so it carries no method of its own.
+	waitedOnWake := cold || !platformWakeStart.IsZero()
+	if waitedOnWake && h.metrics != nil {
 		// Wake latency is "request-received to first upstream byte". The
 		// wake-timing RoundTripper stamps the inbound request's recorder at
 		// GotFirstResponseByte; reading it back here yields the actual wake
@@ -8244,30 +8369,39 @@ haveApp:
 				"app", app.ID, "node", target.NodeID, "instance", target.InstanceID)
 			firstByteAt = time.Now()
 		}
-		h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceIDFromContext(r.Context()))
-		if !platformWakeStart.IsZero() {
-			h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceIDFromContext(r.Context()))
-			platformWakeTrace.observe(h.metrics, firstByteAt)
+		traceID := traceIDFromContext(r.Context())
+		// What every caller saw, including the queue behind a wake in flight.
+		h.metrics.ObserveWakeRequestLatencyWithTrace(firstByteAt.Sub(wakeStart), traceID)
+		// The §12 wake SLO, its per-node and platform views, the phase
+		// breakdown, the cold-boot counter, locality and tier hold one sample
+		// per admitted wake. Counting joiners too filed each one as
+		// local_coldboot (8,497 in a 2026-10-31 load test whose 15 wakes were
+		// all restores) and weighted the SLO by how many requests piled up
+		// behind a wake rather than by how long the wake took.
+		if cold && wakeMethod != WakeMethodUnspecified {
+			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
+			if !platformWakeStart.IsZero() {
+				h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+				platformWakeTrace.observe(h.metrics, firstByteAt)
+			}
+			// Wake-locality classifier (PR scale-out readiness). Increment
+			// AFTER the first-byte observation so the 350 ms measurement
+			// path is unchanged. Today's outcomes are local_snapshot /
+			// local_coldboot; remote_* outcomes slot in when a second
+			// compute node joins.
+			h.metrics.ObserveWakeLocality(wakeMethod.String())
+			// Snapshot-tier counter (issue #470 / PR #470-FU-B). The
+			// tier ∈ {warm, init, cold} refinement of the wake
+			// outcome is produced by PR #470-FU-A (engine
+			// usableSnapshotForWake). Until the engine threads the
+			// tier onto the Admit response, we map the existing
+			// WakeMethod to the closest tier: snapshot→init (today
+			// every restored snapshot is init; warm is a refinement)
+			// and cold-boot→cold. Update to the real tier field once
+			// PR #470-FU-A lands; the Observe method's empty-string
+			// fallback already covers the transition seam.
+			h.metrics.ObserveWakeSnapshotTier(tierFromWakeMethod(wakeMethod))
 		}
-		// Wake-locality classifier (PR scale-out readiness). Increment
-		// AFTER the existing first-byte observation so the 350 ms
-		// measurement path is unchanged. Only fires on a real admit
-		// (cold==true), so warm requests, at-capacity benign outcomes,
-		// and admission errors do not enumerate. Today's outcomes are
-		// local_snapshot / local_coldboot; remote_* outcomes slot in
-		// when a second compute node joins.
-		h.metrics.ObserveWakeLocality(wakeMethod.String())
-		// Snapshot-tier counter (issue #470 / PR #470-FU-B). The
-		// tier ∈ {warm, init, cold} refinement of the wake
-		// outcome is produced by PR #470-FU-A (engine
-		// usableSnapshotForWake). Until the engine threads the
-		// tier onto the Admit response, we map the existing
-		// WakeMethod to the closest tier: snapshot→init (today
-		// every restored snapshot is init; warm is a refinement)
-		// and cold-boot→cold. Update to the real tier field once
-		// PR #470-FU-A lands; the Observe method's empty-string
-		// fallback already covers the transition seam.
-		h.metrics.ObserveWakeSnapshotTier(tierFromWakeMethod(wakeMethod))
 	}
 }
 
@@ -8370,7 +8504,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// the time.Since(startTime(r)) call here would yield the same result
 	// but recomputes; `elapsed` was already measured above.
 	requestLog := h.log
-	if decision := trafficDecisionEvidence(r.Context(), status, false); decision.path != "" && requestLog != nil {
+	decision := trafficDecisionEvidence(r.Context(), status, false)
+	if decision.path != "" && requestLog != nil {
 		requestLog = requestLog.With(decision.logAttribute())
 	}
 	if revision := TrafficPolicyRevision(r.Context()); revision != "" && requestLog != nil {
@@ -8483,6 +8618,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				DeploymentCreatedAt:                  target.DeploymentCreatedAt,
 				ImageDigest:                          target.ImageDigest,
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
+				PlatformRefusal:                      decision.platformRefusal(status),
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {
@@ -8989,6 +9125,9 @@ type statusRecorder struct {
 	// Validated candidate probes must remain uncacheable after guest headers
 	// and customer header rules, including gateway failures before forwarding.
 	deploymentSmoke bool
+	// sharedCachePrivate is set when an access control decided the request
+	// (keepFromSharedCaches): no shared cache may store the answer.
+	sharedCachePrivate bool
 
 	// Streaming fields (PR-B, nil → buffered path). Install via
 	// installFlushHook; the fields stay zero otherwise.
@@ -9076,7 +9215,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// reading it here is race-free relative to the underlying
 		// ResponseWriter.
 		s.ContentType = s.ResponseWriter.Header().Get("Content-Type")
-		s.headCachePrivate = responseForbidsSharedCaching(s.Header())
+		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed
 		// BEFORE the status code is committed. The ops run in
@@ -9102,6 +9241,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	}
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
+	}
+	if s.sharedCachePrivate {
+		markSharedCachePrivate(s.Header())
 	}
 }
 
@@ -10008,12 +10150,16 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	return p
 }
 
-// hostname strips any port from the Host header and lowercases it.
+// hostname strips any port from the Host header, lowercases it and drops a
+// trailing root dot. "app.example.com." names the same host as
+// "app.example.com"; keeping the dot missed the exact custom-domain row and
+// host-scoped edge rules while the wildcard lookup, which trims it, still
+// matched (bug hunt 32 M3).
 func hostname(host string) string {
 	if i := strings.IndexByte(host, ':'); i >= 0 {
 		host = host[:i]
 	}
-	return strings.ToLower(host)
+	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
 
 // basicCredentialsMatch compares Basic credentials in time independent of

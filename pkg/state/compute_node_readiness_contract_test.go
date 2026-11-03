@@ -146,3 +146,57 @@ func testComputeNodeWakeBreaker(t *testing.T, store computeNodeReadinessTestStor
 		t.Fatalf("closed breaker = %v (%v)", got.WakeBreakerOpenUntil, got.WakeBreakerReason)
 	}
 }
+
+func TestMemComputeNodeCPUPressure(t *testing.T) {
+	testComputeNodeCPUPressure(t, state.NewMemStore())
+}
+
+// adr: 20261030100950 — a node's CPU pressure hold is set, read back,
+// expires on its own without changing readiness, and survives vmmd
+// re-registration and the heartbeat's readiness writes.
+func testComputeNodeCPUPressure(t *testing.T, store computeNodeReadinessTestStore) {
+	ctx := context.Background()
+	node, err := store.UpsertComputeNodeFromOperator(ctx, state.ComputeNode{Name: "fsn-pressure", TargetURL: "tcp://10.0.9.5:7000",
+		VPCPUs: 8, MemMB: 16384, MaxConcurrency: 50, AdmissionCeilingMB: 8593, VCPUBudget: 80, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func() state.ComputeNode {
+		t.Helper()
+		got, err := store.ComputeNodeByID(ctx, node.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	now := time.Now()
+	if got := read(); got.CPUPressureUntil != nil || got.CPUPressured(now) {
+		t.Fatalf("new node hold = %v", got.CPUPressureUntil)
+	}
+	until := now.Add(30 * time.Second).Truncate(time.Microsecond)
+	for range 2 { // the second write is the same value
+		if err := store.HoldComputeNodeCPUPressure(ctx, node.ID, until); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := read()
+	if got.CPUPressureUntil == nil || !got.CPUPressureUntil.Equal(until) || !got.CPUPressured(now) || got.CPUPressured(until) {
+		t.Fatalf("hold = %v, want pressured until %v", got.CPUPressureUntil, until)
+	}
+	if r := got.EffectiveReadinessAt(now); r != state.NodeReadinessReady {
+		t.Fatalf("readiness while held = %q, want ready: the hold is not readiness", r)
+	}
+	if _, err := store.SetComputeNodeReadiness(ctx, node.ID, state.NodeReadinessReady, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertComputeNodeFromVmmd(ctx, state.ComputeNode{Name: "fsn-pressure", TargetURL: "tcp://10.0.9.5:7000",
+		VPCPUs: 8, MemMB: 16384, MaxConcurrency: 50, AdmissionCeilingMB: 8593, VCPUBudget: 80, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.CPUPressureUntil == nil || !got.CPUPressureUntil.Equal(until) {
+		t.Fatalf("hold after readiness and re-registration writes = %v, want %v", got.CPUPressureUntil, until)
+	}
+	if err := store.HoldComputeNodeCPUPressure(ctx, "00000000-0000-0000-0000-000000000000", until); err != nil {
+		t.Fatalf("hold on an unknown node: %v", err)
+	}
+}

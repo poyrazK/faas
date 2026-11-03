@@ -193,7 +193,7 @@ func commitPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPla
 				(account_id, app_id, consumer_id, name, prefix, hashed_secret, scopes, expires_at)
 				values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8)
 				returning `+consumerKeySelectCols, in.AccountID, item.Key.AppID, item.Key.ConsumerID,
-				item.Key.Name, item.Key.Prefix, item.Key.Hash, item.Key.Scopes, item.Key.ExpiresAt))
+				item.Key.Name, item.Key.Prefix, storedCredential(CredentialColumnConsumerKey, item.Key.Hash), item.Key.Scopes, item.Key.ExpiresAt))
 			if err != nil {
 				return applyWriteError(err)
 			}

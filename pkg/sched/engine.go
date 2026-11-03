@@ -671,7 +671,7 @@ type Engine struct {
 	brokerLag BrokerLagReader
 
 	mu    sync.Mutex
-	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	appMu map[string]*appLock // app_id -> serialisation lock, while held or awaited
 	// frozenTier (ADR-1151, schedd `frozen_tier`) freezes idle eligible
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
@@ -685,6 +685,10 @@ type Engine struct {
 	// (ADR-20261024085817). Thaw, warm-pool resume and freeze consult it
 	// so a draining node does not take resident work back.
 	leavingNodes atomic.Pointer[map[string]struct{}]
+	// admittingCeilings holds each admitting, active node's RAM admission
+	// ceiling from the same node list, so the floor's headroom counts nodes
+	// this ledger holds nothing on (ADR 20261031190030, floor_headroom.go).
+	admittingCeilings atomic.Pointer[map[string]int]
 	// drainRequestBound bounds how long a drain park waits for a withdrawn
 	// instance's in-flight requests; zero is
 	// api.ServiceReplicaDrainTimeoutSeconds.
@@ -761,6 +765,10 @@ type Engine struct {
 	// min-floor is a wake-shape concern, the cap is a budget
 	// concern, separated in time so the audit row is unambiguous).
 	overage OverageChecker
+	// capSubjects remembers, per organization, whether it is its apps'
+	// billing subject, so the spend cap gate reads the right cap without a
+	// store read per wake (ADR-20261030093512).
+	capSubjects spendCapSubjects
 	// (obs, cap) cents ride on the (outcome, obs, cap) tuple
 	// admitGate returns. The earlier field-on-Engine shape was
 	// racy across goroutines hitting the cap-reached branch.
@@ -813,6 +821,26 @@ type Engine struct {
 	// view of the capacity streams it receives (ADR-20261029085904).
 	nodeBoots *nodeBootBreaker
 	streams   *capacityStreamWatch
+	// cpuPressureReadings and cpuPressureHolds, when set, make this schedd
+	// hold the nodes whose readings it receives under CPU pressure
+	// (ADR 20261030100950, node_cpu_pressure.go).
+	cpuPressureReadings CPUPressureReadings
+	cpuPressureHolds    *cpuPressureHolds
+	// frozenProactiveCompress, compressBackoff and frozenCompressOne drive
+	// proactive compression of frozen VMs (ADR 20261031143521,
+	// frozen_proactive_compress.go); frozenCompressOne replaces the vmmd
+	// call in tests.
+	frozenProactiveCompress bool
+	compressBackoff         *frozenCompressBackoff
+	frozenCompressOne       func(ctx context.Context, instanceID string) string
+	// frozenYieldOne replaces parking a frozen VM for admission in tests
+	// (ADR 20261031190030, frozen_yield.go); it reports whether it parked.
+	frozenYieldOne func(ctx context.Context, instanceID, reason string) bool
+	// nodeMemoryLocal measures this scheduler's node for its peers, and
+	// nodeMemoryReports caches every node's report (ADR 20261101091815,
+	// node_memory_reports.go).
+	nodeMemoryLocal   NodeMemorySource
+	nodeMemoryReports atomic.Pointer[map[string]state.NodeMemoryReport]
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -1013,7 +1041,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		fcVer:                    fcVer,
 		log:                      log,
 		jobContext:               ctx,
-		appMu:                    map[string]*sync.Mutex{},
+		appMu:                    map[string]*appLock{},
 		restorePlacementInFlight: map[string]int{},
 		restartInFlight:          map[string]*restartCall{},
 		restartCompleted:         map[string]string{},
@@ -1664,6 +1692,11 @@ func (e *Engine) WithNodeRegistry(reg *NodeRegistry) *Engine {
 		return e
 	}
 	e.nodeRegistry = reg
+	// ADR 20261030100950: the ledger withholds the CPU discount on a node
+	// the registry holds under CPU pressure.
+	if e.ledger != nil {
+		e.ledger.cpuPressured = func(nodeID string, now time.Time) bool { return nodeCPUPressured(reg, nodeID, now) }
+	}
 	return e
 }
 
@@ -1704,6 +1737,15 @@ func (e *Engine) InstanceBridgeSink() InstanceBridgeSink {
 		return func(string, time.Time, int64) {}
 	}
 	return e.telemetryCache.ReplaceInstanceBridge
+}
+
+// CPUPressureSink returns the callback scheddgrpc uses to record a node's
+// CPU pressure readings (ADR 20261030100950) with its telemetry.
+func (e *Engine) CPUPressureSink() CPUPressureSink {
+	if e == nil || e.telemetryCache == nil {
+		return func(string, time.Time, NodeCPUPressure) {}
+	}
+	return e.telemetryCache.ReplaceCPUPressure
 }
 
 // WithNodeKeyRegistry wires the ADR-053 signature-verification
@@ -1951,31 +1993,8 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 			release()
 			return WakeResult{}, fmt.Errorf("sched: wake: instance deployment: %w", depErr)
 		}
-		port := deploymentRuntimePort(dep)
 		release()
-		// Surface the existing row's wake_id so a Phase-1 fast-path
-		// response carries x-faas-wake-id just like a cold-wake
-		// response would. The correlation handle is the wake that
-		// brought the instance up; an operator tailing a warm request
-		// can still pin it back to the schedd slog line that stamped
-		// it (gaps analysis 2026-07-23 review finding #1).
-		identity := api.PlatformIdentity{
-			AppID:         appID,
-			DeploymentID:  resolvedDeploymentID,
-			InstanceID:    ins.ID,
-			NodeID:        ins.NodeID,
-			CommitSHA:     dep.CommitSHA,
-			DeploymentTag: dep.Tag,
-			ImageDigest:   dep.ImageDigest,
-		}
-		if !dep.CreatedAt.IsZero() {
-			identity.DeploymentCreatedAt = dep.CreatedAt.UTC().Format(time.RFC3339Nano)
-		}
-		identity.TenantID = app.AccountID
-		if node, nodeErr := e.store.ComputeNodeByID(ctx, ins.NodeID); nodeErr == nil {
-			identity.Region = stringValue(node.Region)
-		}
-		return WakeResult{InstanceID: ins.ID, NodeID: ins.NodeID, Method: vmmdpb.WakeMethod_WAKE_RESTORE, WakeID: ins.WakeID, Port: port, DeploymentID: resolvedDeploymentID, RequestCount: ins.RequestCount, Identity: identity}, nil
+		return e.runningWakeResult(ctx, appID, app.AccountID, ins, dep), nil
 	} else if err != nil && !errors.Is(err, state.ErrNotFound) {
 		// A fenced app reports the barrier, as it did before the lookup.
 		if barrierErr := e.checkManagedPostgresAdmission(ctx, appID); barrierErr != nil {
@@ -1997,10 +2016,17 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// as *api.Problem{Code: CodePlanLimitConcur}. The ledger's
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
 	// rather than lift into the typed AtCapacity result.
+	var res WakeResult
+	var err error
 	if deploymentID != "" {
-		return e.admitAndDispatchWithOptions(ctx, appID, deploymentID, string(state.InstanceModeNormal), trigger, false, false)
+		res, err = e.admitAndDispatchWithOptions(ctx, appID, deploymentID, string(state.InstanceModeNormal), trigger, false, false)
+	} else {
+		res, err = e.admitAndDispatch(ctx, appID, trigger, false)
 	}
-	return e.admitAndDispatch(ctx, appID, trigger, false)
+	if booted, ok := e.awaitBootingInstanceForWake(ctx, app.AccountID, appID, deploymentID, scope, err); ok {
+		return booted, nil
+	}
+	return res, err
 }
 
 // A wake can reuse only its selected deployment's running instance. Unscoped
@@ -2045,7 +2071,7 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 			return state.Instance{}, err
 		}
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return state.Instance{}, err
 	}
@@ -4385,7 +4411,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// park re-snapshots. Best-effort — failure here doesn't block the
 	// RUNNING transition (the stale snapshot also gets the next-park
 	// treatment from snapshotAndPark).
-	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT && out.RestoreFallbackReason == fcvm.RestoreFallbackNodeLocal {
+		// The restore failed for this node's reasons (a full disk, an image or
+		// identity it could not read, jail setup): the snapshot is still good
+		// for every other node, so it stays live (bug hunt 2026-10-28 B12).
+		e.log.Info("wake: restore fell back to cold boot on this node; snapshot kept", "app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "node", bootInput.nodeID, "snapshot", bootInput.snapID, "wake_id", logsanitize.Field(bootInput.wakeID))
+	} else if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		// A catalog-bound fallback still validates its selected capture through
 		// receipt acknowledgment and publication. Invalidate after that attempt
 		// so our own cache retirement cannot reject a verified cold runtime.
@@ -4992,10 +5023,26 @@ func (e *Engine) nodeUsageForNodes(ctx context.Context, nodes []state.ComputeNod
 			missing = append(missing, node)
 		}
 	}
-	for nodeID, value := range e.fallbackNodeUsage(ctx, missing) {
-		used[nodeID] = value
+	fallback := e.fallbackNodeUsage(ctx, missing)
+	for _, node := range missing {
+		used[node.ID] = e.unreportedNodeUsedMB(node, fallback[node.ID])
 	}
 	return used
+}
+
+// unreportedNodeUsedMB is placement's used_mb for a node without a fresh vmmd
+// report: a peer node, whose stream reaches only its own scheduler, or this
+// node during a stream gap. With a measured basis in the ledger (this node's
+// held measurement or the peer's published report, ADR 20261101091815) it is
+// the figure Admit uses, but never below what the node's bookings, every
+// owner's (bookedMB, frozen excluded), leave under the durable guard's
+// overcommit cap; otherwise it is the bookings, as before.
+func (e *Engine) unreportedNodeUsedMB(node state.ComputeNode, bookedMB int64) int64 {
+	if _, ok := e.ledger.MeasuredAsOf(node.ID); !ok || node.AdmissionCeilingMB <= 0 {
+		return bookedMB
+	}
+	overcommit := int64(node.AdmissionCeilingMB) * int64(api.MeasuredAdmissionMaxOvercommitPercent-100) / 100
+	return max(int64(e.ledger.AdmissionUsedMB(node.ID)), bookedMB-overcommit)
 }
 
 // nodeCPUUsageForNodes merges the durable fleet-wide instance aggregate with
@@ -5686,7 +5733,7 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 // appHasResidentInstances reports whether any instance of appID still holds
 // resident RAM (state.CountsForRAM), wherever it runs.
 func (e *Engine) appHasResidentInstances(ctx context.Context, appID string) (bool, error) {
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return false, err
 	}
@@ -7060,7 +7107,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 	problem := api.ErrDeployFailed(cause.Error())
 	code := api.CodeDeployFailed
 	var upstream *api.Problem
-	if errors.As(cause, &upstream) && upstream != nil && upstream.Code != "" {
+	capacity := customerCapacityProblem(cause)
+	if capacity != nil {
+		problem, code = capacity, capacity.Code
+	} else if errors.As(cause, &upstream) && upstream != nil && upstream.Code != "" {
 		problem = upstream
 		code = upstream.Code
 	} else if errors.Is(cause, context.DeadlineExceeded) || status.Code(cause) == codes.DeadlineExceeded {
@@ -7084,6 +7134,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 
 	now := time.Now().UTC()
 	message := "snapshot prime failed: " + cause.Error()
+	if capacity != nil {
+		// The node-budget refusal's own text names nodes and their ledgers.
+		message = "snapshot prime failed: " + capacity.Detail
+	}
 	switch code {
 	case api.CodeStageSnapshotPrepareTimeout:
 		message = "snapshot prime failed: " + problem.Error()
@@ -7237,14 +7291,18 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 }
 
 // appMustPark reports whether no instance of app may stay live: the app is
-// evicted_cold, its account is suspended or abuse-held, or the account has
-// reached its monthly spend cap. The cap check is cached and fails open
-// (OverageChecker), so a transient read error never parks an app.
+// evicted_cold, its account is suspended or abuse-held, or its billing
+// subject has reached its monthly spend cap. account is the app's resource
+// account (state.AppResourceAccount); for a company app whose organization
+// owns its resources, its ID is the creator's and the organization's cap
+// governs (ADR-20261030093512, as spendCapSubject). The cap check is cached
+// and fails open (OverageChecker), so a transient read error never parks an
+// app.
 func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.Account) bool {
 	if app.Status == state.AppEvictedCold || account.Status == state.AccountSuspended || account.AbuseHeld() {
 		return true
 	}
-	return e.spendCapReached(ctx, account.ID)
+	return e.spendCapReached(ctx, account.ResourceOwnerID())
 }
 
 // ParkApp tears down every live instance of an app whose lifecycle has already
@@ -8082,7 +8140,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+		instances, err := e.liveInstancesForApp(ctx, app.ID)
 		if err != nil {
 			continue
 		}
@@ -8369,30 +8427,25 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			"instance", ins.ID,
 			"instance_ram_mb", ins.RAMMB,
 			"app_ram_mb", app.RAMMB)
-		destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
-		if destroyErr != nil {
-			e.log.Warn("sched: park: destroy RAM-incompatible instance", "instance", ins.ID, "err", destroyErr)
+		// An uncertain destroy keeps the row and its reservation: the VM may
+		// still hold its memory, and the next park retries (ADR
+		// 20261101091815), as the ephemeral-secret discard below does.
+		if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, ins.ID, DestroyTimeout); err != nil {
+			return fmt.Errorf("sched: park: destroy RAM-incompatible instance %s: %w", ins.ID, err)
 		}
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_resource_mismatch", "ram_changed")
-		if destroyErr != nil {
-			return fmt.Errorf("sched: park: destroy RAM-incompatible instance %s: %w", ins.ID, destroyErr)
-		}
 		return nil
 	}
 	// Issue #3360: the same retire-instead-of-capture rule applies when the
 	// app's secrets or environment changed after this process started.
 	if e.runtimeConfigStale(ctx, ins) {
 		e.log.Info("sched: park: discard instance after runtime config change", "instance", ins.ID, "app", ins.AppID)
-		destroyErr := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
-		if destroyErr != nil {
-			e.log.Warn("sched: park: destroy runtime-config-stale instance", "instance", ins.ID, "err", destroyErr)
+		if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, ins.ID, DestroyTimeout); err != nil {
+			return fmt.Errorf("sched: park: destroy runtime-config-stale instance %s: %w", ins.ID, err)
 		}
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, ins.AppID, state.StateStopped, "park_runtime_config_changed", "runtime_config_changed")
-		if destroyErr != nil {
-			return fmt.Errorf("sched: park: destroy runtime-config-stale instance %s: %w", ins.ID, destroyErr)
-		}
 		return nil
 	}
 	ephemeral, err := e.hasEphemeralSecretForInstance(ctx, ins, app)
@@ -10747,14 +10800,15 @@ func (e *Engine) admitSpendCap(ctx context.Context, app *state.App) (bool, int64
 	if e.overage == nil {
 		return false, 0, 0
 	}
-	status, observedCents, capCents, _ := e.overage.Check(ctx, app.AccountID)
+	subject := e.spendCapSubject(ctx, *app)
+	status, observedCents, capCents, _ := e.overage.Check(ctx, subject)
 	if status != OverageReached {
 		return false, 0, 0
 	}
 	if e.ops != nil {
 		e.ops.ObserveScaleUp(app.ID, "overage_cap_reached")
 	}
-	e.overage.RecordReached(ctx, app.AccountID, observedCents, capCents)
+	e.overage.RecordReached(ctx, subject, observedCents, capCents)
 	return true, observedCents, capCents
 }
 
@@ -10850,26 +10904,68 @@ func cooldownSRemaining(app *state.App, now time.Time) int {
 	return int(remaining.Seconds())
 }
 
+// appLock is one app's serialisation lock. refs counts its holder and its
+// waiters, under Engine.mu; the entry leaves Engine.appMu when it reaches
+// zero, so the map holds only apps someone is working on (ADR
+// 20261102160622). Every lock and unlock goes through lockApp, tryLockApp
+// and unlockApp: a caller that kept the *appLock past its unlock could lock
+// a mutex another caller no longer shares.
+type appLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
 func (e *Engine) lockApp(appID string) func() {
-	e.appMutex(appID).Lock()
+	e.appLockRef(appID).mu.Lock()
 	return func() { e.unlockApp(appID) }
 }
 
-func (e *Engine) unlockApp(appID string) {
-	e.appMutex(appID).Unlock()
+// tryLockApp locks appID's lock when it is free and reports whether it did.
+func (e *Engine) tryLockApp(appID string) (func(), bool) {
+	l := e.appLockRef(appID)
+	if l.mu.TryLock() {
+		return func() { e.unlockApp(appID) }, true
+	}
+	e.mu.Lock()
+	e.dropAppLockRefLocked(appID, l)
+	e.mu.Unlock()
+	return nil, false
 }
 
-// appMutex returns the stable per-app serialisation mutex, creating it on first
-// use. Never GC'd (one-box scale, single-digit apps).
-func (e *Engine) appMutex(appID string) *sync.Mutex {
+func (e *Engine) unlockApp(appID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	mu, ok := e.appMu[appID]
-	if !ok {
-		mu = &sync.Mutex{}
-		e.appMu[appID] = mu
+	l := e.appMu[appID]
+	if l == nil {
+		panic("sched: unlock of an app lock nobody holds: " + appID)
 	}
-	return mu
+	l.mu.Unlock()
+	e.dropAppLockRefLocked(appID, l)
+}
+
+// appLockRef returns appID's lock with a reference taken for the caller,
+// creating it on first use.
+func (e *Engine) appLockRef(appID string) *appLock {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.appMu == nil {
+		e.appMu = map[string]*appLock{}
+	}
+	l := e.appMu[appID]
+	if l == nil {
+		l = &appLock{}
+		e.appMu[appID] = l
+	}
+	l.refs++
+	return l
+}
+
+// dropAppLockRefLocked releases a reference; the caller holds e.mu.
+func (e *Engine) dropAppLockRefLocked(appID string, l *appLock) {
+	l.refs--
+	if l.refs <= 0 && e.appMu[appID] == l {
+		delete(e.appMu, appID)
+	}
 }
 
 // Ledger exposes the engine's admission ledger for the reaper's resident-RAM

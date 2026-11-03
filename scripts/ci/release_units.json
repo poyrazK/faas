@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; edge = the gateways, deployed after the control plane by cd-edge-units.yml one host at a time (services name the host role they run on); shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only; tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
+  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; edge = the gateways, deployed after the control plane by cd-edge-units.yml one host at a time (services name the host role they run on); shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only (and database nodes, ADR-1027: pgproxyd, dbbackupd and vmmd there wait for the full release too); tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
   "binaries": {
     "apid": {
       "lane": "control-plane",
@@ -20,10 +20,7 @@
       "lane": "control-plane",
       "services": [{"name": "outboundd", "readyz": "http://127.0.0.1:8095/readyz"}]
     },
-    "s3-gatewayd": {
-      "lane": "control-plane",
-      "services": [{"name": "s3-gatewayd", "optional": true, "readyz": "http://127.0.0.1:9096/readyz"}]
-    },
+    "s3-gatewayd": {"lane": "shared"},
     "livequeryd": {
       "lane": "control-plane",
       "services": [{"name": "livequeryd", "optional": true, "readyz": "http://127.0.0.1:9471/readyz"}]
@@ -31,6 +28,10 @@
     "agentd": {
       "lane": "control-plane",
       "services": [{"name": "agentd", "optional": true}]
+    },
+    "edgednsd": {
+      "lane": "control-plane",
+      "services": [{"name": "edgednsd", "optional": true}]
     },
     "bridged": {
       "lane": "control-plane",
@@ -54,6 +55,8 @@
       "services": [{"name": "gatewayd-internal", "host": "compute-only", "readyz": "http://127.0.0.1:9090/readyz"}]
     },
     "vmmd": {"lane": "compute"},
+    "pgproxyd": {"lane": "compute"},
+    "dbbackupd": {"lane": "compute"},
     "vmmd-jail-helper": {"lane": "compute"},
     "vmmd-guestdisk": {"lane": "compute"},
     "vmmd-raw-bridge": {"lane": "compute"},
@@ -118,7 +121,8 @@
       "deploy/ansible/roles/githubd_service/files/faas-githubd.service",
       "deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service",
       "deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service",
-      "deploy/ansible/roles/agentd_service/files/faas-agentd.service"
+      "deploy/ansible/roles/agentd_service/files/faas-agentd.service",
+      "deploy/ansible/roles/edgednsd_service/files/faas-edgednsd.service"
     ]
   },
   "_deploy_classes_comment": "Every deploy/ path has exactly one class (docs/adr/20261027151755-unit-lane-deploy-path-classes.md; scripts/ci/affected_units.py deploy_class), first match wins: a release unit (host_config.release_units, blocking); a path a host role reads (host_config on the control plane, compute_deploy on compute); then the first class below with a pattern that names it. A pattern is a directory (trailing /), an exact path, or a glob (* inside one segment, **/ across segments). inert: nothing a host runs reads it at activation, so it maps to no flag: documentation, tests, samples (*.example, which roles install only as /etc/faas/*.example for operators to copy), the legacy unit tree deployctl generate writes for dev VMs (deploy/systemd/), the grafana role's dashboard mirror (deploy/grafana/, make grafana-mirror-check) and Cloudflare workers, which deploy through their own workflows. compute_only: playbooks only compute hosts run; pending for the control-plane lane, they hold the edge lane while it restarts a gateway on a compute host (compute_deploy). blocking: read by a full release or an operator path the lanes cannot vouch for, so a change waits for the next full tag (deploy). A path none of these names blocks, and scripts/ci/affected_units_test.py fails until it is classified. Whatever its class, a path no host role reads whose change since base only touches blank and # comment lines maps to no flag.",
@@ -144,6 +148,7 @@
       "deploy/ansible/.cache/",
       "deploy/ansible/control_plane_converge.yml",
       "deploy/ansible/cp_state_restore.yml",
+      "deploy/ansible/database_node.yml",
       "deploy/ansible/fleet_runner.yml",
       "deploy/ansible/metal-h2c-acceptance.yml",
       "deploy/ansible/native-acceptance-host.yml",
@@ -161,9 +166,14 @@
       "deploy/ansible/inventory/hosts.ini",
       "deploy/ansible/roles/control_plane_peer_access/",
       "deploy/ansible/roles/control_plane_standby/",
+      "deploy/ansible/roles/database_node/",
+      "deploy/ansible/roles/database_node_pki/",
+      "deploy/ansible/roles/database_vmmd/",
+      "deploy/ansible/roles/dbbackupd_service/",
       "deploy/ansible/roles/github_actions_runner/",
       "deploy/ansible/roles/metal-h2c-acceptance/",
       "deploy/ansible/roles/native_acceptance_host/",
+      "deploy/ansible/roles/pgproxyd_service/",
       "deploy/ansible/roles/postgres_standby/",
       "deploy/ansible/roles/tenant_egress_gateway/",
       "deploy/controlplane/",

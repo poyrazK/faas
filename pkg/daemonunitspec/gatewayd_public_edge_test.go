@@ -359,22 +359,24 @@ func TestComputeEdgeScrapeJobsFollowTheSwitch(t *testing.T) {
 	}
 }
 
+// computeNodeListeners are the listeners on a production compute node (ss
+// -ltn, 2026-10-26) plus the app edge's public socket and its connector's
+// metrics.
+var computeNodeListeners = map[string]string{
+	"22": "sshd", "53": "resolver", "5354": "service DNS", "8080": "gatewayd-internal",
+	"8090": "the edge's public socket", "9090": "gatewayd-internal control", "9091": "schedd",
+	"9092": "gatewayd-internal egress", "9097": "gatewayd-internal private control",
+	"9100": "node_exporter", "9102": "imaged", "9103": "schedd metrics", "9104": "vmmd metrics",
+	"9105": "builderd", "9107": "realtimed", "10080": "gatewayd-internal", "10081": "gatewayd-internal",
+	"20201": "vmmd stream bridge", "20202": "vmmd stream bridge", "20241": "cloudflared metrics",
+	"50051": "vmmd",
+}
+
 // The edge's control listener binds every address on a compute node, so its
 // port must be one no other compute-node listener holds. On rc.296 it was
 // 9092, gatewayd-internal's egress listener, and the edge never started.
 func TestComputeEdgeControlPortIsFreeOnComputeNodes(t *testing.T) {
-	// Listeners on a production compute node (ss -ltn, 2026-10-26) plus the
-	// edge's own public socket and its connector's metrics.
-	taken := map[string]string{
-		"22": "sshd", "53": "resolver", "5354": "service DNS", "8080": "gatewayd-internal",
-		"8090": "the edge's public socket", "9090": "gatewayd-internal control", "9091": "schedd",
-		"9092": "gatewayd-internal egress", "9097": "gatewayd-internal private control",
-		"9100": "node_exporter", "9102": "imaged", "9103": "schedd metrics", "9104": "vmmd metrics",
-		"9105": "builderd", "9107": "realtimed", "10080": "gatewayd-internal", "10081": "gatewayd-internal",
-		"20201": "vmmd stream bridge", "20202": "vmmd stream bridge", "20241": "cloudflared metrics",
-		"50051": "vmmd",
-	}
-	if owner, ok := taken[ComputeEdgeControlPort]; ok {
+	if owner, ok := computeNodeListeners[ComputeEdgeControlPort]; ok {
 		t.Fatalf("edge control port %s is held by %s on a compute node", ComputeEdgeControlPort, owner)
 	}
 	env := map[string]string{}

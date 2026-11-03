@@ -44,25 +44,20 @@ func TestClaudePluginManifestAndMCPServer(t *testing.T) {
 		t.Fatalf("plugin.json needs name gregale, a version and a description: %+v", manifest)
 	}
 
+	// The plugin connects to the hosted server: the person chooses at sign-in
+	// what the agent may do, so nothing runs locally with their login.
 	var config struct {
-		MCPServers map[string]struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
-		} `json:"mcpServers"`
+		MCPServers map[string]map[string]any `json:"mcpServers"`
 	}
 	readPluginJSON(t, ".mcp.json", &config)
 	server, ok := config.MCPServers["gregale"]
-	if !ok || server.Command != "gregale" || len(server.Args) < 2 || server.Args[0] != "mcp" || server.Args[1] != "serve" {
-		t.Fatalf(".mcp.json must run `gregale mcp serve`: %+v", config.MCPServers)
-	}
-	opts, err := parseMCPServeOptions(server.Args[2:])
-	if err != nil {
-		t.Fatalf(".mcp.json arguments do not parse: %v", err)
-	}
-	if opts.transport != "stdio" || opts.allowWrites {
-		t.Fatalf("the plugin's server must be read-only stdio; got transport %q, allowWrites %v", opts.transport, opts.allowWrites)
+	if !ok || len(config.MCPServers) != 1 || server["type"] != "http" || server["url"] != hostedMCPURL || len(server) != 2 {
+		t.Fatalf(".mcp.json must name only the hosted server %s over http: %+v", hostedMCPURL, config.MCPServers)
 	}
 }
+
+// hostedMCPURL is Gregale's hosted management MCP server.
+const hostedMCPURL = "https://api.gregale.dev/mcp"
 
 func TestClaudePluginSkillsHaveFrontmatter(t *testing.T) {
 	skills, err := filepath.Glob(filepath.Join(claudePluginDir, "skills", "*", "SKILL.md"))

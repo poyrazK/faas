@@ -7,7 +7,7 @@ workflows: [code-first](code-workflows.md) (ordinary async functions) or
 
 Jobs are bounded run-to-completion workloads. Create a job from an OCI image
 reference, then dispatch one or more tasks; each run retains task status and
-logs. A newly created or image-updated job is `pending` until Gregale has
+logs ([log retention](#log-retention)). A newly created or image-updated job is `pending` until Gregale has
 pulled and prepared its image. Tasks stay queued until the image is `ready`;
 pull and build failures show as `image_materialization_status=failed` with an
 actionable error. A terminal image failure marks any queued tasks failed and
@@ -44,8 +44,8 @@ gregale job runs nightly
 gregale job tasks nightly RUN_ID
 gregale job attempts nightly RUN_ID 0
 gregale job retry nightly RUN_ID 0
-gregale job replay-failed nightly RUN_ID
-gregale job artifact-url nightly RUN_ID 0 result
+gregale job replay nightly RUN_ID
+gregale job artifact get nightly RUN_ID 0 result
 gregale job logs nightly RUN_ID 0 [--max-bytes N]
 ```
 
@@ -149,8 +149,12 @@ gregale job update customer-sync --failure-rules \
 `fail_partition` retains its outcome and excludes it from automatic retries.
 When a Job partition classified `retry` has no attempt left, its final
 attempt records `dead_letter` (reason `retry_budget_exhausted`) and the run's
-dead-letter count rises. `gregale job retry` refuses a partition past its
-retry budget; re-run its input with `gregale job replay-failed JOB RUN_ID`.
+dead-letter count rises. A retry Gregale cannot run, because the run is
+interactive or owned by an operation, or the Job's image changed since the
+run started, records `dead_letter` (reason `retry_refused`) the same way.
+Either way the partition has failed permanently, so `--fail-fast` stops the
+run. `gregale job retry` refuses a partition past its
+retry budget; re-run its input with `gregale job replay JOB RUN_ID`.
 For a command Cron, the bounded retry budget is per occurrence; for a Job, it
 is per partition. `gregale cron runs CRON_ID --run TASK_ID` shows the reported
 outcome code and saved work decision.
@@ -263,7 +267,7 @@ fail, so it follows the configured retry policy. For an `obj://` artifact, call
 Gregale verifies the current object's size and SHA-256, then returns a
 five-minute signed URL. The caller needs job and storage read access. Check
 the downloaded checksum too, because an object can change after verification.
-`gregale job artifact-url` prints the signed URL and expected digest; add
+`gregale job artifact get` prints the signed URL and expected digest; add
 the global JSON output option to retrieve the full signed request, including
 headers and expiry.
 Missing objects return 404; an object whose current bytes disagree with the
@@ -281,7 +285,8 @@ and use the job run id as the correlation id in application logs. Failed runs
 remain inspectable; `jobs retry` re-queues one failed task while its retry
 budget remains, preserving the run history and applying capped backoff.
 `GET /v1/jobs/{name}/runs/{id}/tasks/{index}/attempts` lists the immutable
-outcome of each completed attempt. To rerun failed, timed-out, OOM, or cancelled
+outcome of each completed attempt; its output follows the
+[log retention](#log-retention) below. To rerun failed, timed-out, OOM, or cancelled
 inputs from a terminal run, call
 `POST /v1/jobs/{name}/runs/{id}/replay-failed`. This creates a linked standard
 run with a fresh attempt budget. Each replay task includes `source_task_index`
@@ -304,3 +309,16 @@ customer cancellation.
 `--follow` (`-f`) to stream a task's output while it runs: the stream waits
 while the task is queued, follows each retry attempt in turn, and ends when
 the task finishes (ADR-1163).
+
+## Log retention
+
+Gregale keeps a task's output, the last 1 MiB of its combined stdout and
+stderr for each attempt, for your plan's log retention after the run
+finishes: 1 day on Free, 7 days on Hobby, 30 on Pro, 90 on Scale, the same
+window as an app's [archived logs](logs.md#retention). Then the output is
+deleted. The run, its tasks and their attempts stay, with statuses, exit
+codes, errors, timings and output artifacts; their `log_content` is empty
+and `truncated` (`log_truncated` on attempts) is true, which tells deleted
+output apart from a task that wrote nothing. A retried task that reopens a
+run starts its window again when the run finishes again. Write output you
+need for longer to object storage from the task itself.

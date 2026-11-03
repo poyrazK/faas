@@ -1,0 +1,13 @@
+---
+- name: database_vmmd — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-vmmd
+
+- name: database_vmmd — try-restart faas-vmmd
+  ansible.builtin.command: systemctl try-restart faas-vmmd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-vmmd
+  # ADR-472 invariant for every vmmd restart handler (database nodes never
+  # join through node_join.yml, so this is always true there).
+  when: not (faas_join_defer_service_handlers | default(false) | bool)

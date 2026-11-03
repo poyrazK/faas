@@ -176,6 +176,7 @@ func validatePgConsumerKeyForConsumer(accountID, consumerID, name, prefix string
 // insertConsumerKeyForConsumer issues a key for an active consumer of
 // accountID on db, the pool or a transaction.
 func insertConsumerKeyForConsumer(ctx context.Context, db sqlc.DBTX, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
+	hash = storedCredential(CredentialColumnConsumerKey, hash)
 	row := db.QueryRow(ctx,
 		`insert into consumer_keys
 		   (consumer_id, account_id, app_id, name, prefix, hashed_secret, scopes, expires_at)

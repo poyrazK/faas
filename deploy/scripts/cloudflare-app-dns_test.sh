@@ -47,13 +47,13 @@ esac
 MOCK
 chmod +x "$ROOT/bin/curl"
 
-# reset writes the production-like starting state: a stale apex record, api.
-# on the origin's address, no operations. or s3. record, the wildcard on the
-# control plane, and the Worker on every route.
+# reset writes the production-like starting state: the apex on another
+# provider, api. on the origin's address, no operations. or s3. record, the
+# wildcard on the control plane, and the Worker on every route.
 reset() {
   rm -rf "$ROOT/mock" && mkdir -p "$ROOT/mock/records"
   local r="$ROOT/mock/records"
-  echo "rec-apex CNAME old-pages.example true" >"$r/example.dev"
+  echo "rec-apex A 76.76.21.21 true" >"$r/example.dev"
   echo "rec-api A 203.0.113.4 true" >"$r/api.example.dev"
   echo "rec-wild CNAME origin.example.dev true" >"$r/*.example.dev"
   echo "rec-origin A 203.0.113.4 false" >"$r/origin.example.dev"
@@ -75,8 +75,8 @@ out="$(run bash "$DNS" plan)"
 [[ "$out" == *"  api.example.dev A 203.0.113.4 true"* ]] || fail "plan does not list every record: $out"
 out="$(run bash "$DNS" platform)"
 [[ -z "$(writes)" ]] || fail "a dry run wrote: $(writes)"
-[[ "$out" == *"would: example.dev: CNAME old-pages.example -> CNAME origin.example.dev"* ]] || fail "stale apex not planned: $out"
-[[ "$out" == *"ok: api.example.dev serves origin.example.dev"* ]] || fail "api. on the origin address should be left alone: $out"
+[[ "$out" == *"ok: example.dev has its own record (A 76.76.21.21), left alone"* ]] || fail "an apex served elsewhere must be left alone: $out"
+[[ "$out" == *"ok: api.example.dev has its own record (A 203.0.113.4), left alone"* ]] || fail "api. should be left alone: $out"
 [[ "$out" == *"would: operations.example.dev: new CNAME origin.example.dev"* ]] || fail "missing operations. not planned: $out"
 
 # The wildcard waits for the platform hosts.
@@ -85,9 +85,8 @@ if run bash "$DNS" wildcard >/dev/null 2>&1; then fail "wildcard moved before th
 # APPLY=1 writes only what needs a change.
 out="$(run env APPLY=1 bash "$DNS" platform)"
 [[ "$out" != *SECRET-API-TOKEN* ]] || fail "the token was printed"
-[[ "$(writes | grep -c '^PUT .*/dns_records/rec-apex ')" == 1 ]] || fail "apex not updated: $(writes)"
 [[ "$(writes | grep -c '^POST .*/dns_records ')" == 2 ]] || fail "operations. and s3. not created: $(writes)"
-! writes | grep -q rec-api || fail "api. was rewritten: $(writes)"
+! writes | grep -q -E 'rec-apex|rec-api|^PUT ' || fail "an existing record was rewritten: $(writes)"
 
 # A pilot adds a route with no Worker and a record to the tunnel.
 reset
@@ -95,9 +94,9 @@ run env APPLY=1 bash "$DNS" pilot h10.example.dev >/dev/null
 writes | grep -q '^POST .*/workers/routes {"pattern":"h10.example.dev/\*"}$' || fail "no Worker-free route: $(writes)"
 writes | grep -q '^POST .*/dns_records .*"name":"h10.example.dev".*"content":"tun-1.cfargotunnel.com".*"proxied":true' || fail "no tunnel record: $(writes)"
 
-# Once the platform hosts serve the origin, the wildcard moves to the tunnel.
+# Once every platform host has its own record, the wildcard moves to the tunnel.
 reset
-for host in example.dev operations.example.dev s3.example.dev; do
+for host in operations.example.dev s3.example.dev; do
   echo "rec-$host CNAME origin.example.dev true" >"$ROOT/mock/records/$host"
 done
 run env APPLY=1 bash "$DNS" wildcard >/dev/null

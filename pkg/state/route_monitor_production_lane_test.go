@@ -69,7 +69,7 @@ func TestRouteMonitorRollbackSkipsProjectReleases(t *testing.T) {
 	} {
 		i := incident
 		d := state.Deployment{ID: "current", Scope: tc.scope, Status: state.DeployLive, TrafficPercent: 100, CreatedAt: released}
-		_, claimed, changed := state.DecideRouteMonitorRollback(config, &i, d, now)
+		_, claimed, changed := state.DecideRouteMonitorRollback(config, &i, d, nil, now)
 		if !changed || claimed != tc.wantClaim {
 			t.Fatalf("scope %q: claimed=%v changed=%v, want claimed=%v", tc.scope, claimed, changed, tc.wantClaim)
 		}

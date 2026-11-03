@@ -633,7 +633,7 @@ printf 'org=%s\n' "${COMPREPLY[*]}"
 	if err != nil {
 		t.Fatalf("bash completion failed: %v\noutput: %s", err, string(out))
 	}
-	want := "app=alpha\napp-sub=streaming-cap scale security static-egress-ip\ncanary=beta\norg=acme\n"
+	want := "app=alpha\napp-sub=streaming-cap status scale security static-egress-ip\ncanary=beta\norg=acme\n"
 	if got := string(out); got != want {
 		t.Fatalf("completion output = %q, want %q", got, want)
 	}

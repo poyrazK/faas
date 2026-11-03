@@ -74,6 +74,50 @@ func TestGoCollectorCaptureUploadsHeapOnce(t *testing.T) {
 	}
 }
 
+// A control poll that fails just as a capture's window ends still sends the
+// window, once: the capture would otherwise come back empty.
+func TestGoCollectorCaptureSurvivesFailedControlPoll(t *testing.T) {
+	var mu sync.Mutex
+	kinds := map[string]int{}
+	var first time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/control":
+			mu.Lock()
+			if first.IsZero() {
+				first = time.Now()
+			}
+			since := time.Since(first)
+			mu.Unlock()
+			if since >= 900*time.Millisecond && since < 1500*time.Millisecond {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(control{Enabled: true, Epoch: "66666666666666666666666666666666", WindowSeconds: 1, Kinds: []string{"heap", "cpu"}, Capture: true})
+		case "/ingest":
+			_, _ = io.Copy(io.Discard, r.Body)
+			mu.Lock()
+			kinds[r.URL.Query().Get("kind")]++
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); run(ctx, server.URL) }()
+	time.Sleep(2500 * time.Millisecond)
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if kinds["heap"] != 1 || kinds[""] != 1 {
+		t.Fatalf("capture window ended during a failed poll must yield one CPU and one heap upload, got %v", kinds)
+	}
+}
+
 func TestGoCollectorCheckpointsHeapDuringCapture(t *testing.T) {
 	retainHeap()
 	var mu sync.Mutex

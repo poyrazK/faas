@@ -13,6 +13,8 @@ import (
 // adr: 20261028101615 — meterd stops alert rules, channel deliveries and
 // synthetic probes that an account's plan or capability flags no longer
 // cover, and keeps them running when it cannot read the account.
+// adr: 20261029203000 — a suspended account, or one pending deletion, gets
+// neither rules nor probes; a past-due account still serves and keeps both.
 
 type observeReleaseFake struct {
 	accounts map[string]state.Account
@@ -34,10 +36,24 @@ func (f observeReleaseFake) AppByID(_ context.Context, id string) (state.App, er
 }
 
 const (
-	proAccount  = "00000000-0000-4000-8000-0000000000a1"
-	freeAccount = "00000000-0000-4000-8000-0000000000a2"
-	goneAccount = "00000000-0000-4000-8000-0000000000a9"
+	proAccount       = "00000000-0000-4000-8000-0000000000a1"
+	freeAccount      = "00000000-0000-4000-8000-0000000000a2"
+	pastDueAccount   = "00000000-0000-4000-8000-0000000000a3"
+	suspendedAccount = "00000000-0000-4000-8000-0000000000a4"
+	deletingAccount  = "00000000-0000-4000-8000-0000000000a5"
+	goneAccount      = "00000000-0000-4000-8000-0000000000a9"
 )
+
+// releaseAccounts are the accounts both decision tests read.
+func releaseAccounts() map[string]state.Account {
+	return map[string]state.Account{
+		proAccount:       {ID: proAccount, Plan: api.PlanPro, Status: state.AccountActive},
+		freeAccount:      {ID: freeAccount, Plan: api.PlanFree, Status: state.AccountActive},
+		pastDueAccount:   {ID: pastDueAccount, Plan: api.PlanPro, Status: state.AccountPastDue},
+		suspendedAccount: {ID: suspendedAccount, Plan: api.PlanPro, Status: state.AccountSuspended},
+		deletingAccount:  {ID: deletingAccount, Plan: api.PlanPro, Status: state.AccountDeletedPending},
+	}
+}
 
 func releaseFor(t *testing.T, store observeReleaseFake, written map[string]platformflags.Definition) *observeRelease {
 	t.Helper()
@@ -60,10 +76,7 @@ func releaseFor(t *testing.T, store observeReleaseFake, written map[string]platf
 
 func TestObserveReleaseDecidesAlertRules(t *testing.T) {
 	on, off := platformflags.Definition{Enabled: true, Default: true}, platformflags.Definition{Enabled: false}
-	store := observeReleaseFake{accounts: map[string]state.Account{
-		proAccount:  {ID: proAccount, Plan: api.PlanPro},
-		freeAccount: {ID: freeAccount, Plan: api.PlanFree},
-	}}
+	store := observeReleaseFake{accounts: releaseAccounts()}
 	rule := func(metric, comparison string) state.AlertRule {
 		return state.AlertRule{AccountID: proAccount, AppID: "app", Metric: state.AlertMetric(metric), Comparison: state.AlertComparison(comparison)}
 	}
@@ -80,6 +93,12 @@ func TestObserveReleaseDecidesAlertRules(t *testing.T) {
 			rule: rule(string(state.AlertMetricErrorRate), "gt")},
 		{name: "an account that no longer exists runs nothing", account: goneAccount,
 			rule: rule(string(state.AlertMetricErrorRate), "gt")},
+		{name: "a suspended account runs nothing", account: suspendedAccount,
+			rule: rule(string(state.AlertMetricErrorRate), "gt")},
+		{name: "an account pending deletion runs nothing", account: deletingAccount,
+			rule: rule(string(state.AlertMetricErrorRate), "gt")},
+		{name: "a past-due account still serves, so it keeps its alerts", account: pastDueAccount,
+			rule: rule(string(state.AlertMetricErrorRate), "gt"), evaluate: true, channels: true},
 		{name: "an internal capability's metric waits for its release", account: proAccount,
 			rule: rule(api.AlertRuleMetricLogSearchMatches, "gt")},
 		{name: "releasing one capability does not release another", account: proAccount, written: map[string]platformflags.Definition{"log-search": on},
@@ -109,10 +128,7 @@ func TestObserveReleaseDecidesAlertRules(t *testing.T) {
 
 func TestObserveReleaseDecidesSyntheticChecks(t *testing.T) {
 	on := platformflags.Definition{Enabled: true, Default: true}
-	store := observeReleaseFake{accounts: map[string]state.Account{
-		proAccount:  {ID: proAccount, Plan: api.PlanPro},
-		freeAccount: {ID: freeAccount, Plan: api.PlanFree},
-	}}
+	store := observeReleaseFake{accounts: releaseAccounts()}
 	check := func(account string) state.RunnableSyntheticCheck {
 		return state.RunnableSyntheticCheck{SyntheticCheck: state.SyntheticCheck{AccountID: account, AppID: "app"}}
 	}
@@ -127,7 +143,35 @@ func TestObserveReleaseDecidesSyntheticChecks(t *testing.T) {
 	if released.Synthetic(ctx, check(freeAccount)) || released.Synthetic(ctx, check(goneAccount)) {
 		t.Error("a downgraded or deleted account must not be probed")
 	}
+	if released.Synthetic(ctx, check(suspendedAccount)) || released.Synthetic(ctx, check(deletingAccount)) {
+		t.Error("a suspended account, or one pending deletion, must not be probed")
+	}
+	if !released.Synthetic(ctx, check(pastDueAccount)) {
+		t.Error("a past-due account still serves and must keep its probes")
+	}
 	if !releaseFor(t, observeReleaseFake{err: errors.New("connection refused")}, nil).Synthetic(ctx, check(proAccount)) {
 		t.Error("an unreadable account must keep its checks running")
+	}
+}
+
+func TestObserveReleaseDecidesSLORollups(t *testing.T) {
+	on := platformflags.Definition{Enabled: true, Default: true}
+	store := observeReleaseFake{accounts: releaseAccounts()}
+	def := func(account string) state.SLO { return state.SLO{AccountID: account, AppID: "app"} }
+	ctx := context.Background()
+	if releaseFor(t, store, nil).SLO(ctx, def(proAccount)) {
+		t.Error("a preview capability must stay off until released")
+	}
+	released := releaseFor(t, store, map[string]platformflags.Definition{"custom-slos": on})
+	if !released.SLO(ctx, def(proAccount)) || !released.SLO(ctx, def(pastDueAccount)) {
+		t.Error("a released account on a paid plan must get rollups")
+	}
+	for _, account := range []string{freeAccount, suspendedAccount, deletingAccount, goneAccount} {
+		if released.SLO(ctx, def(account)) {
+			t.Errorf("account %s must get no rollups", account)
+		}
+	}
+	if !releaseFor(t, observeReleaseFake{err: errors.New("connection refused")}, nil).SLO(ctx, def(proAccount)) {
+		t.Error("an unreadable account must keep its rollups")
 	}
 }

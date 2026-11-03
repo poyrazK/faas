@@ -31,7 +31,7 @@ func TestLeafHelpDocumentsRequiredArguments(t *testing.T) {
 		{"data-api refresh", []string{"gregale data-api refresh <name>", "--wait", "--timeout <DURATION>"}},
 		{"data-api health", []string{"gregale data-api health <name>", "--since <DURATION|RFC3339>", "--timeout <DURATION>"}},
 		{"data-api sync", []string{"gregale data-api sync --config <FILE> <name>", "--config <FILE>", "--timeout <DURATION>"}},
-		{"data-api dev", []string{"gregale data-api dev", "--directory <DIR>", "--config <FILE>", "--port <PORT>", "--check", "--once", "--watch", "--baseline <FILE>", "--check-breaking", "--replay <FILE>", "--scenario <NAME>"}},
+		{"data-api dev", []string{"gregale data-api serve", "--directory <DIR>", "--config <FILE>", "--port <PORT>", "--check", "--once", "--watch", "--baseline <FILE>", "--check-breaking", "--replay <FILE>", "--scenario <NAME>"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {

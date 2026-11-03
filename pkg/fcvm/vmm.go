@@ -174,6 +174,8 @@ type JailerVMM struct {
 	// /var/log/faas in tests.
 	consoleOpens  map[string]*consoleFileOpen
 	consoleLogDir string
+	// consoleDrainWait overrides consoleTailDrainWait in tests.
+	consoleDrainWait time.Duration
 	// rings is the per-instance log ring buffer (issue #254 / Move 4).
 	// Created in Boot/Restore before startJailer so cmd.Stdout can be wired
 	// to the ring's writer; closed in Kill/DestroyWithExport so the byte
@@ -284,6 +286,12 @@ type bindSourceMode struct {
 	// handle pins the original inode so teardown can restore its mode even
 	// when a snapshot writer atomically replaces the source pathname.
 	handle *os.File
+	// viaGuest: an adopted guest's source the cache had already re-staged,
+	// so the handle came through the guest's own read-only bind mount
+	// (adoptGuestBinds). It cannot change the mode, and the source path no
+	// longer names this inode, so a failed restoration does not hold the
+	// guest's teardown.
+	viaGuest bool
 }
 
 // restoreTimingBreakdown is the vmmd-side breakdown of one successful
@@ -420,6 +428,10 @@ type instanceRecord struct {
 	// fileConsole marks a guest whose stdout and stderr are its console
 	// file, not a pipe into vmmd (console_file.go).
 	fileConsole bool
+	// tailDone closes once the file-console tailer has drained the exited
+	// guest's last output into the ring; nil without a tailer. Guarded by
+	// JailerVMM.mu (console_file.go startConsoleTail).
+	tailDone chan struct{}
 	// oomKilled records the guest's ADR-121 workload OOM report so a startup
 	// that then fails is explained as app_runtime_oom; guarded by JailerVMM.mu.
 	oomKilled bool
@@ -1390,6 +1402,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	cfg = v.withCPUTemplate(cfg)
 	cfg = v.withPmemBase(l, cfg)
 	cfg = v.withRestoreReseedMode(l, cfg)
+	cfg = withEventPublishVerdict(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
@@ -3115,7 +3128,11 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
 		Entropy          string `json:"entropy"`     // base64; guest decodes + ioctl(RNDADDENTROPY)
 		Traceparent      string `json:"traceparent"` // W3C; empty is tolerated (guest no-ops)
-	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent})
+		// ADR-20261031102000: this vmmd answers in-guest event publishes. A
+		// restored guest follows the vmmd restoring it, not the one its
+		// snapshot booted under; an older vmmd omits the field.
+		EventPublishVerdict bool `json:"eventPublishVerdict,omitempty"`
+	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
@@ -4142,6 +4159,9 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 			return fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
 		}
 	}
+	// The guest has exited; let a file console's tailer copy its last
+	// output into the ring before the ring closes (audit 2026-10-31 A7).
+	v.awaitConsoleDrain(l.Instance, rec)
 	// Builder output is build-log evidence owned by builderd, not app logs.
 	v.retireRing(l.Instance, !l.IsBuilder)
 	v.closeGuestVsockListeners(l.Instance)
@@ -5647,7 +5667,7 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		_ = consoleFile.Close()
 		consoleFile = nil
 		if consoleWriter != nil {
-			go tailConsole(consolePath, 0, consoleWriter, consoleWriter.Flush, rec.done)
+			v.startConsoleTail(rec, 0, consoleWriter)
 			consoleWriter = nil // the tail flushes it once the process exits
 		}
 	}
@@ -6096,7 +6116,7 @@ func (v *JailerVMM) releaseBindSource(src string, file resourceFileIdentity) err
 				return state.handle.Close()
 			}
 		}
-		if err := chmodResourceFile(state.handle, state.file, state.mode); err != nil {
+		if err := chmodResourceFile(state.handle, state.file, state.mode); err != nil && !state.viaGuest {
 			return fmt.Errorf("restore bind source mode: %w", err)
 		}
 	}

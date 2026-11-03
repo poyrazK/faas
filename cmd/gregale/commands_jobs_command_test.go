@@ -26,3 +26,15 @@ func TestParseJobCommand(t *testing.T) {
 		}
 	}
 }
+
+// A command after a bare "--" is taken as the exact argv, so a shell script
+// needs no comma escaping; the job's own flags stay before it.
+func TestSplitJobArgv(t *testing.T) {
+	own, argv := main.SplitJobArgv([]string{"nightly", "--image", "alpine", "--", "/bin/sh", "-c", "echo a, b --flag"})
+	if !slices.Equal(own, []string{"nightly", "--image", "alpine"}) || !slices.Equal(argv, []string{"/bin/sh", "-c", "echo a, b --flag"}) {
+		t.Fatalf("split = %q / %q", own, argv)
+	}
+	if own, argv := main.SplitJobArgv([]string{"nightly", "--image", "alpine"}); len(own) != 3 || argv != nil {
+		t.Fatalf("split without -- = %q / %q, want no argv", own, argv)
+	}
+}

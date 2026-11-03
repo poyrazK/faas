@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // RuntimeQualificationProfile names the trusted native acceptance contract:
@@ -44,7 +44,7 @@ type RuntimeReleaseQualificationStore interface {
 	RevokeRuntimeReleaseQualification(context.Context, string, string, string) error
 }
 
-var runtimeQualificationCommit = regexp.MustCompile(`^[a-f0-9]{40}$|^[a-f0-9]{64}$`)
+var runtimeQualificationCommit = lazyregexp.New(`^[a-f0-9]{40}$|^[a-f0-9]{64}$`)
 
 func (q RuntimeReleaseQualification) validateEvidence(now time.Time) error {
 	if q.Profile != RuntimeQualificationProfile || (q.Architecture != "amd64" && q.Architecture != "arm64") ||

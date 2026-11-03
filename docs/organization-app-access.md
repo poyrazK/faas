@@ -47,7 +47,12 @@ attempting to access a teammate's app receives 409 `org_api_key_requires_org`.
 The first shared surface covers app detail/configuration, env and secret
 management, security/publishers, image or multipart deployment creation,
 deployment list/latest/summary/cancellation/retry, deployment/build evidence,
-and live/archive logs. The exact reviewed routes are in
+and live/archive logs, and edge rules: members who can read the app read its
+rules, history, events, stats and traces, and owners and admins create,
+change and delete them, roll them back and switch attack mode (purging cached
+responses takes the deploy permission). Edge-rule lists and CORS presets stay
+with the account that holds the app's rules; the app's dashboard page manages
+the lists its rules use. The exact reviewed routes are in
 [`routes.go`](../pkg/apid/appaccess/routes.go). Additional operations require a
 permission review before teammates can use them. Account-wide inventories remain
 creator-scoped and filter apps the caller can no longer read; select the
@@ -62,7 +67,9 @@ it does not delete existing applications.
 
 Other per-account plan allowances follow the app's billing subject
 (ADR-202610171904): API consumer keys, log drains, realtime endpoints, inbound
-and outbound webhooks, alert rules, CORS presets, triggers, crons (created
+and outbound webhooks, alert rules, CORS presets, triggers, pending custom domain
+claims, captured and imported OpenAPI
+documents, crons (created
 singly, by a deploy or by a project apply) and reserved
 (`eviction_priority: reserved`) apps. Once an
 organization has adopted billing, a company app's resources count toward the
@@ -78,7 +85,11 @@ request budgets and future usage billing. Human verification, audit attribution
 and credential revocation continue to use the actual caller. Organizations do
 not become login accounts.
 
-Free organizations own resources immediately. Existing paid organizations adopt
+Free organizations own resources immediately, so each has its own Free app and
+allowance. An account may own one organization on the Free plan
+(`api.FreeOrganizationsOwnedMax`); creating another answers `403
+org_free_limit_exceeded` until one is upgraded or deleted
+(ADR-20261031090658). Existing paid organizations adopt
 ownership when their own provider-qualified subscription is confirmed; a customer
 ID or cached subscription handle alone does not activate it. Until then, existing
 billing remains in place and creator erasure returns 409. Personal provider IDs
@@ -100,9 +111,10 @@ Organization financial APIs are scoped by URL:
 - `GET /v1/orgs/{slug}/billing/status` and `GET /v1/orgs/{slug}/usage` require organization view permission.
 - `GET /v1/orgs/{slug}/invoices` requires billing permission.
 - `GET /v1/orgs/{slug}/billing/portal` and `PATCH /v1/orgs/{slug}/plan` require the owner, admin credential scope and the existing verification/step-up posture.
+- `GET /v1/orgs/{slug}/overage-cap` requires organization view permission; `POST /v1/orgs/{slug}/overage-cap` sets or clears the organization's monthly spend cap and requires the owner like a plan change. The organization's apps stop at its cap, not at a member's (ADR-20261030093512).
 
 The Go client exposes `GetOrgBillingStatus`, `GetOrgUsage`, `ListOrgInvoices`,
-`GetOrgBillingPortal` and `ChangeOrgPlan`. The OpenAPI contract and generated Node
+`GetOrgBillingPortal`, `ChangeOrgPlan`, `GetOrgOverageCap` and `SetOrgOverageCap`. The OpenAPI contract and generated Node
 and Python clients include these operations. Paid plan changes remain pending
 until the provider confirms them.
 

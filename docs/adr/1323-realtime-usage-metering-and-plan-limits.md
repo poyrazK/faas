@@ -187,3 +187,94 @@ about 32 GiB for Scale).
   read-progress and schedule rows that name a channel considered first; that
   is a follow-up, not a limit.
 
+
+## Amendment (2026-10-31): per-user state counts live rows
+
+Three per-user stores capped each endpoint by counting every row it had ever
+created, and nothing deleted those rows, so each cap was used up for good: an
+endpoint could send inbox messages to 256 distinct users in its lifetime, keep
+notification preferences for 256 users and read markers for 1,024
+user-stream pairs. Event schemas allowed 64 immutable versions per endpoint
+across all its channels and event types, with no way to delete one.
+
+- **Inbox:** an inbox counts while it holds unexpired messages
+  (`oldest_sequence < next_sequence`, which
+  `PruneExpiredManagedRealtimeInboxMessages` advances), as retained channels
+  do since 2026-10-27. An endpoint holds at most 256 such inboxes at a time
+  (`api.RealtimeInboxesHeldPerEndpoint`). Inbox heads stay so sequences never
+  restart; `managed_realtime_inbox_heads_held_idx` keeps the count
+  proportional to held inboxes.
+- **Read markers:** a marker counts for 30 days after its last update and the
+  history reaper deletes it after that, like a named cursor. Messages are
+  retained for at most 24 hours, so an older marker sits below every retained
+  message and deleting it leaves the unread count unchanged. An endpoint keeps
+  at most 1,024 live markers (`api.RealtimeReadMarkersPerEndpoint`).
+- **Notification preferences:** settings with no expiry, so they are capped
+  per account by plan (`RealtimeLimits.NotificationPreferencesPerAccount`):
+  Hobby 1,000, Pro 10,000, Scale 50,000 users. A document is at most 32
+  categories and 16 devices, a few KB, so Scale stays near 100 MB. Writing the
+  defaults deletes the user's row and frees the slot, since the defaults need
+  none.
+- **Event schemas:** 64 versions per channel and event type
+  (`api.RealtimeEventSchemaVersionsPerEventType`) and 1,024 per endpoint
+  (`api.RealtimeEventSchemasPerEndpoint`). At 16 KiB a schema that bounds an
+  endpoint's schemas to 16 MiB. Versions stay immutable and undeletable.
+- The constants moved from `pkg/state` to `pkg/api/limits.go`.
+
+## Amendment (2026-11-02): an account's realtime write rate
+
+Retained writes reach control-plane Postgres through apid on paths the account
+API budget (600–6,000 requests a minute by plan) does not cover: a publisher
+credential publishes up to 600 times a minute and an endpoint holds 64 of
+them, and an endpoint keeps up to 256 recurring schedules firing every
+5 seconds with no end. One account could write without bound, and its
+schedules could fill the schedule runner's due list ahead of every other
+account's.
+
+- Every apid path that writes realtime rows takes from one per-account token
+  bucket (`RealtimeLimits.RetainedWritesPerSecond`, `RetainedWriteBurst`):
+  Hobby 10/s burst 32, Pro 50/s burst 100, Scale 200/s burst 400. It counts
+  retained publishes and each message of a batch, publisher-credential
+  publishes, inbox messages, message edits and deletes, snapshot writes and
+  scheduled publishes. Live publishes write no rows and are not counted.
+- A request past the rate gets `429 realtime_write_rate_limited` with the
+  limit, the writes it needed and `Retry-After`; it writes nothing. The burst
+  is at least `ManagedRealtimeBatchMaxMessages` (32), so a full batch fits.
+- A due schedule of an account past the rate is postponed, without counting
+  an attempt, until the bucket has room for it and for that account's
+  schedules postponed before it in the same pass
+  (`DeferManagedRealtimeSchedule` sets `next_attempt_at`). Recurrence is
+  fixed-delay, so the next occurrence follows the publish.
+- The bucket is per apid, like the account API budget. A publisher credential
+  or schedule reads the account's plan at most once a minute.
+
+## Amendment (2026-11-02): endpoint changes close sockets they no longer admit
+
+An endpoint update used to apply only to new connections. A socket admitted
+with a finalized or expired static token, under a changed auth mode or OIDC
+policy, or from an origin removed from `allowed_origins` stayed open until its
+maximum age, up to 7 days, although finalizing a rotation is how a customer
+revokes an exposed token. realtimed now records what admitted each connection
+and, on every endpoint registration, closes with 1008 the connections the new
+configuration would refuse. apid re-registers endpoints every 30 seconds,
+which also closes previous-token sockets once their grace deadline passes.
+Channel-rule changes, including the claims rules extract, keep connections;
+ticket connections keep their own per-second recheck.
+
+## Amendment (2026-11-02): client message rate and repeated acks
+
+- A client frame on the original protocol is written to the node's callback
+  spool (two fsyncs) and delivered to the message callback, with no bound: a
+  failing callback let one client spool at wire speed, on the disk snapshot
+  restores use. A connection now sends `api.RealtimeClientMessagesPerSecond`
+  (20, bursts of 40) and a node spools `RealtimeNodeClientMessagesPerSecond`
+  (2,000, bursts of 4,000). Past either the node stops reading the socket until
+  the rate allows, so TCP slows the client and nothing is dropped; a frame that
+  would wait over five seconds closes the connection with 1013. Counters:
+  `realtimed_client_messages_paced_total`, `..._throttled_total`.
+- Acks were exempt from the per-connection command budget
+  (`api.RealtimeResumeCommandsPerSecond`) because each must advance a cursor,
+  but an ack of the already-acknowledged sequence
+  was accepted and, for durable subscriptions and the inbox, rewrote the
+  cursor row each time. Such an ack is now answered without a write and spends
+  a command token.

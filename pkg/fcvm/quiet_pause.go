@@ -157,11 +157,14 @@ type quietCandidate struct {
 	id    string
 	inst  *Instance
 	after time.Duration
+	// agent marks an agent run waiting on the model (agent_wait_pause.go),
+	// which has its own eligibility and idle rule.
+	agent bool
 }
 
 // RunQuietPause pauses idle eligible instances every tick until ctx ends.
 func (m *Manager) RunQuietPause(ctx context.Context) {
-	if m.quietActivity == nil {
+	if m.quietActivity == nil && !m.agentWaitOn() {
 		return
 	}
 	if _, ok := m.vmm.(quietPauser); !ok && !m.quietObserve {
@@ -188,13 +191,22 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 	live := make(map[string]*Instance, len(m.live))
 	for id, inst := range m.live {
 		live[id] = inst
-		if m.quietEligibleLocked(id, inst) {
+		switch {
+		case m.quietActivity != nil && m.quietEligibleLocked(id, inst):
 			candidates = append(candidates, quietCandidate{id: id, inst: inst, after: inst.QuietPauseAfter})
+		case m.agentWaitEligibleLocked(id, inst):
+			candidates = append(candidates, quietCandidate{id: id, inst: inst, after: inst.AgentWaitPauseAfter, agent: true})
 		}
 	}
 	m.mu.Unlock()
 
 	for _, c := range candidates {
+		if c.agent {
+			// Observe mode is ADR-1151's; agent_wait_pause always pauses.
+			m.agentWaitSample(c.id, c.after, now)
+			m.quietPauseOne(ctx, c, now)
+			continue
+		}
 		if m.quietObserve {
 			m.quietObserveOne(c, now)
 			continue
@@ -202,7 +214,7 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 		m.quietPauseOne(ctx, c, now)
 	}
 
-	paused, observed := 0, 0
+	paused, observed, agentPaused := 0, 0, 0
 	m.quietMu.Lock()
 	for id, st := range m.quietStates {
 		if live[id] != st.inst {
@@ -210,7 +222,11 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 			continue
 		}
 		if st.paused.Load() {
-			paused++
+			if st.inst.AgentRunOnly {
+				agentPaused++
+			} else {
+				paused++
+			}
 		}
 		if st.observing.Load() {
 			observed++
@@ -219,6 +235,7 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 	m.quietMu.Unlock()
 	m.quietMetrics.setPaused(paused)
 	m.quietMetrics.setObserved(observed)
+	m.agentWaitMetrics.setPaused(agentPaused)
 }
 
 // quietObserveOne records, in observe mode, that an idle eligible instance
@@ -312,8 +329,12 @@ func (m *Manager) quietIdle(id string, st *quietState, after time.Duration, now 
 }
 
 func (m *Manager) quietPauseOne(ctx context.Context, c quietCandidate, now time.Time) {
+	pauser, ok := m.vmm.(quietPauser)
+	if !ok {
+		return
+	}
 	st := m.quietStateFor(c.id, c.inst, now)
-	if st.paused.Load() || !m.quietIdle(c.id, st, c.after, now) {
+	if st.paused.Load() || !m.candidateIdle(c, st, now) {
 		return
 	}
 	st.mu.Lock()
@@ -326,22 +347,21 @@ func (m *Manager) quietPauseOne(ctx context.Context, c quietCandidate, now time.
 	st.paused.Store(true)
 	m.mu.Lock()
 	inst := m.live[c.id]
-	eligible := inst == c.inst && m.quietEligibleLocked(c.id, inst)
+	eligible := inst == c.inst && m.candidateEligibleLocked(c, inst)
 	var lease Lease
 	if eligible {
 		lease = inst.Lease
 	}
 	m.mu.Unlock()
-	if !eligible || !m.quietIdle(c.id, st, c.after, now) {
+	if !eligible || !m.candidateIdle(c, st, now) {
 		st.paused.Store(false)
 		return
 	}
-	pauser := m.vmm.(quietPauser)
 	pauseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), quietVMMTimeout)
 	err := pauser.PauseVM(pauseCtx, lease)
 	cancel()
 	if err != nil {
-		m.quietMetrics.observePause("error")
+		m.observePauseOutcome(c, "error")
 		// The call can fail after Firecracker paused the guest: the timeout
 		// can fire late, and the API client resends a request after a
 		// transport error. Resume so the guest is known to run; ResumeVM
@@ -364,7 +384,16 @@ func (m *Manager) quietPauseOne(ctx context.Context, c quietCandidate, now time.
 	}
 	st.since = time.Now()
 	st.epoch.Add(1)
-	m.quietMetrics.observePause("paused")
+	m.observePauseOutcome(c, "paused")
+}
+
+// observePauseOutcome counts a pause under the series of its rule.
+func (m *Manager) observePauseOutcome(c quietCandidate, outcome string) {
+	if c.agent {
+		m.agentWaitMetrics.observePause(outcome)
+		return
+	}
+	m.quietMetrics.observePause(outcome)
 }
 
 // QuietResume resumes a quiet-paused instance and returns once its vCPUs
@@ -421,7 +450,11 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	}
 	cancel()
 	if err != nil {
-		m.quietMetrics.observeResumeError()
+		if inst.AgentRunOnly {
+			m.agentWaitMetrics.observePause("resume_error")
+		} else {
+			m.quietMetrics.observeResumeError()
+		}
 		return fmt.Errorf("quiet resume %s: %w", instance, err)
 	}
 	if !st.since.IsZero() {
@@ -431,7 +464,11 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	st.paused.Store(false)
 	st.since = time.Time{}
 	st.epoch.Add(1)
-	m.quietMetrics.observeResume(time.Since(started))
+	if inst.AgentRunOnly {
+		m.agentWaitMetrics.observeResume(time.Since(started))
+	} else {
+		m.quietMetrics.observeResume(time.Since(started))
+	}
 	return nil
 }
 

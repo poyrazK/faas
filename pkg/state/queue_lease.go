@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/subtle"
 	"strings"
 	"time"
 
@@ -105,7 +104,7 @@ func newQueueLeaseReceipt(invocationID string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	return invocationID + "." + token, digest, nil
+	return invocationID + "." + token, storedCredentialHex(credTagQueueLeaseReceipt, digest), nil
 }
 
 // parseQueueLeaseReceipt splits a receipt into its message id and token digest.
@@ -132,7 +131,7 @@ type queueLeaseReceipt struct {
 // has not expired.
 func queueLeaseOwned(inv Invocation, accountID, appID, queueName string, r queueLeaseReceipt, digest string, now time.Time) bool {
 	return inv.AccountID == accountID && inv.AppID == appID && inv.Source == InvocationQueue && inv.QueueName == queueName &&
-		subtle.ConstantTimeCompare([]byte(r.TokenHash), []byte(digest)) == 1 &&
+		credentialHexMatches(credTagQueueLeaseReceipt, digest, r.TokenHash) &&
 		r.Attempt == inv.Attempts && r.ReplayGeneration == inv.ReplayGeneration &&
 		inv.State == InvocationDispatching && inv.LeaseExpiresAt != nil && inv.LeaseExpiresAt.After(now)
 }

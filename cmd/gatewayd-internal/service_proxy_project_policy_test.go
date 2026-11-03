@@ -67,7 +67,9 @@ func TestServiceProxyAuthorizerProjectPolicy(t *testing.T) {
 		{"same-project service needs no declaration", caller, sibling, nil},
 		{"target caller list still applies", caller, guardedSibling, gateway.ErrServiceProxyCallerDenied},
 		{"other project's service needs a declaration", caller, otherProjectService, gateway.ErrServiceProxyBindingDenied},
-		{"declared service outside the project is allowed", caller, declaredOtherProjectService, nil},
+		// ADR-20261030131528: a project workload's bindings name its own
+		// project's services; reaching outside the project takes `account`.
+		{"a binding declares no service outside the project", caller, declaredOtherProjectService, gateway.ErrServiceProxyBindingDenied},
 		{"standalone service needs a declaration", caller, standalone, gateway.ErrServiceProxyBindingDenied},
 		{"caller without a project has no project to share", standaloneCaller, standalone, gateway.ErrServiceProxyBindingDenied},
 		{"declared policy keeps its edge-by-edge check", declaredCaller, sibling, gateway.ErrServiceProxyBindingDenied},

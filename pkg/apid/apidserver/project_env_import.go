@@ -37,7 +37,7 @@ func (s *server) importComposeEnv(r *http.Request, acct state.Account, projectID
 		callable = append(callable, app.WorkloadName)
 	}
 	for _, w := range workloads {
-		values := projectsetup.PlanEnvImport(env, w.Name, callable, limits).Values
+		values := projectsetup.PlanEnvImport(env, w.Name, callable, limits, s.privateServiceHTTPS(acct)).Values
 		if len(values) == 0 {
 			continue
 		}

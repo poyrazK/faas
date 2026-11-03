@@ -12,6 +12,10 @@ import (
 // sent to Loki. Each needs a reason.
 var promtailUnshippedUnits = map[string]string{
 	"faas-github-runner.service": "CI runner: job output belongs to GitHub, and the runner is not part of the platform",
+	// adr: 1027 — database_node.yml installs no log shipper yet; the node's
+	// journal keeps these until database nodes get the alloy role.
+	"faas-pgproxyd.service":  "database nodes only, which run no log shipper yet (ADR-1027)",
+	"faas-dbbackupd.service": "database nodes only, which run no log shipper yet (ADR-1027)",
 }
 
 // TestPromtailShipsEveryFaasUnit pins ADR-20261023124955 §2. The Promtail

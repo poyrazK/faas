@@ -39,7 +39,7 @@ func (s *server) profileDeploymentChecksView(w http.ResponseWriter, r *http.Requ
 	if s.sessions == nil {
 		return view
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileDeploymentPolicyAction, acct.ID, profileDeploymentPolicyCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileDeploymentPolicyAction, actorAccount(r, acct).ID, profileDeploymentPolicyCookie)
 	if err != nil {
 		view.Error = "Policy editing is temporarily unavailable."
 		return view

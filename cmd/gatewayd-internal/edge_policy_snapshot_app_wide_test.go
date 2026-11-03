@@ -52,3 +52,35 @@ func TestPinnedHostPolicyAddsAppWideRulesOnlyThroughAppPin(t *testing.T) {
 		t.Fatalf("pinned app policy changed after a rule write: %+v", got)
 	}
 }
+
+// Another tenant's rule change no longer refuses a request between its host
+// pin and its (host, app) pin: the pins are checked against the invalidations
+// that can reach their own sets. A change to the request's own host still
+// refuses it, so its pins stay one snapshot (ADR-570).
+func TestPinnedHostPolicySurvivesAnotherTenantsRuleChange(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(ctx, "owner@example.test", api.PlanPro)
+	shop, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "shop", Status: state.AppActive})
+	g := newGatewaydEdgeRules(store, testLogger(), nil, nil)
+	const host = "shop.example.com"
+	admit := func(t *testing.T) context.Context {
+		t.Helper()
+		hostPinned, err := g.PinHostPolicy(ctx, host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return gateway.WithEdgeRuleApp(gateway.WithEdgeRuleOwner(hostPinned, acct.ID), shop.ID)
+	}
+	admitted := admit(t)
+	g.InvalidateAccountHosts("another-account", "another-app", []string{api.EdgeRuleAppHosts, "other.example.com"})
+	g.InvalidateHosts([]string{"other.example.com"})
+	if _, err := g.PinHostPolicy(admitted, host); err != nil {
+		t.Fatalf("another tenant's rule change refused the app pin: %v", err)
+	}
+	admitted = admit(t)
+	g.InvalidateHosts([]string{host})
+	if _, err := g.PinHostPolicy(admitted, host); err == nil {
+		t.Fatal("a change to the request's own host left its pins as one snapshot")
+	}
+}

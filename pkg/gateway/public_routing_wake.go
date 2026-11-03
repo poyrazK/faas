@@ -16,12 +16,18 @@ func (h *Handler) publicRoutingWakeMaximum(app App, routing PublicRoutingSnapsho
 	if routing.SelectionReason != "weighted" && routing.SelectionReason != "version" && routing.SelectionReason != "session" {
 		return maximum + api.RolloutConcurrencyGrant
 	}
-	// Only a second positive cohort coming up beside a routable cohort gets
-	// the existing overlap allowance. The scheduler still owns its ledger.
+	// A second positive cohort coming up beside a routable cohort gets the
+	// existing overlap allowance. The scheduler still owns its ledger.
 	for _, weight := range routing.Weights {
 		if weight.ID != routing.SelectedDeploymentID && pickPublicDeployment(h.backend, app.ID, weight.ID, "").OK {
 			return maximum + api.RolloutConcurrencyGrant
 		}
+	}
+	// A release staged with no traffic holds instances outside the weights;
+	// a cold cohort beside them is ADR-199's overlap too, or a parked serving
+	// release could not wake beside it (ADR-20261031105227).
+	if h.coldBesideOtherInstances(app.ID, routing.SelectedDeploymentID) {
+		return maximum + api.RolloutConcurrencyGrant
 	}
 	return maximum
 }

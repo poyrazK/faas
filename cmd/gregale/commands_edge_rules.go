@@ -183,14 +183,14 @@ func cmdEdgeRulesList(args []string) int {
 		}
 		label := ""
 		if it.Name != "" {
-			label = "  " + truncate(it.Name, 40)
+			label = "  " + terminalSafe(truncate(it.Name, 40))
 		}
 		// ADR-20261023113721: the edge does not enforce unreleased features.
 		if len(it.UnreleasedFeatures) > 0 {
 			label += "  (not enforced, not yet available: " + strings.Join(it.UnreleasedFeatures, ", ") + ")"
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-9d %-32s %s  [%s]%s\n",
-			it.ID, it.Kind, it.Priority, truncate(it.MatchHost, 32), it.MatchPath, enabled, label)
+			it.ID, it.Kind, it.Priority, terminalSafe(truncate(it.MatchHost, 32)), terminalSafe(it.MatchPath), enabled, label)
 	}
 	warnTemplatedEdgeRulePaths(osStderr, items)
 	return 0
@@ -598,7 +598,20 @@ func cmdEdgeRulesCreate(args []string) int {
 	}
 	PrintOK(osStdout, "Edge rule %s created for app %s (kind=%s, priority=%d).", out.ID, *slug, out.Kind, out.Priority)
 	warnRootOnlyProtectiveRule(*kind, visited["match-path"])
+	warnSingleHostProtectiveRule(*kind, *matchHost, *slug)
 	return 0
+}
+
+// warnSingleHostProtectiveRule flags a gate written for one exact host. An
+// app is always served at its own platform hostname as well as its custom
+// domains (and companion hostnames), and a rule naming one of them leaves the
+// others open (ADR-091 amendment 2026-11-02).
+func warnSingleHostProtectiveRule(kind, matchHost, slug string) {
+	host := strings.TrimSpace(matchHost)
+	if !api.EdgeRuleKindUsesProtectivePathMatch(kind) || api.IsEdgeRuleAppHosts(host) || strings.ContainsAny(host, "*?") {
+		return
+	}
+	PrintWarn(osStderr, "This %s rule covers only %s. App %s is also served at its own platform hostname and any other domains; pass --match-host @app to cover every host it serves.", kind, host, slug)
 }
 
 // warnRootOnlyProtectiveRule flags a gate created without --match-path. The
@@ -636,8 +649,8 @@ func cmdEdgeRulesGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "ID:          %s\n", out.ID)
 	_, _ = fmt.Fprintf(osStdout, "Account:     %s\n", out.AccountID)
 	_, _ = fmt.Fprintf(osStdout, "App:         %s\n", out.AppID)
-	_, _ = fmt.Fprintf(osStdout, "Match host:  %s\n", out.MatchHost)
-	_, _ = fmt.Fprintf(osStdout, "Match path:  %s\n", out.MatchPath)
+	_, _ = fmt.Fprintf(osStdout, "Match host:  %s\n", terminalSafe(out.MatchHost))
+	_, _ = fmt.Fprintf(osStdout, "Match path:  %s\n", terminalSafe(out.MatchPath))
 	if len(out.MatchMethods) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "Methods:     %s\n", strings.Join(out.MatchMethods, ", "))
 	}
@@ -649,10 +662,10 @@ func cmdEdgeRulesGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Enabled:     %t\n", out.Enabled)
 	_, _ = fmt.Fprintf(osStdout, "Kind:        %s\n", out.Kind)
 	if out.Name != "" {
-		_, _ = fmt.Fprintf(osStdout, "Name:        %s\n", out.Name)
+		_, _ = fmt.Fprintf(osStdout, "Name:        %s\n", terminalSafe(out.Name))
 	}
 	if out.Description != "" {
-		_, _ = fmt.Fprintf(osStdout, "Description: %s\n", out.Description)
+		_, _ = fmt.Fprintf(osStdout, "Description: %s\n", terminalSafe(out.Description))
 	}
 	if out.ExpiresAt != nil {
 		state := "active until"
@@ -1089,7 +1102,7 @@ func cmdEdgeRulesRm(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale edge rule delete <id> [--app <slug>] [--yes]", "edge-rules")
 		return 1
 	}
-	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+	if code := requireConfirmationFlag(*quiet, "--yes", "edge rule deletion"); code != 0 {
 		return code
 	}
 	id := fs.Arg(0)

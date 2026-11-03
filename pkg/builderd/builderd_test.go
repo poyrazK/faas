@@ -343,6 +343,43 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 	}
 }
 
+// A cache hit opens image_build at once, so imaged's wait for the layer is
+// recorded there and not as source download (the spawn path already does).
+func TestProcessOne_CacheHitOpensImageBuildStage(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+	buildID, depID, _ := seedDeployment(t, store, src)
+	c := NewCache(t.TempDir())
+	layerPath := filepath.Join(t.TempDir(), "layer.ext4")
+	if err := os.WriteFile(layerPath, []byte("pre-cached layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := hashFile(src)
+	if err := c.StoreBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID)), layerPath, 18); err != nil {
+		t.Fatal(err)
+	}
+	b := New(store, &fakeNotifier{}, &fakeVM{}, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if res, err := b.ProcessOne(context.Background(), buildID); err != nil || !res.CacheHit {
+		t.Fatalf("ProcessOne = %+v, %v; want a cache hit", res, err)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	var stages state.StageState
+	if err := json.Unmarshal(dep.StageState, &stages); err != nil {
+		t.Fatalf("decode stage state: %v", err)
+	}
+	if stages.Current != state.StageImageBuild {
+		t.Errorf("current stage = %q, want %q", stages.Current, state.StageImageBuild)
+	}
+	if len(stages.History) != 1 {
+		t.Fatalf("stage history length = %d, want the completed source download: %+v", len(stages.History), stages.History)
+	}
+	if got := stages.History[0]; got.Name != state.StageSourceDownload || got.Status != "completed" || got.EndedAt == nil {
+		t.Errorf("source stage = %+v, want completed", got)
+	}
+}
+
 func TestSnapshotBootPayloadIncludesBuilderNode(t *testing.T) {
 	b := &Builderd{builderNodeID: "fsn-2.faas"}
 	got := b.snapshotBootPayload("app-1", "dep-1")

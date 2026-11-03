@@ -73,7 +73,7 @@ func (s *Service) QueueMagicLink(ctx context.Context, accountID, expectedEmail s
 	}
 	r := q.PlatformMailProducerOutbox{ID: pgID(uuid.NewString()), AccountID: account.ID, Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, RecipientAddress: address,
 		Template: MagicLinkTemplate, TemplateVersion: 1, ExpiresAt: pgtype.Timestamptz{Time: issued.Time.Add(api.MagicLinkTTL), Valid: true}, RecoveryID: recovery.RecoveryID,
-		VerificationTokenHash: api.HashToken(raw), VerificationKeyID: s.magicLink.keyID, VerificationOrigin: s.magicLink.origin}
+		VerificationTokenHash: storedTokenHash(tagMagicLink, api.HashToken(raw)), VerificationKeyID: s.magicLink.keyID, VerificationOrigin: s.magicLink.origin}
 	sealed, err := secretbox.SealBytes(s.magicLink.writer.Recipient(), verificationBinding(r), raw, api.MagicLinkTokenBytes)
 	if err != nil || len(sealed) > api.InternalMailVerificationCipherMaxBytes {
 		return errVerificationPayloadUnavailable

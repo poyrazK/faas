@@ -35,6 +35,7 @@ import (
 // `lookup` field; nil lookup returns "hash miss" semantics.
 type fakeAuthStore struct {
 	lookup func(hash []byte) (state.Account, state.APIKey, error)
+	oidc   func(hash []byte) (state.Account, state.APIKey, error)
 	calls  int
 }
 
@@ -46,15 +47,29 @@ func (f *fakeAuthStore) AuthenticateKey(_ context.Context, hash []byte) (state.A
 	return f.lookup(hash)
 }
 
+func (f *fakeAuthStore) AuthenticateOIDCBearer(_ context.Context, hash []byte) (state.Account, state.APIKey, error) {
+	f.calls++
+	if f.oidc == nil {
+		return state.Account{}, state.APIKey{}, state.ErrNotFound
+	}
+	return f.oidc(hash)
+}
+
 // dialAuthBufconn brings up an in-process gRPC server backed by a
 // bufconn listener and returns a connected AuthClient. The listener
 // is cleaned up by t.Cleanup.
 func dialAuthBufconn(t *testing.T, store authStore) apidpb.AuthClient {
 	t.Helper()
+	return dialAuthBufconnWith(t, store, nil)
+}
+
+// dialAuthBufconnWith is dialAuthBufconn with a tracing release gate.
+func dialAuthBufconnWith(t *testing.T, store authStore, tracing TracingReleased) apidpb.AuthClient {
+	t.Helper()
 	const bufSize = 1 << 20
 	lis := bufconn.Listen(bufSize)
 	srv := grpc.NewServer()
-	RegisterAuthReceiver(srv, store)
+	RegisterAuthReceiver(srv, store, tracing)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
 
@@ -76,7 +91,7 @@ func TestAuthReceiver_HappyPath(t *testing.T) {
 	acctID := uuid.New().String()
 	store := &fakeAuthStore{
 		lookup: func(hash []byte) (state.Account, state.APIKey, error) {
-			return state.Account{ID: acctID, Plan: api.PlanHobby}, state.APIKey{}, nil
+			return state.Account{ID: acctID, Plan: api.PlanHobby}, state.APIKey{Scopes: []string{api.ScopeAdmin}}, nil
 		},
 	}
 	cli := dialAuthBufconn(t, store)

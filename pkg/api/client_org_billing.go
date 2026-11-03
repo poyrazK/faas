@@ -50,3 +50,19 @@ func (c *Client) ChangeOrgPlan(ctx context.Context, slug string, plan Plan) (Org
 	err := c.do(ctx, http.MethodPatch, "/v1/orgs/"+url.PathEscape(slug)+"/plan", map[string]Plan{"plan": plan}, &out)
 	return out, err
 }
+
+// GetOrgOverageCap reads the organization's monthly spend cap
+// (ADR-20261030093512). A nil cap means no ceiling; zero allows no overage.
+func (c *Client) GetOrgOverageCap(ctx context.Context, slug string) (AccountOverageCapResponse, error) {
+	var out AccountOverageCapResponse
+	err := c.do(ctx, http.MethodGet, "/v1/orgs/"+url.PathEscape(slug)+"/overage-cap", nil, &out)
+	return out, err
+}
+
+// SetOrgOverageCap sets the organization's monthly spend cap in cents, or
+// clears it with nil.
+func (c *Client) SetOrgOverageCap(ctx context.Context, slug string, overageCapCents *int64) (AccountOverageCapResponse, error) {
+	var out AccountOverageCapResponse
+	err := c.do(ctx, http.MethodPost, "/v1/orgs/"+url.PathEscape(slug)+"/overage-cap", map[string]any{"overage_cap_cents": overageCapCents}, &out)
+	return out, err
+}

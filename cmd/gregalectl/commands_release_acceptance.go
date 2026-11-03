@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -339,6 +340,14 @@ func cmdReleaseAcceptanceMintToken(args []string) int {
 		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance mint-token: %v\n", err)
 		return 2
 	}
+	// The key is written as apid would write it, under apid's credential
+	// configuration when the environment carries it (ADR 20261029202403).
+	policy, err := credhash.LoadAccountPolicy(os.Getenv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance mint-token: %v\n", err)
+		return 1
+	}
+	credhash.SetAccount(policy)
 
 	st, closeFn, err := releaseAcceptanceStoreOpener()
 	if err != nil {

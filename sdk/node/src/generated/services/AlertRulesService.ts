@@ -86,7 +86,7 @@ export class AlertRulesService {
   }
   /**
    * Delete a notification channel
-   * Removes the channel; alert rules stop delivering to it.
+   * Removes the channel; alert rules stop delivering to it. Refused with 409 notification_channel_in_use while the channel is the only destination of a rule (no webhook and no other channel), naming those rules.
    * @returns void
    * @throws ApiError
    */
@@ -107,6 +107,7 @@ export class AlertRulesService {
       errors: {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }

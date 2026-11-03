@@ -77,7 +77,11 @@ The release workflow must provide these local artifacts:
 
 - `release.tar.gz`, alongside `release.cosign.bundle` and `release.sbom.json`;
 - a Linux/amd64 bootstrap `gregalectl` binary;
-- the `cosign` verifier binary;
+- the `cosign` verifier binary: exactly cosign 2.4.1 linux/amd64
+  (`https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64`,
+  sha256 `8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b`).
+  It becomes the host's release and base-provenance verifier, so
+  `gregalectl deploy prepare` and `deploy join` refuse any other build;
 - either a compute trust-bundle directory containing `ca/ca.crt` and the
   compute-only leaves, or the operator-side full PKI root. If the full root
   is supplied, the pipeline issues/refreshes endpoint SANs locally and still

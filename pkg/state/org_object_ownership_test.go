@@ -232,16 +232,9 @@ func orgObjectOwnership(t *testing.T, base state.Store) {
 	if err := store.DeleteAccount(ctx, f.actor.ID); err != nil {
 		t.Fatal(err)
 	}
-	retainedEvents, err := store.ListEvents(ctx, f.actor.ID, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var retained bool
-	for _, event := range retainedEvents {
-		retained = retained || bytes.Contains(event.Data, []byte("retained-object-event"))
-	}
-	if !retained {
-		t.Fatal("creator erasure discarded company storage event history")
+	// ADR-20261030170000: the receipt is the event's only copy.
+	if _, err := base.(state.EventReceiptAcceptanceStore).EventReceiptAcceptedAt(ctx, f.actor.ID, api.ObjectEventSource, "retained-storage-event"); err != nil {
+		t.Fatalf("creator erasure discarded company storage event history: %v", err)
 	}
 	for _, key := range []state.ObjectS3Credential{ownerKey, binding} {
 		saved, b, err := store.ResolveObjectS3Credential(ctx, key.AccessKeyID)

@@ -1,0 +1,26 @@
+# Accepted Wolfi CPython 3.13 finding for execution-python-data-v1
+# (ADR 20261024132405).
+#
+# scan-oci-image.sh applies this file to the publication gate pass and
+# scan-published-images.sh to the nightly CVE monitor (ADR-131); the full
+# image report stays unfiltered. The rule pins the exact Wolfi build it was
+# reviewed against, so it lapses with Wolfi's next python-3.13 build and the
+# finding comes back for review.
+#
+# Reviewed 2026-10-30. Upstream fixed CVE-2026-115557 in 3.13.18 (gh-160040).
+# Wolfi's newest python-3.13 build is 3.13.17_git20261023-r1, so no rebuild can
+# clear it yet. The image in production already carries this build. Accepting
+# it lets the other base refreshes, including CPython 3.12.16 for
+# runner-python312, ship in the meantime.
+ignore:
+  - vulnerability: CVE-2026-115557
+    reason: >-
+      ssl accepts TLS certificate chains that contain compromised eMudhra
+      intermediate CA keys, so whoever holds those keys can intercept a
+      function's outbound HTTPS. Fixed upstream in 3.13.18, which Wolfi has
+      not built yet. Accepted until Wolfi's next python-3.13 build retires
+      this rule.
+    package:
+      name: python-3.13
+      version: 3.13.17_git20261023-r1
+      type: apk

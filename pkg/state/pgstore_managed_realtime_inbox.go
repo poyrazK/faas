@@ -17,6 +17,19 @@ import (
 // appendManagedRealtimeInboxMessage allocates the sequence and persists the
 // message in one transaction. The channel head row is the cross-replica
 // serialization point; rolled-back attempts cannot leave sequence holes.
+// inboxHeld reports whether an inbox holds retained messages. The history
+// reaper moves oldest_sequence past expired messages, so an emptied inbox has
+// oldest_sequence = next_sequence.
+func inboxHeld(ctx context.Context, tx pgx.Tx, endpointID, channel string) (bool, error) {
+	var held bool
+	if err := tx.QueryRow(ctx, `
+		select coalesce((select oldest_sequence < next_sequence from managed_realtime_inbox_heads where endpoint_id = $1 and channel = $2), false)
+	`, endpointID, channel).Scan(&held); err != nil {
+		return false, fmt.Errorf("state: check realtime inbox head: %w", err)
+	}
+	return held, nil
+}
+
 func (s *PgStore) appendManagedRealtimeInboxMessage(ctx context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string, fallbackAfter int, categories ...string) (ManagedRealtimeChannelMessage, error) {
 	category := "notifications"
 	if len(categories) > 0 {
@@ -73,13 +86,15 @@ func (s *PgStore) appendManagedRealtimeInboxMessage(ctx context.Context, endpoin
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: begin realtime history append: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var exists bool
-	if err := tx.QueryRow(ctx, `
-		select exists(select 1 from managed_realtime_inbox_heads where endpoint_id = $1 and channel = $2)
-	`, endpointID, channel).Scan(&exists); err != nil {
-		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: check realtime channel head: %w", err)
+	// An inbox counts against the endpoint's cap only while it holds
+	// messages; heads outlive their messages so sequences never restart, and
+	// counting every head ever created capped an endpoint at that many users
+	// for its lifetime (ADR-1323, amendment of 2026-10-31).
+	held, err := inboxHeld(ctx, tx, endpointID, channel)
+	if err != nil {
+		return ManagedRealtimeChannelMessage{}, err
 	}
-	if !exists {
+	if !held {
 		var lockedID string
 		if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpointID).Scan(&lockedID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -87,17 +102,15 @@ func (s *PgStore) appendManagedRealtimeInboxMessage(ctx context.Context, endpoin
 			}
 			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: lock realtime endpoint: %w", err)
 		}
-		// A concurrent request may have created this same channel while we
-		// waited for the endpoint lock. Count only if it is still new.
-		if err := tx.QueryRow(ctx, `
-			select exists(select 1 from managed_realtime_inbox_heads where endpoint_id = $1 and channel = $2)
-		`, endpointID, channel).Scan(&exists); err != nil {
-			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: recheck realtime channel head: %w", err)
+		// A concurrent request may have filled this inbox while we waited
+		// for the endpoint lock. Count only if it is still empty.
+		if held, err = inboxHeld(ctx, tx, endpointID, channel); err != nil {
+			return ManagedRealtimeChannelMessage{}, err
 		}
-		if !exists {
+		if !held {
 			var channels int
-			if err := tx.QueryRow(ctx, `select count(*) from managed_realtime_inbox_heads where endpoint_id = $1`, endpointID).Scan(&channels); err != nil {
-				return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: count realtime channels: %w", err)
+			if err := tx.QueryRow(ctx, `select count(*) from managed_realtime_inbox_heads where endpoint_id = $1 and oldest_sequence < next_sequence`, endpointID).Scan(&channels); err != nil {
+				return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: count realtime inboxes: %w", err)
 			}
 			if channels >= ManagedRealtimeInboxMaxPrincipals {
 				return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryLimit

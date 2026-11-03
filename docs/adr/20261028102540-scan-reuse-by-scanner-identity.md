@@ -81,3 +81,59 @@ report.
   component scans for registry images, whose renewal worker could take the
   same rule later; and moving real base scans out from under the runtime-base
   lock.
+
+## Amendment 1 (2026-10-29): skipped rescans renew the enforce lease
+
+Decision 4 left a skipped deployment's evidence exactly as it was. The
+enforce-mode evidence lease (`securityScanLeaseFailure`) only knows when the
+evidence was last checked, so it parked every enforce app six hours after its
+last real scan whenever the database had not changed (bug hunt 2026-10-28 B33).
+Separately, the six-hourly sweep found a deployment due only once
+`scanned_at + 6 h` had passed, and `scanned_at` is stamped when a scan
+finishes, so the next tick usually landed just short of the mark and the lease
+(6 h plus one minute) expired first (B34, live since September).
+
+- A skip stamps `verified_at` on the stored result with a conditional write
+  that applies only while the row still holds the evidence that was checked,
+  so it never replaces a newer scan another imaged wrote. `scanned_at` in the
+  result stays the time Grype ran; the row's `scanned_at` column, which only
+  schedules rescans, moves to the renewal.
+- The lease counts from `verified_at` when it is set and later than
+  `scanned_at`. Nothing else about the lease changes: digest, metadata,
+  database age and findings are checked as before.
+- A deployment is due a sixth of the interval early (an hour of six), the
+  sweep runs every sixth of that (ten minutes) and picks only due
+  deployments, oldest evidence first, and a sweep still running skips the
+  next tick. The six-hour interval and the lease are unchanged.
+
+## Amendment 2 (2026-10-30): a failed shared-base renewal keeps the last verdict
+
+A renewal that failed for a reason unrelated to the bytes (`scanner_unavailable`,
+`scanner_invalid`, `artifact_read`) published the CRITICAL=9999 refusal, so a
+Grype database fetch failure or a storage blip stopped every boot on a base
+whose unchanged bytes had just scanned clean: three production outages in three
+days (bug hunt 2026-10-28 H102).
+
+- Such a failure keeps the base's current complete scan in force when that scan
+  covers the same producer bytes and is younger than
+  `api.SharedBaseScanFailureGrace` (24 hours). imaged republishes the scan's
+  sidecar, counts the failure in `imaged_base_scan_failures_held_total`, and
+  `FaasBaseScanFailureHeld` pages after ten minutes of failures.
+- After the grace, changed bytes (`artifact_mismatch`), or a scan that
+  completes, the result is published as before: blocking findings and unscanned
+  bytes still refuse.
+- Staging new base bytes is unchanged: they have no earlier scan to hold.
+
+## Amendment 3 (2026-10-30): a live rescan that cannot run keeps the evidence
+
+A live rescan that could not run (Grype unavailable, a storage read, a control
+plane read error) stamped `scan_status = failed` over complete evidence, or was
+read as a regression, and the enforce lease parked the app within a minute
+although its image and findings had not changed (bug hunt 2026-10-28 H84).
+
+- A live rescan that fails to run leaves complete evidence in place and logs the
+  failure; a new deployment still records `failed` as before.
+- Quarantine follows a completed scan with blocking findings, a missing or
+  invalid signature, or evidence the lease finds expired, drifted or invalid. A
+  store read error skips that lease tick instead of counting as missing evidence.
+- The lease is unchanged: evidence that no rescan renews still expires on it.

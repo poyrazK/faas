@@ -57,6 +57,13 @@ func (e *Engine) retireFinancialBudgetRuntime(ctx context.Context, ins state.Ins
 // A missed notification or restarted scheduler cannot lose the stop. New work
 // is refused immediately; existing work gets the configured drain interval.
 func (e *Engine) ReconcileFinancialBudgetStops(ctx context.Context, appID string) error {
+	return e.reconcileFinancialBudgetStops(ctx, appID, nil)
+}
+
+// reconcileFinancialBudgetStops is ReconcileFinancialBudgetStops with the
+// reaper tick's bulk read of the strict compute sweep's inputs, or nil to read
+// them per app.
+func (e *Engine) reconcileFinancialBudgetStops(ctx context.Context, appID string, pre *strictComputePreload) error {
 	store, ok := e.store.(state.FinancialBudgetStopStore)
 	if !ok {
 		return nil
@@ -68,7 +75,7 @@ func (e *Engine) ReconcileFinancialBudgetStops(ctx context.Context, appID string
 		return err
 	}
 	now := e.financialBudgetNow()
-	if err := e.reconcileStrictCompute(ctx, app, now); err != nil {
+	if err := e.reconcileStrictCompute(ctx, app, now, pre); err != nil {
 		return err
 	}
 	if app.PreviewOfSlug == "" {
@@ -109,7 +116,7 @@ func (e *Engine) reconcileFinancialBudgetStop(ctx context.Context, store state.F
 		return nil
 	}
 	target := financial.BudgetStopTarget{AppID: app.ID, EnvironmentID: environment, State: "requested", ObservedAt: now}
-	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return err
 	}

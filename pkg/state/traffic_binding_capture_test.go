@@ -36,10 +36,10 @@ func TestTrafficCapturedHostNormalizes(t *testing.T) {
 		want    trafficBindingChange
 		addedIn bool
 	}{
-		{"Shop.Example.ORG.", trafficBindingChange{host: "shop.example.org", added: true}, true},
-		{"*.Example.org", trafficBindingChange{host: "example.org", subtree: true}, false},
+		{"Shop.Example.ORG.", trafficBindingChange{host: "shop.example.org", kind: TrafficBindingScopeKindDomain, added: true}, true},
+		{"*.Example.org", trafficBindingChange{host: "example.org", kind: TrafficBindingScopeKindDomain, subtree: true}, false},
 	} {
-		if got := trafficCapturedHost(tc.host, tc.addedIn); got != tc.want {
+		if got := trafficCapturedHost(TrafficBindingScopeKindDomain, tc.host, tc.addedIn); got != tc.want {
 			t.Fatalf("%s: got %+v, want %+v", tc.host, got, tc.want)
 		}
 	}

@@ -470,6 +470,19 @@ func normalizedJoinRolloutPhase(phase string) (string, error) {
 	}
 }
 
+// runFleetPreflightPlaybook gathers and caches every fleet host's facts, including
+// the private addresses role convergence resolves peers from.
+func runFleetPreflightPlaybook(ctx context.Context, ansibleDir string, common []string, report *deployJoinReport) error {
+	preflightArgs := append(append([]string{}, common...), filepath.Join(ansibleDir, "preflight.yml"))
+	phaseStarted := time.Now()
+	err := ansiblePlaybookRunner(ctx, ansibleDir, preflightArgs)
+	report.Timings = append(report.Timings, joinTiming{Phase: "preflight", DurationMS: time.Since(phaseStarted).Milliseconds()})
+	if err != nil {
+		return fmt.Errorf("fleet preflight: %w", err)
+	}
+	return nil
+}
+
 func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	rolloutPhase, err := normalizedJoinRolloutPhase(opts.RolloutPhase)
 	if err != nil {
@@ -648,6 +661,13 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	}
 	if info, err := os.Stat(opts.CosignBinary); err == nil && info.Mode()&0o111 == 0 {
 		return report, fmt.Errorf("--cosign-binary is not executable: %s", opts.CosignBinary)
+	}
+	// Node join stages this binary as the host's /usr/local/bin/cosign, which
+	// verifies releases and platform base provenance.
+	if _, err := os.Stat(opts.CosignBinary); err == nil {
+		if err := releaseinstall.CheckCosignBinary(opts.CosignBinary, pinnedCosignSHA256); err != nil {
+			return report, fmt.Errorf("--cosign-binary: %w", err)
+		}
 	}
 	// A PKI source may be either a ready trust bundle or the operator-side
 	// issuance root. Do not reject missing leaves here: the latter is allowed
@@ -922,12 +942,8 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 				return 3, fmt.Errorf("record preflight phase: %w", err)
 			}
 		}
-		preflightArgs := append(append([]string{}, common...), filepath.Join(ansibleDir, "preflight.yml"))
-		phaseStarted := time.Now()
-		preflightErr := ansiblePlaybookRunner(ctx, ansibleDir, preflightArgs)
-		report.Timings = append(report.Timings, joinTiming{Phase: "preflight", DurationMS: time.Since(phaseStarted).Milliseconds()})
-		if preflightErr != nil {
-			return 3, fmt.Errorf("fleet preflight: %w", preflightErr)
+		if err := runFleetPreflightPlaybook(ctx, ansibleDir, common, report); err != nil {
+			return 3, err
 		}
 	}
 	if progress != nil {
@@ -960,6 +976,14 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		if current {
 			joinArgs = append(joinArgs, "--start-at-task", "Verify the prepared rollout marker")
 		} else {
+			// Role convergence reads every peer's private address from the
+			// fleet preflight's cached facts, which this activation job never
+			// gathered: the rc.314 overlay role refused fsn-1 and fsn-3.
+			if !opts.SkipFleetPreflight {
+				if err := runFleetPreflightPlaybook(ctx, ansibleDir, common, report); err != nil {
+					return 3, err
+				}
+			}
 			report.RolesConverged = true
 		}
 	}

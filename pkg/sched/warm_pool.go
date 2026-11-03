@@ -52,7 +52,7 @@ func (e *Engine) ReconcileEnvironmentWarmPools(ctx context.Context, appID string
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: environment inventory: %w", err)
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: paused inventory: %w", err)
 	}
@@ -131,7 +131,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	// Keep the plan-labelled gauge aligned with durable WARM rows even when
 	// reconciliation exits early (disabled pool, plan gate, or no snapshot).
 	defer e.refreshWarmPoolSizeGauge(ctx, acct.Plan, appID)
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: list instances: %w", err)
 	}
@@ -161,11 +161,12 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	if depErr != nil && !reaperProductionScope(scope) && app.Status == state.AppActive && acct.Active() && api.Plan(acct.Plan).WarmPoolAllowed() {
 		return e.reclaimWarmPool(ctx, obsolete, 0)
 	}
-	// A paused warm VM holds resident RAM and is billed, so an account at its
-	// spend cap keeps no pool until the cap is raised or the month rolls over
-	// (ADR-1162).
+	// A paused warm VM holds resident RAM and is billed, so an app whose
+	// billing subject is at its spend cap keeps no pool until the cap is
+	// raised or the month rolls over (ADR-1162). A company app's subject is
+	// its organization (ADR-20261030093512); acct.ID is the creator's.
 	if desired == 0 || app.Status != state.AppActive || !acct.Active() || !api.Plan(acct.Plan).WarmPoolAllowed() ||
-		!instanceModeUsesSnapshots(instanceModeForApp(app)) || e.spendCapReached(ctx, acct.ID) {
+		!instanceModeUsesSnapshots(instanceModeForApp(app)) || e.spendCapReached(ctx, acct.ResourceOwnerID()) {
 		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
 	}
 	if depErr != nil {
@@ -205,7 +206,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 		if err := e.reclaimWarmPool(ctx, warm, desired); err != nil {
 			return err
 		}
-		instances, err = e.store.ListInstancesForApp(ctx, appID)
+		instances, err = e.liveInstancesForApp(ctx, appID)
 		if err != nil {
 			return fmt.Errorf("sched: warm pool: refresh instances: %w", err)
 		}
@@ -304,7 +305,7 @@ func (e *Engine) refreshWarmPoolSizeGauge(ctx context.Context, plan api.Plan, ap
 	if e == nil || e.store == nil || e.ops == nil || appID == "" {
 		return
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		if e.log != nil {
 			e.log.Warn("sched: warm pool: refresh size gauge", "app", appID, "err", err)

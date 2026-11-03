@@ -147,26 +147,15 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		}
 		// The project policy needs no declaration for a service in the caller's
 		// own project (ADR-20261022111119); every other target falls through to
-		// the declared check.
+		// the declared check. A project workload's bindings name its own
+		// project's services (ADR-20261030131528), so they declare nothing
+		// outside it: a binding left by a deleted member never matches another
+		// app that holds the member's name as its slug.
 		policy := caller.Manifest.EffectiveServiceBindingPolicy()
 		if policy == api.ServiceBindingPolicyDeclared || (policy == api.ServiceBindingPolicyProject && !projectAliases) {
 			declared := false
-			for _, binding := range caller.Manifest.ServiceBindings {
-				if !api.SameServiceName(binding.Service, bindingTarget) &&
-					!api.SameServiceName(binding.Service, legacyBindingTarget) {
-					continue
-				}
-				if !projectAliases && !callerIsTest {
-					own, err := namesCallerProjectService(ctx, store, caller, binding.Service)
-					if err != nil {
-						return gateway.ServiceCaller{}, err
-					}
-					if own {
-						continue
-					}
-				}
-				declared = true
-				break
+			if projectAliases || caller.ProjectID == "" || callerIsTest {
+				declared = caller.BindsService(bindingTarget) || caller.BindsService(legacyBindingTarget)
 			}
 			if !declared {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
@@ -284,25 +273,6 @@ func slugNamesCaller(ctx context.Context, store AuthorizationStore, caller, targ
 		return false, fmt.Errorf("check target caller list: %w", err)
 	}
 	return strings.EqualFold(member.Slug, slug), nil
-}
-
-// namesCallerProjectService reports whether name is a service of the caller's
-// own project: a production member holds it, or a deleted member still does.
-// A binding to such a name was written for that member, so it never declares
-// an app outside the project that holds the name as its slug
-// (ADR-20261022120205).
-func namesCallerProjectService(ctx context.Context, store AuthorizationStore, caller state.App, name string) (bool, error) {
-	if caller.ProjectID == "" {
-		return false, nil
-	}
-	_, err := state.ProjectMemberByWorkload(ctx, store, caller.AccountID, caller.ProjectID, name)
-	switch {
-	case err == nil, errors.Is(err, state.ErrProjectServiceDeleted), errors.Is(err, state.ErrConflict):
-		return true, nil
-	case errors.Is(err, state.ErrNotFound):
-		return false, nil
-	}
-	return false, fmt.Errorf("check caller project service: %w", err)
 }
 
 // previewCallerProjectID preserves policy enforcement for preview rows created

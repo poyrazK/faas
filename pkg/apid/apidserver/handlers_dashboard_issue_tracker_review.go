@@ -21,7 +21,7 @@ func (s *server) dashboardIssueTrackerReviewHandler(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	if app.AccountID != acct.ID {
+	if !dashboardAppOwner(r, &acct, app) {
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the owner may review tracker sync"))
 		return
 	}
@@ -51,7 +51,7 @@ func (s *server) dashboardIssueTrackerReviewHandler(w http.ResponseWriter, r *ht
 }
 
 func (s *server) renderDashboardTrackerReviews(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, category string, page state.IssueTrackerReviewPage) {
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, actorAccount(r, acct).ID, dashboardIssueCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
 		return

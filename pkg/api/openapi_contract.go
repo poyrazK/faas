@@ -14,11 +14,13 @@ type GitHubInstallMutationRequest struct {
 // credentials; the nested sync result is kept anonymous because it is an
 // inline object in the public OpenAPI document.
 type GitHubInstallStatus struct {
-	State                        string            `json:"state"`
-	Health                       string            `json:"health"`
-	Connected                    bool              `json:"connected"`
-	InstallationID               int64             `json:"installation_id,omitempty"`
-	GitHubLogin                  string            `json:"github_login,omitempty"`
+	State          string `json:"state"`
+	Health         string `json:"health"`
+	Connected      bool   `json:"connected"`
+	InstallationID int64  `json:"installation_id,omitempty"`
+	GitHubLogin    string `json:"github_login,omitempty"`
+	// DefaultBranch is empty for installations connected since
+	// ADR-20261101160300; a bind without a branch takes the repository's.
 	DefaultBranch                string            `json:"default_branch,omitempty"`
 	RepoFullName                 string            `json:"repo_full_name,omitempty"`
 	ProductionBranch             string            `json:"production_branch,omitempty"`
@@ -35,6 +37,17 @@ type GitHubInstallStatus struct {
 		RemoteRepositoryCount int       `json:"remote_repository_count"`
 		SyncedAt              time.Time `json:"synced_at"`
 	} `json:"sync_result,omitempty"`
+	// Installations lists the account's connected installations when it
+	// has more than one; an unbound app then reports no installation_id.
+	Installations []GitHubInstallationSummary `json:"installations,omitempty"`
+	// Activity is the recent GitHub events that reached a bound app.
+	Activity *GitHubInstallActivity `json:"activity,omitempty"`
+}
+
+// GitHubInstallationSummary names one connected GitHub App installation.
+type GitHubInstallationSummary struct {
+	InstallationID int64  `json:"installation_id"`
+	GitHubLogin    string `json:"github_login,omitempty"`
 }
 
 // GitHubInstallActivity is the redacted activity projection returned with a
@@ -53,6 +66,9 @@ type GitHubWebhookActivity struct {
 	ReceivedAt  time.Time  `json:"received_at"`
 	ProcessedAt *time.Time `json:"processed_at,omitempty"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+	// SkipReason says why a processed event deployed nothing; see
+	// GitHubSkipReasonDescription.
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 // GitHubCheckActivity is a customer-safe projection of Check Run syncing.
@@ -81,6 +97,8 @@ type GitHubDeploymentPolicy struct {
 	IgnoredPaths         []string `json:"ignored_paths"`
 	PreviewEnabled       bool     `json:"preview_enabled"`
 	PreviewTTLHours      int      `json:"preview_ttl_hours"`
+	PreviewBotPRs        bool     `json:"preview_bot_prs"`
+	PreviewDraftPRs      bool     `json:"preview_draft_prs"`
 	PreviewServicePolicy string   `json:"preview_service_policy"`
 	ProductionTrigger    string   `json:"production_trigger"`
 }
@@ -91,6 +109,8 @@ type GitHubDeploymentPolicyPatch struct {
 	IgnoredPaths         *[]string `json:"ignored_paths,omitempty"`
 	PreviewEnabled       *bool     `json:"preview_enabled,omitempty"`
 	PreviewTTLHours      *int      `json:"preview_ttl_hours,omitempty"`
+	PreviewBotPRs        *bool     `json:"preview_bot_prs,omitempty"`
+	PreviewDraftPRs      *bool     `json:"preview_draft_prs,omitempty"`
 	PreviewServicePolicy *string   `json:"preview_service_policy,omitempty"`
 	ProductionTrigger    *string   `json:"production_trigger,omitempty"`
 }

@@ -296,6 +296,28 @@ func TestHiddenDebuggerSubcommandsLeaveDebugUsage(t *testing.T) {
 	}
 }
 
+// metrics --services reaches the service map, an internal preview: with it
+// hidden for the account, help leaves the flag out and the CLI answers it
+// like an unknown flag instead of "no such API route".
+func TestMetricsServicesFollowsServiceMapVisibility(t *testing.T) {
+	api := &capabilitiesAPI{}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	clearCapabilityReleaseAll(t)
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
+	api.setHidden("service-map")
+	_, _, _ = runCLI(t, "help", "--all") // caches the account view
+
+	if _, help, _ := runCLI(t, "metrics", "--help"); strings.Contains(help, "--services") {
+		t.Fatalf("metrics help lists --services with the service map hidden:\n%s", help)
+	}
+	if code, _, stderr := runCLI(t, "metrics", "--services"); code == 0 || !strings.Contains(stderr, "unknown flag --services") {
+		t.Fatalf("metrics --services with the service map hidden = %d %q, want unknown flag", code, stderr)
+	}
+}
+
 // debugUsageOutput runs the CLI with the process streams swapped, because
 // cmdDebug prints its usage straight to os.Stderr.
 func debugUsageOutput(t *testing.T, args ...string) string {

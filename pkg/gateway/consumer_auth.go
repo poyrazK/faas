@@ -13,6 +13,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/lruutil"
 )
 
+// ConsumerKeyCredentialColumn is the column consumer-key hashes live in,
+// as apid's MatchCredential names it (state.CredentialColumnConsumerKey).
+const ConsumerKeyCredentialColumn = "consumer_keys.hashed_secret"
+
 // ConsumerAuthStore is the small state.Store slice needed by the public edge.
 // The gateway owns the request policy; cmd/gatewayd-internal adapts the
 // concrete state.Store so this package does not depend on sqlc/state types.
@@ -209,7 +213,19 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		return false
 	}
 	expectedHash := api.HashConsumerKey(token)
-	if subtle.ConstantTimeCompare(key.Hash, expectedHash) != 1 || key.AccountID != app.AccountID || key.AppID != app.ID || key.Prefix != prefix || key.ConsumerID == "" {
+	matched := subtle.ConstantTimeCompare(key.Hash, expectedHash) == 1
+	if h.credentialMatcher != nil {
+		// The stored hash is keyed by a secret only apid holds (ADR
+		// 20261029202403); apid answers whether the token matches it.
+		var err error
+		if matched, err = h.credentialMatcher.Match(r.Context(), ConsumerKeyCredentialColumn, key.Hash, expectedHash); err != nil {
+			if h.log != nil {
+				h.log.Warn("gateway: consumer key match failed", "app_id", app.ID, "err", err)
+			}
+			return h.consumerAuthUnavailable(w, r, rec, app)
+		}
+	}
+	if !matched || key.AccountID != app.AccountID || key.AppID != app.ID || key.Prefix != prefix || key.ConsumerID == "" {
 		h.keyLookups.fail(source)
 		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
 		rec.status = http.StatusUnauthorized

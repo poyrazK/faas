@@ -138,6 +138,10 @@ type VersionSpec struct {
 	AIBudgetMillicents int64
 	// Deliveries are what a succeeded run delivers (ADR-20261027090010 §8).
 	Deliveries []Delivery
+	// NoModelWaitPause opts the version's runs out of the model-wait pause
+	// (ADR-20261027090012 §1), for a harness whose connections are
+	// heartbeat-sensitive. The API names it pause_during_model_calls: false.
+	NoModelWaitPause bool
 }
 
 // Agent is an agent definition.
@@ -223,7 +227,21 @@ type Admission struct {
 	GitHub    *GitHubTarget
 	// Workflow links a run an automation's agent step admitted to its step.
 	Workflow *WorkflowLink
+	// Callback links a run gregale_run admitted to the thread and tool call
+	// it answers (ADR-20261030125501 §4).
+	Callback *RunCallback
 	Limits   AdmitLimits
+}
+
+// RunCallback is the stateless agent thread and tool call a run answers when
+// it finishes. IssuedAt is the issue time of the callback URL the call
+// carried: a thread revoked since then receives nothing.
+type RunCallback struct {
+	EndpointID     string
+	ThreadID       string
+	ToolCallID     string
+	ProviderCallID string
+	IssuedAt       time.Time
 }
 
 // WorkflowLink is the workflow run, step and reserved event of an agent
@@ -329,6 +347,7 @@ func (s *Store) addVersion(ctx context.Context, tx pgx.Tx, accountID string, age
 		HarnessRun: run, HarnessModels: models, PromptTemplate: spec.PromptTemplate,
 		RamMb: optInt(spec.RAMMB), TimeoutSec: int32(spec.TimeoutSec),
 		ModelIntegrations: integrations, AiBudgetMillicents: optInt8(spec.AIBudgetMillicents), Deliveries: deliveries,
+		PauseDuringModelCalls: !spec.NoModelWaitPause,
 	})
 	if err != nil {
 		return Agent{}, Version{}, fmt.Errorf("insert agent version: %w", err)
@@ -456,7 +475,7 @@ func (s *Store) AdmitRun(ctx context.Context, a Admission) (run Run, existing bo
 			found, err := s.q.FindDedupedRun(ctx, tx, sqlc.FindDedupedRunParams{AgentID: agent.ID, TenantID: optText(a.TenantID), DedupeKey: a.DedupeKey})
 			if err == nil {
 				id, existing = found, true
-				return nil
+				return s.linkCallback(ctx, tx, a, id)
 			}
 			if !errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("find deduped run: %w", err)
@@ -483,14 +502,32 @@ func (s *Store) AdmitRun(ctx context.Context, a Admission) (run Run, existing bo
 		if err := s.resolveDeliveryTargets(ctx, tx, &a, version); err != nil {
 			return err
 		}
-		id, err = s.insertRun(ctx, tx, a, agent.ID, version)
-		return err
+		if id, err = s.insertRun(ctx, tx, a, agent.ID, version); err != nil {
+			return err
+		}
+		return s.linkCallback(ctx, tx, a, id)
 	})
 	if err != nil {
 		return Run{}, false, err
 	}
 	run, err = s.Run(ctx, a.AccountID, id)
 	return run, existing, err
+}
+
+// linkCallback records a gregale_run run's thread and tool call in the
+// admitting transaction, so a run admitted is always answered.
+func (s *Store) linkCallback(ctx context.Context, tx pgx.Tx, a Admission, runID string) error {
+	c := a.Callback
+	if c == nil {
+		return nil
+	}
+	err := s.q.InsertAgentRunCallback(ctx, tx, sqlc.InsertAgentRunCallbackParams{RunID: runID, AccountID: a.AccountID,
+		EndpointID: c.EndpointID, ThreadID: c.ThreadID, ToolCallID: c.ToolCallID, ProviderCallID: optText(c.ProviderCallID),
+		IssuedAt: pgtype.Timestamptz{Time: c.IssuedAt, Valid: true}})
+	if err != nil {
+		return fmt.Errorf("link run callback: %w", err)
+	}
+	return nil
 }
 
 // resolveCheckout fixes the installation that fetches a checkout at
@@ -754,7 +791,7 @@ func versionFrom(row sqlc.GetAgentVersionRow) (Version, error) {
 			Harness:        Harness{Preset: row.HarnessPreset.String, Image: row.HarnessImage.String, Run: row.HarnessRun, Models: models},
 			PromptTemplate: row.PromptTemplate, RAMMB: int(row.RamMb.Int32), TimeoutSec: int(row.TimeoutSec),
 			Integrations: nilIfEmpty(integrations), AIBudgetMillicents: row.AiBudgetMillicents.Int64,
-			Deliveries: deliveries,
+			Deliveries: deliveries, NoModelWaitPause: !row.PauseDuringModelCalls,
 		},
 		CreatedAt: row.CreatedAt.Time,
 	}, nil

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -118,4 +119,11 @@ func (s *server) managedPostgresOverageLimits(w http.ResponseWriter, acct state.
 		return api.ManagedPostgresPlanLimits{}, false
 	}
 	return limits, true
+}
+
+// managedPostgresChargeSink is the billing provider's managed PostgreSQL
+// overage sink, or nil without one (ADR-20261031110037).
+func (s *server) managedPostgresChargeSink() billing.ManagedPostgresChargeSink {
+	sink, _ := s.billingProvider.(billing.ManagedPostgresChargeSink)
+	return sink
 }

@@ -23,7 +23,7 @@ func appSlugForDeploymentID(command, arg string) (int, bool) {
 
 func cmdCanaryProfileGate(args []string) int {
 	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
-		return printErr("Usage", fmt.Errorf("gregale release canary gate DEPLOYMENT_ID [--json]"))
+		return printErr("Usage", fmt.Errorf("gregale release canary evidence DEPLOYMENT_ID [--json]"))
 	}
 	if code, ok := appSlugForDeploymentID("canary gate", args[0]); ok {
 		return code

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
 import type { ApplicationStandardAssignment } from '../models/ApplicationStandardAssignment.js';
 import type { ApplicationStandardAssignmentList } from '../models/ApplicationStandardAssignmentList.js';
@@ -49,6 +50,7 @@ import type { OrgResponse } from '../models/OrgResponse.js';
 import type { PatchOrgRequest } from '../models/PatchOrgRequest.js';
 import type { Preview } from '../models/Preview.js';
 import type { PreviewList } from '../models/PreviewList.js';
+import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
 import type { RevokeApplicationStandardExceptionRequest } from '../models/RevokeApplicationStandardExceptionRequest.js';
 import type { RotateOrgAPIKeyRequest } from '../models/RotateOrgAPIKeyRequest.js';
@@ -140,7 +142,7 @@ export class OrgsService {
   }
   /**
    * Lift a company organization's deploy freeze.
-   * Lifts one of the organization's freezes. A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID.
+   * Lifts one of the organization's freezes. Needs the admin scope (a signed-in session or an admin key). A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID.
    * @returns ReleaseFreeze The organization's lifted freeze.
    * @throws ApiError
    */
@@ -412,7 +414,8 @@ export class OrgsService {
    * `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
    * trimmed-non-empty (1..256 chars). Personal orgs cannot be
    * created via this endpoint — every account already has a
-   * personal org (backfill).
+   * personal org (backfill). A new org starts on the Free plan,
+   * and an account may own one Free org at a time.
    *
    * @returns OrgResponse The new shared org.
    * @throws ApiError
@@ -440,6 +443,10 @@ export class OrgsService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `\`403 Forbidden\` — the caller already owns as many Free orgs
+        as an account may (\`org_free_limit_exceeded\`, with the limit
+        and the observed count). Upgrade or delete one first.
+        `,
         409: `\`409 Conflict\` — slug already taken (\`org_slug_taken\`) or the
         caller is already a member of an org with the same slug
         (\`org_already_member\`).
@@ -2899,6 +2906,97 @@ export class OrgsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the organization's monthly spend cap.
+   * Requires current organization membership and usage:read. Integer cents, zero when no overage is allowed, or null when no cap is set. An organization that owns its resources is billed, and capped, apart from its members.
+   * @returns AccountOverageCapResponse The saved monthly spend cap.
+   * @throws ApiError
+   */
+  public static getOrgOverageCap({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<AccountOverageCapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/overage-cap',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Set or clear the organization's monthly spend cap.
+   * Requires the organization owner, admin credential scope, verified email,
+   * MFA and recent step-up. `{"overage_cap_cents": <int|null>}`: null clears
+   * the cap, 0 allows no overage. Once the organization's overage this month
+   * meets the cap, the scheduler stops its apps' wakes (HTTP 402
+   * `admission_refused`) until the cap is raised or the month ends. A paid
+   * organization starts with its plan's default cap.
+   *
+   * @returns AccountOverageCapResponse The organization's spend cap after the change.
+   * @throws ApiError
+   */
+  public static setOrgOverageCap({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: RaiseOverageCapRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AccountOverageCapResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/overage-cap',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

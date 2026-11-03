@@ -30,17 +30,18 @@ UPDATE agents SET state='deleted', deleted_at=now(), updated_at=now()
 
 -- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
  VALUES (sqlc.arg(agent_id)::text::uuid,sqlc.arg(version)::integer,sqlc.arg(account_id)::text::uuid,
   sqlc.narg(harness_preset)::text,sqlc.narg(harness_image)::text,sqlc.arg(harness_run)::text[],sqlc.arg(harness_models)::jsonb,
   sqlc.arg(prompt_template)::text,sqlc.narg(ram_mb)::integer,sqlc.arg(timeout_sec)::integer,
-  sqlc.arg(model_integrations)::jsonb,sqlc.narg(ai_budget_millicents)::bigint,sqlc.arg(deliveries)::jsonb)
+  sqlc.arg(model_integrations)::jsonb,sqlc.narg(ai_budget_millicents)::bigint,sqlc.arg(deliveries)::jsonb,
+  sqlc.arg(pause_during_model_calls)::boolean)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries;
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls;
 
 -- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
  WHERE agent_id=sqlc.arg(agent_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND version=sqlc.arg(version)::integer;
 
 -- name: ListAgentModelIntegrations :many
@@ -157,7 +158,7 @@ UPDATE agent_runs SET state='starting', lease_token=sqlc.arg(lease_token)::text,
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=sqlc.arg(run_id)::text::uuid;
@@ -171,6 +172,24 @@ UPDATE agent_runs SET state='running', running_at=now(), node_id=sqlc.arg(node_i
 -- name: RecordAgentRunBoot :execrows
 UPDATE agent_runs SET boot_ms=sqlc.arg(boot_ms)::integer, updated_at=now()
  WHERE id=sqlc.arg(run_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='running';
+
+-- name: RecordAgentRunUsage :execrows
+-- ADR-20261027090011: vmmd's measured memory of the run VM. Only the first
+-- record of a run is kept.
+INSERT INTO agent_run_usage (run_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
+    private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot)
+SELECT r.id, r.account_id, sqlc.arg(method)::smallint, sqlc.arg(samples)::integer, sqlc.arg(expected_samples)::integer,
+       sqlc.arg(measured_ms)::bigint, sqlc.arg(paused_ms)::bigint, sqlc.arg(private_mb_ms)::bigint,
+       sqlc.arg(unpaused_private_mb_ms)::bigint, sqlc.arg(billable_mb_ms)::bigint, sqlc.arg(peak_private_mb)::bigint,
+       sqlc.arg(cold_boot)::boolean
+  FROM agent_runs r
+ WHERE r.id=sqlc.arg(run_id)::text::uuid AND r.lease_token=sqlc.arg(lease_token)::text AND r.state='running'
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: GetAgentRunUsage :one
+SELECT method, samples, expected_samples, measured_ms, paused_ms, private_mb_ms, unpaused_private_mb_ms,
+       billable_mb_ms, peak_private_mb, cold_boot
+  FROM agent_run_usage WHERE run_id=sqlc.arg(run_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: RenewAgentRunLease :one
 UPDATE agent_runs SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
@@ -360,3 +379,40 @@ SELECT r.id::text AS id,r.account_id::text AS account_id,r.workflow_run_id::text
  AND EXISTS (SELECT 1 FROM workflow_runs w WHERE w.id=r.workflow_run_id AND w.status IN ('pending','running','awaiting_event'))
  AND NOT EXISTS (SELECT 1 FROM workflow_events e WHERE e.run_id=r.workflow_run_id AND e.event_name=r.workflow_event)
  ORDER BY r.finished_at,r.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: RevokeAgentCallbacks :one
+-- ADR-20261030125501 §3: revoke every callback URL of a thread issued until now.
+INSERT INTO agent_callback_revocations (endpoint_id, thread_id, account_id, revoked_at)
+VALUES (sqlc.arg(endpoint_id)::text::uuid, sqlc.arg(thread_id)::text, sqlc.arg(account_id)::text::uuid, clock_timestamp())
+ON CONFLICT (endpoint_id, thread_id) DO UPDATE SET revoked_at = clock_timestamp(), account_id = excluded.account_id
+RETURNING revoked_at;
+
+-- name: AgentCallbacksRevokedAt :one
+SELECT revoked_at FROM agent_callback_revocations
+ WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND thread_id = sqlc.arg(thread_id)::text;
+
+-- name: InsertAgentRunCallback :exec
+-- ADR-20261030125501 §4: the thread and tool call a gregale_run run answers.
+-- A retried invocation that found its run keeps the first link.
+INSERT INTO agent_run_callbacks (run_id, account_id, endpoint_id, thread_id, tool_call_id, provider_call_id, issued_at)
+VALUES (sqlc.arg(run_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(endpoint_id)::text::uuid,
+  sqlc.arg(thread_id)::text, sqlc.arg(tool_call_id)::text, sqlc.narg(provider_call_id)::text, sqlc.arg(issued_at)::timestamptz)
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: ListUndeliveredAgentRunCallbacks :many
+-- Finished gregale_run runs whose end apid has not yet published into their
+-- thread. The mark is written after the publish, which is idempotent, so an
+-- interrupted delivery is retried and lands once.
+SELECT c.run_id::text AS run_id, c.account_id::text AS account_id, c.endpoint_id::text AS endpoint_id, c.thread_id,
+  c.tool_call_id, c.provider_call_id, c.issued_at, r.state, r.outcome_code, r.outcome_message, o.result
+ FROM agent_run_callbacks c JOIN agent_runs r ON r.id=c.run_id LEFT JOIN agent_run_outputs o ON o.run_id=c.run_id
+ WHERE c.delivered_at IS NULL AND r.finished_at IS NOT NULL
+ ORDER BY r.finished_at, c.run_id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: MarkAgentRunCallbackDelivered :exec
+UPDATE agent_run_callbacks SET delivered_at = now() WHERE run_id = sqlc.arg(run_id)::text::uuid AND delivered_at IS NULL;
+
+-- name: AgentCallbackClock :one
+-- ADR-20261030125501 §3: the clock RevokeAgentCallbacks records, read when a
+-- callback URL is issued so issue and revocation compare on one clock.
+SELECT clock_timestamp()::timestamptz AS now;

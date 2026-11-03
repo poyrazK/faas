@@ -402,6 +402,9 @@ type CreateAlertRuleRequest struct {
 	WebhookURL      string   `json:"webhook_url"`
 	WebhookSecret   string   `json:"webhook_secret"`
 	CooldownMinutes *int     `json:"cooldown_minutes,omitempty"`
+	// NotifyResolved also sends the webhook a signed resolve event when the
+	// rule recovers (ADR-20261029203000). Needs webhook_url.
+	NotifyResolved bool `json:"notify_resolved,omitempty"`
 }
 
 // UpdateAlertRuleRequest is the PATCH body. Every editable field is
@@ -433,6 +436,7 @@ type UpdateAlertRuleRequest struct {
 	WebhookURL      *string   `json:"webhook_url,omitempty"`
 	WebhookSecret   *string   `json:"webhook_secret,omitempty"`
 	CooldownMinutes *int      `json:"cooldown_minutes,omitempty"`
+	NotifyResolved  *bool     `json:"notify_resolved,omitempty"`
 }
 
 // RotateAlertRuleSecretRequest carries a caller-supplied replacement. The
@@ -476,6 +480,7 @@ type AlertRuleResponse struct {
 	Action                          string   `json:"action"`
 	WebhookURL                      string   `json:"webhook_url"`
 	WebhookSecretSealedMasked       string   `json:"webhook_secret_sealed_masked"`
+	NotifyResolved                  bool     `json:"notify_resolved,omitempty"`
 	CooldownMinutes                 int      `json:"cooldown_minutes"`
 	State                           string   `json:"state"`
 	LastFiredAt                     string   `json:"last_fired_at,omitempty"`
@@ -512,6 +517,7 @@ type AlertRuleRow struct {
 	SyntheticCheckID                string
 	Action                          string
 	WebhookURL                      string
+	NotifyResolved                  bool
 	CooldownMinutes                 int
 	State                           string
 	LastFiredAt                     time.Time
@@ -551,6 +557,7 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		Action:                          r.Action,
 		WebhookURL:                      r.WebhookURL,
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,
+		NotifyResolved:                  r.NotifyResolved,
 		CooldownMinutes:                 r.CooldownMinutes,
 		State:                           r.State,
 		LastFiredAt:                     FormatAlertTime(r.LastFiredAt),

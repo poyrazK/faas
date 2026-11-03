@@ -12,6 +12,13 @@ vmmd_adoption_record: true
 # not hand off yet (node_join reads that from the running process); the rollout
 # after that skips the drain when `vmmd adoption-check` proves every guest.
 # Widen the list only after the canary has restarted cleanly.
+#
+# fsn-3 joined on 2026-10-31, before fsn-2's first clean no-drain restart
+# (rc.306 adopted 1 of 2; rc.309 drained for a base generation change). Its
+# first rollout with the switch drains anyway, so the release that proves the
+# rc.309 fixes on fsn-2 also turns the switch on for fsn-3. If that release's
+# fsn-2 restart does not adopt every guest, take fsn-3 out again before the next.
 vmmd_adoption_canary_nodes:
   - fsn-2.faas
+  - fsn-3.faas
 vmmd_adopt_running_vms: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_adoption_canary_nodes }}"

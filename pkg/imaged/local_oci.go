@@ -245,6 +245,9 @@ type appLayerReport struct {
 	// virtualenv's links into the dropped toolchain move to it (ADR-1500
 	// amendment 2), and a link that cannot move is unexpected.
 	PythonInterpreter string
+	// Python is what a package manager's `run` in the start command is
+	// checked against (ADR-1500 amendment 3); filled with PythonInterpreter.
+	Python sharedruntime.PythonLayer
 }
 
 const appLayerReportMaxUnexpected = 8
@@ -302,6 +305,57 @@ func (r *appLayerReport) relinkVenv(hdr *tar.Header, content io.Reader) (io.Read
 		return bytes.NewReader(rewritten), nil
 	}
 	return content, nil
+}
+
+// notePython records a kept /app entry that ResolvePythonStart checks a
+// package manager's `run` against: a script in the virtualenv or an
+// /app/.env. For a .py file it returns a scanner for inline script metadata.
+func (r *appLayerReport) notePython(hdr *tar.Header) *inlineScriptScan {
+	switch name := hdr.Name; {
+	case hdr.Typeflag == tar.TypeDir:
+	case pathpkg.Dir(name) == "app/.venv/bin":
+		if r.Python.Scripts == nil {
+			r.Python.Scripts = map[string]bool{}
+		}
+		r.Python.Scripts[pathpkg.Base(name)] = true
+	case name == "app/.env":
+		r.Python.DotEnv = true
+	case hdr.Typeflag == tar.TypeReg && strings.HasSuffix(name, ".py") && !strings.HasPrefix(name, "app/.venv/"):
+		return &inlineScriptScan{}
+	}
+	return nil
+}
+
+// inlineScriptScan looks for the `# /// script` line that opens inline
+// script metadata (PEP 723) in a file copied through it, holding at most the
+// start of one line.
+type inlineScriptScan struct {
+	line  []byte
+	long  bool
+	found bool
+}
+
+const inlineScriptOpen = "# /// script"
+
+func (s *inlineScriptScan) Write(p []byte) (int, error) {
+	for _, c := range p {
+		switch {
+		case c == '\n':
+			s.endLine()
+		case len(s.line) < len(inlineScriptOpen)+8:
+			s.line = append(s.line, c)
+		default:
+			s.long = true
+		}
+	}
+	return len(p), nil
+}
+
+func (s *inlineScriptScan) endLine() {
+	if !s.long && strings.TrimRight(string(s.line), " \t\r") == inlineScriptOpen {
+		s.found = true
+	}
+	s.line, s.long = s.line[:0], false
 }
 
 func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reader, func(), error) {
@@ -404,6 +458,12 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 			if capture {
 				content = io.TeeReader(content, &packageJSON)
 			}
+			var inlineScan *inlineScriptScan
+			if report != nil && report.PythonInterpreter != "" {
+				if inlineScan = report.notePython(&copyHeader); inlineScan != nil {
+					content = io.TeeReader(content, inlineScan)
+				}
+			}
 			if _, err := io.CopyN(tw, content, copyHeader.Size); err != nil {
 				_ = tw.Close()
 				_ = zw.Close()
@@ -413,6 +473,14 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 			}
 			if capture {
 				report.PackageJSON = packageJSON.Bytes()
+			}
+			if inlineScan != nil {
+				if inlineScan.endLine(); inlineScan.found {
+					if report.Python.InlineScripts == nil {
+						report.Python.InlineScripts = map[string]bool{}
+					}
+					report.Python.InlineScripts[pathpkg.Base(name)] = true
+				}
 			}
 			retainedBytes += copyHeader.Size
 			entries++

@@ -20,7 +20,7 @@ func TestLeafHelpNamesPositionalArguments(t *testing.T) {
 		{"crons cancel", []string{"gregale cron cancel <cron-id> <run-id>"}},
 		{"crons runs", []string{"gregale cron runs <id>"}},
 		{"triggers retry", []string{"gregale trigger retry <trigger-id> <record-id>"}},
-		{"jobs artifact-url", []string{"gregale job artifact-url <name> <run-id> <task-index> <artifact-name>"}},
+		{"jobs artifact-url", []string{"gregale job artifact get <name> <run-id> <task-index> <artifact-name>"}},
 		{"build status", []string{"gregale build status <id>"}},
 		{"deploys cancel", []string{"gregale release cancel <id>"}},
 		{"domains verify", []string{"gregale domain verify <domain>"}},

@@ -83,7 +83,9 @@ func (e *Engine) seedFinancialPreviewCommandLedger(ctx context.Context, apps []s
 		if err != nil {
 			return err
 		}
-		account, err := e.store.AccountByID(ctx, app.AccountID)
+		// The billing subject's plan, not the creator's (bug hunt
+		// 2026-10-28 B37).
+		account, err := state.AppResourceAccount(ctx, e.store, app)
 		if err != nil {
 			return err
 		}

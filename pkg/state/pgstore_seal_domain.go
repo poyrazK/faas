@@ -301,6 +301,155 @@ type RegistrySealedCredential struct {
 	Sealed []byte
 }
 
+// CountRuntimeCopiesOffDomain counts the short-lived copies of runtime
+// secrets filed under another key id than kid (ADR 20261022111812): the
+// replaced secrets an open config guard keeps to restore, and the
+// credentials a managed Postgres cutover has sealed and not yet published.
+// A guard's copies are deleted when it closes, and a cutover's ciphertext
+// is cleared when it publishes or cancels; a copy that lands in app_secrets
+// is listed with the rekey documents.
+func (s *PgStore) CountRuntimeCopiesOffDomain(ctx context.Context, kid string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM app_config_guard_secrets s
+		          JOIN app_config_guards g ON g.id = s.guard_id
+		         WHERE g.status = 'watching' AND s.ciphertext IS NOT NULL AND s.kid IS DISTINCT FROM $1)
+		     + (SELECT count(*) FROM managed_postgres_cutover_credentials
+		         WHERE state = 'sealed' AND kid IS DISTINCT FROM $1)
+	`, kid).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count runtime copies off the domain: %w", err)
+	}
+	return n, nil
+}
+
+// CrashCaptureKey is a ready crash capture's sealed per-capture key.
+type CrashCaptureKey struct {
+	ID        string
+	SealedKey []byte
+}
+
+// ListSealedCrashCaptureKeys pages, in id order after the cursor, through
+// the keys of the unexpired ready captures vmmd sealed at the source
+// (ADR-733): the keys a restoring vmmd opens.
+func (s *PgStore) ListSealedCrashCaptureKeys(ctx context.Context, afterID string, limit int) ([]CrashCaptureKey, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, sealed_key FROM crash_captures
+		 WHERE status = 'ready' AND plaintext_state = 'sealed' AND sealed_key IS NOT NULL
+		   AND (expires_at IS NULL OR expires_at > now())
+		   AND id::text > $1
+		 ORDER BY id::text
+		 LIMIT $2
+	`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list sealed crash capture keys: %w", err)
+	}
+	defer rows.Close()
+	var out []CrashCaptureKey
+	for rows.Next() {
+		var k CrashCaptureKey
+		if err := rows.Scan(&k.ID, &k.SealedKey); err != nil {
+			return nil, fmt.Errorf("state: scan crash capture key: %w", err)
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list sealed crash capture keys: %w", err)
+	}
+	return out, nil
+}
+
+// ListSidecarEnvDeployments pages, in id order after the cursor, through
+// the deployments whose sidecars declare env values: the sealed values the
+// runtime re-seal copies into deployment_sidecar_env_reseals. Soft-deleted
+// deployments are listed too, since recovery can serve them again.
+func (s *PgStore) ListSidecarEnvDeployments(ctx context.Context, afterID string, limit int) ([]DeploymentSidecars, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id::text, d.sidecars FROM deployments d
+		 WHERE d.id::text > $1
+		   AND EXISTS (SELECT 1 FROM jsonb_array_elements(d.sidecars) s
+		                WHERE jsonb_typeof(s->'env') = 'object' AND s->'env' <> '{}'::jsonb)
+		 ORDER BY d.id::text
+		 LIMIT $2
+	`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list sidecar env deployments: %w", err)
+	}
+	defer rows.Close()
+	var out []DeploymentSidecars
+	for rows.Next() {
+		var d DeploymentSidecars
+		if err := rows.Scan(&d.ID, &d.Sidecars); err != nil {
+			return nil, fmt.Errorf("state: scan sidecar env deployment: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list sidecar env deployments: %w", err)
+	}
+	return out, nil
+}
+
+// UpsertSidecarEnvReseal writes r when no copy is stored, or when the
+// stored copy is still previous, and reports whether it did; a copy
+// rewritten since it was read is left for the next run.
+func (s *PgStore) UpsertSidecarEnvReseal(ctx context.Context, r SidecarEnvReseal, previous []byte) (bool, error) {
+	if !validSidecarEnvReseal(r) {
+		return false, errors.New("state: sidecar env reseal needs a deployment, sidecar, key, source digest, key id and ciphertext")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO deployment_sidecar_env_reseals AS r
+		       (deployment_id, sidecar_name, env_key, source_sha256, kid, ciphertext)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6)
+		ON CONFLICT (deployment_id, sidecar_name, env_key) DO UPDATE SET
+			source_sha256 = EXCLUDED.source_sha256,
+			kid = EXCLUDED.kid,
+			ciphertext = EXCLUDED.ciphertext,
+			resealed_at = now()
+		 WHERE r.ciphertext = $7
+	`, r.DeploymentID, r.SidecarName, r.Key, r.SourceSHA256, r.Kid, r.Ciphertext, previous)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return false, nil // the deployment was deleted since it was listed
+	}
+	if err != nil {
+		return false, fmt.Errorf("state: upsert sidecar env reseal: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ListDeploymentSidecarEnvReseals implements Store; schedd reads it at wake.
+func (s *PgStore) ListDeploymentSidecarEnvReseals(ctx context.Context, deploymentID string) ([]SidecarEnvReseal, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT sidecar_name, env_key, source_sha256, kid, ciphertext
+		  FROM deployment_sidecar_env_reseals
+		 WHERE deployment_id = $1::uuid
+		 ORDER BY sidecar_name, env_key
+	`, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list sidecar env reseals: %w", err)
+	}
+	defer rows.Close()
+	out := []SidecarEnvReseal{}
+	for rows.Next() {
+		r := SidecarEnvReseal{DeploymentID: deploymentID}
+		if err := rows.Scan(&r.SidecarName, &r.Key, &r.SourceSHA256, &r.Kid, &r.Ciphertext); err != nil {
+			return nil, fmt.Errorf("state: scan sidecar env reseal: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list sidecar env reseals: %w", err)
+	}
+	return out, nil
+}
+
 // CountImagedKeyedCrashCaptures counts the unexpired ready crash captures
 // whose at-rest state imaged keeps with the fleet key (ADR-733): plaintext
 // it would still encrypt to the fleet recipient, and captures it encrypted

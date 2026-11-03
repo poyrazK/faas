@@ -289,6 +289,41 @@ func TestPgStoreCurrentMonthOverageCents_Formula(t *testing.T) {
 	}
 }
 
+// A tracked month reads the trigger-kept month totals, not a month of minute
+// rows, and reaches the same overage (ADR-20261030120000).
+func TestPgStoreCurrentMonthOverageCents_TrackedMonthReadsTotals(t *testing.T) {
+	store, pool, ctx := pgStoreAccountCreditsWithPool(t)
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if _, err := pool.Exec(ctx, `update usage_month_totals_tracking set tracked_from = $1`, monthStart); err != nil {
+		t.Fatalf("track the current month: %v", err)
+	}
+	acct, err := store.CreateAccount(ctx, "tracked@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	const wantCents = int64(7)
+	half := int64(api.PlanHobby.PlanIncludedGBHours()+int(wantCents)) * api.SecondsPerGBHour / 2
+	for _, instance := range []string{uuid.NewString(), uuid.NewString()} {
+		if err := store.AppendUsage(ctx, acct.ID, uuid.NewString(), instance, now, half, 0, 0, 0, 0, 0, 0, 0); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	// Remove the minute rows' contribution from the aggregate path: if the
+	// read still summed usage_minutes it would now see a different total.
+	if _, err := pool.Exec(ctx, `update usage_month_totals set mb_seconds = mb_seconds * 2 where account_id = $1`, acct.ID); err != nil {
+		t.Fatalf("scale totals: %v", err)
+	}
+	got, err := store.CurrentMonthOverageCents(ctx, acct.ID)
+	if err != nil {
+		t.Fatalf("current month: %v", err)
+	}
+	doubled := api.OverageCentsForBillableMBSeconds(api.BillableMBSecondsAbove(api.IncludedMBSeconds(api.PlanHobby), 4*half))
+	if got != doubled {
+		t.Fatalf("tracked month overage = %d cents, want %d from usage_month_totals", got, doubled)
+	}
+}
+
 func TestPgStoreCurrentMonthOverageCents_PreviousMonthExcluded(t *testing.T) {
 	store, _, ctx := pgStoreAccountCreditsWithPool(t)
 	acct, err := store.CreateAccount(ctx, "alice@example.com", api.PlanHobby)

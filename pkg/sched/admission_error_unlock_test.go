@@ -94,11 +94,11 @@ func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
 				}
 				// Check synchronously so the broken code fails immediately instead of
 				// leaving an uncancellable retry blocked inside sync.Mutex.Lock.
-				mu := e.AppMutex(app.ID)
-				if !mu.TryLock() {
+				unlock, ok := e.TryLockApp(app.ID)
+				if !ok {
 					t.Fatal("failed admission left the app mutex locked; subsequent wakes would hang")
 				}
-				mu.Unlock()
+				unlock()
 				store.secretErr, store.sidecarErr = nil, nil
 				res, err := admit()
 				if err != nil {

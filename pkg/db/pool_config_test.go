@@ -30,6 +30,7 @@ func TestPoolConfigWarmFloor(t *testing.T) {
 	}{
 		{name: "schedd keeps a warm floor", appName: "faas-schedd", wantMin: DaemonMinConnections["schedd"], wantJitter: warmFloorLifetimeJitter},
 		{name: "unprefixed name resolves the same floor", appName: "schedd", wantMin: DaemonMinConnections["schedd"], wantJitter: warmFloorLifetimeJitter},
+		{name: "gatewayd-internal keeps a warm floor", appName: "faas-gatewayd-internal", wantMin: DaemonMinConnections["gatewayd-internal"], wantJitter: warmFloorLifetimeJitter},
 		{name: "apid closes idle connections", appName: "faas-apid"},
 		{name: "read-only pool without a floor", appName: "bridged", readOnly: true},
 		{name: "unknown daemon", appName: "faas-unknown"},
@@ -60,6 +61,32 @@ func TestPoolConfigWarmFloor(t *testing.T) {
 				t.Errorf("read-only session = %t, want %t", got, tc.readOnly)
 			}
 		})
+	}
+}
+
+// TestPoolConfigConnectionWarmup pins which pools warm each new connection
+// before handing it out.
+func TestPoolConfigConnectionWarmup(t *testing.T) {
+	t.Setenv(NotifyHubEnv, "")
+	t.Setenv(DirectDSNEnv, "")
+	t.Setenv(RuntimeRoleEnv, "")
+	for _, tc := range []struct {
+		appName string
+		want    bool
+	}{
+		{appName: "faas-gatewayd-internal", want: true},
+		{appName: "gatewayd-internal", want: true},
+		{appName: "faas-schedd"},
+		{appName: "faas-apid"},
+		{appName: ""},
+	} {
+		cfg, err := poolConfig("postgres://faas@127.0.0.1:5432/faas", tc.appName, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.AfterConnect != nil; got != tc.want {
+			t.Errorf("%q: warm-up hook set = %t, want %t", tc.appName, got, tc.want)
+		}
 	}
 }
 

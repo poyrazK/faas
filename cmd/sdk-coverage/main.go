@@ -234,6 +234,15 @@ var routeExclude = map[string]bool{
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
+	"POST /v1/runtime/data-api/events":                  true,
+
+	// ADR-1027 in-place major upgrades: a preview gated by
+	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered
+	// routes outside it, so it stays out of the public OpenAPI spec and
+	// generated SDKs until launch. pkg/api keeps its client for the CLI.
+	// Mirror across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"POST /v1/postgres/databases/{id}/upgrade":              true,
+	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -286,6 +295,12 @@ var routeExclude = map[string]bool{
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
 	"POST /v1/agents":                                 true,
+	"POST /v1/agent-callbacks":                        true,
+	"POST /v1/agent-callbacks/{token}":                true,
+	"POST /v1/agent-callbacks/revocations":            true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
+	"POST /v1/agent-tools/invoke":                     true,
+	"POST /v1/agent-tools/close_thread":               true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -535,6 +550,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/orgs/{slug}/invoices":                                                                                     "ListOrgInvoices",
 	"GET /v1/orgs/{slug}/billing/portal":                                                                               "GetOrgBillingPortal",
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
+	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
+	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
 	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
 	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
 	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",
@@ -1199,6 +1216,11 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/orgs/{slug}/invitations/{invitation_id}":                                         "RevokeInvitation",
 	"GET /v1/github/repos":                                                                       "ListGitHubRepositories",
 	"DELETE /v1/keys/{id}":                                                                       "DeleteKey",
+	"GET /v1/agent-connections":                                                                  "ListAgentConnections",
+	"DELETE /v1/agent-connections/{id}":                                                          "RevokeAgentConnection",
+	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
+	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
+	"DELETE /v1/agent-connections/self":                                                          "DisconnectAgent",
 	"POST /v1/keys/{id}/rotate":                                                                  "RotateKey",
 	"PATCH /v1/account/keys/grace_window_days":                                                   "SetGraceWindow",
 	"GET /v1/account/keys/grace_window_days":                                                     "GetGraceWindow",
@@ -1235,6 +1257,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/deployments/{id}/approvals":                                                         "GetReleaseApproval",
 	"POST /v1/deployments/{id}/approvals":                                                        "DecideReleaseApproval",
 	"GET /v1/deployments/{id}/diff":                                                              "GetReleaseDiff",
+	"GET /v1/deployments/{id}/timeline":                                                          "GetReleaseTimeline",
 	"GET /v1/scheduled-releases":                                                                 "ListScheduledReleases",
 	"GET /v1/deployments/{id}/schedule":                                                          "GetDeploymentSchedule",
 	"PUT /v1/deployments/{id}/schedule":                                                          "ScheduleDeployment",
@@ -1436,6 +1459,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
+	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
 	"DELETE /v1/postgres/databases/{id}":                                              "DeleteManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/restore":                                        "RestoreManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/undelete":                                       "UndeleteManagedPostgresDatabase",
@@ -1453,11 +1477,13 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/data-api/usage":                                              "GetAppDataAPIUsage",
 	"POST /v1/apps/{slug}/data-api/contract-tasks":                                    "CreateDataAPIContractTask",
 	"GET /v1/apps/{slug}/data-api/contract-tasks/{id}":                                "GetDataAPIContractTask",
+	"GET /v1/apps/{slug}/data-api/runtime":                                            "GetDataAPIRuntime",
 	"POST /v1/postgres/cutovers/{id}/verify":                                          "VerifyManagedPostgresCutover",
 	"POST /v1/postgres/cutovers/{id}/cancel":                                          "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",
 	"GET /v1/deployments/{id}/logs":                                                   "StreamDeploymentLogs",
 	"GET /v1/deployments/{id}/scan":                                                   "GetDeploymentScan",                    // issue #464 / ADR-055; per-deploy grype CVE drill-down
+	"GET /v1/deployments/{id}/status":                                                 "GetDeploymentStatus",                  // ADR-20261030151810
 	"GET /v1/deployments/{id}/secret-scan":                                            "GetDeploymentSecretScan",              // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
 	"GET /v1/deployments/{id}/runtime":                                                "GetDeploymentRuntime",                 // ADR-736
 	"GET /v1/deployments/{id}/runtime/upgrade-preview":                                "PreviewRuntimeUpgrade",                // ADR-736
@@ -1583,6 +1609,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/crons/{id}/run":                                                               "FireCron",             // issue #791 — manual fire-now (PR-C)
 	"GET /v1/cron-fire-now-requests/{request_id}":                                           "GetFireCronRequest",   // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
 	"GET /v1/crons/{id}":                                                                    "GetCron",              // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
+	"GET /v1/crons/{id}/status":                                                             "GetCronStatus",        // ADR-20261030151810
 	// Issue #1184 Workstream A — run-to-completion jobs. Same
 	// resource-noun convention as crons + alerts + edge-rules:
 	// auto-derivation produces verb+placeholder concatenation
@@ -1600,6 +1627,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/jobs/{name}/runs":                          "CreateJobRun",
 	"GET /v1/jobs/{name}/runs":                           "ListJobRuns",
 	"GET /v1/jobs/{name}/runs/{id}":                      "GetJobRun",
+	"GET /v1/jobs/{name}/runs/{id}/status":               "GetJobRunStatus", // ADR-20261030151810
 	"POST /v1/jobs/{name}/runs/{id}/cancel":              "CancelJobRun",
 	"POST /v1/jobs/{name}/runs/{id}/replay-failed":       "ReplayFailedJobRun",
 	"GET /v1/jobs/{name}/runs/{id}/tasks":                "ListJobRunTasks",
@@ -2422,6 +2450,11 @@ var methodRouteMap = map[string]string{
 	// names it GetAppMetrics to match the existing per-app methods
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/health":                "GetAppHealth",
+	"GET /v1/apps/{slug}/status":                "GetAppStatus",
+	"PATCH /v1/apps/{slug}/labels":              "UpdateAppLabels",
+	"PATCH /v1/postgres/databases/{id}/labels":  "UpdateDatabaseLabels",
+	"PATCH /v1/crons/{id}/labels":               "UpdateCronLabels",
+	"PATCH /v1/jobs/{name}/labels":              "UpdateJobLabels",
 	"GET /v1/apps/{slug}/health/history":        "ListAppHealthHistory",
 	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
 	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",
@@ -2704,8 +2737,12 @@ var methodRouteMap = map[string]string{
 	// family (GetApp, GetDeployment, GetUsage).
 	"POST /v1/apps/{slug}/deployments/source-tarball": "DeployFromSourceTarball",
 	"GET /v1/domains/{domain}":                        "GetDomain",
+	"GET /v1/domains/{domain}/status":                 "GetDomainStatus", // ADR-20261030151810
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
+	"GET /v1/domains/{domain}/hosts":                  "GetDomainHosts",   // ADR-520 amendment 2
+	"PUT /v1/domains/{domain}/hosts":                  "SetDomainHosts",   // ADR-520 amendment 2
+	"DELETE /v1/domains/{domain}/hosts":               "ClearDomainHosts", // ADR-520 amendment 2
 
 	"POST /v1/apps/{slug}/github/activity/retry":                                                    "RetryGitHubActivity",
 	"PATCH /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":          "UpdateAccountWorkflowReadinessNotification",
@@ -2788,7 +2825,11 @@ func (r *reportT) print() {
 // Convenience aliases share a route with its checked path-shaped method.
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
-	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
+	"UpsertDevSession":                     "PUT /v1/dev/sessions/{project}",
+	"ListAppsSelected":                     "GET /v1/apps",
+	"ListManagedPostgresDatabasesSelected": "GET /v1/postgres/databases",
+	"ListCronsSelected":                    "GET /v1/crons",
+	"ListJobsSelected":                     "GET /v1/jobs",
 }
 
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {

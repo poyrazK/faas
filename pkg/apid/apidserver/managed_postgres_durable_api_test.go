@@ -260,7 +260,9 @@ func TestManagedPostgresDurableAPIRestart(t *testing.T) {
 	}
 	restart("", false)
 	request(http.MethodDelete, "/v1/postgres/bindings/"+bindingID, "delete-binding", nil, http.StatusOK)
-	request(http.MethodDelete, "/v1/postgres/databases/"+databaseID, "delete-database", nil, http.StatusOK)
+	// A plain delete is scheduled for 7 days (ADR-20261029174950); purge
+	// deletes the database now, which the cleanup below checks.
+	request(http.MethodDelete, "/v1/postgres/databases/"+databaseID+"?purge=true", "delete-database", nil, http.StatusOK)
 	restart("", false)
 	if err := observer.Deleted(ctx, current); err != nil {
 		t.Fatal(err)

@@ -42,7 +42,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list deployments for %s: %w", appID, err)
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list initial instances for %s: %w", appID, err)
 	}
@@ -188,7 +188,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 				// owns any remaining serving rows; do not create more VMs.
 				return CoordOutcome{}, nil
 			}
-			instances, listErr := e.store.ListInstancesForApp(ctx, appID)
+			instances, listErr := e.liveInstancesForApp(ctx, appID)
 			if listErr != nil {
 				return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list instances for %s: %w", appID, listErr)
 			}
@@ -302,7 +302,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 
 	// Retire stale instances from superseded/preview deployments only after
 	// every live scope has at least its fresh configured serving capacity.
-	instances, err = e.store.ListInstancesForApp(ctx, appID)
+	instances, err = e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: list final stale instances for %s: %w", appID, err)
 	}
@@ -324,7 +324,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 			}
 		}
 	}
-	instances, err = e.store.ListInstancesForApp(ctx, appID)
+	instances, err = e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: verify refreshed instances for %s: %w", appID, err)
 	}

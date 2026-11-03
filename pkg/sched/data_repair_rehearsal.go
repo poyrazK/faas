@@ -47,6 +47,24 @@ type DataRepairRehearsalCoordinator struct {
 	Log                                        *slog.Logger
 	queuedCursor, recoveryCursor, expiryCursor string
 	pendingClaims                              map[string]core.RehearsalFrame
+	recoveredAt                                time.Time
+}
+
+// dataRepairRecoveryInterval spaces RecoverOnce while no claim is pending.
+// Recovery retires expired plans and resumes rehearsals a crash left behind;
+// run every second it read two pages of rehearsals per scheduler per second
+// (6 statements a second on prod, 2026-11-02), nearly always empty.
+const dataRepairRecoveryInterval = 10 * time.Second
+
+// recoveryDue reports whether Run should recover now: on the first tick, on
+// every tick while a claim is pending, and otherwise every
+// dataRepairRecoveryInterval.
+func (c *DataRepairRehearsalCoordinator) recoveryDue(now time.Time) bool {
+	if len(c.pendingClaims) == 0 && !c.recoveredAt.IsZero() && now.Sub(c.recoveredAt) < dataRepairRecoveryInterval {
+		return false
+	}
+	c.recoveredAt = now
+	return true
 }
 
 func (c *DataRepairRehearsalCoordinator) binding(t state.DataRepairRehearsal) (DataRepairRehearsalExecutor, error) {
@@ -72,8 +90,10 @@ func (c *DataRepairRehearsalCoordinator) Run(ctx context.Context) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if err := c.RecoverOnce(ctx); err != nil && ctx.Err() == nil {
-			log.Warn("data repair rehearsal recovery deferred", "error_class", "unavailable")
+		if c.recoveryDue(time.Now()) {
+			if err := c.RecoverOnce(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("data repair rehearsal recovery deferred", "error_class", "unavailable")
+			}
 		}
 		if c.Enabled {
 			if _, err := c.ProcessNext(ctx); err != nil && ctx.Err() == nil {

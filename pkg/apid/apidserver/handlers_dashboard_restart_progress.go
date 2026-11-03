@@ -27,7 +27,7 @@ func (s *server) renderAppRestartProgress(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), api.AppOperationalReadTimeout)
 	defer cancel()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID || app.Status == state.AppDeleted {
+	if err != nil || !dashboardAppOwner(r, &acct, app) || app.Status == state.AppDeleted {
 		http.NotFound(w, r)
 		return
 	}

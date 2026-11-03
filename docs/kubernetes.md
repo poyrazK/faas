@@ -7,7 +7,7 @@ Gregale does not apply is listed in the plan with the reason and, where one
 exists, the Gregale setting to use instead.
 
 > **Preview.** Kubernetes manifests are a preview capability, released per
-> account. Ask support to enable it; `gregale capabilities` lists it once it is
+> account. Ask support to enable it; `gregale feature list` lists it once it is
 > on. Behavior can change before general availability.
 
 The import is one way. Gregale reads the files in your repository; it never

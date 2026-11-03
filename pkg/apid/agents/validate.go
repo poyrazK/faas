@@ -99,7 +99,8 @@ func versionSpec(in api.AgentVersionSpec, plan api.Plan) (agentstore.VersionSpec
 		return agentstore.VersionSpec{}, prob
 	}
 	return agentstore.VersionSpec{Harness: harness, PromptTemplate: in.PromptTemplate, RAMMB: in.RAMMB, TimeoutSec: timeout,
-		Integrations: integrations, AIBudgetMillicents: in.AIBudgetMillicents, Deliveries: deliveries}, nil
+		Integrations: integrations, AIBudgetMillicents: in.AIBudgetMillicents, Deliveries: deliveries,
+		NoModelWaitPause: in.PauseDuringModelCalls != nil && !*in.PauseDuringModelCalls}, nil
 }
 
 // validDeliveries allows each known destination once. A comment or an email

@@ -70,7 +70,8 @@ var consumerKeyExpectedColumns = []string{
 var consumerKeyExpectedConstraints = []string{
 	"consumer_keys_name_len_chk",
 	"consumer_keys_prefix_len_chk",
-	"consumer_keys_hashed_secret_len_chk",
+	// Widened to admit keyed digests (ADR 20261029202403).
+	"consumer_keys_hashed_secret_credhash_chk",
 	"consumer_keys_scopes_vocab_chk",
 	"consumer_keys_expires_after_created_chk",
 	"consumer_keys_revoked_state_chk",

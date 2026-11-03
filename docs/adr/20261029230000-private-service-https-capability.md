@@ -1,0 +1,21 @@
+# ADR-20261029230000: Private service HTTPS is a capability an operator turns on
+
+- **Status:** accepted
+- **Date:** 2026-10-29
+- **Owner:** apid, githubd and gateway maintainers
+- **Amends:** ADR-274 (additive HTTPS service binding URLs) and ADR-20261026181020 (Compose service address import)
+- **Decision:** Calling another service at `https://<service>.internal` needs the private HTTPS listener on every compute node (`gatewayd_service_proxy_https_listen`) and its CA in guests (ADR-273). Both are an installation option, off by default. The control plane now knows whether it is on: the `private-service-https` capability (`internal` maturity, parent `service-bindings`) is off until the operator turns it on.
+  - **The https transport is refused while it is off.** Every call from such a caller would fail, because the service proxy refuses its plain-HTTP calls and nothing answers its HTTPS ones.
+    - Compose: a scan with `x-gregale-service-transport: https` fails with the reason. apid's plan and apply and githubd's push and preview scans decide it alike (`reposcan.ScanOptions.HTTPSTransportUnavailable`).
+    - App API: `service_binding_transport: https` answers 400 with the reason (`api.PrivateServiceHTTPSTransportProblem`).
+  - **The env import keeps addresses that answer.** While the capability is off, a Compose `https` or `wss` value that calls a project service imports as the plaintext service address (`http://<service>.svc.gregale:10081`, or `ws://`), not as `https://<service>.internal`. The plan note says so.
+  - **Unchanged:** the additive `GREGALE_SERVICE_<NAME>_HTTPS_URL` variable is still injected. It is generated in many places, and binding fingerprints and promotions compare it, so removing it where the capability is off would show as drift on every app. The docs say it answers only where private HTTPS is enabled.
+- **Why:** The customer journey found production guests without `GREGALE_SERVICE_CA_BUNDLE`, and a call to `https://<service>.internal` failed with an edge 502 (2026-10-29). The platform still offered the HTTPS alias in three ways that break: the transport setting, which breaks every call from a service; the env import rewrite, which breaks the imported variable; and the `_HTTPS_URL` variable.
+- **Consequences:**
+  - On an installation without the listener, a project that asks for the https transport fails its plan with a reason that names the capability, instead of deploying services that cannot call each other.
+  - **Operators who already run the listener** must enable the capability once (`gregalectl flags enable --capability private-service-https --reason "<why>" --yes`), or such plans are refused after this release. Production does not run it.
+  - A standalone app that already stores the https transport keeps it; the app API refuses only setting it. A Compose project that declares it fails its next plan, with the reason, until the capability is on or the declaration goes.
+- **Rejected alternatives:**
+  - **Turn the listener on everywhere.** That is operator work across every compute node (a dedicated CA, listener staging, guest trust). It can follow, and turning the capability on is its last step.
+  - **Read the listener's state from the nodes.** Nodes do not report it today. A readiness record per node is a larger change, and one node without the listener would still break calls.
+  - **Drop `_HTTPS_URL` where the capability is off.** See *Unchanged* above.

@@ -352,7 +352,7 @@ func validateCreateExecution(params CreateExecutionParams) error {
 		return fmt.Errorf("%w: sealed payload or key id is outside hard bounds", ErrExecutionInvalid)
 	}
 	for _, redemption := range params.ArtifactGrantRedemptions {
-		if strings.TrimSpace(redemption.GrantID) == "" || len(redemption.TokenHash) != 32 {
+		if strings.TrimSpace(redemption.GrantID) == "" || !storedCredentialShape(redemption.TokenHash) {
 			return fmt.Errorf("%w: invalid artifact grant redemption", ErrExecutionInvalid)
 		}
 	}

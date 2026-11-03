@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-10-22
 - **Amends:** ADR-266 (new project workloads default to `declared`): new project workloads now default to `project`
+- **Amended by ADR-20261030131528 (2026-10-30):** a project workload's bindings name its own project's services, so a binding no longer declares a service outside the project; reaching outside a project takes `account`.
 - **Decision:** A new caller policy `project` lets a workload call any service in its own project without declaring it. Calls to services outside the project still need a declared binding, as under `declared`.
   - **Who counts as the same project.** The caller and the target have the same non-empty project. A preview counts only where the preview rules already let it reach the target: a same-PR preview, or the production service when the project's preview policy allows production fallback. A scenario-test member never counts; it keeps the declared check against its run's workload names.
   - **What still applies.** Every other check is unchanged and runs in the same order: the account boundary, deleted apps, rehearsal and scenario-test isolation, the project preview policy, the target's `x-gregale-allow-callers` and caller scopes, and service reliability. A target that lists its callers still refuses a sibling that is not on its list.

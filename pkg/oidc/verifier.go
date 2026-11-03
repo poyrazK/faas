@@ -49,6 +49,11 @@ type Claims struct {
 	Aud     []string
 	Exp     time.Time
 	JTI     string // "" if the IdP omits the jti claim
+	// Ref and EventName are GitHub Actions' ref and event_name claims
+	// ("" from other issuers); the exchange decides from them what a
+	// workflow may deploy (ADR-20261101100000).
+	Ref       string
+	EventName string
 }
 
 // edgeJWKSVerifier is the production impl. Composition over
@@ -103,15 +108,18 @@ func (a *edgeJWKSVerifier) Verify(ctx context.Context, rawToken string, p *OIDCT
 		Algorithms:            p.Algorithms,
 		RequiredClaims:        p.RequiredClaims,
 		RequiredClaimPatterns: subjectPatternAsClaim(p.SubjectPattern),
+		ExtractClaims:         []string{"ref", "event_name"},
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &Claims{
-		Subject: src.Subject,
-		Issuer:  src.Issuer,
-		Aud:     src.Aud,
-		Exp:     src.Exp,
+		Subject:   src.Subject,
+		Issuer:    src.Issuer,
+		Aud:       src.Aud,
+		Exp:       src.Exp,
+		Ref:       src.Custom["ref"],
+		EventName: src.Custom["event_name"],
 		// JTI is extracted at the caller from the raw payload because
 		// pkg/edgejwks.Claims doesn't carry it — the standard claim
 		// is non-required and most IdPs omit it. The handler decodes

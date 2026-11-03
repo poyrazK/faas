@@ -1,0 +1,22 @@
+# Memory-only compressed swap for frozen VMs (ADR-906 decision 6, roles/zswap).
+#
+# Production compute nodes have no swap, so a frozen VM keeps all its memory
+# (18-144 MB each on fsn-2/fsn-3, 2026-10-31) and memory pressure parks it.
+# With this role, schedd first asks vmmd to compress a frozen VM under
+# pressure; it stays thawable (16-150 ms against a ~190 ms snapshot restore).
+#
+# Canary first: every release rollout runs node_join.yml, which imports the
+# compute bootstrap and with it this role, so a node listed here gets zswap on
+# its next rollout. Names are the canonical database node names (gregalectl
+# compute-nodes list). Widen the list once the canary has frozen, compressed
+# and thawed VMs cleanly (schedd_frozen_compress_total, FaasFrozenTier).
+faas_zswap_canary_nodes:
+  - fsn-3.faas
+faas_zswap_enabled: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in faas_zswap_canary_nodes }}"
+
+# The swapfile only provides zswap's slots and is never written, but a
+# swapfile cannot be sparse, so its size is reserved on the root filesystem
+# (48 GB, 9.1 GB free on fsn-3). 4 GB of slots holds 4 GB of frozen VM
+# memory, about 0.6 GB once compressed (6-7x with lz4, ADR-906); the
+# compressed pool itself stays capped at 25% of RAM.
+faas_zswap_swapfile_size_mb: 4096

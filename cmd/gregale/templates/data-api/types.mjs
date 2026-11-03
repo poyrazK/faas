@@ -6,6 +6,8 @@ import { databaseURL, schemaNames, limits } from './config.mjs'
 
 // Fixed, parameterized catalog reads run in the customer's workload using
 // its restricted binding. No SQL text or database URL comes from a request.
+// The change hooks table (ADR-20261022121642) is the relay's, never part of
+// the contract.
 const columnsQuery = `SELECT n.nspname AS schema, c.relname AS relation, c.relkind AS kind,
  c.oid::text AS id, a.attnum AS number,
  a.attname AS name, a.atttypid::text AS type, a.attnotnull AS required,
@@ -15,7 +17,7 @@ const columnsQuery = `SELECT n.nspname AS schema, c.relname AS relation, c.relki
  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
  JOIN pg_attribute a ON a.attrelid=c.oid
  LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
- WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p','v','m')
+ WHERE n.nspname=ANY($1::text[]) AND c.relkind IN ('r','p','v','m') AND c.relname<>'gregale_change_events'
  AND a.attnum>0 AND NOT a.attisdropped AND has_schema_privilege(COALESCE($2::name,current_user),n.oid,'USAGE')
  AND has_column_privilege(COALESCE($2::name,current_user),c.oid,a.attnum,'SELECT')
  ORDER BY n.nspname,c.relname,a.attnum LIMIT ${limits.columns + 1}`

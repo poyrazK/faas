@@ -448,13 +448,16 @@ const (
 	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
 	CodePlanLimitDeveloperLease            = "plan_limit_developer_lease"
 	CodePlanLimitRAM                       = "plan_limit_ram"
-	CodePlanLimitConcur                    = "plan_limit_concurrency"
-	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
-	CodeInvalidAppRAM                      = "invalid_ram_mb"
-	CodeInvalidCPURAMPair                  = "invalid_cpu_ram_pair"
-	CodeInvalidResourceProfile             = "invalid_resource_profile"
-	CodeSourceTooLarge                     = "source_too_large"
-	CodeSourceInvalid                      = "source_invalid"
+	// CodePlanLimitObjectStorage refuses a downgrade while the account
+	// stores more than the target plan's storage ceiling (ADR-20261101214152).
+	CodePlanLimitObjectStorage = "plan_limit_object_storage"
+	CodePlanLimitConcur        = "plan_limit_concurrency"
+	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidAppRAM          = "invalid_ram_mb"
+	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
+	CodeInvalidResourceProfile = "invalid_resource_profile"
+	CodeSourceTooLarge         = "source_too_large"
+	CodeSourceInvalid          = "source_invalid"
 	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
 	// the node-local developer-source cache was absent, stale, or corrupt.
 	// The CLI responds by uploading a complete source snapshot.
@@ -670,6 +673,12 @@ const (
 	// notification channels more test messages than a minute allows
 	// (ADR-20261028101615).
 	CodeNotificationChannelTestRateLimited = "notification_channel_test_rate_limited"
+	// CodeNotificationChannelInUse marks a channel delete refused because the
+	// channel is the only destination of alert rules (ADR-20261029203000).
+	CodeNotificationChannelInUse = "notification_channel_in_use"
+	// CodeAlertPresetTestRateLimited marks an account that sent more preset
+	// test alerts than a minute allows (ADR-20261030214500).
+	CodeAlertPresetTestRateLimited = "alert_preset_test_rate_limited"
 	// CodeEventPublishRateLimited marks a publication beyond the account's
 	// event publish rate (EventPublishLimits); retry after Retry-After.
 	CodeEventPublishRateLimited = "event_publish_rate_limited"
@@ -967,6 +976,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodeReleaseFreezeOverrideNotAllowed means the caller may not override a
+	// company organization's freeze: only someone who may lift it, signed in
+	// or with an admin key, can (ADR-20261019071733 amendment 5).
+	CodeReleaseFreezeOverrideNotAllowed = "release_freeze_override_not_allowed"
 	// CodePlatformReleasePaused means an operator paused every release on the
 	// platform (ADR 20261022140000), for example while a security incident is
 	// contained. Nothing the caller sends overrides it; rollbacks still work.
@@ -995,6 +1008,10 @@ const (
 	// CodeReleaseApprovalSelf means the deployer tried to approve their own
 	// release while the policy does not allow self-approval.
 	CodeReleaseApprovalSelf = "release_approval_self"
+	// CodeReleaseApprovalSessionRequired means an API key or token tried to
+	// approve a release: approvals come from a person signed in to the
+	// dashboard (ADR-20261020085706 amendment 4).
+	CodeReleaseApprovalSessionRequired = "release_approval_session_required"
 	// CodeReleaseApprovalDecided means this person already decided on the
 	// release, or the release no longer accepts decisions.
 	CodeReleaseApprovalDecided = "release_approval_decided"
@@ -1313,6 +1330,10 @@ const (
 	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
 	// would change the serving weights owned by an in-flight canary rollout.
 	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
+	// CodeTrafficSplitReleaseLimit is a 422 when a manual traffic change
+	// would give traffic to more releases than the app can run at once
+	// (TrafficSplitMaxReleases): the extra release could never wake.
+	CodeTrafficSplitReleaseLimit = "traffic_split_release_limit"
 	// CodeMCPTaskCompatibilityGate is a 409 when promotion would route away
 	// from the final workers for an outstanding MCP task handler version.
 	CodeMCPTaskCompatibilityGate = "mcp_task_compatibility_gate_blocked"
@@ -1397,6 +1418,10 @@ const (
 	// nothing left to redrive: an event_route routing failure whose receipt
 	// was pruned (ADR-20261026163443). Re-publish its payload instead.
 	CodeDeadLetterNotReplayable = "dead_letter_not_replayable"
+	// CodeKeyedReplayExpired is the 409 for replaying keyed work whose
+	// pending deadline has passed (ADR-609); from the dead-letter queue a
+	// replay would only expire again (ADR-20261031101000).
+	CodeKeyedReplayExpired = "keyed_replay_expired"
 	// CodeDebugReplayUnsupported is returned when a retained request has no
 	// enabled mirror rule for the deployment that served it. Replaying without
 	// that target would silently exercise a different deployment.
@@ -1942,7 +1967,8 @@ const (
 	// immutable-from-PR-1 invariants from the ADR.
 	//
 	// The 12 codes are a complete set: every org-scoped handler
-	// error returns exactly one of these.
+	// error returns exactly one of these. Organization creation adds
+	// org_free_limit_exceeded (ADR-20261031090658).
 	CodeOrgNotFound              = "org_not_found"
 	CodeOrgSlugInvalid           = "org_slug_invalid"
 	CodeOrgSlugTaken             = "org_slug_taken"
@@ -1955,6 +1981,9 @@ const (
 	CodeOrgLastOwner             = "org_last_owner"
 	CodeOrgPersonalImmutable     = "org_personal_immutable"
 	CodeOrgAPIKeyRequiresOrg     = "org_api_key_requires_org"
+	// CodeOrgFreeLimitExceeded: the caller already owns
+	// FreeOrganizationsOwnedMax Free organizations (ADR-20261031090658).
+	CodeOrgFreeLimitExceeded = "org_free_limit_exceeded"
 	// CodeTenantSurfacesNotAllowed marks POST /v1/apps/{slug}/tenant-surfaces
 	// when the account's plan does not enable surfaces (Free today, ADR-100
 	// / issue #879). Distinct from CodeTenantSurfaceQuota (the surface
@@ -2124,8 +2153,13 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
+	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict,
+		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired:
 		return http.StatusConflict
+	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
+		return http.StatusForbidden
+	case CodeGitHubAppNotInstalled:
+		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
@@ -2143,7 +2177,7 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy, CodeAgentCallbackRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -2440,7 +2474,7 @@ func StatusForCode(code string) int {
 		return http.StatusPaymentRequired
 	case CodePlanCronsNotAllowed:
 		return http.StatusPaymentRequired
-	case CodePlanCronQuota:
+	case CodePlanCronQuota, CodePlanEventSubscriptionQuota:
 		return http.StatusForbidden
 	case CodePlanAlertRulesNotAllowed:
 		return http.StatusPaymentRequired
@@ -2533,7 +2567,7 @@ func StatusForCode(code string) int {
 		// surface 409 — the conflict is between the request and
 		// the resource's current state, not between two writes.
 		return http.StatusConflict
-	case CodeDeadLetterNotReplayable:
+	case CodeDeadLetterNotReplayable, CodeKeyedReplayExpired:
 		return http.StatusConflict
 	case CodeInvalidCredentials, CodeEmailNotVerified:
 		return http.StatusUnauthorized
@@ -2566,7 +2600,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeOrgInvitationInvalid, CodeOrgInvitationExpired:
 		return http.StatusGone
-	case CodeOrgRoleForbidden, CodeOrgMemberCapExceeded, CodeOrgInvitationCapExceeded:
+	case CodeOrgRoleForbidden, CodeOrgMemberCapExceeded, CodeOrgInvitationCapExceeded, CodeOrgFreeLimitExceeded:
 		return http.StatusForbidden
 	case CodeBadRequest:
 		return http.StatusBadRequest
@@ -3053,6 +3087,47 @@ func ErrNotificationChannelTestRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("This account has sent its notification channels %d test messages in the last minute.", limit)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
+// ErrAlertPresetTestRateLimited is a 429 for an account past
+// AlertPresetTestsPerAccountMinute (ADR-20261030214500): each test is a real
+// webhook post.
+func ErrAlertPresetTestRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeAlertPresetTestRateLimited,
+		"Alert preset test rate limited",
+		fmt.Sprintf("This account has sent %d preset test alerts in the last minute.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/alerts")
+}
+
+// ErrNotificationChannelInUse is a 409 for deleting a channel that is the only
+// destination of rules, which would fire into nothing (ADR-20261029203000).
+// rules names them as "name (id)".
+func ErrNotificationChannelInUse(rules []string) *Problem {
+	return ErrNotificationChannelInUseBy(rules, nil)
+}
+
+// ErrNotificationChannelInUseBy refuses deleting the last channel of alert
+// rules, release approval policies or pending scheduled releases: rules would
+// fire into nothing, and releases would wait for approval, start or be blocked
+// without anyone being told.
+func ErrNotificationChannelInUseBy(rules, releases []string) *Problem {
+	var parts []string
+	if len(rules) > 0 {
+		parts = append(parts, fmt.Sprintf("This channel is the only destination of %d alert rule(s): %s. Give them a webhook or another channel, or delete them.",
+			len(rules), strings.Join(rules, ", ")))
+	}
+	if len(releases) > 0 {
+		parts = append(parts, fmt.Sprintf("It is the last channel told about %s. Name another channel there, or remove the policy or schedule.",
+			strings.Join(releases, ", ")))
+	}
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Notification channel in use",
+		strings.Join(parts, " ")+" Then delete the channel.").
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
@@ -3642,6 +3717,11 @@ const CodePlanCronsNotAllowed = "plan_crons_not_allowed"
 // upsell-vs-delete copy without parsing the body.
 const CodePlanCronQuota = "plan_cron_quota"
 
+// CodePlanEventSubscriptionQuota is the 403 a deploy gets when its
+// event_triggers would leave more enabled event subscriptions than the plan's
+// per-app or per-account cap (ADR-20261031130000).
+const CodePlanEventSubscriptionQuota = "plan_event_subscription_quota"
+
 // CodeCronFireNowBusy is the 429 a manual cron run gets while the cron
 // already has CronFireNowActivePerCron runs waiting or running
 // (ADR-20261026201726).
@@ -3917,7 +3997,22 @@ const (
 	// account is at its plan's concurrent-connection allowance, or holds the
 	// most one account may on a single realtime node (ADR-1323 fair use).
 	CodeRealtimeConnectionLimit = "realtime_connection_limit"
+	// CodeRealtimeWriteRateLimited is the 429 for a retained realtime write
+	// past the account's plan rate (RealtimeLimits.RetainedWritesPerSecond).
+	CodeRealtimeWriteRateLimited = "realtime_write_rate_limited"
 )
+
+// ErrRealtimeWriteRateLimited refuses retained realtime writes past the
+// account's plan rate; nothing was written.
+func ErrRealtimeWriteRateLimited(perSecond, writes int, retryAfter time.Duration) *Problem {
+	retryAfterS := max(int(math.Ceil(retryAfter.Seconds())), 1)
+	return NewProblem(http.StatusTooManyRequests, CodeRealtimeWriteRateLimited,
+		"Realtime write rate limited",
+		fmt.Sprintf("This account's realtime endpoints write retained messages, inbox messages, edits and snapshots at most %d times per second; this request needed %d. Nothing was written; retry after the indicated back-off.", perSecond, writes)).
+		WithLimit(int64(perSecond), int64(writes)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/realtime#fair-use-limits")
+}
 
 // Realtime connection limit scopes (ADR-1323).
 const (
@@ -4331,6 +4426,50 @@ func ErrPlanCronQuota(plan Plan, scope string, limit, observed int) *Problem {
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#crons")
+}
+
+// ErrCronRunOverPlan is the 403 for a manual run of a cron that the owner's
+// current plan does not let fire: after a downgrade only the oldest crons
+// within the new limits keep running.
+func ErrCronRunOverPlan(plan Plan, scope string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanCronQuota,
+		"Cron over plan limit",
+		fmt.Sprintf("%s plan runs at most %d crons for %s; %d of your enabled crons count toward it and this cron is not among the oldest %d, so it does not run. Disable or delete a cron, or upgrade.",
+			plan, limit, PlanQuotaScopeDisplayName(scope), observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#crons")
+}
+
+// ErrPlanEventSubscriptionQuota refuses a deploy whose gregale.yaml would
+// leave more enabled event subscriptions than the plan allows for the app or
+// the account (ADR-20261031130000).
+func ErrPlanEventSubscriptionQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanEventSubscriptionQuota,
+		"Event subscription limit reached",
+		fmt.Sprintf("%s plan caps enabled event subscriptions at %d for %s; this deploy would leave %d. Remove event_triggers from gregale.yaml to add others.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/events#subscription-limits")
+}
+
+// ErrCronConflict is the 409 for a cron another cron of the same app already
+// has the schedule and path (or command) of: an app has one cron per schedule
+// and path, which is how gregale.yaml matches its declared crons.
+func ErrCronConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron already exists",
+		"this app already has a cron with this schedule and path; change that cron instead, or give this one a distinct path, for example by adding a query string such as ?tz=europe").
+		WithDocs(docsBase + "/crons#create-a-cron")
+}
+
+// ErrCronSuspendedRun is the 409 for a manual run of a suspended cron.
+func ErrCronSuspendedRun(reason string) *Problem {
+	detail := "this cron is suspended (" + reason + ") and does not run until it is resumed"
+	if reason == "no_live_deployment" {
+		detail = "this cron is suspended because the app has no live deployment; deploy the app to resume its crons"
+	}
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron suspended", detail).
+		WithDocs(docsBase + "/crons#suspension")
 }
 
 // ErrCronFireNowBusy is the 429 for a manual run of a cron that already
@@ -5014,6 +5153,16 @@ func ErrWildcardDomainsNotAllowed(p Plan) *Problem {
 		"Wildcard domains unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include wildcard custom domains; upgrade to Pro or Scale.", p)).
 		WithDocs(docsBase + "/domains#wildcard-domains")
+}
+
+// ErrCustomDomainHostsTooMany is a 422: a wildcard custom domain's host
+// allowlist names more than CustomDomainTLSAllowedHostsMax hosts.
+func ErrCustomDomainHostsTooMany(observed int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
+		"Too many allowlisted hosts",
+		fmt.Sprintf("a wildcard domain's host allowlist holds at most %d names; got %d.", CustomDomainTLSAllowedHostsMax, observed)).
+		WithLimit(int64(CustomDomainTLSAllowedHostsMax), int64(observed)).
+		WithDocs(docsBase + "/domains#wildcard-host-allowlist")
 }
 
 // ErrWildcardDomainTenantSurfaceOverlap is a typed 409: a wildcard cannot
@@ -5758,6 +5907,29 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
+// ErrTrafficResidualUnassigned is the same 409 for a manual traffic change
+// whose remaining percent could only go to an aborted canary candidate or a
+// release that has never served, neither of which receives traffic unless
+// named.
+func ErrTrafficResidualUnassigned(remaining int) *Problem {
+	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
+		"No deployment can take the remaining traffic",
+		fmt.Sprintf("the other live deployments in this environment are aborted canaries or releases that have not served yet (staged with no traffic), which receive traffic only when named; set the remaining %d%% on a deployment explicitly, or keep this one at 100%%.", remaining)).
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
+// ErrTrafficSplitReleaseLimit refuses a split that gives traffic to more
+// releases than the app can run at once: each serving release needs its own
+// instance, and the app runs at most its max_concurrency plus the one-instance
+// rollout overlap.
+func ErrTrafficSplitReleaseLimit(limit, requested int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeTrafficSplitReleaseLimit,
+		"Too many releases in the traffic split",
+		fmt.Sprintf("this change would send traffic to %d releases, but the app runs at most %d instances at once (max_concurrency plus one during a rollout), so one release could never start; take a release out of the split first, or raise max_concurrency with gregale app --max-concurrency.", requested, limit)).
+		WithLimit(int64(limit), int64(requested)).
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
 // ErrTrafficServingChanged makes a stale promotion actionable without
 // disclosing any deployment the caller has not already been authorized to
 // read through the target app.
@@ -5773,7 +5945,7 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
+		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale rollouts recover <app> --action abort`.").
 		WithDocs(docsBase + "/deployments#canary")
 }
 
@@ -6515,6 +6687,16 @@ func ErrDeadLetterNotReplayable() *Problem {
 		WithDocs(docsBase + "/events#routing-failures-in-the-dead-letter-queue")
 }
 
+// ErrDeadLetterKeyedReplayExpired refuses a dead-letter replay of keyed work
+// whose pending deadline has passed: replay resets its attempts, so it would
+// only expire again (ADR-20261031101000).
+func ErrDeadLetterKeyedReplayExpired() *Problem {
+	return NewProblem(http.StatusConflict, CodeKeyedReplayExpired,
+		"Keyed replay deadline expired",
+		"this keyed delivery's pending deadline has passed, so a replay would expire at once; re-publish the event to deliver it again.").
+		WithDocs(docsBase + "/events#keyed-delivery-deadlines")
+}
+
 // ErrInvocationNotReplayable (issue #315 / tier-2 DX) is returned by
 // POST /v1/invocations/{id}/replay when the original's State is
 // outside the replayable allow-list ({failed, dead_letter}).
@@ -6798,6 +6980,18 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/orgs#member-cap")
+}
+
+// ErrOrgFreeLimitExceeded is the 403 returned when the caller already owns
+// FreeOrganizationsOwnedMax organizations on the Free plan
+// (ADR-20261031090658).
+func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgFreeLimitExceeded,
+		"Free organization limit reached",
+		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade or delete one to create another.",
+			limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/orgs#free-organizations")
 }
 
 // ErrOrgInvitationCapExceeded is the 403 returned when the

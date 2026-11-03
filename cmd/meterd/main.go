@@ -763,6 +763,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops := wire.NewOpsMetrics("meterd")
 	requestTelemetryPartitions := newRequestTelemetryPartitionMetrics(ops.Registry(), deps.now)
 	logEventMaintenance := newLogEventMaintenanceMetrics(ops.Registry(), deps.now)
+	jobLogRetention := newJobLogRetentionMetrics(ops.Registry(), deps.now)
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "meterd", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
 		return fmt.Errorf("meterd: init tracing: %w", traceErr)
@@ -1214,7 +1215,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	evaluator.SetLogContext(logSearch.Released)
 	// ADR-747: record customer SLO budget hours from Prometheus.
-	go runSLORollup(ctx, store, promClient, loops, log)
+	go runSLORollup(ctx, store, promClient, release.SLO, loops, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can
@@ -1352,6 +1353,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go meter.RetentionLoopRequestAudit(ctx, partitionDB, time.Hour, log)
 	go meter.LogEventPartitionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observePartition)
 	go meter.LogEventRetentionLoop(ctx, partitionDB, meter.LogEventMaintenanceInterval, log, logEventMaintenance.observeRetention)
+	// ADR-20261102183152: job task output follows the account plan's log
+	// retention too. job_tasks/job_task_attempts are written by apid and
+	// schedd; this sweep only empties the output of finished runs and keeps
+	// every row, status and exit code, as meterd ages out request_telemetry
+	// and deployment_audit rows other daemons write.
+	go meter.JobLogRetentionLoop(ctx, store, meter.JobLogRetentionInterval, log, jobLogRetention.observe)
 
 	// SAFE-RELEASES production-leveling Stream D (issue #976 /
 	// ADR-122 post-merge audit): deployment_audit GC cron.

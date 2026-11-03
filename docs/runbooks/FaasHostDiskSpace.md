@@ -26,7 +26,7 @@ What fills first:
 | Host | Mount | Usual writers |
 |---|---|---|
 | control plane | `/` | PostgreSQL data and `pg_wal` under `/var/lib/postgresql`, Prometheus TSDB under `/var/lib/prometheus`, release directories under `/opt/faas/releases`, the journal |
-| compute | `/srv/fc` | snapshots, app layers and the runtime cache (`/var/lib/faas/cache` is a bind of `/srv/fc/cache`) |
+| compute | `/srv/fc` | snapshots, app layers, the runtime cache (`/var/lib/faas/cache` is a bind of `/srv/fc/cache`) and the Grype database (`/var/lib/faas/grype` is a bind of `/srv/fc/grype`, 3.4 GB) |
 | compute | `/` | release directories, `/var/log/faas/vm-*.console`, log-archive spools under `/var/log/faas`, the journal |
 
 ## Check

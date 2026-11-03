@@ -113,7 +113,10 @@ domains still enter there.
 
 - **Node-local routing.** A hybrid dialer uses the local gatewayd-internal
   socket and falls back to the compute pool only while the local gateway is
-  unready or draining. Readiness follows the hybrid dialer.
+  unready or draining. Readiness follows the hybrid dialer. (Amended by
+  ADR-20261031105055: Cloudflare does not spread requests across a tunnel's
+  connectors, so with `FAAS_EDGE_PLACEMENT_ROUTING` the edge sends each host
+  to the gatewayd-internal of the node that last served it.)
 - **Host check.** Only `*.<apps domain>` is served. Platform hosts (per
   `apid.IsPlatformHost`, including IP literals) and unknown hosts get
   `421 Misdirected Request` with a metric. The DNS split keeps them away; the

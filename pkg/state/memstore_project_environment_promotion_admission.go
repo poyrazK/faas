@@ -39,7 +39,7 @@ func (m *MemStore) findPromotionApprovalLocked(p ProjectEnvironmentPromotion) (*
 		return nil, nil
 	}
 	for _, approval := range m.projectEnvironmentApprovals {
-		if approval.AccountID == p.AccountID && approval.ProjectSlug == p.ProjectSlug && approval.EnvironmentSlug == p.ToEnvironment && approval.PlanTokenHash == p.Approval.PlanTokenHash && approval.ApprovalTokenHash == p.Approval.ApprovalTokenHash && approval.ConsumedAt == nil && approval.ExpiresAt.After(m.clock()) {
+		if approval.AccountID == p.AccountID && approval.ProjectSlug == p.ProjectSlug && approval.EnvironmentSlug == p.ToEnvironment && approvalTokensMatch(approval, p.Approval.PlanTokenHash, p.Approval.ApprovalTokenHash) && approval.ConsumedAt == nil && approval.ExpiresAt.After(m.clock()) {
 			return &approval, nil
 		}
 	}

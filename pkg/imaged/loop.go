@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,6 +64,9 @@ type Loop struct {
 	appsRoot                string
 	storageRoot             string
 	gcMu                    sync.Mutex
+	// securityScanRunning keeps the start-up rescan goroutine and the loop's
+	// ticks from sweeping at the same time.
+	securityScanRunning atomic.Bool
 	// prep prepares deployments' images off the loop; nil prepares inline.
 	prep *imagePrepWorkers
 
@@ -258,7 +262,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	if securityScanEvery <= 0 {
 		securityScanEvery = securityScanSweepEvery
 	}
-	securityScanTicker := time.NewTicker(securityScanEvery)
+	securityScanTicker := time.NewTicker(securityScanCheckEvery(securityScanEvery))
 	defer securityScanTicker.Stop()
 	securityLeaseEvery := l.securityLeaseEvery
 	if securityLeaseEvery <= 0 {

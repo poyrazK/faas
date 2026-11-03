@@ -636,9 +636,10 @@ type OpsMetrics struct {
 	issueEventsRecorded *prometheus.CounterVec
 	// requestTelemetryRecorded (ADR-127 PR-B) — counter the
 	// apid gRPC handler (cmd/apid/grpc_server_request_telemetry.go)
-	// increments per outcome. outcome ∈ {inserted, rate_limited,
-	// db_error}. `inserted` is the §12 customer-telemetry-ingest
-	// panel (rate over 5m). `rate_limited` is the per-account
+	// increments per outcome. outcome ∈ {inserted, not_retained,
+	// rate_limited, db_error}. `inserted` is the §12 customer-telemetry-ingest
+	// panel (rate over 5m). `not_retained` is a row whose plan keeps no
+	// request telemetry (usage only). `rate_limited` is the per-account
 	// token-bucket overflow path (DebugTelemetryRequestsPerMinute
 	// exceeded). `db_error` is the per-row INSERT failure path.
 	// The closed label set keeps cardinality bounded.
@@ -670,7 +671,8 @@ type OpsMetrics struct {
 	// counter the gatewayd-public OTel handler increments when
 	// the apid AuthenticateKey RPC rejects the bearer token or
 	// the plan doesn't include telemetry. reason ∈
-	// {unauthenticated, plan_disabled, internal}. Single-registry:
+	// {unauthenticated, forbidden, not_released, plan_disabled,
+	// internal}. Single-registry:
 	// registered on every daemon; only gatewayd-public increments
 	// via IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures *prometheus.CounterVec
@@ -1387,7 +1389,13 @@ type OpsMetrics struct {
 	// are tuned on (ADR 20261029151111). Per node, not per instance, so its
 	// cardinality is bounded by the fleet.
 	instanceCPUMeasuredMillicores *prometheus.HistogramVec
-	instanceInflightReqs          *prometheus.GaugeVec
+	// nodeCPUPressureSomeAvg10, nodeCPUBusyPercent and nodeCPUPressureHeld:
+	// the CPU pressure backstop's readings and the holds this schedd started
+	// (ADR 20261030100950).
+	nodeCPUPressureSomeAvg10 *prometheus.GaugeVec
+	nodeCPUBusyPercent       *prometheus.GaugeVec
+	nodeCPUPressureHeld      *prometheus.CounterVec
+	instanceInflightReqs     *prometheus.GaugeVec
 	// instanceCPUSecondsTotal (issue #279 / PR-B): cumulative
 	// CPU-seconds per (app, node). Counter (not Gauge) because
 	// the value is monotonic between cgroup regressions — the
@@ -1717,6 +1725,10 @@ type OpsMetrics struct {
 	// whose scan found a fixable CRITICAL refused every boot on it with
 	// no metric and no alert (Hunt 12 H12-1).
 	baseScanRefusals *prometheus.CounterVec
+	// baseScanFailuresHeld counts shared-base scans that failed for a
+	// reason other than the bytes or their findings while a clean scan of
+	// the same bytes stayed in force (bug hunt 2026-10-28 H102).
+	baseScanFailuresHeld *prometheus.CounterVec
 	// liveMigrationDecisions: Tier A5 / ADR-066 cross-node
 	// live-instance migration observability. Counter labelled by
 	// outcome ∈ {migrated, conflict, no_headroom, no_eligibility,
@@ -2371,10 +2383,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	frozenCompressTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_compress_total",
-		Help: "Compressions of frozen instances into memory-only swap before memory pressure would park them (ADR-906 decision 6), by outcome.",
-	}, []string{"outcome"})
-	for _, outcome := range FrozenCompressOutcomes {
-		frozenCompressTotal.WithLabelValues(outcome)
+		Help: "Compressions of frozen instances into memory-only swap (ADR-906 decision 6), by what asked for them (pressure: before memory pressure would park them; proactive: a node near its RAM ceiling, ADR 20261031143521) and outcome.",
+	}, []string{"trigger", "outcome"})
+	for _, trigger := range FrozenCompressTriggers {
+		for _, outcome := range FrozenCompressOutcomes {
+			frozenCompressTotal.WithLabelValues(trigger, outcome)
+		}
 	}
 	frozenInstances := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "_frozen_instances",
@@ -3602,6 +3616,18 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help:    "Each measured instance's host CPU millicores per instance stats tick, as measured CPU admission measures it: the larger of its latest CPU and its p95 over the charge window (ADR 20261029151111). 125 is the booking model's assumption for a 1000 mc booking.",
 		Buckets: []float64{1, 2, 5, 10, 15, 25, 50, 125, 250, 500, 1000, 2000},
 	}, []string{"node"})
+	nodeCPUPressureSomeAvg10 := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_cpu_pressure_some_avg10",
+		Help: "A node's tenant-slice CPU pressure: the share of the last 10 s in which a tenant task waited for a CPU, in percent (cpu.pressure some avg10, ADR 20261030100950). Reported for the nodes whose readings this schedd receives.",
+	}, []string{"node"})
+	nodeCPUBusyPercent := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_cpu_busy_percent",
+		Help: "A node's busy share of all its CPUs over the last 10 s, in percent, from /proc/stat (ADR 20261030100950).",
+	}, []string{"node"})
+	nodeCPUPressureHeld := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_node_cpu_pressure_holds_total",
+		Help: "CPU pressure episodes this schedd started on a node: its tenant tasks waited for CPU while its CPUs were nearly all busy, so placement prefers other nodes and admission counts its bookings in full (ADR 20261030100950).",
+	}, []string{"node"})
 	instanceInflightReqs := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_instance_inflight_requests",
 		Help: "Outbound ForwardHTTP count in flight, per (app, node) — sum over live siblings (issue #170 / PR-A). Load rollup.",
@@ -4044,7 +4070,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest,
+		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest, eventDelivery.outcomes,
 		workerRecovery.apps, workerRecovery.replicas, workerRecovery.observedAt,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
@@ -4079,6 +4105,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		staleDeploymentOldestAge, staleDeploymentsReconciled,
 		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
 		nodeMemoryReservedMB, nodeMemoryMeasuredMB, nodeCPUMeasuredMillicores, instanceCPUMeasuredMillicores,
+		nodeCPUPressureSomeAvg10, nodeCPUBusyPercent, nodeCPUPressureHeld,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
@@ -4232,6 +4259,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Instance boots vmmd's base scan gate refused (issue #299), labelled by base (the storage key of the staged base ext4) and reason (critical, sidecar_missing, generation_mismatch, generation_unavailable, incomplete). Any increase means no instance on that base can start until the base is rebuilt or rescanned.",
 	}, []string{"base", "reason"})
 	commonCollectors = append(commonCollectors, baseScanRefusals)
+	baseScanFailuresHeld := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_base_scan_failures_held_total",
+		Help: "Shared-base scans that failed for a reason other than the bytes or their findings (scanner_unavailable, artifact_read, scanner_invalid) while the last clean scan of the same bytes stayed in force, labelled by base (the artifact storage key) and reason. Boots continue; the base is refused only once the hold runs out (api.SharedBaseScanFailureGrace).",
+	}, []string{"base", "reason"})
+	commonCollectors = append(commonCollectors, baseScanFailuresHeld)
 	// ADR-055: per-deploy grype scan metrics. Labelled by
 	// severity (the Grype closed set) — the same vocabulary
 	// imageScanVulns uses, so anyone familiar with the base-ext4
@@ -4354,7 +4386,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// increments via IncrementGatewaydPublicOtelSpansIngested.
 	gatewaydPublicOtelSpansIngested := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_spans_ingested_total",
-		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid}. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
+		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid, buffer_full}. `buffer_full` counts traces rejected because the account or the process already buffers its maximum of traces between flushes. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansIngested)
 	// ADR-127 PR-D: truncation tripwire. Fires once per OTLP
@@ -4374,7 +4406,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_auth_failures_total",
-		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
+		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, forbidden, not_released, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `forbidden` is a key that cannot write traces (no admin, deploy:write or metrics:write scope, or a company key whose holder may no longer deploy there). `not_released` is the tracing capability being off for the account. `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
 	}, []string{"reason"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelAuthFailures)
 	// ADR-127 PR-D: apid-side SpansWriter RPC outcomes. outcome
@@ -5769,6 +5801,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		nodeMemoryMeasuredMB:                 nodeMemoryMeasuredMB,
 		nodeCPUMeasuredMillicores:            nodeCPUMeasuredMillicores,
 		instanceCPUMeasuredMillicores:        instanceCPUMeasuredMillicores,
+		nodeCPUPressureSomeAvg10:             nodeCPUPressureSomeAvg10,
+		nodeCPUBusyPercent:                   nodeCPUBusyPercent,
+		nodeCPUPressureHeld:                  nodeCPUPressureHeld,
 		instanceInflightReqs:                 instanceInflightReqs,
 		instanceCPUSecondsTotal:              instanceCPUSecondsTotal,
 		instanceStatsCollectDur:              instanceStatsCollectDur,
@@ -5801,6 +5836,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		provenanceWrites:                     provenanceWrites,
 		imageScanVulns:                       imageScanVulns,
 		baseScanRefusals:                     baseScanRefusals,
+		baseScanFailuresHeld:                 baseScanFailuresHeld,
 		deployScanDuration:                   deployScanDuration,
 		deployStageDuration:                  deployStageDuration,
 		apiHostingPhaseTotal:                 apiHostingPhaseTotal,
@@ -6448,10 +6484,15 @@ var (
 	// (ADR-1741).
 	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
-		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining"}
+		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining",
+		// ADR 20261031190030: frozen VMs yield memory to admission.
+		"admission", "refused_wake"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
 	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}
+	// FrozenCompressTriggers: pressure is eviction above a node's ceiling,
+	// proactive a node near it (ADR 20261031143521).
+	FrozenCompressTriggers = []string{"pressure", "proactive"}
 )
 
 // FrozenFreezeTotal is the idle-timeout freeze counter for one outcome.
@@ -6503,12 +6544,13 @@ func (m *OpsMetrics) FrozenParksTotal(reason string) prometheus.Counter {
 	return m.frozenParksTotal.WithLabelValues(reason)
 }
 
-// FrozenCompressTotal is the frozen-compression counter for one outcome.
-func (m *OpsMetrics) FrozenCompressTotal(outcome string) prometheus.Counter {
+// FrozenCompressTotal is the frozen-compression counter for one trigger and
+// outcome.
+func (m *OpsMetrics) FrozenCompressTotal(trigger, outcome string) prometheus.Counter {
 	if m == nil {
 		return nil
 	}
-	return m.frozenCompressTotal.WithLabelValues(outcome)
+	return m.frozenCompressTotal.WithLabelValues(trigger, outcome)
 }
 
 // SetFrozenInstances sets the number of instances held frozen.
@@ -8744,6 +8786,15 @@ func (m *OpsMetrics) ObserveBaseScanRefusal(base, reason string) {
 	m.baseScanRefusals.WithLabelValues(base, reason).Inc()
 }
 
+// ObserveBaseScanFailureHeld counts one failed shared-base scan whose last
+// clean verdict stayed in force. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveBaseScanFailureHeld(base, reason string) {
+	if m == nil {
+		return
+	}
+	m.baseScanFailuresHeld.WithLabelValues(base, reason).Inc()
+}
+
 // ObserveDeployScanDuration records one per-deploy grype scan's
 // wall-clock duration in <daemon>_deploy_scan_duration_seconds{app}
 // (issue #464 / ADR-055). Result is the closed set
@@ -9573,6 +9624,35 @@ func (m *OpsMetrics) ReplaceNodeCPUMeasured(byNode map[string]map[string]int) {
 		}
 		m.nodeCPUMeasuredMillicores.WithLabelValues(node).Set(float64(sum))
 	}
+}
+
+// NodeCPUPressure is one node's CPU pressure readings (ADR 20261030100950).
+type NodeCPUPressure struct {
+	SomeAvg10   float64
+	BusyPercent float64
+}
+
+// ReplaceNodeCPUPressure publishes the CPU pressure readings of the nodes
+// whose readings this schedd receives; nodes absent from byNode are dropped.
+func (m *OpsMetrics) ReplaceNodeCPUPressure(byNode map[string]NodeCPUPressure) {
+	if m == nil {
+		return
+	}
+	m.nodeCPUPressureSomeAvg10.Reset()
+	m.nodeCPUBusyPercent.Reset()
+	for node, r := range byNode {
+		m.nodeCPUPressureSomeAvg10.WithLabelValues(node).Set(r.SomeAvg10)
+		m.nodeCPUBusyPercent.WithLabelValues(node).Set(r.BusyPercent)
+	}
+}
+
+// NodeCPUPressureHeld counts a CPU pressure episode this schedd started on
+// node.
+func (m *OpsMetrics) NodeCPUPressureHeld(node string) {
+	if m == nil {
+		return
+	}
+	m.nodeCPUPressureHeld.WithLabelValues(node).Inc()
 }
 
 func (m *OpsMetrics) ReplaceInstanceStats(rows []InstanceStatRow, dur time.Duration) {

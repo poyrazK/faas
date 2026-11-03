@@ -77,6 +77,7 @@ func TestGatewayChecksEnforcePlanCeilings(t *testing.T) {
 		name             string
 		requests, egress int64
 		reserve          int64
+		stored           int64
 		plan             api.ObjectStoragePlanLimits
 		kind             string
 		limit            int64
@@ -86,9 +87,14 @@ func TestGatewayChecksEnforcePlanCeilings(t *testing.T) {
 		{name: "plan egress reached stops a request", egress: 10, plan: api.ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 10}, kind: "egress_bytes", limit: 10},
 		{name: "plan requests stop a request", requests: 2, plan: api.ObjectStoragePlanLimits{MaxMonthlyRequests: 2}, kind: "requests", limit: 2},
 		{name: "usage under plan ceilings admitted", requests: 1, egress: 1, reserve: 1, plan: api.ObjectStoragePlanLimits{MaxMonthlyRequests: 2, MaxMonthlyEgressBytes: 10}},
+		// ADR-20261101214152: above the plan's storage ceiling a body is
+		// refused, a read without one is not.
+		{name: "stored above the plan ceiling stops a body", stored: 60, reserve: 1, plan: api.ObjectStoragePlanLimits{MaxAccountBytes: 50}, kind: "account_bytes", limit: 50},
+		{name: "stored above the plan ceiling keeps a bodiless read", stored: 60, plan: api.ObjectStoragePlanLimits{MaxAccountBytes: 50}},
+		{name: "stored at the plan ceiling keeps downloads", stored: 50, reserve: 1, plan: api.ObjectStoragePlanLimits{MaxAccountBytes: 50}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := planCeilingSnapshot(now, 1, 0, 0, tc.plan)
+			s := planCeilingSnapshot(now, max(tc.stored, 1), 0, 0, tc.plan)
 			s.Buckets[0].GatewayMetricsKnown = true
 			s.Buckets[0].RequestCount, s.Buckets[0].EgressBytes = tc.requests, tc.egress
 			err := state.CheckGatewayRequest(s, "bucket", now, p)

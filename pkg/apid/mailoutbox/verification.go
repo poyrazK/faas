@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -83,7 +82,7 @@ func (s *Service) QueueVerification(ctx context.Context, accountID, expectedEmai
 	}
 	r := q.PlatformMailProducerOutbox{ID: pgID(uuid.NewString()), AccountID: account.ID, Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, RecipientAddress: address,
 		Template: VerificationTemplate, TemplateVersion: 1, ExpiresAt: pgtype.Timestamptz{Time: issued.Time.Add(api.EmailVerificationTTL), Valid: true}, RecoveryID: recovery.RecoveryID,
-		VerificationTokenHash: api.HashToken(raw), VerificationKeyID: s.verification.keyID, VerificationOrigin: s.verification.origin}
+		VerificationTokenHash: storedTokenHash(tagEmailVerification, api.HashToken(raw)), VerificationKeyID: s.verification.keyID, VerificationOrigin: s.verification.origin}
 	sealed, err := secretbox.SealBytes(s.verification.writer.Recipient(), verificationBinding(r), raw, api.EmailVerificationTokenBytes)
 	if err != nil || len(sealed) > api.InternalMailVerificationCipherMaxBytes {
 		return errVerificationPayloadUnavailable
@@ -140,7 +139,7 @@ func credentialPayload(config *credentialConfig, r q.PlatformMailProducerOutbox)
 		return nil, errVerificationPayloadUnavailable
 	}
 	binding, raw, err := secretbox.OpenBytes(reader, r.SealedVerification)
-	if err != nil || binding != verificationBinding(r) || len(raw) != api.EmailVerificationTokenBytes || subtle.ConstantTimeCompare(api.HashToken(raw), r.VerificationTokenHash) != 1 {
+	if err != nil || binding != verificationBinding(r) || len(raw) != api.EmailVerificationTokenBytes || !tokenHashMatches(tagEmailVerification, api.HashToken(raw), r.VerificationTokenHash) {
 		clear(raw)
 		return nil, errVerificationPayloadUnavailable
 	}

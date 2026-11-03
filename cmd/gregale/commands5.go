@@ -318,7 +318,7 @@ func cmdEnv(args []string) int {
 		// in commands_env_diff.go.
 		return envDiff(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
 	// `env list` named no verb (Hunt 14 H14-63).
 	parent, _ := lookupCliCommand("env")
 	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
@@ -959,6 +959,10 @@ func cmdAppScale(slug string, args []string) int {
 		if explicit["per-instance-concurrency"] {
 			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
+		if explicit["min"] {
+			// The policy was copied from the app, so it holds the old floor.
+			policy.MinInstances = *min
+		}
 		req.ScalingPolicy = policy
 	}
 	if explicit["idle"] {
@@ -1171,7 +1175,16 @@ func cmdAppDispatch(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|traffic-status|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
 		return 1
 	}
+	if args[0] == subWait && hasSelectorFlag(args[1:]) {
+		return cmdAppWaitSelected(args[1:])
+	}
 	slug := args[0]
+	if code, ok := cmdAppConditions(slug, args[1:]); ok {
+		return code
+	}
+	if code, ok := cmdAppLabels(slug, args[1:]); ok {
+		return code
+	}
 	if len(args) >= 2 {
 		switch args[1] {
 		case subHealth:
@@ -1263,17 +1276,9 @@ func cmdPlan(args []string) int {
 		return printErr("Could not fetch account", err)
 	}
 	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] && !*yes {
-		if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
+		question := fmt.Sprintf("Downgrade from %s to %s: existing apps may exceed the new plan's limits. Continue?", acct.Plan, target)
+		if code := confirmYesNo(question, "--yes", "the plan downgrade"); code != 0 {
 			return code
-		}
-		fmt.Fprintf(os.Stderr,
-			"Downgrade from %s to %s: existing apps may exceed the new plan's limits. "+
-				"Continue? [y/N] ", acct.Plan, target)
-		var ans string
-		_, _ = fmt.Scanln(&ans)
-		if strings.ToLower(strings.TrimSpace(ans)) != "y" {
-			_, _ = fmt.Fprintln(osStdout, "aborted")
-			return 1
 		}
 	}
 	updated, err := client.ChangePlan(context.Background(), string(target))
@@ -1785,11 +1790,11 @@ func cmdQueueDeadLetter(args []string) int {
 		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--cursor C] [--all]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> [--limit N] [--cursor C] [--all]", "queue")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> --limit N (1 <= N <= 100)", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> --limit N (1 <= N <= 100)", "queue")
 		return 1
 	}
 	slug := pos[0]

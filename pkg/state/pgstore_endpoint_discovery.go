@@ -19,6 +19,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // openAPIDocSelectCols is the canonical column order for every
@@ -101,13 +103,17 @@ func (s *PgStore) GetDeploymentOpenAPIDoc(ctx context.Context, deploymentID, acc
 // "first captured at" view is stable across re-deliveries.
 // updated_at is bumped on every write.
 //
-// The per-account quota gate is upstream — the apid calls
-// CountOpenAPIDocsByAccount before this call.
+// It checks no quota; UpsertDeploymentOpenAPIDocIfUnderQuota counts the
+// billing subject's documents and saves in one step.
 func (s *PgStore) UpsertDeploymentOpenAPIDoc(ctx context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error {
+	return upsertDeploymentOpenAPIDoc(ctx, s.pool, deploymentID, accountID, appID, doc, source, truncated)
+}
+
+func upsertDeploymentOpenAPIDoc(ctx context.Context, db sqlc.DBTX, deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error {
 	// Defence-in-depth: confirm the FK target row exists so the
 	// caller gets a clean ErrNotFound before Postgres raises 23503.
 	var exists string
-	if err := s.pool.QueryRow(ctx,
+	if err := db.QueryRow(ctx,
 		`select id from deployments where id = $1`, deploymentID,
 	).Scan(&exists); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -116,7 +122,7 @@ func (s *PgStore) UpsertDeploymentOpenAPIDoc(ctx context.Context, deploymentID, 
 		return fmt.Errorf("state: openapi doc parent check: %w", err)
 	}
 	sum := sha256.Sum256(doc)
-	_, err := s.pool.Exec(ctx, `
+	_, err := db.Exec(ctx, `
 		insert into deployment_openapi_docs
 		    (deployment_id, account_id, app_id, doc, doc_sha256,
 		     byte_size, source, truncated, captured_at, updated_at)
@@ -157,9 +163,8 @@ func (s *PgStore) DeleteDeploymentOpenAPIDoc(ctx context.Context, deploymentID, 
 }
 
 // CountOpenAPIDocsByAccount returns the number of doc rows the
-// account owns. Drives the per-account quota gate. The count is
-// computed server-side via a SELECT COUNT(*) so the apid doesn't
-// load the full body slice.
+// account owns. The per-account quota counts the app's billing
+// subject instead, in UpsertDeploymentOpenAPIDocIfUnderQuota.
 func (s *PgStore) CountOpenAPIDocsByAccount(ctx context.Context, accountID string) (int, error) {
 	var n int
 	if err := s.pool.QueryRow(ctx,

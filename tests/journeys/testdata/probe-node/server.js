@@ -158,6 +158,11 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { app: "gregale-e2e-probe", version, uptime_ms: Date.now() - started });
     case "/ready":
       return json(res, 200, { ready: true, port: Number(process.env.PORT) || 8080 });
+    case "/cacheable":
+      // The one response a kind=cache edge rule may store: json() sends
+      // no-store, which the edge cache never stores.
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=60" });
+      return res.end(JSON.stringify({ cacheable: true, version }));
     case "/secret": {
       const key = url.searchParams.get("key") || "";
       if (!/^E2E_[A-Z0-9_]{1,40}$/.test(key)) {
@@ -176,6 +181,15 @@ const server = http.createServer((req, res) => {
       const ms = Math.min(Math.max(Number(url.searchParams.get("ms")) || 0, 0), 20000);
       setTimeout(() => json(res, 200, { slept_ms: ms }), ms);
       return;
+    }
+    case "/status": {
+      // Answers with the requested status, so a release can fail its
+      // requests while its health check passes (automatic 5xx rollback).
+      const code = Number(url.searchParams.get("code"));
+      if (!Number.isInteger(code) || code < 200 || code > 599) {
+        return json(res, 400, { error: "code must be an HTTP status from 200 to 599" });
+      }
+      return json(res, code, { status: code, version });
     }
     case "/healthz":
       if (version.startsWith("broken")) {
@@ -248,7 +262,9 @@ const server = http.createServer((req, res) => {
     case "/.well-known/jwks.json": {
       // The realtime journey signs its clients' tokens and publishes the
       // public key here, so this app is the endpoint's OIDC issuer.
-      const jwks = process.env.E2E_REALTIME_JWKS_B64;
+      // The fallback keeps `gregale deploy check` (TestCLITools/doctor_source)
+      // from reporting these realtime-only variables as required (Hunt 31).
+      const jwks = process.env.E2E_REALTIME_JWKS_B64 || "";
       if (!jwks) {
         return json(res, 404, { error: "no realtime JWKS configured" });
       }
@@ -269,7 +285,7 @@ const server = http.createServer((req, res) => {
 // they carry the endpoint's callback token. It grants every channel except
 // those named denied-*, so the realtime journey can see a refusal.
 function realtimeCallback(req, res, path) {
-  const token = process.env.E2E_REALTIME_CALLBACK_TOKEN;
+  const token = process.env.E2E_REALTIME_CALLBACK_TOKEN || "";
   if (req.method !== "POST" || !token || req.headers.authorization !== `Bearer ${token}`) {
     req.resume();
     return json(res, 401, { error: "bad realtime callback token" });

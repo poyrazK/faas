@@ -78,6 +78,26 @@ message WriteSpansSummaryRequest {
   // per-account rate-cap (Stage 4 takes one token per flush
   // window, not per request; PR-B's caps cache carries across).
   string account_id = 3;
+
+  // app_id — optional UUID of the app that produced the spans: the
+  // in-guest bridge's instance, a service binding's or outbound
+  // integration's caller, or an app-bound credential. When set, the
+  // summary merges only into that app's request rows, and the plan that
+  // bounds it is the app's resource owner's. Empty keeps the account-wide
+  // merge older producers rely on.
+  string app_id = 4;
+
+  // org_id — optional UUID of the company organization a customer key is
+  // bound to. When set, the summary merges into rows of that
+  // organization's apps, whoever created them, instead of rows carrying
+  // account_id.
+  string org_id = 5;
+
+  // customer_credential — the spans came from a customer credential held
+  // by account_id (the public OTLP endpoint). A company app's rows are then
+  // merged only while that account may still deploy to the company, so a
+  // creator who left it cannot write its apps' evidence.
+  bool customer_credential = 6;
 }
 
 // WriteSpansSummaryResponse is the per-flush outcome. outcome ∈

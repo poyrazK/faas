@@ -69,8 +69,23 @@ func (r *reaperAccounts) forApp(ctx context.Context, app state.App) (state.Accou
 // liveInstancesForApp is ListInstancesForApp limited to live rows in SQL when
 // the store can. Callers still filter by state: the fallback returns history.
 func (e *Engine) liveInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error) {
-	if reader, ok := e.store.(state.LiveInstancesForAppsReader); ok {
+	return liveInstancesOf(ctx, e.store, appID)
+}
+
+// appInstanceLister reads one app's retained instance history.
+type appInstanceLister interface {
+	ListInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error)
+}
+
+// liveInstancesOf serves every scheduler read that keeps only live rows. An
+// app's history is all its wakes for the retention window (30 days): on
+// production-us the per-app reconciles, wake paths and log streams read it
+// about 700 times a minute at ~20 ms each, for a handful of live rows. Reads
+// that need parked or terminal rows (admission repair, deleted-app cleanup)
+// keep ListInstancesForApp.
+func liveInstancesOf(ctx context.Context, store appInstanceLister, appID string) ([]state.Instance, error) {
+	if reader, ok := store.(state.LiveInstancesForAppsReader); ok {
 		return reader.ListLiveInstancesForApps(ctx, []string{appID})
 	}
-	return e.store.ListInstancesForApp(ctx, appID)
+	return store.ListInstancesForApp(ctx, appID)
 }

@@ -189,6 +189,9 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 			managedpostgres.MeterHistoryByteSeconds,
 			managedpostgres.MeterEgressBytes,
 		},
+		// PostgreSQL 14 reaches upstream end of life in November 2026, and
+		// Neon has no in-place major upgrade.
+		RetiringMajors: []int{14},
 	}
 }
 
