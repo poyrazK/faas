@@ -36773,6 +36773,7 @@ CREATE TABLE public.edge_rule_lists (
     items text[] DEFAULT '{}'::text[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    org_id uuid,
     CONSTRAINT edge_rule_lists_description_check CHECK ((length(description) <= 500)),
     CONSTRAINT edge_rule_lists_kind_check CHECK ((kind = ANY (ARRAY['ip'::text, 'country'::text, 'host'::text, 'string'::text, 'asn'::text]))),
     CONSTRAINT edge_rule_lists_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9_-]{0,63}$'::text))
@@ -92680,6 +92681,14 @@ ALTER TABLE ONLY public.domain_doctor_observations
 
 ALTER TABLE ONLY public.edge_rule_lists
     ADD CONSTRAINT edge_rule_lists_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: edge_rule_lists edge_rule_lists_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_lists
+    ADD CONSTRAINT edge_rule_lists_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE SET NULL;
 
 
 --
