@@ -294,6 +294,7 @@ func wakeAdmissionOutcome(err error) string {
 
 type admissionTicket struct {
 	appID    string
+	owner    string
 	plan     string
 	priority int
 	sequence uint64
@@ -355,15 +356,22 @@ type admissionPreemptSink func(context.Context, admissionPreemption)
 // consume one scheduler slot per incoming request. Priority orders distinct
 // plans, while sequence gives FIFO ordering within a plan.
 type wakeAdmissionQueue struct {
-	mu            sync.Mutex
-	capacity      int
-	queueCap      int
-	running       int
-	nextSequence  uint64
-	waiting       admissionTicketHeap
-	queuedByPlan  map[string]int
-	onDepthChange func(plan string, depth int)
-	onPreempt     admissionPreemptSink
+	mu           sync.Mutex
+	capacity     int
+	queueCap     int
+	running      int
+	nextSequence uint64
+	waiting      admissionTicketHeap
+	queuedByPlan map[string]int
+	// queuedByOwner and runningByOwner hold each account's share (H75): an
+	// account may hold at most api.GatewayWakeAdmissionQueuedPerAccount
+	// waiting and api.GatewayWakeAdmissionRunningPerAccount running
+	// admissions, so one account cannot take every slot. An empty owner
+	// is not limited.
+	queuedByOwner  map[string]int
+	runningByOwner map[string]int
+	onDepthChange  func(plan string, depth int)
+	onPreempt      admissionPreemptSink
 }
 
 func newWakeAdmissionQueue(capacity, queueCap int, onDepthChange func(plan string, depth int)) *wakeAdmissionQueue {
@@ -374,10 +382,12 @@ func newWakeAdmissionQueue(capacity, queueCap int, onDepthChange func(plan strin
 		queueCap = 1
 	}
 	q := &wakeAdmissionQueue{
-		capacity:      capacity,
-		queueCap:      queueCap,
-		queuedByPlan:  make(map[string]int),
-		onDepthChange: onDepthChange,
+		capacity:       capacity,
+		queueCap:       queueCap,
+		queuedByPlan:   make(map[string]int),
+		queuedByOwner:  make(map[string]int),
+		runningByOwner: make(map[string]int),
+		onDepthChange:  onDepthChange,
 	}
 	heap.Init(&q.waiting)
 	return q
@@ -404,7 +414,7 @@ func (q *wakeAdmissionQueue) setPreemptSink(fn admissionPreemptSink) {
 // actual time spent waiting for that slot.
 //
 //nolint:contextcheck // the queue inherits the caller context; a nil context is normalized for test/adapter seams.
-func (q *wakeAdmissionQueue) Do(ctx context.Context, appID, plan string, policy WakeAdmissionPolicy, fn func(context.Context) error) (bool, time.Duration, error) {
+func (q *wakeAdmissionQueue) Do(ctx context.Context, appID, owner, plan string, policy WakeAdmissionPolicy, fn func(context.Context) error) (bool, time.Duration, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -414,19 +424,25 @@ func (q *wakeAdmissionQueue) Do(ctx context.Context, appID, plan string, policy 
 	policy = policy.normalized(q.capacity, api.GatewayWakeAdmissionPaidMaxWait)
 
 	q.mu.Lock()
-	if q.running < q.capacity && q.waiting.Len() == 0 {
-		q.running++
+	if q.running < q.capacity && q.waiting.Len() == 0 && q.ownerMayRunLocked(owner) {
+		q.startLocked(owner)
 		q.mu.Unlock()
-		return false, 0, q.run(ctx, fn)
+		return false, 0, q.run(ctx, owner, fn)
 	}
 	if q.waiting.Len() >= q.queueCap {
 		depth := q.waiting.Len()
 		q.mu.Unlock()
 		return false, 0, &WakeAdmissionQueueFullError{Depth: depth, Limit: q.queueCap, RetryAfter: policy.MaxWait}
 	}
+	if owner != "" && q.queuedByOwner[owner] >= api.GatewayWakeAdmissionQueuedPerAccount {
+		depth := q.queuedByOwner[owner]
+		q.mu.Unlock()
+		return false, 0, &WakeAdmissionQueueFullError{Depth: depth, Limit: api.GatewayWakeAdmissionQueuedPerAccount, RetryAfter: policy.MaxWait}
+	}
 
 	ticket := &admissionTicket{
 		appID:    appID,
+		owner:    owner,
 		plan:     plan,
 		priority: policy.Priority,
 		sequence: q.nextSequence,
@@ -445,7 +461,13 @@ func (q *wakeAdmissionQueue) Do(ctx context.Context, appID, plan string, policy 
 	}
 	heap.Push(&q.waiting, ticket)
 	q.queuedByPlan[plan]++
+	if owner != "" {
+		q.queuedByOwner[owner]++
+	}
 	updates := []admissionDepthUpdate{{plan: plan, depth: q.queuedByPlan[plan]}}
+	// A free slot may be idle because every waiting ticket's account is at
+	// its running share; this ticket can take it.
+	updates = append(updates, q.dispatchLocked()...)
 	q.mu.Unlock()
 	q.notifyDepth(updates)
 	q.notifyPreempt(ctx, preemptions)
@@ -455,7 +477,7 @@ func (q *wakeAdmissionQueue) Do(ctx context.Context, appID, plan string, policy 
 	defer timer.Stop()
 	select {
 	case <-ticket.start:
-		return true, time.Since(start), q.run(ctx, fn)
+		return true, time.Since(start), q.run(ctx, owner, fn)
 	case <-ctx.Done():
 		if q.cancel(ticket) {
 			return true, time.Since(start), ctx.Err()
@@ -464,7 +486,7 @@ func (q *wakeAdmissionQueue) Do(ctx context.Context, appID, plan string, policy 
 		// Consume the start signal so this goroutine owns and releases
 		// the slot; do not run customer work after cancellation.
 		<-ticket.start
-		q.release()
+		q.release(owner)
 		return true, time.Since(start), ctx.Err()
 	case <-timer.C:
 		timeout := &WakeAdmissionQueueWaitTimeoutError{RetryAfter: policy.MaxWait}
@@ -472,13 +494,13 @@ func (q *wakeAdmissionQueue) Do(ctx context.Context, appID, plan string, policy 
 			return true, time.Since(start), timeout
 		}
 		<-ticket.start
-		q.release()
+		q.release(owner)
 		return true, time.Since(start), timeout
 	}
 }
 
-func (q *wakeAdmissionQueue) run(ctx context.Context, fn func(context.Context) error) error {
-	defer q.release()
+func (q *wakeAdmissionQueue) run(ctx context.Context, owner string, fn func(context.Context) error) error {
+	defer q.release(owner)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -497,6 +519,7 @@ func (q *wakeAdmissionQueue) cancel(ticket *admissionTicket) bool {
 	}
 	ticket.removed = true
 	heap.Remove(&q.waiting, ticket.index)
+	q.unqueueOwnerLocked(ticket.owner)
 	q.queuedByPlan[ticket.plan]--
 	if q.queuedByPlan[ticket.plan] <= 0 {
 		delete(q.queuedByPlan, ticket.plan)
@@ -509,25 +532,63 @@ func (q *wakeAdmissionQueue) cancel(ticket *admissionTicket) bool {
 	return true
 }
 
-func (q *wakeAdmissionQueue) release() {
+func (q *wakeAdmissionQueue) release(owner string) {
 	q.mu.Lock()
 	if q.running > 0 {
 		q.running--
+	}
+	if owner != "" {
+		if q.runningByOwner[owner]--; q.runningByOwner[owner] <= 0 {
+			delete(q.runningByOwner, owner)
+		}
 	}
 	updates := q.dispatchLocked()
 	q.mu.Unlock()
 	q.notifyDepth(updates)
 }
 
+func (q *wakeAdmissionQueue) ownerMayRunLocked(owner string) bool {
+	return owner == "" || q.runningByOwner[owner] < api.GatewayWakeAdmissionRunningPerAccount
+}
+
+func (q *wakeAdmissionQueue) startLocked(owner string) {
+	q.running++
+	if owner != "" {
+		q.runningByOwner[owner]++
+	}
+}
+
+func (q *wakeAdmissionQueue) unqueueOwnerLocked(owner string) {
+	if owner == "" {
+		return
+	}
+	if q.queuedByOwner[owner]--; q.queuedByOwner[owner] <= 0 {
+		delete(q.queuedByOwner, owner)
+	}
+}
+
+// dispatchLocked starts waiting tickets in priority order while slots are
+// free, skipping (and keeping) tickets whose account is at its running share.
 func (q *wakeAdmissionQueue) dispatchLocked() []admissionDepthUpdate {
 	var updates []admissionDepthUpdate
+	var heldBack []*admissionTicket
+	defer func() {
+		for _, ticket := range heldBack {
+			heap.Push(&q.waiting, ticket)
+		}
+	}()
 	for q.running < q.capacity && q.waiting.Len() > 0 {
 		ticket := heap.Pop(&q.waiting).(*admissionTicket)
 		if ticket.removed {
 			continue
 		}
+		if !q.ownerMayRunLocked(ticket.owner) {
+			heldBack = append(heldBack, ticket)
+			continue
+		}
 		ticket.started = true
-		q.running++
+		q.startLocked(ticket.owner)
+		q.unqueueOwnerLocked(ticket.owner)
 		q.queuedByPlan[ticket.plan]--
 		if q.queuedByPlan[ticket.plan] <= 0 {
 			delete(q.queuedByPlan, ticket.plan)

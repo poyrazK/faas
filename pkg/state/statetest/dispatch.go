@@ -27,6 +27,8 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"EvaluateAutomationFailurePolicies":      true,
+	"GetAutomationFailurePolicy":             true,
 	"DefaultCustomDomain":                    true,
 	"DefaultCustomDomains":                   true,
 	"DeploymentWorkerDrainStatus":            true,
@@ -290,6 +292,24 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) EvaluateAutomationFailurePolicies(ctx context.Context, owner, after string, limit int, now time.Time) (string, error) {
+	if o, ok := s.over.(interface {
+		EvaluateAutomationFailurePolicies(context.Context, string, string, int, time.Time) (string, error)
+	}); ok {
+		return o.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+	}
+	return s.MemStore.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+}
+
+func (s *Mem) GetAutomationFailurePolicy(ctx context.Context, appID, name string) (api.AutomationFailurePolicyResponse, error) {
+	if o, ok := s.over.(interface {
+		GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error)
+	}); ok {
+		return o.GetAutomationFailurePolicy(ctx, appID, name)
+	}
+	return s.MemStore.GetAutomationFailurePolicy(ctx, appID, name)
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {

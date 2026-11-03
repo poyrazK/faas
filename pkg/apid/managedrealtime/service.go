@@ -53,8 +53,10 @@ type Service struct {
 	AccessPreviewEnabled  bool
 	TicketsPreviewEnabled bool
 	claimWaiters          claimWaiters
-	AuthLimiter           *middleware.Limiter
-	Host                  Host
+	// unsealed caches endpoint credentials for the endpoint reconcile.
+	unsealed    unsealedCredentials
+	AuthLimiter *middleware.Limiter
+	Host        Host
 
 	// Owner routes customer-facing connection operations to the node that
 	// owns a live socket; the local Unix client is the same-box fast path.

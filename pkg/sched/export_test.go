@@ -119,7 +119,6 @@ var DecodeKafkaConfig = decodeKafkaConfig
 var DecodeNATSConfig = decodeNATSConfig
 var DecodeOperationResult = decodeOperationResult
 var DecodeRedisConfig = decodeRedisConfig
-var DecodeSQSConfig = decodeSQSConfig
 var EnableWarmSnapshot = enableWarmSnapshot
 var EnqueueScopedDemand = enqueueScopedDemand
 var EnvironmentGitOpsJobBindingIntentMatches = environmentGitOpsJobBindingIntentMatches
@@ -604,6 +603,7 @@ func (r *Loop) RunRetention(p0 context.Context)                                 
 func (r *Loop) RunScaleUp(p0 context.Context)                                   { r.runScaleUp(p0) }
 func (r *Loop) RunServiceRecovery(p0 context.Context)                           { r.runServiceRecovery(p0) }
 func (r *Loop) RunWorkflowRetention(p0 context.Context)                         { r.runWorkflowRetention(p0) }
+func (r *Loop) DispatchWorkflowRetention(p0 context.Context)                    { r.dispatchWorkflowRetention(p0) }
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }
@@ -1247,4 +1247,21 @@ const (
 // FailInterruptedFireNowRequests runs the interrupted manual-run sweep once.
 func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
 	r.failInterruptedFireNowRequests(ctx)
+}
+
+// RealtimeIdleDelays observes claims of the given sizes on a fresh realtime
+// poller and returns the idle delay after each.
+func RealtimeIdleDelays(sizes []int) []time.Duration {
+	p := &realtimePoller{}
+	now := time.Unix(1_000, 0)
+	out := make([]time.Duration, 0, len(sizes))
+	for _, n := range sizes {
+		batch := state.RealtimeConsumerGroupBatch{Claims: make([]state.RealtimeConsumerGroupClaim, n)}
+		p.observeClaim(batch, now)
+		if p.idle(now) != (p.idleDelay > 0) || p.idle(now.Add(p.idleDelay)) {
+			panic("idle window does not match the delay")
+		}
+		out = append(out, p.idleDelay)
+	}
+	return out
 }

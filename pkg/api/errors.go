@@ -703,6 +703,9 @@ const (
 	// CodeAPIRateLimited is the 429 an account gets past its plan's
 	// APIRequestsPerMinute.
 	CodeAPIRateLimited = "api_rate_limited"
+	// CodeColdWakeRateLimited is the 429 a client gets past the number of
+	// different parked apps it may wake through one gateway a minute (H75).
+	CodeColdWakeRateLimited = "cold_wake_rate_limited"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
@@ -3224,6 +3227,20 @@ func ErrAPIRateLimited(limit, retryAfterS int) *Problem {
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithDocs(docsBase + "/errors#api_rate_limited")
+}
+
+// ErrColdWakeRateLimited refuses a request that would wake one more parked
+// app than its client network may wake through this gateway a minute.
+func ErrColdWakeRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeColdWakeRateLimited,
+		"Too many app wakes",
+		fmt.Sprintf("This network may wake %d different parked apps a minute. Retry after %d seconds.", limit, retryAfterS)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/errors#cold_wake_rate_limited")
 }
 
 // DetailServerFailure is the detail of a 5xx problem whose cause is an

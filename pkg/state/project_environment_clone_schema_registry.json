@@ -12176,7 +12176,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12198,7 +12199,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12220,7 +12222,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12257,7 +12260,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12283,7 +12287,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -12314,7 +12319,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "strategy": "derived"
     }
   },
   {
@@ -12363,7 +12369,6 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "data_checkpoint_unavailable",
       "live": [
         {
           "column": "state",
@@ -12719,7 +12724,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "strategy": "derived"
     }
   },
   {
@@ -13000,7 +13006,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -13027,7 +13034,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "unavailable": "object_bucket_setting_unavailable"
     }
   },
   {
@@ -13050,7 +13058,8 @@
           "object_buckets",
           "id"
         ]
-      ]
+      ],
+      "strategy": "derived"
     }
   },
   {
@@ -19170,6 +19179,18 @@
       "last_claimed_at",
       "platform_tenant_id",
       "scope_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_event_archive",
+    "columns": [
+      "app_id",
+      "event_name",
+      "id",
+      "payload",
+      "received_at",
+      "run_id"
     ],
     "kind": "operational"
   },

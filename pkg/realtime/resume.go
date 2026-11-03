@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -1267,13 +1268,47 @@ func (m *Manager) markResumeSubscriptionResync(c *connection, channel string, su
 // membership before sending. If another subscribe or unsubscribe superseded
 // this transition while it waited, the newer state is reported by that
 // operation instead.
+// routeReportLock serializes one channel's route reports.
+type routeReportLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockRouteReport locks key's route reports and returns the unlock.
+func (m *Manager) lockRouteReport(key channelKey) func() {
+	m.routeReportMu.Lock()
+	if m.routeReportLocks == nil {
+		m.routeReportLocks = make(map[channelKey]*routeReportLock)
+	}
+	lock := m.routeReportLocks[key]
+	if lock == nil {
+		lock = &routeReportLock{}
+		m.routeReportLocks[key] = lock
+	}
+	lock.refs++
+	m.routeReportMu.Unlock()
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		m.routeReportMu.Lock()
+		if lock.refs--; lock.refs == 0 {
+			delete(m.routeReportLocks, key)
+		}
+		m.routeReportMu.Unlock()
+	}
+}
+
 func (m *Manager) reportChannelRoute(ctx context.Context, key channelKey, subscribed bool) {
 	reporter := m.cfg.ChannelRouteReporter
 	if reporter == nil {
 		return
 	}
-	m.routeReportMu.Lock()
-	defer m.routeReportMu.Unlock()
+	// Reports of one channel stay in order; different channels report in
+	// parallel. A node-wide lock held across the apid call let a node open
+	// only about one new channel per control-plane round trip
+	// (ADR-1323, amendment of 2026-11-03).
+	unlock := m.lockRouteReport(key)
+	defer unlock()
 	m.mu.RLock()
 	current := m.hasChannelSubscribersLocked(key)
 	m.mu.RUnlock()

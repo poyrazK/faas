@@ -212,7 +212,7 @@ func TestServiceDeploymentWakeUsesGatewayAdmissionQueue(t *testing.T) {
 	t.Cleanup(unblock)
 	holderResult := make(chan error, 1)
 	go func() {
-		_, _, err := h.admissionQueue.Do(t.Context(), "holder", "pro", WakeAdmissionPolicyForPlan(api.PlanPro), func(ctx context.Context) error {
+		_, _, err := h.admissionQueue.Do(t.Context(), "holder", "", "pro", WakeAdmissionPolicyForPlan(api.PlanPro), func(ctx context.Context) error {
 			close(holderStarted)
 			select {
 			case <-holderRelease:

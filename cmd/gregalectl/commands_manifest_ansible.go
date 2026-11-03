@@ -798,7 +798,7 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 		if edge.NoFront() {
 			fmt.Fprintf(&b, "faas_edge_public_front: %q\n", edge.Front)
 			b.WriteString("faas_edge_client_limits: true\n")
-			fmt.Fprintf(&b, "faas_public_entry_addrs: [%s]\n", quotedYAMLList([]string{host.EntryIPv4}))
+			fmt.Fprintf(&b, "faas_public_entry_addrs: [%s]\n", quotedYAMLList([]string{host.EntryAddress()}))
 		}
 	}
 	return b.String()
@@ -834,7 +834,7 @@ func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
 	for _, h := range hosts {
 		addr := h.PublicIPv4
 		if edge.NoFront() {
-			addr = h.EntryIPv4
+			addr = h.EntryAddress()
 		}
 		if h.Role == roleComputeOnly && addr != "" {
 			addresses = append(addresses, canonicalComputeNodeName(h.Name, roleTemplating.Role(h.Role))+"="+addr)

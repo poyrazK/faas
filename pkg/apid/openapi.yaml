@@ -13338,9 +13338,11 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        Consumes a 24-hour, single-use verification token and marks the
-        account email verified. This endpoint does not create a session;
-        the returned HTML page prompts the customer to sign in again.
+        A browser (Accept text/html) gets an HTML page whose button posts the
+        token back, and nothing is consumed, so a mail scanner that prefetches
+        the link cannot use up the token. Any other client consumes the
+        24-hour, single-use token here and the account email is marked
+        verified. No session is created.
       parameters:
         - in: query
           name: token
@@ -13349,12 +13351,41 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: The confirmation page, or for a non-browser client the verified-email page.
           content:
             text/html:
               schema: { type: string }
         '410':
           description: Verification link expired, invalid, or already used.
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [auth]
+      operationId: confirmEmailVerification
+      summary: Confirm an email verification from its confirmation page.
+      description: |
+        The confirmation page's form posts the token here. It is consumed and
+        the account email marked verified; the HTML answer asks the customer
+        to sign in again rather than creating a session.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: The verification token from the confirmation page's form.
+      responses:
+        '200':
+          description: Email verified; HTML sign-in prompt.
+          content:
+            text/html:
+              schema: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '410':
+          description: The posted token is expired, unknown, or was already used.
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/reset:
@@ -35348,9 +35379,13 @@ paths:
       tags: [workflows]
       operationId: injectPlatformTenantSelfWorkflowEvent
       summary: Deliver an external event to this tenant's waiting workflow run.
-      description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404.
+      description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404. A matching retained event may be retried after the run finishes; reusing its key with different content conflicts.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: Preserve this key and event content when retrying a retained tenant workflow event.
       requestBody:
         required: true
         content:
@@ -35367,7 +35402,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '409':
-          description: "code: workflow_not_running — only active runs accept events."
+          description: "code: workflow_not_running for a new event on an inactive tenant run, or conflict when a retained event key has different content."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -35869,6 +35904,13 @@ paths:
       tags: [workflows]
       operationId: injectWorkflowEvent
       summary: Deliver an external event to a waiting workflow run.
+      description: A matching retained event may be retried after the run finishes. Reusing an event key with different content conflicts.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: Reuse the same key and event content to retry while the event is retained.
       requestBody:
         required: true
         content:
@@ -35884,7 +35926,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '409':
-          description: "code: workflow_not_running — only running or awaiting_event runs accept events."
+          description: "code: workflow_not_running for a new event on an inactive run, or conflict when a retained event key has different content."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }

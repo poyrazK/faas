@@ -745,6 +745,29 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
 }
 func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) {
+	// SAFE-RELEASES-B fan-out: when the rule's action column is
+	// anything other than the 'webhook' default (or empty), route
+	// the same fire to the in-process ActionExecutor. Both paths
+	// are independent — a webhook 5xx never blocks the rollback,
+	// and a rollback failure never blocks the webhook.
+	//
+	// The action runs before the webhook (bug hunt H78): after it, a
+	// receiver that never answered held the rollback for the whole
+	// webhook budget, retries included, and a webhook secret that
+	// failed to open skipped the rollback entirely.
+	//
+	// The action is gated by the cool-down bucket that
+	// ClaimAlertFire enforces: a duplicate inside the cool-down
+	// window already returned at the `if !won` branch.
+	//
+	// Serialised behind dispatchMu because the ActionDispatcher's
+	// Execute path may share connection state with the webhook
+	// dispatcher in the future; today the lock is just
+	// precautionary.
+	e.dispatchMu.Lock()
+	e.runAction(ctx, rule, deliveryID, observed, now, stats)
+	e.dispatchMu.Unlock()
+
 	// Unseal the webhook secret. A nil identity or a namespace
 	// mismatch is a hard skip — we never dispatch without a valid
 	// signature, and we never re-open a future-namespace blob.
@@ -809,26 +832,6 @@ func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deli
 	cancel()
 
 	e.recordResult(ctx, rule, deliveryID, observed, result, now, stats)
-
-	// SAFE-RELEASES-B fan-out: when the rule's action column is
-	// anything other than the 'webhook' default (or empty), route
-	// the same fire to the in-process ActionExecutor. Both paths
-	// are independent — a webhook 5xx never blocks the rollback,
-	// and a rollback failure never blocks the webhook.
-	//
-	// The action is gated by the cool-down bucket that
-	// ClaimAlertFire enforces above: the webhook path consumes
-	// the same idempotency key, so a duplicate inside the
-	// cool-down window would have already early-returned at the
-	// `if !won` branch and never reached this code.
-	//
-	// Serialised behind dispatchMu because the ActionDispatcher's
-	// Execute path may share connection state with the webhook
-	// dispatcher in the future; today the lock is just
-	// precautionary.
-	e.dispatchMu.Lock()
-	e.runAction(ctx, rule, deliveryID, observed, now, stats)
-	e.dispatchMu.Unlock()
 }
 
 // openIdentities returns the host identities that open webhook secrets,
