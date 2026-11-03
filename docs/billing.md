@@ -14,7 +14,7 @@ Free accounts have a zero monthly charge and are subject to the published limits
 
 ## Changing plan
 
-`gregale plan PLAN` (or `PATCH /v1/account/plan`) changes plan. Your first paid plan starts with a hosted checkout. On an existing subscription an upgrade happens in place: the billing provider charges the prorated difference for the rest of the billing period to the card on the subscription, and the new plan applies once that charge succeeds. If the charge is declined nothing changes; update the card in the billing portal and try again. A downgrade applies at the end of the billing period, and is refused until your apps, databases and stored objects fit the lower plan. The billing portal shows invoices and payment methods but does not switch plans.
+`gregale billing plan PLAN` (or `PATCH /v1/account/plan`) changes plan. Your first paid plan starts with a hosted checkout. On an existing subscription an upgrade happens in place: the billing provider charges the prorated difference for the rest of the billing period to the card on the subscription, and the new plan applies once that charge succeeds. If the charge is declined nothing changes; update the card in the billing portal and try again. A downgrade applies at the end of the billing period, and is refused until your apps, databases and stored objects fit the lower plan. The billing portal shows invoices and payment methods but does not switch plans.
 
 If a plan ends without a downgrade, for example when a subscription lapses, its limits still bind: see [after a plan ends or shrinks](plans.md#what-each-limit-means).
 

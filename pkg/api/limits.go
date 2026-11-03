@@ -9576,6 +9576,12 @@ const (
 	GatewayFailoverRetryBudgetBurst     = 10
 	GatewayFailoverMaxExtraNodes        = 2
 	GatewayFailoverMaxRefusalBodyBytes  = 64 << 10 // 64 KiB
+
+	// EdgeDNSOnlyAddrsPerNameMax bounds the DNS-only address records
+	// edgednsd keeps behind one app host name (ADR-20261103163954 §1): an
+	// answer with that many A and AAAA records stays well under the
+	// 1,232-byte EDNS size resolvers use. A larger cell needs pools.
+	EdgeDNSOnlyAddrsPerNameMax = 16
 )
 
 // EdgeWAFInlineSlots is the number of in-path WAF check slots for a
@@ -17163,6 +17169,17 @@ const (
 	DataRepairPurgePlanTTLSeconds      = 15 * 60
 	DataRepairPurgeTimeoutSeconds      = 10
 	DataRepairPurgeLockTimeoutMS       = 2000
+)
+
+// HTTP/2 on a compute edge that serves clients directly (ADR-20261103163954
+// §2) gets explicit limits rather than library defaults: concurrent streams
+// per connection, the largest frame it reads (16 KiB, the protocol's
+// minimum) and the HPACK table in each direction. The header list is capped
+// by the server's MaxHeaderBytes, as an HTTP/1.1 header is.
+const (
+	EdgeHTTP2MaxConcurrentStreams = 100
+	EdgeHTTP2MaxReadFrameSize     = 16 << 10
+	EdgeHTTP2MaxHeaderTableSize   = 4096
 )
 
 // Resource labels (ADR-20261031100025) use Kubernetes label syntax and are the

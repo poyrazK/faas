@@ -21,6 +21,11 @@ const RecordComment = "edgednsd (ADR-20261102081618)"
 // CloudflareAPI is Cloudflare's v4 API.
 const CloudflareAPI = "https://api.cloudflare.com/client/v4"
 
+// DNSOnlyTTL is a DNS-only record's TTL in seconds, the shortest Cloudflare
+// allows below Enterprise (ADR-20261103163954 §1). Proxied records take TTL
+// 1, Cloudflare's automatic TTL.
+const DNSOnlyTTL = 60
+
 // Cloudflare is DNS over Cloudflare's API, with a token that holds
 // Zone > DNS: Edit on the managed zones and nothing else.
 type Cloudflare struct {
@@ -41,6 +46,7 @@ type cfRecord struct {
 	ID      string `json:"id"`
 	Type    string `json:"type"`
 	Content string `json:"content"`
+	Proxied bool   `json:"proxied"`
 }
 
 // Records returns name's A and AAAA records, and whether a CNAME holds it.
@@ -59,7 +65,7 @@ func (c *Cloudflare) Records(ctx context.Context, name Name) ([]Record, bool, er
 			if err != nil {
 				return nil, false, fmt.Errorf("edgedns: record %s has content %q: %w", r.ID, r.Content, err)
 			}
-			records = append(records, Record{ID: r.ID, Addr: addr})
+			records = append(records, Record{ID: r.ID, Addr: addr, DNSOnly: !r.Proxied})
 		case "CNAME":
 			cname = true
 		}
@@ -67,14 +73,30 @@ func (c *Cloudflare) Records(ctx context.Context, name Name) ([]Record, bool, er
 	return records, cname, nil
 }
 
-// Create adds a proxied address record for addr with an automatic TTL.
+// Create adds an address record for addr in name's mode.
 func (c *Cloudflare) Create(ctx context.Context, name Name, addr netip.Addr) error {
 	kind := "A"
 	if addr.Is6() {
 		kind = "AAAA"
 	}
-	body := map[string]any{"type": kind, "name": name.Host, "content": addr.String(), "proxied": true, "ttl": 1, "comment": RecordComment}
+	body := map[string]any{"type": kind, "name": name.Host, "content": addr.String(), "comment": RecordComment}
+	setMode(body, name)
 	return c.do(ctx, http.MethodPost, "/zones/"+url.PathEscape(name.ZoneID)+"/dns_records", body, nil)
+}
+
+// SetMode switches one record to name's mode, with that mode's TTL.
+func (c *Cloudflare) SetMode(ctx context.Context, name Name, id string) error {
+	body := map[string]any{}
+	setMode(body, name)
+	return c.do(ctx, http.MethodPatch, "/zones/"+url.PathEscape(name.ZoneID)+"/dns_records/"+url.PathEscape(id), body, nil)
+}
+
+func setMode(body map[string]any, name Name) {
+	body["proxied"] = !name.DNSOnly
+	body["ttl"] = 1
+	if name.DNSOnly {
+		body["ttl"] = DNSOnlyTTL
+	}
 }
 
 // Delete removes one record.

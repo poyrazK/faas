@@ -29,7 +29,10 @@ table inet faas {
     iifname "br-tenants" tcp dport { 80,443 } accept
     iifname "br-tenants" meta l4proto { icmp, ipv6-icmp } accept
     iifname "br-tenants" drop
-{% if faas_cloudflare_origin_only | default(false) and (faas_custom_domain_tls | default(false) | string | lower) not in ["true", "yes", "on", "1"] %}    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary
+{% if faas_public_entry_addrs | default([]) %}{% for addr in faas_public_entry_addrs %}    {{ 'ip6' if ':' in addr else 'ip' }} daddr {{ addr }} tcp dport 443 accept comment "public entry"
+{% endfor %}{% for addr in faas_public_entry_addrs %}    {{ 'ip6' if ':' in addr else 'ip' }} daddr {{ addr }} drop comment "public entry carries 443 only"
+{% endfor %}    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary
+{% elif faas_cloudflare_origin_only | default(false) and (faas_custom_domain_tls | default(false) | string | lower) not in ["true", "yes", "on", "1"] %}    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary
 {% for cidr in faas_cloudflare_ipv4_cidrs %}    ip saddr {{ cidr }} tcp dport { 80,443 } accept comment "gateway via Cloudflare"
 {% endfor %}{% for cidr in faas_cloudflare_ipv6_cidrs %}    ip6 saddr {{ cidr }} tcp dport { 80,443 } accept comment "gateway via Cloudflare"
 {% endfor %}{% elif (faas_custom_domain_tls | default(false) | string | lower) in ["true", "yes", "on", "1"] %}    tcp dport { 22,80,443 } accept     # sshd + public edge; customer domains connect directly (ADR-520), platform hosts still answer Cloudflare only at Caddy

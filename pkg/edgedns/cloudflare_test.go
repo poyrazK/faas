@@ -65,6 +65,67 @@ func TestCloudflareReadsCreatesAndDeletesRecords(t *testing.T) {
 	}
 }
 
+func TestCloudflareWritesDNSOnlyRecordsAndSwitchesModes(t *testing.T) {
+	var calls []string
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"success":true,"result":[
+				{"id":"r1","type":"A","content":"203.0.113.1","proxied":true},
+				{"id":"r2","type":"A","content":"203.0.113.2","proxied":false}]}`)
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		_, _ = io.WriteString(w, `{"success":true,"result":{}}`)
+	}))
+	defer srv.Close()
+	cf, err := edgedns.NewCloudflare(srv.URL, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	pilot := edgedns.Name{ZoneID: "zone-1", Host: "pilot.gregale.dev", DNSOnly: true}
+	records, _, err := cf.Records(ctx, pilot)
+	if err != nil || len(records) != 2 || records[0].DNSOnly || !records[1].DNSOnly {
+		t.Fatalf("Records = %+v %v, want r1 proxied and r2 DNS-only", records, err)
+	}
+	if err := cf.Create(ctx, pilot, addrA); err != nil {
+		t.Fatal(err)
+	}
+	if err := cf.SetMode(ctx, pilot, "r1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cf.SetMode(ctx, wildcard, "r2"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"GET /zones/zone-1/dns_records?name=pilot.gregale.dev&per_page=100",
+		"POST /zones/zone-1/dns_records",
+		"PATCH /zones/zone-1/dns_records/r1",
+		"PATCH /zones/zone-1/dns_records/r2",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+	for i, wantBody := range []map[string]any{
+		{"proxied": false, "ttl": float64(edgedns.DNSOnlyTTL)},
+		{"proxied": false, "ttl": float64(edgedns.DNSOnlyTTL)},
+		{"proxied": true, "ttl": float64(1)},
+	} {
+		for k, v := range wantBody {
+			if bodies[i][k] != v {
+				t.Fatalf("write %d body = %v, want %s=%v", i, bodies[i], k, v)
+			}
+		}
+	}
+	if len(bodies[1]) != 2 {
+		t.Fatalf("the mode switch sent %v, want only proxied and ttl", bodies[1])
+	}
+}
+
 func TestCloudflareReportsACNAMEAndErrorsWithoutTheToken(t *testing.T) {
 	cnameOK := true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
