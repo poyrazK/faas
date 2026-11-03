@@ -159,7 +159,7 @@ func (m *management) completeEnvironment(ctx context.Context, field string, args
 		}
 	} else {
 		var err error
-		grants, err = discoverEnvironments(ctx, m.client)
+		grants, err = discoverEnvironments(ctx, m.client, m.opts.Org)
 		if err != nil {
 			return nil, false, err
 		}
@@ -238,7 +238,7 @@ func (m *management) completeApps(ctx context.Context, args map[string]string) (
 			return nil, false, invalid("identity_changed", "completion environment identity changed")
 		}
 	} else {
-		apps, err := m.client.ListApps(ctx)
+		apps, err := listApps(ctx, m.client, m.opts.Org)
 		if err != nil {
 			return nil, false, err
 		}

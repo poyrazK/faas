@@ -16674,10 +16674,11 @@ List or revoke the agents connected to your account
 
 List connected agents: hosted MCP sign-ins and agent keys
 
-`gregale mcp connection list [--socket <PATH>] [--limit <N>] [--offset <N>]`
+`gregale mcp connection list [--org <SLUG>] [--socket <PATH>] [--limit <N>] [--offset <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--org <SLUG>` | an organization&#39;s agents, for its owners and admins |  |
 | `--socket <PATH>` | owner-protected management control socket (operators) |  |
 | `--limit <N>` | page size from 1 to 100 (with --socket, default 20) |  |
 | `--offset <N>` | non-negative page offset (with --socket) |  |
@@ -16694,11 +16695,12 @@ With --socket, an operator lists a bridge&#39;s grants through its local admin s
 
 Revoke one connected agent, or all of them
 
-`gregale mcp connection revoke [--all] [--socket <PATH>] [--grant-id <ID>] [<id>]`
+`gregale mcp connection revoke [--all] [--org <SLUG>] [--socket <PATH>] [--grant-id <ID>] [<id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--all` | revoke every agent connected to the account |  |
+| `--org <SLUG>` | an organization&#39;s agents, for its owners and admins |  |
 | `--socket <PATH>` | owner-protected management control socket (operators) |  |
 | `--grant-id <ID>` | exact active bridge grant ID to revoke (with --socket) |  |
 
@@ -18515,6 +18517,51 @@ Show account status
 Manage orgs, members and invitations
 
 `gregale org [<subcommand>]`
+
+### org agent
+
+policy
+
+#### org agent policy
+
+Show or set whether agents may act in the org
+
+`gregale org agent policy <get|set>`
+
+The policy also caps the capabilities agents may hold beyond inspection.
+
+##### org agent policy get
+
+Show the org&#39;s agent policy
+
+`gregale org agent policy get --org <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+##### org agent policy set
+
+Allow or deny agents and cap their capabilities
+
+`gregale org agent policy set --org <SLUG> --agents <allow|deny> [--capabilities <LIST>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--agents <allow|deny>` | allow or deny agents in the org | required |
+| `--capabilities <LIST>` | comma-separated capabilities agents may get: deploy:write, secrets:request, storage:manage, postgres:manage; empty for read-only |  |
+
+Examples:
+
+```sh
+gregale org agent policy set --org acme --agents allow --capabilities deploy:write,secrets:request
+gregale org agent policy set --org acme --agents deny
+```
+
+Owners and admins only. Without --capabilities, an allowed policy keeps its current capabilities.
+
+Revokes, at once, the agent connections the new policy no longer allows.
 
 ### org invitation
 

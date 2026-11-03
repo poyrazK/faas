@@ -470,6 +470,7 @@ touch them. The tables below map each earlier name.
 | `gregale operations policy list` | `gregale job lock-policy list` |
 | `gregale operations policy retire` | `gregale job lock-policy delete` |
 | `gregale operations policy upsert` | `gregale job lock-policy set` |
+| `gregale orgs agent-policy` | `gregale org agent policy` |
 | `gregale orgs invitations list-all` | `gregale org invitation list --all` |
 | `gregale orgs invitations` | `gregale org invitation` |
 | `gregale orgs members change-role` | `gregale org members update` |
