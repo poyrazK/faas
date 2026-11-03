@@ -132,7 +132,12 @@ func TestCaptureAcceptsTheContinuousWindowItCutShort(t *testing.T) {
 	})
 	h := b.handler()
 	continuous := pollControl(t, h, "9").Epoch
+	sent := false // runCapture sleeps twice: the capture and its grace
 	result, _ := b.runCapture(captureRequest("cpu"), func(time.Duration) {
+		if sent {
+			return
+		}
+		sent = true
 		if code := ingest(h, continuous, "9", "", "cut short"); code != http.StatusNoContent {
 			t.Errorf("continuous window cut short by the capture = %d", code)
 		}
