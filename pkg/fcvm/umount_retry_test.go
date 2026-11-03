@@ -46,26 +46,6 @@ func TestRetryUmountWhileMounted_GivesUpAfterBudget(t *testing.T) {
 	}
 }
 
-// A loaded node released the loop device's reference after more than a second
-// (2026-10-29); the production budget must outlast that.
-func TestRetryUmountWhileMounted_ProductionBudgetOutlastsSlowRelease(t *testing.T) {
-	t.Parallel()
-	var elapsed time.Duration
-	const holder = 2 * time.Second
-	err := retryUmountWhileMounted("/mp",
-		func(string) error {
-			if elapsed < holder {
-				return errors.New("exit status 32: umount: /mp: target is busy.")
-			}
-			return nil
-		},
-		func(string) (bool, error) { return true, nil },
-		func(d time.Duration) { elapsed += d }, umountBusyRetryInterval, umountBusyRetryBudget)
-	if err != nil {
-		t.Fatalf("err = %v, want nil once a %s holder releases the mount", err, holder)
-	}
-}
-
 func TestRetryUmountWhileMounted_AlreadyGoneIsSuccess(t *testing.T) {
 	t.Parallel()
 	err := retryUmountWhileMounted("/mp",

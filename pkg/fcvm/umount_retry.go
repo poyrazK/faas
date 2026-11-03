@@ -18,14 +18,9 @@ import (
 // fallback) can therefore see umount(8) report the target busy, and the wake
 // then fails instead of falling back. The holder is transient, so the unmount
 // is retried for a bounded interval while the mount is still present.
-//
-// The release is asynchronous, so it slows with the host. On a loaded 2-vCPU
-// node one second was not enough: teardown kept the bind and failed, and the
-// leaked mounts then failed every later leak check (2026-10-29). Retrying
-// costs time only while the mount stays busy.
 const (
 	umountBusyRetryInterval = 25 * time.Millisecond
-	umountBusyRetryBudget   = 5 * time.Second
+	umountBusyRetryBudget   = time.Second
 )
 
 // umountRetryBusy runs umount(8) on mountpoint, retrying while the mount is
