@@ -12,6 +12,17 @@ import tracemalloc
 
 MAX_SAMPLES = 5000
 MAX_FRAMES = 32
+# Captures taken because memory runs low record shorter tracebacks: tracing
+# costs memory per traced block and per distinct traceback.
+LOW_MEMORY_FRAMES = 8
+# Tracing stops, without a snapshot, once available memory falls below the
+# larger of these: a heap capture must never cause the OOM kill it explains.
+FLOOR_BYTES = 16 << 20
+FLOOR_PERCENT = 5
+# A snapshot copies every trace into Python objects, several times the
+# tracer's own storage; it is taken only with this much room to spare.
+SNAPSHOT_COST_FACTOR = 4
+SNAPSHOT_HEADROOM_BYTES = 16 << 20
 MAX_SOURCE_BYTES = 1 << 20
 # Allocations made by the profiler itself, including the collector's control
 # loop in sitecustomize (urllib, json, http.client), are not the app's.
@@ -98,9 +109,72 @@ class _FunctionNames:
         return scopes
 
 
-def start():
+def start(frames=MAX_FRAMES):
     if not tracemalloc.is_tracing():
-        tracemalloc.start(MAX_FRAMES)
+        tracemalloc.start(frames)
+
+
+def _read_int(path):
+    try:
+        with open(path) as f:
+            value = f.read().strip()
+    except OSError:
+        return None
+    return None if value == "max" else int(value)
+
+
+def memory():
+    """Returns (available, total) bytes for this process, or (None, None).
+
+    The guest's MemAvailable, narrowed by the process's cgroup v2 limit when
+    it has one.
+    """
+    available = total = None
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                if key in ("MemAvailable", "MemTotal"):
+                    value = int(rest.split()[0]) * 1024
+                    if key == "MemAvailable":
+                        available = value
+                    else:
+                        total = value
+    except (OSError, ValueError, IndexError):
+        return None, None
+    try:
+        with open("/proc/self/cgroup") as f:
+            path = next((line.split("::", 1)[1].strip() for line in f if line.startswith("0::")), None)
+        if path is not None:
+            base = "/sys/fs/cgroup" + path.rstrip("/")
+            limit, used = _read_int(base + "/memory.max"), _read_int(base + "/memory.current")
+            if limit is not None and used is not None:
+                available = min(available, max(limit - used, 0)) if available is not None else max(limit - used, 0)
+                total = min(total, limit) if total is not None else limit
+    except (OSError, ValueError):
+        pass
+    return available, total
+
+
+def low_memory(available=None, total=None):
+    """Reports whether tracing must stop to protect the process."""
+    if available is None:
+        available, total = memory()
+    if available is None:
+        return False
+    floor = max(FLOOR_BYTES, (total or 0) * FLOOR_PERCENT // 100)
+    return available < floor
+
+
+def snapshot_affordable(available=None, traced=None):
+    """Reports whether a snapshot fits in the memory left."""
+    if available is None:
+        available, _ = memory()
+    if available is None:
+        return True
+    if traced is None:
+        traced = tracemalloc.get_tracemalloc_memory()
+    return available > traced * SNAPSHOT_COST_FACTOR + SNAPSHOT_HEADROOM_BYTES
 
 
 def stop():
@@ -117,6 +191,12 @@ def snapshot_pprof(started_ns, stop=False):
     With stop, tracing ends right after the snapshot so encoding is not traced.
     """
     if not tracemalloc.is_tracing():
+        return None
+    if not snapshot_affordable():
+        # No room to copy the traces: give up this profile rather than the
+        # process. Stopping frees the tracer's own memory too.
+        if stop:
+            tracemalloc.stop()
         return None
     snapshot = tracemalloc.take_snapshot()
     if stop:
