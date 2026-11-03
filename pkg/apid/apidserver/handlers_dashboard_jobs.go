@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -390,6 +391,10 @@ func (s *server) dashboardQueueDeadLetterReplay(w http.ResponseWriter, r *http.R
 	if _, err := s.store.RetryQueueDeadLetter(r.Context(), acct.ID, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrInvocationNotFound(id))
+			return
+		}
+		if problem := appevents.QueueCapProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("queue dead-letter replay"))
