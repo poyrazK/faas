@@ -1567,6 +1567,17 @@ func (l *Loop) postBatch(ctx context.Context, env triggerDispatchRequest) ([]byt
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.ContentLength = int64(len(body))
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if l.mintInternalSvcToken != nil {
+		tok, mErr := l.mintInternalSvcToken(env.AppID)
+		if mErr != nil {
+			return nil, fmt.Errorf("sched: batch mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// ADR-119 — attach an Authorization: Bearer JWT when the
 	// target app is in 'internal_only' mode. The trigger batch
 	// envelope carries ONE appID across all records, so the

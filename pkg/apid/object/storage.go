@@ -174,7 +174,7 @@ func (s *Service) providerRefusingCredentials() bool {
 			backends = append(backends, backend.ID)
 		}
 	}
-	return s.health.anyFailing(backends)
+	return s.health.anyFailing(backends, time.Now())
 }
 
 // BucketView deliberately excludes operator placement, credentials and leases.

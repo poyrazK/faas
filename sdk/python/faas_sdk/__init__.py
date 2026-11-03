@@ -71,6 +71,7 @@ from .release_context import (
 from .webhook import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
     WEBHOOK_DELIVERY_ID_HEADER,
+    WEBHOOK_PREVIOUS_SIGNATURE_HEADER,
     WEBHOOK_SIGNATURE_HEADER,
     WEBHOOK_TIMESTAMP_HEADER,
     VerifiedWebhook,
@@ -138,6 +139,7 @@ __all__ = (
     "verify_webhook",
     "VerifiedWebhook",
     "WebhookVerificationError",
+    "WEBHOOK_PREVIOUS_SIGNATURE_HEADER",
     "WEBHOOK_SIGNATURE_HEADER",
     "WEBHOOK_TIMESTAMP_HEADER",
     "WEBHOOK_DELIVERY_ID_HEADER",

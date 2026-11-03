@@ -5,8 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/internalsvc"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,12 +37,31 @@ func (d *daemonIngressPolicyDispatcher) Invoke(_ context.Context, _ string, inv 
 	return inv, nil
 }
 
+// daemonIngressPolicyKey signs the fixture's scheduler tokens: every synth
+// request needs one (ADR-20261103090000).
+var daemonIngressPolicyKey = func() ed25519.PrivateKey {
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		panic(err)
+	}
+	return priv
+}()
+
 type daemonIngressPolicyVerifier struct{}
 
-func (daemonIngressPolicyVerifier) AllowedSvcNames() []string { return nil }
+func (daemonIngressPolicyVerifier) AllowedSvcNames() []string { return []string{"schedd"} }
 
-func (daemonIngressPolicyVerifier) Verify(context.Context, string) (string, error) {
-	return "", errors.New("fixture does not accept tokens")
+func (daemonIngressPolicyVerifier) Verify(_ context.Context, token string) (string, error) {
+	return internalsvc.Verify(token, map[string]ed25519.PublicKey{"schedd": daemonIngressPolicyKey.Public().(ed25519.PublicKey)})
+}
+
+func daemonSchedulerToken(t *testing.T, appID string) string {
+	t.Helper()
+	token, err := internalsvc.Mint("schedd", 30*time.Second, map[string]any{"app_id": appID}, daemonIngressPolicyKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
 }
 
 func assertDaemonSyntheticIngressPolicy(t *testing.T, url string, pool *pgxpool.Pool, store *state.PgStore, dispatcher *daemonIngressPolicyDispatcher) {
@@ -54,7 +74,7 @@ func assertDaemonSyntheticIngressPolicy(t *testing.T, url string, pool *pgxpool.
 	if err != nil {
 		t.Fatal(err)
 	}
-	check := func(appID string, status int, wantCalls int64) {
+	check := func(appID string, withToken bool, status int, wantCalls int64) {
 		t.Helper()
 		before := dispatcher.calls.Load()
 		for _, route := range []struct{ path, body string }{
@@ -67,6 +87,9 @@ func assertDaemonSyntheticIngressPolicy(t *testing.T, url string, pool *pgxpool.
 			if err != nil {
 				cancel()
 				t.Fatal(err)
+			}
+			if withToken {
+				request.Header.Set("Authorization", "Bearer "+daemonSchedulerToken(t, appID))
 			}
 			started := time.Now()
 			response, err := http.DefaultClient.Do(request)
@@ -88,12 +111,16 @@ func assertDaemonSyntheticIngressPolicy(t *testing.T, url string, pool *pgxpool.
 			t.Fatalf("status=%d dispatch calls=%d want=%d", status, calls, wantCalls)
 		}
 	}
-	check(app.ID, http.StatusOK, 3)
+	check(app.ID, true, http.StatusOK, 3)
+	// A synth request without the scheduler's token is refused even for an
+	// open app (ADR-20261103090000).
+	check(app.ID, false, http.StatusForbidden, 0)
 	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetPublicAuth: true, PublicAuth: &state.AppPublicAuthUpdate{Mode: state.AppPublicAuthModeInternalOnly}}); err != nil {
 		t.Fatal(err)
 	}
-	check(app.ID, http.StatusForbidden, 0)
-	check(uuid.NewString(), http.StatusServiceUnavailable, 0)
+	check(app.ID, false, http.StatusForbidden, 0)
+	check(app.ID, true, http.StatusOK, 3)
+	check(uuid.NewString(), true, http.StatusServiceUnavailable, 0)
 	lock, err := pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -102,13 +129,13 @@ func assertDaemonSyntheticIngressPolicy(t *testing.T, url string, pool *pgxpool.
 	if _, err := lock.Exec(t.Context(), "LOCK TABLE apps IN ACCESS EXCLUSIVE MODE"); err != nil {
 		t.Fatal(err)
 	}
-	check(app.ID, http.StatusServiceUnavailable, 0)
+	check(app.ID, true, http.StatusServiceUnavailable, 0)
 	if err := lock.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	check(app.ID, http.StatusForbidden, 0)
+	check(app.ID, false, http.StatusForbidden, 0)
 	if _, err := store.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetPublicAuth: true, PublicAuth: &state.AppPublicAuthUpdate{Mode: state.AppPublicAuthModeOpen}}); err != nil {
 		t.Fatal(err)
 	}
-	check(app.ID, http.StatusOK, 3)
+	check(app.ID, true, http.StatusOK, 3)
 }

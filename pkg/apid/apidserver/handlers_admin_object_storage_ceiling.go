@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -40,9 +41,8 @@ func (s *server) postObsObjectStorageCeiling(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, prob)
 		return
 	}
-	if grantBytes != nil && !plan.IsPaid() {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Free plan storage is not raised",
-			"a Free subject's storage is never billed, so its 1 GiB ceiling stays; the customer upgrades first"))
+	if prob := s.objectStorageCeilingRefusal(plan, grantBytes); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	previous, err := grants.ObjectStorageCeilingGrant(r.Context(), ownerID)
@@ -64,6 +64,25 @@ func (s *server) postObsObjectStorageCeiling(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, view)
+}
+
+// objectStorageCeilingRefusal refuses a grant that would not take effect: on
+// Free, whose storage is never billed, or above the installation's
+// max_account_bytes, which bounds every account (api.ObjectStoragePlanLimits.Policy).
+func (s *server) objectStorageCeilingRefusal(plan api.Plan, grantBytes *int64) *api.Problem {
+	switch {
+	case grantBytes == nil:
+		return nil
+	case !plan.IsPaid():
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Free plan storage is not raised",
+			"a Free subject's storage is never billed, so its 1 GiB ceiling stays; the customer upgrades first")
+	case s.objectStorage != nil && *grantBytes > s.objectStorage.Accounting.MaxAccountBytes:
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Ceiling above the installation's limit",
+			fmt.Sprintf("this installation holds every account to %d GiB (max_account_bytes), so a %d GiB grant would not take effect",
+				s.objectStorage.Accounting.MaxAccountBytes>>30, *grantBytes>>30)).
+			WithHint("Raise max_account_bytes in the object storage configuration first.")
+	}
+	return nil
 }
 
 // parseObjectStorageCeilingRequest reads the subject, the ceiling in whole GiB

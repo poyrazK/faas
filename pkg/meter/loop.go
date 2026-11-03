@@ -676,12 +676,11 @@ func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now t
 	// apid bills object storage in daily steps under the same cap
 	// (ADR-20261027093220); a part cent counts as reached. A pending step's
 	// reservation is an upper bound, not a charge, so it never parks.
-	objectStorage, _, err := liveObjectStorageCharge(ctx, l.store, acct.ID, now)
+	objectStorageCents, err := SpendCapObjectStorageCents(ctx, l.store, acct.ID, now)
 	if err != nil {
 		l.log.Warn("meter: object storage charge read failed", "account", acct.ID, "err", err)
 		return
 	}
-	objectStorageCents := objectStorage/api.MillicentsPerCent + min(objectStorage%api.MillicentsPerCent, 1)
 	observed := saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents)
 	holds, hasHolds := l.store.(state.SpendCapHoldStore)
 	if observed < capCents {

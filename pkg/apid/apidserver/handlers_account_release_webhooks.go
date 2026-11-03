@@ -258,6 +258,7 @@ func accountReleaseWebhookUpdateParams(ctx context.Context, req api.UpdateAccoun
 			return p, prob
 		}
 		p.WebhookSecretSealed = &sealed
+		p.PreviousSecretUntil = webhookSecretOverlapUntil()
 	}
 	return p, nil
 }
@@ -298,7 +299,9 @@ func (s *server) rotateAccountReleaseWebhookSecret(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, prob)
 		return
 	}
-	row, err := s.store.UpdateAppWebhook(r.Context(), r.PathValue("id"), state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed})
+	row, err := s.store.UpdateAppWebhook(r.Context(), r.PathValue("id"), state.UpdateAppWebhookParams{
+		WebhookSecretSealed: &sealed, PreviousSecretUntil: webhookSecretOverlapUntil(),
+	})
 	if err != nil {
 		s.log.WarnContext(r.Context(), "rotate account release webhook secret", slog.String("err", err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("could not rotate release webhook secret"))

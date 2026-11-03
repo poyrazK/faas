@@ -585,10 +585,14 @@ func (r *Loop) ProcessFireNowRequest(p0 context.Context, p1 state.FireNowRequest
 func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time) error {
 	return r.recoverPrimeCandidate(p0, p1, p2)
 }
-func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
-func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
-func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
-func (r *Loop) RunCronTick(p0 context.Context)      { r.runCronTick(p0) }
+func (r *Loop) RunInstanceStats(p0 context.Context)     { r.runInstanceStats(p0) }
+func (r *Loop) RunPrimeRecovery(p0 context.Context)     { r.runPrimeRecovery(p0) }
+func (r *Loop) RunReaper(p0 context.Context)            { r.runReaper(p0) }
+func (r *Loop) RunCronTick(p0 context.Context)          { r.runCronTick(p0) }
+func (r *Loop) RunScheduledJobsTick(p0 context.Context) { r.runScheduledJobsTick(p0) }
+
+// DrainEngine is the engine a drain wakes apps through.
+func DrainEngine(d *Drain) *Engine { return d.engine }
 func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
 	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
 }
