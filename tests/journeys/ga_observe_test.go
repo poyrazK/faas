@@ -48,11 +48,20 @@ func TestTailAnalyticsAndMetrics(t *testing.T) {
 		t.Logf("tail: %s", tail(string(res.stdout), 400))
 	})
 	s.check("request_analytics", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "metric", "requests", slug, "--since", "1h", "--by", "status")
-		if len(objects(t, res.stdout)) == 0 {
-			t.Fatal("gregale metric requests printed nothing")
-		}
-		t.Logf("analytics: %s", tail(string(res.stdout), 400))
+		// Non-empty JSON passed even when the pipeline counted nothing; the
+		// tail step's 10 requests must show up once their minute is delivered.
+		var last []byte
+		eventually(t, "analytics counts the tail requests", 3*time.Minute, 10*time.Second, func() (bool, string) {
+			res := tg.ok(t, time.Minute, "metric", "requests", slug, "--since", "1h", "--by", "status")
+			last = res.stdout
+			docs := objects(t, res.stdout)
+			if len(docs) == 0 {
+				return false, "gregale metric requests printed nothing"
+			}
+			requests, _ := docs[0]["requests"].(json.Number).Int64()
+			return requests >= 10, fmt.Sprintf("requests=%d", requests)
+		})
+		t.Logf("analytics: %s", tail(string(last), 400))
 	})
 	s.check("account_metrics", func(t *testing.T) {
 		res := tg.ok(t, time.Minute, "metric", "--account", "--range", "1h")

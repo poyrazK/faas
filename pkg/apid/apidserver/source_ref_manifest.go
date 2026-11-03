@@ -189,6 +189,8 @@ func (s *server) applyManifestWorkloads(
 // deployments: an explicit gregale.yaml release.command wins, otherwise the
 // selected source root's Procfile release: process is used. Both forms are
 // stored as a single shell command, matching Heroku's Procfile semantics.
+// A source that declares neither keeps the release command its project's
+// Compose file gave the app (ADR-20261102192943).
 func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
 	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return validateDeploymentReleaseCommand(manifest.Release.Command)
@@ -198,16 +200,28 @@ func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 		return deploymentReleaseCommand{}, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
 	}
 	if !found {
-		return deploymentReleaseCommand{}, nil
+		return projectReleaseCommand(app), nil
 	}
 	command, ok, err := reposcan.ParseProcfileReleaseCommand(body)
 	if err != nil {
 		return deploymentReleaseCommand{}, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid Procfile", "release: "+err.Error())
 	}
 	if !ok {
-		return deploymentReleaseCommand{}, nil
+		return projectReleaseCommand(app), nil
 	}
 	return validateDeploymentReleaseCommand(command)
+}
+
+// projectReleaseCommand is the release command a project's Compose file gave
+// app: the command of the service it waits for to complete.
+func projectReleaseCommand(app state.App) deploymentReleaseCommand {
+	if len(app.Manifest.ProjectReleaseCommand) == 0 {
+		return deploymentReleaseCommand{}
+	}
+	return deploymentReleaseCommand{
+		command: append([]string(nil), app.Manifest.ProjectReleaseCommand...),
+		shell:   app.Manifest.ProjectReleaseCommandShell,
+	}
 }
 
 func validateDeploymentReleaseCommand(command string) (deploymentReleaseCommand, *api.Problem) {

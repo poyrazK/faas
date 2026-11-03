@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -37,6 +38,20 @@ func (s *server) ProtectedPromotionApprovalProblemForTest(ctx context.Context, a
 		plan.Apps[app.Slug] = app
 	}
 	return s.protectedPromotionApprovalProblem(ctx, plan, toEnvironment, approver, promoter)
+}
+
+// PromotionApprovalKeyProblemForTest refuses, or not, acct approving a
+// protected promotion of apps into toEnvironment with key (nil: a session)
+// (ADR-20261020085706 amendment 9).
+func (s *server) PromotionApprovalKeyProblemForTest(acct state.Account, key *state.APIKey, apps []state.App, toEnvironment string) *api.Problem {
+	plan := projectEnvironmentPromotionPlan{Apps: map[string]state.App{}}
+	plan.Preview.ApprovalRequired = true
+	for _, app := range apps {
+		plan.Apps[app.Slug] = app
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r = r.WithContext(authmw.WithPrincipal(r.Context(), acct, key, nil))
+	return s.promotionApprovalKeyProblem(r, plan, toEnvironment)
 }
 
 // RenderReleaseSafetyForTest renders the release safety dashboard page for

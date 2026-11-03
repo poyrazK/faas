@@ -96,6 +96,43 @@ Other datastores, and `postgres` where managed PostgreSQL is not available, are
 listed under **Managed (not provisioned)** with the variable your services
 expect. Point that variable at a database you run elsewhere.
 
+### Start order and migrations
+
+`depends_on` keeps its Compose meaning where Gregale can honour it
+([ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md)):
+
+- `condition: service_healthy` on another service holds this service's new
+  release until that service's deployment is live.
+- `condition: service_healthy` on a datastore (`db: postgres:16`) is accepted as
+  a plain dependency, because Gregale does not run the datastore as a service.
+  The plan says so; have the service retry its connection until the database
+  answers, as it does when Compose restarts the database.
+- A step the others wait for with `condition: service_completed_successfully`,
+  such as a migration, runs as the **release command** of the waiting service
+  that shares its build:
+
+  ```yaml
+  services:
+    migrate:
+      build: ./api
+      command: npm run migrate
+    api:
+      build: ./api
+      ports: ["3000:3000"]
+      depends_on:
+        migrate:
+          condition: service_completed_successfully
+  ```
+
+  `npm run migrate` runs once before each `api` release goes live, in the `api`
+  image with its variables and secrets, and `migrate` is not deployed as a
+  service. Every deploy of `api` runs it, GitHub pushes included, unless the
+  `api` source declares its own `release.command` or Procfile `release:`. Other
+  services that waited for `migrate` no longer wait; the plan names them. The
+  step must use the same `build:` (context, Dockerfile, args) or `image:` as a
+  waiting service that serves requests, must have a `command:` and must not
+  publish ports; chained steps and two steps for one service fail the plan.
+
 Each service keeps its name inside the project. Its app slug is the same name,
 or `<project>-<name>` when the name is reserved (`api`, `admin`, …) or taken by
 another app, for example `shop-api`.
@@ -104,7 +141,9 @@ another app, for example `shop-api`.
 
 A Compose service that publishes `ports:` gets a public URL. One without
 `ports:` is **internal**: other services in the project can call it, and it has
-no public URL. Other services are public unless
+no public URL. So is one whose ports are all bound to a loopback address, such
+as `127.0.0.1:8081:8080`, which Docker publishes only on your own machine; the
+plan warns, and removing the address publishes it. Other services are public unless
 [`.gregale/project.yaml`](#without-a-compose-file) says `visibility: internal`.
 The plan lists every public service under **Public on the internet** and marks
 the rest `visibility=internal`. Visibility is set when the app is created; see

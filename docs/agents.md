@@ -1,15 +1,68 @@
 # Use Gregale from coding agents
 
 Coding agents such as Claude Code, Codex and Cursor can deploy and operate
-apps on Gregale with the same CLI and API you use. This page covers the
-credential to give an agent, the CLI's automation contract, the management
-MCP server, the Claude Code plugin, project instructions, and documentation
-an agent can read directly.
+apps on Gregale with the same CLI and API you use. This page covers
+Gregale's hosted MCP server, the credential to give an agent that runs the
+CLI, the CLI's automation contract, running the MCP server locally, the
+Claude Code plugin, project instructions, and documentation an agent can read
+directly.
+
+## Connect an agent to Gregale
+
+Connect any MCP client to Gregale's hosted MCP server at
+`https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
+
+Claude Code:
+
+```sh
+claude mcp add --transport http gregale https://api.gregale.dev/mcp
+```
+
+Codex (`~/.codex/config.toml`), then `codex mcp login gregale`:
+
+```toml
+[mcp_servers.gregale]
+url = "https://api.gregale.dev/mcp"
+```
+
+Other clients that use an `mcpServers` JSON file:
+
+```json
+{
+  "mcpServers": {
+    "gregale": {
+      "url": "https://api.gregale.dev/mcp"
+    }
+  }
+}
+```
+
+Agents that run in the cloud, such as claude.ai and ChatGPT, add the same URL
+as a connector.
+
+When the agent first connects, your browser opens:
+1. Sign in to Gregale. No account yet? Sign up with GitHub or Google on the
+   same page.
+2. Choose what the agent may do: inspect apps, deploy and roll back, ask you
+   for secrets, add buckets and databases.
+3. Choose which apps it may use, and connect.
+
+The agent can then inspect and deploy apps, promote and roll back. It
+deploys code it wrote by uploading the project or passing small projects as
+files, and can ask you for secrets without ever seeing them. The connection
+stays valid while the agent uses it: a week unused, or 30 days after you
+connect, ends it. See which agents are connected, and revoke any of them,
+with `gregale mcp connection list` and `revoke`.
+
+An agent with no person at a browser, such as one in CI, connects with an
+agent key instead; see
+[Headless agents](mcp.md#headless-agents-with-an-agent-key).
 
 ## Give the agent its own key
 
-Create a dedicated key instead of sharing your own login. Scope it to what the
-agent needs:
+An agent that runs the `gregale` CLI, or the MCP server locally, needs a
+credential. Create a dedicated key instead of sharing your own login. Scope
+it to what the agent needs:
 
 ```sh
 gregale key create coding-agent --scopes apps:read,deploy:write
@@ -68,29 +121,13 @@ approval exits `1`; `--non-interactive` never approves on the agent's behalf.
 See [CLI configuration](cli-config.md) for the full contract, including
 pagination and profiles.
 
-## Connect a cloud agent
+## Run the MCP server locally
 
-Agents that run in the cloud, such as claude.ai, ChatGPT and hosted coding
-agents, connect to Gregale's hosted MCP server at
-`https://api.gregale.dev/mcp`. There's nothing to install:
-1. Add the URL as a connector.
-2. When the agent connects, sign in to Gregale and choose what it may do and
-   which apps it may use.
-
-The agent can then:
-- inspect and deploy apps, promote and roll back;
-- upload a project it wrote, or pass small projects as files;
-- ask you for secrets, and add domains, crons, buckets and databases, if you
-  allowed those.
-
-See
-[Connect a cloud agent to Gregale](mcp.md#connect-a-cloud-agent-to-gregale).
-
-## Connect the management MCP server
-
-`gregale mcp serve` gives an agent Gregale's management tools over MCP. The
-agent starts it as a subprocess, and it uses `FAAS_TOKEN` or the selected
-profile's login.
+The hosted server is the default. Run the server on your own machine instead
+when the agent can't reach `api.gregale.dev`, or when it should deploy a
+directory straight from your disk. `gregale mcp serve` gives an agent
+Gregale's management tools over MCP. The agent starts it as a subprocess, and
+it uses `FAAS_TOKEN` or the selected profile's login.
 
 Claude Code:
 
@@ -172,7 +209,8 @@ your DNS provider; `gregale_check_domain` reports when they verify. See
 
 ## Install the Claude Code plugin
 
-The `gregale` plugin bundles the MCP server with two skills:
+The `gregale` plugin connects Claude Code to the hosted MCP server and adds
+two skills:
 
 ```sh
 claude plugin marketplace add poyrazK/faas-web
@@ -184,8 +222,9 @@ claude plugin install gregale@gregale
 - `/gregale:diagnose` finds why an app is failing from its deployments,
   health, errors and logs.
 
-The plugin runs the `gregale` CLI, so install it and log in or set
-`FAAS_TOKEN` first.
+The first time Claude Code connects, you sign in to Gregale in the browser as
+above. The skills deploy with the `gregale` CLI, so install it and log in or
+set `FAAS_TOKEN` first.
 
 ## Project instructions for agents
 

@@ -164,8 +164,10 @@ func TestReaperEnvironmentSelectorsNeverCountSiblingReplicas(t *testing.T) {
 
 type unavailableReaperPolicyStore struct{ MemStore *state.MemStore }
 
-func (s unavailableReaperPolicyStore) RuntimeAppValuesForDeployment(context.Context, string, string, string) (state.RuntimeAppValuesSnapshot, error) {
-	return state.RuntimeAppValuesSnapshot{}, state.ErrConflict
+// The reaper resolves a deployment's scope and environment from its scaling
+// state (ADR 20261102205122), so that read failing is the policy read failing.
+func (s unavailableReaperPolicyStore) RuntimeScalingStateForDeployment(context.Context, string, string, string) (state.RuntimeScalingState, error) {
+	return state.RuntimeScalingState{}, state.ErrConflict
 }
 
 func TestReaperPolicyFailureAndLostLifetimeDoNotAuthorizeScaleIn(t *testing.T) {
