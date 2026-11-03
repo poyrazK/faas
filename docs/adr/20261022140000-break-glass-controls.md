@@ -139,3 +139,7 @@ Forced fleet-wide rotation of platform-issued credentials (object storage
 bindings, managed PostgreSQL passwords, GitHub install tokens), notifications
 targeted by what each account stored, resuming releases by plan, and a status
 page that does not depend on apid (ADR-130 serves it from apid) are follow-ups.
+
+## Amendment 1 (2026-11-02): the pause holds releases that were built before it
+
+The pause refused creating releases, but a release deployed earlier with `--no-traffic`, or parked for a scheduled start, could still take its first traffic during the pause: through `PATCH /v1/deployments/{id}/traffic`, promote, or a rollback to it. Those paths now answer `503 platform_release_paused` for a release that has never served. A rollback to a release that served before is still not paused.

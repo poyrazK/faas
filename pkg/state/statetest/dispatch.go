@@ -66,6 +66,7 @@ var memDispatched = map[string]bool{
 	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
+	"ActivePrewarmFloors":                                     true,
 	"ActiveProjectReleaseSet":                                 true,
 	"AdmitPublishedEventRecipient":                            true,
 	"AdmitScheduledWorkflow":                                  true,
@@ -379,6 +380,15 @@ func (s *Mem) ActivePrewarmFloor(p0 context.Context, p1 string, p2 time.Time) (i
 		return o.ActivePrewarmFloor(p0, p1, p2)
 	}
 	return s.MemStore.ActivePrewarmFloor(p0, p1, p2)
+}
+
+func (s *Mem) ActivePrewarmFloors(p0 context.Context, p1 []string, p2 time.Time) (map[string]int, error) {
+	if o, ok := s.over.(interface {
+		ActivePrewarmFloors(context.Context, []string, time.Time) (map[string]int, error)
+	}); ok {
+		return o.ActivePrewarmFloors(p0, p1, p2)
+	}
+	return s.MemStore.ActivePrewarmFloors(p0, p1, p2)
 }
 
 func (s *Mem) ActiveProjectReleaseSet(p0 context.Context, p1 string, p2 string, p3 string) (state.ProjectReleaseSet, error) {

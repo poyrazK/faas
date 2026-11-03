@@ -722,6 +722,9 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return stopped
 	}
 
+	// accessGatePhases match the client's original path before the rewritten
+	// one, as the gateway's matchEdgeGate does.
+	accessGatePhases := map[string]bool{"jwt": true, "ip": true, "geo": true, "throttle": true, "challenge": true}
 	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "challenge", "respond", "async", "cache", "budget", "circuit_breaker", "retry"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
@@ -807,6 +810,13 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)
 		}
 		rule, tied := firstPhaseRule(rules, phase, input, requestPath, matchMethod, input.Headers)
+		if accessGatePhases[phase] && input.Path != requestPath {
+			// The gateway's access gates match the client's path first, then
+			// the rewritten one (ADR-091 amendment 2026-11-02, review round 8).
+			if public, publicTied := firstPhaseRule(rules, phase, input, input.Path, matchMethod, input.Headers); public != nil || publicTied {
+				rule, tied = public, publicTied
+			}
+		}
 		if phase == "budget" && pinnedBudget != nil {
 			rule, tied = pinnedBudget, false
 		}

@@ -1090,6 +1090,10 @@ from .dashboard_widget_window import DashboardWidgetWindow
 from .dashboards_response import DashboardsResponse
 from .data_api_access_config import DataAPIAccessConfig
 from .data_api_access_config_version import DataAPIAccessConfigVersion
+from .data_api_change_event import DataAPIChangeEvent
+from .data_api_change_event_batch import DataAPIChangeEventBatch
+from .data_api_change_event_batch_response import DataAPIChangeEventBatchResponse
+from .data_api_change_event_batch_version import DataAPIChangeEventBatchVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
@@ -2643,6 +2647,7 @@ from .managed_postgres_cutover_writer_isolation_state import ManagedPostgresCuto
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
+from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
 from .managed_postgres_health import ManagedPostgresHealth
@@ -7303,6 +7308,10 @@ __all__ = (
     "DashboardWidgetWindow",
     "DataAPIAccessConfig",
     "DataAPIAccessConfigVersion",
+    "DataAPIChangeEvent",
+    "DataAPIChangeEventBatch",
+    "DataAPIChangeEventBatchResponse",
+    "DataAPIChangeEventBatchVersion",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
@@ -8774,6 +8783,7 @@ __all__ = (
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
+    "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
     "ManagedPostgresHealth",

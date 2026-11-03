@@ -561,6 +561,13 @@ func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, s
 			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "match", Err: err})
 			g.metrics.ObserveEdgeRuleCompileError(string(rule.Kind))
 		}
+		// A kind this gateway does not know (written by a newer apid) or a
+		// rule without its action fails the host closed too (ADR-091
+		// amendment 2026-11-02, review round 8).
+		if err := edgeRuleShapeError(rule); err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "action", Err: err})
+			g.metrics.ObserveEdgeRuleCompileError(string(rule.Kind))
+		}
 	}
 	if len(parseErrs) > 0 {
 		entry.PathGlobErrs = parseErrs
@@ -2064,7 +2071,8 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 			ExcludeRuleIDs:   slices.Clone(rule.Action.WAF.ExcludeRuleIDs),
 			InspectBodyBytes: rule.Action.WAF.InspectBodyBytes,
 		}
-		if action.Validate() != nil {
+		if prob := action.Validate(); prob != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "action", Err: errors.New(prob.Detail)})
 			continue
 		}
 		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {
@@ -2089,8 +2097,10 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 }
 
 // compileChallengeRules compiles kind=challenge rows (ADR-831 amendment 7).
-// A row whose action is missing or fails the apid bounds (a direct-database
-// write) is dropped rather than enforced with values apid would reject.
+// A row whose action fails the apid bounds (a direct-database write, or a
+// newer apid's range) is a broken rule: it fails its host closed rather than
+// letting traffic past unchallenged (ADR-091 amendment 2026-11-02). A missing
+// action is reported by edgeRuleShapeError.
 func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChallengeResolved, []gateway.PathGlobError) {
 	var out []gateway.EdgeRuleChallengeResolved
 	var parseErrs []gateway.PathGlobError
@@ -2104,7 +2114,8 @@ func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChall
 			PassTTLSeconds: rule.Action.Challenge.PassTTLSeconds,
 			MaxDifficulty:  rule.Action.Challenge.MaxDifficulty,
 		}
-		if action.Validate() != nil {
+		if prob := action.Validate(); prob != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "action", Err: errors.New(prob.Detail)})
 			continue
 		}
 		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {

@@ -2062,6 +2062,69 @@ groups:
   # Cloudflare sends its share to the other connectors. Once s3.<domain>
   # resolves to the s3 tunnel (step 6), no node serving is an outage.
   # ────────────────────────────────────────────────────────────────────
+  # ADR-20261102081618 §3: edgednsd keeps the app hosts' address records
+  # pointed at the compute edges that are ready. Cloudflare does not
+  # health-check those records, so edgednsd is the failover.
+  - name: faas_edge_dns
+    rules:
+      - alert: FaasEdgeDNSNoReadyNode
+        expr: |
+          (max(edge_dns_records) > 0)
+            and on()
+          (sum(edge_dns_node_in) == 0)
+        for: 2m
+        labels:
+          severity: page
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "No compute edge is ready for direct entry"
+          description: "For 2 minutes no compute node's edge has answered edgednsd's readiness probes. edgednsd keeps the last address records rather than remove them all, so Cloudflare still sends app requests to edges that may fail them."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
+      - alert: FaasEdgeDNSNodeWithdrawn
+        expr: |
+          (edge_dns_node_in == 0)
+            and on(node)
+          (increase(edge_dns_probe_failures_total[5m]) > 0)
+        for: 5m
+        labels:
+          severity: warn
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The edge on {{ $labels.node }} is out of DNS"
+          description: "edgednsd withdrew {{ $labels.node }}'s address because its edge stopped answering readiness probes. The other nodes carry its share; it comes back after five answers in a row."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
+      - alert: FaasEdgeDNSWritesFailing
+        expr: sum by (op) (increase(edge_dns_errors_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "edgednsd cannot {{ $labels.op }} DNS records"
+          description: "edgednsd's Cloudflare {{ $labels.op }} calls have failed for 10 minutes. The records stay as they are, so a node that fails now is not withdrawn."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
+      - alert: FaasEdgeDNSDown
+        expr: up{job="edgednsd"} == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "edgednsd is not answering"
+          description: "Prometheus cannot scrape edgednsd on the control plane. The records stay as they were, so traffic flows, but a compute node that fails now is not withdrawn."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
   - name: faas_compute_object_gateway
     rules:
       # Gated on the s3_endpoint_route target label, which Prometheus sets

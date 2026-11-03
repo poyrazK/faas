@@ -3,11 +3,11 @@ package state
 import (
 	"context"
 	"encoding/json"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // DataRepairAdmission contains only immutable plan metadata validated by the
@@ -30,7 +30,7 @@ type DataRepairOperationStore interface {
 	AdvanceDataRepairOperation(context.Context, string, string, DataRepairAdvance) (Operation, error)
 }
 
-var repairHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var repairHash = lazyregexp.New(`^[0-9a-f]{64}$`)
 
 func validateDataRepairAdmission(in DataRepairAdmission) error {
 	for _, id := range []string{in.AccountID, in.AppID, in.ID, in.Plan.PlanID, in.Plan.SourceOperationID} {

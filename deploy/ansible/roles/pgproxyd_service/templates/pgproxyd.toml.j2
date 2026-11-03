@@ -15,6 +15,9 @@ vmmd_client_ca_path = "/etc/faas/tls/ca/ca.crt"
 verifier_cache_ttl = "{{ pgproxyd_verifier_cache_ttl }}"
 ops_addr = "{{ pgproxyd_ops_addr }}"
 instance_id = {{ pgproxyd_instance_id | int }}
+{% if pgproxyd_trusted_sources | length > 0 %}
+trusted_sources = {{ pgproxyd_trusted_sources | to_json }}
+{% endif %}
 {% if pgproxyd_cancel_peers | length > 0 %}
 
 [cancel_peers]

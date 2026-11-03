@@ -111,7 +111,7 @@ func TestSubsetHonorsDaemonRoleGates(t *testing.T) {
 	// change to cmd/<daemon>/main.go's role.Require MUST be mirrored
 	// here, otherwise the review invariant regresses silently.
 	dmnAllows := map[string]map[Role]bool{
-		"vmmd":              {RoleSingleBox: true, RoleComputeOnly: true},
+		"vmmd":              {RoleSingleBox: true, RoleComputeOnly: true, RoleDatabase: true},
 		"apid":              {RoleSingleBox: true, RoleControlPlane: true},
 		"schedd":            {RoleSingleBox: true, RoleControlPlane: true, RoleComputeOnly: true},
 		"meterd":            {RoleSingleBox: true, RoleControlPlane: true},

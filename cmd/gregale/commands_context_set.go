@@ -173,7 +173,7 @@ func cmdContextSetSelected(args []string, selection *contextUpdateSelection) int
 			return printErr("Could not save context update", err)
 		}
 	}
-	receipt := contextUpdateReceipt{Before: before, After: after, Path: path, Changed: after != before && !*dryRun, DryRun: *dryRun, WouldChange: after != before, Connection: effectiveConnectionContext()}
+	receipt := contextUpdateReceipt{Before: before, After: after, Path: path, Changed: after != before && !*dryRun, DryRun: *dryRun, WouldChange: after != before, Connection: displayConnectionContext()}
 	if selection != nil {
 		receipt.Preset, receipt.PresetPath = selection.Preset, selection.PresetPath
 	}

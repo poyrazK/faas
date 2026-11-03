@@ -21,6 +21,8 @@ type ProjectEnvironmentCloneLease struct {
 type ProjectEnvironmentCloneWorkerLeaseStore interface {
 	ClaimNextProjectEnvironmentClone(context.Context, string, time.Duration) (ProjectEnvironmentCloneLease, error)
 	RenewProjectEnvironmentCloneLease(context.Context, ProjectEnvironmentCloneLease, time.Duration) (ProjectEnvironmentCloneLease, error)
+	// ReleaseProjectEnvironmentCloneLease keeps at most lease.AttemptCount
+	// attempts (never fewer than one), so a worker can end a failure streak.
 	ReleaseProjectEnvironmentCloneLease(context.Context, ProjectEnvironmentCloneLease, time.Duration) error
 }
 

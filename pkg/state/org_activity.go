@@ -3,16 +3,16 @@ package state
 import (
 	"encoding/json"
 	"errors"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 const orgActivityStoreLimitMax = 101
 
-var orgActivityKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
+var orgActivityKindPattern = lazyregexp.New(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
 
 func normalizeOrgActivity(entry OrgActivity, now time.Time) (OrgActivity, error) {
 	if entry.OrgID == uuid.Nil {

@@ -11,6 +11,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -25,9 +26,11 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capflags"
+	core "github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -419,7 +422,6 @@ func (r *Engine) AdmitAndDispatchWithOptions(p0 context.Context, p1 string, p2 s
 func (r *Engine) AppMustPark(p0 context.Context, p1 state.App, p2 state.Account) bool {
 	return r.appMustPark(p0, p1, p2)
 }
-func (r *Engine) AppMutex(p0 string) *sync.Mutex { return r.appMutex(p0) }
 func (r *Engine) ApplyLiveCapacityMB(p0 context.Context, p1 string) int64 {
 	return r.applyLiveCapacityMB(p0, p1)
 }
@@ -1077,6 +1079,26 @@ func (e *Engine) MarkRestartInFlight(appID string) func() {
 	}
 }
 
+// WithCronSweepSlice sets how long one pass of the cron sweep may dispatch.
+func (r *Loop) WithCronSweepSlice(d time.Duration) *Loop { r.cronSweepSlice = d; return r }
+
+// RunCronSweep runs one continuation pass of the minute's cron sweep.
+func (r *Loop) RunCronSweep(ctx context.Context) { r.runCronSweep(ctx) }
+
+// TakeCronSweepResume reports, and consumes, a pending request to continue
+// the cron sweep.
+func (r *Loop) TakeCronSweepResume() bool {
+	select {
+	case <-r.cronResume:
+		return true
+	default:
+		return false
+	}
+}
+
+// XFireNowRefusal is the requester-facing reason for a refused manual run.
+var XFireNowRefusal = fireNowRefusal
+
 // CoalesceInvocationDue exposes the drain's notification burst collapse.
 var CoalesceInvocationDue = coalesceInvocationDue
 
@@ -1086,6 +1108,58 @@ func DrainLeaseRecoveryDue(every time.Duration, nows ...time.Time) []bool {
 	due := make([]bool, len(nows))
 	for i, now := range nows {
 		due[i] = r.due(now)
+	}
+	return due
+}
+
+// ReconcileFinancialBudgetStopsForTick runs the reaper tick's strict compute
+// sweep over apps: one bulk read, then each app (ADR 20261102160622).
+func (r *Engine) ReconcileFinancialBudgetStopsForTick(ctx context.Context, apps []state.App) error {
+	pre := r.loadStrictComputePreload(ctx, apps)
+	if pre == nil {
+		return errors.New("the store cannot preload the strict compute sweep")
+	}
+	var errs []error
+	for _, app := range apps {
+		errs = append(errs, r.reconcileFinancialBudgetStops(ctx, app.ID, pre))
+	}
+	return errors.Join(errs...)
+}
+
+// ReconcileFinancialBudgetStopsWithPreload runs one app's sweep with a given
+// tick preload.
+func (r *Engine) ReconcileFinancialBudgetStopsWithPreload(ctx context.Context, appID string, rows []state.Instance, leases map[string]financial.ComputeLease) error {
+	return r.reconcileFinancialBudgetStops(ctx, appID, &strictComputePreload{rows: map[string][]state.Instance{appID: rows}, leases: leases})
+}
+
+// LockApp, TryLockApp and AppLocks reach the per-app serialisation locks
+// (ADR 20261102160622).
+func (r *Engine) LockApp(appID string) func() { return r.lockApp(appID) }
+func (r *Engine) TryLockApp(appID string) (func(), bool) {
+	return r.tryLockApp(appID)
+}
+func (r *Engine) AppLocks() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.appMu)
+}
+
+// OpenWorkflowDueGate is one dispatch tick's workflow due gate over read.
+func OpenWorkflowDueGate(read state.WorkflowRunDueReader) func(context.Context) bool {
+	g := &workflowDueGate{read: read}
+	return g.open
+}
+
+// DataRepairRecoveryDue replays nows through one rehearsal coordinator's
+// recovery spacing; pending keeps a claim pending throughout.
+func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
+	c := &DataRepairRehearsalCoordinator{pendingClaims: map[string]core.RehearsalFrame{}}
+	if pending {
+		c.pendingClaims["claim"] = core.RehearsalFrame{}
+	}
+	due := make([]bool, len(nows))
+	for i, now := range nows {
+		due[i] = c.recoveryDue(now)
 	}
 	return due
 }

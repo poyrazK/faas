@@ -1030,6 +1030,7 @@ from .managed_postgres_connection_budget_version import ManagedPostgresConnectio
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
+from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
 from .managed_postgres_health import ManagedPostgresHealth
@@ -3563,6 +3564,7 @@ __all__ = (
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
+    "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
     "ManagedPostgresHealth",

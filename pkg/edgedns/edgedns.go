@@ -152,6 +152,7 @@ func (r *Reconciler) Step(ctx context.Context, nodes []Node) error {
 	for _, name := range r.cfg.Names {
 		records, cname, err := r.dns.Records(ctx, name)
 		if err != nil {
+			r.metrics.errored("read")
 			return fmt.Errorf("edgedns: read %s: %w", name.Host, err)
 		}
 		current[name], held[name] = records, cname
@@ -225,7 +226,11 @@ func (r *Reconciler) observe(nodes []Node) []netip.Addr {
 			h.passes, h.fails = h.passes+1, 0
 		} else {
 			h.passes, h.fails = 0, h.fails+1
-			r.metrics.probeFailed(n.Name)
+			// Only a node that could be behind the names counts: a drained
+			// node or one without an address is not expected to answer.
+			if n.Active && n.Public.IsValid() {
+				r.metrics.probeFailed(n.Name)
+			}
 		}
 		switch {
 		case !n.Active || !n.Public.IsValid():
@@ -262,6 +267,7 @@ func (r *Reconciler) apply(ctx context.Context, c Change) error {
 		err = r.dns.Delete(ctx, c.Name, c.ID)
 	}
 	if err != nil {
+		r.metrics.errored(action)
 		return fmt.Errorf("edgedns: %s: %w", c, err)
 	}
 	r.log.Info("edgedns: " + c.String())

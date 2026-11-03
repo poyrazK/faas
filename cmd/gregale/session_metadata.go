@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -8,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,6 +141,56 @@ func (m cliSessionMetadata) matches(token string) bool {
 	// weak format: accept the already-bound key ID for one final logout and
 	// remove the metadata immediately afterward.
 	return m.TokenSHA256 != ""
+}
+
+// managedLogin is a saved credential together with the CLI key that an
+// interactive login minted for it.
+type managedLogin struct {
+	token string
+	meta  cliSessionMetadata
+}
+
+// currentManagedLogin returns the selected profile's saved login when an
+// interactive login minted it (session metadata bound to the stored token),
+// otherwise the zero value. A key the user created and passed with --token
+// has no metadata, so the CLI never revokes it.
+func currentManagedLogin() managedLogin {
+	token := loadStoredToken(io.Discard)
+	meta, err := loadManagedSession()
+	if err != nil || token == "" || !meta.matches(token) {
+		return managedLogin{}
+	}
+	return managedLogin{token: token, meta: meta}
+}
+
+// revokeManagedLogin revokes the CLI key behind a saved login, using that
+// login's own credential against the API it was minted on. A key the server
+// no longer accepts (401) or knows (404) is already unusable.
+func revokeManagedLogin(ctx context.Context, login managedLogin) error {
+	base := login.meta.APIBase
+	if base == "" {
+		base = apiBase()
+	}
+	client := NewClient(base, login.token)
+	client.SetCompletionCache(nil)
+	err := client.DeleteKey(ctx, login.meta.KeyID)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && (apiErr.Problem.Status == http.StatusUnauthorized || apiErr.Problem.Status == http.StatusNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("could not revoke CLI key %s: %w", login.meta.KeyID, err)
+	}
+	return nil
+}
+
+// revokeReplacedLogin is the best-effort revoke for a login that re-login or
+// `config profile remove` has already replaced or deleted locally: failure
+// only warns, naming the key so the user can revoke it by hand.
+func revokeReplacedLogin(ctx context.Context, login managedLogin) {
+	if err := revokeManagedLogin(ctx, login); err != nil {
+		PrintWarn(osStderr, "%s. Revoke it with 'gregale key delete %s' while signed in to that account.", redactErrorText(err.Error()), login.meta.KeyID)
+	}
 }
 
 func clearManagedSession() {

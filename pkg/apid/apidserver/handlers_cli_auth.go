@@ -77,7 +77,8 @@ type cliAuthHandlers struct {
 // shape as a fresh code. The only 4xx is 429 from the cliAuthLimiter
 // (cliAuthChain, server.go).
 func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request) {
-	code, hash, device, err := mintBrowserAuthCode(r)
+	_, deviceCodes := h.srv.store.(state.CliAuthDeviceCodeStore)
+	code, hash, device, err := mintBrowserAuthCode(r, deviceCodes)
 	if errors.Is(err, errBrowserAuthInput) {
 		api.WriteProblem(w, api.NewProblem(400, api.CodeValidation, "Invalid authorization", "purpose must be empty, mcp-read, or mcp-write"))
 		return
@@ -106,12 +107,15 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 // issueCliAuthCode persists a minted code. With device, it also mints a
 // 32-byte device code, stores only its hash, and returns it: the row can
 // then be exchanged only with that device code, never with the short code
-// the user types (bug hunt 2026-10-28 H67). A store without device codes
-// keeps the code-only exchange.
+// the user types (bug hunt 2026-10-28 H67). Without device, the code was
+// minted long enough to exchange by itself (mintBrowserAuthCode).
 func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device bool, expiresAt time.Time) (string, error) {
-	devices, ok := h.srv.store.(state.CliAuthDeviceCodeStore)
-	if !device || !ok {
+	if !device {
 		return "", h.srv.store.IssueCliAuthCode(r.Context(), hash, expiresAt)
+	}
+	devices, ok := h.srv.store.(state.CliAuthDeviceCodeStore)
+	if !ok {
+		return "", errors.New("store cannot bind device codes")
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -139,6 +143,11 @@ func (h *cliAuthHandlers) consumeCliAuthExchange(r *http.Request, req api.CliAut
 	hash, ok := normalizeCliAuthCode(req.Code)
 	if !ok {
 		return "", "", false, nil
+	}
+	// A short code is minted only bound to a device code, so it never
+	// exchanges alone: answer as for an unknown code without a lookup.
+	if isShortCliAuthCode(req.Code) {
+		return api.CliAuthStatusExpired, "", true, state.ErrNotFound
 	}
 	status, accountID, err = h.srv.store.ConsumeCliAuthCode(r.Context(), hash)
 	return status, accountID, true, err
@@ -174,7 +183,7 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	status, accountID, ok, err := h.consumeCliAuthExchange(r, req)
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid code", "code must be 8 alphanumeric characters (XXXX-NNNN), or device_code 64 hex characters"))
+			"Invalid code", "code must be 16 hex characters (XXXX-XXXX-XXXX-XXXX), or device_code 64 hex characters"))
 		return
 	}
 	if err != nil {
@@ -318,7 +327,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	}
 	hash, ok := normalizeCliAuthCode(r.URL.Query().Get("code"))
 	if !ok {
-		h.renderCliAuthError(w, r, "Code looks malformed", "Codes are 8 characters, like ABCD-1234.")
+		h.renderCliAuthError(w, r, "Code looks malformed", "Use the code your terminal shows, like ABCD-1234.")
 		return
 	}
 	status, _, err := h.srv.store.PeekCliAuthCode(r.Context(), hash)
@@ -491,11 +500,11 @@ func (h *cliAuthHandlers) renderCliAuthError(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// mintCliAuthCodeRaw returns (human-readable "XXXX-NNNN", sha256 hash).
-// 4 bytes of crypto/rand → 8 hex chars → formatted with a dash after
-// the first 4 chars. 32 bits of entropy is fine: the consume path is
-// rate-limited to 10/min/IP (cliAuthChain) and the TTL is 5 min, so
-// brute-force on the code space is not realistic.
+// mintCliAuthCodeRaw returns (human-readable "XXXX-NNNN", sha256 hash) for a
+// login code bound to a device code. 4 bytes of crypto/rand → 8 hex chars →
+// a dash after the first 4. 32 bits suits a code a person types because the
+// short code never exchanges alone: only the 32-byte device code does (H67,
+// isShortCliAuthCode).
 func mintCliAuthCodeRaw() (string, []byte, error) {
 	raw := make([]byte, 4)
 	if _, err := rand.Read(raw); err != nil {
@@ -505,9 +514,28 @@ func mintCliAuthCodeRaw() (string, []byte, error) {
 	return hexStr[:4] + "-" + hexStr[4:], api.HashToken(raw), nil
 }
 
+// mintCodeOnlyCliAuthCode returns ("XXXX-XXXX-XXXX-XXXX", sha256 hash) for a
+// login code with no device code, which the CLI exchanges by the code alone
+// (CLIs before v0.1.18). 64 bits keeps guessing at the exchange worthless
+// even from many addresses, where 32 bits behind a per-IP limit was not.
+func mintCodeOnlyCliAuthCode() (string, []byte, error) {
+	raw := make([]byte, 8)
+	if _, err := rand.Read(raw); err != nil {
+		return "", nil, err
+	}
+	hexStr := hex.EncodeToString(raw) // 16 hex chars
+	return hexStr[:4] + "-" + hexStr[4:8] + "-" + hexStr[8:12] + "-" + hexStr[12:], api.HashToken(raw), nil
+}
+
+// isShortCliAuthCode reports whether raw is a device-bound 8-character login
+// code (mintCliAuthCodeRaw).
+func isShortCliAuthCode(raw string) bool {
+	return len(strings.ReplaceAll(strings.TrimSpace(raw), "-", "")) == 8
+}
+
 // normalizeCliAuthCode strips whitespace + dashes, uppercases, and
-// returns the 4-byte hash if the result is a valid 8-hex-char code.
-// Returns ok=false on any shape mismatch.
+// returns the code's hash if the result is an MCP code or an 8- or
+// 16-hex-char login code. Returns ok=false on any shape mismatch.
 func normalizeCliAuthCode(raw string) ([]byte, bool) {
 	normalized := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(raw), "-", ""))
 	if isMCPAuthCode(normalized) {
@@ -517,7 +545,7 @@ func normalizeCliAuthCode(raw string) ([]byte, bool) {
 		}
 		return api.HashToken(append([]byte(normalized[:4]+":"), decoded...)), true
 	}
-	if len(normalized) != 8 {
+	if len(normalized) != 8 && len(normalized) != 16 {
 		return nil, false
 	}
 	decoded, err := hex.DecodeString(normalized)

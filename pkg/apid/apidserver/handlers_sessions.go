@@ -192,6 +192,10 @@ func (s *server) revokeAllSessions(w http.ResponseWriter, r *http.Request, acct 
 			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
+	// Keys an interactive sign-in minted are sessions too (bug hunt
+	// 2026-10-28 H71). This route takes a dashboard session, so none of them
+	// is the caller's credential.
+	s.revokeInteractiveSignInKeys(r, acct, "sessions_revoke_all")
 	if s.audit != nil {
 		s.audit.Emit(r.Context(), "auth.sessions.revoke_all", &acct.ID, map[string]any{
 			"revoked_count": n,
