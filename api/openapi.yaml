@@ -92693,6 +92693,10 @@ components:
           maximum: 2000
           default: 500
           description: "Callback timeout in milliseconds; 0 uses the 500 ms default."
+        identity:
+          type: string
+          enum: [reload]
+          description: "reload lets an environment branch wake from the parent deployment's credential-free capture instead of a cold boot; the callback then re-reads config and reconnects under the branch's identity. Omit to cold-boot branches."
     BeforeCheckpointHook:
       description: "Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables warm snapshots; snapshot reuse skips the callback."
       type: object

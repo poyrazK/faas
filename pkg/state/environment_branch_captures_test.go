@@ -36,7 +36,13 @@ func environmentBranchCaptures(t *testing.T, s contractTestStore) {
 	t.Helper()
 	ctx := context.Background()
 	_, _, _, deployment := seedProjectEnvironmentBranch(t, s, "branch-capture@example.com")
-	parentID := deployment.ID // any deployment can be a lineage parent
+	parentID, err := s.EnvironmentBranchLineageParent(ctx, deployment.ID)
+	if err != nil || parentID == "" || parentID == deployment.ID {
+		t.Fatalf("lineage parent = %q, %v", parentID, err)
+	}
+	if _, err := s.EnvironmentBranchLineageParent(ctx, parentID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("the parent has no lineage parent: %v", err)
+	}
 	if _, err := s.EnvironmentBranchCapture(ctx, parentID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("capture before request: %v", err)
 	}

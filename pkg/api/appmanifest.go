@@ -53,6 +53,20 @@ const (
 type AfterRestoreHook struct {
 	Path      string `json:"path" yaml:"path"`
 	TimeoutMS int    `json:"timeout_ms,omitempty" yaml:"timeout_ms,omitempty"`
+	// Identity "reload" opts an environment branch of the app into waking
+	// from its parent deployment's credential-free capture instead of a cold
+	// boot (ADR-20261031193635 section 3): the hook then re-reads config and
+	// reconnects under the branch's identity. Empty keeps cold boot.
+	Identity string `json:"identity,omitempty" yaml:"identity,omitempty"`
+}
+
+// AfterRestoreIdentityReload is the AfterRestoreHook.Identity that opts into
+// branch restores.
+const AfterRestoreIdentityReload = "reload"
+
+// ReloadsIdentity reports whether the hook opts into branch restores.
+func (h *AfterRestoreHook) ReloadsIdentity() bool {
+	return h != nil && h.Identity == AfterRestoreIdentityReload
 }
 
 // BeforeCheckpointHook runs in the source guest before a new terminal init
@@ -79,6 +93,9 @@ func (h *BeforeCheckpointHook) EffectiveTimeout() time.Duration {
 func (h *AfterRestoreHook) Validate() error {
 	if h == nil {
 		return nil
+	}
+	if h.Identity != "" && h.Identity != AfterRestoreIdentityReload {
+		return fmt.Errorf("after_restore.identity must be %q or empty", AfterRestoreIdentityReload)
 	}
 	return validateLifecycleHook("after_restore", h.Path, h.TimeoutMS)
 }

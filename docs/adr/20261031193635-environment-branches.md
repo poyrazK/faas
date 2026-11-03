@@ -122,10 +122,11 @@ bounded by existing per-project caps.
 **Opt-in path: restore with a new identity.** An app that declares:
 
 ```yaml
-lifecycle:
-  after_restore: { path: /internal/after-restore }
-  restore_identity: reload
+after_restore: { path: /internal/after-restore, identity: reload }
 ```
+
+The opt-in lives on the existing `after_restore` hook (`AfterRestoreHook.Identity`), since
+a reload needs the hook.
 
 wakes in a branch from the parent deployment's **init-tier** capture instead of cold
 booting. Rules:
@@ -174,7 +175,7 @@ booting. Rules:
     lineage parent. Later wakes, in any branch of that parent deployment, restore from
     it. No capture is made for an app nobody branches, and a new parent deployment
     starts without one.
-  - Opting in (`restore_identity: reload`) therefore also means the app does not need
+  - Opting in (`after_restore.identity: reload`) therefore also means the app does not need
     working managed connections during init: it connects after the after-restore
     reload, or lazily. An app whose init needs its database fails the capture boot's
     readiness; the capture is then marked failed for that deployment and its branches
@@ -379,7 +380,7 @@ or `production` (refused for branches).
   branch gives speed and pays at first use.
 - PR previews can later become branches of production, one per pull request. That needs
   its own ADR.
-- The opt-in restore path adds an app contract (`restore_identity: reload`). Until an app
+- The opt-in restore path adds an app contract (`after_restore.identity: reload`). Until an app
   adopts it, its first wake in a branch is a cold boot.
 - An overlay on an unversioned parent bucket is not point-in-time. The API reports this
   per bucket, so nobody mistakes `live_parent` for a snapshot.

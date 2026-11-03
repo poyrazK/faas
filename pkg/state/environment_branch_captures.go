@@ -77,6 +77,10 @@ type EnvironmentBranchCaptureStore interface {
 	// FailEnvironmentBranchCapture releases a leased capture for a retry, or
 	// fails it for good when permanent.
 	FailEnvironmentBranchCapture(ctx context.Context, id, leaseToken, failure string, permanent bool) error
+	// EnvironmentBranchLineageParent returns the deployment a branch
+	// deployment was created from: the only one whose capture it restores.
+	// ErrNotFound when no branch created the deployment.
+	EnvironmentBranchLineageParent(ctx context.Context, deploymentID string) (string, error)
 }
 
 // CredentialFreeValue is the placeholder that replaces a managed binding
@@ -202,7 +206,29 @@ func (m *MemStore) FailEnvironmentBranchCapture(_ context.Context, id, leaseToke
 	return nil
 }
 
+func (m *MemStore) EnvironmentBranchLineageParent(_ context.Context, deploymentID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lineage, ok := m.projectEnvironmentBranchDeployments[deploymentID]
+	if !ok {
+		return "", ErrNotFound
+	}
+	return lineage.SourceDeploymentID, nil
+}
+
 // PgStore
+
+func (s *PgStore) EnvironmentBranchLineageParent(ctx context.Context, deploymentID string) (string, error) {
+	if _, err := uuid.Parse(deploymentID); err != nil {
+		return "", ErrNotFound
+	}
+	var parent string
+	err := s.pool.QueryRow(ctx, `select source_deployment_id::text from project_environment_branch_deployments where deployment_id = $1`, deploymentID).Scan(&parent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return parent, mapErr(err)
+}
 
 const environmentBranchCaptureColumns = `id::text, deployment_id::text, state, attempts, coalesce(lease_token::text, ''), failure,
 	fc_version, storage_key, base_image_version, cpu_template, cpu_model, mem_bytes, disk_bytes, stored_bytes,

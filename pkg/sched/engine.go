@@ -3496,6 +3496,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			"reason", coldReason, "snapshot_id", choice.rejected.ID,
 			"snapshot_tier", choice.rejected.Tier, "snapshot_fc_version", choice.rejected.FCVersion,
 			"fc_version", e.fcVer, "snapshot_created_at", choice.rejected.CreatedAt)
+		e.requestEnvironmentBranchCapture(ctx, app, dep)
 	}
 	if e.ops != nil {
 		if c := e.ops.WakeColdReason(coldReason); c != nil && !haveSnap {
