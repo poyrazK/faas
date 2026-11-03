@@ -8,7 +8,18 @@
 #                   80/443 rules), reserve a regional static address, and
 #                   forward its TCP 443 to the node through a target instance
 #   delete NODE...  remove the forwarding rule, target instance, address and
-#                   tag again
+#                   tags again
+#   entry NODE...   ADR-20261103163954 §2, nothing in front: tag the node with
+#                   the entry tag, which the direct-entry rule admits TCP 443
+#                   to from every source, and create that rule if missing.
+#                   Needs apply first: the forwarded address carries 443 only,
+#                   and the node's own addresses stay unreachable
+#   unentry NODE... remove the entry tag; the node is Cloudflare-only again
+#
+# The direct-entry rule is a security policy change
+# (deploy/gcp/public-beta-policy.json access.direct_entry, which
+# scripts/ops/gcp_public_beta_audit.py holds it to): the owner decides when
+# to run entry with APPLY=1.
 #
 # An external IP on the VM's interface would move all of the node's egress,
 # tenant traffic included, off Cloud NAT. A forwarding rule to a target
@@ -27,9 +38,12 @@ action=${1:-plan}
 shift || true
 REGION=${GCP_REGION:-us-east1}
 ORIGIN_TAG=${ORIGIN_TAG:-gregale-origin}
+ENTRY_TAG=${ENTRY_TAG:-gregale-entry}
+ENTRY_RULE=${ENTRY_RULE:-gregale-direct-entry-v4}
+NETWORK=${NETWORK:-default}
 APPLY=${APPLY:-0}
 if (($# == 0)); then
-  echo "usage: $0 plan|apply|delete NODE..." >&2
+  echo "usage: $0 plan|apply|delete|entry|unentry NODE..." >&2
   exit 2
 fi
 
@@ -55,7 +69,10 @@ zone_of() {
   g compute instances list --filter="name=($1)" --format='value(zone.basename())'
 }
 has_tag() {
-  g compute instances describe "$1" --zone "$2" --format='value(tags.items)' | tr ';' '\n' | grep -x "$ORIGIN_TAG" >/dev/null
+  g compute instances describe "$1" --zone "$2" --format='value(tags.items)' | tr ';' '\n' | grep -x "${3:-$ORIGIN_TAG}" >/dev/null
+}
+entry_rule_exists() {
+  [[ -n "$(g compute firewall-rules list --filter="name=($ENTRY_RULE)" --format='value(name)')" ]]
 }
 address_of() {
   g compute addresses list --filter="name=($1-edge) AND region:($REGION)" --format='value(address)'
@@ -76,9 +93,10 @@ for node in "$@"; do
   case "$action" in
     plan)
       tag=no; has_tag "$node" "$zone" && tag=yes
+      entry=no; has_tag "$node" "$zone" "$ENTRY_TAG" && entry=yes
       target=no; target_exists "$node" && target=yes
       rule=no; rule_exists "$node" && rule=yes
-      echo "$node zone=$zone origin_tag=$tag address=$(address_of "$node" || true) target_instance=$target forwarding_rule=$rule"
+      echo "$node zone=$zone origin_tag=$tag entry_tag=$entry address=$(address_of "$node" || true) target_instance=$target forwarding_rule=$rule"
       ;;
     apply)
       has_tag "$node" "$zone" ||
@@ -93,7 +111,26 @@ for node in "$@"; do
           --target-instance "$node-edge" --target-instance-zone "$zone"
       echo "$node public_ipv4=$(address_of "$node" || true)"
       ;;
+    entry)
+      if ! rule_exists "$node"; then
+        echo "$node: no forwarding rule $node-edge-https; run apply first" >&2
+        exit 1
+      fi
+      entry_rule_exists ||
+        write "firewall $ENTRY_RULE: tcp/443 from 0.0.0.0/0 to tag $ENTRY_TAG" compute firewall-rules create "$ENTRY_RULE" \
+          --network "$NETWORK" --direction INGRESS --action ALLOW --rules tcp:443 \
+          --source-ranges 0.0.0.0/0 --target-tags "$ENTRY_TAG"
+      has_tag "$node" "$zone" "$ENTRY_TAG" ||
+        write "tag $node $ENTRY_TAG" compute instances add-tags "$node" --zone "$zone" --tags "$ENTRY_TAG"
+      echo "$node entry_ipv4=$(address_of "$node" || true)"
+      ;;
+    unentry)
+      ! has_tag "$node" "$zone" "$ENTRY_TAG" ||
+        write "untag $node $ENTRY_TAG" compute instances remove-tags "$node" --zone "$zone" --tags "$ENTRY_TAG"
+      ;;
     delete)
+      ! has_tag "$node" "$zone" "$ENTRY_TAG" ||
+        write "untag $node $ENTRY_TAG" compute instances remove-tags "$node" --zone "$zone" --tags "$ENTRY_TAG"
       ! rule_exists "$node" ||
         write "delete forwarding rule $node-edge-https" compute forwarding-rules delete "$node-edge-https" --region "$REGION"
       ! target_exists "$node" ||
@@ -104,7 +141,7 @@ for node in "$@"; do
         write "untag $node $ORIGIN_TAG" compute instances remove-tags "$node" --zone "$zone" --tags "$ORIGIN_TAG"
       ;;
     *)
-      echo "usage: $0 plan|apply|delete NODE..." >&2
+      echo "usage: $0 plan|apply|delete|entry|unentry NODE..." >&2
       exit 2
       ;;
   esac
