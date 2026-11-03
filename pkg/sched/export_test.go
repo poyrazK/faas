@@ -1175,3 +1175,8 @@ func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
 	}
 	return due
 }
+
+// FailInterruptedFireNowRequests runs the interrupted manual-run sweep once.
+func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
+	r.failInterruptedFireNowRequests(ctx)
+}

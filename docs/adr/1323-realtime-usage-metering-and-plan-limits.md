@@ -260,3 +260,21 @@ configuration would refuse. apid re-registers endpoints every 30 seconds,
 which also closes previous-token sockets once their grace deadline passes.
 Channel-rule changes, including the claims rules extract, keep connections;
 ticket connections keep their own per-second recheck.
+
+## Amendment (2026-11-02): client message rate and repeated acks
+
+- A client frame on the original protocol is written to the node's callback
+  spool (two fsyncs) and delivered to the message callback, with no bound: a
+  failing callback let one client spool at wire speed, on the disk snapshot
+  restores use. A connection now sends `api.RealtimeClientMessagesPerSecond`
+  (20, bursts of 40) and a node spools `RealtimeNodeClientMessagesPerSecond`
+  (2,000, bursts of 4,000). Past either the node stops reading the socket until
+  the rate allows, so TCP slows the client and nothing is dropped; a frame that
+  would wait over five seconds closes the connection with 1013. Counters:
+  `realtimed_client_messages_paced_total`, `..._throttled_total`.
+- Acks were exempt from the per-connection command budget
+  (`api.RealtimeResumeCommandsPerSecond`) because each must advance a cursor,
+  but an ack of the already-acknowledged sequence
+  was accepted and, for durable subscriptions and the inbox, rewrote the
+  cursor row each time. Such an ack is now answered without a write and spends
+  a command token.

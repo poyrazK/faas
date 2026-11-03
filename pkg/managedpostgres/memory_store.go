@@ -36,6 +36,7 @@ type MemoryStore struct {
 	capEventsMailed           map[memoryCapEventKey]bool
 	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
 	restoreSlotNoticesMailed  map[memoryRestoreSlotNoticeKey]bool
+	planExcessNotices         map[string]memoryPlanExcessNotice
 	overageDeliveries         map[memoryOverageKey]OverageDelivery
 	usageWaivers              map[string][]usageWaiver
 }
@@ -64,6 +65,7 @@ func NewMemoryStore() *MemoryStore {
 		capEventsMailed:           map[memoryCapEventKey]bool{},
 		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
 		restoreSlotNoticesMailed:  map[memoryRestoreSlotNoticeKey]bool{},
+		planExcessNotices:         map[string]memoryPlanExcessNotice{},
 		overageDeliveries:         map[memoryOverageKey]OverageDelivery{},
 		usageWaivers:              map[string][]usageWaiver{},
 	}

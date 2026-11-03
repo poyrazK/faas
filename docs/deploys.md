@@ -326,7 +326,9 @@ own hosts: a rule's `match_host` must be `@app`, the app's
 `routes` and `async_routes` in a `gregale.yaml` it deploys. A rule that covers
 other hosts (`*`, a wildcard, another app's host), or a route that sends
 another app's host to this app, needs an account API key, because edge rules
-apply to every host they cover across your apps.
+apply to every host they cover across your apps. A route rule written with a
+deploy token may serve only the token's app: routing its hosts to another app
+needs an account API key too.
 
 ```bash
 gregale app deploy-token create --app my-api --label ci   # default expiry: 90 days
@@ -767,7 +769,15 @@ production`) and its promotion approval stands in for the app's policy.
 A GitOps source releases into `production` only once a person approved the
 revision in Gregale (approval policy `manual`); with `protected_branch` the
 sync waits until you remove the app's policy or switch the source to manual
-approval.
+approval. That one approval stands in for the app's policy only when a person
+gave it, the policy asks for one approval and, in an organization, the
+approver holds a role the policy lets approve; otherwise the sync waits. An
+API key's approval of the revision does not count: approve the same revision
+on the environment's GitOps page in the dashboard.
+
+While a policy or a pending scheduled release names a channel as its last
+Slack or email channel, that channel can't be deleted (`409
+notification_channel_in_use`): name another channel there first.
 
 The app's **Release safety** page in the dashboard
 (`/dashboard/apps/<app>/release-safety`) shows the policy and the releases
@@ -859,8 +869,10 @@ While Gregale handles a security incident, it may pause new releases for
 every account
 ([ADR-20261022140000](adr/20261022140000-break-glass-controls.md)). Deploys
 and new schedules then fail with 503 `platform_release_paused`, which nothing
-in the request overrides. Queued builds wait, and scheduled releases start
-once the pause is lifted. Your running apps keep serving, rollbacks still
+in the request overrides. A release you deployed earlier with `--no-traffic`
+can't take its first traffic during the pause either. Queued builds wait, and
+scheduled releases start once the pause is lifted. Your running apps keep
+serving, rollbacks to a release that served before still
 work, and you can still change env vars and secrets, so you can rotate a
 credential during the incident. Retry the deploy after the pause is lifted.
 
@@ -894,7 +906,9 @@ Just before it starts, Gregale checks again:
 - **Freezes.** A freeze active at that moment stops the release, including a
   freeze created after you scheduled it. Scheduling into a freeze you know
   about needs `--override-freeze REASON`, which covers exactly the freezes
-  active at the scheduled time.
+  active at the scheduled time. Overriding a company organization's freeze
+  this way needs the same right as an immediate override: someone who may
+  lift the freeze.
 - **Approvals.** If the app requires approvals, the release must roll out
   through a canary, and it waits for approval in that canary like any other
   release. A policy added while the release waited applies to it.
@@ -1116,7 +1130,9 @@ the previous release's traffic from before the rollout. A clear 5xx or p95
 latency regression rolls it back automatically and records why on the
 deployment (`gregale release summary`). This also covers immediate
 releases, and anything the canary's share of traffic did not show. Releases
-deployed with `--rollback-on-5xx=false` are not watched.
+deployed with `--rollback-on-5xx=false` are not watched. The watch ends early
+only when a newer release takes traffic; deploying one with `--no-traffic`,
+scheduling one, or a build still running leaves the serving release watched.
 
 Opt out when you need an immediate cutover:
 

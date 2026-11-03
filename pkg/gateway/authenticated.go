@@ -86,7 +86,7 @@ type Authenticated struct {
 
 	// CredentialWithheld marks a preview request whose Authorization a
 	// platform gate verified and the gateway removed before the app
-	// (ADR-20261102100000). Shared caches treat it as credentialed.
+	// (ADR-20261102100001). Shared caches treat it as credentialed.
 	CredentialWithheld bool
 	// JWTSubject is the `sub` claim from a JWKS-verified token for
 	// requests that satisfied applyEdgeRuleJWT. Empty for traffic

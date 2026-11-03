@@ -140,5 +140,8 @@ func (s *PgStore) ChangeManagedRealtimeAccess(ctx context.Context, ep, principal
 	if err != nil {
 		return row, err
 	}
+	if err = notifyRealtimeAccessChangedPG(ctx, tx, ep, principal); err != nil {
+		return row, err
+	}
 	return row, tx.Commit(ctx)
 }
