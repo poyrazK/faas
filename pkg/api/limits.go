@@ -97,11 +97,57 @@ const (
 // a botnet guessing one account's password; past this budget every password
 // sign-in for the address answers 429 until failures age out or a password
 // reset succeeds, and a bound account's owner is emailed once. One apid
-// tracks at most LoginFailureEmailsTrackedMax addresses at a time.
+// tracks at most LoginFailureEmailsTrackedMax addresses at a time; when full
+// it forgets the address with the fewest failures among
+// LoginFailureEvictionSample random entries, so filling the table with random
+// addresses does not stop a targeted one from being counted.
 const (
 	LoginFailuresPerEmail        = 20
 	LoginFailureEmailWindow      = time.Hour
 	LoginFailureEmailsTrackedMax = 100_000
+	LoginFailureEvictionSample   = 32
+)
+
+// An app's basic-auth gate (public_auth mode basic) refuses guesses from one
+// client prefix (IPv4 /24, IPv6 /64) for one app with 429 once it has
+// PublicAuthBasicFailuresPerWindow wrong passwords inside
+// PublicAuthBasicFailureWindow (H76). One gateway tracks at most
+// PublicAuthGuessKeysMax app/prefix pairs. A newly set basic-auth password
+// must be at least PublicAuthBasicPassMinBytes long.
+const (
+	PublicAuthBasicFailuresPerWindow = 10
+	PublicAuthBasicFailureWindow     = time.Minute
+	PublicAuthGuessIPv4Prefix        = 24
+	PublicAuthGuessIPv6Prefix        = 64
+	PublicAuthGuessKeysMax           = 100_000
+	PublicAuthGuessEvictionSample    = 32
+	PublicAuthBasicPassMinBytes      = 12
+)
+
+// One client prefix (IPv4 /24, IPv6 /64) may wake at most
+// GatewayColdWakeAppsPerClient different parked apps through one gateway per
+// GatewayColdWakeClientWindow (H75); more answer 429. Loopback and private
+// callers are platform traffic and are not counted. In the gateway's wake
+// admission queue one account may hold at most
+// GatewayWakeAdmissionQueuedPerAccount waiting and
+// GatewayWakeAdmissionRunningPerAccount running admissions, so one account's
+// burst cannot take every slot.
+const (
+	GatewayColdWakeAppsPerClient          = 20
+	GatewayColdWakeClientWindow           = time.Minute
+	GatewayColdWakeClientsTrackedMax      = 100_000
+	GatewayWakeAdmissionQueuedPerAccount  = 8
+	GatewayWakeAdmissionRunningPerAccount = 2
+)
+
+// PasswordResetMailInFlightMax caps the forgot-password requests one apid
+// handles off the request path at once (H86). The account lookup, token and
+// mail run in the background so the response time is the same whether or not
+// the address has an account; past the cap a request is dropped and logged,
+// answering the same 200.
+const (
+	PasswordResetMailInFlightMax = 64
+	PasswordResetMailTimeout     = 30 * time.Second
 )
 
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
@@ -685,6 +731,14 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // PostgreSQL delete can be undone before the provider resource is deleted
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
+
+// ManagedPostgresUsageWaiverPeriod bounds the usage waiver of a scheduled
+// delete (ADR-20261029174950 decision 6, amendment 1): a database's waiver
+// counts only when no earlier one for it began within this period. Deleting
+// and undeleting in a loop used to park a database's storage for free, billed
+// only for the short ready gaps (H106). ManagedPostgresUsageForSubject
+// spells the same 30 days in SQL.
+const ManagedPostgresUsageWaiverPeriod = 30 * 24 * time.Hour
 
 // ManagedPostgresRestoreSlots is how many databases a point-in-time restore
 // may hold past the plan's database limit, and ManagedPostgresRestoreSlotWindow
@@ -7531,6 +7585,10 @@ const (
 	// (DeploymentQueuedBuildTimeoutSeconds, anchored on enqueued_at) still
 	// fails a build that never finds capacity.
 	BuildDiskCapacityRetryDelay = 30 * time.Second
+	// BuildDiskCapacityMaxWait is how long after it was enqueued a build may
+	// keep waiting for build disk before it fails with the disk-full error
+	// instead of being requeued (H83).
+	BuildDiskCapacityMaxWait = 15 * time.Minute
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
@@ -14071,8 +14129,11 @@ const (
 	RouteHealthProbeChallengeTTL      = 2 * time.Minute
 	RouteHealthProbePollInterval      = 15 * time.Second
 	RouteHealthProbeRoundTimeout      = 55 * time.Second
-	RouteHealthProbePruneInterval     = time.Minute
-	RouteHealthProbeRetention         = 24 * time.Hour
+	// RouteHealthProbeWorkers is how many accounts one apid probes at once;
+	// each account's targets run in turn (H79).
+	RouteHealthProbeWorkers       = 8
+	RouteHealthProbePruneInterval = time.Minute
+	RouteHealthProbeRetention     = 24 * time.Hour
 	// A probe window is unknown when at least this share of responses were
 	// 401/403: customer auth gates stay in force for probes.
 	RouteHealthProbeUnauthenticatedShare = 0.5

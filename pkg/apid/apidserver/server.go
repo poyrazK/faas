@@ -479,6 +479,9 @@ type server struct {
 	// loginFailures caps failed password sign-ins per email address across
 	// client addresses (login_failure_limit.go).
 	loginFailures *loginFailureLimiter
+	// resetMail runs forgot-password lookups and mail off the request path
+	// (background_mail.go, H86).
+	resetMail *backgroundWork
 	// apiRequests is each account's budget of authenticated API requests a
 	// minute (api_request_budget.go). Nil (bare test servers) is unlimited.
 	apiRequests *apiRequestBudget
@@ -1553,6 +1556,7 @@ func newServerWithDeps(
 		securityMail:           newSecurityMailLimiter(),
 		signups:                newSignupNetworkLimiter(),
 		loginFailures:          newLoginFailureLimiter(),
+		resetMail:              newBackgroundWork(api.PasswordResetMailInFlightMax),
 		apiRequests:            newAPIRequestBudget(),
 		inboundWebhookAccepts:  newAPIRequestBudget(),
 		domainCreateLimiter:    domainCreateLimiter,
@@ -5096,7 +5100,10 @@ func (s *server) handler() http.Handler {
 	}, s.fromTrustedOrigin(http.HandlerFunc(auth.verifyConfirmed))))
 	mux.Handle("GET /v1/auth/verify-email", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
-	}, http.HandlerFunc(s.verifyEmail)))
+	}, http.HandlerFunc(s.verifyEmailConfirm)))
+	mux.Handle("POST /v1/auth/verify-email", s.dashboardAuthChain(middleware.AuthLimitConfig{
+		CountStatuses: []int{middleware.CountEveryAttempt, http.StatusGone},
+	}, s.fromTrustedOrigin(http.HandlerFunc(s.verifyEmail))))
 	// Programmatic auth surface (issue #311). JSON-only, bearer-key
 	// CLI path — three endpoints that share the spec §11 10/min/IP
 	// authlimit bucket with the rest of the cookie auth surface.

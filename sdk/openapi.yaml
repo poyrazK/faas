@@ -1755,9 +1755,11 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        Consumes a 24-hour, single-use verification token and marks the
-        account email verified. This endpoint does not create a session;
-        the returned HTML page prompts the customer to sign in again.
+        A browser (Accept text/html) gets an HTML page whose button posts the
+        token back, and nothing is consumed, so a mail scanner that prefetches
+        the link cannot use up the token. Any other client consumes the
+        24-hour, single-use token here and the account email is marked
+        verified. No session is created.
       parameters:
         - in: query
           name: token
@@ -1766,12 +1768,41 @@ paths:
           schema: {type: string}
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: The confirmation page, or for a non-browser client the verified-email page.
           content:
             text/html:
               schema: {type: string}
         '410':
           description: Verification link expired, invalid, or already used.
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    post:
+      tags: [auth]
+      operationId: confirmEmailVerification
+      summary: Confirm an email verification from its confirmation page.
+      description: |
+        The confirmation page's form posts the token here. It is consumed and
+        the account email marked verified; the HTML answer asks the customer
+        to sign in again rather than creating a session.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: The verification token from the confirmation page's form.
+      responses:
+        '200':
+          description: Email verified; HTML sign-in prompt.
+          content:
+            text/html:
+              schema: {type: string}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '410':
+          description: The posted token is expired, unknown, or was already used.
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /auth/reset:
     get:

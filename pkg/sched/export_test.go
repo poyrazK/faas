@@ -119,7 +119,6 @@ var DecodeKafkaConfig = decodeKafkaConfig
 var DecodeNATSConfig = decodeNATSConfig
 var DecodeOperationResult = decodeOperationResult
 var DecodeRedisConfig = decodeRedisConfig
-var DecodeSQSConfig = decodeSQSConfig
 var EnableWarmSnapshot = enableWarmSnapshot
 var EnqueueScopedDemand = enqueueScopedDemand
 var EnvironmentGitOpsJobBindingIntentMatches = environmentGitOpsJobBindingIntentMatches
