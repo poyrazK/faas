@@ -36,26 +36,49 @@ func (h Handler) deployTarget(ctx context.Context, accountID, issuerURL, subject
 	case "pull_request", "pull_request_target":
 		return "", refuse("a pull request workflow cannot deploy: merge the change, or let its PR preview build it")
 	}
-	app = strings.TrimSpace(app)
-	if app == "" {
-		return "", refuse("name the app to deploy (`app`): a token issued through the repository's GitHub connection deploys one app bound to that repository")
-	}
-	lookup, ok := h.deps.Lookups.(DeployTargetLookup)
-	if !ok {
-		return "", api.ErrCapacity("deploy targets cannot be resolved")
-	}
-	target, err := lookup.OIDCDeployTargetForSubject(ctx, accountID, issuerURL, subject, app)
-	if errors.Is(err, state.ErrNotFound) {
-		return "", refuse("the app " + app + " is not bound to this repository")
-	}
-	if err != nil {
-		return "", api.ErrCapacity("deploy target lookup failed")
+	target, problem := h.repositoryTarget(ctx, accountID, issuerURL, subject, app, refuse)
+	if problem != nil {
+		return "", problem
 	}
 	if !deployRefAllowed(claims.Ref, target.Branches) {
 		return "", refuse("this run is on " + claims.Ref + "; deploys come from the repository's deploy branches (" +
 			strings.Join(target.Branches, ", ") + ") or v* release tags. Write the account's trust policy to allow another ref")
 	}
 	return target.AppID, nil
+}
+
+// boundRepositoryApp resolves the app a preview-read bearer is bound to: one
+// bound to the token's repository (ADR-20261102203228).
+func (h Handler) boundRepositoryApp(ctx context.Context, accountID, issuerURL, subject, app string) (string, *api.Problem) {
+	refuse := func(detail string) *api.Problem {
+		return api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Preview status not readable from this workflow", detail)
+	}
+	target, problem := h.repositoryTarget(ctx, accountID, issuerURL, subject, app, refuse)
+	if problem != nil {
+		return "", problem
+	}
+	return target.AppID, nil
+}
+
+// repositoryTarget resolves app among the apps bound to the token's
+// repository.
+func (h Handler) repositoryTarget(ctx context.Context, accountID, issuerURL, subject, app string, refuse func(string) *api.Problem) (state.OIDCDeployTarget, *api.Problem) {
+	app = strings.TrimSpace(app)
+	if app == "" {
+		return state.OIDCDeployTarget{}, refuse("name the app (`app`): a token issued through the repository's GitHub connection acts on one app bound to that repository")
+	}
+	lookup, ok := h.deps.Lookups.(DeployTargetLookup)
+	if !ok {
+		return state.OIDCDeployTarget{}, api.ErrCapacity("deploy targets cannot be resolved")
+	}
+	target, err := lookup.OIDCDeployTargetForSubject(ctx, accountID, issuerURL, subject, app)
+	if errors.Is(err, state.ErrNotFound) {
+		return state.OIDCDeployTarget{}, refuse("the app " + app + " is not bound to this repository")
+	}
+	if err != nil {
+		return state.OIDCDeployTarget{}, api.ErrCapacity("deploy target lookup failed")
+	}
+	return target, nil
 }
 
 func deployRefAllowed(ref string, branches []string) bool {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -52,6 +53,32 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 	}
 	app, err := store.AppByID(r.Context(), appID)
 	return app, true, err
+}
+
+// previewStatusReads are the PR preview status reads a credential bound to the
+// production app may make (ADR-20261102203228).
+var previewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// previewAccessApp is the app a preview route is authorized against: the
+// preview, except for a status read made with a credential bound to one app,
+// which reads its own app's previews and is authorized against the preview's
+// production app (ADR-20261102203228).
+func previewAccessApp(r *http.Request, store Store, preview state.App) string {
+	if !previewStatusReads[r.Pattern] || preview.PreviewOfSlug == "" {
+		return preview.ID
+	}
+	_, key, _, ok := authmw.PrincipalFrom(r)
+	if !ok || key == nil || key.AppID == "" {
+		return preview.ID
+	}
+	parent, err := store.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if err != nil || parent.ID != key.AppID || parent.AccountID != preview.AccountID {
+		return preview.ID
+	}
+	return parent.ID
 }
 
 // fireNowRequestApp resolves the app behind a manual cron run's request. A
@@ -106,7 +133,10 @@ func ownedResourceApp(r *http.Request, store Store, actorID string) (string, err
 		return id, nil
 	case strings.HasPrefix(path, "/v1/preview/") && r.PathValue("slug") != "":
 		preview, err := store.AppBySlug(ctx, r.PathValue("slug"))
-		return preview.ID, missing(err)
+		if err != nil {
+			return "", missing(err)
+		}
+		return previewAccessApp(r, store, preview), nil
 	case strings.HasPrefix(path, "/v1/freezes/") && validID(id):
 		freezes, ok := store.(state.ReleaseFreezeStore)
 		if !ok {
