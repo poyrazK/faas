@@ -9,3 +9,7 @@ Environment=FAAS_REFERRAL_NEW_CUSTOMER_REWARD_CENTS={{ faas_referral_new_custome
 Environment=FAAS_SALES_COMMISSION_BPS={{ faas_sales_commission_bps }}
 Environment=FAAS_REFERRAL_HOLD_DAYS={{ faas_referral_hold_days }}
 Environment=FAAS_REFERRAL_CONVERSION_DAYS={{ faas_referral_conversion_days }}
+
+Environment=FAAS_SALES_INTAKE_ENABLED={{ '1' if faas_sales_intake_enabled | bool else '0' }}
+Environment=FAAS_SALES_INTAKE_FOLLOWUP_DAYS={{ faas_sales_intake_followup_days }}
+Environment={{ ('FAAS_SALES_INTAKE_TIMEZONE=' ~ faas_sales_intake_timezone) | to_json }}

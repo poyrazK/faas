@@ -6,16 +6,20 @@ import (
 	"net/mail"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/referrals"
 )
 
 type Config struct {
-	Enabled      bool
-	Members      map[string]bool // value true grants team-wide management visibility
-	Policy       referrals.Policy
-	PublicOrigin string
+	IntakeEnabled      bool
+	IntakeFollowupDays int
+	IntakeTimezone     *time.Location
+	Enabled            bool
+	Members            map[string]bool // value true grants team-wide management visibility
+	Policy             referrals.Policy
+	PublicOrigin       string
 }
 
 func (c Config) Member(email string) (manager, member bool) {
@@ -25,8 +29,25 @@ func (c Config) Member(email string) (manager, member bool) {
 
 func FromEnv(getenv func(string) string, origin string) (Config, error) {
 	c := Config{Enabled: getenv("FAAS_SALES_ENABLED") == "1", PublicOrigin: origin, Members: map[string]bool{}, Policy: referrals.Policy{Currency: "usd", HoldDays: 30, ConversionDays: 90}}
+	c.IntakeEnabled = getenv("FAAS_SALES_INTAKE_ENABLED") == "1"
+	c.IntakeFollowupDays = api.SalesIntakeFollowupDefaultDays
+	c.IntakeTimezone = time.UTC
 	if !c.Enabled {
 		return c, nil
+	}
+	if value := getenv("FAAS_SALES_INTAKE_FOLLOWUP_DAYS"); value != "" {
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > api.SalesIntakeFollowupMaxDays {
+			return Config{}, fmt.Errorf("FAAS_SALES_INTAKE_FOLLOWUP_DAYS must be between 0 and %d", api.SalesIntakeFollowupMaxDays)
+		}
+		c.IntakeFollowupDays = n
+	}
+	if value := getenv("FAAS_SALES_INTAKE_TIMEZONE"); value != "" {
+		zone, err := time.LoadLocation(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("FAAS_SALES_INTAKE_TIMEZONE must be an IANA time zone")
+		}
+		c.IntakeTimezone = zone
 	}
 	for _, group := range []struct {
 		key     string

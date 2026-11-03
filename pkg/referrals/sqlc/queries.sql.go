@@ -11,6 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activeSalesInquiry = `-- name: ActiveSalesInquiry :one
+SELECT id, name, email, company, intent, message, latest_message, requested_code, status, reason, lead_id, task_id, repeat_count, version, created_at, last_received_at, updated_at FROM sales_inquiries WHERE email=$1 AND status<>'closed' FOR UPDATE
+`
+
+func (q *Queries) ActiveSalesInquiry(ctx context.Context, db DBTX, email string) (SalesInquiry, error) {
+	row := db.QueryRow(ctx, activeSalesInquiry, email)
+	var i SalesInquiry
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.Company,
+		&i.Intent,
+		&i.Message,
+		&i.LatestMessage,
+		&i.RequestedCode,
+		&i.Status,
+		&i.Reason,
+		&i.LeadID,
+		&i.TaskID,
+		&i.RepeatCount,
+		&i.Version,
+		&i.CreatedAt,
+		&i.LastReceivedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const advanceSalesIntake = `-- name: AdvanceSalesIntake :exec
+UPDATE sales_intake_routing SET last_owner_id=$1 WHERE id=1
+`
+
+func (q *Queries) AdvanceSalesIntake(ctx context.Context, db DBTX, lastOwnerID pgtype.UUID) error {
+	_, err := db.Exec(ctx, advanceSalesIntake, lastOwnerID)
+	return err
+}
+
 const attributeSignup = `-- name: AttributeSignup :execrows
 INSERT INTO referral_attributions(account_id,code,currency,customer_reward_cents,referred_reward_cents,commission_bps,hold_days,conversion_days)
 SELECT $1::uuid,l.code,$2::text,
@@ -47,6 +85,100 @@ func (q *Queries) AttributeSignup(ctx context.Context, db DBTX, arg AttributeSig
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const claimIntakeReceipt = `-- name: ClaimIntakeReceipt :execrows
+INSERT INTO sales_intake_receipts(nonce,expires_at) VALUES($1,$2) ON CONFLICT DO NOTHING
+`
+
+type ClaimIntakeReceiptParams struct {
+	Nonce     pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimIntakeReceipt(ctx context.Context, db DBTX, arg ClaimIntakeReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, claimIntakeReceipt, arg.Nonce, arg.ExpiresAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const closeSalesInquiry = `-- name: CloseSalesInquiry :execrows
+UPDATE sales_inquiries i SET status='closed',updated_at=now(),version=version+1
+WHERE i.id=$1 AND i.version=$2 AND i.status<>'closed'
+ AND ($3::boolean OR (i.status<>'pending' AND EXISTS(SELECT 1 FROM sales_leads l WHERE l.id=i.lead_id AND l.owner_id=$4::uuid)))
+`
+
+type CloseSalesInquiryParams struct {
+	ID        pgtype.UUID
+	Version   int64
+	AllOwners bool
+	ActorID   pgtype.UUID
+}
+
+func (q *Queries) CloseSalesInquiry(ctx context.Context, db DBTX, arg CloseSalesInquiryParams) (int64, error) {
+	result, err := db.Exec(ctx, closeSalesInquiry,
+		arg.ID,
+		arg.Version,
+		arg.AllOwners,
+		arg.ActorID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createIntakeLead = `-- name: CreateIntakeLead :one
+INSERT INTO sales_leads(id,owner_id,name,email,company,note) VALUES($1,$2,$3,$4,$5,$6)
+ON CONFLICT(owner_id,email) DO UPDATE SET email=sales_leads.email RETURNING id
+`
+
+type CreateIntakeLeadParams struct {
+	ID      pgtype.UUID
+	OwnerID pgtype.UUID
+	Name    string
+	Email   string
+	Company string
+	Note    string
+}
+
+func (q *Queries) CreateIntakeLead(ctx context.Context, db DBTX, arg CreateIntakeLeadParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, createIntakeLead,
+		arg.ID,
+		arg.OwnerID,
+		arg.Name,
+		arg.Email,
+		arg.Company,
+		arg.Note,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createIntakeTask = `-- name: CreateIntakeTask :one
+INSERT INTO sales_tasks(id,lead_id,title,due_on) VALUES($1,$2,$3,$4) RETURNING id
+`
+
+type CreateIntakeTaskParams struct {
+	ID     pgtype.UUID
+	LeadID pgtype.UUID
+	Title  string
+	DueOn  pgtype.Date
+}
+
+func (q *Queries) CreateIntakeTask(ctx context.Context, db DBTX, arg CreateIntakeTaskParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, createIntakeTask,
+		arg.ID,
+		arg.LeadID,
+		arg.Title,
+		arg.DueOn,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const createProspect = `-- name: CreateProspect :one
@@ -191,6 +323,70 @@ func (q *Queries) GetLink(ctx context.Context, db DBTX, shareCode pgtype.Text) (
 		&i.ShareCode,
 	)
 	return i, err
+}
+
+const insertSalesInquiry = `-- name: InsertSalesInquiry :exec
+INSERT INTO sales_inquiries(id,name,email,company,intent,message,requested_code,status,reason,lead_id,task_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+`
+
+type InsertSalesInquiryParams struct {
+	ID            pgtype.UUID
+	Name          string
+	Email         string
+	Company       string
+	Intent        string
+	Message       string
+	RequestedCode string
+	Status        string
+	Reason        string
+	LeadID        pgtype.UUID
+	TaskID        pgtype.UUID
+}
+
+func (q *Queries) InsertSalesInquiry(ctx context.Context, db DBTX, arg InsertSalesInquiryParams) error {
+	_, err := db.Exec(ctx, insertSalesInquiry,
+		arg.ID,
+		arg.Name,
+		arg.Email,
+		arg.Company,
+		arg.Intent,
+		arg.Message,
+		arg.RequestedCode,
+		arg.Status,
+		arg.Reason,
+		arg.LeadID,
+		arg.TaskID,
+	)
+	return err
+}
+
+const intakeLead = `-- name: IntakeLead :one
+SELECT id,owner_id,email FROM sales_leads WHERE id=$1 FOR UPDATE
+`
+
+type IntakeLeadRow struct {
+	ID      pgtype.UUID
+	OwnerID pgtype.UUID
+	Email   string
+}
+
+func (q *Queries) IntakeLead(ctx context.Context, db DBTX, id pgtype.UUID) (IntakeLeadRow, error) {
+	row := db.QueryRow(ctx, intakeLead, id)
+	var i IntakeLeadRow
+	err := row.Scan(&i.ID, &i.OwnerID, &i.Email)
+	return i, err
+}
+
+const intakeTaskOpen = `-- name: IntakeTaskOpen :one
+SELECT EXISTS(SELECT 1 FROM sales_tasks WHERE id=$1 AND completed_at IS NULL)::boolean
+`
+
+func (q *Queries) IntakeTaskOpen(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, intakeTaskOpen, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const listProspects = `-- name: ListProspects :many
@@ -339,6 +535,94 @@ func (q *Queries) ListReferrals(ctx context.Context, db DBTX, arg ListReferralsP
 	return items, nil
 }
 
+const listSalesInquiries = `-- name: ListSalesInquiries :many
+SELECT i.id, i.name, i.email, i.company, i.intent, i.message, i.latest_message, i.requested_code, i.status, i.reason, i.lead_id, i.task_id, i.repeat_count, i.version, i.created_at, i.last_received_at, i.updated_at,COALESCE(l.owner_id,'00000000-0000-0000-0000-000000000000'::uuid)::uuid AS owner_id,COALESCE(a.email,'')::text AS owner_email,
+ CASE WHEN i.status='assigned' AND l.id IS NULL THEN 'pending' ELSE i.status END::text AS effective_status
+FROM sales_inquiries i LEFT JOIN sales_leads l ON l.id=i.lead_id LEFT JOIN accounts a ON a.id=l.owner_id
+WHERE ($1::boolean OR (i.status<>'pending' AND l.owner_id=$2::uuid))
+ AND ($3::text='' OR (CASE WHEN i.status='assigned' AND l.id IS NULL THEN 'pending' ELSE i.status END)=$3::text)
+ AND ($4::uuid='00000000-0000-0000-0000-000000000000' OR i.id<$4::uuid)
+ORDER BY i.id DESC LIMIT $5
+`
+
+type ListSalesInquiriesParams struct {
+	AllOwners    bool
+	ActorID      pgtype.UUID
+	StatusFilter string
+	AfterID      pgtype.UUID
+	RowLimit     int32
+}
+
+type ListSalesInquiriesRow struct {
+	ID              pgtype.UUID
+	Name            string
+	Email           string
+	Company         string
+	Intent          string
+	Message         string
+	LatestMessage   string
+	RequestedCode   string
+	Status          string
+	Reason          string
+	LeadID          pgtype.UUID
+	TaskID          pgtype.UUID
+	RepeatCount     int64
+	Version         int64
+	CreatedAt       pgtype.Timestamptz
+	LastReceivedAt  pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	OwnerID         pgtype.UUID
+	OwnerEmail      string
+	EffectiveStatus string
+}
+
+func (q *Queries) ListSalesInquiries(ctx context.Context, db DBTX, arg ListSalesInquiriesParams) ([]ListSalesInquiriesRow, error) {
+	rows, err := db.Query(ctx, listSalesInquiries,
+		arg.AllOwners,
+		arg.ActorID,
+		arg.StatusFilter,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSalesInquiriesRow{}
+	for rows.Next() {
+		var i ListSalesInquiriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.Company,
+			&i.Intent,
+			&i.Message,
+			&i.LatestMessage,
+			&i.RequestedCode,
+			&i.Status,
+			&i.Reason,
+			&i.LeadID,
+			&i.TaskID,
+			&i.RepeatCount,
+			&i.Version,
+			&i.CreatedAt,
+			&i.LastReceivedAt,
+			&i.UpdatedAt,
+			&i.OwnerID,
+			&i.OwnerEmail,
+			&i.EffectiveStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSalesTasks = `-- name: ListSalesTasks :many
 SELECT t.id,t.lead_id,t.title,t.due_on,t.completed_at,t.version,l.name AS lead_name,l.email AS lead_email,l.owner_id,a.email AS owner_email
 FROM sales_tasks t JOIN sales_leads l ON l.id=t.lead_id JOIN accounts a ON a.id=l.owner_id
@@ -419,6 +703,18 @@ func (q *Queries) ListSalesTasks(ctx context.Context, db DBTX, arg ListSalesTask
 	return items, nil
 }
 
+const lockSalesIntake = `-- name: LockSalesIntake :one
+INSERT INTO sales_intake_routing(id) VALUES(1)
+ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING last_owner_id
+`
+
+func (q *Queries) LockSalesIntake(ctx context.Context, db DBTX) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockSalesIntake)
+	var last_owner_id pgtype.UUID
+	err := row.Scan(&last_owner_id)
+	return last_owner_id, err
+}
+
 const ownLink = `-- name: OwnLink :one
 SELECT code, owner_id, kind, active, created_at, share_code FROM referral_links WHERE owner_id=$1 AND kind=$2
 `
@@ -487,6 +783,15 @@ func (q *Queries) ProspectCounts(ctx context.Context, db DBTX, arg ProspectCount
 	return items, nil
 }
 
+const purgeIntakeReceipts = `-- name: PurgeIntakeReceipts :exec
+DELETE FROM sales_intake_receipts WHERE nonce IN (SELECT nonce FROM sales_intake_receipts WHERE expires_at<now() ORDER BY expires_at LIMIT $1)
+`
+
+func (q *Queries) PurgeIntakeReceipts(ctx context.Context, db DBTX, purgeLimit int32) error {
+	_, err := db.Exec(ctx, purgeIntakeReceipts, purgeLimit)
+	return err
+}
+
 const recordReferralPayment = `-- name: RecordReferralPayment :exec
 UPDATE referral_attributions r
 SET first_paid_invoice_id=i.id,first_paid_at=now()
@@ -547,6 +852,102 @@ func (q *Queries) ReferralSummary(ctx context.Context, db DBTX, arg ReferralSumm
 			&i.RewardCents,
 			&i.PaidCents,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const repeatSalesInquiry = `-- name: RepeatSalesInquiry :exec
+UPDATE sales_inquiries SET latest_message=$2,repeat_count=repeat_count+1,last_received_at=now(),updated_at=now(),version=version+1 WHERE id=$1
+`
+
+type RepeatSalesInquiryParams struct {
+	ID            pgtype.UUID
+	LatestMessage string
+}
+
+func (q *Queries) RepeatSalesInquiry(ctx context.Context, db DBTX, arg RepeatSalesInquiryParams) error {
+	_, err := db.Exec(ctx, repeatSalesInquiry, arg.ID, arg.LatestMessage)
+	return err
+}
+
+const routeSalesInquiry = `-- name: RouteSalesInquiry :exec
+UPDATE sales_inquiries SET status=$2,reason=$3,lead_id=$4,task_id=$5,updated_at=now(),version=version+1 WHERE id=$1
+`
+
+type RouteSalesInquiryParams struct {
+	ID     pgtype.UUID
+	Status string
+	Reason string
+	LeadID pgtype.UUID
+	TaskID pgtype.UUID
+}
+
+func (q *Queries) RouteSalesInquiry(ctx context.Context, db DBTX, arg RouteSalesInquiryParams) error {
+	_, err := db.Exec(ctx, routeSalesInquiry,
+		arg.ID,
+		arg.Status,
+		arg.Reason,
+		arg.LeadID,
+		arg.TaskID,
+	)
+	return err
+}
+
+const salesInquiryByID = `-- name: SalesInquiryByID :one
+SELECT id, name, email, company, intent, message, latest_message, requested_code, status, reason, lead_id, task_id, repeat_count, version, created_at, last_received_at, updated_at FROM sales_inquiries WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) SalesInquiryByID(ctx context.Context, db DBTX, id pgtype.UUID) (SalesInquiry, error) {
+	row := db.QueryRow(ctx, salesInquiryByID, id)
+	var i SalesInquiry
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.Company,
+		&i.Intent,
+		&i.Message,
+		&i.LatestMessage,
+		&i.RequestedCode,
+		&i.Status,
+		&i.Reason,
+		&i.LeadID,
+		&i.TaskID,
+		&i.RepeatCount,
+		&i.Version,
+		&i.CreatedAt,
+		&i.LastReceivedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const salesInquiryLeads = `-- name: SalesInquiryLeads :many
+SELECT id,owner_id,email FROM sales_leads WHERE email=$1 ORDER BY id FOR UPDATE
+`
+
+type SalesInquiryLeadsRow struct {
+	ID      pgtype.UUID
+	OwnerID pgtype.UUID
+	Email   string
+}
+
+func (q *Queries) SalesInquiryLeads(ctx context.Context, db DBTX, email string) ([]SalesInquiryLeadsRow, error) {
+	rows, err := db.Query(ctx, salesInquiryLeads, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SalesInquiryLeadsRow{}
+	for rows.Next() {
+		var i SalesInquiryLeadsRow
+		if err := rows.Scan(&i.ID, &i.OwnerID, &i.Email); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

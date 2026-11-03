@@ -17053,3 +17053,14 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	}
 	return l.TenantHostnamesPerSurface
 }
+
+// Website sales intake is independent of the authentication failure budget.
+const (
+	SalesIntakeMessageMaxBytes     = 1500
+	SalesIntakeFollowupDefaultDays = 1
+	SalesIntakeFollowupMaxDays     = 30
+	SalesIntakeChallengeMinAge     = 2 * time.Second
+	SalesIntakeChallengeTTL        = time.Hour
+	SalesIntakeRequestsPerMinute   = 10
+	SalesIntakeReceiptPurge        = 100
+)

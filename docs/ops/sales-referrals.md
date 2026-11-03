@@ -233,3 +233,48 @@ an empty period, multiple currencies, a refund, a pending refund, and a salesper
 with no activity. Reassign a CRM lead and confirm that lead counts move while
 referral credit does not. Check that a rep receives 403 from the report endpoint,
 and that comparison/collection CSVs preserve the selected period and scope.
+
+## Website contact/demo intake
+
+Apply `20261103211600000_sales_intake.sql` after the CRM migration, then deploy
+apid and the website. The website `/contact` route, footer **Contact sales**
+link and pricing **Request a demo** action are enabled by the build-time flag
+`VITE_FEATURE_SALES_INTAKE=1`. Both `/v1/*` and the website must share the
+existing trusted control-plane origin. No additional DNS is required for the
+contact page; the staff inbox stays on `sales.gregale.dev`.
+
+Backend settings (also exposed by the matching `faas_sales_intake_*` Ansible
+variables):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `FAAS_SALES_INTAKE_ENABLED` | off | `1` opens anonymous intake; also requires sales enabled |
+| `FAAS_SALES_INTAKE_FOLLOWUP_DAYS` | `1` | Initial follow-up due after 0–30 calendar days from assignment |
+| `FAAS_SALES_INTAKE_TIMEZONE` | `UTC` | IANA time zone used to calculate that calendar date |
+
+A rep must have an active account, verified email, MFA and membership in
+`FAAS_SALES_EMAILS` to receive generic inquiries. Managers can receive a request
+through their own code or manual assignment. With no eligible reps, requests
+enter **Website inquiries → Needs manager review**. A manager should monitor
+this queue, choose a salesperson and use **Assign & create follow-up**. Code
+conflicts and unavailable codes go here too. Entering a code never reveals the
+owner to the visitor or grants commission. The visitor must enter a referral
+code again at signup to establish actual referral credit.
+
+Each assignment creates a lead (or reuses an existing lead without changing its
+staff fields) and a follow-up task atomically. Repeated open-email submissions
+retain the original owner and message; the latest repeat message appears
+separately. Only one initial follow-up remains open; later requests rearm a
+completed/missing first task. Closing the inquiry retains the lead and tasks.
+Deleted leads reappear as manager-review inquiries. All submitted identities
+and messages remain unverified.
+
+The public form uses a two-second-minimum, one-hour signed token, a honeypot,
+strict body/text bounds and a separate ten-request-per-minute/IP budget shared
+by challenge and submit. Retries reuse the token so an uncertain response does
+not duplicate the inquiry or task. Expired tokens can be refreshed without
+clearing the form. These measures deter basic spam; review suspicious messages
+before acting. No external email or calendar event is sent. Original and latest
+messages persist until database retention/deletion, subject to the existing
+backup and restricted-access controls. The release stores no visitor IP/user
+agent. Disable the intake flag to stop capture while retaining staff access.

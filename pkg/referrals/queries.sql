@@ -190,3 +190,47 @@ WHERE l.kind='sales' AND r.first_paid_at IS NOT NULL
  AND (r.created_at AT TIME ZONE sqlc.arg(report_timezone)::text)::date BETWEEN sqlc.arg(from_date)::date AND sqlc.arg(to_date)::date
  AND (sqlc.arg(owner_filter)::text='' OR l.owner_id::text=sqlc.arg(owner_filter)::text)
 GROUP BY l.owner_id,i.currency ORDER BY l.owner_id,i.currency;
+
+-- name: LockSalesIntake :one
+INSERT INTO sales_intake_routing(id) VALUES(1)
+ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING last_owner_id;
+-- name: AdvanceSalesIntake :exec
+UPDATE sales_intake_routing SET last_owner_id=$1 WHERE id=1;
+-- name: PurgeIntakeReceipts :exec
+DELETE FROM sales_intake_receipts WHERE nonce IN (SELECT nonce FROM sales_intake_receipts WHERE expires_at<now() ORDER BY expires_at LIMIT sqlc.arg(purge_limit));
+-- name: ClaimIntakeReceipt :execrows
+INSERT INTO sales_intake_receipts(nonce,expires_at) VALUES($1,$2) ON CONFLICT DO NOTHING;
+-- name: ActiveSalesInquiry :one
+SELECT * FROM sales_inquiries WHERE email=$1 AND status<>'closed' FOR UPDATE;
+-- name: SalesInquiryByID :one
+SELECT * FROM sales_inquiries WHERE id=$1 FOR UPDATE;
+-- name: SalesInquiryLeads :many
+SELECT id,owner_id,email FROM sales_leads WHERE email=$1 ORDER BY id FOR UPDATE;
+-- name: IntakeLead :one
+SELECT id,owner_id,email FROM sales_leads WHERE id=$1 FOR UPDATE;
+-- name: IntakeTaskOpen :one
+SELECT EXISTS(SELECT 1 FROM sales_tasks WHERE id=$1 AND completed_at IS NULL)::boolean;
+-- name: CreateIntakeLead :one
+INSERT INTO sales_leads(id,owner_id,name,email,company,note) VALUES($1,$2,$3,$4,$5,$6)
+ON CONFLICT(owner_id,email) DO UPDATE SET email=sales_leads.email RETURNING id;
+-- name: CreateIntakeTask :one
+INSERT INTO sales_tasks(id,lead_id,title,due_on) VALUES($1,$2,$3,$4) RETURNING id;
+-- name: InsertSalesInquiry :exec
+INSERT INTO sales_inquiries(id,name,email,company,intent,message,requested_code,status,reason,lead_id,task_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11);
+-- name: RepeatSalesInquiry :exec
+UPDATE sales_inquiries SET latest_message=$2,repeat_count=repeat_count+1,last_received_at=now(),updated_at=now(),version=version+1 WHERE id=$1;
+-- name: RouteSalesInquiry :exec
+UPDATE sales_inquiries SET status=$2,reason=$3,lead_id=$4,task_id=$5,updated_at=now(),version=version+1 WHERE id=$1;
+-- name: CloseSalesInquiry :execrows
+UPDATE sales_inquiries i SET status='closed',updated_at=now(),version=version+1
+WHERE i.id=$1 AND i.version=$2 AND i.status<>'closed'
+ AND (sqlc.arg(all_owners)::boolean OR (i.status<>'pending' AND EXISTS(SELECT 1 FROM sales_leads l WHERE l.id=i.lead_id AND l.owner_id=sqlc.arg(actor_id)::uuid)));
+-- name: ListSalesInquiries :many
+SELECT i.*,COALESCE(l.owner_id,'00000000-0000-0000-0000-000000000000'::uuid)::uuid AS owner_id,COALESCE(a.email,'')::text AS owner_email,
+ CASE WHEN i.status='assigned' AND l.id IS NULL THEN 'pending' ELSE i.status END::text AS effective_status
+FROM sales_inquiries i LEFT JOIN sales_leads l ON l.id=i.lead_id LEFT JOIN accounts a ON a.id=l.owner_id
+WHERE (sqlc.arg(all_owners)::boolean OR (i.status<>'pending' AND l.owner_id=sqlc.arg(actor_id)::uuid))
+ AND (sqlc.arg(status_filter)::text='' OR (CASE WHEN i.status='assigned' AND l.id IS NULL THEN 'pending' ELSE i.status END)=sqlc.arg(status_filter)::text)
+ AND (sqlc.arg(after_id)::uuid='00000000-0000-0000-0000-000000000000' OR i.id<sqlc.arg(after_id)::uuid)
+ORDER BY i.id DESC LIMIT sqlc.arg(row_limit);

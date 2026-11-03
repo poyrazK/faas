@@ -5,10 +5,13 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/apid/sales"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/referrals"
 	"github.com/onebox-faas/faas/pkg/state"
+	"time"
 )
 
 func (s *server) configureSales(getenv func(string) string) error {
@@ -59,6 +62,14 @@ func (s *server) salesRoutes(mux *http.ServeMux) {
 		acct, _ := AccountFrom(r.Context())
 		s.sales.CustomerPage(w, r, acct)
 	})))
+	// This public form budget is separate from failed-auth limits.
+	cfg := middleware.AuthLimitConfig{Window: time.Minute, MaxFailures: api.SalesIntakeRequestsPerMinute, CountStatuses: []int{middleware.CountEveryAttempt}}
+	intakeLimit := middleware.AuthLimitWithLimiter(cfg, middleware.NewLimiter(cfg))
+	mux.Handle("GET /v1/sales/inquiries/challenge", intakeLimit(http.HandlerFunc(s.sales.IntakeChallenge)))
+	mux.Handle("POST /v1/sales/inquiries", intakeLimit(s.fromTrustedOrigin(http.HandlerFunc(s.sales.SubmitInquiry))))
+	mux.HandleFunc("GET /v1/sales/inquiries", s.authLimited(s.requireSessionPrincipal(s.sales.Inquiries)))
+	mux.HandleFunc("PUT /v1/sales/inquiries/{inquiry}/assignment", s.authLimited(s.requireSessionPrincipal(s.sales.AssignInquiry)))
+	mux.HandleFunc("PUT /v1/sales/inquiries/{inquiry}/close", s.authLimited(s.requireSessionPrincipal(s.sales.CloseInquiry)))
 	mux.HandleFunc("GET /v1/sales/reports", s.authLimited(s.requireSessionPrincipal(s.sales.Reports)))
 	mux.HandleFunc("GET /v1/sales/team", s.authLimited(s.requireSessionPrincipal(s.sales.Team)))
 	mux.HandleFunc("GET /v1/sales/leads", s.authLimited(s.requireSessionPrincipal(s.sales.Leads)))

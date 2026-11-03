@@ -160,3 +160,8 @@ faas_referral_new_customer_reward_cents: 0
 faas_sales_commission_bps: 0
 faas_referral_hold_days: 30
 faas_referral_conversion_days: 90
+
+# Anonymous website intake is a separate, opt-in rollout.
+faas_sales_intake_enabled: false
+faas_sales_intake_followup_days: 1
+faas_sales_intake_timezone: UTC

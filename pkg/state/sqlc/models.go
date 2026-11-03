@@ -14507,6 +14507,36 @@ type SafeReleaseWorkerLease struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+type SalesInquiry struct {
+	ID             pgtype.UUID
+	Name           string
+	Email          string
+	Company        string
+	Intent         string
+	Message        string
+	LatestMessage  string
+	RequestedCode  string
+	Status         string
+	Reason         string
+	LeadID         pgtype.UUID
+	TaskID         pgtype.UUID
+	RepeatCount    int64
+	Version        int64
+	CreatedAt      pgtype.Timestamptz
+	LastReceivedAt pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SalesIntakeReceipt struct {
+	Nonce     pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+}
+
+type SalesIntakeRouting struct {
+	ID          int16
+	LastOwnerID pgtype.UUID
+}
+
 type SalesLead struct {
 	ID        pgtype.UUID
 	OwnerID   pgtype.UUID

@@ -120,6 +120,12 @@ var previewFields = map[string]map[string]bool{
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"GET /v1/sales/inquiries/challenge":            true, // website intake; x-internal contract
+	"POST /v1/sales/inquiries":                     true,
+	"GET /v1/sales/inquiries":                      true, // private sales inbox
+	"PUT /v1/sales/inquiries/{inquiry}/assignment": true,
+	"PUT /v1/sales/inquiries/{inquiry}/close":      true,
+
 	"DELETE /v1/apps/{slug}/operation-approval-forms/{id}":                        true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
 	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":                           true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 	"GET /v1/apps/{slug}/operation-approval-forms":                                true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested

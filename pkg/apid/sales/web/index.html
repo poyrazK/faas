@@ -5,7 +5,7 @@
   <meta name="robots" content="noindex,nofollow"><title>{{if .Staff}}Sales workspace{{else}}Your referrals{{end}} · Gregale</title>
   <link rel="stylesheet" href="/dashboard/referral-assets/portal.css">
   <script nonce="{{.Nonce}}" src="/dashboard/referral-assets/portal.js" defer></script>
-  {{if .Staff}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/pipeline.js" defer></script>{{end}}
+  {{if .Staff}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/pipeline.js" defer></script><script nonce="{{.Nonce}}" src="/dashboard/referral-assets/inquiries.js" defer></script>{{end}}
   {{if .Manager}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/reports.js" defer></script>{{end}}
 </head>
 <body data-staff="{{.Staff}}" data-manager="{{.Manager}}">
@@ -16,7 +16,7 @@
     <nav aria-label="Workspace">
       <a href="#overview" class="nav-item active" aria-current="page"><span>◈</span> Overview</a>
       {{if .Manager}}<a href="#reports" class="nav-item"><span>▥</span> Manager reports</a>{{end}}
-      {{if .Staff}}<a href="#pipeline" class="nav-item"><span>◇</span> Lead pipeline</a><a href="#tasks" class="nav-item"><span>✓</span> Task inbox <span id="task-nav-count" class="task-nav-count" hidden></span></a>{{end}}
+      {{if .Staff}}<a href="#inquiries" class="nav-item"><span>↘</span> Website inquiries</a><a href="#pipeline" class="nav-item"><span>◇</span> Lead pipeline</a><a href="#tasks" class="nav-item"><span>✓</span> Task inbox <span id="task-nav-count" class="task-nav-count" hidden></span></a>{{end}}
       <a href="#referrals" class="nav-item"><span>↗</span> {{if .Staff}}Customers & referrals{{else}}Your referrals{{end}}</a>
       {{if .Staff}}<a href="#kit" class="nav-item"><span>▤</span> Sales kit</a>{{end}}
       <a href="/dashboard/" class="nav-item"><span>←</span> Product console</a>
@@ -55,6 +55,13 @@
     </section>
     {{end}}
     {{if .Staff}}
+    <section id="inquiries" class="page-section">
+      <div class="section-heading"><div><p class="eyebrow">THE FIRST HELLO</p><h2>Website inquiries</h2><p class="muted">Contact and demo requests, with a follow-up task for every assignment.</p></div><button id="inquiry-refresh" class="button secondary">Refresh inquiries</button></div>
+      <p class="muted">Messages and contact details are unverified. Closing an inquiry keeps its lead and tasks. Referral credit is established separately at signup.</p>
+      <div class="filters"><label>Show<select id="inquiry-filter">{{if .Manager}}<option value="pending">Needs manager review</option>{{end}}<option value="assigned">Assigned</option><option value="closed">Closed</option><option value="">All inquiries</option></select></label></div>
+      <p id="inquiry-error" class="error" role="alert" hidden></p><p id="inquiry-status" class="muted" role="status">Loading inquiries…</p><div id="inquiry-list" class="inquiry-list"></div>
+      <div class="table-footer"><span>25 inquiries per page · newest first</span><div><button id="inquiry-first" class="button secondary small" hidden>First page</button><button id="inquiry-next" class="button secondary small" disabled>Next page →</button></div></div>
+    </section>
     <section id="pipeline" class="page-section">
       <div class="section-heading"><div><p class="eyebrow">BEFORE THE FIRST SIGNUP</p><h2>Lead pipeline</h2><p class="muted">Keep each prospect, owner, and next conversation in one place.</p></div><button id="new-prospect" class="button primary" disabled>+ Add lead</button></div>
       <p id="pipeline-error" class="error" role="alert" hidden></p><p id="pipeline-status" class="muted" role="status"></p>

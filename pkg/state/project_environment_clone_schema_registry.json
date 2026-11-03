@@ -20027,5 +20027,44 @@
       "version"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "sales_intake_routing",
+    "columns": [
+      "id",
+      "last_owner_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_inquiries",
+    "columns": [
+      "company",
+      "created_at",
+      "email",
+      "id",
+      "intent",
+      "last_received_at",
+      "latest_message",
+      "lead_id",
+      "message",
+      "name",
+      "reason",
+      "repeat_count",
+      "requested_code",
+      "status",
+      "task_id",
+      "updated_at",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_intake_receipts",
+    "columns": [
+      "expires_at",
+      "nonce"
+    ],
+    "kind": "account_identity"
   }
 ]

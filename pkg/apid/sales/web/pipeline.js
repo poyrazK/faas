@@ -115,6 +115,7 @@
   let searchTimer;$('prospect-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{leadCursor='';loadLeads();},250);});
   $('prospect-next').addEventListener('click',()=>{leadCursor=leadNext;loadLeads();});$('prospect-first').addEventListener('click',()=>{leadCursor='';loadLeads();});
   $('task-next').addEventListener('click',()=>{taskCursor=taskNext;loadTasks();});$('task-first').addEventListener('click',()=>{taskCursor='';loadTasks();});
+  document.addEventListener('sales-inquiry-updated',()=>{loadLeads();loadTasks();});
   $('tasks-refresh').addEventListener('click',loadTasks);$('refresh').addEventListener('click',()=>{if(team)reload();else bootstrap();});
   window.addEventListener('focus',()=>{if(team&&!saving)loadTasks();});
   async function bootstrap(){
