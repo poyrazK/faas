@@ -225,6 +225,10 @@
       when:
         - faas_edgednsd_managed | default(false) | bool
         - faas_cp_converge_roles | default(none) is none or 'edgednsd_service' in faas_cp_converge_roles
+    # ADR-20261023104734 contract amendment: after every role that installs a
+    # unit running as the shared `faas` OS user, move those units to faas_shared.
+    - role: postgres_shared_runtime_role
+      when: faas_cp_converge_roles | default(none) is none or 'postgres_shared_runtime_role' in faas_cp_converge_roles
     - role: log_archive
       when: faas_cp_converge_roles | default(none) is none or 'log_archive' in faas_cp_converge_roles
     - role: optional_credentials
