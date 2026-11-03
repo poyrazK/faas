@@ -1613,6 +1613,10 @@ type Querier interface {
 	FailCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	FailCrashCapture(ctx context.Context, db DBTX, arg FailCrashCaptureParams) (CrashCapture, error)
 	FailIncompleteMCPRouteDelivery(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// A manual cron run claimed (running) but never linked to an invocation, task
+	// or operation was interrupted between its claim and its dispatch; nothing
+	// else ever settles it. node_id scopes the sweep to one scheduler's apps.
+	FailInterruptedFireNowRequests(ctx context.Context, db DBTX, arg FailInterruptedFireNowRequestsParams) (int64, error)
 	// Ends a pending major upgrade without its change: the provider refused it
 	// or it broke the cluster. Only an upgrade can fail.
 	FailManagedPostgresResize(ctx context.Context, db DBTX, arg FailManagedPostgresResizeParams) (int64, error)

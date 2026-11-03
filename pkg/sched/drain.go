@@ -907,6 +907,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if !d.engine.ownsApp(app) {
 		return
 	}
+	if d.cronRunOrphaned(ctx, inv) {
+		if _, err := d.store.CancelPendingInvocation(ctx, inv.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			d.log.Warn("drain: cancel a deleted cron's run", "inv", inv.ID, "err", err)
+		}
+		return
+	}
 	if err := d.financialAdmission(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
 		// Keep pending work and its attempt count intact. A held budget is
 		// an admission decision, not a failed customer execution. The row
@@ -1630,6 +1636,23 @@ func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryP
 	}
 	return dispatch.RetryPolicy{BaseSeconds: api.EventDeliveryRetryBaseSeconds,
 		MaxSeconds: maxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
+}
+
+// cronRunOrphaned reports a queued cron run whose cron is gone. Every cron run
+// is queued with its cron's id; deleting the cron sets it to NULL
+// (invocations_cron_id_fkey), and a soft-deleted app's crons read as missing.
+// DeleteCron cancels its own runs, but a cron removed by a deploy's
+// gregale.yaml, a project apply or an app's deletion left its queued and
+// retrying runs to reach the app (crons audit 2026-11-02).
+func (d *Drain) cronRunOrphaned(ctx context.Context, inv state.Invocation) bool {
+	if inv.Source != state.InvocationCron {
+		return false
+	}
+	if inv.CronID == nil {
+		return true
+	}
+	_, err := d.store.CronByID(ctx, *inv.CronID)
+	return errors.Is(err, state.ErrNotFound)
 }
 
 // financialHoldDeferral is how far a row of an app held by its compute

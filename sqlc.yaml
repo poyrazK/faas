@@ -217,6 +217,7 @@ sql:
       - "pkg/state/build_dependency_queries.sql"
       - "pkg/state/config_revision_queries.sql"
       - "pkg/state/cron_delete_queries.sql"
+      - "pkg/state/cron_fire_now_recovery_queries.sql"
       - "pkg/state/cron_history_queries.sql"
       - "pkg/state/data_api_connection_budget_queries.sql"
       - "pkg/state/data_api_runtime_connections_queries.sql"
