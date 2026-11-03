@@ -178,6 +178,10 @@ at least once, so deduplicate by `message_id` or `sequence`.
   open.
 - Code 1008 closes a connection whose token expired or changed: reconnect with
   a fresh token. Code 1013 means try again: reconnect from the saved cursor.
+  Code 1012 means the realtime node restarted: reconnect after a random delay
+  of up to a few seconds (the Node SDK waits up to 5 s), so clients do not all
+  return at once. A handshake answered 503 with `Retry-After` means the node is
+  accepting connections more slowly for a moment; retry after that delay.
 
 ## Declare endpoints in gregale.yaml
 
