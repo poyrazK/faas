@@ -498,6 +498,7 @@ type Querier interface {
 	// later suspension is noticed again.
 	ClearManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) error
 	ClearManagedPostgresRestoreSlot(ctx context.Context, db DBTX, arg ClearManagedPostgresRestoreSlotParams) (int64, error)
+	ClearObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) error
 	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
 	// Records that the spool file has been removed. Terminal status is
@@ -4772,6 +4773,7 @@ type Querier interface {
 	ObjectS3CredentialRotationStampStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampStageParams) (pgtype.Timestamptz, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
 	ObjectS3MultipartList(ctx context.Context, db DBTX, arg ObjectS3MultipartListParams) ([]ObjectStorageMultipartUpload, error)
+	ObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) (ObjectStorageCeilingGrant, error)
 	// Accrues each open row of this or last month from accrued_through to now,
 	// the end of its month or the bucket's deletion, whichever is first, at the
 	// bucket's last inventoried bytes. Concurrent callers serialize on the row,
@@ -4832,8 +4834,9 @@ type Querier interface {
 	ObjectUploadRouteUpsert(ctx context.Context, db DBTX, arg ObjectUploadRouteUpsertParams) (ObjectUploadRoute, error)
 	ObjectUploadRoutesList(ctx context.Context, db DBTX, arg ObjectUploadRoutesListParams) ([]ObjectUploadRoute, error)
 	ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
-	// The plan and spend cap that set an account's object-storage ceilings
-	// (ADR-1320, ADR-20261101214152). A null cap is no cap.
+	// The plan, spend cap and support grant that set an account's object-storage
+	// ceilings (ADR-1320, ADR-20261101214152). A null cap is no cap; a null grant
+	// keeps the plan's ceiling.
 	ObjectUsageAccountPlanCap(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectUsageAccountPlanCapRow, error)
 	ObjectUsageAuthorizationCount(ctx context.Context, db DBTX, arg ObjectUsageAuthorizationCountParams) (int64, error)
 	ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error
@@ -6971,6 +6974,7 @@ type Querier interface {
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
 	SetMigrationAdmissionCleaning(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	SetMigrationSourceRetiring(ctx context.Context, db DBTX, leaseToken string) (int64, error)
+	SetObjectStorageCeilingGrant(ctx context.Context, db DBTX, arg SetObjectStorageCeilingGrantParams) error
 	// ADR-051: the workload class a cold boot observed. The caller holds the app
 	// row exclusively.
 	SetObservedAppWorkloadClass(ctx context.Context, db DBTX, arg SetObservedAppWorkloadClassParams) (int64, error)

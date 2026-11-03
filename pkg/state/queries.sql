@@ -5439,11 +5439,27 @@ SELECT id FROM resource_namespaces WHERE id = $1 FOR UPDATE;
 SELECT a.plan FROM accounts a WHERE a.id=$1 UNION ALL SELECT o.plan FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
 
 -- name: ObjectUsageAccountPlanCap :one
--- The plan and spend cap that set an account's object-storage ceilings
--- (ADR-1320, ADR-20261101214152). A null cap is no cap.
-SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+-- The plan, spend cap and support grant that set an account's object-storage
+-- ceilings (ADR-1320, ADR-20261101214152). A null cap is no cap; a null grant
+-- keeps the plan's ceiling.
+SELECT a.plan, a.overage_cap_cents, g.max_bytes AS ceiling_grant_bytes FROM accounts a
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = a.id WHERE a.id=$1
 UNION ALL
-SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
+SELECT o.plan, o.overage_cap_cents, g.max_bytes FROM orgs o
+LEFT JOIN object_storage_ceiling_grants g ON g.owner_id = o.id
+WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
+
+-- name: ObjectStorageCeilingGrant :one
+SELECT owner_id, max_bytes, reason, granted_by, granted_at FROM object_storage_ceiling_grants WHERE owner_id=$1;
+
+-- name: SetObjectStorageCeilingGrant :exec
+INSERT INTO object_storage_ceiling_grants (owner_id, max_bytes, reason, granted_by, granted_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (owner_id) DO UPDATE SET max_bytes = EXCLUDED.max_bytes, reason = EXCLUDED.reason,
+  granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at;
+
+-- name: ClearObjectStorageCeilingGrant :exec
+DELETE FROM object_storage_ceiling_grants WHERE owner_id=$1;
 
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
