@@ -154,6 +154,9 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		}
 		return enabled
 	}
+	// Work on existing databases outlives a lapsed production approval
+	// (ADR-20261103091657).
+	operationsGate := managedpostgres.NewOperationsGate(registry, getenv, time.Now)
 	canaryAccountGate := managedpostgres.NewStagingCanaryAccountGate(getenv)
 	provisioningAllowed := func(ctx context.Context, accountID string) bool {
 		// Production releases accounts by the capability flag, staging by
@@ -169,6 +172,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	service, err := managedpostgres.NewService(registry, store, managedpostgres.ServiceOptions{
 		ProvisioningEnabled: provisioningGate,
+		OperationsEnabled:   operationsGate,
 		ProvisioningAllowed: provisioningAllowed,
 		MaxDatabasesPerAccount: func(ctx context.Context, accountID string) (int, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
@@ -251,7 +255,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	fleet = service
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
-		IncludeProvisioning: provisioningGate,
+		IncludeProvisioning: operationsGate,
 		Observe: func(ob managedpostgres.ReconcileObservation) {
 			if metrics != nil {
 				metrics.ObserveReconcile(ob)
@@ -278,7 +282,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	secretSink.identities = hostCredentialIdentities
 	secretSink.probe = managedpostgres.VerifyCredentialSQL
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
-		ProvisioningEnabled: provisioningGate,
+		ProvisioningEnabled: operationsGate,
 		ProvisioningAllowed: provisioningAllowed,
 	})
 	if err != nil {
@@ -294,7 +298,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	reconciler.SetRestoreSlots(restoreSlots)
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
-		IncludeProvisioning: provisioningGate,
+		IncludeProvisioning: operationsGate,
 		Observe: func(ob managedpostgres.BindingReconcileObservation) {
 			if metrics != nil {
 				metrics.ObserveBindingReconcile(ob)

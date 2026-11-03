@@ -76,6 +76,11 @@ type Querier interface {
 	ActiveServiceProjectReleaseTargets(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error)
 	AddDatabaseEgress(ctx context.Context, db DBTX, arg AddDatabaseEgressParams) error
+	// ADR-20261103113952: add one apid flush of per-minute rollups. Row i of
+	// the parallel arrays takes latency_hist from latency_hists[i*45+1 : i*45+45];
+	// the CHECK on latency_hist rejects a flattened array of another width. The
+	// update is additive, so apid replicas flushing the same key add up.
+	AddRequestAnalyticsMinutes(ctx context.Context, db DBTX, arg AddRequestAnalyticsMinutesParams) error
 	AdmitMigrationContract(ctx context.Context, db DBTX, arg AdmitMigrationContractParams) (int64, error)
 	AdmitScenarioRecorderRequest(ctx context.Context, db DBTX, arg AdmitScenarioRecorderRequestParams) (int64, error)
 	AdmitTrafficRetry(ctx context.Context, db DBTX, arg AdmitTrafficRetryParams) (int64, error)
@@ -692,7 +697,10 @@ type Querier interface {
 	CountManagedPostgresCutoverSourceBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresCutoverTargetBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresHealth(ctx context.Context, db DBTX, arg CountManagedPostgresHealthParams) (CountManagedPostgresHealthRow, error)
+	// A delete that can no longer be undone frees the database, including a source
+	// kept for its restore copies (ADR-20261103091657).
 	CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	// Counts as CountManagedPostgresLifecycleDatabases does.
 	CountManagedPostgresOrgDatabases(ctx context.Context, db DBTX, orgID pgtype.UUID) (int64, error)
 	CountMigrationCutovers(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	// Per-(account_id, app_slug) open-session cap check at the top of
@@ -2187,6 +2195,7 @@ type Querier interface {
 	GetRegressionObservation(ctx context.Context, db DBTX, arg GetRegressionObservationParams) (DebugRegressionObservation, error)
 	GetReleaseDatabaseSwitch(ctx context.Context, db DBTX, arg GetReleaseDatabaseSwitchParams) (ReleaseDatabaseSwitch, error)
 	GetReleaseDatabaseSwitchForApp(ctx context.Context, db DBTX, arg GetReleaseDatabaseSwitchForAppParams) (ReleaseDatabaseSwitch, error)
+	GetRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
 	// Exact app/account-scoped lookup, latest first when callers reuse an ID.
 	// expires_at is checked as well as received_at so plan downgrades do not
 	// extend the original request-time retention window.
@@ -6269,6 +6278,10 @@ type Querier interface {
 	RecordQuietPauses(ctx context.Context, db DBTX, arg RecordQuietPausesParams) error
 	// Adds one round's probe counts for a gate and revision.
 	RecordReleaseGateProbeResult(ctx context.Context, db DBTX, arg RecordReleaseGateProbeResultParams) error
+	// The first flush that holds an app's rows records its minute. A later,
+	// earlier minute (a replica's late flush) moves it back; an app that is
+	// gone is skipped.
+	RecordRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupCoverageParams) error
 	// The request-ID journal is independent from sampled request telemetry. Only
 	// insert when the app is still owned by the authenticated account. The
 	// caller-generated record UUID makes an RPC retry idempotent without
@@ -6413,6 +6426,15 @@ type Querier interface {
 	// Lock the node before its epoch, matching registration and FK deletion order.
 	ReportGatewayPolicyProgress(ctx context.Context, db DBTX, arg ReportGatewayPolicyProgressParams) (int64, error)
 	ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg ReportGatewayTrafficRuntimeParams) (int64, error)
+	// ADR-20261103113952: analytics totals from the rollups. Groups are
+	// (dimension, method) over the window, top sqlc.arg(group_limit) by
+	// requests, the rest folded into one __other__ group; with hourly they are
+	// also split by UTC hour (callers zero-fill). group_by 'status' groups the
+	// route rows by HTTP status. The route/method filter applies to route
+	// rows only, so callers pass group_by 'route' or 'status' with it. A
+	// minute counts when it starts inside the window. latency_hist is the
+	// groups' merged histogram; callers turn it into percentiles.
+	RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg RequestAnalyticsRollupGroupsParams) ([]RequestAnalyticsRollupGroupsRow, error)
 	RequestEnvironmentGitOpsRuntimeRefresh(ctx context.Context, db DBTX, arg RequestEnvironmentGitOpsRuntimeRefreshParams) error
 	RequestEventExecutionReconciliation(ctx context.Context, db DBTX, arg RequestEventExecutionReconciliationParams) error
 	// gatewayd-internal, after a serving instance answered 5xx. Succeeds only

@@ -3466,6 +3466,12 @@ type CronOptions struct {
 	CommandMaxOutputBytes int
 	RetryMax              int
 	RetryBackoffSeconds   int
+	// ClearSchedulePolicy and ClearFailureRules remove the cron's policy or
+	// rules on an update; a nil SchedulePolicy or FailureRules leaves them
+	// as they are. Nothing could remove either once set (crons audit
+	// 2026-11-03).
+	ClearSchedulePolicy bool
+	ClearFailureRules   bool
 }
 
 const (

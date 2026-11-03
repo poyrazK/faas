@@ -391,6 +391,7 @@
       "password_reset_revision",
       "past_due_at",
       "plan",
+      "plan_changed_at",
       "provider_customer_id",
       "quota_mail_revision",
       "status",
@@ -13328,6 +13329,7 @@
       "personal_org",
       "personal_owner_account_id",
       "plan",
+      "plan_changed_at",
       "provider_customer_id",
       "resource_ownership_enabled",
       "slug",
@@ -17160,6 +17162,34 @@
       "route_template",
       "source_ip",
       "trace_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_start",
+      "cold_boots",
+      "deployment_id",
+      "dimension",
+      "dimension_kind",
+      "error_requests",
+      "latency_hist",
+      "latency_max_ms",
+      "method",
+      "request_time_ms",
+      "requests",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_coverage",
+    "columns": [
+      "app_id",
+      "covered_since"
     ],
     "kind": "operational"
   },
