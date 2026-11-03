@@ -91,7 +91,13 @@ func upgradeNoticeFor(flag string) string {
 	case "error":
 		return "We could not start checkout with the billing provider. Nothing was charged — please try again in a minute."
 	case "unavailable":
-		return "Hosted checkout is not available for this account. Use the billing portal or the CLI to change plan."
+		return "Hosted checkout is not available for this account. Use the CLI or the API to change plan."
+	case "pending":
+		return "Your plan is changing. It updates here once the billing provider confirms the charge."
+	case "charge_failed":
+		return "The billing provider could not charge the upgrade. Update your payment method in the billing portal and try again; your plan has not changed."
+	case "billing_email_in_use":
+		return "This email already pays for another Gregale account or organization. Give the organization its own billing email, then upgrade."
 	case "invalid_plan":
 		return "Choose one of the paid plans below."
 	default:
@@ -172,9 +178,17 @@ func (s *server) upgradePageData(r *http.Request, acct state.Account) dashboard.
 	switch {
 	case identityErr != nil:
 		data.Reason = "Billing identity is temporarily unavailable. Please retry in a minute."
-	case billingAcct.StripeSubscriptionItem != "":
+	case billingAcct.StripeSubscriptionItem != "" && !s.changesSubscriptions():
 		data.Reason = "Your account already has a subscription. Plan changes on an existing subscription are made in the " + data.ProviderLabel + " portal."
 		data.PortalURL = s.billingPortalURLForProvider(r.Context(), billingAcct)
+	case billingAcct.StripeSubscriptionItem != "":
+		// ADR-20261103131742: the portal does not switch plans; the
+		// subscription changes in place and the difference is charged now.
+		data.SubscriptionChange = true
+		data.Available = data.Target != nil
+		if len(data.Options) == 0 {
+			data.Reason = "Your account is already on the highest plan."
+		}
 	case s.billingProvider == nil || !s.billingProvider.Capabilities().Has(billing.CapHostedCheckout):
 		data.Reason = "Hosted checkout is not available on this deployment. Change plan via the CLI: gregale plan <plan>."
 	case len(data.Options) == 0:
@@ -215,7 +229,10 @@ func (s *server) dashboardUpgrade(w http.ResponseWriter, r *http.Request) {
 	txID, checkoutURL, err := s.beginHostedCheckout(r.Context(), acct, plan)
 	switch {
 	case errors.Is(err, errNoHostedCheckout):
-		http.Redirect(w, r, "/dashboard/billing?upgrade=unavailable", http.StatusSeeOther)
+		http.Redirect(w, r, "/dashboard/billing?upgrade="+s.dashboardUpgradeSubscription(r.Context(), acct, plan), http.StatusSeeOther)
+		return
+	case errors.Is(err, billing.ErrCustomerEmailInUse):
+		http.Redirect(w, r, "/dashboard/billing?upgrade=billing_email_in_use", http.StatusSeeOther)
 		return
 	case err != nil:
 		s.log.Error("dashboard upgrade: begin checkout",
@@ -230,4 +247,33 @@ func (s *server) dashboardUpgrade(w http.ResponseWriter, r *http.Request) {
 		"at":          time.Now().UTC().Format(time.RFC3339),
 	})
 	http.Redirect(w, r, checkoutURL, http.StatusSeeOther)
+}
+
+// dashboardUpgradeSubscription upgrades a subject that already has a
+// subscription through the provider (ADR-20261103131742) and returns the
+// ?upgrade= flag for the billing page.
+func (s *server) dashboardUpgradeSubscription(ctx context.Context, acct state.Account, plan api.Plan) string {
+	if !acct.Plan.RequiresBillingUpgradeTo(plan) {
+		return "unavailable"
+	}
+	billingAcct, changer, ok, err := s.subscriptionChanger(ctx, acct)
+	if err != nil || !ok {
+		return "unavailable"
+	}
+	if _, err := changer.ChangeSubscriptionPlan(ctx, billingAcct, plan); err != nil {
+		s.log.Error("dashboard upgrade: change subscription", "account", acct.ID,
+			"target_plan", logsanitize.Field(string(plan)), "err", logsanitize.FieldAny(err))
+		return "charge_failed"
+	}
+	s.audit.Emit(ctx, "billing.plan_change_requested", &acct.ID, map[string]any{
+		"target_plan": string(plan), "via": "dashboard",
+	})
+	return "pending"
+}
+
+// changesSubscriptions reports whether the billing provider changes an
+// existing subscription's plan through its API.
+func (s *server) changesSubscriptions() bool {
+	_, ok := s.billingProvider.(billing.SubscriptionPlanChangeProvider)
+	return ok
 }

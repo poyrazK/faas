@@ -93,6 +93,10 @@ type Loop struct {
 	// through the GatewaySynth interface.
 	gatewayHTTPClient *http.Client
 	gatewayBaseURL    string
+	// triggerClaimRenewInterval is how often a running trigger batch renews
+	// its record claims; zero means api.TriggerRecordClaimRenewInterval.
+	// Tests shorten it.
+	triggerClaimRenewInterval time.Duration
 	// triggerPollers caches one triggerSource per trigger id.
 	// triggerPollerConfigs holds the fingerprint of the config each
 	// poller was built from: a changed trigger (credentials, topic, URL)
@@ -1382,7 +1386,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-jobsTick(jobsDispatchT):
 			l.runJobsDispatchTick(ctx)
 		case <-jobsTick(jobsReaperT):
-			l.runJobsReaperTick(ctx)
+			l.submitWork(workJobsReaper, "tick", func() { l.runJobsReaperTick(ctx) })
 		case <-jobsTick(workflowsDispatchT):
 			l.runWorkflowsDispatchTick(ctx)
 		case <-workflowRetentionFirst:
@@ -1410,8 +1414,10 @@ func (l *Loop) Run(ctx context.Context) error {
 			// network blip). Same dispatcher as the notify arm —
 			// drainPendingFireNowRequests is the single owner of the
 			// claim + dispatch loop.
-			l.failInterruptedFireNowRequests(ctx)
-			l.drainPendingFireNowRequests(ctx)
+			l.submitWork(workCronFireNow, "drain", func() {
+				l.failInterruptedFireNowRequests(ctx)
+				l.drainPendingFireNowRequests(ctx)
+			})
 		case <-operatorIntentT.C:
 			// PR #1099 P2 redesign: safety sweep. Picks up rows
 			// that missed a NotifyOperatorIntent delivery
@@ -2533,14 +2539,25 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// source of truth) — drain handles claim + dispatch
 		// regardless of which request_id the notify carried. This
 		// matches the build_queued notify-loss defense pattern
-		// (cmd/imaged consumer: subscriber re-reads the row).
-		l.drainPendingFireNowRequests(ctx)
+		// (cmd/imaged consumer: subscriber re-reads the row). The drain
+		// runs off the loop (ADR 20261103195512).
+		l.submitWork(workCronFireNow, "drain", func() { l.drainPendingFireNowRequests(ctx) })
 	case db.NotifyInstanceFailureRelayed:
 		// Issue #3359: a peer schedd hosts one of this schedd's instances
 		// and relayed vmmd's terminal failure report. Non-owners discard.
-		if err := l.engine.HandleRelayedInstanceFailure(ctx, n.Payload); err != nil {
-			l.log.Warn("sched: relayed instance failure", "err", err)
+		// The destroy waits on the app lock and vmmd, so it runs off the
+		// loop (ADR 20261103195512).
+		payload := n.Payload
+		var report InstanceFailureReport
+		key := payload
+		if json.Unmarshal([]byte(payload), &report) == nil && report.InstanceID != "" {
+			key = report.InstanceID + "/" + report.Kind
 		}
+		l.submitWork(workInstanceFailure, key, func() {
+			if err := l.engine.HandleRelayedInstanceFailure(ctx, payload); err != nil {
+				l.log.Warn("sched: relayed instance failure", "err", err)
+			}
+		})
 	case db.NotifyFrameworkReadyRelayed:
 		// Hunt 14 H14-104: a peer schedd hosts one of this schedd's instances
 		// and relayed vmmd's framework-ready receipt. Non-owners discard.

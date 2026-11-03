@@ -92,6 +92,8 @@ type Account struct {
 	DeploymentMailRevision          int64
 	MfaTotpLastStep                 pgtype.Int8
 	DeletionIncludesManagedPostgres bool
+	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
+	PlanChangedAt pgtype.Timestamptz
 }
 
 type AccountAsyncQuotum struct {
@@ -10504,6 +10506,8 @@ type Org struct {
 	OverageCapCents pgtype.Int8
 	// When the organization was marked for deletion; meterd delivers usage from before it (ADR-20261101143527).
 	DeletionRequestedAt pgtype.Timestamptz
+	// When the plan last changed; meterd dates a newly observed plan from it (ADR-20261103121407).
+	PlanChangedAt pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only
