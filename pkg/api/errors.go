@@ -2177,7 +2177,8 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy, CodeAgentCallbackRateLimited:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy, CodeAgentCallbackRateLimited,
+		CodeWebhookOutboxFull, CodeInboundWebhookBacklogFull, CodeInboundWebhookRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -3980,7 +3981,74 @@ const (
 	CodeInboundWebhookInvalid         = "inbound_webhook_invalid"
 	CodeInboundWebhookBadSignature    = "inbound_webhook_bad_signature"
 	CodeInboundWebhookTooLarge        = "inbound_webhook_too_large"
+	// CodeInboundWebhookBacklogFull refuses a verified delivery while the
+	// app's pending webhook work or the account's backlog is at its plan
+	// cap (ADR-20261101093517). 429 with Retry-After, so the provider
+	// retries the same event later.
+	CodeInboundWebhookBacklogFull = "inbound_webhook_backlog_full"
+	// CodeInboundWebhookRateLimited refuses a verified delivery past the
+	// account's InboundWebhookAcceptsPerMinute (ADR-20261101093517).
+	CodeInboundWebhookRateLimited = "inbound_webhook_rate_limited"
+	// CodeWebhookOutboxFull refuses an application outbox delivery while
+	// the account's undelivered webhook deliveries are at a plan cap
+	// (ADR-20261101093517).
+	CodeWebhookOutboxFull = "webhook_outbox_full"
 )
+
+// WebhookBacklogCap names which backlog cap refused a webhook.
+type WebhookBacklogCap string
+
+const (
+	// WebhookBacklogCapCount is a cap on pending items.
+	WebhookBacklogCapCount WebhookBacklogCap = "count"
+	// WebhookBacklogCapBytes is a cap on pending payload bytes.
+	WebhookBacklogCapBytes WebhookBacklogCap = "bytes"
+)
+
+func webhookBacklogRetryAfter() string {
+	return strconv.Itoa(int(WebhookBacklogRetryAfter.Seconds()))
+}
+
+// ErrWebhookOutboxFull refuses an application outbox delivery while the
+// account's undelivered webhook deliveries are at the plan cap named by
+// which. Nothing was queued; the backlog drains as receivers answer.
+func ErrWebhookOutboxFull(which WebhookBacklogCap, limit, observed int64) *Problem {
+	detail := fmt.Sprintf("this account already holds %d undelivered webhook deliveries; the plan allows %d. Nothing was queued: retry once receivers have drained the backlog.", observed, limit)
+	if which == WebhookBacklogCapBytes {
+		detail = fmt.Sprintf("this account's undelivered webhook deliveries hold %d payload bytes; the plan allows %d. Nothing was queued: retry once receivers have drained the backlog.", observed, limit)
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeWebhookOutboxFull, "Webhook outbox full", detail).
+		WithLimit(limit, observed).
+		WithHeader("Retry-After", webhookBacklogRetryAfter()).
+		WithDocs(docsBase + "/event-driven#outbox-backlog")
+}
+
+// ErrInboundWebhookBacklogFull refuses a verified inbound delivery while the
+// app's pending webhook work (count) or the account's queue backlog (bytes)
+// is at its plan cap. The provider should retry the same event.
+func ErrInboundWebhookBacklogFull(which WebhookBacklogCap, limit, observed int64) *Problem {
+	detail := fmt.Sprintf("this app already holds %d pending inbound webhook deliveries; the plan allows %d. Nothing was accepted: retry the same event later.", observed, limit)
+	if which == WebhookBacklogCapBytes {
+		detail = fmt.Sprintf("this account's pending queue backlog holds %d bytes; the plan allows %d. Nothing was accepted: retry the same event later.", observed, limit)
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeInboundWebhookBacklogFull, "Inbound webhook backlog full", detail).
+		WithLimit(limit, observed).
+		WithHeader("Retry-After", webhookBacklogRetryAfter()).
+		WithDocs(docsBase + "/event-driven#inbound-webhook-backlog")
+}
+
+// ErrInboundWebhookRateLimited refuses a verified inbound delivery past the
+// account's per-minute accept budget. Nothing was accepted.
+func ErrInboundWebhookRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeInboundWebhookRateLimited, "Inbound webhook rate limited",
+		fmt.Sprintf("this account's plan accepts %d inbound webhook deliveries a minute. Nothing was accepted: retry the same event after %d seconds.", limit, retryAfterS)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/event-driven#inbound-webhook-rate-limit")
+}
 
 // Managed realtime endpoint errors (ADR-156). Realtime is an opt-in
 // connection service; Free is gated, while paid plans have bounded endpoint

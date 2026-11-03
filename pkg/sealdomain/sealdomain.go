@@ -157,7 +157,7 @@ var registry = []Spec{
 	// a schedd of the previous release opens them with the fleet key alone.
 	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
-		cols("app_webhooks", "secret_sealed"),
+		cols("app_webhooks", "secret_sealed", "previous_secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
 	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
@@ -177,7 +177,7 @@ var registry = []Spec{
 		// opens it; schedd never reads it.
 		cols("agent_execution_workflows", "sealed_plan"),
 		cols("account_billing_connections", "sealed_secret"),
-		cols("inbound_webhook_endpoints", "signing_secret_sealed"),
+		cols("inbound_webhook_endpoints", "signing_secret_sealed", "previous_signing_secret_sealed"),
 		cols("gitlab_oauth_connections", "credentials_sealed"),
 		cols("issue_slack_installations", "token_sealed"),
 		cols("issue_slack_interaction_policies", "secret_sealed"),

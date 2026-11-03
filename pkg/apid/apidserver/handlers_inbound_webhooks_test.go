@@ -335,11 +335,13 @@ func TestInboundWebhookManagementRotatesSecretAndPreservesOneTimeURL(t *testing.
 		t.Fatalf("patch status %d: %s", patch.Code, patch.Body.String())
 	}
 
-	body := []byte(`{"id":"evt_rotated","object":"event"}`)
-	oldSignature := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
-	if oldSignature.Code != http.StatusBadRequest {
-		t.Fatalf("old signing secret status %d: %s", oldSignature.Code, oldSignature.Body.String())
+	// During the rotation's overlap (ADR-20261101093517) a provider still
+	// signing with the replaced secret verifies.
+	overlap := postStripeInboundWebhook(t, e, endpoint.EndpointURL, []byte(`{"id":"evt_overlap","object":"event"}`), inboundWebhookTestSecret)
+	if overlap.Code != http.StatusAccepted {
+		t.Fatalf("replaced signing secret during the overlap status %d: %s", overlap.Code, overlap.Body.String())
 	}
+	body := []byte(`{"id":"evt_rotated","object":"event"}`)
 	accepted := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, newSecret)
 	if accepted.Code != http.StatusAccepted {
 		t.Fatalf("rotated signing secret status %d: %s", accepted.Code, accepted.Body.String())
@@ -351,6 +353,32 @@ func TestInboundWebhookManagementRotatesSecretAndPreservesOneTimeURL(t *testing.
 	invocation, err := (*e.Store()).InvocationByID(t.Context(), receipt.ReceiptID)
 	if err != nil || invocation.Path != newPath {
 		t.Fatalf("rotated delivery path = %q, %v", invocation.Path, err)
+	}
+
+	// Rotating again with the clock past the overlap stamps a window that
+	// has already ended: the secret it replaced no longer verifies, and the
+	// first one is gone.
+	thirdSecret := "whsec_rotated_again"
+	wallClock := *apidserver.TimeNow
+	t.Cleanup(func() { *apidserver.TimeNow = wallClock })
+	*apidserver.TimeNow = func() time.Time {
+		return wallClock().Add(-api.WebhookSecretRotationOverlap - time.Hour)
+	}
+	again := e.Do(t, http.MethodPatch, "/v1/apps/inbound-manage/inbound-webhooks/"+endpoint.ID, api.UpdateInboundWebhookEndpointRequest{
+		SigningSecret: &thirdSecret,
+	}, nil)
+	*apidserver.TimeNow = wallClock
+	if again.Code != http.StatusOK {
+		t.Fatalf("second rotation status %d: %s", again.Code, again.Body.String())
+	}
+	for _, stale := range []string{newSecret, inboundWebhookTestSecret} {
+		rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, []byte(`{"id":"evt_stale","object":"event"}`), stale)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("secret %q after its overlap status %d: %s", stale, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, []byte(`{"id":"evt_third","object":"event"}`), thirdSecret); rec.Code != http.StatusAccepted {
+		t.Fatalf("current signing secret status %d: %s", rec.Code, rec.Body.String())
 	}
 
 	deleted := e.Do(t, http.MethodDelete, "/v1/apps/inbound-manage/inbound-webhooks/"+endpoint.ID, nil, nil)

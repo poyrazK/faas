@@ -1806,6 +1806,8 @@ type AppWebhook struct {
 	ReceiverRecoveryProbeDeliveryID pgtype.UUID
 	ReceiverCooldownUntil           pgtype.Timestamptz
 	CreatedByAccountID              pgtype.UUID
+	PreviousSecretSealed            []byte
+	PreviousSecretExpiresAt         pgtype.Timestamptz
 }
 
 type AppWebhookDelivery struct {
@@ -6509,17 +6511,19 @@ type IdempotencyKey struct {
 }
 
 type InboundWebhookEndpoint struct {
-	ID                  pgtype.UUID
-	AppID               pgtype.UUID
-	AccountID           pgtype.UUID
-	Name                string
-	Provider            string
-	TokenHash           []byte
-	SigningSecretSealed []byte
-	DeliveryPath        string
-	Enabled             bool
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                             pgtype.UUID
+	AppID                          pgtype.UUID
+	AccountID                      pgtype.UUID
+	Name                           string
+	Provider                       string
+	TokenHash                      []byte
+	SigningSecretSealed            []byte
+	DeliveryPath                   string
+	Enabled                        bool
+	CreatedAt                      pgtype.Timestamptz
+	UpdatedAt                      pgtype.Timestamptz
+	PreviousSigningSecretSealed    []byte
+	PreviousSigningSecretExpiresAt pgtype.Timestamptz
 }
 
 type IncidentNote struct {

@@ -496,8 +496,10 @@ gateway bounds the request bodies it holds in memory at once; when that bound
 is reached, a request gets 503 `capacity_unavailable` with `Retry-After`
 before its body is read. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
-and `apply_while_streaming` to validate requests the gateway would otherwise
-stream to the app.
+and `apply_while_streaming` to validate a WebSocket handshake too. Path,
+query and header parameters are always checked, and so is any body sent with
+`Connection: Upgrade`: servers that do not speak the named protocol run such a
+request as usual.
 
 ### maintenance
 
@@ -546,7 +548,7 @@ or `Accept-Encoding` to the cache key. Responses over 1 MiB are not cached,
 and each gateway keeps at most 16 MiB of one app's responses: past that, the
 app's least recently used responses are dropped first.
 
-Requests with credentials (`Authorization`, cookies) are never cached or
+Requests with credentials (`Authorization`, `Proxy-Authorization`, `X-API-Key`, cookies) are never cached or
 served from the cache, and neither are responses with `Set-Cookie` or
 `Cache-Control: no-store` or `private`. `gregale edge cache purge` removes cached
 responses. Changing an edge rule also clears the cached responses of the
