@@ -132,7 +132,9 @@ func orgQueueHTTPJourney(t *testing.T, server *apidserver.Server, store state.St
 		{"POST", base + "/queues/jobs/leases", readHeaders, 403},
 		{"POST", base + "/queues/dead_letter/missing/replay", devHeaders, 403},
 		{"GET", strings.Replace(base, org.Slug, "wrong-company", 1) + "/queue-bindings", adminHeaders, 404},
-		{"PUT", "/v1/apps/" + app.Slug + "/queue-workload", adminHeaders, 403},
+		// Reviewed in bug hunt 37: configuring the queue workload takes
+		// OrgActionConfigureQueues, which viewers lack.
+		{"PUT", "/v1/apps/" + app.Slug + "/queue-workload", viewerHeaders, 403},
 		{"GET", "/v1/triggers?app_id=" + app.ID, adminHeaders, 404},
 	} {
 		rec := send(t, tc.method, tc.path, nil, tc.headers)
