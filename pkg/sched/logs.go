@@ -160,12 +160,16 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 		}
 		return deploymentID == "" || ins.DeploymentID == "" || ins.DeploymentID == deploymentID
 	}
-	attach := func(ins state.Instance) {
+	// attach starts a reader for ins. It reports true only for an instance
+	// this stream had never attached: a retry after a failed dial or a
+	// node change does not speed the discovery poll back up, so a vmmd that
+	// keeps refusing is re-dialed at the backed-off rate.
+	attach := func(ins state.Instance) bool {
 		if !matches(ins) {
-			return
+			return false
 		}
 		if seen[ins.ID] && nodeOf[ins.ID] == ins.NodeID {
-			return
+			return false
 		}
 		// A migrated instance keeps its ID on a new node: the source ring
 		// ended cleanly, so without the node check it never re-attached.
@@ -237,6 +241,7 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 				}
 			}
 		}()
+		return !resumed
 	}
 	for _, ins := range rows {
 		attach(ins)
@@ -289,8 +294,17 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 	// Instance IDs change whenever an app parks and wakes. Keep discovering
 	// live rows for the lifetime of the follow stream instead of ending when
 	// the rings that existed at attach time close.
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
+	//
+	// The discovery poll backs off from logFollowPollMin to logFollowPollMax
+	// while it finds nothing new, and returns to the minimum when it attaches
+	// an instance. A fixed 250 ms poll made every open follow stream (each
+	// log drain holds one permanently) four control-plane reads a second,
+	// and re-dialed a failing vmmd at the same rate (O20). A late attach
+	// loses nothing: a new instance's reader starts from its ring's first
+	// line.
+	interval := logFollowPollMin
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -306,14 +320,32 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 				// attach resumes it after its last delivered line.
 				delete(seen, ended.instanceID)
 			}
-		case <-ticker.C:
-			current, listErr := e.liveInstancesForApp(streamCtx, appID)
-			if listErr != nil {
-				continue
+		case <-timer.C:
+			attached := false
+			if current, listErr := e.liveInstancesForApp(streamCtx, appID); listErr == nil {
+				for _, ins := range current {
+					if attach(ins) {
+						attached = true
+					}
+				}
 			}
-			for _, ins := range current {
-				attach(ins)
-			}
+			interval = nextLogFollowPoll(interval, attached)
+			timer.Reset(interval)
 		}
 	}
+}
+
+// Bounds of the follow stream's instance discovery poll.
+const (
+	logFollowPollMin = 250 * time.Millisecond
+	logFollowPollMax = 4 * time.Second
+)
+
+// nextLogFollowPoll doubles the discovery interval up to logFollowPollMax
+// while polls find nothing to attach, and resets it after an attach.
+func nextLogFollowPoll(interval time.Duration, attached bool) time.Duration {
+	if attached {
+		return logFollowPollMin
+	}
+	return min(interval*2, logFollowPollMax)
 }

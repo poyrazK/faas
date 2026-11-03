@@ -88,7 +88,7 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("select raw ingress deployment: %w", err)
 	}
-	instances, err := r.Instances.ListInstancesForApp(ctx, route.AppID)
+	instances, err := state.ListLiveInstancesForApp(ctx, r.Instances, route.AppID)
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("list instances for app %q: %w", route.AppID, err)
 	}

@@ -3124,8 +3124,10 @@ func (s *server) handler() http.Handler {
 	// POST /v1/crons/{id}/run inserts. IDOR-safe byte-identical-404:
 	// bad UUID, no row, cross-account row all return the same
 	// not_found Problem body — no existence oracle. Same auth +
-	// scope as the cron-run write (ScopesReadSurface).
-	mux.HandleFunc("GET /v1/cron-fire-now-requests/{request_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFireCronRequest)))
+	// deploy:write reads it too: it may POST the run, and `gregale cron run
+	// --wait` follows the run through this row (crons audit 2026-11-03).
+	// requireMFA matches the rest of the cron family.
+	mux.HandleFunc("GET /v1/cron-fire-now-requests/{request_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.getFireCronRequest))))
 	// Builds (issue #299 / ADR-038 Phase 3). The /sbom route is the
 	// ADR-038 Phase-3 companion to /provenance — same auth, same
 	// scoping, same IDOR-safe Build → Deployment → App → AccountID

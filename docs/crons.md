@@ -73,6 +73,10 @@ match the file exactly: crons missing from the file are removed. An empty
 `triggers: []` removes them all. If the file has no `triggers:` key, or none
 of its cron triggers name the app, the app's crons are left alone.
 
+On a company app, any member who may deploy it can deploy its crons; the
+company's plan sets how many it may have, not the deployer's own plan. The
+file's paths and timezones follow the same rules as `gregale cron create`.
+
 A deploy from a GitHub push, or through the source API, only adds the file's
 crons the app does not have yet, with their timezone and `skip_if_running`; it
 never changes or removes a cron.
@@ -173,7 +177,8 @@ again, since the run may already have been queued.
 
 Without `--wait`, `gregale cron run` exits 0 as soon as the run is queued. In
 scripts and CI use `--wait`: it exits 1 when the run fails or is cancelled and
-3 when `--timeout` (default 2m) passes first.
+3 when `--timeout` (default 2m) passes first. A `deploy:write` key can both
+start a run and follow it, so CI needs no `apps:read` key for `--wait`.
 
 Crons are not part of `gregale triggers`, which covers message-broker and
 queue triggers; list and edit crons with `gregale cron`.
