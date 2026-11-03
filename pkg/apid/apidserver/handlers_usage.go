@@ -96,10 +96,11 @@ func (s *server) getAppUsage(w http.ResponseWriter, r *http.Request, acct state.
 	}
 
 	planIncluded := float64(authAcct.Plan.PlanIncludedGBHours())
-	overage := summary.GBHours - planIncluded
-	if overage < 0 {
-		overage = 0
-	}
+	// Overage is billed per account: every app shares the plan allowance, so
+	// one app's usage over a window has no overage of its own. The field stays
+	// 0 for older clients; /v1/usage/summary reports the account's billed
+	// overage (ADR-20261101113742).
+	overage := 0.0
 
 	if target != nil {
 		emitOperatorActionView(r, s, acct, target.ID, "usage")

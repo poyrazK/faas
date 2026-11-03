@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 	"github.com/onebox-faas/faas/pkg/state"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/codes"
@@ -215,6 +216,14 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 		// answers live frames like any unknown frame, so the protocol is not
 		// discoverable; a session already open keeps receiving its frames.
 		if kind, subscription := liveFrameType(data); kind != "" && (c.live != nil || len(c.liveRoutes()) > 0) {
+			if (kind == liveproto.TypeSubscribe || kind == liveproto.TypeRenew) && !m.allowLiveFrame(c) {
+				frame, _ := json.Marshal(map[string]any{
+					"type": liveproto.TypeError, "subscription": subscription, "code": liveproto.CodeLimit,
+					"message": "too many live query frames; retry shortly", "closed": kind == liveproto.TypeSubscribe,
+				})
+				_ = m.queueLive(ctx, c, frame)
+				continue
+			}
 			m.handleLive(ctx, c, data, subscription)
 			continue
 		}
@@ -803,6 +812,10 @@ func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame
 	}
 	c.presenceCount++
 	c.mu.Unlock()
+	if !m.allowEphemeralRelay(c) {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "presence_rate_limited"})
+		return
+	}
 	var fleetMember PresenceMember
 	writeFleet, flushAfter := m.cfg.FleetClient != nil, time.Duration(0)
 	if writeFleet {
@@ -900,6 +913,10 @@ func (m *Manager) resumeSignal(ctx context.Context, c *connection, frame resumeC
 	memberID, code := m.takeResumeChannelSignal(key, c.info.ID, now)
 	if code != "" {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: code})
+		return
+	}
+	if !m.allowEphemeralRelay(c) {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "signal_rate_limited"})
 		return
 	}
 	var expires *time.Time

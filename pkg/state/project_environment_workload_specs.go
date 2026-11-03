@@ -454,7 +454,18 @@ func AppForInstance(ctx context.Context, store interface {
 	if err != nil {
 		return App{}, err
 	}
-	if deployment.AppID != instance.AppID {
+	return AppForInstanceDeployment(ctx, store, instance, deployment)
+}
+
+// AppForInstanceDeployment is AppForInstance for a caller that already read
+// the instance's deployment row.
+func AppForInstanceDeployment(ctx context.Context, store interface {
+	AppByID(context.Context, string) (App, error)
+}, instance Instance, deployment Deployment) (App, error) {
+	if instance.DeploymentID == "" {
+		return store.AppByID(ctx, instance.AppID)
+	}
+	if deployment.ID != instance.DeploymentID || deployment.AppID != instance.AppID {
 		return App{}, ErrConflict
 	}
 	return AppForDeployment(ctx, store, deployment)

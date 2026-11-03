@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -131,22 +132,26 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, problem)
 		return
 	}
-	latestByApp, err := s.store.ListLatestDeploymentPerApp(r.Context(), acct.ID)
-	if err != nil {
-		s.log.Error("list app deployments failed", "account", acct.ID, "err", err)
+	deps := s.readAccountAppDeployments(r.Context(), acct.ID, apps)
+	if deps.latestErr != nil {
+		s.log.Error("list app deployments failed", "account", acct.ID, "err", deps.latestErr)
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
 		return
 	}
-	liveByApp, err := s.store.ListAppsWithLiveDeployment(r.Context(), acct.ID)
-	if err != nil {
-		s.log.Error("list app live deployments failed", "account", acct.ID, "err", err)
+	if deps.liveErr != nil {
+		s.log.Error("list app live deployments failed", "account", acct.ID, "err", deps.liveErr)
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
 		return
 	}
-	parkedByApp := s.latestParkedDeploymentsByApp(r.Context(), acct.ID)
+	latestByApp, liveByApp, parkedByApp := deps.latest, deps.live, deps.parked
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
-		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
+		var resp api.AppResponse
+		if deps.domainsRead {
+			resp = s.appResponseWithDomain(a, acct.Plan, deps.domains[a.ID])
+		} else {
+			resp = s.appResponseWithContext(r.Context(), a, acct.Plan)
+		}
 		resp.DeploymentAvailability = appDeploymentAvailability(liveByApp[a.ID])
 		resp.Labels = labelsByApp[a.ID]
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
@@ -159,6 +164,44 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		out = append(out, s.withParkedDeploymentRef(r.Context(), resp, a))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// accountAppDeployments are listApps' account-wide deployment reads.
+type accountAppDeployments struct {
+	latest    map[string]state.Deployment
+	latestErr error
+	live      map[string]bool
+	liveErr   error
+	parked    map[string]state.Deployment
+	// domains are the apps' default custom domains; domainsRead is false
+	// when they could not be read in one query.
+	domains     map[string]string
+	domainsRead bool
+}
+
+// readAccountAppDeployments makes listApps' account-wide reads, and the
+// listed apps' default custom domains, at once: each needs only the account
+// or the app list, and one after another they cost every app list four round
+// trips (the domains were one per app).
+func (s *server) readAccountAppDeployments(ctx context.Context, accountID string, apps []state.App) accountAppDeployments {
+	var out accountAppDeployments
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		out.domains, out.domainsRead = s.defaultCustomDomains(ctx, apps)
+	}()
+	go func() {
+		defer wg.Done()
+		out.latest, out.latestErr = s.store.ListLatestDeploymentPerApp(ctx, accountID)
+	}()
+	go func() {
+		defer wg.Done()
+		out.live, out.liveErr = s.store.ListAppsWithLiveDeployment(ctx, accountID)
+	}()
+	out.parked = s.latestParkedDeploymentsByApp(ctx, accountID)
+	wg.Wait()
+	return out
 }
 
 // latestParkedDeploymentsByApp reads every app's parked reference in one
@@ -962,6 +1005,42 @@ func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
 // Request handlers should use the request context so the optional canonical
 // domain lookup is cancelled with the request.
 func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan api.Plan) api.AppResponse {
+	return s.appResponseWithDomain(a, plan, s.defaultCustomDomain(ctx, a.ID))
+}
+
+// defaultCustomDomain is the app's usable default custom domain, or "".
+func (s *server) defaultCustomDomain(ctx context.Context, appID string) string {
+	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
+		if domain, err := resolver.DefaultCustomDomain(ctx, appID); err == nil {
+			return domain
+		}
+	}
+	return ""
+}
+
+// defaultCustomDomains reads every listed app's default custom domain in one
+// query; ok is false when the store cannot, or the read failed, and callers
+// then read app by app.
+func (s *server) defaultCustomDomains(ctx context.Context, apps []state.App) (map[string]string, bool) {
+	reader, ok := s.store.(state.DefaultCustomDomainBatchReader)
+	if !ok {
+		return nil, false
+	}
+	ids := make([]string, 0, len(apps))
+	for _, a := range apps {
+		ids = append(ids, a.ID)
+	}
+	domains, err := reader.DefaultCustomDomains(ctx, ids)
+	if err != nil {
+		s.log.Warn("apid: default custom domains lookup", "apps", len(ids), "err", err)
+		return nil, false
+	}
+	return domains, true
+}
+
+// appResponseWithDomain is appResponseWithContext with the default custom
+// domain already read ("" for none).
+func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string) api.AppResponse {
 	var allowedCallers *[]string
 	if a.Manifest.AllowedServiceCallers != nil {
 		copyOfNames := append([]string{}, (*a.Manifest.AllowedServiceCallers)...)
@@ -984,11 +1063,9 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 	}
 	platformURL := appURLForDomain(a.Slug, s.domain)
 	canonicalURL, defaultDomain := platformURL, ""
-	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
-		if domain, err := resolver.DefaultCustomDomain(ctx, a.ID); err == nil && domain != "" {
-			defaultDomain = domain
-			canonicalURL = "https://" + domain
-		}
+	if domain != "" {
+		defaultDomain = domain
+		canonicalURL = "https://" + domain
 	}
 	// EgressAllowlist is materialised as a non-nil empty slice so
 	// the JSON shape is `[]` (never `null`) regardless of plan /
@@ -1313,14 +1390,20 @@ func cORSOriginsList(v []string) []string {
 // at the schema layer (migration 00157), so this helper never
 // needs to validate.
 func (s *server) withParkedDeploymentRef(ctx context.Context, resp api.AppResponse, app state.App) api.AppResponse {
+	return withParkedDeployment(resp, s.latestParkedDeployment(ctx, app))
+}
+
+// latestParkedDeployment is the app's parked reference, or a zero Deployment
+// when it has none or the read failed.
+func (s *server) latestParkedDeployment(ctx context.Context, app state.App) state.Deployment {
 	d, err := s.store.LatestParkedDeploymentForApp(ctx, app.ID)
 	if err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			s.log.Warn("apid: parked deployment ref lookup", "app", app.ID, "err", err)
 		}
-		return resp
+		return state.Deployment{}
 	}
-	return withParkedDeployment(resp, d)
+	return d
 }
 
 // withParkedDeployment attaches d as the parked reference; a zero d (no parked
