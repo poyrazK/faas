@@ -34,15 +34,20 @@ func platformPullFailure(output []byte, runtimeBaseRef string) bool {
 	if repo := imageRepository(runtimeBaseRef); repo != "" {
 		prefixes = append(append([]string(nil), prefixes...), repo)
 	}
+	// Registry API URLs put /v2/ between the host and the repository
+	// (https://ghcr.io/v2/railwayapp/...), so match that form too.
+	var forms []string
+	for _, prefix := range prefixes {
+		prefix = strings.ToLower(prefix)
+		forms = append(forms, prefix)
+		if host, path, ok := strings.Cut(prefix, "/"); ok {
+			forms = append(forms, host+"/v2/"+path)
+		}
+	}
 	for _, line := range bytes.Split(output, []byte("\n")) {
 		lower := strings.ToLower(string(line))
-		if !containsAny(lower, platformPullFailureMarkers) {
-			continue
-		}
-		for _, prefix := range prefixes {
-			if strings.Contains(lower, strings.ToLower(prefix)) {
-				return true
-			}
+		if containsAny(lower, platformPullFailureMarkers) && containsAny(lower, forms) {
+			return true
 		}
 	}
 	return false
