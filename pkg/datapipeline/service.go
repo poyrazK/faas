@@ -82,7 +82,7 @@ func (s *Service) RotateConnection(ctx context.Context, account, id string, r ap
 	if err != nil {
 		return api.DataConnection{}, err
 	}
-	blob, identity, err := sealConnection(s.Recipient, account, id, r.ConnectionURL)
+	blob, identity, err := sealConnection(s.Recipient, old.AccountID, old.ID, r.ConnectionURL)
 	if err != nil {
 		return api.DataConnection{}, err
 	}
@@ -100,13 +100,13 @@ func (s *Service) Create(ctx context.Context, account string, r api.CreateDataPi
 	if err := ValidateCreate(r); err != nil {
 		return api.DataPipeline{}, err
 	}
+	r = normalize(r)
 	if s.ValidateTarget == nil {
 		return api.DataPipeline{}, ErrUnavailable
 	}
 	if err := s.ValidateTarget(ctx, account, r.DatabaseID); err != nil {
 		return api.DataPipeline{}, err
 	}
-	r = normalize(r)
 	p, err := s.Store.Create(ctx, Pipeline{AccountID: account, DataPipeline: api.DataPipeline{ID: uuid.NewString(), Name: r.Name, SourceConnectionID: r.SourceConnectionID, DatabaseID: r.DatabaseID, Tables: r.Tables, ReadSubjects: r.ReadSubjects, DesiredState: "running", State: "validating", Revision: 1, Generation: 1, Verification: "unknown", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}})
 	return p.DataPipeline, err
 }

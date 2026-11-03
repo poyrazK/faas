@@ -73,6 +73,9 @@ func (s *PostgresStore) TableRemoval(ctx context.Context, account, id string, re
 		if p.SchemaChange == nil || p.SchemaChange.Cancellation == nil || p.SchemaChange.Cancellation.Kind != "live" {
 			return ErrConflict
 		}
+		if approval != "" && CanRetryTableRetirement(p) {
+			return s.retryTableRetirement(ctx, p, approval)
+		}
 		if approval == "" {
 			n, err = s.q.PipelineDiscardTableCancellation(ctx, s.pool, sqlc.PipelineDiscardTableCancellationParams{AccountID: account, ID: id, Revision: revision})
 		} else {

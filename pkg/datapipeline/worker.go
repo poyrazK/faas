@@ -8,10 +8,11 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"golang.org/x/sync/errgroup"
 )
 
 type Worker struct {
-	SetupTick  func(context.Context) error
+	SetupTick  func(context.Context) (bool, error)
 	Store      Store
 	Engine     *Engine
 	Identities []*age.X25519Identity
@@ -22,30 +23,30 @@ type Worker struct {
 // native PostgreSQL handles the initial copy and ongoing row movement. Approved
 // new-column backfills use bounded worker-side batches between the two endpoints.
 func (w *Worker) Tick(ctx context.Context) error {
+	_, err := w.tick(ctx)
+	return err
+}
+
+func (w *Worker) tick(ctx context.Context) (bool, error) {
 	p, err := w.Store.Claim(ctx, uuid.NewString())
 	if errors.Is(err, ErrNotFound) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
+	return true, w.reconcilePipeline(ctx, p)
+}
+
+func (w *Worker) reconcilePipeline(ctx context.Context, p Pipeline) error {
 	op, cancel := context.WithTimeout(ctx, api.DataPipelineOperationTimeout)
 	defer cancel()
-	c, err := w.Store.Connection(op, p.AccountID, p.SourceConnectionID)
-	if err != nil {
-		return w.Store.Finish(ctx, p, Observation{State: "blocked", Reason: "credential_unavailable", Verification: p.Verification})
-	}
-	raw, err := openConnection(w.Identities, c)
-	if err != nil {
-		return w.Store.Finish(ctx, p, Observation{State: "blocked", Reason: "credential_unavailable", Verification: p.Verification})
-	}
 	intent := p
-	intent.SourceRevision = c.Revision
 	admitted := w.Allowed != nil && w.Allowed(op, p.AccountID)
 	if !admitted && intent.DesiredState == "running" {
 		intent.DesiredState = "paused"
 	}
-	ob := w.Engine.Reconcile(op, intent, raw, func(ctx context.Context) error {
+	current := func(ctx context.Context) error {
 		current, err := w.Store.Get(ctx, p.AccountID, p.ID)
 		if err != nil {
 			return err
@@ -54,7 +55,19 @@ func (w *Worker) Tick(ctx context.Context) error {
 			return ErrConflict
 		}
 		return nil
-	})
+	}
+	c, err := w.Store.Connection(op, p.AccountID, p.SourceConnectionID)
+	var raw string
+	if err == nil {
+		intent.SourceRevision = c.Revision
+		raw, err = openConnection(w.Identities, c)
+	}
+	var ob Observation
+	if err != nil {
+		ob = w.Engine.reconcileUnavailable(op, intent, current)
+	} else {
+		ob = w.Engine.Reconcile(op, intent, raw, current)
+	}
 	if !admitted && p.DesiredState == "running" && ob.State == "paused" {
 		ob.State, ob.Reason = "blocked", "admission_closed"
 	}
@@ -64,36 +77,33 @@ func (w *Worker) Run(ctx context.Context) error {
 	if w.Store == nil || w.Engine == nil || len(w.Identities) == 0 {
 		return ErrInvalid
 	}
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		if err := w.Tick(ctx); err != nil && !errors.Is(err, ErrConflict) {
-			return err
-		}
-		if err := w.CheckTick(ctx); err != nil && !errors.Is(err, ErrConflict) {
-			return err
-		}
-		if w.SetupTick != nil {
-			if err := w.SetupTick(ctx); err != nil && !errors.Is(err, ErrConflict) {
-				return err
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
+	queues := []workerQueue{
+		{api.DataPipelineReconcileConcurrency, w.tick},
+		{api.DataPipelineCheckConcurrency, w.checkTick},
 	}
+	if w.SetupTick != nil {
+		queues = append(queues, workerQueue{api.DataPipelineSetupConcurrency, w.SetupTick})
+	}
+	return runWorkerQueues(ctx, queues...)
 }
 
 func (w *Worker) CheckTick(ctx context.Context) error {
+	_, err := w.checkTick(ctx)
+	return err
+}
+
+func (w *Worker) checkTick(ctx context.Context) (bool, error) {
 	job, err := w.Store.ClaimCheck(ctx, uuid.NewString())
 	if errors.Is(err, ErrNotFound) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
+	return true, w.checkConnection(ctx, job)
+}
+
+func (w *Worker) checkConnection(ctx context.Context, job ConnectionCheck) error {
 	op, cancel := context.WithTimeout(ctx, api.DataPipelineOperationTimeout)
 	defer cancel()
 	result := blockedCheck("admission_closed", "Connection checks are unavailable", "Ask the operator to enable this staging account.")
@@ -110,4 +120,50 @@ func (w *Worker) CheckTick(ctx context.Context) error {
 		}
 	}
 	return w.Store.FinishCheck(ctx, job, result)
+}
+
+type workerQueue struct {
+	concurrency int
+	next        func(context.Context) (bool, error)
+}
+
+// Claims and their existing lease/revision fences serialize each resource.
+// Independent bounded queues drain due work immediately; only an empty queue
+// waits. A slow endpoint or provisioning call cannot hold up another queue.
+func runWorkerQueues(ctx context.Context, queues ...workerQueue) error {
+	group, running := errgroup.WithContext(ctx)
+	for _, queue := range queues {
+		for range queue.concurrency {
+			group.Go(func() error {
+				timer := time.NewTimer(api.DataPipelineWorkerIdleInterval)
+				defer timer.Stop()
+				for {
+					if err := running.Err(); err != nil {
+						return err
+					}
+					claimed, err := queue.next(running)
+					if err != nil && !errors.Is(err, ErrConflict) {
+						return err
+					}
+					if claimed {
+						continue
+					}
+					timer.Reset(api.DataPipelineWorkerIdleInterval)
+					select {
+					case <-running.Done():
+						return running.Err()
+					case <-timer.C:
+					}
+				}
+			})
+		}
+	}
+	err := group.Wait()
+	// Catalog errors are sanitized, including queries canceled during shutdown.
+	// Preserve external cancellation without masking a fatal queue error that
+	// canceled only the group's internal context.
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
