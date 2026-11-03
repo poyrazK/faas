@@ -45,8 +45,8 @@ test('reads retained Go/Python native v2 without changing the explicit Node ring
   // Produced by Python AESGCM using the native starter KDF, envelope and AAD.
   const key = 'x'.repeat(32);
   const aad = 'gregale-mcp-task:v1:round2:12345678-1234-4234-8234-123456789abc:result';
-  const native = Buffer.from('Agdpbml0aWFsqZTZwvcVEwRe8lO5rMOwyhgZpJu9k00FnpE9HKPm9zeZ5mOkkNmLn2sO', 'base64');
-  const legacy = Buffer.from('ASx7QwRFWt5N+HSoLxz0tsVOn53n1/O+pBFGdc9lLjq+2WHqW+Eu/fKJtw==', 'base64');
+  const native = Buffer.from('Agdpbml0aWFsqZTZwvcVEwRe8lO5rMOwyhgZpJu9k00FnpE9HKPm9zeZ5mOkkNmLn2sO', 'base64'); // gregale:allow-secret — encrypted test vector, not a credential.
+  const legacy = Buffer.from('ASx7QwRFWt5N+HSoLxz0tsVOn53n1/O+pBFGdc9lLjq+2WHqW+Eu/fKJtw==', 'base64'); // gregale:allow-secret — encrypted test vector, not a credential.
   const configs = [undefined, { activeKeyId: 'initial', keys: { initial: key } }];
   for (const config of configs) {
     const cipher = createMcpTaskPayloadCipher(key, config, [{ id: 'initial', key }]);
