@@ -2,6 +2,8 @@
 // approval window, usage metering and fleet ceilings.
 // adr: 20261031091607 — production allows every plan its database count, and a
 // paid reserve keeps Free sign-ups from pausing paying customers.
+// adr: 20261103091657 — the approval gates new databases only; superseded
+// capacity settings keep existing databases resolving.
 package managedpostgres
 
 import (
@@ -125,6 +127,105 @@ func TestProvisioningGateDecidesProductionByApprovalAndStagingByQualification(t 
 	}
 	if ProductionEnvironmentActive(getenv) || !ProductionEnvironmentActive(func(string) string { return " Production " }) {
 		t.Fatal("production environment detection")
+	}
+}
+
+// adr: 20261103091657
+func TestOperationsGateOutlivesTheProductionApproval(t *testing.T) {
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	env := map[string]string{
+		EnvironmentEnv:          "production",
+		ProductionApprovedAtEnv: now.Add(-48 * time.Hour).Format(time.RFC3339),
+		ProductionUntilEnv:      now.Add(-time.Hour).Format(time.RFC3339),
+	}
+	getenv := func(name string) string { return env[name] }
+	clock := func() time.Time { return now }
+	registry := productionRegistry(t, nil)
+	if NewProvisioningGate(registry, getenv, clock)() {
+		t.Fatal("a lapsed approval must close new databases")
+	}
+	if !NewOperationsGate(registry, getenv, clock)() {
+		t.Fatal("a lapsed approval must not close work on existing databases")
+	}
+	if NewOperationsGate(productionRegistry(t, func(c *Config) { c.ProvisioningEnabled = false }), getenv, clock)() {
+		t.Fatal("provisioning_enabled=false must stop work on existing databases too")
+	}
+	env[EnvironmentEnv] = "staging"
+	if NewOperationsGate(registry, getenv, clock)() {
+		t.Fatal("staging must keep requiring its qualification artifact")
+	}
+}
+
+// adr: 20261103091657
+func TestClosedProvisioningRefusesNewDatabasesButNotRecovery(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	registry, store := testRegistry(t, provider, nil), NewMemoryStore()
+	open, operations := true, true
+	clock := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	service, err := NewService(registry, store, ServiceOptions{
+		ProvisioningEnabled: func() bool { return open },
+		OperationsEnabled:   func() bool { return operations },
+		Now: func() time.Time {
+			clock = clock.Add(time.Second)
+			return clock
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	source, err := service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	open = false
+	if _, err := service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "other", Spec: testSpec()}); !errors.Is(err, ErrProvisioningClosed) {
+		t.Fatalf("create with provisioning closed = %v, want ErrProvisioningClosed", err)
+	}
+	restored, err := service.Restore(ctx, RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: "orders-copy", PointInTime: source.CreatedAt})
+	if err != nil || restored.State != StateReady {
+		t.Fatalf("restore with only operations open = %+v, %v", restored, err)
+	}
+	operations = false
+	if _, err := service.Restore(ctx, RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: "orders-copy-2", PointInTime: source.CreatedAt}); !errors.Is(err, ErrProvisioningClosed) {
+		t.Fatalf("restore with operations closed = %v, want ErrProvisioningClosed", err)
+	}
+}
+
+// adr: 20261103091657
+func TestPreviousSettingsKeepDatabasesResolvingAcrossACapacityChange(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities()}
+	settings := func(storage string) map[string]string {
+		return map[string]string{"endpoint": "https://db.example.test", "max_storage_bytes": storage}
+	}
+	before := testRegistry(t, provider, func(c *Config) { c.Backends[0].Settings = settings("100") })
+	old, _ := before.Default("us-east-1")
+	raised := testRegistry(t, provider, func(c *Config) {
+		c.Backends[0].Settings = settings("200")
+		c.Backends[0].PreviousSettings = []map[string]string{settings("100")}
+	})
+	current, _ := raised.Default("us-east-1")
+	if current.Fingerprint == old.Fingerprint {
+		t.Fatal("a capacity change must still change the approved fingerprint")
+	}
+	for _, fp := range []string{old.Fingerprint, current.Fingerprint} {
+		if _, err := raised.Resolve("primary-a", fp); err != nil {
+			t.Fatalf("Resolve(%s) = %v", fp, err)
+		}
+	}
+	undeclared := testRegistry(t, provider, func(c *Config) { c.Backends[0].Settings = settings("200") })
+	if _, err := undeclared.Resolve("primary-a", old.Fingerprint); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("an undeclared change resolved: %v", err)
+	}
+	moved := settings("100")
+	moved["endpoint"] = "https://elsewhere.example.test"
+	_, err := NewRegistry(Config{
+		DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "primary-a"},
+		Backends: []BackendConfig{{ID: "primary-a", Driver: "fake", Region: "us-east-1", Namespace: "provider-account-a",
+			Settings: settings("200"), PreviousSettings: []map[string]string{moved}}},
+	}, func(string) string { return "" }, map[string]Factory{"fake": func(BackendConfig, func(string) string) (Provider, error) { return provider, nil }})
+	if err == nil || !strings.Contains(err.Error(), "not endpoint") {
+		t.Fatalf("a placement change in previous_settings = %v, want refusal", err)
 	}
 }
 

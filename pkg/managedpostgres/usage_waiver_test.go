@@ -1,5 +1,7 @@
 // adr: 20261029174950 — decision 6: usage while a delete is scheduled is
 // waived for the customer and still counted by the fleet spend breaker.
+// adr: 20261103091657 — a database with restore copies is not waived: its
+// usage includes theirs.
 package managedpostgres
 
 import (
@@ -100,4 +102,47 @@ func usageWaiverReadyDatabase(t *testing.T, store Store, accountID string, at ti
 		t.Fatal(err)
 	}
 	return ready
+}
+
+func TestMemoryStoreDoesNotWaiveARestoreSource(t *testing.T) {
+	testUsageWaiverSkipsRestoreSources(t, NewMemoryStore(), uuid.NewString())
+}
+
+func TestPostgresStoreDoesNotWaiveARestoreSource(t *testing.T) {
+	store, _, _, accountID := postgresStoreFixture(t)
+	testUsageWaiverSkipsRestoreSources(t, store, accountID)
+}
+
+// testUsageWaiverSkipsRestoreSources schedules the delete of a database with
+// a restore copy: every window keeps counting, because the source's usage is
+// the copy's too.
+func testUsageWaiverSkipsRestoreSources(t *testing.T, store usageWaiverTestStore, accountID string) {
+	t.Helper()
+	ctx := context.Background()
+	start := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	database := usageWaiverReadyDatabase(t, store, accountID, start)
+	restored := postgresTestDatabase(accountID, "waiver-copy", start.Add(time.Minute))
+	restored.RestoreSourceDatabaseID = database.ID
+	restored.RestoreSourceResourceID = database.ProviderResourceID
+	restored.RestorePointInTime = start
+	if _, _, err := store.Reserve(ctx, restored, 100); err != nil {
+		t.Fatalf("reserve copy: %v", err)
+	}
+	for k := range 4 {
+		if err := store.RecordUsage(ctx, []UsageRecord{{
+			AccountID: accountID, DatabaseID: database.ID, BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint,
+			WindowFrom: start.Add(time.Duration(k) * time.Hour), WindowTo: start.Add(time.Duration(k+1) * time.Hour), ObservedAt: start.Add(time.Duration(k+1)*time.Hour + time.Minute),
+			Meter: MeterComputeUnitSeconds, Quantity: 1, CostMillicents: 1,
+		}}); err != nil {
+			t.Fatalf("record window %d: %v", k, err)
+		}
+	}
+	now := start.Add(30 * time.Minute)
+	if _, err := store.ClaimScheduledDelete(ctx, accountID, database.ID, "schedule", now, now.Add(time.Minute), start.Add(7*24*time.Hour)); err != nil {
+		t.Fatalf("schedule a source with a copy: %v", err)
+	}
+	snapshot, err := store.UsageSnapshot(ctx, accountID, start)
+	if err != nil || snapshot.ComputeUnitSeconds != 4 {
+		t.Fatalf("customer usage = %d, %v; want all 4 windows (3 would be waived)", snapshot.ComputeUnitSeconds, err)
+	}
 }

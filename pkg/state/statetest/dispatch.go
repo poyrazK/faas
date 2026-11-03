@@ -121,6 +121,7 @@ var memDispatched = map[string]bool{
 	"ListRouteHealthHistory":                                  true,
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
+	"ListInstancesByStatesOlderThan":                          true,
 	"IssueObjectMultipartURLCredential":                       true,
 	"JobRunAttachSession":                                     true,
 	"LatestParkedDeploymentForApp":                            true,
@@ -890,6 +891,15 @@ func (s *Mem) InstanceByID(p0 context.Context, p1 string) (state.Instance, error
 		return o.InstanceByID(p0, p1)
 	}
 	return s.MemStore.InstanceByID(p0, p1)
+}
+
+func (s *Mem) ListInstancesByStatesOlderThan(p0 context.Context, p1 []state.State, p2 time.Time) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListInstancesByStatesOlderThan(context.Context, []state.State, time.Time) ([]state.Instance, error)
+	}); ok {
+		return o.ListInstancesByStatesOlderThan(p0, p1, p2)
+	}
+	return s.MemStore.ListInstancesByStatesOlderThan(p0, p1, p2)
 }
 
 func (s *Mem) IssueObjectMultipartURLCredential(p0 context.Context, p1 state.ObjectS3Credential, p2 state.ObjectMultipartUpload, p3 api.ObjectStoragePolicy) (state.ObjectS3Credential, error) {

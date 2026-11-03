@@ -134,6 +134,36 @@ host's records, which take precedence over the wildcard, so only that host
 leaves the tunnel. Run the ADR's step 0 questions against it. Remove each
 injected failure as soon as it is measured.
 
+## Client limits (ADR-20261103163954 §4)
+
+`faas_edge_client_limits: true` on the edge role sets
+`FAAS_EDGE_CLIENT_LIMITS=1`. The values are in `pkg/api/limits.go`
+(`EdgeClient*`, `EdgeTLSHandshake*`); each is per node and per client address
+(an IPv4 address or an IPv6 /64).
+
+- **Requests a second**, on any front. Behind Cloudflare the client is
+  `CF-Connecting-IP`; with no front it is the connection's peer, whatever the
+  request claims. A refusal is `429 rate_limited` with `Retry-After: 1`,
+  `x-faas-rate-limit-scope: client-address`, the limit and the observed value.
+- **Open connections, new connections a second and TLS handshakes in
+  progress**, only with `faas_edge_public_front: none`. A refused connection
+  is reset before TLS; a handshake slot is held at most
+  `EdgeTLSHandshakeTimeout`.
+
+- **A minimum request-body rate**, on any front: a body must bring
+  `EdgeClientBodyMinBytesPerWindow` bytes every `EdgeClientBodyRateWindow`,
+  or its read fails. gRPC client streams are exempt.
+- **A cap on requests forwarded to the control plane** (uploads, public
+  reads, OTLP), `EdgeControlPlaneForwardsInFlightMax` at once per edge; past
+  it the edge answers `503 control_plane_busy` with `Retry-After: 1`.
+
+`gatewayd_public_edge_refused_total{reason}` counts refusals by
+`open_connections`, `connection_rate`, `handshakes`, `request_rate`,
+`body_rate` and `forward_in_flight`. A
+burst on one reason from many addresses is a flood; a steady stream from one
+address may be carrier-grade NAT, where the starting values need raising.
+An edge with no front and the limits off logs a warning at start.
+
 ## Undo
 
 - **Pilot:** remove `public_edge.dns` and release, then delete the pilot host's

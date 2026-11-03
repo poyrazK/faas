@@ -25,7 +25,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"name"}),
 		changes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "edge_dns_changes_total",
-			Help: "Address records edgednsd created or deleted, by name and action; dry_run=true counts the changes a dry run only logged (ADR-20261102081618).",
+			Help: "Address records edgednsd created, switched between proxied and DNS-only (action=mode, ADR-20261103163954) or deleted, by name and action; dry_run=true counts the changes a dry run only logged (ADR-20261102081618).",
 		}, []string{"name", "action", "dry_run"}),
 		probeFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "edge_dns_probe_failures_total",
@@ -37,10 +37,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"node"}),
 		errors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "edge_dns_errors_total",
-			Help: "Cloudflare DNS calls edgednsd could not complete, by op (read, create, delete); while they fail the records stay as they are (ADR-20261102081618).",
+			Help: "Cloudflare DNS calls edgednsd could not complete, by op (read, create, mode, delete); while they fail the records stay as they are (ADR-20261102081618).",
 		}, []string{"op"}),
 	}
-	for _, op := range []string{"read", "create", "delete"} {
+	for _, op := range []string{"read", "create", "mode", "delete"} {
 		m.errors.WithLabelValues(op)
 	}
 	reg.MustRegister(m.records, m.changes, m.probeFailures, m.nodeIn, m.errors)

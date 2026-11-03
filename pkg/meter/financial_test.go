@@ -162,3 +162,62 @@ func TestFinancialPricingClosedMinute(t *testing.T) {
 		t.Fatalf("activation identities lost across plan changes: %+v", rows)
 	}
 }
+
+// A plan change meterd observes late is dated from the subject's recorded
+// change time, not the minute meterd noticed it, and never before the
+// previous terms (ADR-20261103121407).
+// adr: 20261103121407
+func TestFinancialPricingDatesPlanChangeFromChangeTime(t *testing.T) {
+	store := state.NewMemStore()
+	a, err := store.CreateAccount(t.Context(), "financial-plan-change@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &Loop{store: store}
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	hobbyAt := start.Add(time.Hour)
+	if err := l.recordFinancialPricing(t.Context(), hobbyAt); err != nil {
+		t.Fatal(err)
+	}
+	effective := func(plan api.Plan) time.Time {
+		t.Helper()
+		prices, err := store.ListFinancialPriceSnapshots(t.Context(), a.ID, start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range prices {
+			if p.Plan == plan && p.Price.Meter == string(state.BillingMeterCompute) {
+				return p.EffectiveFrom.UTC()
+			}
+		}
+		t.Fatalf("no %s compute snapshot in %+v", plan, prices)
+		return time.Time{}
+	}
+
+	// Upgraded at 01:10:30 while meterd was down; meterd observes it at 04:00.
+	if err := store.UpdateAccountPlan(t.Context(), a.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	store.SetPlanChangedAt(a.ID, start.Add(70*time.Minute+30*time.Second))
+	if err := l.recordFinancialPricing(t.Context(), start.Add(4*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := effective(api.PlanPro), start.Add(70*time.Minute); !got.Equal(want) {
+		t.Fatalf("Pro effective from %s, want the recorded change minute %s", got, want)
+	}
+
+	// A change time before the previous terms took effect is clamped to them.
+	if err := store.UpdateAccountPlan(t.Context(), a.ID, api.PlanScale); err != nil {
+		t.Fatal(err)
+	}
+	store.SetPlanChangedAt(a.ID, start)
+	if err := l.recordFinancialPricing(t.Context(), start.Add(5*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := effective(api.PlanScale), start.Add(70*time.Minute); !got.Equal(want) {
+		t.Fatalf("Scale effective from %s, want clamped to the Pro terms' %s", got, want)
+	}
+	if got := effective(api.PlanHobby); !got.Equal(hobbyAt) {
+		t.Fatalf("Hobby effective from %s, want %s", got, hobbyAt)
+	}
+}

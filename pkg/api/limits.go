@@ -9576,6 +9576,12 @@ const (
 	GatewayFailoverRetryBudgetBurst     = 10
 	GatewayFailoverMaxExtraNodes        = 2
 	GatewayFailoverMaxRefusalBodyBytes  = 64 << 10 // 64 KiB
+
+	// EdgeDNSOnlyAddrsPerNameMax bounds the DNS-only address records
+	// edgednsd keeps behind one app host name (ADR-20261103163954 §1): an
+	// answer with that many A and AAAA records stays well under the
+	// 1,232-byte EDNS size resolvers use. A larger cell needs pools.
+	EdgeDNSOnlyAddrsPerNameMax = 16
 )
 
 // EdgeWAFInlineSlots is the number of in-path WAF check slots for a
@@ -12443,6 +12449,15 @@ const MeterCatchUpMinutesPerTick = 15
 // reaches back, which drains no live counter.
 const MeterTelemetryDrainWindow = 24 * time.Hour
 
+// MeterFinalNetworkReadingRetention is how long schedd keeps serving an
+// instance's last host-interface byte counters after the instance leaves its
+// stats snapshot (it parked, froze off the node or was destroyed). vmmd
+// forgets the counters at teardown, and meterd checkpoints them only once a
+// minute, so without the retained reading the bytes sent since meterd's last
+// read were never metered (ADR-20261103121407). It spans meterd's stats
+// refresh TTL, one roll and the roll settle with margin.
+const MeterFinalNetworkReadingRetention = 5 * time.Minute
+
 // MeterRollSettle is how long after a minute closes meterd waits before
 // rolling it. Residency intervals are stamped inside their writer's
 // transaction and become visible at commit; a roll right at the boundary
@@ -14237,6 +14252,48 @@ const DashboardRequestAnalyticsTimeout = 5 * time.Second
 // closes and flush every few seconds, so the newest minutes are always still
 // arriving. Route removal excludes the same two minutes.
 const RequestAnalyticsSettleLag = 2 * time.Minute
+
+// Request analytics rollups (ADR-20261103113952). apid adds every telemetry
+// row a plan keeps, before the debugger ingest cap, to per-minute rollups
+// and writes them every RequestAnalyticsRollupFlushInterval in statements of
+// at most RequestAnalyticsRollupFlushRowsMax rows. For each app, minute and
+// non-route dimension a flush keeps RequestAnalyticsRollupDimensionsMax
+// distinct values and folds the rest into "__other__". The aggregator counts
+// a replayed event ID once among the last RequestAnalyticsRollupSeenEventsMax
+// rows; a gateway replays a batch within seconds of the original. Past
+// RequestAnalyticsRollupPendingRowsMax buffered rollup rows, because
+// Postgres is failing, new rows are dropped and counted.
+const (
+	RequestAnalyticsRollupFlushInterval  = 10 * time.Second
+	RequestAnalyticsRollupFlushRowsMax   = 1000
+	RequestAnalyticsRollupDimensionsMax  = 50
+	RequestAnalyticsRollupSeenEventsMax  = 200_000
+	RequestAnalyticsRollupPendingRowsMax = 200_000
+)
+
+// RequestAnalyticsSampledMeasuresTimeout bounds the raw telemetry read that
+// adds sampled measures (guest execution, CPU, RSS, cold request and wake
+// boot p95) to analytics answered from rollups; past it they are left out
+// and the response still carries its counts and latencies.
+const RequestAnalyticsSampledMeasuresTimeout = 3 * time.Second
+
+// RequestAnalyticsLatencyBoundsMS are the upper bounds of the rollup latency
+// histogram (ADR-20261103113952); latency_hist has one bucket per bound plus
+// an overflow bucket, whose percentile is the rollup's latency_max_ms. Up to
+// 100 ms buckets are 10 ms wide, as the gateway's latency representatives
+// are; from 100 ms to 10 s an upper bound is at most 25% above the bucket's
+// lower bound. Changing the
+// bounds changes the meaning of stored rows: add a new column instead.
+var RequestAnalyticsLatencyBoundsMS = [...]int{
+	10, 20, 30, 40, 50, 60, 70, 80, 90, 100,
+	125, 150, 175, 200, 250, 300, 350, 400, 450, 500,
+	600, 700, 800, 900, 1000, 1250, 1500, 1750, 2000, 2500,
+	3000, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 9000, 10000,
+	15000, 20000, 30000, 60000,
+}
+
+// RequestAnalyticsLatencyBuckets is latency_hist's fixed width.
+const RequestAnalyticsLatencyBuckets = len(RequestAnalyticsLatencyBoundsMS) + 1
 
 // RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
@@ -17126,6 +17183,17 @@ const (
 	DataRepairPurgeLockTimeoutMS       = 2000
 )
 
+// HTTP/2 on a compute edge that serves clients directly (ADR-20261103163954
+// §2) gets explicit limits rather than library defaults: concurrent streams
+// per connection, the largest frame it reads (16 KiB, the protocol's
+// minimum) and the HPACK table in each direction. The header list is capped
+// by the server's MaxHeaderBytes, as an HTTP/1.1 header is.
+const (
+	EdgeHTTP2MaxConcurrentStreams = 100
+	EdgeHTTP2MaxReadFrameSize     = 16 << 10
+	EdgeHTTP2MaxHeaderTableSize   = 4096
+)
+
 // Resource labels (ADR-20261031100025) use Kubernetes label syntax and are the
 // same on every plan: labels hold no resources. A resource carries at most
 // LabelsPerResourceMax labels. A key is an optional DNS-subdomain prefix of at
@@ -17138,6 +17206,35 @@ const (
 	LabelKeyPrefixMax     = 253
 	LabelValueMax         = 63
 	LabelSelectorMaxBytes = 4096
+)
+
+// A compute edge that serves clients directly (ADR-20261103163954 §4) bounds
+// what one client address may take from a node: open connections, new
+// connections a second, requests a second, and TLS handshakes in progress per
+// CPU. An address is an IPv4 address or an IPv6 /64. The state is per node and
+// in memory; at most EdgeClientTrackedAddrsMax addresses are tracked, and the
+// rest share one bucket. These are starting values for the pilot to tune; they
+// must allow carrier-grade NAT, where thousands of users share one address.
+const (
+	EdgeClientOpenConnsPerAddrMax      = 512
+	EdgeClientNewConnsPerSecondPerAddr = 100
+	EdgeClientNewConnsBurstPerAddr     = 400
+	EdgeClientRequestsPerSecondPerAddr = 500
+	EdgeClientRequestsBurstPerAddr     = 1000
+	EdgeClientTrackedAddrsMax          = 200_000
+	EdgeTLSHandshakesInFlightPerCPU    = 128
+	EdgeTLSHandshakeTimeout            = 10 * time.Second
+	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
+	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
+	// the public server's read timeout is the whole request envelope.
+	// gRPC client streams are exempt.
+	EdgeClientBodyMinBytesPerWindow = 4096
+	EdgeClientBodyRateWindow        = 10 * time.Second
+	// EdgeControlPlaneForwardsInFlightMax bounds the requests one compute
+	// edge forwards to the control plane's private listener at once
+	// (uploads, public reads, OTLP), so direct clients cannot push more at
+	// the control plane than Cloudflare let through.
+	EdgeControlPlaneForwardsInFlightMax = 256
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
