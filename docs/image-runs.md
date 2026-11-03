@@ -29,7 +29,8 @@ platform-managed runner job per image (named `ir-<hash>`), so the first run
 pulls the image and later runs start from the cached copy. `--pull always`
 pulls a moved tag again. Runner jobs do not appear in `gregale job list` and
 do not count against your Job limit; inspect a run with
-`gregale job tasks ir-<hash> RUN_ID` and `gregale job logs ir-<hash> RUN_ID`,
+`gregale job tasks ir-<hash> RUN_ID` and `gregale job logs ir-<hash> RUN_ID`
+(output is kept for your plan's [job log retention](jobs.md#log-retention)),
 or delete a cached image with `gregale job delete ir-<hash>`.
 
 Image runs use your plan's Job limits for memory, deadline (by default the
