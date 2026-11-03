@@ -53,6 +53,21 @@ func IsDeploySubmissionRequest(r *http.Request) bool {
 	return matchesRoute(r, deploySubmissionRoutes)
 }
 
+// appLifecycleRoutes delete and restore an app. Both change the account's
+// traffic policy, so they wait for the account's traffic binding lock behind
+// any deploy in the same account, and a deploy (30 s budget) can hold it for
+// several seconds. Under the 5 s default a delete queued behind one answered
+// 503 "could not delete app" (Hunt 31 H31-13).
+var appLifecycleRoutes = []struct{ method, path string }{
+	{http.MethodDelete, "/v1/apps/*"},
+	{http.MethodPost, "/v1/apps/*/restore"},
+}
+
+// IsAppLifecycleRequest identifies app delete and restore.
+func IsAppLifecycleRequest(r *http.Request) bool {
+	return matchesRoute(r, appLifecycleRoutes)
+}
+
 // accountExportRoutes assemble the whole account (every app, deployment and
 // audit row) into one spool before the first byte goes out. On
 // production-us a 44-app account outran the 5 s apid default on every

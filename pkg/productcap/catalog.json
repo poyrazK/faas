@@ -338,6 +338,7 @@
       "routes": [
         "/dashboard/account/keys",
         "/v1/account/keys",
+        "/v1/agent-connections",
         "/v1/keys",
         "/v1/orgs/{}/keys"
       ],

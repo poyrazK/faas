@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -24,7 +24,7 @@ var (
 	ErrOperationNotAwaitingApproval = errors.New("state: operation is not waiting for this approval")
 )
 
-var operationApprovalStep = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+var operationApprovalStep = lazyregexp.New(`^[a-z][a-z0-9-]{0,63}$`)
 
 // OperationApprovalInput is one decision. PlatformTenantID scopes a customer
 // caller; it is empty for the account. ApproverKind is the caller's kind.

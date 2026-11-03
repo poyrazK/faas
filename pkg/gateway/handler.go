@@ -3159,7 +3159,9 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	if h.applyMCPAliasPolicy(w, r, app) {
 		return true
 	}
-	rule := h.edgeRules.MatchJWT(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleJWTResolved {
+		return h.edgeRules.MatchJWT(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule != nil && rule.Unavailable {
 		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_policy_unavailable")
 		return true
@@ -3206,7 +3208,9 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// JWT rule before adding the extraction hint; matcher-owned values are
 	// immutable and shared across requests.
 	var extractClaims []string
-	if throttle := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method); throttle != nil &&
+	if throttle := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
+		return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
+	}); throttle != nil &&
 		throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
 		extractClaims = append(extractClaims, throttle.JWTClaimName)
 	}
@@ -3402,7 +3406,9 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchIP(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleIPResolved {
+		return h.edgeRules.MatchIP(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("ip", "miss")
@@ -4483,7 +4489,9 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchGeo(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleGeoResolved {
+		return h.edgeRules.MatchGeo(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("geo", "miss")
@@ -4648,7 +4656,9 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	if h.edgeRules == nil || h.routeLimiter == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
+		return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("throttle", "miss")
@@ -6906,6 +6916,9 @@ haveApp:
 	if !h.enforcePublicAuth(w, r, rec, app) { //nolint:contextcheck // request ctx is the canonical inbound ctx; the helper uses r.Context() internally so passing ctx separately would shadow it.
 		return
 	}
+	// A preview runs unreviewed code: the credential a platform gate just
+	// verified does not reach it (ADR-20261102100001).
+	withholdPreviewGateCredential(r, app)
 	// The three verified identity sources have all run by this point. Keep
 	// operator-authorized deployment smoke available for rollout readiness.
 	if app.PlatformTenantRequired && !deploymentSmoke && authenticatedFrom(r.Context()).PlatformTenantID == "" {

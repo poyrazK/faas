@@ -18,7 +18,6 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -48,7 +47,7 @@ func newSubscriberForTest(store state.Store) *DeletionSubscriber {
 			store:  store,
 			ledger: NewNodeLedger(),
 			vmm:    &fakeVMM{},
-			appMu:  make(map[string]*sync.Mutex),
+			appMu:  make(map[string]*appLock),
 		},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}

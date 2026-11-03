@@ -20,6 +20,10 @@ func cmdDeployCheck(args []string) int {
 	// ADR-20261026145832: deploy check is the one pre-deploy check. Without
 	// --project it checks local source or an image, as `gregale doctor` does.
 	if !slices.ContainsFunc(args, func(arg string) bool { return arg == "--project" || arg == "--project=true" }) {
+		if name := deployCheckProjectOnlyFlag(args); name != "" {
+			PrintUsage(osStderr, fmt.Sprintf("--%s needs --project: it checks project release prerequisites\nusage: gregale deploy check --project --%s ...", name, name), "deploy")
+			return 1
+		}
 		return cmdDoctor(args)
 	}
 	fs := newFlagSet("deploy check", flag.ContinueOnError)
@@ -204,30 +208,62 @@ func renderDeploymentCheck(report api.ProjectDeploymentReadiness) {
 	_, _ = fmt.Fprintln(osStdout, "Checks cover declared inputs and current control-plane state; deployment still validates source and runtime health.")
 }
 
+// deployCheckProjectOnly names the flags only `deploy check --project`
+// defines. Without --project, deploy check is doctor, which answered
+// "unknown flag" for them (CLI audit 2026-10-31).
+var deployCheckProjectOnly = map[string]bool{
+	"project-slug": true, "source": true, "worktree": true, "environment": true, "env": true,
+	"from": true, "expected-state": true, "atomic": true, "add-services": true, "verify": true,
+	"workers": true, "worker-health": true, "migrate": true, "progressive": true, "stabilize": true,
+	"sync-config": true, "config-file": true, "secrets-file": true,
+}
+
+// deployCheckProjectOnlyFlag returns the first project-only flag in args,
+// or "" when there is none. Arguments after "--" are positional.
+func deployCheckProjectOnlyFlag(args []string) string {
+	for _, arg := range args {
+		if arg == "--" {
+			return ""
+		}
+		if !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		name := strings.TrimLeft(arg, "-")
+		if i := strings.IndexByte(name, '='); i >= 0 {
+			name = name[:i]
+		}
+		if deployCheckProjectOnly[name] {
+			return name
+		}
+	}
+	return ""
+}
+
 func deploymentCheckCommand() cliSub {
-	return cliSub{Name: "check", Short: "Check local source, an image or project prerequisites before deploying", Notes: []string{"Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project's release prerequisites against current state."}, Examples: []string{"gregale deploy check", "gregale deploy check --image ghcr.io/acme/api:1.2 --strict", "gregale deploy check --project --json", "gregale deploy check --project --atomic --verify", "gregale deploy check --project --project-slug shop --from staging --env production --sync-config --verify"}, Flags: []cliFlag{
+	return cliSub{Name: "check", Short: "Check local source, an image or project prerequisites before deploying", Notes: []string{"Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project's release prerequisites against current state.", "Flags marked \"with --project\" are refused without --project.", "Without --project, a variable the source reads but .env, .gregale/env.json and the app's env and secrets do not declare is an error; when the app's env cannot be read (no linked app or --app, or logged out), it is a warning."}, Examples: []string{"gregale deploy check", "gregale deploy check --image ghcr.io/acme/api:1.2 --strict", "gregale deploy check --project --json", "gregale deploy check --project --atomic --verify", "gregale deploy check --project --project-slug shop --from staging --env production --sync-config --verify"}, Flags: []cliFlag{
 		{Name: "project", Short: "check the complete project's release prerequisites", Bool: true},
 		{Name: "image", Short: "without --project: inspect this Linux/amd64 image without downloading layers", Value: "REF"},
 		{Name: "registry-user", Short: "without --project: registry username; requires --registry-password-stdin", Value: "USER"},
 		{Name: "registry-password-stdin", Short: "without --project: read the registry password or token from stdin", Bool: true},
 		{Name: "strict", Short: "without --project: exit 1 on warnings", Bool: true},
-		{Name: "project-slug", Short: "project slug (defaults to linked context or selected directory)", Value: "SLUG"},
+		{Name: "app", Short: "without --project: app whose env and secret names count as declared (defaults to linked context)", Value: "SLUG"},
+		{Name: "project-slug", Short: "with --project: project slug (defaults to linked context or selected directory)", Value: "SLUG"},
 		{Name: "path", Short: "selected source directory", Value: "DIR"},
-		{Name: "source", Short: "local source policy (default auto)", Value: "MODE", ClosedSet: []string{"auto", "head", "worktree"}},
-		{Name: "worktree", Short: "check local working tree changes", Bool: true},
-		{Name: "environment", Short: "destination environment (default production)", Value: "ENV"},
-		{Name: "from", Short: "source environment for a promotion check", Value: "ENV"},
-		{Name: "expected-state", Short: "compare a previous check's state hash", Value: "SHA256"},
-		{Name: "atomic", Short: "check atomic source release prerequisites", Bool: true},
-		{Name: "add-services", Short: "check HTTP service addition prerequisites", Bool: true},
-		{Name: "verify", Short: "check critical health verification prerequisites", Bool: true},
-		{Name: "workers", Short: "check push worker release prerequisites", Bool: true},
-		{Name: "worker-health", Short: "require worker delivery health during deployment", Bool: true},
-		{Name: "migrate", Short: "check one backward-compatible migration", Bool: true},
-		{Name: "progressive", Short: "check progressive rollout prerequisites", Bool: true},
-		{Name: "stabilize", Short: "check post-success monitoring prerequisites", Bool: true},
-		{Name: "sync-config", Short: "check synchronized promotion configuration", Bool: true},
-		{Name: "config-file", Short: "proposed non-secret paired configuration", Value: "PATH"},
-		{Name: "secrets-file", Short: "proposed secret input; only key names leave this machine", Value: "PATH"},
+		{Name: "source", Short: "with --project: local source policy (default auto)", Value: "MODE", ClosedSet: []string{"auto", "head", "worktree"}},
+		{Name: "worktree", Short: "with --project: check local working tree changes", Bool: true},
+		{Name: "environment", Short: "with --project: destination environment (default production)", Value: "ENV"},
+		{Name: "from", Short: "with --project: source environment for a promotion check", Value: "ENV"},
+		{Name: "expected-state", Short: "with --project: compare a previous check's state hash", Value: "SHA256"},
+		{Name: "atomic", Short: "with --project: check atomic source release prerequisites", Bool: true},
+		{Name: "add-services", Short: "with --project: check HTTP service addition prerequisites", Bool: true},
+		{Name: "verify", Short: "with --project: check critical health verification prerequisites", Bool: true},
+		{Name: "workers", Short: "with --project: check push worker release prerequisites", Bool: true},
+		{Name: "worker-health", Short: "with --project: require worker delivery health during deployment", Bool: true},
+		{Name: "migrate", Short: "with --project: check one backward-compatible migration", Bool: true},
+		{Name: "progressive", Short: "with --project: check progressive rollout prerequisites", Bool: true},
+		{Name: "stabilize", Short: "with --project: check post-success monitoring prerequisites", Bool: true},
+		{Name: "sync-config", Short: "with --project: check synchronized promotion configuration", Bool: true},
+		{Name: "config-file", Short: "with --project: proposed non-secret paired configuration", Value: "PATH"},
+		{Name: "secrets-file", Short: "with --project: proposed secret input; only key names leave this machine", Value: "PATH"},
 	}}
 }
