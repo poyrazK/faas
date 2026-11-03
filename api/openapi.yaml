@@ -35325,7 +35325,7 @@ paths:
           in: header
           required: false
           schema: { type: string }
-          description: Reuse the same key and event content to retry while the event is retained.
+          description: Preserve this key and event content when retrying a retained tenant workflow event.
       requestBody:
         required: true
         content:
@@ -35342,7 +35342,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '409':
-          description: "code: workflow_not_running for a new event on an inactive run, or conflict when a retained event key has different content."
+          description: "code: workflow_not_running for a new event on an inactive tenant run, or conflict when a retained event key has different content."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }

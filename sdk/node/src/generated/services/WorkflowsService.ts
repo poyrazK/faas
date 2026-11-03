@@ -1769,7 +1769,7 @@ export class WorkflowsService {
     id: string,
     requestBody: InjectWorkflowEventRequest,
     /**
-     * Reuse the same key and event content to retry while the event is retained.
+     * Preserve this key and event content when retrying a retained tenant workflow event.
      */
     idempotencyKey?: string,
   }): CancelablePromise<InjectWorkflowEventResponse> {
@@ -1789,7 +1789,7 @@ export class WorkflowsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: workflow_run_not_found — the run is absent or outside the caller's workflow access.`,
-        409: `code: workflow_not_running for a new event on an inactive run, or conflict when a retained event key has different content.`,
+        409: `code: workflow_not_running for a new event on an inactive tenant run, or conflict when a retained event key has different content.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
