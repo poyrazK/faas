@@ -158,16 +158,16 @@ const (
 )
 
 const (
-	RequestBodySpoolNodeBytes   int64 = 4 << 30
-	RequestBodySpoolPerClient         = 4
+	RequestBodySpoolNodeBytes int64 = 4 << 30
+	RequestBodySpoolPerClient       = 4
 	// One app owner holds at most 1/RequestBodySpoolOwnerShareDivisor of
 	// the node spool (1 GiB: four of Scale's 250 MiB bodies), and the
 	// per-client cap keys IPv6 clients by /RequestBodySpoolClientIPv6Prefix
 	// (H94).
 	RequestBodySpoolOwnerShareDivisor       = 4
 	RequestBodySpoolClientIPv6Prefix        = 56
-	RequestBodyMemoryNodeBytes  int64 = 96 << 20
-	RequestBodyBudgetRetryAfter       = 5 * time.Second
+	RequestBodyMemoryNodeBytes        int64 = 96 << 20
+	RequestBodyBudgetRetryAfter             = 5 * time.Second
 )
 
 // The project scan reads Kubernetes manifests under k8s/, kubernetes/,
