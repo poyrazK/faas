@@ -28,6 +28,8 @@ class CreateNativeLinearIssueTicketRequest:
     """Explicitly recover an unconfirmed dispatch by its stable request UUID after the dispatch lease expires."""
     recovery_url: str | Unset = UNSET
     """Optional known Linear issue URL that also requests recovery and must match the UUID lookup."""
+    original_app_slug: str | Unset = UNSET
+    """Original slug for recovering a legacy receipt after an app rename."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +44,8 @@ class CreateNativeLinearIssueTicketRequest:
         recover = self.recover
 
         recovery_url = self.recovery_url
+
+        original_app_slug = self.original_app_slug
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -58,6 +62,8 @@ class CreateNativeLinearIssueTicketRequest:
             field_dict["recover"] = recover
         if recovery_url is not UNSET:
             field_dict["recovery_url"] = recovery_url
+        if original_app_slug is not UNSET:
+            field_dict["original_app_slug"] = original_app_slug
 
         return field_dict
 
@@ -76,6 +82,8 @@ class CreateNativeLinearIssueTicketRequest:
 
         recovery_url = d.pop("recovery_url", UNSET)
 
+        original_app_slug = d.pop("original_app_slug", UNSET)
+
         create_native_linear_issue_ticket_request = cls(
             request_id=request_id,
             team_id=team_id,
@@ -83,6 +91,7 @@ class CreateNativeLinearIssueTicketRequest:
             description=description,
             recover=recover,
             recovery_url=recovery_url,
+            original_app_slug=original_app_slug,
         )
 
         create_native_linear_issue_ticket_request.additional_properties = d

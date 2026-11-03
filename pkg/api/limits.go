@@ -13349,6 +13349,8 @@ const (
 	IssueCursorMaxBytes   = 2048
 	IssueMaxTokenLifetime = 90 * 24 * time.Hour
 	IssueMaxClockSkew     = 5 * time.Minute
+	// IssueHTTPBatchMaxCount bounds the weight of one gateway aggregation.
+	IssueHTTPBatchMaxCount int64 = 1_000_000_000
 )
 
 // Offline grouping evaluation and reviewed partition snapshots (ADR-1744).
@@ -13420,6 +13422,16 @@ func (p Plan) IssueLimits() IssueLimits {
 
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
+const IssueIngestPurgeBatch = 100
+
+// Attribution scans return complete payloads. Bound each page by bytes as
+// well as rows so valid source-mapped events fit within apid's memory budget.
+const IssueAttributionBatch = 50
+const IssueAttributionMaxBatches = 200
+const IssueAttributionRowTimeout = time.Second
+const IssueAttributionReviewBatch = 25
+const IssueAttributionReviewMaxBatches = 40
+const IssueAttributionReviewBudget = 5 * time.Second
 
 // IssueAttributionRetryWindow bounds how long after ingestion the issue
 // maintenance pass retries customer attribution for an occurrence whose
@@ -15862,7 +15874,7 @@ const (
 // references are retained even if merging exceeds the new-reference quota.
 const (
 	IssueTrackerLinksMax          = 20
-	IssueTrackerNativeRequestsMax = 100 // retained recovery receipts per original issue
+	IssueTrackerNativeRequestsMax = 100 // unresolved native requests per original issue
 	IssueTrackerLinkURLMaxBytes   = 512
 	IssueTrackerLinkTitleMaxBytes = 256
 )

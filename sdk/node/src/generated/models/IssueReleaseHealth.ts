@@ -19,5 +19,9 @@ export type IssueReleaseHealth = {
   regressed_issue_groups: number;
   identified_customers: number;
   unattributed_events: number;
+  /**
+   * Legacy HTTP records with unknown folded weights; observed event counts are lower bounds.
+   */
+  unknown_http_batches?: number;
 };
 

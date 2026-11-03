@@ -2249,6 +2249,7 @@ from .incident_update import IncidentUpdate
 from .incidents_response import IncidentsResponse
 from .ingest_issue_otlp_body import IngestIssueOTLPBody
 from .ingest_issue_otlp_response_200 import IngestIssueOTLPResponse200
+from .ingest_issue_otlp_response_200_partial_success import IngestIssueOTLPResponse200PartialSuccess
 from .ingest_issue_otlp_signal import IngestIssueOTLPSignal
 from .inject_scenario_test_chaos_request import InjectScenarioTestChaosRequest
 from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
@@ -8420,6 +8421,7 @@ __all__ = (
     "IncidentUpdate",
     "IngestIssueOTLPBody",
     "IngestIssueOTLPResponse200",
+    "IngestIssueOTLPResponse200PartialSuccess",
     "IngestIssueOTLPSignal",
     "InjectScenarioTestChaosRequest",
     "InjectScenarioTestChaosResponse",

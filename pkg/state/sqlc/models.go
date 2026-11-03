@@ -7270,6 +7270,16 @@ type IssueEvent struct {
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
 	OriginalIssueID          pgtype.UUID
+	OccurrenceCount          int64
+	AttributionVersion       int32
+	OccurrenceWeightKnown    bool
+	HttpTimeBuckets          []byte
+}
+
+type IssueEventUsage struct {
+	AppID         pgtype.UUID
+	RetainedCount int64
+	Initialized   bool
 }
 
 type IssueFrequencyAlertReceipt struct {

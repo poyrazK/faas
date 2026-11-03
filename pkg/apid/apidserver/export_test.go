@@ -2040,3 +2040,8 @@ var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
 func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLister) oidc.AccountLookup {
 	return newOIDCAccountLookup(store, repos)
 }
+
+// WriteIssueErrorForTest exercises the public issue quota response mapping.
+func WriteIssueErrorForTest(w http.ResponseWriter, err error) {
+	writeIssueError(w, err)
+}

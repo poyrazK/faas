@@ -22962,10 +22962,19 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         '200':
-          description: Exceptions accepted, including exact retries
+          description: Exceptions accepted, including exact retries. Partial success reports permanently rejected logs or spans.
           content:
             application/json:
-              schema: { type: object, additionalProperties: false }
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  partialSuccess:
+                    type: object
+                    properties:
+                      rejectedLogRecords: { type: string, description: Decimal count of rejected log records. }
+                      rejectedSpans: { type: string, description: Decimal count of rejected spans. }
+                      errorMessage: { type: string }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanFeatureGated' }
@@ -24097,6 +24106,26 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteIssue
+      summary: Permanently delete a standalone issue and its retained history.
+      description: Split linked groups and remove derived branches first. A later occurrence may create a new issue.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: abandon_unconfirmed_tickets
+          in: query
+          description: Explicitly abandon expired unconfirmed ticket dispatches. The provider may still have created a ticket, and deleting the issue removes its recovery receipt. Confirmed unattached tickets still block deletion.
+          schema: { type: boolean, default: false }
+      responses:
+        '204': { description: Issue and its dependent history deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
   /v1/apps/{slug}/issues/{issue_id}/split-preview:
     parameters:
@@ -124178,6 +124207,7 @@ components:
         identified_customers: { type: integer }
         observed_events: { type: integer }
         unattributed_events: { type: integer }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP records with unknown folded weights; observed event counts are lower bounds. }
 
     IssueGroupingFrame:
       description: "Canonical file and function used in identity, with a zero-based index into selected cause frames when cause_index is present, otherwise occurrence frames. Line numbers are excluded."
@@ -124214,6 +124244,8 @@ components:
           properties:
             id: { type: string, format: uuid }
             original_issue_id: { type: string, format: uuid, readOnly: true, description: Original fingerprint provenance retained through occurrence-level splits and manual merges. }
+            occurrence_count: { type: integer, format: int64, minimum: 1, readOnly: true, description: Number of failures represented by this record; customer identity applies to the sampled request only. }
+            occurrence_count_exact: { type: boolean, readOnly: true, description: False when an older writer did not preserve the folded HTTP weight. }
             deployment_id: { type: string, format: uuid }
             received_at: { type: string, format: date-time }
             verified_consumer_id: { type: string, format: uuid }
@@ -124256,6 +124288,7 @@ components:
         identified_customers: { type: integer }
         observed_events: { type: integer }
         unattributed_events: { type: integer }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP records with unknown folded weights; observed event counts are lower bounds. }
         coverage: { type: string }
 
     IssueLifecycleAlertPolicy:
@@ -124456,6 +124489,7 @@ components:
         title: { type: string, maxLength: 256 }
         description: { type: string, maxLength: 16384 }
         recovery_url: { type: string, format: uri, maxLength: 512 }
+        original_app_slug: { type: string, maxLength: 512, description: Original slug for recovering a legacy receipt after an app rename. }
     NativeIssueTicketResult:
       type: object
       description: Durable GitHub ticket evidence and Gregale attachment state for a native creation operation.
@@ -124500,6 +124534,7 @@ components:
         description: { type: string, maxLength: 16384, description: Optional description bounded to 16 KiB; no telemetry is copied automatically. }
         recover: { type: boolean, default: false, description: Explicitly recover an unconfirmed dispatch by its stable request UUID after the dispatch lease expires. }
         recovery_url: { type: string, maxLength: 512, description: Optional known Linear issue URL that also requests recovery and must match the UUID lookup. }
+        original_app_slug: { type: string, maxLength: 512, description: Original slug for recovering a legacy receipt after an app rename. }
     IssueTrackerLinearConnection:
       type: object
       description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.
@@ -124819,6 +124854,7 @@ components:
         regressed_issue_groups: { type: integer, format: int64, minimum: 0 }
         identified_customers: { type: integer, format: int64, minimum: 0 }
         unattributed_events: { type: integer, format: int64, minimum: 0 }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP records with unknown folded weights; observed event counts are lower bounds. }
     IssueReleaseComparison:
       description: "Baseline and candidate deployment health with newly observed, recurring and resolved issue groups."
       type: object

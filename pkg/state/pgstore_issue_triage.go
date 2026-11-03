@@ -28,7 +28,7 @@ func (s *PgStore) CompareIssueReleases(ctx context.Context, account, app, baseli
 		if err != nil {
 			return out, mapErr(err)
 		}
-		h := api.IssueReleaseHealth{DeploymentID: id, CommitSHA: r.CommitSha.String, CreatedAt: r.CreatedAt.Time, ObservedRequests: r.ObservedRequests, HTTP5xxRequests: r.Http5xxRequests, ObservedIssueEvents: r.ObservedIssueEvents, ObservedIssueGroups: r.ObservedIssueGroups, NewIssueGroups: r.NewIssueGroups, RegressedIssueGroups: r.RegressedIssueGroups, IdentifiedCustomers: r.IdentifiedCustomers, UnattributedEvents: r.UnattributedEvents, RequestCoverage: "unknown"}
+		h := api.IssueReleaseHealth{DeploymentID: id, CommitSHA: r.CommitSha.String, CreatedAt: r.CreatedAt.Time, ObservedRequests: r.ObservedRequests, HTTP5xxRequests: r.Http5xxRequests, ObservedIssueEvents: r.ObservedIssueEvents, ObservedIssueGroups: r.ObservedIssueGroups, NewIssueGroups: r.NewIssueGroups, RegressedIssueGroups: r.RegressedIssueGroups, IdentifiedCustomers: r.IdentifiedCustomers, UnattributedEvents: r.UnattributedEvents, UnknownHTTPBatches: r.UnknownHttpBatches, RequestCoverage: "unknown"}
 		if h.ObservedRequests > 0 {
 			rate := float64(h.HTTP5xxRequests) / float64(h.ObservedRequests)
 			h.HTTP5xxRate = &rate
