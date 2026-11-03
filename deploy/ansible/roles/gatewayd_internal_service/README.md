@@ -59,12 +59,14 @@ under `/var/lib/faas/log-drains` before delivery.
   requires an operator-provisioned Redis service; this role does not
   install Redis. Follow `docs/runbooks/FaasSharedRetryBudget.md` for the
   rollout check and rollback procedure.
-- `99-faas-edge-challenge-key.conf` — when `gatewayd_edge_challenge_key` (64
-  hex digits) is supplied from the fleet vault, projects it through
-  `LoadCredential` as `FAAS_EDGE_CHALLENGE_KEY_FILE`, so every gateway signs
-  browser-challenge tokens and passes with one key (ADR-831 amendment 17).
-  Without it each gateway uses its own host's session key, and a visitor
-  whose requests reach two gateways is challenged again and again. The play
+- `99-faas-edge-challenge-key.conf` — projects the gateway fleet key through
+  `LoadCredential` as `FAAS_GATEWAY_FLEET_KEY_FILE` (and, for one release,
+  `FAAS_EDGE_CHALLENGE_KEY_FILE`), so every gateway signs browser-challenge
+  tokens, passes and managed deadlines with one key (ADR-831 amendment 17,
+  ADR-20261102191500). gatewayd-internal refuses to start without it. The key
+  is `gatewayd_edge_challenge_key` (64 hex digits), which CD stages from the
+  `GATEWAYD_EDGE_CHALLENGE_KEY` secret; a host given none gets a key of its
+  own, made once, which serves a single gateway only. The play
   fails if its gateways hold different keys, or, with
   `gatewayd_edge_challenge_key_required=true`, if any gateway lacks one.
   `FaasEdgeChallengeKeyMismatch` checks the running fleet.

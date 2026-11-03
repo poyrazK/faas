@@ -1220,6 +1220,7 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, gatewaydDurableEnv(h.TmpDir)...)
+	env = append(env, gatewaydFleetKeyEnv(t, h.TmpDir))
 	env = append(env, extraEnv...)
 	// Multi-gateway tests need a named gateway without making the legacy
 	// single-box schedd claim the synthetic default-local node. Keep this
@@ -1322,6 +1323,7 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 		"FAAS_NODE_NAME="+nodeName,
 	)
 	env = append(env, gatewaydDurableEnv(dir)...)
+	env = append(env, gatewaydFleetKeyEnv(t, h.TmpDir))
 	env = append(env, extraEnv...)
 	h.procs = append(h.procs, startProc(t, h.BinDir, "gatewayd-internal", env))
 	waitReadyz(t, controlAddr, 30*time.Second)
