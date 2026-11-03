@@ -92,8 +92,11 @@ func admitEventWorkflowTx(ctx context.Context, queries *sqlc.Queries, tx pgx.Tx,
 	}
 	plan := api.Plan(target.Plan)
 	if (target.AccountStatus != "active" && target.AccountStatus != "past_due") || target.AbuseHoldAt.Valid ||
-		!plan.WorkflowsAllowed() || target.MaintenanceMode || (target.PlatformTenantRequired && recipient.PlatformTenantID == "") {
+		target.MaintenanceMode || (target.PlatformTenantRequired && recipient.PlatformTenantID == "") {
 		return "", false, ErrWorkflowEventTargetUnavailable
+	}
+	if !plan.WorkflowsAllowed() {
+		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventTargetUnavailable, ErrWorkflowEventPlanIneligible)
 	}
 	if recipient.PlatformTenantID != "" {
 		if !target.PlatformTenantRequired || lockTenantPublishedEventBinding(ctx, tx, recipient.AccountID, recipient.PlatformTenantID, recipient.AppID) != nil {
@@ -102,6 +105,9 @@ func admitEventWorkflowTx(ctx context.Context, queries *sqlc.Queries, tx pgx.Tx,
 	}
 	run, err := eventWorkflowRun(recipient, payload, plan)
 	if err != nil {
+		if errors.Is(err, ErrWorkflowEventTargetUnavailable) {
+			return "", false, err
+		}
 		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
 	}
 	paused, err := queries.AutomationFailurePaused(ctx, tx, sqlc.AutomationFailurePausedParams{AppID: mustPgUUID(recipient.AppID), Name: run.WorkflowName})
