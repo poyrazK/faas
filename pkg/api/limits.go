@@ -130,6 +130,28 @@ const AgentKeyLifetime = 90 * 24 * time.Hour
 // before it gets 429 without a lookup.
 const InboundWebhookFailuresPerIPPerMinute = 30
 
+// AppWebhookMaxInFlightPerAccount bounds one account's concurrent outbound
+// webhook requests across every scheduler (ADR-20261101093517). Each
+// scheduler runs 64 delivery slots and each subscription may hold 4, so an
+// account with many subscriptions could otherwise fill a scheduler's pool
+// with slow receivers. 16 leaves at least three quarters of every pool to
+// other accounts. Two schedulers claiming for one account at the same
+// instant can pass it by one claim batch; it is a fairness bound, not a
+// quota.
+const AppWebhookMaxInFlightPerAccount = 16
+
+// WebhookSecretRotationOverlap is how long a rotated webhook secret stays
+// valid beside its replacement (ADR-20261101093517): outbound deliveries
+// carry a second signature made with it, and inbound generic endpoints
+// accept signatures made with it, so a receiver or sender can switch
+// secrets without failing deliveries in between.
+const WebhookSecretRotationOverlap = 24 * time.Hour
+
+// WebhookBacklogRetryAfter is the Retry-After a refusal for a full webhook
+// backlog carries. The dispatcher drains a healthy backlog within seconds;
+// a minute keeps retrying senders from polling a stuck one.
+const WebhookBacklogRetryAfter = 60 * time.Second
+
 // PasswordHashConcurrency caps the Argon2id password hashes (64 MiB each)
 // one process computes at once; the rest wait for a slot.
 const PasswordHashConcurrency = 3
@@ -2461,6 +2483,16 @@ const (
 	RealtimeEndpointEphemeralRelayBurst      = 400
 )
 
+// A realtime node accepts at most RealtimeNodeHandshakesPerSecond new
+// connections (bursts of RealtimeNodeHandshakeBurst); past that a handshake
+// gets 503 with a Retry-After of 1-5 seconds. A restarting node closes its
+// sockets with 1012, and clients spread their reconnects over a few seconds
+// (ADR-1323, amendment of 2026-11-03).
+const (
+	RealtimeNodeHandshakesPerSecond = 1_000
+	RealtimeNodeHandshakeBurst      = 5_000
+)
+
 // Live query frames live.subscribe and live.renew start or change a
 // subscription on the database's live hub. A connection may send
 // RealtimeLiveFramesPerSecond (bursts of RealtimeLiveFrameBurst) and a node
@@ -3644,6 +3676,20 @@ const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/do
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
 
+// ObjectStoragePlanLimitsMax is the largest storage ceiling and monthly egress
+// any plan sells. An installation's safety policy (ObjectStoragePolicy) must
+// allow at least these, because apid enforces the tighter of the two and a
+// smaller policy value silently sells every plan less.
+func ObjectStoragePlanLimitsMax() ObjectStoragePlanLimits {
+	var most ObjectStoragePlanLimits
+	for _, p := range Plans {
+		l := MustLimitsFor(p).ObjectStorage
+		most.MaxAccountBytes = max(most.MaxAccountBytes, l.MaxAccountBytes)
+		most.MaxMonthlyEgressBytes = max(most.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
+	}
+	return most
+}
+
 // ObjectStorageLimitsFor returns a billing subject's object-storage limits on
 // plan (ADR-20261101214152): the plan's, with the ceiling support granted the
 // subject (grantBytes, nil for none) in place of a paid plan's, tightened by
@@ -4684,6 +4730,22 @@ type Limits struct {
 	// InboundWebhookPerAccount prevents the N-apps-times-cap bypass. Creation
 	// is serialized under the owning app and account rows in the state store.
 	InboundWebhookPerAccount int
+	// WebhookOutboxMaxPending caps the outbound webhook deliveries one
+	// account may hold undelivered (pending or in flight) when it adds one
+	// through the application outbox (ADR-20261101093517). Platform events
+	// fan out without it; they count towards it.
+	// Free 1,000 · Hobby 5,000 · Pro 25,000 · Scale 50,000.
+	WebhookOutboxMaxPending int
+	// WebhookOutboxMaxBacklogBytes caps the payload bytes of those
+	// undelivered deliveries (ADR-20261101093517).
+	// Free 16 MiB · Hobby 64 MiB · Pro 256 MiB · Scale 512 MiB.
+	WebhookOutboxMaxBacklogBytes int64
+	// InboundWebhookAcceptsPerMinute caps the signature-verified deliveries
+	// one account's inbound webhook endpoints accept a minute, as a token
+	// bucket of this capacity refilled over a minute, per apid process
+	// (ADR-20261101093517). Only failed deliveries per client IP were
+	// limited. Free 60 · Hobby 1,200 · Pro 3,000 · Scale 6,000.
+	InboundWebhookAcceptsPerMinute int
 	// LogDrainPerApp caps the number of customer runtime log destinations
 	// on one app. It follows the same plan gate as outbound webhooks.
 	LogDrainPerApp int
@@ -5616,8 +5678,12 @@ var planLimits = map[Plan]Limits{
 		WebhookPerAccount:        0,
 		InboundWebhookPerApp:     0,
 		InboundWebhookPerAccount: 0,
-		LogDrainPerApp:           0,
-		LogDrainPerAccount:       0,
+		// ADR-20261101093517: outbound outbox backlog and inbound accept rate.
+		WebhookOutboxMaxPending:        1_000,
+		WebhookOutboxMaxBacklogBytes:   16 << 20,
+		InboundWebhookAcceptsPerMinute: 60,
+		LogDrainPerApp:                 0,
+		LogDrainPerAccount:             0,
 		// Trigger primitive (issue #757 / ADR-0NN): Free is the
 		// abuse-floor tier — TriggersAllowed=false so a POST on a
 		// Free account gets 402 CodePlanTriggersNotAllowed before the
@@ -6046,8 +6112,12 @@ var planLimits = map[Plan]Limits{
 		WebhookPerAccount:        10,
 		InboundWebhookPerApp:     3,
 		InboundWebhookPerAccount: 10,
-		LogDrainPerApp:           3,
-		LogDrainPerAccount:       10,
+		// ADR-20261101093517: outbound outbox backlog and inbound accept rate.
+		WebhookOutboxMaxPending:        5_000,
+		WebhookOutboxMaxBacklogBytes:   64 << 20,
+		InboundWebhookAcceptsPerMinute: 1_200,
+		LogDrainPerApp:                 3,
+		LogDrainPerAccount:             10,
 		// Trigger primitive (issue #757 / ADR-0NN): Hobby is the
 		// entry paid tier — unlocks the in-platform queue kind and
 		// the sqs_compat kind (the two no-external-broker shapes).
@@ -6476,8 +6546,12 @@ var planLimits = map[Plan]Limits{
 		WebhookPerAccount:        30,
 		InboundWebhookPerApp:     10,
 		InboundWebhookPerAccount: 30,
-		LogDrainPerApp:           10,
-		LogDrainPerAccount:       30,
+		// ADR-20261101093517: outbound outbox backlog and inbound accept rate.
+		WebhookOutboxMaxPending:        25_000,
+		WebhookOutboxMaxBacklogBytes:   256 << 20,
+		InboundWebhookAcceptsPerMinute: 3_000,
+		LogDrainPerApp:                 10,
+		LogDrainPerAccount:             30,
 		// Trigger primitive (issue #757 / ADR-0NN): Pro is the first
 		// tier where the external-broker kinds unlock (Kafka, NATS,
 		// Redis-streams) — the egress-allowlist tier (ADR-031) is
@@ -6901,8 +6975,12 @@ var planLimits = map[Plan]Limits{
 		WebhookPerAccount:        100,
 		InboundWebhookPerApp:     25,
 		InboundWebhookPerAccount: 100,
-		LogDrainPerApp:           25,
-		LogDrainPerAccount:       100,
+		// ADR-20261101093517: outbound outbox backlog and inbound accept rate.
+		WebhookOutboxMaxPending:        50_000,
+		WebhookOutboxMaxBacklogBytes:   512 << 20,
+		InboundWebhookAcceptsPerMinute: 6_000,
+		LogDrainPerApp:                 25,
+		LogDrainPerAccount:             100,
 		// Trigger primitive (issue #757 / ADR-0NN): Scale is the upper
 		// tier — caps align with the SQL CHECK ceilings (5000 records
 		// / 5 min window / 25 attempts) so a Scale customer's

@@ -334,6 +334,16 @@ func (h Handler) serveLegacy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		boundAppID = appID
+	} else if policy.AuditLogin == autoPolicyLogin && req.Capability == CapabilityPreviewRead {
+		// Reading an app's preview status takes no ref gate: a pull request
+		// run may wait for its preview. The bearer is bound to the app
+		// (ADR-20261102203228).
+		appID, problem := h.boundRepositoryApp(r.Context(), acct.ID, issuerURL, subject, req.App)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		boundAppID = appID
 	}
 	if createPolicy {
 		policy, err = deps.Policies.Upsert(r.Context(), policy)

@@ -174,8 +174,24 @@ func (s *server) executeCheckedProjectRelease(r *http.Request, acct state.Accoun
 // production. Members already serving, and a deactivation's fallback, are
 // not new releases.
 func (s *server) checkedProjectReleaseGuardProblem(ctx context.Context, manifest api.CheckedProjectReleaseManifest, members []state.ProjectReleaseMember) *api.Problem {
+	return s.releaseSetMembersGuardProblem(ctx, manifest.Environment, manifest.RollbackReleaseID != "", members)
+}
+
+// releaseSetMembersGuardProblem holds a project release set that is about to
+// serve in environment to the release guards, member by member
+// (checkedProjectReleaseGuardProblem). A rollback returns to a set that was
+// published before, so it is not refused for its environment's protection;
+// its members still meet the guards giving them traffic does. Publishing a
+// set directly meets the same guards (ADR-20261019071733 amendment 10).
+func (s *server) releaseSetMembersGuardProblem(ctx context.Context, environment string, rollback bool, members []state.ProjectReleaseMember) *api.Problem {
 	for _, member := range members {
+		if _, err := uuid.Parse(member.DeploymentID); err != nil {
+			return api.ErrValidation("invalid release set deployment ID")
+		}
 		d, err := s.store.DeploymentByID(ctx, member.DeploymentID)
+		if errors.Is(err, state.ErrNotFound) || err == nil && d.AppID != member.AppID {
+			return api.ErrValidation("invalid release set deployment ID")
+		}
 		if err != nil {
 			return api.ErrCapacity("could not read a release graph member")
 		}
@@ -186,8 +202,8 @@ func (s *server) checkedProjectReleaseGuardProblem(ctx context.Context, manifest
 		if err != nil {
 			return api.ErrCapacity("could not read a release graph member's app")
 		}
-		if manifest.RollbackReleaseID == "" {
-			if p := protectedEnvironmentReleaseProblem(ctx, s.store, app, manifest.Environment); p != nil {
+		if !rollback {
+			if p := protectedEnvironmentReleaseProblem(ctx, s.store, app, environment); p != nil {
 				return p
 			}
 		}
