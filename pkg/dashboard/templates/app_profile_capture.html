@@ -4,7 +4,7 @@
 body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5rem} a {color:#2563eb} table {width:100%;border-collapse:collapse} td,th {text-align:left;padding:.5rem;border-bottom:1px solid #ddd} code {overflow-wrap:anywhere} .notice {padding:1rem;background:#fef3c7;color:#92400e} .muted {color:#64748b} svg {width:100%;font-size:12px} svg rect {stroke:white;stroke-width:1;cursor:pointer} svg text {pointer-events:none} svg g:focus rect {stroke:#0f172a;stroke-width:2}
 </style></head><body>
 {{$d := .Data}}{{$c := $d.Capture}}
-<nav><a href="/dashboard/apps/{{$d.AppSlug}}">{{$d.AppSlug}}</a> · <a href="/dashboard/apps/{{$d.AppSlug}}/profiles#profile-captures">Profiles</a></nav>
+<nav><a href="/dashboard/apps/{{$d.AppSlug}}">{{$d.AppSlug}}</a> · <a href="/dashboard/apps/{{$d.AppSlug}}/profiles/captures">Captures</a></nav>
 <h1>Profile capture</h1>
 <p>Status: <strong>{{$c.Status}}</strong>{{if $d.Refresh}} — this page refreshes until the capture finishes.{{end}}</p>
 <p class="muted">{{range $i, $k := $c.Kinds}}{{if $i}} + {{end}}{{$k}}{{end}} for {{$c.DurationSeconds}}s · started {{$c.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}{{with $c.InstanceID}} · instance <code>{{.}}</code>{{end}}{{with $c.DeploymentID}} · deployment <code>{{.}}</code>{{end}}{{if $c.InstanceID}} · {{$c.Processes}} instrumented process(es){{end}}</p>
@@ -13,6 +13,8 @@ body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5r
 {{if eq $c.Trigger "cpu_saturation"}}<p class="notice">Captured automatically because the instance was using its whole CPU limit: {{$c.TriggerDetail}}. The CPU profile shows where that time went.</p>{{end}}
 {{with $c.OOMKilledAt}}<p class="notice" role="alert">This instance was OOM-killed at {{.Format "2006-01-02 15:04:05Z07:00"}}{{if $c.OOMPeakMB}}, peaking at {{$c.OOMPeakMB}} MB of its {{$c.OOMPlanMB}} MB plan{{end}}. The heap profile below shows memory retained before the kill.</p>{{end}}
 {{with $c.Reason}}<p class="notice">{{.}}</p>{{end}}
+{{with $d.CSRF}}<form method="post" action="/dashboard/apps/{{$d.AppSlug}}/profiles/captures/{{$c.ID}}/delete" aria-label="Delete capture">
+<input type="hidden" name="csrf_token" value="{{.}}"><button type="submit">Delete capture</button> <span class="muted">Deletes the capture and its profiles now{{if $d.Refresh}}; a running capture finishes into nothing{{end}}.</span></form>{{end}}
 {{if $d.Compare}}<form method="get" action="/dashboard/apps/{{$d.AppSlug}}/profiles/captures/{{$c.ID}}/diff" aria-label="Compare captures">
 <label>Compare with <select name="base">{{range $d.Compare}}<option value="{{.ID}}">{{.Label}}</option>{{end}}</select></label>
 <label>Kind <select name="kind">{{range $c.Kinds}}<option value="{{.}}"{{if eq . "heap"}} selected{{end}}>{{.}}</option>{{end}}</select></label>

@@ -103,6 +103,29 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 	if n := operations(); n != 1 {
 		t.Fatalf("a refused admission must not create an operation; have %d", n)
 	}
+	// A bucket scoped to another environment is not the source's, and a
+	// deleted one holds nothing to copy, so neither blocks admission.
+	other, err := s.ReserveObjectBucket(ctx, state.ObjectBucket{ID: uuid.NewString(), AccountID: account.ID, AppID: app.ID, Name: "stage-assets", Scope: "stage",
+		Region: "us-east-1", BackendID: "fixture", BackendFingerprint: strings.Repeat("a", 64), PhysicalName: "gregale-" + strings.ReplaceAll(uuid.NewString(), "-", "")}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimObjectBucket(ctx, account.ID, app.ID, other.ID, "source", "provisioning"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishObjectBucket(ctx, other.ID, "source", "ready"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimObjectBucket(ctx, account.ID, app.ID, bucket.ID, "drop", "deleting"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishObjectBucket(ctx, bucket.ID, "drop", "deleted"); err != nil {
+		t.Fatal(err)
+	}
+	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable}}
+	if got := blockers("deleted-stage"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("deleted and other-environment buckets must not block: blockers = %+v, want %+v", got, want)
+	}
 	// Internal checkpoint work still captures sources admission refuses.
 	if _, err := s.CreateCapturedProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneCaptureRequest{AccountID: account.ID, ProjectID: app.ProjectID,
 		SourceEnvironment: "production", TargetEnvironment: "internal", IdempotencyKey: "internal"}); err != nil {

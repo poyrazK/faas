@@ -435,8 +435,16 @@ type AuthenticateKeyResponse struct {
 	// "unknown customer" and drops the batch).
 	AccountId string `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
 	// plan — api.Plan string ("free"/"hobby"/"pro"/"scale").
-	// Empty when outcome != "ok".
-	Plan          string `protobuf:"bytes,2,opt,name=plan,proto3" json:"plan,omitempty"`
+	// Empty when outcome != "ok". For a key bound to a company
+	// organization that owns its resources, the organization's plan.
+	Plan string `protobuf:"bytes,2,opt,name=plan,proto3" json:"plan,omitempty"`
+	// app_id — set when the credential is bound to one app: its spans
+	// merge only into that app's request rows.
+	AppId string `protobuf:"bytes,3,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	// org_id — set when the key is bound to a company organization: its
+	// spans merge into rows of that organization's apps, whoever created
+	// them, instead of rows of the holder's own apps.
+	OrgId         string `protobuf:"bytes,4,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -485,6 +493,20 @@ func (x *AuthenticateKeyResponse) GetPlan() string {
 	return ""
 }
 
+func (x *AuthenticateKeyResponse) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *AuthenticateKeyResponse) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
 var File_onebox_faas_apid_v1_auth_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_auth_proto_rawDesc = "" +
@@ -504,11 +526,13 @@ const file_onebox_faas_apid_v1_auth_proto_rawDesc = "" +
 	"\faccount_json\x18\x02 \x01(\fR\vaccountJson\x12\x19\n" +
 	"\bkey_json\x18\x03 \x01(\fR\akeyJson\".\n" +
 	"\x16AuthenticateKeyRequest\x12\x14\n" +
-	"\x05token\x18\x01 \x01(\tR\x05token\"L\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\"z\n" +
 	"\x17AuthenticateKeyResponse\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x12\n" +
-	"\x04plan\x18\x02 \x01(\tR\x04plan*o\n" +
+	"\x04plan\x18\x02 \x01(\tR\x04plan\x12\x15\n" +
+	"\x06app_id\x18\x03 \x01(\tR\x05appId\x12\x15\n" +
+	"\x06org_id\x18\x04 \x01(\tR\x05orgId*o\n" +
 	"\x0eCredentialKind\x12\x1f\n" +
 	"\x1bCREDENTIAL_KIND_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17CREDENTIAL_KIND_API_KEY\x10\x01\x12\x1f\n" +

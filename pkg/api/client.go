@@ -49,12 +49,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
@@ -106,7 +106,7 @@ func (e *ResponseTruncatedError) Error() string {
 	return fmt.Sprintf("API response was truncated: expected %d bytes, received %d", e.Expected, e.Received)
 }
 
-var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
+var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
@@ -231,6 +231,23 @@ func NewClientWithDeployTimeout(baseURL, token string, deployTimeout time.Durati
 // callers can swap transport-level knobs (TLS, retries) without
 // depending on a private field.
 func (c *Client) HTTPClient() *http.Client { return c.http }
+
+// WrapTransport replaces the transport of every HTTP client c sends with
+// (JSON, streams and uploads) by wrap(current), so a caller can stamp
+// headers or watch responses on all of them. It returns c.
+func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) *Client {
+	for _, cli := range []*http.Client{c.http, c.deployHTTP} {
+		if cli == nil {
+			continue
+		}
+		base := cli.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		cli.Transport = wrap(base)
+	}
+	return c
+}
 
 // BaseURL returns the URL prefix the client was constructed with.
 func (c *Client) BaseURL() string { return c.baseURL }
@@ -3098,6 +3115,19 @@ func (c *Client) ListCrons(ctx context.Context, slug string) ([]CronResponse, er
 	var out []CronResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
+
+// ListCronsSelected lists the crons a label selector picks, on the app named
+// by slug or, when slug is empty, on every app (ADR-20261031100025). An apid
+// without labels ignores the selector, so callers match the returned labels
+// again.
+func (c *Client) ListCronsSelected(ctx context.Context, slug, selector string) ([]CronResponse, error) {
+	q := url.Values{"selector": {selector}}
+	if slug != "" {
+		q.Set("slug", slug)
+	}
+	var out []CronResponse
+	return out, c.do(ctx, "GET", "/v1/crons?"+q.Encode(), nil, &out)
+}
 func (c *Client) CreateCron(ctx context.Context, slug string, req CreateCronRequest) (CronResponse, error) {
 	var out CronResponse
 	return out, c.do(ctx, "POST", "/v1/crons", req, &out)
@@ -3150,6 +3180,22 @@ func (c *Client) ListJobs(ctx context.Context, pagination ...int) (ListJobsRespo
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListJobsSelected returns one page of the jobs a label selector picks
+// (ADR-20261031100025); limit and offset page the matches, and zero uses the
+// server default. An apid without labels ignores the selector and pages every
+// job, so callers match the returned labels again.
+func (c *Client) ListJobsSelected(ctx context.Context, selector string, limit, offset int) (ListJobsResponse, error) {
+	q := url.Values{"selector": {selector}}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	var out ListJobsResponse
+	return out, c.do(ctx, "GET", "/v1/jobs?"+q.Encode(), nil, &out)
 }
 
 // CreateJob creates a new job under the calling account. Idempotent
@@ -3767,6 +3813,16 @@ func (c *Client) ListEdgeRules(ctx context.Context) ([]EdgeRuleResponse, error) 
 func (c *Client) ListEdgeRulesForApp(ctx context.Context, slug string) ([]EdgeRuleResponse, error) {
 	var out []EdgeRuleResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules", nil, &out)
+}
+
+// ListCoveringEdgeRulesForApp is ListEdgeRulesForApp plus the rules of the
+// account's other apps whose host pattern can cover the app's hosts, which
+// the gateway applies there too (ADR-091 amendment 2026-10-31). Each rule
+// carries its own app_id. An apid that predates the parameter returns the
+// app's own rules.
+func (c *Client) ListCoveringEdgeRulesForApp(ctx context.Context, slug string) ([]EdgeRuleResponse, error) {
+	var out []EdgeRuleResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules?covering=true", nil, &out)
 }
 
 // CreateEdgeRule attaches a new rule to the slug's app. Plan-kind

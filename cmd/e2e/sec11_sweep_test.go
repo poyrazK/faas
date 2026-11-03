@@ -210,8 +210,8 @@ var vmmdBinary string
 // The FAAS_MFA_RECOVERY_HMAC_KEY entry is generated fresh per test
 // (matches the testEnvCommon wiring in pkg/e2etest/harness.go) so the
 // apid refuse-to-start policy in cmd/apid/main.go:loadOrGenerateRecoveryHMACKey
-// has a real key to load. The audit-hmac loader still falls back to
-// a zero-key Warn — that path was never gated.
+// has a real key to load. The audit HMAC key gets the same treatment:
+// apid refuses to boot without one it can keep (ADR 20261029202403).
 func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 	t.Helper()
 	hostHMACPath := testHostHMACKeyFile(t)
@@ -241,6 +241,7 @@ func envForAPID(t *testing.T, dbURL string, extra ...string) []string {
 		"HOME=" + os.Getenv("HOME"),
 		"FAAS_APPS_DOMAIN=apps.test.example",
 		"FAAS_MFA_RECOVERY_HMAC_KEY=" + testRecoveryHMACKeyHex(t),
+		"FAAS_AUDIT_HMAC_KEY=" + testAuditHMACKeyHex(t),
 		// ADR-117 PR-C: apid refuses to start without the per-host
 		// HMAC key (loadHostHMACKey in cmd/apid/main.go). Mirror the
 		// audit + recovery key posture: a fresh 32-byte key in
@@ -308,6 +309,24 @@ func testRecoveryHMACKeyHex(t *testing.T) string {
 	tRecoverHMAC.Store(t, s)
 	return s
 }
+
+// testAuditHMACKeyHex returns the test's FAAS_AUDIT_HMAC_KEY, stable across
+// the apid reboots of one test like testRecoveryHMACKeyHex.
+func testAuditHMACKeyHex(t *testing.T) string {
+	t.Helper()
+	if v, ok := tAuditHMAC.Load(t); ok {
+		return v.(string)
+	}
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("e2e: crypto/rand for audit HMAC: %v", err)
+	}
+	s := hex.EncodeToString(b[:])
+	tAuditHMAC.Store(t, s)
+	return s
+}
+
+var tAuditHMAC sync.Map // *testing.T -> string
 
 // tRecoverHMAC keys per-testing.T to a fresh 32-byte hex string for
 // FAAS_MFA_RECOVERY_HMAC_KEY. Per-test uniqueness prevents one

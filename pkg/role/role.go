@@ -77,11 +77,15 @@ const (
 	// compute daemons (vmmd, gatewayd-internal, builderd, imaged) and its
 	// node-local schedd. Control-plane-only daemons still refuse this role.
 	RoleComputeOnly Role = "compute-only"
+
+	// RoleDatabase is a native managed-database node (ADR-1027): vmmd
+	// runs database VMs only and never registers as a compute node.
+	RoleDatabase Role = "database"
 )
 
 // AllRoles is the canonical, sorted set of valid roles. Useful for
 // validation in tests and operator-facing diagnostics.
-var AllRoles = []Role{RoleSingleBox, RoleControlPlane, RoleComputeOnly}
+var AllRoles = []Role{RoleSingleBox, RoleControlPlane, RoleComputeOnly, RoleDatabase}
 
 // IsKnown reports whether r is one of AllRoles. The check is the
 // single source of truth for the "is this a recognised role?" predicate;

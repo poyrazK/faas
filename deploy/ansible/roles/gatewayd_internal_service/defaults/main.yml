@@ -63,6 +63,15 @@ gatewayd_service_tcp_listen: ""
 # ADR-576 customer-visible switch: answer <service>.svc.gregale with service
 # addresses. Requires gatewayd_service_tcp_listen.
 gatewayd_service_tcp_dns: false
+# ADR-1027: the app route to managed databases. Bind the same bridge address
+# as gatewayd_service_proxy_listen on the reserved port 10083 and list the
+# database nodes' pgproxyd listeners on the overlay (host:port). Enable
+# together with vmmd database_route_enabled and the nftables role's
+# faas_database_route_enabled. The host suffix makes guest DNS answer
+# <database-id>.<suffix> with the route.
+gatewayd_database_route_listen: ""
+gatewayd_database_route_upstreams: []
+gatewayd_database_route_host_suffix: ""
 
 # Path of the rendered config file on the box. The alertmanager role
 # uses the same shape (am_config_path) for the alertmanager.yml drop.
@@ -109,3 +118,7 @@ faas_dev_bridge_enabled: false
 # as given.
 faas_realtime_live_tls_managed: false
 faas_realtime_live_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
+# ADR-20261102081618 §5: serve the requests a compute edge forwarded from this
+# node's instances first, and name every node of the app for the edges. The
+# manifest's public_edge.local_first sets it on compute nodes.
+faas_gateway_edge_local_first: false

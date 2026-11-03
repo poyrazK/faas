@@ -26,7 +26,9 @@ their frames are ignored.
 
 Create an endpoint on your app, then connect clients to
 `wss://<your-app-host>/__gregale/realtime/<endpoint-id>`. The API generates the
-endpoint ID. Pipe secrets on stdin so they stay out of shell history:
+endpoint ID. An endpoint answers on the hosts and custom domains of your
+account's apps and returns 404 on anyone else's. Pipe secrets on stdin so
+they stay out of shell history:
 
 ```bash
 printf '%s\n' "$CALLBACK_TOKEN" | gregale realtime create my-app \
@@ -67,6 +69,13 @@ sends its token as a second requested subprotocol,
 only on an endpoint with `allowed_origins`, and the browser's `Origin` must
 match one of them exactly. Tokens are at most 3,072 bytes.
 
+Changing how an endpoint admits clients applies to open connections too. When
+you finalize a token rotation, its grace deadline passes, you change the
+authentication mode or the OIDC issuer, JWKS URL, audience, algorithms or
+required claims, or you remove an origin from `allowed_origins`, Gregale
+closes every connection the new settings would refuse with code 1008. Changing
+channel rules or the claims they read leaves connections open.
+
 ### Callbacks
 
 Gregale calls your app, with `Authorization: Bearer <callback token>`, at these
@@ -78,6 +87,11 @@ paths under the callback URL:
 | `/realtime/message` | a client sends a frame on the original protocol | any 2xx |
 | `/realtime/disconnect` | a connection closes | any 2xx |
 | `/realtime/authorize-channel` | a resumable client subscribes, or sets presence on a channel | any 2xx grants; 401 or 403 refuses |
+
+A client on the original protocol may send 20 frames a second (bursts of 40).
+Past that, Gregale reads its next frame only when the rate allows, so the
+client's sends slow down and nothing is dropped; a client that would wait more
+than 5 seconds is closed with code 1013.
 
 Check the callback token on every request. Each callback body is JSON with the
 event `type`, `endpoint_id`, `connection_id`, `principal` and, for
@@ -147,9 +161,13 @@ at least once, so deduplicate by `message_id` or `sequence`.
   device or worker; acks then move a cursor Gregale stores (at most 256 per
   endpoint, kept 30 days after last use).
 - A connection holds at most 8 channels, and each frame from the client is at
-  most 4 KiB. Refusals arrive as `{"type":"error","code":...}` frames with the
-  channel, for example `not_authorized` or `subscription_limit`; the
-  connection stays open.
+  most 4 KiB. It may send 20 commands a second (bursts of 40): subscribe,
+  unsubscribe, reset, read state, inbox and preference frames. Acks, presence
+  and signals have their own limits. A command past the budget gets
+  `command_rate_limited` and is dropped.
+- Refusals arrive as `{"type":"error","code":...}` frames with the channel,
+  for example `not_authorized` or `subscription_limit`; the connection stays
+  open.
 - Code 1008 closes a connection whose token expired or changed: reconnect with
   a fresh token. Code 1013 means try again: reconnect from the saved cursor.
 
@@ -266,6 +284,14 @@ where realtime holds real capacity on our servers:
   `capacity_unavailable`.
 - **Event schemas:** 64 versions per channel and event type, and 1,024 per
   endpoint.
+- **Writes:** an account's endpoints write retained messages (each message of a
+  batch counts), inbox messages, message edits and deletes, snapshots and
+  scheduled messages at most 10 (Hobby), 50 (Pro) or 200 (Scale) times a
+  second, with bursts of 32, 100 or 400. Publisher credentials share this rate
+  with your API key. A write past it gets HTTP 429 with code
+  `realtime_write_rate_limited`, the limit and `Retry-After`; nothing was
+  written. A due scheduled message waits for the rate instead of failing.
+  Live publishes are not counted.
 - **Functions triggered by channel messages** bill as normal compute.
 
 An endpoint's `max_connections` still caps that endpoint; the account limit
@@ -307,8 +333,9 @@ and they trigger no connect or authorize callbacks.
 Store the `ticket_id`, not the ticket. Revoke one ticket with
 `DELETE …/tickets/{ticket_id}` (204, or 404 once it has expired), or every
 ticket of a user at logout with `DELETE …/tickets?principal=…` (`{"revoked":
-n}`). Connections using a revoked ticket close within about a second, and
-reconnecting with it gets 401.
+n}`). Connections using a revoked ticket close within about two seconds, and
+reconnecting with it gets 401. A connection whose ticket Gregale cannot check
+right now gets 503 with `Retry-After`; retry it.
 
 ## Presence
 
@@ -473,7 +500,9 @@ Content-Type: application/json
 
 `GET` on the same path returns `denied_channels`, `sessions_revoked_before`,
 `revision` (0 means no controls) and `updated_at`. Changes reach every node
-within about a second. An endpoint keeps controls for at most 1,024 users and
+within about two seconds. If Gregale cannot check a connection's access, for
+example during a control-plane restart, the connection keeps its last checked
+access for up to two minutes and is then closed with code 1013. An endpoint keeps controls for at most 1,024 users and
 64 denied channels per user; they stay until the endpoint is deleted. The Node
 SDK has `revokeRealtimeChannelAccess`, `restoreRealtimeChannelAccess` and
 `revokeRealtimeSessions`.

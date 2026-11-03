@@ -31,6 +31,7 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
+	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
@@ -43,8 +44,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/logerasure"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/oidcrepo"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
@@ -57,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -784,6 +788,7 @@ var ValidateAnnotationForm = validateAnnotationForm
 var ValidateCapturedProjectEnvironmentDatabaseResources = validateCapturedProjectEnvironmentDatabaseResources
 var ValidateCapturedProjectEnvironmentObjectResources = validateCapturedProjectEnvironmentObjectResources
 var ValidateCloneCoordinatorInventory = validateCloneCoordinatorInventory
+var FullProjectEnvironmentCloneAdmissionProblem = fullProjectEnvironmentCloneAdmissionProblem
 var ValidateOverrides = validateOverrides
 var ValidateProjectEnvironmentPromotionResume = validateProjectEnvironmentPromotionResume
 var ValidateScannedSchedules = validateScannedSchedules
@@ -1044,6 +1049,8 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) PostgresUpgrades() *managedpg.Rollout               { return &r.postgresUpgrades }
+func (r *server) PostgresStorage() *managedpg.Rollout                { return &r.postgresStorage }
 func (r *server) LogArchive() *logerasure.Objects                    { return &r.logArchive }
 func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
 	return r.beforeAccountDelete(ctx, acct)
@@ -1133,6 +1140,9 @@ func (r *server) CaptureProjectEnvironmentValues(p0 context.Context, p1 state.Ac
 	return r.captureProjectEnvironmentValues(p0, p1, p2, p3)
 }
 func (r *server) CheckedRollbackSweep(p0 context.Context) error { return r.checkedRollbackSweep(p0) }
+func (r *server) RollbackOutcomeSweep(p0 context.Context, p1 time.Time) error {
+	return r.plainRollbacks().Sweep(p0, p1)
+}
 func (r *server) ConfigureAIGateway(p0 Config, p1 func(string) string) error {
 	return r.configureAIGateway(p0, p1)
 }
@@ -1781,6 +1791,13 @@ func NewGithubdBridgeForTest(store githubdBridgeStore, notif githubdBridgeNotifi
 // after ConfigureAgentsForTest.
 func (s *server) SetAgentStoreForTest(store agents.Store) { s.agentAPI.Store = store }
 
+// SetAgentCallbackRevocationsForTest gives the configured agent API the
+// callback revocations it otherwise keeps in Postgres, so the callback
+// routes answer; call it after ConfigureAgentsForTest.
+func (s *server) SetAgentCallbackRevocationsForTest(r agents.CallbackRevocations) {
+	s.agentAPI.Revocations = r
+}
+
 // RealtimePreviewEveryone shows realtime preview features to every account
 // (ADR-20261019102657).
 func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
@@ -1929,6 +1946,25 @@ func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.
 	return r.planDowngradeProblem(ctx, subject, target)
 }
 
+// SetManagedPostgresCapModeForTest sets FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT
+// as configureManagedPostgresCapMode would.
+func (r *server) SetManagedPostgresCapModeForTest(mode managedpostgres.CapEnforcementMode) {
+	r.managedPostgresCapMode = mode
+}
+
+// SetManagedPostgresPlanExcessForTest sets whether the views report databases
+// past their plan, as configureManagedPostgresCapMode would with
+// FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT and the compute cap both on.
+func (r *server) SetManagedPostgresPlanExcessForTest(on bool) {
+	r.managedPostgresPlanExcessOn = on
+}
+
+// EnsureDevPostgresForTest provisions a developer environment's database as
+// `gregale dev --postgres` does.
+func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Account, app state.App) (*api.DevPostgresResponse, error) {
+	return r.ensureDevPostgres(ctx, acct, app, &api.DevPostgresRequest{})
+}
+
 // RequestBillingMailOutboxesForTest selects the three webhook billing-mail
 // outboxes without configuring one, so a delivery that reaches an outbox
 // fails closed with 503 (Hunt 17 H17-3).
@@ -1963,3 +1999,52 @@ var ProjectReadinessOverrides = projectReadinessOverrides
 
 // SetEventPublishClock pins the event publish rate limiter's clock.
 func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }
+
+// XPrepareDeliveryCrons runs the GitHub bridge's cron staging for one push
+// against store; staged marks a release staged without traffic.
+func XPrepareDeliveryCrons(ctx context.Context, store *state.MemStore, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, m *gregalemanifest.Manifest, kind state.DeploymentKind, staged bool) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
+	g := &githubdBridge{store: store, log: slog.Default()}
+	params := apidsource.EnqueueParams{}
+	if staged {
+		params.TrafficPercentExplicit = true
+	}
+	return g.prepareDeliveryCrons(ctx, req, resource, app, m, kind, params)
+}
+
+// GitHub connector bearer handlers (ADR-20261101160300).
+func (r *server) ListGitHubRepositoriesForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.listGitHubRepositories(w, req, acct)
+}
+func (r *server) GetGitHubDeployPolicyForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.getGitHubDeployPolicy(w, req, acct)
+}
+func (r *server) PatchGitHubDeployPolicyForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.patchGitHubDeployPolicy(w, req, acct)
+}
+func (r *server) BindGitHubConnectionForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.bindGitHubConnection(w, req, acct)
+}
+func (r *server) GetGitHubConnectionForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.getGitHubConnection(w, req, acct)
+}
+
+// AppErrorsPurgeStore is the store the app_errors retention purge needs.
+type AppErrorsPurgeStore = appErrorsPurgeStore
+
+// PurgeAppErrorsOnce runs one app_errors retention pass at now over every
+// account the store lists.
+func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func() time.Time) {
+	p := newAppErrorsPurger(store, nil, nil, slog.New(slog.DiscardHandler), true)
+	p.now = now
+	p.purgeAll(ctx)
+}
+
+// LoadOrGenerateAuditHMACKey exposes the boot-time audit HMAC key loader.
+var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
+
+// OIDCAccountLookup is the OIDC exchange's account lookup with project
+// repository bindings confirmed through repos (ADR-20261101160300,
+// amendment 1).
+func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
+	return newOIDCAccountLookup(store, repos)
+}

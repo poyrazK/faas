@@ -76,6 +76,13 @@ func (s *server) putReleaseApprovalPolicy(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	// ADR-20261020085706 amendment 6: someone must hear that a release
+	// waits, or it waits unseen until its timeout aborts it.
+	if len(req.NotifyChannels) == 0 {
+		api.WriteProblem(w, api.ErrValidation("notify_channels must name at least one Slack or email channel, so the approvers learn a release is waiting").
+			WithHint("Create one with `gregale alert channel create`, then pass `--notify CHANNEL` to `gregale release approval require`."))
+		return
+	}
 	if p := s.releaseApprovalPolicyEligible(r.Context(), acct, app, &req); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -503,6 +510,9 @@ func (s *server) rollbackTargetApprovalProblem(ctx context.Context, app state.Ap
 }
 
 func (s *server) approvalTrafficProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
+	if p := s.darkReleasePauseProblem(d); p != nil {
+		return p
+	}
 	// ADR-20261021152201: a release waiting for its scheduled start takes
 	// no traffic by hand.
 	if p := s.scheduledTrafficProblem(ctx, d); p != nil {

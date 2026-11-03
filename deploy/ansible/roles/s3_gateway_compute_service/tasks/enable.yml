@@ -15,6 +15,7 @@
       - faas_edge_on_compute_nodes | default(false) | bool
       - faas_cloudflared_install_dir is defined
       - faas_object_gateway_public_endpoint | length == 0 or faas_object_gateway_public_endpoint is match('^https://[a-z0-9.-]+$')
+      - not (faas_object_public_reads_on_compute_nodes | bool) or faas_object_public_read_max_bytes_per_second | int > 0
     fail_msg: >-
       The S3 gateway on a compute node needs the provider registry
       (faas_object_storage_config_src), the gateway-only credential
@@ -25,6 +26,8 @@
       (faas_edge_on_compute_nodes), whose role installs the cloudflared
       binary the s3 tunnel connector runs. A pilot
       faas_object_gateway_public_endpoint is https://<host>, nothing else.
+      Public reads on the node need the edge's part of the port share
+      (faas_object_public_read_max_bytes_per_second).
 
 # The node's registry is the control plane's with this node's port share,
 # and the load test's pilot endpoint while one is set: stage the control
@@ -47,7 +50,9 @@
     faas_object_gateway_registry: "{{ faas_object_gateway_registry_raw.content | b64decode | from_json }}"
 
 - name: s3_gateway_compute_service — install the provider registry with this node's port share
-  notify: restart faas-s3-gatewayd-compute
+  notify:
+    - restart faas-s3-gatewayd-compute
+    - restart faas-gatewayd-public-edge for public reads
   ansible.builtin.copy:
     content: >-
       {{ faas_object_gateway_registry
@@ -70,7 +75,9 @@
     mode: "0700"
 
 - name: s3_gateway_compute_service — install the gateway-only provider credential
-  notify: restart faas-s3-gatewayd-compute
+  notify:
+    - restart faas-s3-gatewayd-compute
+    - restart faas-gatewayd-public-edge for public reads
   ansible.builtin.copy:
     src: "{{ faas_object_storage_gateway_provider_env_src }}"
     dest: /etc/faas/secrets/object-storage/gateway-provider.env
@@ -112,6 +119,34 @@
   loop:
     - faas-s3-gatewayd-compute.service
     - faas-gatewayd-internal.service
+    - faas-gatewayd-public-edge.service
+
+# ADR-20261031122757 step 7: the app edge serves public bucket reads itself
+# with this node's registry and the gateway-only credential, paced to its part
+# of the port share. Without the drop-in it forwards them to the control
+# plane. The edge reads both only at start, so a change restarts it.
+- name: s3_gateway_compute_service — let the app edge serve public reads
+  notify: restart faas-gatewayd-public-edge for public reads
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-gatewayd-public-edge.service.d/50-faas-object-public-reads.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (s3_gateway_compute_service). ADR-20261031122757 step 7.
+      [Service]
+      EnvironmentFile=/etc/faas/secrets/object-storage/gateway-provider.env
+      Environment=FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json
+      Environment=FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND={{ faas_object_public_read_max_bytes_per_second | int }}
+  when: faas_object_public_reads_on_compute_nodes | bool
+
+- name: s3_gateway_compute_service — leave public reads to the control plane
+  notify: restart faas-gatewayd-public-edge for public reads
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-public-edge.service.d/50-faas-object-public-reads.conf
+    state: absent
+  register: faas_object_public_reads_dropin_removed
+  when: not (faas_object_public_reads_on_compute_nodes | bool)
 
 - name: s3_gateway_compute_service — run s3-gatewayd in compute mode
   notify: restart faas-s3-gatewayd-compute

@@ -73,6 +73,52 @@ Follow-ups from the same review (#5711, #5906, and branch `fix/crons-prod-findin
   attempts (ADR-20261026201726 amendment 2026-10-29); `gregale cron runs`
   explains runs the app answered with 404.
 
+Audit findings 2026-10-30 (branch `fix/crons-audit-findings`):
+
+- Deleting a cron cancels its runs that have not started, including runs
+  waiting to retry.
+- `schedd_cron_delivery_total` counts runs the app answered with an error as
+  `app_error`, so `FaasCronDeliveryFailing` pages on platform failures only.
+- A schedule-policy cron's catch-up after a long gap records only the newest
+  `api.CronCatchUpRecordedMax` (20) due times.
+- The cron tick skips suspended accounts and apps without the crons
+  capability before claiming a fire.
+- A manual run of a cron that a plan downgrade stopped gets
+  `403 plan_cron_quota` (`pkg/apid/cronrun`), matching the scheduler's gate.
+
+Audit round 2, 2026-11-01 (branch `fix/crons-audit-round2`,
+ADR-20261026201726 amendment 2026-11-02, ADR-20261026151103 amendment 5):
+
+- A cron with a schedule policy but no failure rules is delivered once per
+  scheduled time; it took the plan's queue retry budget (up to 25 attempts).
+- A plain cron run that could not be queued is retried on the next sweep
+  instead of being lost; a schedule-policy cron on an app with no live
+  deployment is suspended.
+- The cron sweep yields schedd's main loop after 10 s and continues within the
+  minute, so many due crons cannot hold the heartbeat.
+- GitHub push deploys stage the crons `gregale.yaml` declares; source-declared
+  crons keep their timezone and `skip_if_running` (they were staged in UTC).
+- Company members can read a cron's status and poll a manual run's request.
+- `gregale cron status` reports `plan_limit` or `account_suspended` for a cron
+  that will not fire; a duplicate schedule and path is `409`; a suspended
+  cron's manual run is `409`; manual-run failures name their reason; timezone
+  `Local` is refused.
+
+Audit round 3, 2026-11-02 (branch `fix/crons-audit-round3`,
+ADR-20261026201726 amendment 2026-11-02 (2)):
+
+- A strict compute budget hold no longer piles up a run per scheduled time:
+  the sweep leaves the cron due and it runs once after the hold.
+- The drain cancels runs of crons removed by `gregale.yaml`, a project apply
+  or an app's deletion, not only by `DeleteCron`.
+- Manual-run requests a scheduler restart interrupted are failed with a reason
+  instead of staying running forever.
+- Rollbacks warn (HTTP `Warning`, printed by the CLI) about crons added after
+  the deployment they return to; crons are not rolled back.
+- `gregale cron runs` explains `405` (crons always send `POST`) as it does
+  `404`; the webhook delivery example no longer names the unemitted
+  `cron.fired` event.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of
@@ -359,6 +405,27 @@ whose paths route to several apps. Open before releasing `edge_challenge` or
 `edge_attack_mode`: deliver the fleet's `gatewayd_edge_challenge_key` to
 every gateway and see `FaasEdgeChallengeKeyMismatch` quiet
 (`docs/ops/platform-flags.md`).
+
+2026-10-31: a security review fixed three more. A per-app deploy token could
+write rules covering every app of its account; it is now limited to its own
+app's hosts (ADR-091 amendment 2026-10-31, later). A cookie planted by
+another app on the shared apps domain could hide a challenge pass (now a
+`__Host-` cookie) or get a visitor boxed through a WAF `block` rule
+(cookie-only detections no longer count toward penalties), and challenged CORS
+preflights broke cross-origin calls (now answered at the edge; ADR-831
+amendment 18). Open: such a planted cookie still trips `block` rules on
+`gregale.dev` hosts until apps move to a domain on the Public Suffix List
+(ADR-20261026100000 amendment 1, proposed).
+
+2026-11-02: a third review fixed four more. Cloudflare cached gated
+responses and served them past `ip`, `geo` and `jwt` rules; such responses
+are now CDN-private (ADR-091 amendment 2026-11-02). Any client could escape
+the penalty box by sending `Sec-Fetch-Site: cross-site`; such refusals now
+count, and only a box made of them alone is capped at a minute
+(ADR-20261022105846 amendment 3). Large request headers made WAF checks slow
+enough to hold every check slot; a check now scores at most 16 KiB of
+headers (ADR-831 amendment 19). Docs and a CLI warning now steer gates to
+`@app`, since a rule naming one host leaves the app's platform hostname open.
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

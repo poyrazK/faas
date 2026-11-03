@@ -1,8 +1,8 @@
 package api
 
-import "regexp"
+import "github.com/onebox-faas/faas/pkg/lazyregexp"
 
-var projectSlugRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+var projectSlugRE = lazyregexp.New(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // ValidProjectSlug is the canonical project identity contract shared by the
 // scan client, API boundary, and database constraint. Project slugs allow one

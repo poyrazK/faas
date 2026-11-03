@@ -80,8 +80,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 			defer close(retainedFlushDone)
 			if err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
 				Interval: flushInterval,
-				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				// The target names the calling app, so an outbound call's
+				// span lands in its caller's rows only (tracing tenancy T4).
+				WriteTargetFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+					return retainedSpansWriter.WriteSummary(writeCtx, target.Request(traceID, summaryJSON))
 				},
 				Log: log,
 				MaxSpansPerTrace: func(string) int {

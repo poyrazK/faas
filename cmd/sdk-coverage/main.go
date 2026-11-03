@@ -234,6 +234,15 @@ var routeExclude = map[string]bool{
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
+	"POST /v1/runtime/data-api/events":                  true,
+
+	// ADR-1027 in-place major upgrades: a preview gated by
+	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered
+	// routes outside it, so it stays out of the public OpenAPI spec and
+	// generated SDKs until launch. pkg/api keeps its client for the CLI.
+	// Mirror across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"POST /v1/postgres/databases/{id}/upgrade":              true,
+	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
 
 	"GET /v1/account/dpa":                                                    true, // public markdown (no Bearer; SDK consumers don't render HTML)
 	"GET /v1/apps/{slug}/tasks/{id}/attach":                                  true, // ADR-1037 WebSocket attach; the CLI drives it directly
@@ -289,6 +298,9 @@ var routeExclude = map[string]bool{
 	"POST /v1/agent-callbacks":                        true,
 	"POST /v1/agent-callbacks/{token}":                true,
 	"POST /v1/agent-callbacks/revocations":            true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
+	"POST /v1/agent-tools/invoke":                     true,
+	"POST /v1/agent-tools/close_thread":               true,
 	"GET /v1/agents":                                  true,
 	"GET /v1/agents/{agent}":                          true,
 	"DELETE /v1/agents/{agent}":                       true,
@@ -1204,6 +1216,11 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/orgs/{slug}/invitations/{invitation_id}":                                         "RevokeInvitation",
 	"GET /v1/github/repos":                                                                       "ListGitHubRepositories",
 	"DELETE /v1/keys/{id}":                                                                       "DeleteKey",
+	"GET /v1/agent-connections":                                                                  "ListAgentConnections",
+	"DELETE /v1/agent-connections/{id}":                                                          "RevokeAgentConnection",
+	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
+	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
+	"DELETE /v1/agent-connections/self":                                                          "DisconnectAgent",
 	"POST /v1/keys/{id}/rotate":                                                                  "RotateKey",
 	"PATCH /v1/account/keys/grace_window_days":                                                   "SetGraceWindow",
 	"GET /v1/account/keys/grace_window_days":                                                     "GetGraceWindow",
@@ -2808,8 +2825,11 @@ func (r *reportT) print() {
 // Convenience aliases share a route with its checked path-shaped method.
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
-	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
-	"ListAppsSelected": "GET /v1/apps",
+	"UpsertDevSession":                     "PUT /v1/dev/sessions/{project}",
+	"ListAppsSelected":                     "GET /v1/apps",
+	"ListManagedPostgresDatabasesSelected": "GET /v1/postgres/databases",
+	"ListCronsSelected":                    "GET /v1/crons",
+	"ListJobsSelected":                     "GET /v1/jobs",
 }
 
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {

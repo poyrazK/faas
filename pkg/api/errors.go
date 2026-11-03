@@ -448,13 +448,16 @@ const (
 	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
 	CodePlanLimitDeveloperLease            = "plan_limit_developer_lease"
 	CodePlanLimitRAM                       = "plan_limit_ram"
-	CodePlanLimitConcur                    = "plan_limit_concurrency"
-	CodeInvalidAppCPU                      = "invalid_cpu_millicores"
-	CodeInvalidAppRAM                      = "invalid_ram_mb"
-	CodeInvalidCPURAMPair                  = "invalid_cpu_ram_pair"
-	CodeInvalidResourceProfile             = "invalid_resource_profile"
-	CodeSourceTooLarge                     = "source_too_large"
-	CodeSourceInvalid                      = "source_invalid"
+	// CodePlanLimitObjectStorage refuses a downgrade while the account
+	// stores more than the target plan's storage ceiling (ADR-20261101214152).
+	CodePlanLimitObjectStorage = "plan_limit_object_storage"
+	CodePlanLimitConcur        = "plan_limit_concurrency"
+	CodeInvalidAppCPU          = "invalid_cpu_millicores"
+	CodeInvalidAppRAM          = "invalid_ram_mb"
+	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
+	CodeInvalidResourceProfile = "invalid_resource_profile"
+	CodeSourceTooLarge         = "source_too_large"
+	CodeSourceInvalid          = "source_invalid"
 	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
 	// the node-local developer-source cache was absent, stale, or corrupt.
 	// The CLI responds by uploading a complete source snapshot.
@@ -1327,6 +1330,10 @@ const (
 	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
 	// would change the serving weights owned by an in-flight canary rollout.
 	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
+	// CodeTrafficSplitReleaseLimit is a 422 when a manual traffic change
+	// would give traffic to more releases than the app can run at once
+	// (TrafficSplitMaxReleases): the extra release could never wake.
+	CodeTrafficSplitReleaseLimit = "traffic_split_release_limit"
 	// CodeMCPTaskCompatibilityGate is a 409 when promotion would route away
 	// from the final workers for an outstanding MCP task handler version.
 	CodeMCPTaskCompatibilityGate = "mcp_task_compatibility_gate_blocked"
@@ -2146,8 +2153,13 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
+	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict,
+		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired:
 		return http.StatusConflict
+	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
+		return http.StatusForbidden
+	case CodeGitHubAppNotInstalled:
+		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
 	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
@@ -3097,10 +3109,25 @@ func ErrAlertPresetTestRateLimited(limit, retryAfterS int) *Problem {
 // destination of rules, which would fire into nothing (ADR-20261029203000).
 // rules names them as "name (id)".
 func ErrNotificationChannelInUse(rules []string) *Problem {
-	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse,
-		"Notification channel in use",
-		fmt.Sprintf("This channel is the only destination of %d alert rule(s): %s. Give them a webhook or another channel, or delete them, before deleting the channel.",
-			len(rules), strings.Join(rules, ", "))).
+	return ErrNotificationChannelInUseBy(rules, nil)
+}
+
+// ErrNotificationChannelInUseBy refuses deleting the last channel of alert
+// rules, release approval policies or pending scheduled releases: rules would
+// fire into nothing, and releases would wait for approval, start or be blocked
+// without anyone being told.
+func ErrNotificationChannelInUseBy(rules, releases []string) *Problem {
+	var parts []string
+	if len(rules) > 0 {
+		parts = append(parts, fmt.Sprintf("This channel is the only destination of %d alert rule(s): %s. Give them a webhook or another channel, or delete them.",
+			len(rules), strings.Join(rules, ", ")))
+	}
+	if len(releases) > 0 {
+		parts = append(parts, fmt.Sprintf("It is the last channel told about %s. Name another channel there, or remove the policy or schedule.",
+			strings.Join(releases, ", ")))
+	}
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Notification channel in use",
+		strings.Join(parts, " ")+" Then delete the channel.").
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
@@ -3970,7 +3997,22 @@ const (
 	// account is at its plan's concurrent-connection allowance, or holds the
 	// most one account may on a single realtime node (ADR-1323 fair use).
 	CodeRealtimeConnectionLimit = "realtime_connection_limit"
+	// CodeRealtimeWriteRateLimited is the 429 for a retained realtime write
+	// past the account's plan rate (RealtimeLimits.RetainedWritesPerSecond).
+	CodeRealtimeWriteRateLimited = "realtime_write_rate_limited"
 )
+
+// ErrRealtimeWriteRateLimited refuses retained realtime writes past the
+// account's plan rate; nothing was written.
+func ErrRealtimeWriteRateLimited(perSecond, writes int, retryAfter time.Duration) *Problem {
+	retryAfterS := max(int(math.Ceil(retryAfter.Seconds())), 1)
+	return NewProblem(http.StatusTooManyRequests, CodeRealtimeWriteRateLimited,
+		"Realtime write rate limited",
+		fmt.Sprintf("This account's realtime endpoints write retained messages, inbox messages, edits and snapshots at most %d times per second; this request needed %d. Nothing was written; retry after the indicated back-off.", perSecond, writes)).
+		WithLimit(int64(perSecond), int64(writes)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/realtime#fair-use-limits")
+}
 
 // Realtime connection limit scopes (ADR-1323).
 const (
@@ -4386,6 +4428,18 @@ func ErrPlanCronQuota(plan Plan, scope string, limit, observed int) *Problem {
 		WithDocs(docsBase + "/plans#crons")
 }
 
+// ErrCronRunOverPlan is the 403 for a manual run of a cron that the owner's
+// current plan does not let fire: after a downgrade only the oldest crons
+// within the new limits keep running.
+func ErrCronRunOverPlan(plan Plan, scope string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanCronQuota,
+		"Cron over plan limit",
+		fmt.Sprintf("%s plan runs at most %d crons for %s; %d of your enabled crons count toward it and this cron is not among the oldest %d, so it does not run. Disable or delete a cron, or upgrade.",
+			plan, limit, PlanQuotaScopeDisplayName(scope), observed, limit)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#crons")
+}
+
 // ErrPlanEventSubscriptionQuota refuses a deploy whose gregale.yaml would
 // leave more enabled event subscriptions than the plan allows for the app or
 // the account (ADR-20261031130000).
@@ -4397,6 +4451,25 @@ func ErrPlanEventSubscriptionQuota(plan Plan, scope string, limit, observed int)
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/events#subscription-limits")
+}
+
+// ErrCronConflict is the 409 for a cron another cron of the same app already
+// has the schedule and path (or command) of: an app has one cron per schedule
+// and path, which is how gregale.yaml matches its declared crons.
+func ErrCronConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron already exists",
+		"this app already has a cron with this schedule and path; change that cron instead, or give this one a distinct path, for example by adding a query string such as ?tz=europe").
+		WithDocs(docsBase + "/crons#create-a-cron")
+}
+
+// ErrCronSuspendedRun is the 409 for a manual run of a suspended cron.
+func ErrCronSuspendedRun(reason string) *Problem {
+	detail := "this cron is suspended (" + reason + ") and does not run until it is resumed"
+	if reason == "no_live_deployment" {
+		detail = "this cron is suspended because the app has no live deployment; deploy the app to resume its crons"
+	}
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron suspended", detail).
+		WithDocs(docsBase + "/crons#suspension")
 }
 
 // ErrCronFireNowBusy is the 429 for a manual run of a cron that already
@@ -5835,12 +5908,25 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 }
 
 // ErrTrafficResidualUnassigned is the same 409 for a manual traffic change
-// whose remaining percent could only go to an aborted canary candidate, which
-// never receives traffic unless named.
+// whose remaining percent could only go to an aborted canary candidate or a
+// release that has never served, neither of which receives traffic unless
+// named.
 func ErrTrafficResidualUnassigned(remaining int) *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
 		"No deployment can take the remaining traffic",
-		fmt.Sprintf("the other live deployments in this environment are aborted canaries, which receive traffic only when named; set the remaining %d%% on a deployment explicitly, or keep this one at 100%%.", remaining)).
+		fmt.Sprintf("the other live deployments in this environment are aborted canaries or releases that have not served yet (staged with no traffic), which receive traffic only when named; set the remaining %d%% on a deployment explicitly, or keep this one at 100%%.", remaining)).
+		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+}
+
+// ErrTrafficSplitReleaseLimit refuses a split that gives traffic to more
+// releases than the app can run at once: each serving release needs its own
+// instance, and the app runs at most its max_concurrency plus the one-instance
+// rollout overlap.
+func ErrTrafficSplitReleaseLimit(limit, requested int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeTrafficSplitReleaseLimit,
+		"Too many releases in the traffic split",
+		fmt.Sprintf("this change would send traffic to %d releases, but the app runs at most %d instances at once (max_concurrency plus one during a rollout), so one release could never start; take a release out of the split first, or raise max_concurrency with gregale app --max-concurrency.", requested, limit)).
+		WithLimit(int64(limit), int64(requested)).
 		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
 }
 
@@ -5859,7 +5945,7 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry. `gregale release traffic status` shows the canary's current step.").
+		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale rollouts recover <app> --action abort`.").
 		WithDocs(docsBase + "/deployments#canary")
 }
 

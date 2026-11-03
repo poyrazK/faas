@@ -48,9 +48,9 @@ func hasSelectorFlag(args []string) bool {
 // matches the returned labels again, because an apid without labels ignores
 // the selector and returns every app.
 func selectedApps(ctx context.Context, client *Client, selector string) ([]api.AppResponse, error) {
-	sel, err := labels.Parse(selector)
+	sel, err := parseSelectorFlag(selector)
 	if err != nil {
-		return nil, fmt.Errorf("--selector: %w", err)
+		return nil, err
 	}
 	apps, err := client.ListAppsSelected(ctx, sel.String())
 	if err != nil {
@@ -69,10 +69,36 @@ func cmdAppLabels(slug string, args []string) (int, bool) {
 	return cmdAppLabel(slug, args[1:]), true
 }
 
+// labelTarget is one labelled resource the label verbs read and write.
+type labelTarget struct {
+	noun  string // "app", "database", "cron" or "job", as printed
+	name  string // what the customer typed
+	usage string
+	doc   string
+	read  func(ctx context.Context, client *Client) (map[string]string, error)
+	write func(ctx context.Context, client *Client, change api.LabelChange) (api.LabelsResponse, error)
+}
+
 // cmdAppLabel runs `app <slug> label list|set|unset`.
 func cmdAppLabel(slug string, args []string) int {
+	return runLabelVerb(args, labelTarget{
+		noun: "app", name: slug, doc: "apps",
+		usage: "usage: gregale app label list <app> | set <app> KEY=VALUE... | unset <app> KEY...",
+		read: func(ctx context.Context, client *Client) (map[string]string, error) {
+			app, err := client.GetApp(ctx, slug)
+			return app.Labels, err
+		},
+		write: func(ctx context.Context, client *Client, change api.LabelChange) (api.LabelsResponse, error) {
+			return client.UpdateAppLabels(ctx, slug, change)
+		},
+	})
+}
+
+// runLabelVerb runs list, set or unset (args[0]) on target; args[1:] are the
+// labels to set or remove.
+func runLabelVerb(args []string, target labelTarget) int {
 	usage := func() int {
-		PrintUsage(osStderr, "usage: gregale app label list <app> | set <app> KEY=VALUE... | unset <app> KEY...", "apps")
+		PrintUsage(osStderr, target.usage, target.doc)
 		return 1
 	}
 	if len(args) == 0 {
@@ -89,21 +115,21 @@ func cmdAppLabel(slug string, args []string) int {
 		if len(args) != 1 {
 			return usage()
 		}
-		app, err := client.GetApp(ctx, slug)
+		l, err := target.read(ctx, client)
 		if err != nil {
-			return printErr("Could not read app", err)
+			return printErr("Could not read "+target.noun, err)
 		}
-		return renderLabels(slug, app.Labels)
+		return renderLabels(target, l)
 	case "set", "unset":
 		change, err := parseLabelChange(args[0], args[1:])
 		if err != nil {
 			return printErr("Invalid labels", err)
 		}
-		out, err := client.UpdateAppLabels(ctx, slug, change)
+		out, err := target.write(ctx, client, change)
 		if err != nil {
-			return printErr("Could not change labels", labelsError(slug, err))
+			return printErr("Could not change labels", labelsError(target, err))
 		}
-		return renderLabels(slug, out.Labels)
+		return renderLabels(target, out.Labels)
 	}
 	return usage()
 }
@@ -133,22 +159,22 @@ func parseLabelChange(verb string, args []string) (api.LabelChange, error) {
 	return api.LabelChange(change), nil
 }
 
-// labelsError explains a 404, keeping the not-found exit code: the app may
-// be missing, or labels are not available to the account or server yet.
-func labelsError(slug string, err error) error {
+// labelsError explains a 404, keeping the not-found exit code: the resource
+// may be missing, or labels are not available to the account or server yet.
+func labelsError(target labelTarget, err error) error {
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusNotFound {
-		return &exitErr{code: exitCodeForStatus(http.StatusNotFound), msg: fmt.Sprintf("no labels for app %s: the app does not exist, or labels (a preview) are not available to this account yet", slug)}
+		return &exitErr{code: exitCodeForStatus(http.StatusNotFound), msg: fmt.Sprintf("no labels for %s %s: the %s does not exist, or labels (a preview) are not available to this account yet", target.noun, target.name, target.noun)}
 	}
 	return err
 }
 
-func renderLabels(slug string, l map[string]string) int {
+func renderLabels(target labelTarget, l map[string]string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(api.LabelsResponse{Labels: l}))
 	}
 	if len(l) == 0 {
-		_, _ = fmt.Fprintf(osStdout, "App %s has no labels.\n", slug)
+		_, _ = fmt.Fprintf(osStdout, "%s %s has no labels.\n", strings.ToUpper(target.noun[:1])+target.noun[1:], target.name)
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)

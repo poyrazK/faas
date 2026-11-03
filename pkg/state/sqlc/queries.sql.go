@@ -75,6 +75,62 @@ func (q *Queries) AbandonProjectEnvironmentCloneConfiguration(ctx context.Contex
 	return result.RowsAffected(), nil
 }
 
+const abortDatabaseVMMove = `-- name: AbortDatabaseVMMove :execrows
+UPDATE database_vms
+SET move_node = NULL, move_lease_until = NULL, state = 'parked', state_changed_at = now(), last_error = $1
+WHERE database_id = $2 AND state = 'moving'
+  AND (move_lease_until = $3::timestamptz OR ($3::timestamptz IS NULL AND move_lease_until < now()))
+`
+
+type AbortDatabaseVMMoveParams struct {
+	LastError  pgtype.Text
+	DatabaseID pgtype.UUID
+	Held       pgtype.Timestamptz
+}
+
+// Ends a move with the database parked where it was: by the lease holder,
+// or by anyone once the lease has lapsed (held NULL).
+func (q *Queries) AbortDatabaseVMMove(ctx context.Context, db DBTX, arg AbortDatabaseVMMoveParams) (int64, error) {
+	result, err := db.Exec(ctx, abortDatabaseVMMove, arg.LastError, arg.DatabaseID, arg.Held)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const abortDatabaseVMUpgrade = `-- name: AbortDatabaseVMUpgrade :execrows
+UPDATE database_vms
+SET upgrade_result = $1::text, upgrade_lease_until = NULL, state = $2::text, state_changed_at = now(),
+    last_error = $3
+WHERE database_id = $4 AND state = 'upgrading'
+  AND (upgrade_lease_until = $5::timestamptz
+       OR ($5::timestamptz IS NULL AND upgrade_lease_until < now()))
+`
+
+type AbortDatabaseVMUpgradeParams struct {
+	UpgradeResult string
+	ToState       string
+	LastError     pgtype.Text
+	DatabaseID    pgtype.UUID
+	Held          pgtype.Timestamptz
+}
+
+// Ends an upgrade on the major the database had, with its result: by the
+// lease holder, or by anyone once the lease lapsed (held NULL).
+func (q *Queries) AbortDatabaseVMUpgrade(ctx context.Context, db DBTX, arg AbortDatabaseVMUpgradeParams) (int64, error) {
+	result, err := db.Exec(ctx, abortDatabaseVMUpgrade,
+		arg.UpgradeResult,
+		arg.ToState,
+		arg.LastError,
+		arg.DatabaseID,
+		arg.Held,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const abortLockedInstanceMigration = `-- name: AbortLockedInstanceMigration :execrows
 UPDATE instances SET state = 'parked', lease_token = NULL, migration_started_at = NULL
 WHERE id = $1::uuid AND node_id = $2::uuid
@@ -628,7 +684,7 @@ func (q *Queries) ActiveEnvironmentWorkloadReleaseSet(ctx context.Context, db DB
 }
 
 const activeManagedPostgresResize = `-- name: ActiveManagedPostgresResize :one
-SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending'
+SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code FROM managed_postgres_resizes WHERE account_id=$1 AND database_id=$2 AND state='pending'
 `
 
 type ActiveManagedPostgresResizeParams struct {
@@ -654,6 +710,9 @@ func (q *Queries) ActiveManagedPostgresResize(ctx context.Context, db DBTX, arg 
 		&i.CreatedAt,
 		&i.CompletedAt,
 		&i.TargetScaleToZero,
+		&i.TargetStorageLimitBytes,
+		&i.TargetPostgresMajor,
+		&i.ErrorCode,
 	)
 	return i, err
 }
@@ -694,6 +753,24 @@ func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, pu
 		&i.TlsHostname,
 	)
 	return i, err
+}
+
+const addDatabaseEgress = `-- name: AddDatabaseEgress :exec
+INSERT INTO database_usage (database_id, meter, started_at, rate)
+VALUES ($1, 'egress', $2, $3)
+ON CONFLICT (database_id, started_at) WHERE meter = 'egress'
+DO UPDATE SET rate = database_usage.rate + EXCLUDED.rate
+`
+
+type AddDatabaseEgressParams struct {
+	DatabaseID pgtype.UUID
+	Hour       pgtype.Timestamptz
+	Bytes      int64
+}
+
+func (q *Queries) AddDatabaseEgress(ctx context.Context, db DBTX, arg AddDatabaseEgressParams) error {
+	_, err := db.Exec(ctx, addDatabaseEgress, arg.DatabaseID, arg.Hour, arg.Bytes)
+	return err
 }
 
 const admitMigrationContract = `-- name: AdmitMigrationContract :execrows
@@ -2747,6 +2824,59 @@ func (q *Queries) BeginCrashCaptureStage(ctx context.Context, db DBTX, arg Begin
 		&i.Reason,
 	)
 	return i, err
+}
+
+const beginDatabaseVMMove = `-- name: BeginDatabaseVMMove :execrows
+UPDATE database_vms
+SET state = 'moving', move_node = $1::text, state_changed_at = now(), last_error = NULL,
+    move_lease_until = now() + make_interval(secs => $2::double precision)
+WHERE database_id = $3 AND state = 'parked' AND NOT resize_pending
+`
+
+type BeginDatabaseVMMoveParams struct {
+	MoveNode     string
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+}
+
+func (q *Queries) BeginDatabaseVMMove(ctx context.Context, db DBTX, arg BeginDatabaseVMMoveParams) (int64, error) {
+	result, err := db.Exec(ctx, beginDatabaseVMMove, arg.MoveNode, arg.LeaseSeconds, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const beginDatabaseVMUpgrade = `-- name: BeginDatabaseVMUpgrade :execrows
+UPDATE database_vms
+SET state = 'upgrading', upgrade_major = $1::integer, upgrade_from = postgres_major,
+    upgrade_operation = $2::text, upgrade_result = NULL, state_changed_at = now(), last_error = NULL,
+    upgrade_lease_until = now() + make_interval(secs => $3::double precision)
+WHERE database_id = $4 AND state = 'parked' AND bootstrapped AND NOT resize_pending AND NOT promote_pending
+  AND postgres_major < $1::integer
+`
+
+type BeginDatabaseVMUpgradeParams struct {
+	UpgradeMajor     int32
+	UpgradeOperation string
+	LeaseSeconds     float64
+	DatabaseID       pgtype.UUID
+}
+
+// Marks a parked database upgrading to upgrade_major as the operation
+// under the caller's lease; the caller checked its node's room under the
+// node's lock.
+func (q *Queries) BeginDatabaseVMUpgrade(ctx context.Context, db DBTX, arg BeginDatabaseVMUpgradeParams) (int64, error) {
+	result, err := db.Exec(ctx, beginDatabaseVMUpgrade,
+		arg.UpgradeMajor,
+		arg.UpgradeOperation,
+		arg.LeaseSeconds,
+		arg.DatabaseID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const beginImagePreparation = `-- name: BeginImagePreparation :one
@@ -5240,6 +5370,96 @@ func (q *Queries) ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX
 	return i, err
 }
 
+const claimDatabaseStandby = `-- name: ClaimDatabaseStandby :execrows
+UPDATE database_vms SET standby_running = true
+WHERE database_id = $1 AND state = 'running' AND standby_node IS NOT NULL AND NOT standby_running
+`
+
+// Marks a running replicated database's standby VM running; the caller
+// checked the standby node's room under its lock.
+func (q *Queries) ClaimDatabaseStandby(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, claimDatabaseStandby, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const claimDatabaseVMProvision = `-- name: ClaimDatabaseVMProvision :one
+UPDATE database_vms
+SET restore_lease_until = now() + make_interval(secs => $1::double precision)
+WHERE database_id = $2 AND state = 'provisioning' AND restore_source IS NULL
+  AND (restore_lease_until IS NULL OR restore_lease_until < now()
+       OR restore_lease_until = $3::timestamptz)
+RETURNING restore_lease_until
+`
+
+type ClaimDatabaseVMProvisionParams struct {
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+	Held         pgtype.Timestamptz
+}
+
+// ClaimDatabaseVMRestore for a provisioning database that is not a restore:
+// the lease on its bootstrap, in the restore lease's column, since a
+// database is never both.
+func (q *Queries) ClaimDatabaseVMProvision(ctx context.Context, db DBTX, arg ClaimDatabaseVMProvisionParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, claimDatabaseVMProvision, arg.LeaseSeconds, arg.DatabaseID, arg.Held)
+	var restore_lease_until pgtype.Timestamptz
+	err := row.Scan(&restore_lease_until)
+	return restore_lease_until, err
+}
+
+const claimDatabaseVMRestore = `-- name: ClaimDatabaseVMRestore :one
+UPDATE database_vms
+SET restore_lease_until = now() + make_interval(secs => $1::double precision)
+WHERE database_id = $2 AND state = 'provisioning' AND restore_source IS NOT NULL
+  AND (restore_lease_until IS NULL OR restore_lease_until < now()
+       OR restore_lease_until = $3::timestamptz)
+RETURNING restore_lease_until
+`
+
+type ClaimDatabaseVMRestoreParams struct {
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+	Held         pgtype.Timestamptz
+}
+
+// Takes (held is NULL) or renews (held is the current lease) the lease on
+// a provisioning restore. The lease is the database clock's, so replicas'
+// clocks do not matter.
+func (q *Queries) ClaimDatabaseVMRestore(ctx context.Context, db DBTX, arg ClaimDatabaseVMRestoreParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, claimDatabaseVMRestore, arg.LeaseSeconds, arg.DatabaseID, arg.Held)
+	var restore_lease_until pgtype.Timestamptz
+	err := row.Scan(&restore_lease_until)
+	return restore_lease_until, err
+}
+
+const claimDatabaseVMUpgrade = `-- name: ClaimDatabaseVMUpgrade :one
+UPDATE database_vms
+SET upgrade_lease_until = now() + make_interval(secs => $1::double precision)
+WHERE database_id = $2 AND state = 'upgrading'
+  AND (upgrade_lease_until = $3::timestamptz
+       OR ($3::timestamptz IS NULL AND upgrade_lease_until < now()))
+RETURNING upgrade_lease_until
+`
+
+type ClaimDatabaseVMUpgradeParams struct {
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+	Held         pgtype.Timestamptz
+}
+
+// Renews the lease the caller holds on an upgrade, or takes one that
+// lapsed (held NULL). The lease is the database clock's, so replicas'
+// clocks do not matter.
+func (q *Queries) ClaimDatabaseVMUpgrade(ctx context.Context, db DBTX, arg ClaimDatabaseVMUpgradeParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, claimDatabaseVMUpgrade, arg.LeaseSeconds, arg.DatabaseID, arg.Held)
+	var upgrade_lease_until pgtype.Timestamptz
+	err := row.Scan(&upgrade_lease_until)
+	return upgrade_lease_until, err
+}
+
 const claimDueLegacyWorkflowRun = `-- name: ClaimDueLegacyWorkflowRun :one
 UPDATE workflow_runs SET status='running',started_at=coalesce(started_at,now()),updated_at=now(),lease_until=now()+interval '5 minutes'
 WHERE id=$1::uuid AND operation_id IS NULL AND
@@ -7726,6 +7946,18 @@ func (q *Queries) ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX
 	return result.RowsAffected(), nil
 }
 
+const clearDatabaseStandbySlotDrop = `-- name: ClearDatabaseStandbySlotDrop :execrows
+UPDATE database_vms SET drop_standby_slot = false WHERE database_id = $1
+`
+
+func (q *Queries) ClearDatabaseStandbySlotDrop(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, clearDatabaseStandbySlotDrop, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearExpiredAppForkExecOutput = `-- name: ClearExpiredAppForkExecOutput :execrows
 UPDATE app_fork_execs e
 SET stdout = ''::bytea,
@@ -7767,6 +7999,17 @@ DELETE FROM instance_runtime_config_receipts WHERE instance_id = $1::uuid
 
 func (q *Queries) ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error {
 	_, err := db.Exec(ctx, clearInstanceRuntimeConfigReceipt, instanceID)
+	return err
+}
+
+const clearManagedPostgresPlanExcessNotices = `-- name: ClearManagedPostgresPlanExcessNotices :exec
+DELETE FROM managed_postgres_plan_excess_notices WHERE database_id=ANY($1::uuid[])
+`
+
+// ADR-20261102125208: a database back inside its plan loses its notice, so a
+// later suspension is noticed again.
+func (q *Queries) ClearManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearManagedPostgresPlanExcessNotices, databaseIds)
 	return err
 }
 
@@ -8600,6 +8843,25 @@ WHERE run_id=$1::uuid AND status='running'
 func (q *Queries) CloseCustomerOperationWorkflowAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, closeCustomerOperationWorkflowAttempts, runID)
 	return err
+}
+
+const closeDatabaseUsage = `-- name: CloseDatabaseUsage :execrows
+UPDATE database_usage SET ended_at = greatest($1::timestamptz, started_at)
+WHERE database_id = $2 AND meter = $3 AND ended_at IS NULL
+`
+
+type CloseDatabaseUsageParams struct {
+	At         pgtype.Timestamptz
+	DatabaseID pgtype.UUID
+	Meter      string
+}
+
+func (q *Queries) CloseDatabaseUsage(ctx context.Context, db DBTX, arg CloseDatabaseUsageParams) (int64, error) {
+	result, err := db.Exec(ctx, closeDatabaseUsage, arg.At, arg.DatabaseID, arg.Meter)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const closeLegacyWorkflowOutboundUnknownAttempts = `-- name: CloseLegacyWorkflowOutboundUnknownAttempts :exec
@@ -13654,6 +13916,147 @@ func (q *Queries) CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, tar
 	return err
 }
 
+const databaseHasUsage = `-- name: DatabaseHasUsage :one
+SELECT EXISTS (SELECT 1 FROM database_usage WHERE database_id = $1)
+`
+
+func (q *Queries) DatabaseHasUsage(ctx context.Context, db DBTX, databaseID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, databaseHasUsage, databaseID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const databaseNodeUsage = `-- name: DatabaseNodeUsage :many
+SELECT n.id AS node_id,
+    COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
+    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+        OR (v.standby_node = n.id AND v.standby_running)), 0)::bigint AS active_mem_mib,
+    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
+        OR (v.standby_node = n.id AND v.standby_running))::bigint AS active_vms,
+    count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state = 'waking')::bigint AS waking_vms
+FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id OR v.standby_node = n.id
+GROUP BY n.id ORDER BY n.id
+`
+
+type DatabaseNodeUsageRow struct {
+	NodeID       string
+	VolumeBytes  int64
+	ActiveMemMib int64
+	ActiveVms    int64
+	WakingVms    int64
+}
+
+// A moving database's volume counts on its node and on the node it is
+// moving to; its memory only where it can run. A replicated database's
+// standby volume counts on its standby node, and its memory there while
+// the standby runs. An upgrading database's VM runs pg_upgrade.
+func (q *Queries) DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNodeUsageRow, error) {
+	rows, err := db.Query(ctx, databaseNodeUsage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseNodeUsageRow{}
+	for rows.Next() {
+		var i DatabaseNodeUsageRow
+		if err := rows.Scan(
+			&i.NodeID,
+			&i.VolumeBytes,
+			&i.ActiveMemMib,
+			&i.ActiveVms,
+			&i.WakingVms,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const databaseRestoreDrillsByNode = `-- name: DatabaseRestoreDrillsByNode :many
+SELECT node_id,
+       max(started_at)::timestamptz AS last_started,
+       coalesce(max(finished_at) FILTER (WHERE result = 'ok'), 'epoch'::timestamptz)::timestamptz AS last_ok
+  FROM database_restore_drills
+ GROUP BY node_id
+`
+
+type DatabaseRestoreDrillsByNodeRow struct {
+	NodeID      string
+	LastStarted pgtype.Timestamptz
+	LastOk      pgtype.Timestamptz
+}
+
+func (q *Queries) DatabaseRestoreDrillsByNode(ctx context.Context, db DBTX) ([]DatabaseRestoreDrillsByNodeRow, error) {
+	rows, err := db.Query(ctx, databaseRestoreDrillsByNode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseRestoreDrillsByNodeRow{}
+	for rows.Next() {
+		var i DatabaseRestoreDrillsByNodeRow
+		if err := rows.Scan(&i.NodeID, &i.LastStarted, &i.LastOk); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const databaseUsageRows = `-- name: DatabaseUsageRows :many
+SELECT meter, started_at, ended_at, rate FROM database_usage
+WHERE database_id = $1 AND started_at < $2
+  AND (ended_at IS NULL OR ended_at > $3)
+`
+
+type DatabaseUsageRowsParams struct {
+	DatabaseID pgtype.UUID
+	WindowTo   pgtype.Timestamptz
+	WindowFrom pgtype.Timestamptz
+}
+
+type DatabaseUsageRowsRow struct {
+	Meter     string
+	StartedAt pgtype.Timestamptz
+	EndedAt   pgtype.Timestamptz
+	Rate      int64
+}
+
+// Rows that can overlap [from, to): intervals crossing it and egress hours
+// starting before its end (the caller drops earlier hours).
+func (q *Queries) DatabaseUsageRows(ctx context.Context, db DBTX, arg DatabaseUsageRowsParams) ([]DatabaseUsageRowsRow, error) {
+	rows, err := db.Query(ctx, databaseUsageRows, arg.DatabaseID, arg.WindowTo, arg.WindowFrom)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseUsageRowsRow{}
+	for rows.Next() {
+		var i DatabaseUsageRowsRow
+		if err := rows.Scan(
+			&i.Meter,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Rate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deactivateProjectReleaseSets = `-- name: DeactivateProjectReleaseSets :exec
 UPDATE project_release_sets SET active=false,expires_at=now()+(ttl_seconds*interval '1 second')
 WHERE project_id=$1::uuid AND environment_slug=$2::text AND active
@@ -14358,6 +14761,48 @@ DELETE FROM data_upstreams WHERE id = $1
 func (q *Queries) DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteDataUpstreamByID, id)
 	return err
+}
+
+const deleteDatabaseRoleVerifier = `-- name: DeleteDatabaseRoleVerifier :execrows
+DELETE FROM database_role_verifiers
+WHERE database_id = $1 AND role_name = $2
+`
+
+type DeleteDatabaseRoleVerifierParams struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+}
+
+func (q *Queries) DeleteDatabaseRoleVerifier(ctx context.Context, db DBTX, arg DeleteDatabaseRoleVerifierParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteDatabaseRoleVerifier, arg.DatabaseID, arg.RoleName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteDatabaseRoleVerifiers = `-- name: DeleteDatabaseRoleVerifiers :execrows
+DELETE FROM database_role_verifiers WHERE database_id = $1
+`
+
+func (q *Queries) DeleteDatabaseRoleVerifiers(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteDatabaseRoleVerifiers, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteDatabaseVM = `-- name: DeleteDatabaseVM :execrows
+DELETE FROM database_vms WHERE database_id = $1 AND state = 'deleting'
+`
+
+func (q *Queries) DeleteDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteDatabaseVM, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteDeploymentAlias = `-- name: DeleteDeploymentAlias :execrows
@@ -20763,6 +21208,104 @@ func (q *Queries) FailIncompleteMCPRouteDelivery(ctx context.Context, db DBTX, i
 	return err
 }
 
+const failManagedPostgresResize = `-- name: FailManagedPostgresResize :execrows
+UPDATE managed_postgres_resizes SET state='failed',completed_at=$1::timestamptz,error_code=$2::text
+WHERE id=$3::uuid AND database_id=$4::uuid AND generation=$5::bigint
+    AND state='pending' AND target_postgres_major IS NOT NULL
+`
+
+type FailManagedPostgresResizeParams struct {
+	At         pgtype.Timestamptz
+	ErrorCode  string
+	ID         pgtype.UUID
+	Database   pgtype.UUID
+	Generation int64
+}
+
+// Ends a pending major upgrade without its change: the provider refused it
+// or it broke the cluster. Only an upgrade can fail.
+func (q *Queries) FailManagedPostgresResize(ctx context.Context, db DBTX, arg FailManagedPostgresResizeParams) (int64, error) {
+	result, err := db.Exec(ctx, failManagedPostgresResize,
+		arg.At,
+		arg.ErrorCode,
+		arg.ID,
+		arg.Database,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const failManagedPostgresResizeDatabase = `-- name: FailManagedPostgresResizeDatabase :one
+UPDATE managed_postgres_databases SET state='ready',observed_generation=desired_generation,
+    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$1::timestamptz,updated_at=$1::timestamptz
+WHERE id=$2::uuid AND account_id=$3::uuid AND state='updating'
+    AND desired_generation=$4::bigint AND observed_generation=desired_generation-1
+    AND lease_token=$5::text AND lease_until>$1::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels
+`
+
+type FailManagedPostgresResizeDatabaseParams struct {
+	At         pgtype.Timestamptz
+	ID         pgtype.UUID
+	Account    pgtype.UUID
+	Generation int64
+	Token      string
+}
+
+// Puts the database back to ready on its source spec at the failed
+// change's generation.
+func (q *Queries) FailManagedPostgresResizeDatabase(ctx context.Context, db DBTX, arg FailManagedPostgresResizeDatabaseParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, failManagedPostgresResizeDatabase,
+		arg.At,
+		arg.ID,
+		arg.Account,
+		arg.Generation,
+		arg.Token,
+	)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.CutoverID,
+		&i.EnvironmentCloneOperationID,
+		&i.DataResourceID,
+		&i.CloneResourceRole,
+		&i.AccountingRequired,
+		&i.OrgID,
+		&i.PurgeAfter,
+		&i.RestoreSlotUntil,
+		&i.Labels,
+	)
+	return i, err
+}
+
 const failNotificationClaim = `-- name: FailNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox
@@ -20934,6 +21477,25 @@ func (q *Queries) FailedCheckedRollbackTarget(ctx context.Context, db DBTX, targ
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const failoverDatabaseVM = `-- name: FailoverDatabaseVM :execrows
+UPDATE database_vms SET node_id = standby_node, standby_node = NULL, standby_running = false, standby_synced = false,
+    promote_pending = NOT standby_running,
+    state = CASE WHEN standby_running THEN 'running' ELSE 'parked' END,
+    last_error = 'failed_over', state_changed_at = now()
+WHERE database_id = $1 AND standby_synced
+    AND state IN ('parked', 'running', 'parking', 'failed')
+`
+
+// A synchronized standby's node becomes the database's: running if its
+// standby VM ran (now promoted), else parked with its promotion pending.
+func (q *Queries) FailoverDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, failoverDatabaseVM, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const featureFlagCustomerOwned = `-- name: FeatureFlagCustomerOwned :one
@@ -22228,6 +22790,110 @@ func (q *Queries) FinishCrashCaptureStage(ctx context.Context, db DBTX, arg Fini
 	return i, err
 }
 
+const finishDatabasePromotion = `-- name: FinishDatabasePromotion :execrows
+UPDATE database_vms SET promote_pending = false WHERE database_id = $1
+`
+
+func (q *Queries) FinishDatabasePromotion(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, finishDatabasePromotion, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishDatabaseRestoreDrill = `-- name: FinishDatabaseRestoreDrill :execrows
+UPDATE database_restore_drills
+   SET result = $1, finished_at = now(), recovered_to = $2, error_code = $3
+ WHERE drill_id = $4 AND result = 'running'
+`
+
+type FinishDatabaseRestoreDrillParams struct {
+	Result      string
+	RecoveredTo pgtype.Timestamptz
+	ErrorCode   pgtype.Text
+	DrillID     pgtype.UUID
+}
+
+func (q *Queries) FinishDatabaseRestoreDrill(ctx context.Context, db DBTX, arg FinishDatabaseRestoreDrillParams) (int64, error) {
+	result, err := db.Exec(ctx, finishDatabaseRestoreDrill,
+		arg.Result,
+		arg.RecoveredTo,
+		arg.ErrorCode,
+		arg.DrillID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishDatabaseVMMove = `-- name: FinishDatabaseVMMove :execrows
+UPDATE database_vms
+SET node_id = move_node, move_node = NULL, move_lease_until = NULL, state = 'parked', state_changed_at = now()
+WHERE database_id = $1 AND state = 'moving' AND move_lease_until = $2::timestamptz
+`
+
+type FinishDatabaseVMMoveParams struct {
+	DatabaseID pgtype.UUID
+	Held       pgtype.Timestamptz
+}
+
+func (q *Queries) FinishDatabaseVMMove(ctx context.Context, db DBTX, arg FinishDatabaseVMMoveParams) (int64, error) {
+	result, err := db.Exec(ctx, finishDatabaseVMMove, arg.DatabaseID, arg.Held)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishDatabaseVMResize = `-- name: FinishDatabaseVMResize :execrows
+UPDATE database_vms SET resize_pending = false WHERE database_id = $1
+`
+
+func (q *Queries) FinishDatabaseVMResize(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, finishDatabaseVMResize, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishDatabaseVMUpgrade = `-- name: FinishDatabaseVMUpgrade :execrows
+UPDATE database_vms
+SET major_history = major_history || jsonb_build_array(jsonb_build_object('major', postgres_major, 'until', $1::timestamptz)),
+    postgres_major = upgrade_major, upgrade_result = 'ok', upgrade_lease_until = NULL,
+    last_backup_at = $2::timestamptz,
+    state = $3::text, state_changed_at = now(), last_error = NULL,
+    last_active_at = CASE WHEN $3::text = 'running' THEN now() ELSE last_active_at END
+WHERE database_id = $4 AND state = 'upgrading' AND upgrade_lease_until = $5::timestamptz
+`
+
+type FinishDatabaseVMUpgradeParams struct {
+	Until      pgtype.Timestamptz
+	BackupAt   pgtype.Timestamptz
+	ToState    string
+	DatabaseID pgtype.UUID
+	Held       pgtype.Timestamptz
+}
+
+// Makes the upgrade's major the database's and records until when it ran
+// the one it leaves (SET sees the old row). backup_at is its first base
+// backup on the new major; NULL when none was taken.
+func (q *Queries) FinishDatabaseVMUpgrade(ctx context.Context, db DBTX, arg FinishDatabaseVMUpgradeParams) (int64, error) {
+	result, err := db.Exec(ctx, finishDatabaseVMUpgrade,
+		arg.Until,
+		arg.BackupAt,
+		arg.ToState,
+		arg.DatabaseID,
+		arg.Held,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishDevBridgeWebhookReplay = `-- name: FinishDevBridgeWebhookReplay :execrows
 UPDATE dev_bridge_webhook_replays SET state=$1,http_status=$2,completed_at=now()
 WHERE id=$3 AND account_id=$4 AND state='dispatching'
@@ -22813,27 +23479,33 @@ func (q *Queries) FinishManagedPostgresLifecycleProvision(ctx context.Context, d
 }
 
 const finishManagedPostgresResizeDatabase = `-- name: FinishManagedPostgresResizeDatabase :one
-UPDATE managed_postgres_databases SET state='ready',service_class=$1::text,scale_to_zero=$2::boolean,observed_generation=desired_generation,
-    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$3::timestamptz,updated_at=$3::timestamptz
-WHERE id=$4::uuid AND account_id=$5::uuid AND state='updating'
-    AND desired_generation=$6::bigint AND observed_generation=desired_generation-1
-    AND lease_token=$7::text AND lease_until>$3::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels
+UPDATE managed_postgres_databases SET state='ready',service_class=$1::text,scale_to_zero=$2::boolean,
+    storage_limit_bytes=$3::bigint,postgres_major=$4::smallint,
+    observed_generation=desired_generation,
+    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=$5::timestamptz,updated_at=$5::timestamptz
+WHERE id=$6::uuid AND account_id=$7::uuid AND state='updating'
+    AND desired_generation=$8::bigint AND observed_generation=desired_generation-1
+    AND lease_token=$9::text AND lease_until>$5::timestamptz AND lease_until>clock_timestamp() RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after, restore_slot_until, labels
 `
 
 type FinishManagedPostgresResizeDatabaseParams struct {
-	TargetClass       string
-	TargetScaleToZero bool
-	At                pgtype.Timestamptz
-	ID                pgtype.UUID
-	Account           pgtype.UUID
-	Generation        int64
-	Token             string
+	TargetClass             string
+	TargetScaleToZero       bool
+	TargetStorageLimitBytes int64
+	TargetPostgresMajor     int16
+	At                      pgtype.Timestamptz
+	ID                      pgtype.UUID
+	Account                 pgtype.UUID
+	Generation              int64
+	Token                   string
 }
 
 func (q *Queries) FinishManagedPostgresResizeDatabase(ctx context.Context, db DBTX, arg FinishManagedPostgresResizeDatabaseParams) (ManagedPostgresDatabase, error) {
 	row := db.QueryRow(ctx, finishManagedPostgresResizeDatabase,
 		arg.TargetClass,
 		arg.TargetScaleToZero,
+		arg.TargetStorageLimitBytes,
+		arg.TargetPostgresMajor,
 		arg.At,
 		arg.ID,
 		arg.Account,
@@ -23793,7 +24465,7 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
 WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  app_scope AS MATERIALIZED (
- SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
  FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
  ), live AS MATERIALIZED (
@@ -25831,6 +26503,74 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 	return i, err
 }
 
+const getDatabaseRoleVerifier = `-- name: GetDatabaseRoleVerifier :one
+SELECT verifier FROM database_role_verifiers
+WHERE database_id = $1 AND role_name = $2
+`
+
+type GetDatabaseRoleVerifierParams struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+}
+
+func (q *Queries) GetDatabaseRoleVerifier(ctx context.Context, db DBTX, arg GetDatabaseRoleVerifierParams) (string, error) {
+	row := db.QueryRow(ctx, getDatabaseRoleVerifier, arg.DatabaseID, arg.RoleName)
+	var verifier string
+	err := row.Scan(&verifier)
+	return verifier, err
+}
+
+const getDatabaseVM = `-- name: GetDatabaseVM :one
+SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
+    bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+FROM database_vms WHERE database_id = $1
+`
+
+func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.UUID) (DatabaseVm, error) {
+	row := db.QueryRow(ctx, getDatabaseVM, databaseID)
+	var i DatabaseVm
+	err := row.Scan(
+		&i.DatabaseID,
+		&i.NodeID,
+		&i.PostgresMajor,
+		&i.VcpuCount,
+		&i.MemMib,
+		&i.VolumeBytes,
+		&i.State,
+		&i.Bootstrapped,
+		&i.AlwaysOn,
+		&i.LastBackupAt,
+		&i.RestoreWindowSeconds,
+		&i.RestoreSource,
+		&i.RestoreTarget,
+		&i.RestoreRecoveredTo,
+		&i.RestoreLeaseUntil,
+		&i.ResizePending,
+		&i.LastError,
+		&i.LastActiveAt,
+		&i.StateChangedAt,
+		&i.CreatedAt,
+		&i.MoveNode,
+		&i.MoveLeaseUntil,
+		&i.Replicated,
+		&i.StandbyNode,
+		&i.StandbyRunning,
+		&i.StandbySynced,
+		&i.PromotePending,
+		&i.DropStandbySlot,
+		&i.UpgradeMajor,
+		&i.UpgradeFrom,
+		&i.UpgradeOperation,
+		&i.UpgradeResult,
+		&i.UpgradeLeaseUntil,
+		&i.MajorHistory,
+	)
+	return i, err
+}
+
 const getDeploymentArtifactScanByID = `-- name: GetDeploymentArtifactScanByID :one
 SELECT id, rootfs_producer_id, deployment_id, workload_name, input_snapshot, input_hash, result_snapshot, scanned_at, expires_at, registry_verification_id FROM deployment_artifact_scans WHERE id=$1::uuid
 `
@@ -26936,7 +27676,7 @@ func (q *Queries) GetManagedPostgresReconciliationLedger(ctx context.Context, db
 }
 
 const getManagedPostgresResize = `-- name: GetManagedPostgresResize :one
-SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero FROM managed_postgres_resizes WHERE account_id=$1 AND id=$2
+SELECT id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code FROM managed_postgres_resizes WHERE account_id=$1 AND id=$2
 `
 
 type GetManagedPostgresResizeParams struct {
@@ -26962,6 +27702,9 @@ func (q *Queries) GetManagedPostgresResize(ctx context.Context, db DBTX, arg Get
 		&i.CreatedAt,
 		&i.CompletedAt,
 		&i.TargetScaleToZero,
+		&i.TargetStorageLimitBytes,
+		&i.TargetPostgresMajor,
+		&i.ErrorCode,
 	)
 	return i, err
 }
@@ -27091,7 +27834,8 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, db DBTX, arg GetNo
 
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
-       audience, coalesce(jti, '') as jti, scopes, created_at
+       audience, coalesce(jti, '') as jti, scopes, created_at,
+       coalesce(app_id::text, '')::text as app_id
 from oidc_exchanged_tokens
 where token_hash = $1
   and expires_at > now()
@@ -27108,6 +27852,7 @@ type GetOIDCExchangedTokenByHashRow struct {
 	Jti       string
 	Scopes    []string
 	CreatedAt pgtype.Timestamptz
+	AppID     string
 }
 
 // Bearer hot-path lookup. Filters past-TTL rows out at the SQL
@@ -27127,6 +27872,7 @@ func (q *Queries) GetOIDCExchangedTokenByHash(ctx context.Context, db DBTX, toke
 		&i.Jti,
 		&i.Scopes,
 		&i.CreatedAt,
+		&i.AppID,
 	)
 	return i, err
 }
@@ -28364,6 +29110,46 @@ func (q *Queries) GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db
 		&i.ReplayedAt,
 	)
 	return i, err
+}
+
+const gitHubProjectBindingsForRepository = `-- name: GitHubProjectBindingsForRepository :many
+select p.account_id::text as account_id,
+       p.install_id::bigint as installation_id
+from projects p
+join github_installations gi
+  on gi.account_id = p.account_id
+ and gi.installation_id = p.install_id
+where lower(p.repo_full_name) = lower($1::text)
+order by p.account_id, p.install_id
+`
+
+type GitHubProjectBindingsForRepositoryRow struct {
+	AccountID      string
+	InstallationID int64
+}
+
+// Projects bound to a repository name through an installation their account
+// connected. A project records no immutable repository ID, so the OIDC
+// exchange confirms each binding's repository with GitHub before trusting it
+// (ADR-20261101160300, amendment 1).
+func (q *Queries) GitHubProjectBindingsForRepository(ctx context.Context, db DBTX, repoFullName string) ([]GitHubProjectBindingsForRepositoryRow, error) {
+	rows, err := db.Query(ctx, gitHubProjectBindingsForRepository, repoFullName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GitHubProjectBindingsForRepositoryRow{}
+	for rows.Next() {
+		var i GitHubProjectBindingsForRepositoryRow
+		if err := rows.Scan(&i.AccountID, &i.InstallationID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const gitHubRepositoryIDsBoundToAccount = `-- name: GitHubRepositoryIDsBoundToAccount :one
@@ -32056,6 +32842,51 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 	return err
 }
 
+const insertDatabaseVM = `-- name: InsertDatabaseVM :execrows
+INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on,
+    restore_window_seconds, restore_source, restore_target, replicated, standby_node, state)
+VALUES ($1, $2, $3, $4,
+    $5, $6, $7, $8,
+    $9, $10, $11, $12, 'provisioning')
+ON CONFLICT (database_id) DO NOTHING
+`
+
+type InsertDatabaseVMParams struct {
+	DatabaseID           pgtype.UUID
+	NodeID               string
+	PostgresMajor        int32
+	VcpuCount            int32
+	MemMib               int32
+	VolumeBytes          int64
+	AlwaysOn             bool
+	RestoreWindowSeconds int64
+	RestoreSource        pgtype.UUID
+	RestoreTarget        pgtype.Timestamptz
+	Replicated           bool
+	StandbyNode          pgtype.Text
+}
+
+func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatabaseVMParams) (int64, error) {
+	result, err := db.Exec(ctx, insertDatabaseVM,
+		arg.DatabaseID,
+		arg.NodeID,
+		arg.PostgresMajor,
+		arg.VcpuCount,
+		arg.MemMib,
+		arg.VolumeBytes,
+		arg.AlwaysOn,
+		arg.RestoreWindowSeconds,
+		arg.RestoreSource,
+		arg.RestoreTarget,
+		arg.Replicated,
+		arg.StandbyNode,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertDeploymentArtifactScan = `-- name: InsertDeploymentArtifactScan :one
 WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now),
 inputs AS MATERIALIZED (SELECT $6::jsonb AS value)
@@ -32426,7 +33257,19 @@ INSERT INTO environment_desired_revisions
 VALUES ($1::uuid, $2::text,
         $3::text, $4::jsonb, $5::text)
 ON CONFLICT (source_id, commit_sha, definition_digest) DO UPDATE
-    SET source_id = excluded.source_id
+    SET source_id = excluded.source_id,
+        approved_by = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                            AND NOT EXISTS (SELECT 1 FROM environment_git_sources g
+                                             WHERE g.id = environment_desired_revisions.source_id
+                                               AND g.approval_policy = 'protected_branch')
+                           THEN excluded.approved_by ELSE environment_desired_revisions.approved_by END,
+        approved_at = CASE WHEN excluded.approved_by NOT LIKE 'api\_key:%'
+                            AND excluded.approved_by <> environment_desired_revisions.approved_by
+                            AND NOT EXISTS (SELECT 1 FROM environment_git_sources g
+                                             WHERE g.id = environment_desired_revisions.source_id
+                                               AND g.approval_policy = 'protected_branch')
+                           THEN now() ELSE environment_desired_revisions.approved_at END
 RETURNING id, source_id, commit_sha, definition_digest, definition, approved_by, approved_at
 `
 
@@ -32438,6 +33281,11 @@ type InsertEnvironmentDesiredRevisionParams struct {
 	ApprovedBy       string
 }
 
+// Approving the same revision again keeps its row. A person's approval
+// replaces a key's ("api_key:<id>"), never the reverse, so a person can stand
+// in for the apps' release approvals after CI approved the revision
+// (ADR-20261020085706 amendment 8). A protected-branch source's revisions are
+// immutable (their approval is the merge provenance), so they keep theirs.
 func (q *Queries) InsertEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg InsertEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error) {
 	row := db.QueryRow(ctx, insertEnvironmentDesiredRevision,
 		arg.SourceID,
@@ -33609,23 +34457,25 @@ func (q *Queries) InsertManagedPostgresReservation(ctx context.Context, db DBTX,
 
 const insertManagedPostgresResize = `-- name: InsertManagedPostgresResize :one
 INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,
-    source_spec,target_class,target_scale_to_zero,generation,state,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12) RETURNING id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero
+    source_spec,target_class,target_scale_to_zero,target_storage_limit_bytes,target_postgres_major,generation,state,created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14) RETURNING id, account_id, database_id, backend_id, backend_fingerprint, provider_resource_id, data_resource_id, source_spec, target_class, generation, state, created_at, completed_at, target_scale_to_zero, target_storage_limit_bytes, target_postgres_major, error_code
 `
 
 type InsertManagedPostgresResizeParams struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	DatabaseID         pgtype.UUID
-	BackendID          string
-	BackendFingerprint string
-	ProviderResourceID string
-	DataResourceID     string
-	SourceSpec         []byte
-	TargetClass        string
-	TargetScaleToZero  pgtype.Bool
-	Generation         int64
-	CreatedAt          pgtype.Timestamptz
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	DatabaseID              pgtype.UUID
+	BackendID               string
+	BackendFingerprint      string
+	ProviderResourceID      string
+	DataResourceID          string
+	SourceSpec              []byte
+	TargetClass             string
+	TargetScaleToZero       pgtype.Bool
+	TargetStorageLimitBytes pgtype.Int8
+	TargetPostgresMajor     pgtype.Int4
+	Generation              int64
+	CreatedAt               pgtype.Timestamptz
 }
 
 func (q *Queries) InsertManagedPostgresResize(ctx context.Context, db DBTX, arg InsertManagedPostgresResizeParams) (ManagedPostgresResize, error) {
@@ -33640,6 +34490,8 @@ func (q *Queries) InsertManagedPostgresResize(ctx context.Context, db DBTX, arg 
 		arg.SourceSpec,
 		arg.TargetClass,
 		arg.TargetScaleToZero,
+		arg.TargetStorageLimitBytes,
+		arg.TargetPostgresMajor,
 		arg.Generation,
 		arg.CreatedAt,
 	)
@@ -33659,6 +34511,9 @@ func (q *Queries) InsertManagedPostgresResize(ctx context.Context, db DBTX, arg 
 		&i.CreatedAt,
 		&i.CompletedAt,
 		&i.TargetScaleToZero,
+		&i.TargetStorageLimitBytes,
+		&i.TargetPostgresMajor,
+		&i.ErrorCode,
 	)
 	return i, err
 }
@@ -33810,8 +34665,8 @@ func (q *Queries) InsertNotificationChannel(ctx context.Context, db DBTX, arg In
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
 insert into oidc_exchanged_tokens
     (id, account_id, token_hash, expires_at, issuer_url, subject,
-     audience, jti, scopes)
-values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
+     audience, jti, scopes, app_id)
+values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9::uuid)
 returning id, account_id, token_hash, expires_at, issuer_url,
           subject, audience, coalesce(jti, '') as jti, scopes,
           created_at
@@ -33826,6 +34681,7 @@ type InsertOIDCExchangedTokenParams struct {
 	Audience  []string
 	Jti       pgtype.Text
 	Scopes    []string
+	AppID     pgtype.UUID
 }
 
 type InsertOIDCExchangedTokenRow struct {
@@ -33853,6 +34709,7 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 		arg.Audience,
 		arg.Jti,
 		arg.Scopes,
+		arg.AppID,
 	)
 	var i InsertOIDCExchangedTokenRow
 	err := row.Scan(
@@ -35776,7 +36633,7 @@ INSERT INTO request_telemetry (
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
     guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
-    content_outcome, trace_inferred
+    content_outcome, trace_inferred, platform_refusal
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -35797,7 +36654,8 @@ INSERT INTO request_telemetry (
     $31::bool,
     COALESCE(NULLIF($32::text, '')::jsonb, '[]'::jsonb),
     $33::text,
-    $34::bool
+    $34::bool,
+    $35::bool
 )
 `
 
@@ -35836,6 +36694,7 @@ type InsertRequestTelemetryParams struct {
 	FlagEvidenceJson            string
 	ContentOutcome              string
 	TraceInferred               bool
+	PlatformRefusal             bool
 }
 
 // ---------------------------------------------------------------------------
@@ -35908,6 +36767,7 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.FlagEvidenceJson,
 		arg.ContentOutcome,
 		arg.TraceInferred,
+		arg.PlatformRefusal,
 	)
 	return err
 }
@@ -42041,6 +42901,57 @@ func (q *Queries) ListAppHealthHistory(ctx context.Context, db DBTX, arg ListApp
 	return items, nil
 }
 
+const listAppLogDrainPlanSubjectDrains = `-- name: ListAppLogDrainPlanSubjectDrains :many
+SELECT d.id::text AS id,d.app_id::text AS app_id,(d.app_id=$1::uuid)::boolean AS addressed,
+ jsonb_build_object('plan',r.plan,'subject',(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)::text,
+  'counted',a.status<>'deleted','standard',EXISTS(SELECT 1 FROM application_standard_control_bindings b
+   WHERE b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text))::jsonb AS owner
+FROM app_log_drains d JOIN apps a ON a.id=d.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ JOIN app_resource_accounts r ON r.app_id=d.app_id
+ JOIN (SELECT CASE WHEN NOT so.personal_org AND so.resource_ownership_enabled THEN so.id ELSE sa.account_id END AS subject
+  FROM apps sa LEFT JOIN orgs so ON so.id=sa.org_id WHERE sa.id=$1::uuid) t
+  ON t.subject=(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)
+WHERE d.enabled
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
+ORDER BY d.created_at,d.id
+`
+
+type ListAppLogDrainPlanSubjectDrainsRow struct {
+	ID        string
+	AppID     string
+	Addressed bool
+	Owner     []byte
+}
+
+// The enabled, deliverable drains of every app that shares app_id's billing
+// subject, in delivery order, with the owner facts the delivery reads check
+// against the plan. PgStore reports which of app_id's own drains the plan
+// leaves out.
+func (q *Queries) ListAppLogDrainPlanSubjectDrains(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListAppLogDrainPlanSubjectDrainsRow, error) {
+	rows, err := db.Query(ctx, listAppLogDrainPlanSubjectDrains, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppLogDrainPlanSubjectDrainsRow{}
+	for rows.Next() {
+		var i ListAppLogDrainPlanSubjectDrainsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Addressed,
+			&i.Owner,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppPendingRestarts = `-- name: ListAppPendingRestarts :many
 WITH latest AS (
  SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
@@ -45476,6 +46387,113 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 	return items, nil
 }
 
+const listDatabaseNodes = `-- name: ListDatabaseNodes :many
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle
+FROM database_nodes ORDER BY id
+`
+
+type ListDatabaseNodesRow struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	BootSlots           int32
+	PostgresMajors      []int32
+	Lifecycle           string
+}
+
+func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabaseNodesRow, error) {
+	rows, err := db.Query(ctx, listDatabaseNodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDatabaseNodesRow{}
+	for rows.Next() {
+		var i ListDatabaseNodesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetUrl,
+			&i.AdmissionCeilingMb,
+			&i.VolumeCapacityBytes,
+			&i.BootSlots,
+			&i.PostgresMajors,
+			&i.Lifecycle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDatabaseVMsByState = `-- name: ListDatabaseVMsByState :many
+SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
+    bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
+    upgrade_major, upgrade_from, upgrade_operation, upgrade_result, upgrade_lease_until, major_history
+FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
+`
+
+func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []string) ([]DatabaseVm, error) {
+	rows, err := db.Query(ctx, listDatabaseVMsByState, states)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseVm{}
+	for rows.Next() {
+		var i DatabaseVm
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.NodeID,
+			&i.PostgresMajor,
+			&i.VcpuCount,
+			&i.MemMib,
+			&i.VolumeBytes,
+			&i.State,
+			&i.Bootstrapped,
+			&i.AlwaysOn,
+			&i.LastBackupAt,
+			&i.RestoreWindowSeconds,
+			&i.RestoreSource,
+			&i.RestoreTarget,
+			&i.RestoreRecoveredTo,
+			&i.RestoreLeaseUntil,
+			&i.ResizePending,
+			&i.LastError,
+			&i.LastActiveAt,
+			&i.StateChangedAt,
+			&i.CreatedAt,
+			&i.MoveNode,
+			&i.MoveLeaseUntil,
+			&i.Replicated,
+			&i.StandbyNode,
+			&i.StandbyRunning,
+			&i.StandbySynced,
+			&i.PromotePending,
+			&i.DropStandbySlot,
+			&i.UpgradeMajor,
+			&i.UpgradeFrom,
+			&i.UpgradeOperation,
+			&i.UpgradeResult,
+			&i.UpgradeLeaseUntil,
+			&i.MajorHistory,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDefaultRouteProbeTargets = `-- name: ListDefaultRouteProbeTargets :many
 SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug,
  d.id::text AS candidate_id, s.id::text AS stable_id,
@@ -46461,8 +47479,13 @@ func (q *Queries) ListEgressCircuitCandidates(ctx context.Context, db DBTX, samp
 }
 
 const listEnabledAppLogDrainsWithStandardBinding = `-- name: ListEnabledAppLogDrainsWithStandardBinding :many
-SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at, d.created_by_account_id,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
-FROM app_log_drains d WHERE d.enabled
+SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at, d.created_by_account_id,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding,
+ jsonb_build_object('plan',r.plan,'subject',(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)::text,
+  'counted',a.status<>'deleted','standard',EXISTS(SELECT 1 FROM application_standard_control_bindings b
+   WHERE b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text))::jsonb AS owner
+FROM app_log_drains d JOIN apps a ON a.id=d.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ JOIN app_resource_accounts r ON r.app_id=d.app_id
+WHERE d.enabled
  AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
 ORDER BY d.created_at,d.id
 `
@@ -46479,10 +47502,13 @@ type ListEnabledAppLogDrainsWithStandardBindingRow struct {
 	UpdatedAt          pgtype.Timestamptz
 	CreatedByAccountID pgtype.UUID
 	StandardBinding    []byte
+	Owner              []byte
 }
 
 // A rehearsal-enrolled app's candidate output never leaves for a customer
-// log destination (ADR-20261019180000).
+// log destination (ADR-20261019180000). owner is what PgStore checks against
+// the plan of the account the app's resources belong to, so a drain stops
+// when that plan stops covering it (appLogDrainOwnership).
 func (q *Queries) ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error) {
 	rows, err := db.Query(ctx, listEnabledAppLogDrainsWithStandardBinding)
 	if err != nil {
@@ -46504,6 +47530,7 @@ func (q *Queries) ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context
 			&i.UpdatedAt,
 			&i.CreatedByAccountID,
 			&i.StandardBinding,
+			&i.Owner,
 		); err != nil {
 			return nil, err
 		}
@@ -48082,7 +49109,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -48208,6 +49235,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.MailFailureAccountRevision,
 			&i.MailFailureAppRevision,
 			&i.MailFailureSuccessRevision,
+			&i.PromotedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -52920,6 +53948,56 @@ func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID str
 	return items, nil
 }
 
+const listUnmailedManagedPostgresPlanExcessNotices = `-- name: ListUnmailedManagedPostgresPlanExcessNotices :many
+SELECT n.database_id,n.reason,n.recorded_at,d.account_id,d.name,d.service_class
+FROM managed_postgres_plan_excess_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
+WHERE n.mail_intent_id IS NULL AND n.recorded_at>$1::timestamptz AND d.state NOT IN ('deleting','deleted')
+ORDER BY n.recorded_at,n.database_id LIMIT $2
+`
+
+type ListUnmailedManagedPostgresPlanExcessNoticesParams struct {
+	Since     pgtype.Timestamptz
+	BatchSize int32
+}
+
+type ListUnmailedManagedPostgresPlanExcessNoticesRow struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	AccountID    pgtype.UUID
+	Name         string
+	ServiceClass string
+}
+
+// The notices still to mail: recorded after since, not yet linked to an
+// intent, for databases not being deleted.
+func (q *Queries) ListUnmailedManagedPostgresPlanExcessNotices(ctx context.Context, db DBTX, arg ListUnmailedManagedPostgresPlanExcessNoticesParams) ([]ListUnmailedManagedPostgresPlanExcessNoticesRow, error) {
+	rows, err := db.Query(ctx, listUnmailedManagedPostgresPlanExcessNotices, arg.Since, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnmailedManagedPostgresPlanExcessNoticesRow{}
+	for rows.Next() {
+		var i ListUnmailedManagedPostgresPlanExcessNoticesRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.Reason,
+			&i.RecordedAt,
+			&i.AccountID,
+			&i.Name,
+			&i.ServiceClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnmailedManagedPostgresRestoreSlotNotices = `-- name: ListUnmailedManagedPostgresRestoreSlotNotices :many
 SELECT n.database_id,n.kind,n.slot_until,n.restorable_until,n.recorded_at,d.account_id,d.name
 FROM managed_postgres_restore_slot_notices n JOIN managed_postgres_databases d ON d.id=n.database_id
@@ -53871,14 +54949,27 @@ SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object
  jsonb_build_object('ID',d.id::text,'AppID',d.app_id::text,'AccountID',d.account_id::text,
  'Kind',d.kind,'TargetURL',d.target_url,'AuthHeaderSealed',encode(coalesce(d.auth_header_sealed,''::bytea),'base64'),
  'Enabled',d.enabled,'CreatedAt',d.created_at,'UpdatedAt',d.updated_at),
- 'binding',application_standard_log_binding(d.app_id,d.id)) ORDER BY d.created_at,d.id)
- FROM app_log_drains d WHERE d.enabled),'[]'::jsonb),
+ 'binding',application_standard_log_binding(d.app_id,d.id),
+ 'owner',jsonb_build_object('plan',r.plan,'subject',(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)::text,
+  'counted',a.status<>'deleted','standard',EXISTS(SELECT 1 FROM application_standard_control_bindings b
+   WHERE b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text))) ORDER BY d.created_at,d.id)
+ FROM app_log_drains d JOIN apps a ON a.id=d.app_id LEFT JOIN orgs o ON o.id=a.org_id
+ JOIN app_resource_accounts r ON r.app_id=d.app_id
+ WHERE d.enabled AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)),'[]'::jsonb),
  'inventories',coalesce((SELECT jsonb_agg(i.inventory ORDER BY i.app_id) FROM
- (SELECT e.app_id,application_standard_log_inventory(e.app_id) AS inventory FROM app_application_standards e) i
+ -- The join and predicates repeat conditions application_standard_log_inventory
+ -- requires, so rows that can only yield NULL (deleted apps above all) skip the
+ -- per-row function call and its plan.
+ (SELECT e.app_id,application_standard_log_inventory(e.app_id) AS inventory FROM app_application_standards e
+  JOIN apps a ON a.id=e.app_id
+  WHERE a.status='active' AND e.state IN ('persisted','observed') AND e.desired_revision=e.persisted_revision) i
  WHERE i.inventory IS NOT NULL),'[]'::jsonb))::jsonb AS snapshot
 `
 
 // Both collections come from one statement snapshot, including empty drain sets.
+// The drains are ListEnabledAppLogDrainsWithStandardBinding's: a
+// rehearsal-enrolled app's output never leaves for a customer destination
+// (ADR-20261019180000), and owner is checked against the plan.
 func (q *Queries) LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error) {
 	row := db.QueryRow(ctx, loadApplicationStandardLogConsumerSnapshot)
 	var snapshot []byte
@@ -55509,6 +56600,34 @@ func (q *Queries) LockCustomerOperationWorkflowRun(ctx context.Context, db DBTX,
 		&i.CreateIdempotencyKey,
 		&i.CreateRequestFingerprint,
 		&i.DeploymentID,
+	)
+	return i, err
+}
+
+const lockDatabaseNode = `-- name: LockDatabaseNode :one
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
+FROM database_nodes WHERE id = $1 FOR UPDATE
+`
+
+type LockDatabaseNodeRow struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	BootSlots           int32
+	Lifecycle           string
+}
+
+func (q *Queries) LockDatabaseNode(ctx context.Context, db DBTX, id string) (LockDatabaseNodeRow, error) {
+	row := db.QueryRow(ctx, lockDatabaseNode, id)
+	var i LockDatabaseNodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.TargetUrl,
+		&i.AdmissionCeilingMb,
+		&i.VolumeCapacityBytes,
+		&i.BootSlots,
+		&i.Lifecycle,
 	)
 	return i, err
 }
@@ -57458,6 +58577,39 @@ func (q *Queries) LockProductionQueueTriggerInvocationRow(ctx context.Context, d
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockProjectEnvironmentCloneAdmissionSwitches = `-- name: LockProjectEnvironmentCloneAdmissionSwitches :many
+SELECT config_key, desired_value FROM runtime_config_entries
+WHERE scope = 'global' AND scope_id = '' AND config_key = ANY($1::text[])
+FOR SHARE
+`
+
+type LockProjectEnvironmentCloneAdmissionSwitchesRow struct {
+	ConfigKey    string
+	DesiredValue []byte
+}
+
+// Admission holds every switch it decides on until it commits, so turning one
+// off waits for the admissions already reading it.
+func (q *Queries) LockProjectEnvironmentCloneAdmissionSwitches(ctx context.Context, db DBTX, configKeys []string) ([]LockProjectEnvironmentCloneAdmissionSwitchesRow, error) {
+	rows, err := db.Query(ctx, lockProjectEnvironmentCloneAdmissionSwitches, configKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockProjectEnvironmentCloneAdmissionSwitchesRow{}
+	for rows.Next() {
+		var i LockProjectEnvironmentCloneAdmissionSwitchesRow
+		if err := rows.Scan(&i.ConfigKey, &i.DesiredValue); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockProjectEnvironmentCloneApps = `-- name: LockProjectEnvironmentCloneApps :many
@@ -60392,6 +61544,27 @@ func (q *Queries) MarkCrashCaptureEncrypted(ctx context.Context, db DBTX, arg Ma
 		&i.Reason,
 	)
 	return i, err
+}
+
+const markDatabaseStandbySynced = `-- name: MarkDatabaseStandbySynced :execrows
+UPDATE database_vms SET standby_synced = $1::boolean
+WHERE database_id = $2
+    AND (NOT $1::boolean OR (state = 'running' AND standby_running))
+`
+
+type MarkDatabaseStandbySyncedParams struct {
+	Synced     bool
+	DatabaseID pgtype.UUID
+}
+
+// Synchronized only while the database and its standby run; clearing is
+// always allowed.
+func (q *Queries) MarkDatabaseStandbySynced(ctx context.Context, db DBTX, arg MarkDatabaseStandbySyncedParams) (int64, error) {
+	result, err := db.Exec(ctx, markDatabaseStandbySynced, arg.Synced, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markDeploymentLive = `-- name: MarkDeploymentLive :exec
@@ -69658,6 +70831,26 @@ func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype
 	return plan, err
 }
 
+const objectUsageAccountPlanCap = `-- name: ObjectUsageAccountPlanCap :one
+SELECT a.plan, a.overage_cap_cents FROM accounts a WHERE a.id=$1
+UNION ALL
+SELECT o.plan, o.overage_cap_cents FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled
+`
+
+type ObjectUsageAccountPlanCapRow struct {
+	Plan            string
+	OverageCapCents pgtype.Int8
+}
+
+// The plan and spend cap that set an account's object-storage ceilings
+// (ADR-1320, ADR-20261101214152). A null cap is no cap.
+func (q *Queries) ObjectUsageAccountPlanCap(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectUsageAccountPlanCapRow, error) {
+	row := db.QueryRow(ctx, objectUsageAccountPlanCap, id)
+	var i ObjectUsageAccountPlanCapRow
+	err := row.Scan(&i.Plan, &i.OverageCapCents)
+	return i, err
+}
+
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
 SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
 `
@@ -70924,6 +72117,47 @@ type ObserveTrafficRetryOriginalParams struct {
 func (q *Queries) ObserveTrafficRetryOriginal(ctx context.Context, db DBTX, arg ObserveTrafficRetryOriginalParams) error {
 	_, err := db.Exec(ctx, observeTrafficRetryOriginal, arg.AppID, arg.WindowMs)
 	return err
+}
+
+const openDatabaseUsage = `-- name: OpenDatabaseUsage :exec
+INSERT INTO database_usage (database_id, meter, started_at, rate)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (database_id, meter) WHERE ended_at IS NULL AND meter <> 'egress' DO NOTHING
+`
+
+type OpenDatabaseUsageParams struct {
+	DatabaseID pgtype.UUID
+	Meter      string
+	At         pgtype.Timestamptz
+	Rate       int64
+}
+
+// Starts a rate interval unless one is open for the meter.
+func (q *Queries) OpenDatabaseUsage(ctx context.Context, db DBTX, arg OpenDatabaseUsageParams) error {
+	_, err := db.Exec(ctx, openDatabaseUsage,
+		arg.DatabaseID,
+		arg.Meter,
+		arg.At,
+		arg.Rate,
+	)
+	return err
+}
+
+const openDatabaseUsageRate = `-- name: OpenDatabaseUsageRate :one
+SELECT rate FROM database_usage
+WHERE database_id = $1 AND meter = $2 AND ended_at IS NULL
+`
+
+type OpenDatabaseUsageRateParams struct {
+	DatabaseID pgtype.UUID
+	Meter      string
+}
+
+func (q *Queries) OpenDatabaseUsageRate(ctx context.Context, db DBTX, arg OpenDatabaseUsageRateParams) (int64, error) {
+	row := db.QueryRow(ctx, openDatabaseUsageRate, arg.DatabaseID, arg.Meter)
+	var rate int64
+	err := row.Scan(&rate)
+	return rate, err
 }
 
 const operationEffectDeliveryAllowed = `-- name: OperationEffectDeliveryAllowed :one
@@ -72643,6 +73877,31 @@ DELETE FROM data_upstream_probes WHERE sampled_at < $1
 func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error {
 	_, err := db.Exec(ctx, pruneDataUpstreamProbesOlderThan, sampledAt)
 	return err
+}
+
+const pruneDatabaseRestoreDrills = `-- name: PruneDatabaseRestoreDrills :execrows
+DELETE FROM database_restore_drills WHERE result <> 'running' AND started_at < $1
+`
+
+func (q *Queries) PruneDatabaseRestoreDrills(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, pruneDatabaseRestoreDrills, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneDatabaseUsage = `-- name: PruneDatabaseUsage :execrows
+DELETE FROM database_usage
+WHERE ended_at < $1 OR (meter = 'egress' AND started_at < $1)
+`
+
+func (q *Queries) PruneDatabaseUsage(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, pruneDatabaseUsage, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const pruneDevBridgeSessions = `-- name: PruneDevBridgeSessions :exec
@@ -83954,6 +85213,9 @@ const readPublicHostApp = `-- name: ReadPublicHostApp :one
 SELECT (jsonb_build_object(
     'ID', a.id,
     'AccountID', a.account_id,
+    -- OrgID names a company organization only: a personal one reads as none, so
+    -- a personal app's policy costs no organization read in the snapshot.
+    'OrgID', (SELECT o.id FROM orgs o WHERE o.id = a.org_id AND NOT o.personal_org),
     'Slug', a.slug,
     'Type', a.type,
     'Status', a.status,
@@ -84173,6 +85435,11 @@ WITH matching AS (
       AND (match_host = $3::text OR match_host = '*'
            OR $3::text LIKE replace(replace(match_host, '*', '%'), '?', '_')
            OR (app_id = $4::uuid AND lower(match_host) = '@app'))
+      AND NOT EXISTS (SELECT 1 FROM apps deleted WHERE deleted.id = edge_rules.app_id AND deleted.status = 'deleted')
+      AND ($4::uuid IS NULL OR edge_rules.app_id = $4::uuid
+           OR (SELECT ro.id FROM apps ra JOIN orgs ro ON ro.id = ra.org_id AND NOT ro.personal_org WHERE ra.id = edge_rules.app_id)
+              IS NOT DISTINCT FROM
+              (SELECT so.id FROM apps sa JOIN orgs so ON so.id = sa.org_id AND NOT so.personal_org WHERE sa.id = $4::uuid))
     ORDER BY priority, created_at, id LIMIT ($5::integer + 1)
 ), bounds AS (
     SELECT count(*) > $5::integer
@@ -84202,7 +85469,10 @@ type ReadPublicHostEdgeRulesRow struct {
 // through the row's JSON so historical-schema upgrade fixtures can still run
 // the traffic analysis; on the current schema the projection is identical.
 // A non-null app_id adds that app's app-wide rules (match_host "@app",
-// ADR-1191) in the same ordered, bounded projection.
+// ADR-1191) in the same ordered, bounded projection. As on the cached path
+// (ADR-091 amendments 2026-10-28 and 2026-10-31), rules of deleted apps are
+// left out and, with an app_id, so are rules of apps outside its edge-rule
+// scope: the owning company organization, or none for a personal app.
 func (q *Queries) ReadPublicHostEdgeRules(ctx context.Context, db DBTX, arg ReadPublicHostEdgeRulesParams) (ReadPublicHostEdgeRulesRow, error) {
 	row := db.QueryRow(ctx, readPublicHostEdgeRules,
 		arg.AccountID,
@@ -88740,6 +90010,42 @@ func (q *Queries) RecordClonePostgresMaintenance(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const recordDatabaseVMBackup = `-- name: RecordDatabaseVMBackup :execrows
+UPDATE database_vms SET last_backup_at = $1
+WHERE database_id = $2 AND state <> 'deleting'
+`
+
+type RecordDatabaseVMBackupParams struct {
+	At         pgtype.Timestamptz
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) RecordDatabaseVMBackup(ctx context.Context, db DBTX, arg RecordDatabaseVMBackupParams) (int64, error) {
+	result, err := db.Exec(ctx, recordDatabaseVMBackup, arg.At, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordDatabaseVMRestore = `-- name: RecordDatabaseVMRestore :execrows
+UPDATE database_vms SET restore_recovered_to = $1
+WHERE database_id = $2 AND state = 'provisioning' AND restore_source IS NOT NULL
+`
+
+type RecordDatabaseVMRestoreParams struct {
+	RecoveredTo pgtype.Timestamptz
+	DatabaseID  pgtype.UUID
+}
+
+func (q *Queries) RecordDatabaseVMRestore(ctx context.Context, db DBTX, arg RecordDatabaseVMRestoreParams) (int64, error) {
+	result, err := db.Exec(ctx, recordDatabaseVMRestore, arg.RecoveredTo, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recordDeploymentCronOutcome = `-- name: RecordDeploymentCronOutcome :exec
 INSERT INTO deployment_cron_outcomes(deployment_id,session_id,revision,status,reason)
 SELECT d.id,c.session_id,c.revision,$1::text,$2::text
@@ -89344,6 +90650,27 @@ func (q *Queries) RecordManagedPostgresLifecycleResource(ctx context.Context, db
 		arg.DatabaseID,
 		arg.LeaseToken,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordManagedPostgresPlanExcessNotice = `-- name: RecordManagedPostgresPlanExcessNotice :execrows
+INSERT INTO managed_postgres_plan_excess_notices(database_id,reason,recorded_at)
+VALUES($1::uuid,$2::text,$3::timestamptz)
+ON CONFLICT (database_id) DO NOTHING
+`
+
+type RecordManagedPostgresPlanExcessNoticeParams struct {
+	DatabaseID pgtype.UUID
+	Reason     string
+	RecordedAt pgtype.Timestamptz
+}
+
+// One notice per suspension; later sweeps leave it alone.
+func (q *Queries) RecordManagedPostgresPlanExcessNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresPlanExcessNoticeParams) (int64, error) {
+	result, err := db.Exec(ctx, recordManagedPostgresPlanExcessNotice, arg.DatabaseID, arg.Reason, arg.RecordedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -91282,6 +92609,38 @@ func (q *Queries) ReleaseApplicationStandardOperationWorker(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const releaseCanariesForVerification = `-- name: ReleaseCanariesForVerification :execrows
+UPDATE deployments d SET status = CASE WHEN
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state='aborted', rollout_aborted_at=$1::timestamptz,
+    rollout_aborted_reason='superseded by deployment ' || ($2::uuid)::text
+WHERE d.id = ANY($3::uuid[]) AND d.status='live'
+AND d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+`
+
+type ReleaseCanariesForVerificationParams struct {
+	AbortedAt   pgtype.Timestamptz
+	CandidateID pgtype.UUID
+	ReleasedIds []pgtype.UUID
+}
+
+// A newer candidate that cannot be verified beside the serving deployment
+// and an older in-flight canary takes the canary's rollout grant before its
+// smoke (ADR-20261030102813 amendment, Hunt 31 H31-4). The released canaries
+// leave traffic and end their rollouts as aborted; a retained revision stays
+// live at 0%, as in RetireLiveDeploymentSiblings.
+func (q *Queries) ReleaseCanariesForVerification(ctx context.Context, db DBTX, arg ReleaseCanariesForVerificationParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseCanariesForVerification, arg.AbortedAt, arg.CandidateID, arg.ReleasedIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const releaseCloneCheckpointConfiguration = `-- name: ReleaseCloneCheckpointConfiguration :execrows
 UPDATE project_environment_clone_configuration_guards g SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',
  held_at=NULL,generation=g.generation+1
@@ -91396,6 +92755,26 @@ func (q *Queries) ReleaseConfigurationCandidateOwner(ctx context.Context, db DBT
 	var i ReleaseConfigurationCandidateOwnerRow
 	err := row.Scan(&i.AccountID, &i.ProjectID)
 	return i, err
+}
+
+const releaseDatabaseStandby = `-- name: ReleaseDatabaseStandby :execrows
+UPDATE database_vms SET standby_running = false, standby_synced = standby_synced AND $1::boolean
+WHERE database_id = $2
+`
+
+type ReleaseDatabaseStandbyParams struct {
+	KeepSynced bool
+	DatabaseID pgtype.UUID
+}
+
+// Marks the standby VM stopped; it stays synchronized only if keep_synced
+// (a clean stop after its primary's).
+func (q *Queries) ReleaseDatabaseStandby(ctx context.Context, db DBTX, arg ReleaseDatabaseStandbyParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseDatabaseStandby, arg.KeepSynced, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const releaseEdgeRuleAccountMutationLock = `-- name: ReleaseEdgeRuleAccountMutationLock :one
@@ -91644,15 +93023,17 @@ func (q *Queries) ReleaseProductionNamedQueueClaims(ctx context.Context, db DBTX
 const releaseProjectEnvironmentCloneWorkerLease = `-- name: ReleaseProjectEnvironmentCloneWorkerLease :execrows
 UPDATE project_environment_clone_operations
 SET lease_token = NULL, lease_until = NULL, revision = revision + 1, updated_at = clock_timestamp(),
-    next_attempt_at = clock_timestamp() + $1::bigint * interval '1 microsecond'
-WHERE id = $2::uuid AND account_id = $3::uuid AND project_id = $4::uuid
-  AND lease_token = $5::uuid AND lease_until > clock_timestamp()
-  AND revision = $6::bigint AND status = $7::text
+    next_attempt_at = clock_timestamp() + $1::bigint * interval '1 microsecond',
+    attempt_count = CASE WHEN $2::int BETWEEN 1 AND attempt_count THEN $2::int ELSE attempt_count END
+WHERE id = $3::uuid AND account_id = $4::uuid AND project_id = $5::uuid
+  AND lease_token = $6::uuid AND lease_until > clock_timestamp()
+  AND revision = $7::bigint AND status = $8::text
   AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
 `
 
 type ReleaseProjectEnvironmentCloneWorkerLeaseParams struct {
 	RetryMicroseconds int64
+	KeepAttempts      int32
 	OperationID       pgtype.UUID
 	AccountID         pgtype.UUID
 	ProjectID         pgtype.UUID
@@ -91661,9 +93042,12 @@ type ReleaseProjectEnvironmentCloneWorkerLeaseParams struct {
 	Status            string
 }
 
+// keep_attempts may only lower the count, never below 1: zero with no lease
+// would readmit unleased legacy writers.
 func (q *Queries) ReleaseProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg ReleaseProjectEnvironmentCloneWorkerLeaseParams) (int64, error) {
 	result, err := db.Exec(ctx, releaseProjectEnvironmentCloneWorkerLease,
 		arg.RetryMicroseconds,
+		arg.KeepAttempts,
 		arg.OperationID,
 		arg.AccountID,
 		arg.ProjectID,
@@ -91936,6 +93320,28 @@ func (q *Queries) RenewCustomerOperationWorkflowRun(ctx context.Context, db DBTX
 	return err
 }
 
+const renewDatabaseVMMove = `-- name: RenewDatabaseVMMove :one
+UPDATE database_vms
+SET move_lease_until = now() + make_interval(secs => $1::double precision)
+WHERE database_id = $2 AND state = 'moving' AND move_lease_until = $3::timestamptz
+RETURNING move_lease_until
+`
+
+type RenewDatabaseVMMoveParams struct {
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+	Held         pgtype.Timestamptz
+}
+
+// Renews the lease the caller holds on a move. The lease is the database
+// clock's, so replicas' clocks do not matter.
+func (q *Queries) RenewDatabaseVMMove(ctx context.Context, db DBTX, arg RenewDatabaseVMMoveParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, renewDatabaseVMMove, arg.LeaseSeconds, arg.DatabaseID, arg.Held)
+	var move_lease_until pgtype.Timestamptz
+	err := row.Scan(&move_lease_until)
+	return move_lease_until, err
+}
+
 const renewEnvironmentGitOpsLease = `-- name: RenewEnvironmentGitOpsLease :execrows
 UPDATE environment_gitops_jobs
 SET lease_until = $1::timestamptz
@@ -92105,6 +93511,25 @@ type ReopenSkippedWorkflowStepsForRetryParams struct {
 
 func (q *Queries) ReopenSkippedWorkflowStepsForRetry(ctx context.Context, db DBTX, arg ReopenSkippedWorkflowStepsForRetryParams) (int64, error) {
 	result, err := db.Exec(ctx, reopenSkippedWorkflowStepsForRetry, arg.RunID, arg.StepNames)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const replaceDatabaseStandby = `-- name: ReplaceDatabaseStandby :execrows
+UPDATE database_vms SET standby_node = $1, standby_running = false, standby_synced = false
+WHERE database_id = $2 AND replicated AND NOT standby_running
+    AND state IN ('provisioning', 'parked', 'waking', 'running', 'parking', 'failed')
+`
+
+type ReplaceDatabaseStandbyParams struct {
+	StandbyNode pgtype.Text
+	DatabaseID  pgtype.UUID
+}
+
+func (q *Queries) ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg ReplaceDatabaseStandbyParams) (int64, error) {
+	result, err := db.Exec(ctx, replaceDatabaseStandby, arg.StandbyNode, arg.DatabaseID)
 	if err != nil {
 		return 0, err
 	}
@@ -94621,6 +96046,44 @@ func (q *Queries) ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID 
 	return err
 }
 
+const resizeDatabaseVM = `-- name: ResizeDatabaseVM :execrows
+UPDATE database_vms
+SET vcpu_count = $1, mem_mib = $2, volume_bytes = $3,
+    replicated = $4::boolean, standby_node = $5,
+    standby_synced = standby_synced AND $4::boolean,
+    drop_standby_slot = $6::boolean,
+    resize_pending = true
+WHERE database_id = $7 AND state IN ('parked', 'running')
+`
+
+type ResizeDatabaseVMParams struct {
+	VcpuCount       int32
+	MemMib          int32
+	VolumeBytes     int64
+	Replicated      bool
+	StandbyNode     pgtype.Text
+	DropStandbySlot bool
+	DatabaseID      pgtype.UUID
+}
+
+// Records a new shape. Turning replication on names the standby node;
+// turning it off (its standby already retired) owes the primary's slot.
+func (q *Queries) ResizeDatabaseVM(ctx context.Context, db DBTX, arg ResizeDatabaseVMParams) (int64, error) {
+	result, err := db.Exec(ctx, resizeDatabaseVM,
+		arg.VcpuCount,
+		arg.MemMib,
+		arg.VolumeBytes,
+		arg.Replicated,
+		arg.StandbyNode,
+		arg.DropStandbySlot,
+		arg.DatabaseID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const resolveEnvironmentFieldOwnershipScope = `-- name: ResolveEnvironmentFieldOwnershipScope :one
 SELECT e.id AS environment_id,e.project_id,p.account_id,
  CASE WHEN $1::text='' THEN 'environment' ELSE 'app/'||a.id::text END::text AS resource
@@ -95074,7 +96537,7 @@ func (q *Queries) RetainStagedProjectRelease(ctx context.Context, db DBTX, arg R
 
 const retainedLayerBytesWithClonePins = `-- name: RetainedLayerBytesWithClonePins :one
 WITH retained_deployments AS (
-    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision FROM deployments d JOIN apps a ON a.id = d.app_id
+    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=d.id)
@@ -96335,7 +97798,7 @@ WITH selected AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
  FROM jsonb_array_elements($3::jsonb)
 ), observed AS MATERIALIZED (
- SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status,
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status, rt.cold_boot,
   CASE WHEN $4::text = 'tenant' THEN pt.id ELSE c.id END AS customer_id,
   CASE WHEN $4::text = 'tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed
  FROM selected s CROSS JOIN windows w JOIN request_telemetry rt
@@ -96344,6 +97807,7 @@ WITH selected AS (
  AND rt.method = s.method AND rt.route = s.method || ' ' || s.path
  AND rt.received_at >= w.start AND rt.received_at < w."end"
  AND rt.received_at >= $9::timestamptz AND rt.received_at < $10::timestamptz
+ AND NOT rt.platform_refusal
  LEFT JOIN api_consumers c ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id = rt.platform_tenant_id AND pt.account_id = rt.account_id
 ), totals AS (
@@ -96377,8 +97841,10 @@ WITH selected AS (
  SELECT b.method, b.path, b.customer_id, b.position, w.start, w."end",
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid), 0)::bigint AS candidate_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid AND NOT o.cold_boot), 0)::bigint AS candidate_latency_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid), 0)::bigint AS stable_requests,
- coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS stable_errors
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS stable_errors,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid AND NOT o.cold_boot), 0)::bigint AS stable_latency_requests
  FROM bounded b CROSS JOIN windows w LEFT JOIN observed o
  ON o.method = b.method AND o.path = b.path AND o.customer_id = b.customer_id AND o.start = w.start
  GROUP BY b.method, b.path, b.customer_id, b.position, w.start, w."end"
@@ -96401,7 +97867,7 @@ WITH selected AS (
  FROM status_windows GROUP BY method,path,customer_id
 ), weighted AS (
  SELECT o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms, sum(o.requests) AS weight
- FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled
+ FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled AND NOT o.cold_boot
  GROUP BY o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms
 ), ranked AS (
  SELECT method, path, customer_id, start, deployment_id, latency_ms, weight, sum(weight) OVER (PARTITION BY method, path, customer_id, start, deployment_id ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
@@ -96419,9 +97885,11 @@ WITH selected AS (
 ), cohort_windows AS (
  SELECT c.method, c.path, c.customer_id, c.position,
  jsonb_agg(jsonb_build_object('start', c.start, 'end', c."end",
- 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', cp.p95_ms),
- 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', sp.p95_ms)) ORDER BY c.start) AS windows
- FROM counts c
+ 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', cp.p95_ms,
+  'latency_requests', CASE WHEN sel.latency_enabled THEN c.candidate_latency_requests END),
+ 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', sp.p95_ms,
+  'latency_requests', CASE WHEN sel.latency_enabled THEN c.stable_latency_requests END)) ORDER BY c.start) AS windows
+ FROM counts c JOIN selected sel ON sel.method = c.method AND sel.path = c.path
  LEFT JOIN percentiles cp ON cp.method = c.method AND cp.path = c.path AND cp.customer_id = c.customer_id AND cp.start = c.start AND cp.deployment_id = $7::text::uuid
  LEFT JOIN percentiles sp ON sp.method = c.method AND sp.path = c.path AND sp.customer_id = c.customer_id AND sp.start = c.start AND sp.deployment_id = $8::text::uuid
  GROUP BY c.method, c.path, c.customer_id, c.position
@@ -96455,6 +97923,7 @@ type RouteCustomerHealthObservationParams struct {
 // Advisory identity cohorts use the same exact routes, deployment pair and
 // closed windows as aggregate health. Rank before bounding output and sorting
 // weighted latency. Request-time attribution never follows today's tenant link.
+// Like the guard, skip platform refusals and rank only warm latency.
 func (q *Queries) RouteCustomerHealthObservation(ctx context.Context, db DBTX, arg RouteCustomerHealthObservationParams) ([]byte, error) {
 	row := db.QueryRow(ctx, routeCustomerHealthObservation,
 		arg.CustomerLimit,
@@ -96495,6 +97964,7 @@ WITH selected AS (
  AND t.method=s.method AND t.route=s.method || ' ' || s.path
  AND t.received_at>=w.start AND t.received_at<w."end"
  AND t.received_at>=$7::timestamptz AND t.received_at<$8::timestamptz
+ AND NOT t.platform_refusal
  AND ($9::text = ''
   OR ($10::text = 'tenant' AND t.platform_tenant_id = NULLIF($9::text, '')::uuid)
   OR ($10::text = 'consumer' AND t.consumer_id = NULLIF($9::text, '')::uuid))
@@ -96593,9 +98063,10 @@ WITH windows AS (
  AND t.deployment_id IN ($6::text::uuid,$7::text::uuid)
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND ($8::boolean OR t.status BETWEEN $9::integer AND $10::integer)
- AND ($11::text = ''
-  OR ($12::text = 'tenant' AND t.platform_tenant_id = NULLIF($11::text, '')::uuid)
-  OR ($12::text = 'consumer' AND t.consumer_id = NULLIF($11::text, '')::uuid))
+ AND NOT t.platform_refusal AND NOT ($8::boolean AND $11::boolean AND t.cold_boot)
+ AND ($12::text = ''
+  OR ($13::text = 'tenant' AND t.platform_tenant_id = NULLIF($12::text, '')::uuid)
+  OR ($13::text = 'consumer' AND t.consumer_id = NULLIF($12::text, '')::uuid))
 ), ranked AS (
  SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id,row_number() OVER (PARTITION BY start,deployment_id ORDER BY CASE WHEN $8::boolean THEN latency_ms END DESC NULLS LAST,(nullif(trace_id,'') IS NOT NULL) DESC,received_at DESC,id DESC) AS position
  FROM observed
@@ -96604,14 +98075,14 @@ WITH windows AS (
  FROM observed GROUP BY start,deployment_id
 ), examples AS (
  SELECT start,deployment_id,jsonb_agg(jsonb_build_object('telemetry_id',id,'received_at',received_at,'status',status,'latency_ms',latency_ms,'represented_requests',count,'trace_id',trace_id) ORDER BY position) AS examples
- FROM ranked WHERE position <= $13::integer GROUP BY start,deployment_id
+ FROM ranked WHERE position <= $14::integer GROUP BY start,deployment_id
 ), sides AS (
  SELECT $6::text::uuid AS deployment_id,'candidate'::text AS side
  UNION ALL SELECT $7::text::uuid,'stable'::text
 ), summaries AS (
  SELECT w.start,w."end",jsonb_object_agg(s.side,jsonb_build_object(
  'matching_requests',coalesce(t.matching_requests,0),'observed_rows',coalesce(t.observed_rows,0),
- 'examples_truncated',coalesce(t.observed_rows,0) > $13::integer,'examples',coalesce(e.examples,'[]'::jsonb))) AS sides
+ 'examples_truncated',coalesce(t.observed_rows,0) > $14::integer,'examples',coalesce(e.examples,'[]'::jsonb))) AS sides
  FROM windows w CROSS JOIN sides s LEFT JOIN totals t ON t.start=w.start AND t.deployment_id=s.deployment_id
  LEFT JOIN examples e ON e.start=w.start AND e.deployment_id=s.deployment_id GROUP BY w.start,w."end"
 )
@@ -96629,6 +98100,7 @@ type RouteHealthInvestigationExamplesParams struct {
 	Latency         bool
 	StatusMin       int32
 	StatusMax       int32
+	WarmLatency     bool
 	CustomerID      string
 	CustomerGroupBy string
 	ExampleLimit    int32
@@ -96637,6 +98109,8 @@ type RouteHealthInvestigationExamplesParams struct {
 // Metadata only. Count all matching rows/weights before independently bounding
 // each deployment/window. Error rows prefer trace links; latency rows prefer
 // slowest latency buckets. Both then use newest timestamps and UUID ties.
+// Same population as the evidence it explains: no platform refusals, and
+// warm latency only for the canary guard (warm_latency).
 func (q *Queries) RouteHealthInvestigationExamples(ctx context.Context, db DBTX, arg RouteHealthInvestigationExamplesParams) ([]byte, error) {
 	row := db.QueryRow(ctx, routeHealthInvestigationExamples,
 		arg.Windows,
@@ -96649,6 +98123,7 @@ func (q *Queries) RouteHealthInvestigationExamples(ctx context.Context, db DBTX,
 		arg.Latency,
 		arg.StatusMin,
 		arg.StatusMax,
+		arg.WarmLatency,
 		arg.CustomerID,
 		arg.CustomerGroupBy,
 		arg.ExampleLimit,
@@ -96671,11 +98146,12 @@ WITH windows AS (
  AND t.method=$4::text AND t.route=$4::text || ' ' || $5::text
  AND t.deployment_id IN ($6::text::uuid,$7::text::uuid)
  AND t.received_at>=w.start AND t.received_at<w."end"
- AND ($8::text=''
-  OR ($9::text='tenant' AND t.platform_tenant_id=NULLIF($8::text,'')::uuid)
-  OR ($9::text='consumer' AND t.consumer_id=NULLIF($8::text,'')::uuid))
+ AND NOT t.platform_refusal AND NOT ($8::boolean AND t.cold_boot)
+ AND ($9::text=''
+  OR ($10::text='tenant' AND t.platform_tenant_id=NULLIF($9::text,'')::uuid)
+  OR ($10::text='consumer' AND t.consumer_id=NULLIF($9::text,'')::uuid))
 ), sampled AS MATERIALIZED (
- SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id, spans_summary, cold_boot, guest_duration_ms, guest_outcome, wake_id, instance_id, position FROM ranked WHERE position<=$10::integer
+ SELECT start, "end", id, received_at, deployment_id, status, latency_ms, count, trace_id, spans_summary, cold_boot, guest_duration_ms, guest_outcome, wake_id, instance_id, position FROM ranked WHERE position<=$11::integer
 )
 SELECT s.start,s.deployment_id::text AS deployment_id,s.id::text AS telemetry_id,s.received_at,s.status,s.latency_ms,s.count,s.trace_id,
  s.spans_summary,s.cold_boot,s.guest_duration_ms,s.guest_outcome,s.wake_id,
@@ -96702,6 +98178,7 @@ type RouteHealthLatencyEvidenceParams struct {
 	Path            string
 	CandidateID     string
 	StableID        string
+	WarmLatency     bool
 	CustomerID      string
 	CustomerGroupBy string
 	RowsLimit       int32
@@ -96726,6 +98203,7 @@ type RouteHealthLatencyEvidenceRow struct {
 
 // Independently bound the newest rows in each exact deployment/window. Read
 // rows without spans too, so missing coverage is not hidden by selection.
+// warm_latency reads the warm population the canary guard ranked.
 func (q *Queries) RouteHealthLatencyEvidence(ctx context.Context, db DBTX, arg RouteHealthLatencyEvidenceParams) ([]RouteHealthLatencyEvidenceRow, error) {
 	rows, err := db.Query(ctx, routeHealthLatencyEvidence,
 		arg.AppID,
@@ -96735,6 +98213,7 @@ func (q *Queries) RouteHealthLatencyEvidence(ctx context.Context, db DBTX, arg R
 		arg.Path,
 		arg.CandidateID,
 		arg.StableID,
+		arg.WarmLatency,
 		arg.CustomerID,
 		arg.CustomerGroupBy,
 		arg.RowsLimit,
@@ -96776,30 +98255,34 @@ const routeHealthObservation = `-- name: RouteHealthObservation :one
 WITH selected AS (
  SELECT (value->>'method')::text AS method, (value->>'path')::text AS path,
   (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled
- FROM jsonb_array_elements($3::jsonb)
+ FROM jsonb_array_elements($4::jsonb)
 ), windows AS (
- SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements($4::jsonb)
+ SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements($5::jsonb)
 ), observed AS MATERIALIZED (
- SELECT s.method, s.path, s.latency_enabled, w.start, w."end", t.deployment_id, t.latency_ms, t.status, t.count
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", t.deployment_id, t.latency_ms, t.status, t.count,
+  ($1::boolean AND t.cold_boot) AS latency_excluded
  FROM selected s CROSS JOIN windows w LEFT JOIN request_telemetry t
- ON t.app_id = $5::text::uuid AND t.account_id = $6::text::uuid
- AND t.deployment_id IN ($1::text::uuid, $2::text::uuid)
+ ON t.app_id = $6::text::uuid AND t.account_id = $7::text::uuid
+ AND t.deployment_id IN ($2::text::uuid, $3::text::uuid)
  AND t.method = s.method AND t.route = s.method || ' ' || s.path
  AND t.received_at >= w.start AND t.received_at < w."end"
- AND t.received_at >= $7::timestamptz AND t.received_at < $8::timestamptz
- AND ($9::text = ''
-  OR ($10::text = 'tenant' AND t.platform_tenant_id = NULLIF($9::text, '')::uuid)
-  OR ($10::text = 'consumer' AND t.consumer_id = NULLIF($9::text, '')::uuid))
+ AND t.received_at >= $8::timestamptz AND t.received_at < $9::timestamptz
+ AND NOT t.platform_refusal
+ AND ($10::text = ''
+  OR ($11::text = 'tenant' AND t.platform_tenant_id = NULLIF($10::text, '')::uuid)
+  OR ($11::text = 'consumer' AND t.consumer_id = NULLIF($10::text, '')::uuid))
 ), counts AS (
- SELECT method, path, start, "end",
- coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $1::text::uuid), 0)::bigint AS candidate_requests,
- coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $1::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
- coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid), 0)::bigint AS stable_requests,
- coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS stable_errors
- FROM observed GROUP BY method, path, start, "end"
+ SELECT method, path, latency_enabled, start, "end",
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid), 0)::bigint AS candidate_requests,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $2::text::uuid AND NOT latency_excluded), 0)::bigint AS candidate_latency_requests,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $3::text::uuid), 0)::bigint AS stable_requests,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $3::text::uuid AND status BETWEEN 500 AND 599), 0)::bigint AS stable_errors,
+ coalesce(sum(count::bigint) FILTER (WHERE deployment_id = $3::text::uuid AND NOT latency_excluded), 0)::bigint AS stable_latency_requests
+ FROM observed GROUP BY method, path, latency_enabled, start, "end"
 ), weighted AS (
  SELECT method, path, start, deployment_id, latency_ms, sum(count::bigint) AS weight
- FROM observed WHERE latency_enabled AND deployment_id IS NOT NULL
+ FROM observed WHERE latency_enabled AND deployment_id IS NOT NULL AND NOT latency_excluded
  GROUP BY method, path, start, deployment_id, latency_ms
 ), ranked AS (
  SELECT method, path, start, deployment_id, latency_ms,
@@ -96808,7 +98291,7 @@ WITH selected AS (
  FROM weighted
 ), targets AS (
  SELECT method, path, start, deployment_id, latency_ms, cumulative,
- (total - 1)::numeric * $11::double precision::numeric AS rank
+ (total - 1)::numeric * $12::double precision::numeric AS rank
  FROM ranked
 ), values_at_rank AS (
  SELECT method, path, start, deployment_id, rank,
@@ -96821,14 +98304,17 @@ WITH selected AS (
  FROM values_at_rank
 )
 SELECT coalesce(jsonb_agg(jsonb_build_object('method', c.method, 'path', c.path, 'start', c.start, 'end', c."end",
- 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', candidate.p95_ms),
- 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', stable.p95_ms)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
+ 'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', candidate.p95_ms,
+  'latency_requests', CASE WHEN $1::boolean AND c.latency_enabled THEN c.candidate_latency_requests END),
+ 'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', stable.p95_ms,
+  'latency_requests', CASE WHEN $1::boolean AND c.latency_enabled THEN c.stable_latency_requests END)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
 FROM counts c
-LEFT JOIN percentiles candidate ON candidate.method = c.method AND candidate.path = c.path AND candidate.start = c.start AND candidate.deployment_id = $1::text::uuid
-LEFT JOIN percentiles stable ON stable.method = c.method AND stable.path = c.path AND stable.start = c.start AND stable.deployment_id = $2::text::uuid
+LEFT JOIN percentiles candidate ON candidate.method = c.method AND candidate.path = c.path AND candidate.start = c.start AND candidate.deployment_id = $2::text::uuid
+LEFT JOIN percentiles stable ON stable.method = c.method AND stable.path = c.path AND stable.start = c.start AND stable.deployment_id = $3::text::uuid
 `
 
 type RouteHealthObservationParams struct {
+	WarmLatency     bool
 	CandidateID     string
 	StableID        string
 	Routes          []byte
@@ -96845,8 +98331,12 @@ type RouteHealthObservationParams struct {
 // Exact selected labels and shared windows. Aggregate publisher weights without
 // expanding requests. Percentile ranks interpolate bucket representatives, like
 // RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
+// Platform refusals never count. warm_latency (the canary guard) ranks only
+// requests that did not cold boot and reports how many it ranked
+// (ADR-20261028110044 amendment 3); the production monitor stays end to end.
 func (q *Queries) RouteHealthObservation(ctx context.Context, db DBTX, arg RouteHealthObservationParams) ([]byte, error) {
 	row := db.QueryRow(ctx, routeHealthObservation,
+		arg.WarmLatency,
 		arg.CandidateID,
 		arg.StableID,
 		arg.Routes,
@@ -96914,7 +98404,7 @@ WITH selected AS (
  FROM selected s CROSS JOIN windows w
  JOIN request_telemetry rt ON rt.account_id=$5::text::uuid AND rt.app_id=$6::text::uuid
   AND rt.deployment_id=$7::text::uuid AND rt.method=s.method AND rt.route=s.method||' '||s.path
-  AND rt.received_at>=w.start AND rt.received_at<w."end"
+  AND rt.received_at>=w.start AND rt.received_at<w."end" AND NOT rt.platform_refusal
  LEFT JOIN api_consumers c ON c.id=rt.consumer_id AND c.account_id=rt.account_id AND c.app_id=rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id=rt.platform_tenant_id AND pt.account_id=rt.account_id
 ), required AS (
@@ -97080,7 +98570,7 @@ func (q *Queries) RouteMonitorCustomerObservations(ctx context.Context, db DBTX,
 
 const routeMonitorServingDeployments = `-- name: RouteMonitorServingDeployments :many
 WITH lanes AS (
- SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,
+ SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,promoted_at,
   CASE WHEN scope='production' THEN 'production' ELSE 'default' END AS lane
  FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL
   AND coalesce(nullif(scope,''),'default') IN ('default','production')
@@ -97089,7 +98579,7 @@ WITH lanes AS (
   OR (NOT EXISTS (SELECT 1 FROM lanes WHERE lane='default' AND traffic_percent>0) AND EXISTS (SELECT 1 FROM lanes WHERE lane='production'))
   THEN 'production' ELSE 'default' END AS lane
 )
-SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps
+SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps,l.promoted_at
 FROM lanes l JOIN chosen c ON c.lane=l.lane WHERE l.traffic_percent>0 ORDER BY l.id LIMIT 2
 `
 
@@ -97104,6 +98594,7 @@ type RouteMonitorServingDeploymentsRow struct {
 	TrafficPercent      int32
 	CanaryStep          int32
 	CanaryTotalSteps    int32
+	PromotedAt          pgtype.Timestamptz
 }
 
 // The app's production routing lane (state.ProductionRoutingDeployments): a
@@ -97130,6 +98621,7 @@ func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, a
 			&i.TrafficPercent,
 			&i.CanaryStep,
 			&i.CanaryTotalSteps,
+			&i.PromotedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -97251,6 +98743,40 @@ func (q *Queries) RouteProbeTotalsByDeployment(ctx context.Context, db DBTX, arg
 			&i.Requests,
 			&i.ServerErrors,
 			&i.Unauthenticated,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const runningDatabaseRestoreDrills = `-- name: RunningDatabaseRestoreDrills :many
+SELECT drill_id, node_id, source_id, target_at, started_at, finished_at, result, recovered_to, error_code FROM database_restore_drills WHERE result = 'running' ORDER BY started_at
+`
+
+func (q *Queries) RunningDatabaseRestoreDrills(ctx context.Context, db DBTX) ([]DatabaseRestoreDrill, error) {
+	rows, err := db.Query(ctx, runningDatabaseRestoreDrills)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseRestoreDrill{}
+	for rows.Next() {
+		var i DatabaseRestoreDrill
+		if err := rows.Scan(
+			&i.DrillID,
+			&i.NodeID,
+			&i.SourceID,
+			&i.TargetAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Result,
+			&i.RecoveredTo,
+			&i.ErrorCode,
 		); err != nil {
 			return nil, err
 		}
@@ -98999,6 +100525,24 @@ func (q *Queries) SetCustomerOperationWorkflowIdentity(ctx context.Context, db D
 	return result.RowsAffected(), nil
 }
 
+const setDatabaseVMAlwaysOn = `-- name: SetDatabaseVMAlwaysOn :execrows
+UPDATE database_vms SET always_on = $1
+WHERE database_id = $2 AND state <> 'deleting'
+`
+
+type SetDatabaseVMAlwaysOnParams struct {
+	AlwaysOn   bool
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) SetDatabaseVMAlwaysOn(ctx context.Context, db DBTX, arg SetDatabaseVMAlwaysOnParams) (int64, error) {
+	result, err := db.Exec(ctx, setDatabaseVMAlwaysOn, arg.AlwaysOn, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setDeploymentFailed = `-- name: SetDeploymentFailed :one
 update deployments
    set status = 'failed', error = $2, error_code = $3,
@@ -100227,6 +101771,34 @@ func (q *Queries) StartCustomerOperationWorkflowStep(ctx context.Context, db DBT
 	return input, err
 }
 
+const startDatabaseRestoreDrill = `-- name: StartDatabaseRestoreDrill :execrows
+
+INSERT INTO database_restore_drills (drill_id, node_id, source_id, target_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (drill_id) DO NOTHING
+`
+
+type StartDatabaseRestoreDrillParams struct {
+	DrillID  pgtype.UUID
+	NodeID   string
+	SourceID pgtype.UUID
+	TargetAt pgtype.Timestamptz
+}
+
+// ADR-1027 restore drills (pkg/dbsched drill.go). schedd is the only writer.
+func (q *Queries) StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg StartDatabaseRestoreDrillParams) (int64, error) {
+	result, err := db.Exec(ctx, startDatabaseRestoreDrill,
+		arg.DrillID,
+		arg.NodeID,
+		arg.SourceID,
+		arg.TargetAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const stopEnvironmentQualificationInstance = `-- name: StopEnvironmentQualificationInstance :one
 UPDATE instances i SET state=CASE WHEN i.state IN ('parked','stopped','failed','evicting_account_deleting') THEN i.state ELSE 'stopped' END,
 terminal_at=e.retired_at FROM environment_qualification_executions e
@@ -101075,6 +102647,33 @@ func (q *Queries) SupersedeInFlightCanarySiblings(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const supersedeOutpacedDeployment = `-- name: SupersedeOutpacedDeployment :execrows
+UPDATE deployments d SET status='superseded', traffic_percent=0,
+    error_code='deployment_superseded',
+    error='deployment ' || n.id::text || ' was deployed after this one, so this one did not go live',
+    rollout_state = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'aborted' ELSE d.rollout_state END,
+    rollout_aborted_at = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN now() ELSE d.rollout_aborted_at END,
+    rollout_aborted_reason = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'superseded by deployment ' || n.id::text ELSE d.rollout_aborted_reason END
+FROM (SELECT o.id FROM deployments o, deployments c
+       WHERE c.id=$1::uuid AND o.app_id=c.app_id AND o.scope=c.scope AND o.revision>c.revision
+       ORDER BY o.revision DESC LIMIT 1) n
+WHERE d.id=$1::uuid AND d.status<>'superseded'
+`
+
+// A deployment a newer revision overtook before it went live (ADR-681 fence,
+// outpaced builds) records why, and an in-flight canary rollout ends as
+// aborted instead of staying pending on a superseded row (Hunt 31 H31-3).
+func (q *Queries) SupersedeOutpacedDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, supersedeOutpacedDeployment, deploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const supersedeTriggerRecordItems = `-- name: SupersedeTriggerRecordItems :execrows
 UPDATE trigger_records
    SET state = 'superseded', last_error = $1,
@@ -101433,6 +103032,24 @@ type TouchCustomerOperationWorkflowStepParams struct {
 func (q *Queries) TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error {
 	_, err := db.Exec(ctx, touchCustomerOperationWorkflowStep, arg.StepName, arg.RunID)
 	return err
+}
+
+const touchDatabaseVM = `-- name: TouchDatabaseVM :execrows
+UPDATE database_vms SET last_active_at = $1
+WHERE database_id = $2 AND state = 'running'
+`
+
+type TouchDatabaseVMParams struct {
+	At         pgtype.Timestamptz
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) TouchDatabaseVM(ctx context.Context, db DBTX, arg TouchDatabaseVMParams) (int64, error) {
+	result, err := db.Exec(ctx, touchDatabaseVM, arg.At, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const touchEdgeListenerHeartbeat = `-- name: TouchEdgeListenerHeartbeat :exec
@@ -101822,6 +103439,36 @@ func (q *Queries) TrafficAnomalyAggregateByNode(ctx context.Context, db DBTX, ar
 		return nil, err
 	}
 	return items, nil
+}
+
+const transitionDatabaseVM = `-- name: TransitionDatabaseVM :execrows
+UPDATE database_vms SET state = $1, state_changed_at = now(),
+    last_error = $2,
+    bootstrapped = bootstrapped OR $3::boolean,
+    last_active_at = CASE WHEN $1 = 'running' THEN now() ELSE last_active_at END
+WHERE database_id = $4 AND state = ANY($5::text[])
+`
+
+type TransitionDatabaseVMParams struct {
+	ToState      string
+	LastError    pgtype.Text
+	Bootstrapped bool
+	DatabaseID   pgtype.UUID
+	FromStates   []string
+}
+
+func (q *Queries) TransitionDatabaseVM(ctx context.Context, db DBTX, arg TransitionDatabaseVMParams) (int64, error) {
+	result, err := db.Exec(ctx, transitionDatabaseVM,
+		arg.ToState,
+		arg.LastError,
+		arg.Bootstrapped,
+		arg.DatabaseID,
+		arg.FromStates,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const transitionImagePreparation = `-- name: TransitionImagePreparation :execrows
@@ -102909,8 +104556,22 @@ update request_telemetry as target
          ) bounded
    )
  where target.trace_id = $1
-   and target.account_id = $3::uuid
    and target.received_at >= now() - interval '24 hours'
+   and ($5::uuid is null or target.app_id = $5::uuid)
+   and (case when $6::uuid is null then target.account_id = $3::uuid
+             else exists (select 1 from apps a where a.id = target.app_id and a.org_id = $6::uuid)
+        end)
+   and (not $7::boolean or not exists (
+         select 1
+           from apps a
+           join orgs o on o.id = a.org_id and not o.personal_org
+          where a.id = target.app_id
+            and not exists (
+                  select 1 from org_memberships m
+                   where m.org_id = o.id
+                     and m.account_id = $3::uuid
+                     and m.removed_at is null
+                     and m.role in ('owner', 'admin', 'developer'))))
 `
 
 type UpdateSpansSummaryParams struct {
@@ -102918,6 +104579,9 @@ type UpdateSpansSummaryParams struct {
 	Column2 []byte
 	Column3 pgtype.UUID
 	Column4 int32
+	Column5 pgtype.UUID
+	Column6 pgtype.UUID
+	Column7 bool
 }
 
 // ADR-127 PR-D: writer for spans_summary jsonb. The gatewayd-public
@@ -102946,12 +104610,30 @@ type UpdateSpansSummaryParams struct {
 // lookup still hits request_telemetry_trace_idx for the trace_id
 // selectivity; the residual account_id check is a post-fetch
 // row-level filter (one row, microseconds).
+//
+// Tracing tenancy (2026-10-31 logs/traces audit, T4/T5). account_id is
+// the app creator's storage namespace, not the tenant, so the pin alone
+// let one trace id merge spans into every app that creator ever made,
+// company apps included. Three optional narrowings, all off (null/false)
+// for an older producer:
+//
+//	$5 app_id: only the producing app's rows (the in-guest bridge, a
+//	   service binding's or outbound call's caller, an app-bound key).
+//	$6 org_id: a key bound to a company merges into that company's apps,
+//	   whoever created them, instead of rows carrying $3.
+//	$7 customer_credential: $3 holds a customer key. A company app's rows
+//	   are merged only while $3 may still deploy there (owner, admin or
+//	   developer, as event publishing requires), so a creator who left
+//	   the company cannot write its evidence.
 func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error) {
 	result, err := db.Exec(ctx, updateSpansSummary,
 		arg.TraceID,
 		arg.Column2,
 		arg.Column3,
 		arg.Column4,
+		arg.Column5,
+		arg.Column6,
+		arg.Column7,
 	)
 	if err != nil {
 		return 0, err
@@ -103272,6 +104954,61 @@ func (q *Queries) UpsertCustomerOperationWorkflowState(ctx context.Context, db D
 		arg.UpdatedAt,
 		arg.OperationID,
 	)
+	return err
+}
+
+const upsertDatabaseNode = `-- name: UpsertDatabaseNode :exec
+
+INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, postgres_majors, lifecycle)
+VALUES ($1, $2, $3, $4, $5,
+    $6::integer[], $7)
+ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
+    admission_ceiling_mb = EXCLUDED.admission_ceiling_mb,
+    volume_capacity_bytes = EXCLUDED.volume_capacity_bytes,
+    boot_slots = EXCLUDED.boot_slots,
+    postgres_majors = EXCLUDED.postgres_majors,
+    lifecycle = EXCLUDED.lifecycle, updated_at = now()
+`
+
+type UpsertDatabaseNodeParams struct {
+	ID                  string
+	TargetUrl           string
+	AdmissionCeilingMb  int32
+	VolumeCapacityBytes int64
+	BootSlots           int32
+	PostgresMajors      []int32
+	Lifecycle           string
+}
+
+// Database VMs (ADR-1027). database_nodes is inventory; database_vms is
+// written only by schedd's database scheduler (pkg/dbsched).
+func (q *Queries) UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDatabaseNodeParams) error {
+	_, err := db.Exec(ctx, upsertDatabaseNode,
+		arg.ID,
+		arg.TargetUrl,
+		arg.AdmissionCeilingMb,
+		arg.VolumeCapacityBytes,
+		arg.BootSlots,
+		arg.PostgresMajors,
+		arg.Lifecycle,
+	)
+	return err
+}
+
+const upsertDatabaseRoleVerifier = `-- name: UpsertDatabaseRoleVerifier :exec
+INSERT INTO database_role_verifiers (database_id, role_name, verifier)
+VALUES ($1, $2, $3)
+ON CONFLICT (database_id, role_name) DO UPDATE SET verifier = EXCLUDED.verifier, updated_at = now()
+`
+
+type UpsertDatabaseRoleVerifierParams struct {
+	DatabaseID pgtype.UUID
+	RoleName   string
+	Verifier   string
+}
+
+func (q *Queries) UpsertDatabaseRoleVerifier(ctx context.Context, db DBTX, arg UpsertDatabaseRoleVerifierParams) error {
+	_, err := db.Exec(ctx, upsertDatabaseRoleVerifier, arg.DatabaseID, arg.RoleName, arg.Verifier)
 	return err
 }
 

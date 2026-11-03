@@ -11,6 +11,8 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -57,8 +59,8 @@ func (f *fakeInbox) AppendManagedRealtimeChannelMetadata(_ context.Context, ep, 
 	return m, nil
 }
 
-// fakeRevocations keeps each thread's latest revocation, at the fixture's
-// clock.
+// fakeRevocations keeps each thread's latest revocation, at its own clock,
+// the database's, which the fixture runs with apid's unless a test skews it.
 type fakeRevocations struct {
 	now func() time.Time
 	at  map[string]time.Time
@@ -73,6 +75,10 @@ func (f *fakeRevocations) RevokeCallbacks(_ context.Context, _, endpointID, thre
 func (f *fakeRevocations) CallbacksRevokedAt(_ context.Context, endpointID, threadID string) (time.Time, bool, error) {
 	t, ok := f.at[endpointID+"/"+threadID]
 	return t, ok, nil
+}
+
+func (f *fakeRevocations) CallbackClock(context.Context) (time.Time, error) {
+	return f.now(), nil
 }
 
 const (
@@ -258,6 +264,58 @@ func TestCallbackMessageLandsOnce(t *testing.T) {
 	}
 }
 
+// Both IDs may carry ':'. Over random thread and message IDs made of 'a',
+// 'b' and ':', starting with thread "a:b" message "c" and thread "a" message
+// "b:c", every distinct pair lands as its own message, a repeated pair gets
+// its first sequence, and a thread without ':' keeps the key
+// "callback:{thread}:{message_id}".
+func TestPropertyCallbackThreadsNeverShareAKey(t *testing.T) {
+	r := rand.New(rand.NewPCG(20261102, 125501))
+	f := newCallbackFixture(t)
+	id := func() string {
+		b := make([]byte, 1+r.IntN(4))
+		for i := range b {
+			b[i] = "ab:"[r.IntN(3)]
+		}
+		return string(b)
+	}
+	pairs := [][2]string{{"a:b", "c"}, {"a", "b:c"}}
+	for i := 0; i < 300; i++ {
+		pairs = append(pairs, [2]string{id(), id()})
+	}
+	tokens, sequences := map[string]string{}, map[[2]string]string{}
+	for _, p := range pairs {
+		thread, message := p[0], p[1]
+		if _, ok := tokens[thread]; !ok {
+			token, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: thread})
+			if code != http.StatusCreated {
+				t.Fatalf("issue for thread %q = %d", thread, code)
+			}
+			tokens[thread] = token
+		}
+		code, receipt := f.post(t, tokens[thread], toolResult(message, `{"ok":true}`))
+		if code != http.StatusAccepted {
+			t.Fatalf("thread %q message %q = %d", thread, message, code)
+		}
+		if first, seen := sequences[p]; seen && receipt.Sequence != first {
+			t.Fatalf("retry of thread %q message %q = sequence %s, want %s", thread, message, receipt.Sequence, first)
+		}
+		sequences[p] = receipt.Sequence
+	}
+	if len(f.inbox.messages) != len(sequences) {
+		t.Fatalf("%d distinct posts made %d messages", len(sequences), len(f.inbox.messages))
+	}
+	for _, m := range f.inbox.messages {
+		thread, message := m.Metadata["thread_id"], m.Metadata["message_id"]
+		if sequences[[2]string{thread, message}] != strconv.FormatInt(m.Sequence, 10) {
+			t.Fatalf("message %d belongs to thread %q message %q, which got sequence %s", m.Sequence, thread, message, sequences[[2]string{thread, message}])
+		}
+		if !strings.Contains(thread, ":") && m.IdempotencyKey != "callback:"+thread+":"+message {
+			t.Fatalf("thread %q message %q has key %q", thread, message, m.IdempotencyKey)
+		}
+	}
+}
+
 // Over random grants, posts and tampered tokens, every published message
 // lands in the inbox of its token's endpoint, under its token's thread, and a
 // token changed in any byte publishes nothing.
@@ -319,7 +377,8 @@ func (f *callbackFixture) revokeAs(t *testing.T, caller agents.CallbackCaller, e
 }
 
 // An app's workload caller issues and revokes callback URLs for its own
-// app's endpoints only; an API key reaches every endpoint of its account.
+// app's endpoints only; an API key reaches every endpoint of its account
+// that its organization check allows (TestCallbackCallerAuthorize).
 func TestCallbackAppCallerOwnsOnlyItsEndpoints(t *testing.T) {
 	f := newCallbackFixture(t)
 	app := agents.CallbackCaller{Account: state.Account{ID: callbackAccount, Plan: api.PlanPro}, AppID: "app-1"}
@@ -340,6 +399,51 @@ func TestCallbackAppCallerOwnsOnlyItsEndpoints(t *testing.T) {
 	}
 	if _, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-2", ThreadID: "t"}); code != http.StatusCreated {
 		t.Errorf("API key issue on ep-2 = %d", code)
+	}
+}
+
+// An API key's caller carries the organization check of the endpoint's app:
+// the check sees the endpoint the request names, only after the account
+// owns it; a refusal answers as it is, and one that hides the app answers
+// like a missing endpoint. Nothing is issued or revoked past a refusal.
+func TestCallbackCallerAuthorize(t *testing.T) {
+	f := newCallbackFixture(t)
+	var seen []string
+	callerWith := func(problem *api.Problem) agents.CallbackCaller {
+		return agents.CallbackCaller{Account: state.Account{ID: callbackAccount, Plan: api.PlanPro},
+			Authorize: func(endpoint state.ManagedRealtimeEndpoint) *api.Problem {
+				seen = append(seen, endpoint.ID)
+				return problem
+			}}
+	}
+	for _, tc := range []struct {
+		thread        string
+		problem       *api.Problem
+		issue, revoke int
+	}{
+		{"allowed", nil, http.StatusCreated, http.StatusOK},
+		{"role-refused", api.ErrOrgRoleForbidden("issue callback URLs"), http.StatusForbidden, http.StatusForbidden},
+		{"app-hidden", api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app"), http.StatusNotFound, http.StatusNotFound},
+	} {
+		caller := callerWith(tc.problem)
+		if _, code := f.issueAs(t, caller, api.CreateAgentCallbackRequest{EndpointID: "ep-2", ThreadID: tc.thread}); code != tc.issue {
+			t.Errorf("%s: issue = %d, want %d", tc.thread, code, tc.issue)
+		}
+		if code := f.revokeAs(t, caller, "ep-2", tc.thread); code != tc.revoke {
+			t.Errorf("%s: revoke = %d, want %d", tc.thread, code, tc.revoke)
+		}
+	}
+	if _, code := f.issueAs(t, callerWith(nil), api.CreateAgentCallbackRequest{EndpointID: "ep-other", ThreadID: "t"}); code != http.StatusNotFound {
+		t.Errorf("another account's endpoint = %d", code)
+	}
+	if want := []string{"ep-2", "ep-2", "ep-2", "ep-2", "ep-2", "ep-2"}; !slices.Equal(seen, want) {
+		t.Errorf("checked endpoints %v, want %v", seen, want)
+	}
+	revocations := f.h.Revocations.(*fakeRevocations)
+	for _, thread := range []string{"role-refused", "app-hidden"} {
+		if _, revoked := revocations.at["ep-2/"+thread]; revoked {
+			t.Errorf("a refused revocation recorded %q", thread)
+		}
 	}
 }
 
@@ -369,6 +473,36 @@ func TestCallbackRevocation(t *testing.T) {
 	}
 	if code := f.revoke(t, callbackAccount, "ep-1", "a b"); code != http.StatusBadRequest {
 		t.Fatalf("revoking a bad thread = %d", code)
+	}
+}
+
+// A token's issue time is read from the clock revocations are recorded on,
+// so apid's clock running behind or ahead of the database changes nothing: a
+// URL issued before a revocation stops working, and one issued after it
+// works.
+func TestCallbackRevocationIgnoresAPIDClockSkew(t *testing.T) {
+	// skew is how far the database's clock runs ahead of apid's.
+	for _, skew := range []time.Duration{5 * time.Second, -5 * time.Second} {
+		t.Run(skew.String(), func(t *testing.T) {
+			f := newCallbackFixture(t)
+			f.h.Revocations = &fakeRevocations{now: func() time.Time { return f.now.Add(skew) }, at: map[string]time.Time{}}
+			before, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+			f.now = f.now.Add(time.Millisecond)
+			if code := f.revoke(t, callbackAccount, "ep-1", "t"); code != http.StatusOK {
+				t.Fatalf("revoke = %d", code)
+			}
+			if code, _ := f.post(t, before, toolResult("m1", `1`)); code != http.StatusNotFound {
+				t.Fatalf("a URL issued before the revocation answered %d", code)
+			}
+			f.now = f.now.Add(time.Millisecond)
+			after, code := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+			if code != http.StatusCreated {
+				t.Fatalf("issue = %d", code)
+			}
+			if code, _ := f.post(t, after, toolResult("m2", `1`)); code != http.StatusAccepted {
+				t.Fatalf("a URL issued after the revocation answered %d", code)
+			}
+		})
 	}
 }
 
@@ -432,5 +566,78 @@ func TestPropertyRevokedCallbackNeverPublishes(t *testing.T) {
 				t.Fatalf("step %d: a URL issued %v, thread revoked %v (%v), answered %d; want %d", i, g.issued, at, wasRevoked, code, want)
 			}
 		}
+	}
+}
+
+// postRaw sends one callback body as is.
+func (f *callbackFixture) postRaw(t *testing.T, token, body string) (int, api.AgentCallbackReceipt) {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/v1/agent-callbacks/token", strings.NewReader(body))
+	r.SetPathValue("token", token)
+	w := httptest.NewRecorder()
+	f.h.ReceiveCallback(w, r)
+	var receipt api.AgentCallbackReceipt
+	_ = json.Unmarshal(w.Body.Bytes(), &receipt)
+	return w.Code, receipt
+}
+
+// A RAP tool posts RAP's own messages (ADR-20261030125501 §3): a tool
+// result lands once under a message_id from its call ID, with the RAP
+// message as its data.
+func TestCallbackAcceptsRAPToolResult(t *testing.T) {
+	f := newCallbackFixture(t)
+	token, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+	first, a := f.postRaw(t, token, `{"type":"tool_result","group_id":"t","id":"toolu_01","text":"Valletta"}`)
+	again, b := f.postRaw(t, token, `{ "type": "tool_result", "group_id": "t", "id": "toolu_01", "text": "Valletta" }`)
+	if first != http.StatusAccepted || again != http.StatusAccepted || a.Sequence != b.Sequence || len(f.inbox.messages) != 1 {
+		t.Fatalf("posts = %d %d, sequences %q %q, %d messages", first, again, a.Sequence, b.Sequence, len(f.inbox.messages))
+	}
+	m := f.inbox.messages[0]
+	if m.Metadata["kind"] != api.AgentCallbackKindToolResult || m.Metadata["message_id"] != "rap-tool-result-toolu_01" ||
+		m.Metadata["thread_id"] != "t" || string(m.Data) != `{"type":"tool_result","group_id":"t","id":"toolu_01","text":"Valletta"}` {
+		t.Fatalf("message %+v data %s", m, m.Data)
+	}
+	long := strings.Repeat("x", api.AgentCallbackMessageIDMaxBytes) + " y"
+	if code, _ := f.postRaw(t, token, `{"type":"tool_result","group_id":"t","id":"`+long+`","text":"ok"}`); code != http.StatusAccepted {
+		t.Fatalf("a call ID that is not a message ID = %d, want 202", code)
+	}
+	if id := f.inbox.messages[1].Metadata["message_id"]; !agents.ValidCallbackID(id, api.AgentCallbackMessageIDMaxBytes) {
+		t.Fatalf("derived message_id %q is not valid", id)
+	}
+}
+
+func TestCallbackRAPRules(t *testing.T) {
+	f := newCallbackFixture(t)
+	results, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t"})
+	events, _ := f.issue(t, callbackAccount, api.CreateAgentCallbackRequest{EndpointID: "ep-1", ThreadID: "t", Kinds: []string{"event"}})
+	for _, tc := range []struct {
+		name, token, body string
+		want              int
+	}{
+		{"another thread's group_id", results, `{"type":"tool_result","group_id":"u","id":"c","text":"x"}`, http.StatusForbidden},
+		{"no call id", results, `{"type":"tool_result","group_id":"t","text":"x"}`, http.StatusBadRequest},
+		{"an event on a results URL", results, `{"type":"subscription_event","group_id":"t","tool_call_id":"c","text":"x"}`, http.StatusForbidden},
+		{"oauth", results, `{"type":"oauth","group_id":"t","id":"c","auth_url":"https://example.test"}`, http.StatusBadRequest},
+		{"unknown type", results, `{"type":"shell","group_id":"t"}`, http.StatusBadRequest},
+		{"too large", results, `{"type":"tool_result","group_id":"t","id":"c","text":"` + strings.Repeat("x", api.AgentCallbackPayloadMaxBytes) + `"}`, http.StatusRequestEntityTooLarge},
+		{"a view update is acknowledged", events, `{"type":"view_update","group_id":"t","view_type":"progress","content":{}}`, http.StatusAccepted},
+	} {
+		if code, _ := f.postRaw(t, tc.token, tc.body); code != tc.want {
+			t.Errorf("%s: post = %d, want %d", tc.name, code, tc.want)
+		}
+	}
+	if len(f.inbox.messages) != 0 {
+		t.Fatalf("a refused or display-only post published %+v", f.inbox.messages)
+	}
+	// A subscription event has no identity of its own: each post is a new message.
+	event := `{"type":"subscription_event","group_id":"t","tool_call_id":"c","text":"tick"}`
+	for range 2 {
+		if code, _ := f.postRaw(t, events, event); code != http.StatusAccepted {
+			t.Fatalf("event post = %d", code)
+		}
+	}
+	if len(f.inbox.messages) != 2 || f.inbox.messages[0].Metadata["kind"] != api.AgentCallbackKindEvent ||
+		f.inbox.messages[0].Metadata["message_id"] == f.inbox.messages[1].Metadata["message_id"] {
+		t.Fatalf("events %+v", f.inbox.messages)
 	}
 }

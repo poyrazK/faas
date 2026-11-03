@@ -170,7 +170,7 @@ func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate valida
 }
 
 // BeginConvergence fences the supplied hosts before the policy write. A TTL
-// prevents a crashed apid from leaving a hostname unavailable indefinitely.
+// bounds how long a crashed apid leaves a hostname marked as changing.
 // accountID is the mutating rule's owner; "" fences every app on the hosts.
 // appID narrows an app-wide (@app) fence to that app's hosts.
 func (g *gatewaydEdgeRules) BeginConvergence(accountID, appID string, hosts []string, generation int64) {
@@ -212,12 +212,15 @@ func (g *gatewaydEdgeRules) EndConvergence(accountID, appID string, hosts []stri
 	g.fencesChangedLocked()
 }
 
-// Converging is the request-path fail-closed check. ownerAccountID and
-// ownerAppID name the app the host resolved to ("" when no app claims it).
-// A fence only holds the owner's traffic: request-time matching ignores
-// another account's rules (OwnedEdgeRules), so that account's mutation —
-// even on match_host "*" — cannot change this host's policy and must not
-// 503 it. Unclaimed hosts and unscoped fences keep the fleet-wide hold.
+// Converging reports a pending (prepared, not yet applied) change to the
+// host's rules. ownerAccountID and ownerAppID name the app the host resolved
+// to ("" when no app claims it). A fence only covers the owner's traffic:
+// request-time matching ignores another account's rules (OwnedEdgeRules), so
+// that account's mutation — even on match_host "*" — cannot change this
+// host's policy. Unclaimed hosts and unscoped fences are covered fleet-wide.
+// The host keeps serving its current rules while a fence holds
+// (ADR-20261101141123); the handler consults this only when a route rule's
+// target does not resolve.
 func (g *gatewaydEdgeRules) Converging(host, ownerAccountID, ownerAppID string) bool {
 	if g == nil || g.fenceCount.Load() == 0 {
 		return false
@@ -556,6 +559,13 @@ func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, s
 	for _, rule := range storeRules {
 		if err := edgeRuleConditionError(rule); err != nil {
 			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "match", Err: err})
+			g.metrics.ObserveEdgeRuleCompileError(string(rule.Kind))
+		}
+		// A kind this gateway does not know (written by a newer apid) or a
+		// rule without its action fails the host closed too (ADR-091
+		// amendment 2026-11-02, review round 8).
+		if err := edgeRuleShapeError(rule); err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "action", Err: err})
 			g.metrics.ObserveEdgeRuleCompileError(string(rule.Kind))
 		}
 	}
@@ -2061,7 +2071,8 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 			ExcludeRuleIDs:   slices.Clone(rule.Action.WAF.ExcludeRuleIDs),
 			InspectBodyBytes: rule.Action.WAF.InspectBodyBytes,
 		}
-		if action.Validate() != nil {
+		if prob := action.Validate(); prob != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "action", Err: errors.New(prob.Detail)})
 			continue
 		}
 		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {
@@ -2086,8 +2097,10 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 }
 
 // compileChallengeRules compiles kind=challenge rows (ADR-831 amendment 7).
-// A row whose action is missing or fails the apid bounds (a direct-database
-// write) is dropped rather than enforced with values apid would reject.
+// A row whose action fails the apid bounds (a direct-database write, or a
+// newer apid's range) is a broken rule: it fails its host closed rather than
+// letting traffic past unchallenged (ADR-091 amendment 2026-11-02). A missing
+// action is reported by edgeRuleShapeError.
 func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChallengeResolved, []gateway.PathGlobError) {
 	var out []gateway.EdgeRuleChallengeResolved
 	var parseErrs []gateway.PathGlobError
@@ -2101,7 +2114,8 @@ func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChall
 			PassTTLSeconds: rule.Action.Challenge.PassTTLSeconds,
 			MaxDifficulty:  rule.Action.Challenge.MaxDifficulty,
 		}
-		if action.Validate() != nil {
+		if prob := action.Validate(); prob != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "action", Err: errors.New(prob.Detail)})
 			continue
 		}
 		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {

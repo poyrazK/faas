@@ -545,13 +545,24 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 		latest = nil
 	}
 	view, _ := AccountFrom(ctx)
+	// The account count above stays the whole list; a label selector only
+	// narrows the rows (ADR-20261031100025).
+	accountAppCount := len(apps)
+	data := dashboard.AppsListData{LabelsOn: s.labelsReleased(r, acct)}
+	var labelsByApp map[string]map[string]string
+	if data.LabelsOn {
+		data.Selector = dashboardSelectorValue(r)
+		apps, labelsByApp, data.SelectorError = s.dashboardSelectApps(r, acct, apps)
+	}
 	items := make([]dashboard.AppListItem, 0, len(apps))
 	for _, a := range apps {
 		var last time.Time
 		if d, err := s.store.LatestDeployment(ctx, a.ID); err == nil {
 			last = d.CreatedAt
 		}
-		items = append(items, s.appListItem(ctx, a, latest, last))
+		item := s.appListItem(ctx, a, latest, last)
+		item.Labels = labelsByApp[a.ID]
+		items = append(items, item)
 	}
 	// Finding 6 (issue #314): stamp the per-row quota-cell metadata.
 	// account.Plan is the plan every app in this account sees
@@ -577,7 +588,7 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 	// issue 100 PromQL calls per render. nil = no badge.
 	badges := s.fetchDashboardSLOBadges(ctx, log, items, acct)
 	attachSLOBadges(items, badges)
-	accountView := dashboardAccountView(view, len(apps))
+	accountView := dashboardAccountView(view, accountAppCount)
 	if snapshot, rateErr := s.readAccountDeployRate(ctx, acct, timeNow().UTC()); rateErr != nil {
 		log.Warn("dashboard renderAppsList: account deploy rate", "account_id", acct.ID, "err", rateErr)
 	} else {
@@ -587,7 +598,8 @@ func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slo
 		accountView.DeployRateResetsAt = snapshot.WindowResetsAt.UTC().Format(time.RFC3339)
 		accountView.DeployRateResetsLabel = snapshot.WindowResetsAt.UTC().Format("15:04 UTC")
 	}
-	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: accountView, Data: items}
+	data.Items = items
+	page := dashboard.Page{Title: "Apps", Body: "apps_list", Account: accountView, Data: data}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
@@ -790,6 +802,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		}
 		cronItems = append(cronItems, item)
 	}
+	attachDashboardCronLabels(cronItems, s.dashboardResourceLabels(r, acct, state.LabelKindCron, dashboardCronIDs(cronItems)))
 	workflowItems := s.fetchDashboardWorkflows(ctx, log, app.ID)
 	// Single-app detail page reuses the batched instance map; for
 	// a one-app render that's one extra row fetched but it keeps
@@ -869,6 +882,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		appCount = 0
 	}
 	appRow := s.appListItem(ctx, app, latest, time.Time{})
+	appRow.Labels = s.singleAppLabels(r, acct, app)
 	appRow.Plan = string(acct.Plan)
 	appRow.QuotaLabel = dashboardEmDash
 	// ADR-095 PR-C / issue #272 — preview environments panel. Fetched

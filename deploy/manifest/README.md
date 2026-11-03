@@ -62,6 +62,53 @@ route is public. This is the portable source of truth; public Cloudflare DNS
 is never used for private transport names. Do not copy a server IP into the
 committed `deploy/ansible/host_vars` files.
 
+Hosts with role `database` are native managed-PostgreSQL nodes (ADR-1027).
+Each carries a `database` block (`admission_ceiling_mb`,
+`volume_capacity_bytes`, optional `boot_slots`, `postgres_majors` and
+`lifecycle`), and the fleet then needs a `managed_postgres` section:
+
+```yaml
+fleet:
+  hosts:
+    - name: db-1
+      role: database
+      address: 10.42.0.5:50051     # its vmmd; pgproxyd listens on 5432
+      database:
+        admission_ceiling_mb: 48000
+        volume_capacity_bytes: 3000000000000
+managed_postgres:
+  host_suffix: db.gregale.dev    # clients connect to <database-id>.<suffix>
+  shared_archive: true           # every dbbackupd shares one bucket
+  app_route: true                # guests reach pgproxyd at 198.18.0.1:5432
+  evacuate_draining: true        # move databases off draining nodes
+  drill_every: 24h               # restore drill spacing per node (default 24h; off turns drills off)
+```
+
+The generator renders the `database_nodes` inventory group and each node's
+vmmd and pgproxyd settings, including pgproxyd's cancel instance id and
+peers. The control plane gets schedd's `[database_scheduler]` (written to
+`/etc/faas/schedd-database.toml`) and pgproxyd's access to the verifier
+table. With `app_route`, compute nodes get the route to every pgproxyd.
+pgproxyd's control-plane DSN uses a password `database_node.yml` generates
+once on the control plane (`/var/lib/faas/pgproxyd/postgres-password`;
+`faas_pgproxyd_postgres_password` in Vault overrides it). Each node's first
+PKI bundle is issued from the control-plane issuer when the node has none,
+and renewed daily. Still per deployment: pgproxyd's `*.<host_suffix>`
+certificate (see `deploy/ansible/database_node.yml`). Control-plane Prometheus scrapes
+every database node (runbook `docs/runbooks/FaasDatabaseNodes.md`).
+
+A node's `lifecycle` drives schedd. Set it, re-render, and converge the
+control plane, which restarts schedd:
+- `draining`: the node takes no new databases. With `evacuate_draining`
+  (which needs `shared_archive`), schedd moves its databases off one at a
+  time.
+- `unavailable`: the node is lost. schedd fails its production-class
+  databases over and parks the rest (`node_lost`). A point-in-time
+  restore recovers those onto another node from the bucket. The
+  generator also drops it from the `database_nodes` group, the scrape
+  targets, the other nodes' cancel peers and the app route. Converge the
+  compute and database nodes too. Its pgproxyd instance id stays reserved.
+
 `public_edge.custom_domains` (ADR-520) turns on self-hosted certificates for
 customer custom domains. It renders `faas_custom_domain_*` for the control
 plane only: the `public_edge` role adds Caddy's on-demand TLS site (asking

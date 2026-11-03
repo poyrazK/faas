@@ -92,6 +92,19 @@ func (q *Queries) ObservedRouteLabels(ctx context.Context, db DBTX, arg Observed
 	return items, nil
 }
 
+const readDeploymentPromotedAt = `-- name: ReadDeploymentPromotedAt :one
+SELECT promoted_at FROM deployments WHERE id = $1::text::uuid
+`
+
+// ADR-20261028110044 amendment 4: when a traffic change last took the
+// deployment to 100%, which anchors the monitor's rollback window.
+func (q *Queries) ReadDeploymentPromotedAt(ctx context.Context, db DBTX, deploymentID string) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, readDeploymentPromotedAt, deploymentID)
+	var promoted_at pgtype.Timestamptz
+	err := row.Scan(&promoted_at)
+	return promoted_at, err
+}
+
 const routeHealthHoldsSince = `-- name: RouteHealthHoldsSince :many
 SELECT s.deployment_id::text AS deployment_id, s.status, s.updated_at,
        COALESCE(h.entry #>> '{decision,reason}', '')::text AS reason,
@@ -149,6 +162,41 @@ func (q *Queries) RouteHealthHoldsSince(ctx context.Context, db DBTX, arg RouteH
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const routeLabelPins = `-- name: RouteLabelPins :many
+SELECT DISTINCT ((r->>'method') || ' ' || (r->>'path'))::text AS label
+FROM (
+  SELECT jsonb_array_elements(g.routes) AS r FROM route_health_gates g WHERE g.app_id = $1::text::uuid
+  UNION ALL
+  SELECT jsonb_array_elements(m.routes) AS r FROM route_monitors m WHERE m.app_id = $1::text::uuid
+) selected
+WHERE coalesce(r->>'method', '') <> '' AND coalesce(r->>'path', '') <> ''
+ORDER BY label
+`
+
+// ADR-20261028110044 amendment 4: the route labels ("METHOD /path") an app's
+// route health guard or production monitor selects. The gateway keeps their
+// telemetry labels in a full route set so their evidence never folds into
+// __route_other__.
+func (q *Queries) RouteLabelPins(ctx context.Context, db DBTX, appID string) ([]string, error) {
+	rows, err := db.Query(ctx, routeLabelPins, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var label string
+		if err := rows.Scan(&label); err != nil {
+			return nil, err
+		}
+		items = append(items, label)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

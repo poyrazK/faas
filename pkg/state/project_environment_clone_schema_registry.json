@@ -905,8 +905,25 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
+  },
+  {
+    "table": "api_key_agent_clients",
+    "columns": [
+      "account_id",
+      "client_name",
+      "client_site",
+      "created_at",
+      "key_id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "api_keys",
@@ -1617,6 +1634,19 @@
     "kind": "operational"
   },
   {
+    "table": "app_memory_pressure",
+    "columns": [
+      "app_id",
+      "episodes",
+      "last_at",
+      "lowest_available_mb",
+      "peak_anon_mb",
+      "total_mb",
+      "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_openapi_docs",
     "columns": [
       "account_id",
@@ -1958,6 +1988,16 @@
     }
   },
   {
+    "table": "app_slug_holds",
+    "columns": [
+      "account_id",
+      "held_until",
+      "reason",
+      "slug"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_task_attach_sessions",
     "columns": [
       "attach_token_sha256",
@@ -2286,7 +2326,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -2563,7 +2609,9 @@
       "github_install_id",
       "github_install_linked_at",
       "github_owner_id",
+      "github_preview_enabled",
       "github_production_branch",
+      "github_production_trigger",
       "github_repo_full_name",
       "github_repo_id",
       "id",
@@ -3062,6 +3110,7 @@
       "cache_status",
       "cancelled_at",
       "cancelled_by_deployment_cascade",
+      "coalesced_with",
       "deployment_id",
       "enqueued_at",
       "failure_class",
@@ -3717,7 +3766,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -5370,6 +5425,7 @@
       "parked_reason",
       "pr_number",
       "priority",
+      "promoted_at",
       "pusher_login",
       "reason",
       "release_command",
@@ -7555,6 +7611,7 @@
       "processed_at",
       "received_at",
       "repo_full_name",
+      "skip_reason",
       "status",
       "updated_at"
     ],
@@ -8856,7 +8913,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "deployment"
+      "owner": "deployment",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -9437,6 +9500,7 @@
       "input_manifest_version",
       "job_id",
       "latest_start_at",
+      "logs_cleared_finished_at",
       "occurrence_id",
       "operation_id",
       "parallelism",
@@ -9715,6 +9779,7 @@
   {
     "table": "managed_postgres_overage_deliveries",
     "columns": [
+      "billed_storage_byte_seconds",
       "billed_unit_seconds",
       "delivered_millicents",
       "live",
@@ -9760,7 +9825,21 @@
       "materialize"
     ],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "state",
+          "not": "deleted"
+        },
+        {
+          "column": "deleted_at",
+          "null": true
+        },
+        {
+          "column": "scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -10107,13 +10186,16 @@
       "created_at",
       "data_resource_id",
       "database_id",
+      "error_code",
       "generation",
       "id",
       "provider_resource_id",
       "source_spec",
       "state",
       "target_class",
-      "target_scale_to_zero"
+      "target_postgres_major",
+      "target_scale_to_zero",
+      "target_storage_limit_bytes"
     ],
     "kind": "operational"
   },
@@ -10149,6 +10231,16 @@
       "provider_resource_id",
       "source_resource_id",
       "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_plan_excess_notices",
+    "columns": [
+      "database_id",
+      "mail_intent_id",
+      "reason",
+      "recorded_at"
     ],
     "kind": "operational"
   },
@@ -11048,6 +11140,12 @@
           "managed_realtime_endpoints",
           "id"
         ]
+      ],
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
       ]
     }
   },
@@ -11347,6 +11445,12 @@
           "managed_realtime_endpoints",
           "id"
         ]
+      ],
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
       ]
     }
   },
@@ -11935,6 +12039,18 @@
     "kind": "operational"
   },
   {
+    "table": "node_memory_reports",
+    "columns": [
+      "frozen_instances",
+      "measured_at",
+      "measured_mb",
+      "node_id",
+      "reported_at",
+      "used_mb"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "notification_channels",
     "columns": [
       "account_id",
@@ -12193,7 +12309,17 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "data_checkpoint_unavailable"
+      "unavailable": "data_checkpoint_unavailable",
+      "live": [
+        {
+          "column": "state",
+          "not": "deleted"
+        },
+        {
+          "column": "scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -12866,6 +12992,7 @@
     "table": "oidc_exchanged_tokens",
     "columns": [
       "account_id",
+      "app_id",
       "audience",
       "created_at",
       "expires_at",
@@ -16831,7 +16958,13 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "work_activation_unavailable"
+      "unavailable": "work_activation_unavailable",
+      "live": [
+        {
+          "column": "retired_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -17008,6 +17141,7 @@
       "latency_ms",
       "method",
       "node_id",
+      "platform_refusal",
       "platform_tenant_id",
       "received_at",
       "referrer_host",
@@ -18609,6 +18743,7 @@
       "net_rx_bytes",
       "net_tx_bytes",
       "org_id",
+      "paused_mb_seconds",
       "requests",
       "tail_seconds",
       "tx_bytes"
@@ -19589,6 +19724,21 @@
     "kind": "operational"
   },
   {
+    "table": "agent_run_callbacks",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "issued_at",
+      "provider_call_id",
+      "run_id",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_run_ai_spend",
     "columns": [
       "account_id",
@@ -19672,5 +19822,96 @@
       "signature"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "database_nodes",
+    "columns": [
+      "admission_ceiling_mb",
+      "boot_slots",
+      "created_at",
+      "id",
+      "lifecycle",
+      "postgres_majors",
+      "target_url",
+      "updated_at",
+      "volume_capacity_bytes"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "database_restore_drills",
+    "columns": [
+      "drill_id",
+      "error_code",
+      "finished_at",
+      "node_id",
+      "recovered_to",
+      "result",
+      "source_id",
+      "started_at",
+      "target_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_role_verifiers",
+    "columns": [
+      "database_id",
+      "role_name",
+      "updated_at",
+      "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_usage",
+    "columns": [
+      "database_id",
+      "ended_at",
+      "meter",
+      "rate",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_vms",
+    "columns": [
+      "always_on",
+      "bootstrapped",
+      "created_at",
+      "database_id",
+      "drop_standby_slot",
+      "last_active_at",
+      "last_backup_at",
+      "last_error",
+      "major_history",
+      "mem_mib",
+      "move_lease_until",
+      "move_node",
+      "node_id",
+      "postgres_major",
+      "promote_pending",
+      "replicated",
+      "resize_pending",
+      "restore_lease_until",
+      "restore_recovered_to",
+      "restore_source",
+      "restore_target",
+      "restore_window_seconds",
+      "standby_node",
+      "standby_running",
+      "standby_synced",
+      "state",
+      "state_changed_at",
+      "upgrade_from",
+      "upgrade_lease_until",
+      "upgrade_major",
+      "upgrade_operation",
+      "upgrade_result",
+      "vcpu_count",
+      "volume_bytes"
+    ],
+    "kind": "operational"
   }
 ]

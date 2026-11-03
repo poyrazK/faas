@@ -19,6 +19,7 @@ type contractTestStore interface {
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
+	state.AgentClientStore
 	state.AppWorkPolicyStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
@@ -77,6 +78,8 @@ type contractTestStore interface {
 	state.MigrationSourceStore
 	state.NodeLeaseStore
 	state.NodeLifecycleCompletionStore
+	state.NodeMemoryReportStore
+	state.AppMemoryPressureStore
 	state.ObjectBucketAccessStore
 	state.ObjectBucketPlacementStore
 	state.ObjectBucketReservationResultStore
