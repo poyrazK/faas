@@ -362,15 +362,17 @@ one next case. Browser continuation never takes over a shared CLI journal.
 Clients can POST `live-suites/{suite_id}/start` with `expected_version`,
 `expected_published_version`, `expected_deployment_id`, ordered case names in
 `cases` and `confirm_real_actions: true`. Use a UUIDv7 generated within the last
-ten minutes and reuse its exact ID and body after a lost response. An identical
-retained start request reads progress without advancing it. POST
+ten minutes and reuse its exact ID and body after a lost response. IDs up to 30
+seconds ahead of server time are accepted to allow for clock differences. An
+identical retained start request reads progress without advancing it. POST
 `live-suites/{suite_id}/advance` with `confirm_real_actions: true` to continue.
 Each admission and its stored run link commit together; missing suites are never
 recreated by continuation. Go, Node and Python expose both operations.
 
 Suite history keeps at most 100 records per automation. Recent dashboard start
-receipts are protected for the creation window so history churn cannot erase
-recovery identity while the original creation request can still be admitted.
+receipts are protected for the creation window plus the clock-skew allowance so
+history churn cannot erase recovery identity while the original creation request
+can still be admitted.
 When all slots are protected, new creation waits rather than displacing them.
 
 ### Compare suites between deployments
@@ -625,8 +627,10 @@ fit the existing 16 KiB policy limit after canonical serialization as well as on
 name instead of creating a new name for each build. Automation deletion removes
 its history. Clearing saved cases retains audit receipts but removes evidence.
 Active current baseline suite groups are protected from normal suite pruning within the
-existing 100-group budget; linked run/report retention still applies. Replaced
-groups can be pruned normally. Missing or invalidated evidence blocks gates;
+existing 100-group budget; linked run/report retention still applies. Completed
+workflow runs and their reports normally expire 30 days after completion. This
+retention applies regardless of the baseline policy; renew the baseline before
+its evidence expires. Replaced groups can be pruned normally. Missing or invalidated evidence blocks gates;
 receipts do not recreate or execute it.
 
 ### Share suite results with your team

@@ -603,6 +603,7 @@ func (r *Loop) RunRetention(p0 context.Context)                                 
 func (r *Loop) RunScaleUp(p0 context.Context)                                   { r.runScaleUp(p0) }
 func (r *Loop) RunServiceRecovery(p0 context.Context)                           { r.runServiceRecovery(p0) }
 func (r *Loop) RunWorkflowRetention(p0 context.Context)                         { r.runWorkflowRetention(p0) }
+func (r *Loop) DispatchWorkflowRetention(p0 context.Context)                    { r.dispatchWorkflowRetention(p0) }
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }

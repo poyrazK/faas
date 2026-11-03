@@ -223,7 +223,7 @@ var workSpecs = map[workKind]workSpec{
 	// One pass of each retention at a time; a tick while one runs
 	// coalesces, and the next pass carries on where it stopped.
 	workRetention:         {slots: 1, overflow: overflowDrop},
-	workWorkflowRetention: {slots: 1, overflow: overflowDrop},
+	workWorkflowRetention: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	workTriggersRetention: {slots: 1, overflow: overflowDrop},
 	// Whole-app parks and deleted-app cleanups, one per app (the key) and
 	// four apps at once. A dropped park is retried by the next reaper tick; a

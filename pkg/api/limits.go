@@ -1291,6 +1291,7 @@ const (
 	WorkflowScheduleHistoryPageDefault   = 100
 	WorkflowScheduleHistoryPageMax       = 200
 	WorkflowScheduleHistoryPruneBatch    = 1000
+	WorkflowRetentionPruneBatch          = 1000
 	WorkflowScheduleReplayBatchMax       = 20
 	WorkflowQueuedRunCancelBatchMax      = 20
 )
@@ -9995,6 +9996,8 @@ const (
 	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
 	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10
 	AutomationLiveSuiteStartWindow                 = 10 * time.Minute
+	AutomationLiveSuiteFutureClockSkew             = 30 * time.Second
+	AutomationLiveSuiteProtectedWindow             = AutomationLiveSuiteStartWindow + AutomationLiveSuiteFutureClockSkew
 	AutomationLiveSuiteHistoryLimit                = AutomationLiveHistoryLimit
 	AutomationLiveSuiteRetainedLimit               = 100
 	AutomationTestCaseNameMaxBytes                 = 128

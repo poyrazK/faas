@@ -38,7 +38,7 @@ func validateManagedSuiteCreation(id string) error {
 	parsed := uuid.MustParse(id) // Already validated by managedSuitePlan.
 	sec, nsec := parsed.Time().UnixTime()
 	age := time.Since(time.Unix(sec, nsec))
-	if age < 0 || age > api.AutomationLiveSuiteStartWindow {
+	if age < -api.AutomationLiveSuiteFutureClockSkew || age > api.AutomationLiveSuiteStartWindow {
 		return api.NewProblem(409, api.CodeConflict, "Suite start expired", "This suite ID is too old or has a future timestamp. Inspect retained history before explicitly starting a new suite; an expired or cleared suite must not be recreated by retrying its old request.")
 	}
 	return nil
