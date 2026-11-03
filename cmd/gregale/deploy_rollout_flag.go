@@ -7,7 +7,9 @@ import (
 )
 
 // rolloutFlagConflicts are the flags --rollout replaces or contradicts.
-var rolloutFlagConflicts = []string{"safe", "canary-preset", "canary-stages", "traffic-percent", "rollback-on-5xx"}
+// --rollback-on-5xx is not one: it adds the first-wake 5xx rollback to any
+// rollout (docs/deploys.md), and a safe rollout refuses only turning it off.
+var rolloutFlagConflicts = []string{"safe", "canary-preset", "canary-stages", "traffic-percent"}
 
 // applyRolloutFlag maps `gregale deploy --rollout` onto the rollout flags the
 // rest of deploy already understands (ADR-1450): safe is --safe, fast and
@@ -33,6 +35,16 @@ func applyRolloutFlag(rollout string, explicit map[string]bool, safe *bool, cana
 		return fmt.Errorf("--rollout must be safe, fast or immediate; got %q", rollout)
 	}
 	return nil
+}
+
+// safeFlagName is how a refusal names the safe rollout: as --rollout safe
+// when the person typed that, not as the deprecated --safe it maps onto
+// (Hunt 31 H31-1).
+func safeFlagName(explicit map[string]bool) string {
+	if explicit["rollout"] {
+		return "--rollout safe"
+	}
+	return "--safe"
 }
 
 // followRolloutByDefault reports whether deploy follows a canary rollout to

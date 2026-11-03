@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -242,8 +242,9 @@ build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit
 	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags $(DAEMON_TAGS)) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
 
-# Issue #295: release.yml attests an SPDX SBOM for the CLI archives and ships
-# release.sbom.json for the daemon bundle (docs/supply-chain.md). `make sbom`
+# Issue #295: images.yml attests an SPDX SBOM for every platform image,
+# release.yml one for the CLI archives, and the release ships release.sbom.json
+# for the daemon bundle (docs/supply-chain.md). `make sbom`
 # writes the same inventory locally as CycloneDX: the binaries in $(BINDIR),
 # plus any image references in SBOM_IMAGES (linux/amd64).
 SYFT ?= syft
@@ -437,6 +438,14 @@ adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet ov
 adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
 	bash scripts/ci/check_adr_number_uniqueness_test.sh
 
+.PHONY: cloudflare-ranges-check
+cloudflare-ranges-check: ## Compare the pinned Cloudflare ranges with Cloudflare's published lists (network; ADR-20261102081618)
+	bash scripts/ci/check_cloudflare_ranges.sh "$(CURDIR)"
+
+.PHONY: cloudflare-ranges-check-test
+cloudflare-ranges-check-test: ## Exercise the Cloudflare range check offline
+	bash scripts/ci/check_cloudflare_ranges_test.sh
+
 .PHONY: migration-version-hygiene-check
 migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
 	bash scripts/ci/check_migration_version_hygiene.sh
@@ -494,6 +503,11 @@ deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip
 .PHONY: verify-action-ref-contents-check
 verify-action-ref-contents-check: ## Verify release.yml's Contents API check accepts a pinned ref that vendors the bare CLI
 	@bash scripts/ci/verify-action-ref-contents_test.sh
+
+.PHONY: release-scripts-check
+release-scripts-check: ## Verify release.yml's moving Action tag (stable tags, forward only) and rendered release notes
+	@bash scripts/ci/advance-action-major-tag_test.sh
+	@bash scripts/ci/render-release-notes_test.sh
 
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
@@ -779,7 +793,11 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-check-compute-edges_test.sh
 	bash deploy/scripts/faas-app-edge-pilot-check_test.sh
 	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
+	bash deploy/scripts/cloudflare-s3-tunnel_test.sh
+	bash tests/load/s3-gateway/run_test.sh
 	bash deploy/scripts/cloudflare-app-dns_test.sh
+	bash deploy/scripts/cloudflare-origin-pull_test.sh
+	bash deploy/scripts/gcp-compute-edge-address_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check
@@ -1136,6 +1154,10 @@ bootstrap-compute: ansible-preflight ## Bootstrap the compute-nodes group. Honor
 	@test -f deploy/ansible/bootstrap.yml || (echo "deploy/ansible/bootstrap.yml missing — run on the control-plane / compute node, not the dev box"; exit 1)
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/bootstrap.yml --limit $${ANSIBLE_LIMIT:-compute_nodes}
 
+.PHONY: bootstrap-database-nodes
+bootstrap-database-nodes: ansible-preflight ## ADR-1027: authorize pgproxyd on the control plane, then converge every database node (firewall + pgproxyd).
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/database_node.yml
+
 .PHONY: bootstrap-tenant-egress-gateway
 bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/tenant_egress_gateway.yml
@@ -1405,7 +1427,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/mcpmanagement/statepg/queries.sql pkg/mcpmanagement/statepg/schema.sql "$$tmp/pkg/mcpmanagement/statepg/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \

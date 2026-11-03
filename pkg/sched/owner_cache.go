@@ -204,7 +204,7 @@ func (e *Engine) runningInstanceOfDeployment(ctx context.Context, appID string, 
 	if dep.AppID != appID || dep.Status != state.DeployLive {
 		return state.Instance{}, state.ErrNotFound
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return state.Instance{}, err
 	}

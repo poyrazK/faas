@@ -24,6 +24,8 @@ type Handler struct {
 	checker *Checker
 	cache   *reportCache
 	limiter *ipLimiter
+	// running holds a slot per check that fetches a repository.
+	running chan struct{}
 }
 
 // NewHandler wires a checker to the per-IP limiter and verdict cache.
@@ -32,6 +34,7 @@ func NewHandler(checker *Checker) *Handler {
 		checker: checker,
 		cache:   newReportCache(api.PreflightCacheMaxEntries, api.PreflightCacheTTL),
 		limiter: newIPLimiter(api.PreflightRateLimitPerHour, time.Hour),
+		running: make(chan struct{}, api.PreflightConcurrentChecks),
 	}
 }
 
@@ -57,6 +60,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if report, ok := h.cache.get(cacheKey(source.FullName(), source.Ref)); ok {
 		writeReport(w, report)
+		return
+	}
+	select {
+	case h.running <- struct{}{}:
+		defer func() { <-h.running }()
+	default:
+		w.Header().Set("Retry-After", "5")
+		writeProblem(w, http.StatusServiceUnavailable, "preflight_busy",
+			"Preflight is busy", "Other checks are running. Try again in a few seconds.")
 		return
 	}
 	report, err := h.checker.Check(r.Context(), source)

@@ -127,7 +127,7 @@ func cmdCronsRun(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Fire-now request enqueued: %s (poll via `gregale cron fire-now %s`)\n",
+	_, _ = fmt.Fprintf(osStdout, "Fire-now request enqueued: %s (poll via `gregale cron run get %s`)\n",
 		resp.RequestID, resp.RequestID)
 	return 0
 }
@@ -148,12 +148,12 @@ func cmdCronsFireNowGet(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale cron fire-now <request-id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron run get <request-id>\n")
 		return 1
 	}
 	requestID := pos[0]
 	if !fireNowRequestIDPattern.MatchString(requestID) {
-		printCommandValidation(os.Stderr, "usage: gregale cron fire-now <request-id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron run get <request-id>\n")
 		return 1
 	}
 	if *timeout <= 0 || logsFlagWasSet(fs, "timeout") && !*wait {

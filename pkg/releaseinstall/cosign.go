@@ -87,6 +87,31 @@ type CosignVerifyConfig struct {
 	CosignPath string
 }
 
+// The cosign build every Gregale host verifies releases with, and since
+// ADR-20261029155852 platform base provenance too: node join stages it at
+// /usr/local/bin/cosign. release.yml and the CD workflows download the same
+// build and check this digest, and gregalectl's deploy prepare and deploy join
+// refuse any other binary (CheckCosignBinary).
+const (
+	PinnedCosignVersion = "2.4.1"
+	PinnedCosignURL     = "https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64"
+	PinnedCosignSHA256  = "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
+)
+
+// CheckCosignBinary returns an error unless the file at path has the SHA-256
+// digest want (hex). The error names the pinned build and where to get it.
+func CheckCosignBinary(path, want string) error {
+	got, err := hashFile(path)
+	if err != nil {
+		return fmt.Errorf("releaseinstall: hash cosign binary %s: %w", path, err)
+	}
+	if got != want {
+		return fmt.Errorf("releaseinstall: cosign binary %s has sha256 %s, not the pinned cosign %s linux/amd64 build (sha256 %s); download %s and check its digest",
+			path, got, PinnedCosignVersion, want, PinnedCosignURL)
+	}
+	return nil
+}
+
 // DefaultGitHubOIDC returns the upstream-pinned config. Pulled
 // into a helper so the production ExecCosignVerifier can be
 // defaulted without each call site re-typing the GitHub issuer.

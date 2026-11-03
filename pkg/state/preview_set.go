@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/previewset"
 )
 
@@ -53,7 +53,7 @@ var (
 	_             PRPreviewSetStore          = (*MemStore)(nil)
 	_             PRPreviewEnvironmentReader = (*PgStore)(nil)
 	_             PRPreviewEnvironmentReader = (*MemStore)(nil)
-	previewSetSHA                            = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+	previewSetSHA                            = lazyregexp.New(`^[0-9a-f]{7,64}$`)
 )
 
 func validatePRPreviewSet(set PRPreviewSet) error {

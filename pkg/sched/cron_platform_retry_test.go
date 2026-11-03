@@ -14,22 +14,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 20261026201726 (amendment 2026-10-29)
+//
 // A 5xx from gatewayd-internal's dispatch endpoint means the gateway refused
 // the dispatch before the app saw it; an app's own 5xx arrives inside a 200
 // envelope and a 4xx refusal stays permanent (ADR-20261026201726 amendment
 // 2026-10-29).
 func TestGatewayDispatchRefusalIsMarked(t *testing.T) {
 	cases := []struct {
-		name               string
-		status             int
-		body               string
-		refused, permanent bool
+		name                         string
+		status                       int
+		body                         string
+		refused, permanent, answered bool
 	}{
 		{"policy_unavailable", http.StatusServiceUnavailable,
-			`{"code":"traffic_policy_unavailable","detail":"Retry shortly.","status":503}`, true, false},
-		{"dispatch_failed", http.StatusBadGateway, `{"code":"capacity_unavailable","status":502}`, true, false},
-		{"refused_permanently", http.StatusConflict, `{"code":"conflict","status":409}`, false, true},
-		{"app_answered_503", http.StatusOK, `{"state":"completed","status_code":503,"result":{}}`, false, false},
+			`{"code":"traffic_policy_unavailable","detail":"Retry shortly.","status":503}`, true, false, false},
+		{"dispatch_failed", http.StatusBadGateway, `{"code":"capacity_unavailable","status":502}`, true, false, false},
+		{"refused_permanently", http.StatusConflict, `{"code":"conflict","status":409}`, false, true, false},
+		{"app_answered_503", http.StatusOK, `{"state":"completed","status_code":503,"result":{}}`, false, false, true},
+		{"app_answered_404", http.StatusOK, `{"state":"failed","status_code":404,"result":{"error":"not_found"}}`, false, true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,6 +58,9 @@ func TestGatewayDispatchRefusalIsMarked(t *testing.T) {
 			if got := errors.Is(err, sched.ErrPermanentInvoke); got != tc.permanent {
 				t.Fatalf("errors.Is(%v, ErrPermanentInvoke) = %v, want %v", err, got, tc.permanent)
 			}
+			if got := errors.Is(err, sched.ErrAppAnswered); got != tc.answered {
+				t.Fatalf("errors.Is(%v, ErrAppAnswered) = %v, want %v", err, got, tc.answered)
+			}
 		})
 	}
 }
@@ -71,11 +77,18 @@ func TestDrain_RetriesPlainCronRunRefusedBeforeDelivery(t *testing.T) {
 	if err != nil || len(apps) == 0 {
 		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
 	}
+	// A cron run carries its cron's id; the drain cancels one whose cron is
+	// gone instead of delivering it.
+	cron, err := store.CreateCron(ctx, apps[0].ID, "0 * * * *", "/tick", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
+	cronID := cron.ID
 	enqueue := func() string {
 		t.Helper()
 		scheduledAt := now
 		inv, err := store.EnqueueInvocation(ctx, state.Invocation{
-			AppID: apps[0].ID, AccountID: apps[0].AccountID,
+			AppID: apps[0].ID, AccountID: apps[0].AccountID, CronID: &cronID,
 			Source: state.InvocationCron, Method: http.MethodPost, Path: "/tick",
 			DueAt: scheduledAt, ScheduledAt: &scheduledAt,
 			RetryPolicyJSON: json.RawMessage(`{"max_attempts":1}`),

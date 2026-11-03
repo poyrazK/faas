@@ -35,10 +35,13 @@ const (
 // each other key, why it is not imported. Rewritten maps a key whose Compose
 // value called another project service over HTTP to the Docker host it named
 // (ADR-20261026181020); its value in Values is the Gregale address.
+// Plaintext marks rewritten keys whose https or wss value imports as the
+// plaintext address because private service HTTPS is off (ADR-20261029230000).
 type EnvImport struct {
 	Values    map[string]string
 	Skipped   map[string]string
 	Rewritten map[string]string
+	Plaintext map[string]bool
 }
 
 // secretKeyParts are `_`-separated key parts that name a credential.
@@ -54,8 +57,11 @@ var localHosts = []string{"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.dock
 // as EnvSkipNotOptedIn, so the plan can say how to import it. callable names
 // the project services this deploy runs; an HTTP value that calls one of
 // them by its Docker host is imported as that service's Gregale address.
-func PlanEnvImport(env reposcan.ComposeEnv, service string, callable []string, limits api.Limits) EnvImport {
-	out := EnvImport{Values: map[string]string{}, Skipped: map[string]string{}, Rewritten: map[string]string{}}
+// privateHTTPS is the private-service-https capability: without it an https
+// or wss value imports as the plaintext service address, which answers, not
+// as https://<service>.internal, which does not (ADR-20261029230000).
+func PlanEnvImport(env reposcan.ComposeEnv, service string, callable []string, limits api.Limits, privateHTTPS bool) EnvImport {
+	out := EnvImport{Values: map[string]string{}, Skipped: map[string]string{}, Rewritten: map[string]string{}, Plaintext: map[string]bool{}}
 	services := make([]string, 0, len(env.Services))
 	for name := range env.Services {
 		services = append(services, strings.ToLower(name))
@@ -65,7 +71,10 @@ func PlanEnvImport(env reposcan.ComposeEnv, service string, callable []string, l
 			continue
 		}
 		if value != nil {
-			if rewritten, host, ok := rewriteServiceAddress(*value, callable); ok {
+			if rewritten, host, ok := rewriteServiceAddress(*value, callable, privateHTTPS); ok {
+				if !privateHTTPS && secureScheme(*value) {
+					out.Plaintext[key] = true
+				}
 				value = &rewritten
 				out.Rewritten[key] = host
 			}
@@ -80,6 +89,7 @@ func PlanEnvImport(env reposcan.ComposeEnv, service string, callable []string, l
 		if reason != "" {
 			out.Skipped[key] = reason
 			delete(out.Rewritten, key)
+			delete(out.Plaintext, key)
 			continue
 		}
 		out.Values[key] = *value
@@ -101,7 +111,11 @@ func RewrittenEnvNotes(service string, imported []string, plan EnvImport) []stri
 	for _, key := range imported {
 		if host, ok := plan.Rewritten[key]; ok {
 			if parsed, err := url.Parse(plan.Values[key]); err == nil {
-				notes = append(notes, fmt.Sprintf("%s: %s calls %s; imported with %s as its address", service, key, host, parsed.Host))
+				note := fmt.Sprintf("%s: %s calls %s; imported with %s as its address", service, key, host, parsed.Host)
+				if plan.Plaintext[key] {
+					note += " over " + parsed.Scheme + ", because private service HTTPS is not enabled on this installation"
+				}
+				notes = append(notes, note)
 			}
 		}
 	}
@@ -109,15 +123,26 @@ func RewrittenEnvNotes(service string, imported []string, plan EnvImport) []stri
 	return notes
 }
 
+// secureScheme reports an https or wss URL.
+func secureScheme(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	return scheme == "https" || scheme == "wss"
+}
+
 // rewriteServiceAddress turns a Compose value that calls a project service
 // over HTTP by its Docker host, `http://billing:8080/v1`, into the address
 // that service answers on Gregale, `http://billing.svc.gregale:10081/v1`
 // (ADR-20261026181020). The HTTP service mesh forwards to the service's
 // serving port on every node, so the Docker port is dropped; HTTPS and
-// secure WebSocket values use the private TLS alias. Values with
+// secure WebSocket values use the private TLS alias where private service
+// HTTPS is enabled, and the plaintext address where it is not. Values with
 // credentials, other schemes, and hosts that are not project services stay
 // as they are.
-func rewriteServiceAddress(value string, callable []string) (rewritten, host string, ok bool) {
+func rewriteServiceAddress(value string, callable []string, privateHTTPS bool) (rewritten, host string, ok bool) {
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	if err != nil || parsed.User != nil || parsed.Hostname() == "" || parsed.Opaque != "" {
 		return "", "", false
@@ -130,10 +155,13 @@ func rewriteServiceAddress(value string, callable []string) (rewritten, host str
 	if !api.ValidServiceName(name) {
 		return "", "", false
 	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "ws":
+	switch scheme := strings.ToLower(parsed.Scheme); {
+	case scheme == "http" || scheme == "ws":
 		parsed.Host = fmt.Sprintf("%s.svc.gregale:%d", name, api.ServiceBindingPort)
-	case "https", "wss":
+	case (scheme == "https" || scheme == "wss") && !privateHTTPS:
+		parsed.Scheme = strings.TrimSuffix(scheme, "s")
+		parsed.Host = fmt.Sprintf("%s.svc.gregale:%d", name, api.ServiceBindingPort)
+	case scheme == "https" || scheme == "wss":
 		parsed.Host = name + ".internal"
 	default:
 		return "", "", false

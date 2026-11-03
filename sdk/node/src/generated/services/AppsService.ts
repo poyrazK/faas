@@ -111,6 +111,8 @@ import type { IssueTeam } from '../models/IssueTeam.js';
 import type { IssueTrackerAutoSync } from '../models/IssueTrackerAutoSync.js';
 import type { IssueTrackerLinearConnection } from '../models/IssueTrackerLinearConnection.js';
 import type { IssueTrackerLink } from '../models/IssueTrackerLink.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
 import type { ListIssueSavedViewsResponse } from '../models/ListIssueSavedViewsResponse.js';
@@ -156,6 +158,7 @@ import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { ReviewBindingVerificationRequest } from '../models/ReviewBindingVerificationRequest.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
@@ -3147,6 +3150,86 @@ export class AppsService {
         404: `App not found for this account.`,
         429: `Rate limit exceeded.`,
       },
+    });
+  }
+  /**
+   * Read an app's conditions.
+   * Preview (resource-conditions capability). The app's Ready,
+   * Progressing and Degraded conditions, derived when read
+   * from the same evidence as GET /v1/apps/{slug}/health and never
+   * stored. It never wakes or probes a workload. An idle app that scales
+   * to zero is Ready=True with reason idle. A terminal condition will not
+   * change without a new request. Requires apps:read or admin scope. No
+   * MFA required. Cache-Control no-store.
+   *
+   * @returns ResourceStatus The app's conditions.
+   * @returns Problem Missing sign-in or read scope, an app this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getAppStatus({
+    slug,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Registered app environment whose conditions are read; omit for its default environment.
+     */
+    environment?: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/status',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+    });
+  }
+  /**
+   * Set and remove an app's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the app carries after it. The
+   * write is idempotent. A result over 32 labels is refused with
+   * label_limit_exceeded; an invalid key or value with invalid_label_key
+   * or invalid_label_value; a key under gregale.dev/ with
+   * reserved_label_key. Emits a resource.labels.changed audit event.
+   * Requires apps:deploy or admin scope and MFA. While the capability is
+   * on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+   * and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+   * label selector such as team=billing,tier in (web,api),!canary (=,
+   * ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+   * through its app. An invalid selector is a 400
+   * invalid_label_selector, and a selector while the capability is off
+   * a 403 capability_not_released. These fields join the GA
+   * description of those routes when the capability does.
+   *
+   * @returns LabelsResponse The app's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, deploy scope or MFA, an app this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateAppLabels({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/labels',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

@@ -35,7 +35,7 @@ func TestPlanEnvImport(t *testing.T) {
 		"billing": {},
 		"cache":   {},
 	}}
-	got := PlanEnvImport(env, "api", []string{"api"}, api.MustLimitsFor(api.PlanPro))
+	got := PlanEnvImport(env, "api", []string{"api"}, api.MustLimitsFor(api.PlanPro), true)
 	wantValues := map[string]string{"LOG_LEVEL": "info", "RATIO": "1.0", "PUBLIC_URL": "https://shop.example.com"}
 	if !maps.Equal(got.Values, wantValues) {
 		t.Fatalf("imported %v, want %v", got.Values, wantValues)
@@ -51,7 +51,7 @@ func TestPlanEnvImport(t *testing.T) {
 	}
 
 	env.Import = false
-	got = PlanEnvImport(env, "api", []string{"api"}, api.MustLimitsFor(api.PlanPro))
+	got = PlanEnvImport(env, "api", []string{"api"}, api.MustLimitsFor(api.PlanPro), true)
 	if len(got.Values) != 0 || got.Skipped["LOG_LEVEL"] != EnvSkipNotOptedIn || got.Skipped["STRIPE_KEY"] != EnvSkipSecret {
 		t.Fatalf("without the opt-in: values %v, skipped %v", got.Values, got.Skipped)
 	}
@@ -81,7 +81,7 @@ func TestPlanEnvImport_Kubernetes(t *testing.T) {
 	}
 	limits := api.MustLimitsFor(api.PlanPro)
 
-	plan := PlanEnvImport(env, "api", []string{"api", "billing"}, limits)
+	plan := PlanEnvImport(env, "api", []string{"api", "billing"}, limits, true)
 	if got, want := plan.Values, map[string]string{
 		"LOG_LEVEL":   "debug",
 		"BILLING_URL": "http://billing.svc.gregale:" + fmt.Sprint(api.ServiceBindingPort) + "/v1",
@@ -96,7 +96,7 @@ func TestPlanEnvImport_Kubernetes(t *testing.T) {
 		t.Errorf("api skipped = %v, want %v", got, want)
 	}
 
-	worker := PlanEnvImport(env, "worker", nil, limits)
+	worker := PlanEnvImport(env, "worker", nil, limits, true)
 	if len(worker.Values) != 0 {
 		t.Errorf("worker values = %v, want none: Compose's opt-in does not cover it", worker.Values)
 	}

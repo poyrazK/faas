@@ -101,7 +101,10 @@ type Handler struct {
 	notif                  Notifier
 	oci                    oci.Puller
 	builder                LayerBuilder
-	log                    *slog.Logger
+	// layerDigests remembers the digest of each layer this process just
+	// published, so the deploy scan does not hash the same bytes again.
+	layerDigests *publishedLayerDigests
+	log          *slog.Logger
 	// profilingOnDemand stamps dormant guest collectors into manifests for
 	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
 	profilingOnDemand bool
@@ -136,6 +139,12 @@ type Handler struct {
 	// deferLegacyParentBases lets the rolling pre-stage skip child bases the
 	// serving vmmd cannot materialize; the post-switch imaged stages them.
 	deferLegacyParentBases bool
+	// releasePrestage marks the release-bound pre-stage one-shot: it always
+	// rebuilds a base whose producer has another guest-init. servingSince is
+	// when this imaged started; a serving imaged keeps a producer another
+	// release published after it (ADR-20261026181418, amendment 2026-10-31).
+	releasePrestage bool
+	servingSince    time.Time
 	// nodeName is the compute_node identity of this imaged process. A
 	// snapshot_boot notification is fleet-wide, while the builder's OCI
 	// export is local to the node that produced it. Named multi-box daemons
@@ -345,8 +354,8 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 		puller = oci.DefaultPuller{}
 	}
 	return &Handler{
-		store: store, notif: notif, oci: puller, builder: b,
-		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log,
+		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{},
+		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log, servingSince: time.Now().UTC(),
 	}
 }
 
@@ -625,6 +634,13 @@ func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
 // for the serving imaged, which stages it against the new vmmd before ready.
 func (h *Handler) WithLegacyParentDeferral(enabled bool) *Handler {
 	h.deferLegacyParentBases = enabled
+	return h
+}
+
+// WithReleasePrestage marks the release-bound pre-stage one-shot, which
+// stages every base with its own release's guest-init.
+func (h *Handler) WithReleasePrestage(enabled bool) *Handler {
+	h.releasePrestage = enabled
 	return h
 }
 
@@ -1008,12 +1024,12 @@ func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error)
 // backend. The grype runner is NOT called in that case; the
 // caller stamps scan_status='failed' with the error string.
 func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, app state.App, dep state.Deployment) (string, func(), error) {
-	layerID := scanLayerDeploymentID(app.Slug, dep)
+	layerSlug, layerID := scanLayer(app.Slug, dep)
 	// Local backend short-circuit. The legacy appsRootPath stays
 	// because SetDeploymentRootfs (handler.go:1334+1380+1697)
 	// stamps it onto the deployment row as a diagnostic column.
 	if _, isLocal := be.(*storage.LocalStorageBackend); isLocal {
-		p := h.appsRootPath(app.Slug, layerID)
+		p := h.appsRootPath(layerSlug, layerID)
 		if p == "" {
 			return "", func() {}, errors.New("slug/path-traversal guard rejected")
 		}
@@ -1024,7 +1040,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	// the ext4 bytes to a local tempdir so grype dir:<path> can
 	// scan a filesystem path regardless of where the canonical
 	// bytes live.
-	appsKey := storagekey.AppLayer(app.Slug, layerID)
+	appsKey := storagekey.AppLayer(layerSlug, layerID)
 	rc, err := be.Get(ctx, appsKey)
 	if err != nil {
 		return "", func() {}, fmt.Errorf("imaged: scan stage backend.Get(%q): %w", appsKey, err)
@@ -1074,23 +1090,43 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	return stageDir, cleanup, nil
 }
 
-// scanLayerDeploymentID names the deployment whose layer holds this
-// deployment's rootfs. A promoted deployment reuses its source's artifact
-// (rootfs_key apps/<slug>/<source-id>.ext4); keying the scan by the new ID
-// read a missing object, so every promotion skipped its scan, and an
-// enforcing security policy would refuse it (hunt #10). Anything other than
-// this app's own layer key falls back to the deployment's ID.
-func scanLayerDeploymentID(slug string, dep state.Deployment) string {
-	prefix := "apps/" + slug + "/"
-	key := dep.RootfsKey
-	if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, ".ext4") {
-		return dep.ID
+// scanLayer names the layer that holds this deployment's rootfs: the slug and
+// deployment ID in its rootfs_key, as wakes read it. A promoted deployment
+// reuses its source's artifact (rootfs_key apps/<slug>/<source-id>.ext4);
+// keying the scan by the new ID read a missing object, so every promotion
+// skipped its scan (hunt #10). The key also keeps the slug the app had when
+// the layer was written: a rename moves no objects, so rebuilding the key from
+// the current slug failed every scan of a deployment built before the rename,
+// and the live rescan parked enforce apps (bug hunt 2026-10-28 B31). Anything
+// other than a well-formed apps/ key falls back to the current slug and the
+// deployment's ID.
+func scanLayer(slug string, dep state.Deployment) (string, string) {
+	if rest, ok := strings.CutPrefix(dep.RootfsKey, "apps/"); ok {
+		if keySlug, file, ok := strings.Cut(rest, "/"); ok && isSlugSafe(keySlug) && strings.HasSuffix(file, ".ext4") {
+			if id := strings.TrimSuffix(file, ".ext4"); isDeploymentIDSafe(id) {
+				return keySlug, id
+			}
+		}
 	}
-	id := strings.TrimSuffix(strings.TrimPrefix(key, prefix), ".ext4")
-	if !isDeploymentIDSafe(id) {
-		return dep.ID
+	return slug, dep.ID
+}
+
+// liveRescanKey marks a scan that re-checks a live deployment's evidence
+// rather than admitting a new deployment.
+type liveRescanKey struct{}
+
+// stampScanFailure records a scan that could not run. A live rescan of a
+// deployment with complete evidence leaves that evidence in place: the failed
+// stamp replaced it, and the evidence lease then parked the enforce app
+// within a minute although its image and findings had not changed (bug hunt
+// 2026-10-28 H84). New deployments still record the failure.
+func (h *Handler) stampScanFailure(ctx context.Context, dep state.Deployment, result []byte) {
+	if ctx.Value(liveRescanKey{}) != nil && dep.ScanStatus == "complete" {
+		return
 	}
-	return id
+	if err := h.store.UpsertDeploymentScanResult(ctx, dep.ID, result, "failed"); err != nil {
+		h.log.Warn("imaged: stamp scan_status=failed", "deployment", dep.ID, "err", err)
+	}
 }
 
 // Marshal contract: *ScanResult + Error field are plain Go
@@ -1132,10 +1168,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		if mErr != nil {
 			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
-		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
-			h.log.Warn("imaged: stamp scan_status=failed",
-				"deployment", dep.ID, "err", writeErr)
-		}
+		h.stampScanFailure(ctx, dep, b)
 		h.ops.ObserveDeployScanDuration(app.Slug, "skipped", time.Since(start))
 		h.ops.ObserveDeployScanTotal(app.Slug, "skipped")
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
@@ -1154,17 +1187,14 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		if mErr != nil {
 			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
-		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
-			h.log.Warn("imaged: stamp scan_status=failed",
-				"deployment", dep.ID, "err", writeErr)
-		}
+		h.stampScanFailure(ctx, dep, b)
 		h.ops.ObserveDeployScanDuration(app.Slug, "skipped", time.Since(start))
 		h.ops.ObserveDeployScanTotal(app.Slug, "skipped")
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
 	}
 	defer cleanup()
 	markScanPhase(ctx, "stage")
-	artifactDigest, artifactErr := digestScanArtifact(scanDir)
+	artifactDigest, artifactErr := h.scanArtifactDigest(be, storagekey.AppLayer(scanLayer(app.Slug, dep)), scanDir)
 	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
 		h.log.Warn("imaged: hash scan artifact", "deployment", dep.ID, "app", app.Slug, "err", artifactErr)
@@ -1194,10 +1224,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 				"deployment", dep.ID, "err", mErr)
 			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
-		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
-			h.log.Warn("imaged: stamp scan_status=failed",
-				"deployment", dep.ID, "err", writeErr)
-		}
+		h.stampScanFailure(ctx, dep, b)
 		// ADR-075: surface the failure as a metric increment so
 		// the §12 dashboard panel can render a 5-min red rate.
 		// Duration histogram is observed on the failed branch too
@@ -2632,7 +2659,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 					_ = c.Close()
 				}
 			}()
-			result, err := h.builder.Build(ctx, rootfs.BuildInput{
+			result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 				Layers:        above.readers,
 				Manifest:      manifest,
 				GuestInitPath: h.guestInitPath,
@@ -2703,7 +2730,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			_ = h.markDeployFailed(ctx, dep.ID, err, "verify app image chain")
 			return err
 		}
-		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 			Layers:        layersAsReaders(pulled.Layers),
 			Manifest:      manifest,
 			GuestInitPath: h.guestInitPath,
@@ -2909,7 +2936,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q manifest", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q manifest: %w", sc.Name, err)
 		}
-		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 			Layers:           layersAsReaders(pulled.Layers),
 			Manifest:         api.SidecarBuildManifest(),
 			WorkloadName:     sc.Name,
@@ -3275,7 +3302,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		buildInput.Layers = builtLayers
 		buildInput.TarballPath = dep.SourcePath
 	}
-	result, err := h.builder.Build(ctx, buildInput)
+	result, err := h.buildAppLayer(ctx, buildInput)
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "build function layer")
 		return fmt.Errorf("imaged: build function layer: %w", err)

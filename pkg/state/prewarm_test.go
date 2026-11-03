@@ -238,3 +238,66 @@ func TestMemStorePrewarmExpiryTerminalizesOnlyExpiredPending(t *testing.T) {
 		t.Fatalf("missing ExpirePrewarmIntent = changed=%v, err=%v", changed, err)
 	}
 }
+
+func TestMemStoreActivePrewarmFloors(t *testing.T) {
+	m := state.NewMemStore()
+	apps := make([]state.App, 3)
+	for i := range apps {
+		apps[i] = state.App{ID: "app-" + string(rune('a'+i)), AccountID: "acct-1", Status: state.AppActive}
+		(*m.Apps())[apps[i].ID] = apps[i]
+	}
+	testActivePrewarmFloors(t, m, apps, "missing")
+}
+
+type prewarmFloorsTestStore interface {
+	state.PrewarmStore
+	state.PrewarmFloorsReader
+}
+
+// adr: 20261102160622 — the reaper's bulk floor read answers what
+// ActivePrewarmFloor answers per app: a running intent's count, a succeeded
+// one's admitted count, nothing for a pending one or an unknown app.
+func testActivePrewarmFloors(t *testing.T, s prewarmFloorsTestStore, apps []state.App, unknown string) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	create := func(app state.App, count int) state.PrewarmIntent {
+		t.Helper()
+		intent, err := s.CreatePrewarmIntent(ctx, app.ID, app.AccountID, count, now.Add(time.Minute), now.Add(5*time.Minute), state.PrewarmTriggerCalendar)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return intent
+	}
+	claim := func(intent state.PrewarmIntent) {
+		t.Helper()
+		if _, claimed, err := s.ClaimPrewarmIntent(ctx, intent.ID, now); err != nil || !claimed {
+			t.Fatalf("claim = %v, err = %v", claimed, err)
+		}
+	}
+	claim(create(apps[0], 3))
+	succeeded := create(apps[1], 4)
+	claim(succeeded)
+	if err := s.CompletePrewarmIntent(ctx, succeeded.ID, now, 2, "partial:2:capacity"); err != nil {
+		t.Fatal(err)
+	}
+	create(apps[2], 5)
+
+	ids := []string{apps[0].ID, apps[1].ID, apps[2].ID, unknown}
+	floors, err := s.ActivePrewarmFloors(ctx, ids, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(floors) != 2 || floors[apps[0].ID] != 3 || floors[apps[1].ID] != 2 {
+		t.Fatalf("ActivePrewarmFloors = %v, want %s:3 and %s:2", floors, apps[0].ID, apps[1].ID)
+	}
+	for _, id := range ids {
+		one, err := s.ActivePrewarmFloor(ctx, id, now.Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if one != floors[id] {
+			t.Fatalf("app %s: ActivePrewarmFloor %d, ActivePrewarmFloors %d", id, one, floors[id])
+		}
+	}
+}

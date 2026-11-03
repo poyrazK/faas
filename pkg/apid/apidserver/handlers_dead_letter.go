@@ -206,7 +206,7 @@ func (s *server) purgeDeadLetterEvents(w http.ResponseWriter, r *http.Request, a
 // deadLetterReplayFailure labels a failed replay for faas_dlq_replayed_total:
 // refusing an entry that cannot be replayed is the caller's 409, not an error.
 func deadLetterReplayFailure(err error) string {
-	if errors.Is(err, state.ErrDeadLetterNotReplayable) {
+	if errors.Is(err, state.ErrDeadLetterNotReplayable) || errors.Is(err, state.ErrKeyedReplayExpired) {
 		return "other"
 	}
 	return "error"

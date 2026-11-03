@@ -24,7 +24,8 @@ class ReleaseFreezeStatus:
     active: list[ReleaseFreeze]
     """The freezes refusing a production release now."""
     next_: ReleaseFreeze | Unset = UNSET
-    """A deploy freeze on production releases of one app or, without `app`, of every app of the account."""
+    """A deploy freeze on production releases of one app or, without `app`, of every app of its owner. An account's
+    freezes cover its personal apps; a company organization's freezes (`org`) cover the organization's apps."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

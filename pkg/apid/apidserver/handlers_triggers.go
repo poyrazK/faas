@@ -1576,6 +1576,9 @@ func sealTriggerConfigWith(seal func(api.TriggerKind, json.RawMessage, []*age.X2
 // without opening it: apid holds no identity for trigger credentials.
 func mergeTriggerConfigForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage) (json.RawMessage, *api.Problem) {
 	merged, err := triggerconfig.MergeForUpdate(kind, stored, incoming)
+	if errors.Is(err, triggerconfig.ErrCredentialMove) {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Credential required", err.Error())
+	}
 	if err != nil {
 		return nil, api.ErrSecretStoreUnavailable()
 	}

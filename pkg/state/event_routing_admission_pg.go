@@ -154,6 +154,16 @@ func admitEventRecipientTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, clai
 	if err := validateEventRoutingClaim(ctx, q, tx, claim); err != nil {
 		return PublishedEventRoutingResult{}, err
 	}
+	if eventAdmissionChecksSubscription(p) {
+		enabled, err := q.EventRoutingSubscriptionEnabled(ctx, tx, sqlc.EventRoutingSubscriptionEnabledParams{
+			ID: mustPgUUID(p.recipient.ID), AccountID: mustPgUUID(p.recipient.AccountID), AppID: mustPgUUID(p.recipient.AppID)})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return PublishedEventRoutingResult{}, admissionError(EventFanoutFailureCodeTargetLookupFailed, true, err)
+		}
+		if !enabled {
+			p.unsubscribe()
+		}
+	}
 
 	var scope string
 	if eventAdmissionNeedsCapacity(p) {

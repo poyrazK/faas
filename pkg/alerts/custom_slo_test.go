@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
@@ -93,12 +94,21 @@ func TestEvaluator_SLOBudgetRemaining(t *testing.T) {
 	}
 }
 
+// sloDeletedAfterListing models an SLO deleted between the evaluator listing
+// its rules and reading the SLO: the delete cascades to the rule, but the tick
+// already holds it.
+type sloDeletedAfterListing struct {
+	MemStore *state.MemStore
+}
+
+func (sloDeletedAfterListing) GetSLO(context.Context, string, string) (state.SLO, error) {
+	return state.SLO{}, state.ErrNotFound
+}
+
 func TestEvaluator_SLORuleForDeletedSLOIsUnknown(t *testing.T) {
-	store := state.NewMemStore()
-	rule, def, ident := seedSLORule(t, store, state.AlertMetricSLOBudgetBurn, state.AlertGt, 1)
-	if err := store.DeleteSLO(context.Background(), def.AppID, def.ID); err != nil {
-		t.Fatal(err)
-	}
+	base := state.NewMemStore()
+	rule, _, ident := seedSLORule(t, base, state.AlertMetricSLOBudgetBurn, state.AlertGt, 1)
+	store := statetest.NewMem(sloDeletedAfterListing{MemStore: base})
 	prom := &selectivePromQL{fn: func(string) (float64, error) { return 0, nil }}
 	if stats := runOnce(t, store, prom, ident, time.Now()); stats.Fired != 0 {
 		t.Fatalf("stats = %+v", stats)

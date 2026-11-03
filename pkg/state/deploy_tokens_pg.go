@@ -38,6 +38,7 @@ func (s *PgStore) CreateDeployToken(ctx context.Context, accountID, appID string
 			return DeployToken{}, fmt.Errorf("pgstore: unsupported deploy token scope %q", scope)
 		}
 	}
+	hash = storedCredential(credTagDeployToken, hash)
 	row := s.pool.QueryRow(ctx,
 		`insert into deploy_tokens (account_id, app_id, token_sha256, label, scopes, expires_at)
 		 select $1::uuid, a.id, $3, $4, $5, $6
@@ -111,6 +112,7 @@ func (s *PgStore) RotateDeployToken(ctx context.Context, accountID, appID, token
 	if len(hash) != 32 || !expiresAt.After(time.Now()) {
 		return DeployToken{}, DeployToken{}, errors.New("pgstore: invalid rotated deploy token")
 	}
+	hash = storedCredential(credTagDeployToken, hash)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return DeployToken{}, DeployToken{}, err
@@ -167,10 +169,18 @@ func (s *PgStore) AuthenticateDeployToken(ctx context.Context, hash []byte) (Acc
 	if len(hash) != 32 {
 		return Account{}, APIKey{}, ErrNotFound
 	}
-	t, err := scanDeployToken(s.pool.QueryRow(ctx,
-		`select `+deployTokenSelectCols+` from deploy_tokens where token_sha256 = $1`, hash))
+	t, err := firstCredential(ctx, credentialLookups(credTagDeployToken, hash), func(ctx context.Context, value []byte) (DeployToken, error) {
+		return scanDeployToken(s.pool.QueryRow(ctx,
+			`select `+deployTokenSelectCols+` from deploy_tokens where token_sha256 = $1`, value))
+	})
 	if err != nil {
 		return Account{}, APIKey{}, err
+	}
+	// ADR 20261029202403: rewrite a plain or older-key hash on use.
+	if next, stale := staleCredential(credTagDeployToken, hash, t.Hash); stale {
+		if _, err := s.pool.Exec(ctx, `update deploy_tokens set token_sha256 = $1 where id = $2::uuid and token_sha256 = $3`, next, t.ID, t.Hash); err == nil {
+			t.Hash = next
+		}
 	}
 	if t.Status == string(APIKeyStatusRevoked) {
 		return Account{}, APIKey{}, ErrAPIKeyRevoked

@@ -59,7 +59,8 @@ leaving a running database without an owner.
   includes the databases. While it stays set, the databases must reach the provider-confirmed
   `deleted` tombstone through the managed PostgreSQL lifecycle. Contact the
   customer, or follow the account's support process, so the databases are
-  deleted (`gregale postgres delete`). The next hourly sweep then moves the
+  deleted (`gregale postgres delete <database> --purge`; a scheduled delete
+  keeps the database for 7 days and keeps blocking the account). The next hourly sweep then moves the
   account to `deleted_pending` and the gauge drops to zero.
 - `shared_app_ownership`: complete the company app ownership transfer for the
   account; the next sweep proceeds once the guard clears.

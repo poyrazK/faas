@@ -2,9 +2,11 @@ package mcpmanagement
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/labels"
 )
 
 type noArgs struct{}
@@ -16,8 +18,9 @@ type appArgs struct {
 }
 
 type appsArgs struct {
-	Limit  int `json:"limit,omitempty" jsonschema:"Page size from 1 to 100; default 20"`
-	Offset int `json:"offset,omitempty" jsonschema:"Non-negative offset from a previous next_offset; default 0"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"Page size from 1 to 100; default 20"`
+	Offset   int    `json:"offset,omitempty" jsonschema:"Non-negative offset from a previous next_offset; default 0"`
+	Selector string `json:"selector,omitempty" jsonschema:"Kubernetes label selector, e.g. team=billing,tier in (web,api); only apps whose labels match (preview)"`
 }
 
 type deploymentsArgs struct {
@@ -42,6 +45,9 @@ type appView struct {
 	MaxConcurrency         int                           `json:"max_concurrency"`
 	MinInstances           int                           `json:"min_instances"`
 	DeploymentAvailability api.AppDeploymentAvailability `json:"deployment_availability"`
+	// Labels are present while the account has the resource-labels preview
+	// (ADR-20261031100025). They are customer metadata, not secrets.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 func projectApp(a api.AppResponse) appView {
@@ -49,6 +55,7 @@ func projectApp(a api.AppResponse) appView {
 		ID: a.ID, Slug: a.Slug, Type: a.Type, Runtime: a.Runtime, Status: a.Status,
 		URL: a.URL, CanonicalURL: a.CanonicalURL, RAMMB: a.RAMMB, CPUMillicores: a.CPUMillicores,
 		MaxConcurrency: a.MaxConcurrency, MinInstances: a.MinInstances, DeploymentAvailability: a.DeploymentAvailability,
+		Labels: a.Labels,
 	}
 }
 
@@ -79,7 +86,7 @@ func (m *management) listApps(ctx context.Context, args appsArgs) (any, error) {
 	if args.Offset < 0 {
 		return nil, invalid("invalid_argument", "offset must be non-negative")
 	}
-	apps, err := m.client.ListApps(ctx)
+	apps, err := m.selectedApps(ctx, args.Selector)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +103,24 @@ func (m *management) listApps(ctx context.Context, args appsArgs) (any, error) {
 		result["next_offset"] = end
 	}
 	return result, nil
+}
+
+// selectedApps lists the account's apps, or those a label selector picks
+// (ADR-20261031100025). The selector is checked before any request, and the
+// returned labels are matched again: an apid without labels ignores it.
+func (m *management) selectedApps(ctx context.Context, selector string) ([]api.AppResponse, error) {
+	if selector == "" {
+		return m.client.ListApps(ctx)
+	}
+	sel, err := labels.Parse(selector)
+	if err != nil {
+		return nil, invalid(labels.CodeInvalidSelector, err.Error())
+	}
+	apps, err := m.client.ListAppsSelected(ctx, sel.String())
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(apps, func(a api.AppResponse) bool { return !sel.Matches(a.Labels) }), nil
 }
 
 func (m *management) getApp(ctx context.Context, args appArgs) (any, error) {

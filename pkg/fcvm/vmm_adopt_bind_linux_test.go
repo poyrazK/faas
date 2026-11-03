@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // restagedBindFixture is an adopted guest whose base drive's cache source
@@ -62,7 +64,7 @@ func TestAdoptGuestBindsTakesARestagedSourceFromTheGuest(t *testing.T) {
 		t.Fatalf("adopt with a re-staged source: %v", err)
 	}
 	st := f.v.bindSourceModes[bindSourceKey{path: f.source, file: f.recorded}]
-	if st.refs != 1 || st.handle == nil {
+	if st.refs != 1 || st.handle == nil || !st.viaGuest {
 		t.Fatalf("bind source state = %+v", st)
 	}
 	info, err := st.handle.Stat()
@@ -129,5 +131,99 @@ func TestAdoptGuestBindsRefusesWhatIsNotTheRecordedFile(t *testing.T) {
 				t.Fatalf("refusal left references: %v", f.v.bindSourceModes)
 			}
 		})
+	}
+}
+
+// In production the guest-view handle comes through the jail's read-only
+// bind, so restoring the mode through it fails (metal 2026-10-30: "chmod
+// /proc/self/fd/15: read-only file system", and the adopted guest could never
+// park). That failure must not hold the teardown; for any other handle it
+// still does.
+func TestReleaseBindSourceToleratesAGuestViewHandle(t *testing.T) {
+	for _, viaGuest := range []bool{true, false} {
+		dir := t.TempDir()
+		src := filepath.Join(dir, "base.ext4")
+		if err := os.WriteFile(src, []byte("image"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		id, err := statIdentity(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// An O_PATH handle cannot change the mode, as a handle through a
+		// read-only mount cannot.
+		fd, err := unix.Open(src, unix.O_PATH|unix.O_CLOEXEC, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := NewJailerVMM(dir, 0)
+		key := bindSourceKey{path: src, file: id}
+		v.bindSourceModes[key] = bindSourceMode{mode: 0o600, refs: 1, file: id, handle: os.NewFile(uintptr(fd), src), viaGuest: viaGuest}
+		err = v.releaseBindSource(src, id)
+		_, kept := v.bindSourceModes[key]
+		if viaGuest && (err != nil || kept) {
+			t.Fatalf("guest-view release = %v, kept %v; want it done", err, kept)
+		}
+		if !viaGuest && (err == nil || !kept) {
+			t.Fatalf("host release = %v, kept %v; want the failed restoration to keep the reference", err, kept)
+		}
+		if kept {
+			_ = v.bindSourceModes[key].handle.Close()
+		}
+	}
+}
+
+// faas-vmmd.service's RestrictSUIDSGID= answers openat2 with ENOSYS, so the
+// guest-view open walks the jail one component at a time and must refuse
+// exactly what RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS would.
+func TestOpenBeneathNoFollowStaysInTheJail(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a", "b", "f"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a/b", filepath.Join(root, "l")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("f", filepath.Join(root, "a", "b", "s")); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := unix.Open(root, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(dir) }()
+	for _, tc := range []struct {
+		rel  string
+		mode uint32 // 0: refused
+	}{
+		{"a/b/f", unix.S_IFREG},
+		{"a/../a/b/f", unix.S_IFREG},
+		{"a/b/s", unix.S_IFLNK}, // the link itself, never its target
+		{"l/f", 0},
+		{"../f", 0},
+		{"a/../../f", 0},
+		{"/a/b/f", 0},
+		{".", 0},
+	} {
+		fd, err := openBeneathNoFollow(dir, tc.rel)
+		if tc.mode == 0 {
+			if err == nil {
+				_ = unix.Close(fd)
+				t.Errorf("%q opened, want it refused", tc.rel)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: %v", tc.rel, err)
+			continue
+		}
+		var st unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT != tc.mode {
+			t.Errorf("%q opened mode %o, %v; want %o", tc.rel, st.Mode&unix.S_IFMT, err, tc.mode)
+		}
+		_ = unix.Close(fd)
 	}
 }

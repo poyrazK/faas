@@ -152,6 +152,62 @@ func applyK8sEnvFrom(seeds []workloadSeed, sources k8sEnvSources) []string {
 	return warnings
 }
 
+// k8sConfigMap is a ConfigMap the scan read. Its warning waits for the end of
+// the walk, because whether its values are imported depends on the
+// workloads that read it.
+type k8sConfigMap struct{ src, name, warning string }
+
+// k8sConfigMapWarnings reports a ConfigMap's values as not imported, unless
+// every workload whose app container reads it carries the env-import
+// annotation; when some do not, the warning names them.
+func k8sConfigMapWarnings(configMaps []k8sConfigMap, readers []k8sEnvWorkload) []string {
+	var warnings []string
+	for _, cm := range configMaps {
+		read := false
+		var unannotated []string
+		for _, w := range readers {
+			if !k8sReadsConfigMap(w.container, cm.name) {
+				continue
+			}
+			read = true
+			if !w.optIn {
+				unannotated = append(unannotated, w.name)
+			}
+		}
+		switch {
+		case !read:
+			if cm.warning != "" {
+				warnings = append(warnings, cm.warning)
+			}
+		case len(unannotated) > 0:
+			slices.Sort(unannotated)
+			warnings = append(warnings, fmt.Sprintf("reposcan: %s: kind ConfigMap %q: values not imported into %s; annotate the workload with `%s: \"true\"` to import them, or set them with `gregale env set`",
+				cm.src, cm.name, strings.Join(slices.Compact(unannotated), ", "), K8sEnvImportAnnotation))
+		}
+	}
+	return warnings
+}
+
+// k8sReadsConfigMap reports whether a container takes any environment from
+// the named ConfigMap, through envFrom or a configMapKeyRef.
+func k8sReadsConfigMap(container map[string]any, name string) bool {
+	envFrom, _ := container["envFrom"].([]any)
+	for _, raw := range envFrom {
+		entry, _ := raw.(map[string]any)
+		if ref, ok := entry["configMapRef"].(map[string]any); ok && ref["name"] == name {
+			return true
+		}
+	}
+	env, _ := container["env"].([]any)
+	for _, raw := range env {
+		entry, _ := raw.(map[string]any)
+		if k8sMap(entry, "valueFrom", "configMapKeyRef")["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
 // sourceFile is the file part of a seed source ("k8s/app.yaml: api").
 func sourceFile(source string) string {
 	file, _, _ := strings.Cut(source, ": ")

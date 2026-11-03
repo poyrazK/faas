@@ -133,8 +133,12 @@ func k8sKindWarning(src string, doc *yaml.Node, h k8sHeader) string {
 		return label + " ignored: " + reason
 	case "Ingress", "HTTPRoute":
 		reason := "every app gets an HTTPS URL"
-		if hosts := k8sRouteHosts(doc, h.Kind); len(hosts) > 0 {
-			reason += "; add " + strings.Join(hosts, ", ") + " with `gregale domain add`"
+		switch hosts := k8sRouteHosts(doc, h.Kind); len(hosts) {
+		case 0:
+		case 1:
+			reason += "; add " + hosts[0] + " with `gregale domain create --app <app> --domain " + hosts[0] + "`"
+		default:
+			reason += "; add " + strings.Join(hosts, ", ") + " with `gregale domain create --app <app> --domain <host>`"
 		}
 		return label + " ignored: " + reason
 	}

@@ -10,3 +10,9 @@ Environment=FAAS_RUNTIME_SECRET_BINDING_REQUIRED={{ faas_seal_domain_runtime_bin
 Environment=FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE=/etc/faas/secrets/domains/runtime-signing.pub
 Environment=FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED={{ faas_seal_domain_runtime_signatures_required | bool | lower }}
 {% endif %}
+{% if faas_seal_domain_runtime_contracted | bool %}
+# ADR 20261022111812, contract step: vmmd opens runtime secrets and registry
+# passwords with the runtime and build domains alone, never the fleet or
+# host identity. faas_seal_domain_legacy_identities reports it.
+Environment=FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED=true
+{% endif %}

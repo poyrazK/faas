@@ -3,10 +3,11 @@ package state
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // App-reported units (ADR-1318): a card with unit "app:<meter>" prices the
@@ -20,7 +21,7 @@ const (
 	MaxAppMeterUnitsPerRequest = int64(1_000_000_000_000)
 )
 
-var appMeterRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+var appMeterRE = lazyregexp.New(`^[a-z][a-z0-9_]{0,31}$`)
 
 // ValidAppMeter reports whether name is a meter an app can report.
 func ValidAppMeter(name string) bool { return appMeterRE.MatchString(name) }

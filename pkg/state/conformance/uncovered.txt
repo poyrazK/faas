@@ -31,7 +31,6 @@ AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
 AppendDeploymentLog
 AppendDeploymentStage
-AppendEventWithTrace
 AppendSnapshotStorage
 AppendUploadBytes
 ApplyProjectPlan
@@ -39,7 +38,6 @@ ApplyRegressionAction
 AppsForProject
 AuthDefaultFlippedAt
 AuthenticateOIDCBearer
-AutoRollbackDeploymentsTx
 BeginCrashCapturePurge
 BeginCrashCaptureStage
 BeginServiceRolloutCutover
@@ -117,12 +115,11 @@ CreateAppWebhookIfUnderQuota
 CreateBuildProvenance
 CreateBuildWithID
 CreateConsumerKey
-CreateCorsPresetIfUnderQuota
+CreateConsumerKeyForConsumerIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions
 CreateCustomDomain
 CreateDeploymentScopeExclusion
-CreateEdgeRule
 CreateEdgeRuleIfUnderQuota
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
@@ -330,6 +327,7 @@ ListDeploymentAudit
 ListDeploymentAuditByAlertRule
 ListDeploymentLogs
 ListDeploymentScopeExclusions
+ListDeploymentSidecarEnvReseals
 ListDeploymentSidecarLayers
 ListDeploymentsByNodeID
 ListDeploymentsForAccount
@@ -338,7 +336,6 @@ ListDistinctUpstreamHostHashes
 ListDomainsForAccount
 ListDomainsForApp
 ListDueInvocations
-ListEdgeRulesForAccount
 ListEdgeRulesForApp
 ListEgressCircuitCandidates
 ListEnabledAlertRules
@@ -404,7 +401,6 @@ ListWorkflowRuns
 LiveCrashCaptureDeploymentIDs
 LiveDeploymentForScope
 LiveDeployments
-LoadAllOverageCapCents
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes
 LookupDeploymentScopeExclusions
@@ -565,7 +561,6 @@ UpdateAccountProviderCustomerID
 UpdateAccountStripeSubscriptionItem
 UpdateAlertDeliveryStatus
 UpdateAlertRule
-UpdateAppLogDrain
 UpdateAppWebhook
 UpdateBuildProvenanceSBOM
 UpdateCorsPreset
@@ -602,6 +597,7 @@ UpsertAppTrustedSigner
 UpsertComputeNode
 UpsertComputeNodeFromOperator
 UpsertDeploymentOpenAPIDoc
+UpsertDeploymentOpenAPIDocIfUnderQuota
 UpsertDeploymentScanResult
 UpsertDeploymentSecretFindings
 UpsertDoctorObservation

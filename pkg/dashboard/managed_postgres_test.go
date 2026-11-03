@@ -35,3 +35,94 @@ func TestRenderManagedPostgresNeverIncludesCredentialMaterial(t *testing.T) {
 		}
 	}
 }
+
+// A scheduled delete (ADR-20261029174950) shows when it becomes final and
+// how to undo or finish it; a database with none shows neither.
+func TestRenderManagedPostgresScheduledDelete(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		restorableUntil string
+		want, forbidden []string
+	}{
+		{name: "scheduled", restorableUntil: "2026-11-06T12:00:00Z",
+			want: []string{"Scheduled for deletion", "Undo before 2026-11-06T12:00:00Z", "gregale postgres recover orders", "gregale postgres delete orders --purge"}},
+		{name: "ready", forbidden: []string{"Scheduled for deletion", "gregale postgres recover orders"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := httptest.NewRecorder()
+			page := Page{
+				Title: "Managed PostgreSQL", Body: "postgres",
+				Account: &AccountView{Email: "alice@example.com", Plan: "pro"},
+				Data: ManagedPostgresData{Available: true, Databases: []ManagedPostgresDatabaseItem{{
+					ID: "db-1", Name: "orders", State: "deleting", RestorableUntil: tc.restorableUntil,
+				}}},
+			}
+			if err := Render(out, slog.Default(), "nonce", page); err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			body := out.Body.String()
+			for _, want := range tc.want {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %q", want)
+				}
+			}
+			for _, forbidden := range tc.forbidden {
+				if strings.Contains(body, forbidden) {
+					t.Errorf("body contains %q", forbidden)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderManagedPostgresRestoreRangeAndSlot shows where a restore can start
+// and a temporary copy's deadline (ADR-20261031123259).
+func TestRenderManagedPostgresRestoreRangeAndSlot(t *testing.T) {
+	out := httptest.NewRecorder()
+	page := Page{
+		Title: "Managed PostgreSQL", Body: "postgres",
+		Account: &AccountView{Email: "alice@example.com", Plan: "hobby"},
+		Data: ManagedPostgresData{Available: true, Databases: []ManagedPostgresDatabaseItem{
+			{ID: "db-1", Name: "orders", State: "ready", RestoreFrom: "2026-10-24T12:00:00Z"},
+			{ID: "db-2", Name: "orders-copy", State: "ready", RestoreSlotUntil: "2026-11-07T12:00:00Z"},
+		}},
+	}
+	if err := Render(out, slog.Default(), "nonce", page); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := out.Body.String()
+	for _, want := range []string{"Restorable points", "From 2026-10-24T12:00:00Z to now", "gregale postgres restore orders",
+		"Temporary copy", "before 2026-11-07T12:00:00Z"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
+// ADR-20261102125208: a database the plan no longer includes says why it is
+// suspended and how to resume it.
+func TestManagedPostgresPageShowsDatabasesPastThePlan(t *testing.T) {
+	out := httptest.NewRecorder()
+	page := Page{
+		Title:   "Managed PostgreSQL",
+		Body:    "postgres",
+		Account: &AccountView{Email: "alice@example.com", Plan: "free"},
+		Data: ManagedPostgresData{Available: true, Databases: []ManagedPostgresDatabaseItem{
+			{ID: "db-1", Name: "orders", State: "ready"},
+			{ID: "db-2", Name: "events", State: "ready", PlanExcess: "database_limit"},
+			{ID: "db-3", Name: "analytics", State: "ready", ServiceClass: "production", PlanExcess: "service_class"},
+		}},
+	}
+	if err := Render(out, slog.Default(), "nonce", page); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	body := out.Body.String()
+	for _, want := range []string{"Your plan allows fewer databases than you have", "does not include the production class", "Its data is kept"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+	if got := strings.Count(body, "<th>Suspended</th>"); got != 2 {
+		t.Errorf("suspended rows = %d; want 2", got)
+	}
+}

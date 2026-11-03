@@ -61,10 +61,12 @@ var memDispatched = map[string]bool{
 	"DeploymentSidecarRAMs":                                   true,
 	"ListBillingWindowInstances":                              true,
 	"ListInstancesForApp":                                     true,
+	"ListLiveInstancesForApps":                                true,
 	"AccountByID":                                             true,
 	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
+	"ActivePrewarmFloors":                                     true,
 	"ActiveProjectReleaseSet":                                 true,
 	"AdmitPublishedEventRecipient":                            true,
 	"AdmitScheduledWorkflow":                                  true,
@@ -101,6 +103,8 @@ var memDispatched = map[string]bool{
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
+	"ListAllAccounts":                                         true,
+	"MarkDunningStep":                                         true,
 	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"FinishPublishedEventRecipient":                           true,
@@ -277,6 +281,8 @@ var memDispatched = map[string]bool{
 	"PinnedProjectReleaseWorkers":                   true,
 	"HeldProjectReleaseWorkers":                     true,
 	"ListConsumerKeysForApp":                        true,
+	"GetSLO":                                        true,
+	"CountOpenAPIDocsByAccount":                     true,
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -376,6 +382,15 @@ func (s *Mem) ActivePrewarmFloor(p0 context.Context, p1 string, p2 time.Time) (i
 	return s.MemStore.ActivePrewarmFloor(p0, p1, p2)
 }
 
+func (s *Mem) ActivePrewarmFloors(p0 context.Context, p1 []string, p2 time.Time) (map[string]int, error) {
+	if o, ok := s.over.(interface {
+		ActivePrewarmFloors(context.Context, []string, time.Time) (map[string]int, error)
+	}); ok {
+		return o.ActivePrewarmFloors(p0, p1, p2)
+	}
+	return s.MemStore.ActivePrewarmFloors(p0, p1, p2)
+}
+
 func (s *Mem) ActiveProjectReleaseSet(p0 context.Context, p1 string, p2 string, p3 string) (state.ProjectReleaseSet, error) {
 	if o, ok := s.over.(interface {
 		ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error)
@@ -446,6 +461,24 @@ func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) erro
 		return o.DeploymentClearSnapshotBackoff(p0, p1)
 	}
 	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
+}
+
+func (s *Mem) ListAllAccounts(p0 context.Context) ([]state.Account, error) {
+	if o, ok := s.over.(interface {
+		ListAllAccounts(context.Context) ([]state.Account, error)
+	}); ok {
+		return o.ListAllAccounts(p0)
+	}
+	return s.MemStore.ListAllAccounts(p0)
+}
+
+func (s *Mem) MarkDunningStep(p0 context.Context, p1 string, p2, p3 state.AccountStatus, p4 ...state.AccountDeletionOption) error {
+	if o, ok := s.over.(interface {
+		MarkDunningStep(context.Context, string, state.AccountStatus, state.AccountStatus, ...state.AccountDeletionOption) error
+	}); ok {
+		return o.MarkDunningStep(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.MarkDunningStep(p0, p1, p2, p3, p4...)
 }
 
 func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
@@ -725,6 +758,15 @@ func (s *Mem) ListConsumerKeysForApp(p0 context.Context, p1 string, p2 string) (
 		return o.ListConsumerKeysForApp(p0, p1, p2)
 	}
 	return s.MemStore.ListConsumerKeysForApp(p0, p1, p2)
+}
+
+func (s *Mem) CountOpenAPIDocsByAccount(p0 context.Context, p1 string) (int, error) {
+	if o, ok := s.over.(interface {
+		CountOpenAPIDocsByAccount(context.Context, string) (int, error)
+	}); ok {
+		return o.CountOpenAPIDocsByAccount(p0, p1)
+	}
+	return s.MemStore.CountOpenAPIDocsByAccount(p0, p1)
 }
 
 func (s *Mem) GetAppErrorSample(p0 context.Context, p1 sqlc.GetAppErrorSampleParams) (state.AppErrorSampleRow, error) {
@@ -1524,6 +1566,15 @@ func (s *Mem) ListInstancesForApp(p0 context.Context, p1 string) ([]state.Instan
 		return o.ListInstancesForApp(p0, p1)
 	}
 	return s.MemStore.ListInstancesForApp(p0, p1)
+}
+
+func (s *Mem) ListLiveInstancesForApps(p0 context.Context, p1 []string) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListLiveInstancesForApps(context.Context, []string) ([]state.Instance, error)
+	}); ok {
+		return o.ListLiveInstancesForApps(p0, p1)
+	}
+	return s.MemStore.ListLiveInstancesForApps(p0, p1)
 }
 
 func (s *Mem) SetDeploymentAlias(p0 context.Context, p1 string, p2 string, p3 string) (state.DeploymentAlias, error) {
@@ -4739,4 +4790,13 @@ func (s *Mem) HeldProjectReleaseWorkers(p0 context.Context, p1 string) ([]string
 		return o.HeldProjectReleaseWorkers(p0, p1)
 	}
 	return s.MemStore.HeldProjectReleaseWorkers(p0, p1)
+}
+
+func (s *Mem) GetSLO(p0 context.Context, p1 string, p2 string) (state.SLO, error) {
+	if o, ok := s.over.(interface {
+		GetSLO(context.Context, string, string) (state.SLO, error)
+	}); ok {
+		return o.GetSLO(p0, p1, p2)
+	}
+	return s.MemStore.GetSLO(p0, p1, p2)
 }

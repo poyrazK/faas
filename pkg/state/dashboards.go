@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Dashboard is one account's saved dashboard (ADR-20261022173833). Widgets
@@ -45,7 +46,7 @@ func (e *DashboardQuotaError) Error() string {
 }
 
 // dashboardName is dashboards_name_shape.
-var dashboardName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var dashboardName = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // ValidDashboardName reports whether name fits the stored name shape.
 func ValidDashboardName(name string) bool { return dashboardName.MatchString(name) }

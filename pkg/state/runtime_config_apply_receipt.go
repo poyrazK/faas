@@ -2,8 +2,9 @@ package state
 
 import (
 	"fmt"
-	"regexp"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // RuntimeConfigApplyReceiptStatus is the outcome a daemon instance reports
@@ -31,7 +32,7 @@ type RuntimeConfigApplyReceipt struct {
 	ReportedAt time.Time
 }
 
-var runtimeConfigReceiptDaemonPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+var runtimeConfigReceiptDaemonPattern = lazyregexp.New(`^[a-z][a-z0-9-]{0,63}$`)
 
 const runtimeConfigReceiptMaxError = 1024
 

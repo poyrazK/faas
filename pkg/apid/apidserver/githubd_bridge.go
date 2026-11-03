@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
 	"github.com/onebox-faas/faas/pkg/apid/release"
@@ -503,10 +504,16 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		Tag:        req.Tag,
 	}
 	params.OverrideHealthcheck, params.OverrideLivenessProbe = projectReadinessOverrides(app.Manifest, resource.Plan)
+	// A push deploys the workflows its gregale.yaml declares, as a CLI deploy
+	// of the same source does (ADR-081). A PR preview does not: its scheduled
+	// workflows would run against the preview.
+	if kind != state.DeploymentKindPreview && manifest != nil {
+		params.Workflows = marshalWorkflowDefinitions(manifest.Workflows)
+	}
 	if kind == state.DeploymentKindGitHub {
 		// ADR-20261019071733: a push cannot carry an override, so a freeze
 		// refuses it; githubd reports the reason on the commit.
-		active, freezeErr := freeze.ActiveFor(ctx, g.store, acct.ID, app.ID, req.DeploymentScope, time.Now().UTC())
+		active, freezeErr := freeze.ActiveFor(ctx, g.store, app, req.DeploymentScope, time.Now().UTC())
 		if freezeErr != nil {
 			g.log.Warn("githubd bridge: could not read deploy freezes; releasing", "app_id", app.ID, "err", freezeErr)
 		} else if len(active) > 0 {
@@ -524,6 +531,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 				return nil, status.Error(codes.FailedPrecondition, api.ErrReleaseApprovalCanaryRequired(app.Slug).Detail)
 			}
 		}
+	}
+	ctx, _, cronProblem := g.prepareDeliveryCrons(ctx, req, resource, app, manifest, kind, params)
+	if cronProblem != nil {
+		return nil, grpcerr.ToStatus(cronProblem)
 	}
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {
@@ -778,4 +789,29 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		spoolRoot:   spool,
 		agentSteps:  agentSteps,
 	})
+}
+
+// prepareDeliveryCrons stages the crons a push's gregale.yaml declares for the
+// app, as a source deploy of the same commit does (crons audit 2026-11-01):
+// pushes ignored them. They activate when the deployment goes live. A PR
+// preview, a non-production scope and a release staged without traffic do not
+// stage crons, as on the source API. An intent whose deployment was never
+// created is left in place: it activates nothing, the app's next push
+// supersedes it, and githubd retrying the delivery prepares it again (a
+// cancelled intent would refuse that retry).
+func (g *githubdBridge) prepareDeliveryCrons(ctx context.Context, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, manifest *gregalemanifest.Manifest, kind state.DeploymentKind, params apidsource.EnqueueParams) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
+	staged := params.TrafficPercentExplicit && params.TrafficPercent == 0 && params.CanaryTotalSteps == 0
+	production := req.DeploymentScope == "" || req.DeploymentScope == state.DefaultEnvScope
+	if kind != state.DeploymentKindGitHub || manifest == nil || staged || !production {
+		return ctx, nil, nil
+	}
+	store, ok := g.store.(state.DeploymentCronStagingStore)
+	if !ok {
+		return ctx, nil, nil
+	}
+	ctx, intent, err := deploystaging.PrepareDeliveryCrons(ctx, store, resource, app, manifest, req.DeliveryId)
+	if err != nil {
+		return ctx, nil, sourceRefManifestStoreProblem(err, resource.Plan, true)
+	}
+	return ctx, intent, nil
 }

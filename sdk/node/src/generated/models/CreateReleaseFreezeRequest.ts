@@ -8,7 +8,7 @@ import type { ReleaseFreezeWeekly } from './ReleaseFreezeWeekly.js';
  */
 export type CreateReleaseFreezeRequest = {
   /**
-   * App slug; omit to freeze every app of the account.
+   * App slug. On `/v1/freezes`, omit to freeze every personal app of the account; a company app is refused with 409 (use `/v1/apps/{slug}/freezes`). On an app route, empty or that app; on an organization route, empty.
    */
   app?: string;
   kind: 'window' | 'weekly' | 'after_rollback';

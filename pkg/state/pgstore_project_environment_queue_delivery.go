@@ -128,6 +128,7 @@ func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, 
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
+	tokenHash = storedCredentialHex(credTagEnvironmentQueueReceipt, tokenHash)
 	count, err := q.UpsertEnvironmentQueueDeliveryReceipt(ctx, tx, sqlc.UpsertEnvironmentQueueDeliveryReceiptParams{
 		InvocationID: row.ID, Attempt: row.Attempts, TokenHash: tokenHash, OwnerHash: environmentQueueReceiptOwnerHash(owner),
 		IssuedAt: row.ReceivedAt, LeaseExpiresAt: row.LeaseExpiresAt})

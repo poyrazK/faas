@@ -483,7 +483,7 @@ func cmdEventsFanoutHistory(args []string) int {
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) ||
 		strings.TrimSpace(*eventSource) == "" || strings.TrimSpace(*eventID) == "" ||
 		validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale event fanout-history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--cursor CURSOR] [--limit N] [--all]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event fanout history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--cursor CURSOR] [--limit N] [--all]", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -643,7 +643,13 @@ func cmdEventsPublish(args []string) int {
 		Data:   json.RawMessage(body),
 	})
 	if err != nil {
-		return printErr("Event publish failed", err)
+		code := printErr("Event publish failed", err)
+		if strings.TrimSpace(*id) == "" {
+			// A fresh id on every run would publish twice when this attempt
+			// actually went through; name the one it used.
+			_, _ = fmt.Fprintf(osStderr, "This attempt used event id %s. Retry with --id %s so it is not published twice.\n", eventID, quoteCLIArg(eventID))
+		}
+		return code
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

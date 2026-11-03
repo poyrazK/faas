@@ -37,7 +37,7 @@ func RuntimePublicationOutcomeUnknown(err error) bool {
 		return false
 	}
 	for _, refused := range []error{ErrConflict, ErrNotFound, ErrInvalidArgument, ErrApplicationStandardRuntimeStale,
-		ErrApplicationStandardsPending, ErrApplicationStandardRuntimeBusy} {
+		ErrApplicationStandardsPending, ErrApplicationStandardRuntimeBusy, ErrNodeCapacity} {
 		if errors.Is(err, refused) {
 			return false
 		}
@@ -77,6 +77,11 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 		}
 		if !fresh {
 			return Instance{}, fmt.Errorf("%w: runtime publication: snapshot recovery is no longer fresh", ErrConflict)
+		}
+	}
+	if p.ExpectedState == string(StateFrozen) && p.targetState() == string(StateRunning) {
+		if err := s.reserveThawDB(ctx, tx, p.InstanceID, p.NodeID); err != nil {
+			return Instance{}, fmt.Errorf("runtime publication: thaw admission: %w", err)
 		}
 	}
 	acceptance, err := prepareRuntimeUpgradeAcceptanceDB(ctx, tx, p)

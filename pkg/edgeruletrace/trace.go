@@ -576,6 +576,21 @@ func RequiresAppCORSDefaultData(headers http.Header) bool {
 	return headers.Get("Origin") != ""
 }
 
+// PreviewInheritedRules returns the production app's rules a PR preview
+// applies as well as its own (ADR-091 amendment 2026-10-30): its app-wide
+// rules, except route and async rules, which would send the preview's
+// traffic to a fixed app. A trace of a preview adds them to the preview's
+// rules, as the gateway does.
+func PreviewInheritedRules(production []api.EdgeRuleResponse) []api.EdgeRuleResponse {
+	var out []api.EdgeRuleResponse
+	for _, rule := range production {
+		if api.IsEdgeRuleAppHosts(rule.MatchHost) && rule.Kind != "route" && rule.Kind != "async" {
+			out = append(out, rule)
+		}
+	}
+	return out
+}
+
 func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 	sorted := append([]api.EdgeRuleResponse(nil), rules...)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -707,6 +722,9 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return stopped
 	}
 
+	// accessGatePhases match the client's original path before the rewritten
+	// one, as the gateway's matchEdgeGate does.
+	accessGatePhases := map[string]bool{"jwt": true, "ip": true, "geo": true, "throttle": true, "challenge": true}
 	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "challenge", "respond", "async", "cache", "budget", "circuit_breaker", "retry"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
@@ -792,6 +810,13 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			matchMethod, _ = corsMatchMethod(input.Method, workingHeaders)
 		}
 		rule, tied := firstPhaseRule(rules, phase, input, requestPath, matchMethod, input.Headers)
+		if accessGatePhases[phase] && input.Path != requestPath {
+			// The gateway's access gates match the client's path first, then
+			// the rewritten one (ADR-091 amendment 2026-11-02, review round 8).
+			if public, publicTied := firstPhaseRule(rules, phase, input, input.Path, matchMethod, input.Headers); public != nil || publicTied {
+				rule, tied = public, publicTied
+			}
+		}
 		if phase == "budget" && pinnedBudget != nil {
 			rule, tied = pinnedBudget, false
 		}
@@ -1093,6 +1118,16 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 			step.PathAfter = requestPath
 			simulation.Steps = append(simulation.Steps, step)
 		case "challenge":
+			if outcome == "challenge_preflight" {
+				// A preflight carries no pass and no credential, so the
+				// edge's 204 is certain (ADR-831 amendment 18).
+				simulation.Status, simulation.Outcome = "complete", outcome
+				simulation.StatusCode, simulation.StoppedAt, simulation.Reason = http.StatusNoContent, phase, reason
+				step.StatusCode = http.StatusNoContent
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			}
 			if outcome != "challenge_page" && outcome != "challenge_required" {
 				return stop("incomplete", outcome, phase, reason, rule)
 			}
@@ -2932,6 +2967,10 @@ func previewChallengeRule(rule api.EdgeRuleResponse, input Input) (string, strin
 	}
 	const unless = "unless the request carries a verified API key, consumer key or JWT, or a challenge pass from an earlier solve"
 	preview := &ActionPreview{Type: "challenge", StatusCode: http.StatusForbidden}
+	if _, preflight := api.EdgeChallengePreflightHeaders(input.Method, input.Headers); preflight {
+		preview.StatusCode, preview.Message = http.StatusNoContent, "preflight allowed without credentials"
+		return "challenge_preflight", "a CORS preflight would be answered at the edge with 204, allowing the request without credentials; the request itself is still challenged", preview
+	}
 	if api.EdgeChallengeNavigation(input.Method, input.Headers) {
 		preview.Message = "proof-of-work page"
 		return "challenge_page", fmt.Sprintf("a browser navigation would get the challenge page (difficulty %d, pass lasts %ds) %s", action.Difficulty, action.PassTTLSeconds, unless), preview

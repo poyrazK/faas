@@ -21,13 +21,15 @@ var _ queueleases.Host = queueLeasesHost{}
 
 func (h queueLeasesHost) Store() state.Store { return h.s.store }
 
-// WorkloadVerifier is the cluster workload trust (ADR-1141), or the Flags
+func (h queueLeasesHost) WorkloadVerifier() *workloadidentity.Verifier { return h.s.workloadTrust() }
+
+// workloadTrust is the cluster workload trust (ADR-1141), or the Flags
 // trust on an apid that only configures that.
-func (h queueLeasesHost) WorkloadVerifier() *workloadidentity.Verifier {
-	if h.s.workloadVerifier != nil {
-		return h.s.workloadVerifier
+func (s *server) workloadTrust() *workloadidentity.Verifier {
+	if s.workloadVerifier != nil {
+		return s.workloadVerifier
 	}
-	return h.s.flagsWorkloadVerifier
+	return s.flagsWorkloadVerifier
 }
 
 func (h queueLeasesHost) Subscribe(ctx context.Context, channels []string) (<-chan db.Notification, func(), error) {

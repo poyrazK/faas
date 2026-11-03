@@ -84,7 +84,7 @@ func TestSharedRuntimeStart(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, reason := sharedRuntimeStart(api.AppManifest{Entrypoint: tt.entrypoint}, state.App{StartCommand: tt.start}, RuntimeNode24, []byte(pkg))
+			got, reason := sharedRuntimeStart(api.AppManifest{Entrypoint: tt.entrypoint}, state.App{StartCommand: tt.start}, RuntimeNode24, &appLayerReport{PackageJSON: []byte(pkg)})
 			if reason != tt.wantReason || !slices.Equal(got, tt.want) {
 				t.Fatalf("start = %q (%q), want %q (%q)", got, reason, tt.want, tt.wantReason)
 			}
@@ -92,9 +92,11 @@ func TestSharedRuntimeStart(t *testing.T) {
 	}
 }
 
-// ADR-1500 amendment 2: a Python app's start command runs as written; only a
-// package manager the runner base lacks keeps the full layer.
+// ADR-1500 amendment 2: a Python app's start command runs as written; a
+// package manager's `run` is dropped when the app layer resolves what it
+// starts (amendment 3), and any other package manager keeps the full layer.
 func TestSharedRuntimeStartPython(t *testing.T) {
+	report := &appLayerReport{Python: sharedruntime.PythonLayer{Scripts: map[string]bool{"python": true, "app": true, "uvicorn": true}}}
 	tests := []struct {
 		name       string
 		entrypoint []string
@@ -105,12 +107,14 @@ func TestSharedRuntimeStartPython(t *testing.T) {
 		{name: "shell start", entrypoint: []string{"/bin/bash", "-c", "python app.py"}, want: []string{"/bin/sh", "-c", "python app.py"}},
 		{name: "exec start", entrypoint: []string{"gunicorn", "--bind", "0.0.0.0:8080", "app:app"}, want: []string{"gunicorn", "--bind", "0.0.0.0:8080", "app:app"}},
 		{name: "customer start command", entrypoint: []string{"/bin/bash", "-c", "python app.py"}, start: "uvicorn main:app", want: []string{"/bin/sh", "-c", "uvicorn main:app"}},
-		{name: "uv run", entrypoint: []string{"/bin/sh", "-c", "uv run app.py"}, wantReason: "package_manager_start"},
-		{name: "exec poetry", entrypoint: []string{"/mise/shims/poetry", "run", "app"}, wantReason: "package_manager_start"},
+		{name: "uv run", entrypoint: []string{"/bin/sh", "-c", "uv run app.py"}, want: []string{"/bin/sh", "-c", "python app.py"}},
+		{name: "exec poetry", entrypoint: []string{"/mise/shims/poetry", "run", "app"}, want: []string{"/bin/sh", "-c", "app"}},
+		{name: "customer poetry script", start: "poetry run serve", wantReason: sharedruntime.ReasonRunTargetUnresolved},
+		{name: "uvx", entrypoint: []string{"/bin/sh", "-c", "uvx gunicorn app:app"}, wantReason: "package_manager_start"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, reason := sharedRuntimeStart(api.AppManifest{Entrypoint: tt.entrypoint}, state.App{StartCommand: tt.start}, RuntimePython313, nil)
+			got, reason := sharedRuntimeStart(api.AppManifest{Entrypoint: tt.entrypoint}, state.App{StartCommand: tt.start}, RuntimePython313, report)
 			if reason != tt.wantReason || !slices.Equal(got, tt.want) {
 				t.Fatalf("start = %q (%q), want %q (%q)", got, reason, tt.want, tt.wantReason)
 			}
@@ -160,7 +164,10 @@ func TestFilterAppLayersRelinksVenv(t *testing.T) {
 		{name: "app/.venv/bin/python", link: mise},
 		{name: "app/.venv/bin/python3", link: "python"},
 		{name: "app/.venv/bin/uv", link: "/mise/installs/uv/0.9.0/uv"},
+		{name: "app/.venv/bin/gunicorn", body: "#!/app/.venv/bin/python\n"},
 		{name: "app/app.py", body: "print('hi')"},
+		{name: "app/tools/fetch.py", body: "#!/usr/bin/env python\n# /// script\n# dependencies = [\"httpx\"]\n# ///\n"},
+		{name: "app/.env", body: "DEBUG=1\n"},
 	})}
 	report := &appLayerReport{PythonInterpreter: "/usr/bin/python3.13"}
 	readers, cleanup, err := filterAppLayers(layers, report)
@@ -170,6 +177,15 @@ func TestFilterAppLayersRelinksVenv(t *testing.T) {
 	defer cleanup()
 	if !slices.Equal(report.Unexpected, []string{"app/.venv/bin/uv -> /mise/installs/uv/0.9.0/uv"}) {
 		t.Fatalf("unexpected = %q, want only the uv link", report.Unexpected)
+	}
+	// ADR-1500 amendment 3: what a package manager's `run` is checked against.
+	wantPython := sharedruntime.PythonLayer{
+		Scripts:       map[string]bool{"python": true, "python3": true, "uv": true, "gunicorn": true},
+		InlineScripts: map[string]bool{"fetch.py": true},
+		DotEnv:        true,
+	}
+	if !maps.Equal(report.Python.Scripts, wantPython.Scripts) || !maps.Equal(report.Python.InlineScripts, wantPython.InlineScripts) || !report.Python.DotEnv {
+		t.Fatalf("python layer = %+v, want %+v", report.Python, wantPython)
 	}
 	zr, err := rootfs.OpenCompressedLayer(readers[0])
 	if err != nil {
@@ -193,11 +209,14 @@ func TestFilterAppLayersRelinksVenv(t *testing.T) {
 		got[hdr.Name] = string(body) + hdr.Linkname
 	}
 	want := map[string]string{
-		"app/.venv/pyvenv.cfg":  "home = /usr/bin\ninclude-system-site-packages = false\n",
-		"app/.venv/bin/python":  "/usr/bin/python3.13",
-		"app/.venv/bin/python3": "python",
-		"app/.venv/bin/uv":      "/mise/installs/uv/0.9.0/uv",
-		"app/app.py":            "print('hi')",
+		"app/.venv/pyvenv.cfg":   "home = /usr/bin\ninclude-system-site-packages = false\n",
+		"app/.venv/bin/python":   "/usr/bin/python3.13",
+		"app/.venv/bin/python3":  "python",
+		"app/.venv/bin/uv":       "/mise/installs/uv/0.9.0/uv",
+		"app/.venv/bin/gunicorn": "#!/app/.venv/bin/python\n",
+		"app/app.py":             "print('hi')",
+		"app/tools/fetch.py":     "#!/usr/bin/env python\n# /// script\n# dependencies = [\"httpx\"]\n# ///\n",
+		"app/.env":               "DEBUG=1\n",
 	}
 	if !maps.Equal(got, want) {
 		t.Fatalf("filtered layer = %q\nwant %q", got, want)
@@ -300,7 +319,9 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 
 // spec: §4.6
 // ADR-1500 amendment 2: a Python export keeps only /app on the runner base,
-// with the virtualenv's scripts first on PATH.
+// with the virtualenv's scripts first on PATH. Amendment 3: a `uv run` of a
+// script in the virtualenv is dropped; a Poetry script it does not hold keeps
+// every layer above the base.
 func TestSharedRuntimeAppLayersPython(t *testing.T) {
 	base := minimalConfigBytes()
 	digest := digestFor(t, base)
@@ -308,28 +329,50 @@ func TestSharedRuntimeAppLayersPython(t *testing.T) {
 		oci:                   &minimalManifestPuller{manifest: oci.Manifest{Config: oci.Descriptor{Digest: digest}}, layers: map[string][]byte{digest: base}},
 		deployBaseRefOverride: "ghcr.io/test/runner-python313@sha256:" + strings.Repeat("4", 64),
 	}
-	archive := sharedRuntimeArtifactFixture(t, map[string]string{
-		"app/app.py":           "print('hi')",
-		"app/.venv/pyvenv.cfg": "home = /mise/installs/python/3.13.15/bin\n",
-		"mise/installs/python/3.13.15/bin/python3.13": "elf",
-	})
-	config, layers, cleanup, err := loadLocalOCIArchiveContext(t.Context(), archive)
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name       string
+		start      string
+		want       string
+		wantReason string
+	}{
+		{name: "python", start: "python app.py", want: "python app.py"},
+		{name: "uv run", start: "uv run uvicorn main:app", want: "uvicorn main:app"},
+		{name: "poetry script", start: "poetry run serve", wantReason: sharedruntime.ReasonRunTargetUnresolved},
 	}
-	defer cleanup()
-	manifest := api.AppManifest{Entrypoint: []string{"/bin/bash", "-c", "python app.py"}, Env: map[string]string{"PATH": "/app/.venv/bin:/mise/shims:/usr/bin", "PYTHONUNBUFFERED": "1"}}
-	got, err := h.sharedRuntimeAppLayers(t.Context(), RuntimePython313, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer got.cleanup()
-	if got.Reason != "" || len(got.layers) != 1 {
-		t.Fatalf("reason=%q layers=%d, want the /app-only layer", got.Reason, len(got.layers))
-	}
-	if !slices.Equal(manifest.Entrypoint, []string{"/bin/sh", "-c", "python app.py"}) || manifest.Env["PATH"] != sharedruntime.PythonRunnerPath ||
-		manifest.Env["VIRTUAL_ENV"] != "/app/.venv" || manifest.Env["PYTHONUNBUFFERED"] != "1" {
-		t.Fatalf("manifest = %+v, want the start command on the Python runner PATH", manifest)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			archive := sharedRuntimeArtifactFixture(t, map[string]string{
+				"app/app.py":                                  "print('hi')",
+				"app/.venv/pyvenv.cfg":                        "home = /mise/installs/python/3.13.15/bin\n",
+				"app/.venv/bin/uvicorn":                       "#!/app/.venv/bin/python\n",
+				"mise/installs/python/3.13.15/bin/python3.13": "elf",
+			})
+			config, layers, cleanup, err := loadLocalOCIArchiveContext(t.Context(), archive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			entrypoint := []string{"/bin/bash", "-c", tt.start}
+			manifest := api.AppManifest{Entrypoint: entrypoint, Env: map[string]string{"PATH": "/app/.venv/bin:/mise/shims:/usr/bin", "PYTHONUNBUFFERED": "1"}}
+			got, err := h.sharedRuntimeAppLayers(t.Context(), RuntimePython313, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer got.cleanup()
+			if got.Reason != tt.wantReason || len(got.layers) != 1 {
+				t.Fatalf("reason=%q layers=%d, want %q with one layer", got.Reason, len(got.layers), tt.wantReason)
+			}
+			if tt.wantReason != "" {
+				if !slices.Equal(manifest.Entrypoint, entrypoint) {
+					t.Fatalf("fallback rewrote the start command: %v", manifest.Entrypoint)
+				}
+				return
+			}
+			if !slices.Equal(manifest.Entrypoint, []string{"/bin/sh", "-c", tt.want}) || manifest.Env["PATH"] != sharedruntime.PythonRunnerPath ||
+				manifest.Env["VIRTUAL_ENV"] != "/app/.venv" || manifest.Env["PYTHONUNBUFFERED"] != "1" {
+				t.Fatalf("manifest = %+v, want %q on the Python runner PATH", manifest, tt.want)
+			}
+		})
 	}
 }
 

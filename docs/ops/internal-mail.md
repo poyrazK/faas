@@ -2711,14 +2711,17 @@ and a canonical HTTPS `FAAS_INTERNAL_MAIL_MFA_DISABLE_ORIGIN`. Request Host and
 forwarding headers never choose the confirmation destination. The fixed V1 path
 is `/auth/reset/mfa`.
 
-Opening the link renders a small authenticated confirmation page behind the same
-child gate. GET and email prefetch cannot consume the token or disable MFA. Only
+Opening the link renders a small authenticated confirmation page. The legacy
+inline path, used while the child gate is off, mails the same page with its
+sealed token (ADR-20261017091735 amendment 1). GET and email prefetch cannot
+consume the token or disable MFA. Only
 the explicit button obtains the existing action-bound CSRF token and sends the
 authenticated confirmation POST. The page uses no-store, no-referrer and CSP
 nonces, with no external resources or token in browser history after rendering.
-Pending MFA sessions can open this recovery page. Turning the child or base gate
-off hides the new page; the existing confirmation POST retains saved credential
-checks for clients after rollback.
+Pending MFA sessions can open this recovery page. The page is hidden only while
+the child gate is on and the outbox is unavailable, when no link is mailed;
+the existing confirmation POST retains saved credential checks for clients
+after rollback.
 
 The existing historical `FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
 `FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH` identify the dedicated
@@ -3130,6 +3133,50 @@ mailed at most once and a jump past several thresholds sends one email. A
 failed save is retried on the next sweep. An organization subject has no account
 row and gets no email yet. Maild re-checks the account at submission and
 cancels the email if the account is no longer active or is being deleted.
+
+## Managed PostgreSQL restore slot notices
+
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=0`
+independently gates the restore slot emails of
+[ADR-20261031123259](../adr/20261031123259-managed-postgres-restore-slot.md) in
+apid, maild and private reconciliation. Units and examples keep it off. Apply
+[`20261101085949320_managed_postgres_restore_slot_notices.sql`](../../migrations/20261101085949320_managed_postgres_restore_slot_notices.sql)
+before opting in. It has the same gate, transport and reader requirements as
+the compute cap notices above.
+
+The restore slot sweep records two notices for a copy that holds the slot,
+each once: `ending` when the slot ends within 48 hours
+(`api.ManagedPostgresRestoreSlotNoticeLead`) and the account still has no room,
+and `expired` when the sweep scheduled the copy's delete. Each sweep, apid
+mails every notice that is unmailed and under 24 hours old to the account that
+restored the copy. It encrypts a frozen snapshot (database name, slot end,
+recovery deadline) and links the intent to the notice in one transaction, so a
+notice is mailed at most once. An `ending` notice is dropped once the copy
+leaves the slot, and its email expires at the slot's end. Maild re-checks the
+account at submission and cancels the email if the account is no longer active
+or is being deleted.
+
+## Managed PostgreSQL plan excess notices
+
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=0`
+independently gates the plan excess emails of
+[ADR-20261102125208](../adr/20261102125208-managed-postgres-databases-past-a-lowered-plan-are-suspended.md)
+in apid, maild and private reconciliation. Units and examples keep it off.
+Apply
+[`20261102175406542_managed_postgres_plan_excess_notices.sql`](../../migrations/20261102175406542_managed_postgres_plan_excess_notices.sql)
+before opting in. It has the same gate, transport and reader requirements as
+the compute cap notices above.
+
+While `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` and the compute cap are
+both `on`, the cap sweep records one notice for each database it suspends
+because the plan no longer includes it, with the reason (`database_limit` or
+`service_class`). A database back inside the plan loses its notice, so a later
+suspension is noticed again. Each sweep, apid mails every notice that is
+unmailed and under 24 hours old to the account that owns the database. It
+encrypts a frozen snapshot (database name, class, reason) and links the intent
+to the notice in one transaction, so a notice is mailed at most once. Maild
+re-checks the account at submission and cancels the email if the account is no
+longer active or is being deleted.
 
 ## Durable overdue-account suspension notices
 

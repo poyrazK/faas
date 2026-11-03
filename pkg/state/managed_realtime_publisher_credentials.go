@@ -86,7 +86,8 @@ func newRealtimePublisherToken() (string, []byte, error) {
 	}
 	token := "grp_" + base64.RawURLEncoding.EncodeToString(raw)
 	hash, _ := realtimePublisherTokenHash(token)
-	return token, hash, nil
+	// The stored form: keyed once keyed writes are on (ADR 20261029202403).
+	return token, storedCredential(credTagRealtimePublisher, hash), nil
 }
 func normalizeRealtimePublisherPolicy(req *RealtimePublisherCredentialRequest) error {
 	if req.TTLSeconds == 0 {

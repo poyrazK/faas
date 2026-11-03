@@ -77,6 +77,9 @@ type Reconciler struct {
 	mfaEnabledAlertEnabled      func() bool
 	passwordChangedAlertEnabled func() bool
 	mfaDisableEnabled           func() bool
+
+	managedPostgresRestoreSlotEnabled func() bool
+	managedPostgresPlanExcessEnabled  func() bool
 }
 
 func (s *Reconciler) WithVerification(enabled func() bool) *Reconciler {
@@ -114,6 +117,10 @@ func (s *Reconciler) templateEnabled(template string) bool {
 		return s.accountSuspendedEnabled != nil && s.accountSuspendedEnabled()
 	case ManagedPostgresCapTemplate:
 		return s.managedPostgresCapEnabled != nil && s.managedPostgresCapEnabled()
+	case ManagedPostgresRestoreSlotTemplate:
+		return s.managedPostgresRestoreSlotEnabled != nil && s.managedPostgresRestoreSlotEnabled()
+	case ManagedPostgresPlanExcessTemplate:
+		return s.managedPostgresPlanExcessEnabled != nil && s.managedPostgresPlanExcessEnabled()
 	case AccountRestoredTemplate:
 		return s.accountRestoredEnabled != nil && s.accountRestoredEnabled()
 	case PaymentFailedTemplate:
@@ -321,6 +328,18 @@ func (s *Reconciler) WithAccountSuspended(enabled func() bool) *Reconciler {
 func (s *Reconciler) WithManagedPostgresCap(enabled func() bool) *Reconciler {
 	copy := *s
 	copy.managedPostgresCapEnabled = enabled
+	return &copy
+}
+
+func (s *Reconciler) WithManagedPostgresRestoreSlot(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.managedPostgresRestoreSlotEnabled = enabled
+	return &copy
+}
+
+func (s *Reconciler) WithManagedPostgresPlanExcess(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.managedPostgresPlanExcessEnabled = enabled
 	return &copy
 }
 

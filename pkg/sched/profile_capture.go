@@ -60,7 +60,7 @@ func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string
 	if !ok {
 		return ProfileCaptureOutcome{}, errors.New("sched: vmm router does not support profile captures")
 	}
-	rows, err := e.store.ListInstancesForApp(ctx, appID)
+	rows, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return ProfileCaptureOutcome{}, fmt.Errorf("sched: CaptureAppProfile list instances: %w", err)
 	}
@@ -89,6 +89,21 @@ func (e *Engine) QueueMemoryPressureCapture(ctx context.Context, instanceID stri
 		Trigger:         api.ProfileCaptureTriggerMemoryPressure,
 		TriggerDetail:   fmt.Sprintf("guest memory available fell to %d MiB of %d MiB (%d MiB anonymous)", availableMB, totalMB, anonMB)}
 	return e.queueAutomaticCapture(ctx, instanceID, capture, api.ProfileCaptureAutomaticMinInterval)
+}
+
+// RecordMemoryPressure folds a guest's memory-pressure report into its app's
+// rollup for app health (ADR-20261102124306). An instance of any state is
+// recorded: the episode happened whether or not the instance still runs.
+func (e *Engine) RecordMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) error {
+	store, ok := e.store.(state.AppMemoryPressureStore)
+	if !ok {
+		return nil
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	return store.RecordAppMemoryPressure(ctx, ins.AppID, time.Now().UTC(), availableMB, totalMB, anonMB)
 }
 
 // QueueSlowRequestCapture turns a gateway report of a request in flight for
@@ -152,11 +167,14 @@ func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, c
 	if err != nil {
 		return false, "", err
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	// An organization's app counts under the organization: its plan, not the
+	// creator's (bug hunt 2026-10-28 B37), and its pool, as apid counts manual
+	// captures (ADR-1155).
+	owner, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return false, "", err
 	}
-	limits, ok := api.LimitsFor(acct.Plan)
+	limits, ok := api.LimitsFor(owner.Plan)
 	if !ok || !limits.Profiling.Enabled {
 		return skip("plan", "plan does not include profiling")
 	}
@@ -169,7 +187,8 @@ func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, c
 	now := time.Now().UTC()
 	capture.ID, capture.AppID, capture.RequestedInstanceID = uuid.NewString(), app.ID, ins.ID
 	capture.CreatedAt, capture.ExpiresAt = now, now.Add(api.ProfileCaptureRetention)
-	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval, limits.Profiling.CaptureStorageBytes); {
+	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval,
+		state.ProfileCaptureLimits{StorageBytes: limits.Profiling.CaptureStorageBytes, Pool: owner.ResourceOwnerID()}); {
 	case errors.Is(err, state.ErrProfileCaptureRecent):
 		return skip("interval", "an automatic capture ran for this app within the minimum interval")
 	case errors.Is(err, state.ErrProfileCaptureActive):

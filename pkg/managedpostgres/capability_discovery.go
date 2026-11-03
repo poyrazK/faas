@@ -27,7 +27,9 @@ func (s *Service) DiscoverCapabilities(ctx context.Context, accountID, region st
 		return CapabilityDiscovery{}, err
 	}
 	c := backend.Capabilities
-	c.PostgresMajors = append([]int(nil), c.PostgresMajors...)
+	// Discovery answers what a new database may choose.
+	c.PostgresMajors = c.NewDatabaseMajors()
+	c.RetiringMajors = nil
 	c.ServiceClasses = append([]ServiceClass(nil), c.ServiceClasses...)
 	c.Availability = append([]Availability(nil), c.Availability...)
 	c.CredentialAccess = append([]CredentialAccess(nil), c.CredentialAccess...)

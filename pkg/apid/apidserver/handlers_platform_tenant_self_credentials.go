@@ -112,7 +112,7 @@ func (s *server) applyPlatformTenantSelfCredentials(w http.ResponseWriter, r *ht
 	in.EnforceDelegationPolicy = true
 	result, err := credentialStore.ApplyPlatformTenantCredentials(r.Context(), in)
 	if err != nil {
-		s.platformTenantSelfCredentialError(w, err, acct.Plan)
+		s.platformTenantSelfCredentialError(w, err)
 		return
 	}
 	if !req.DryRun {
@@ -127,7 +127,7 @@ func (s *server) applyPlatformTenantSelfCredentials(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusOK, platformTenantCredentialResponse(result))
 }
 
-func (s *server) platformTenantSelfCredentialError(w http.ResponseWriter, err error, plan api.Plan) {
+func (s *server) platformTenantSelfCredentialError(w http.ResponseWriter, err error) {
 	var quota *state.PlatformTenantCredentialPolicyQuotaError
 	switch {
 	case errors.Is(err, state.ErrPlatformTenantCredentialDelegationDisabled):
@@ -140,6 +140,6 @@ func (s *server) platformTenantSelfCredentialError(w http.ResponseWriter, err er
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "platform_tenant_credential_limit_reached",
 			"Delegated credential limit reached", "the platform owner sets the maximum active key count per linked consumer"))
 	default:
-		s.platformTenantCredentialError(w, err, plan)
+		s.platformTenantCredentialError(w, err)
 	}
 }

@@ -3,14 +3,14 @@
 package vmmdgrpc
 
 import (
-	"net"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
 // unixPeerUID returns the uid of the process that created the peer socket,
 // as the kernel recorded it at connect time.
-func unixPeerUID(conn *net.UnixConn) (int, error) {
+func unixPeerUID(conn syscall.Conn) (int, error) {
 	raw, err := conn.SyscallConn()
 	if err != nil {
 		return 0, err

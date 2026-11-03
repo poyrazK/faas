@@ -61,6 +61,12 @@ func TestEnvironmentGitApprovalProvenanceGuardsAndReplay(t *testing.T) {
 	if err := store.FinishEnvironmentGitSourcePoll(ctx, lease, state.EnvironmentGitSourcePollResult{CommitSHA: sha, Digest: desired.Digest, Desired: &desired, Approval: &evidence}, now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	// The poll reuses the revision row for the same commit and digest; a
+	// protected-branch revision is immutable, so its approver stays as written.
+	var approvedBy string
+	if err := pool.QueryRow(ctx, `select approved_by from environment_desired_revisions where id=$1`, legacyID).Scan(&approvedBy); err != nil || approvedBy != "legacy" {
+		t.Fatalf("protected revision approver = %q, %v; want legacy", approvedBy, err)
+	}
 	current, err := store.EnvironmentGitSource(ctx, account.ID, project.ID, "production")
 	if err != nil {
 		t.Fatal(err)

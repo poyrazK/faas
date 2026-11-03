@@ -28,7 +28,7 @@ tests:
               instance: cp
             exp_annotations:
               summary: meterd holds back usage older than 30 minutes
-              description: "The oldest closed minute of meterd's 24 h catch-up window that is not recorded compute-complete is 1h 7m 0s old. The provider pusher delivers usage only for hours before that minute, so every account's usage waits and cost reports lose coverage (ADR-1162, ADR-20261029180000). A new environment shows this until its first catch-up finishes, about 100 minutes."
+              description: "The oldest closed minute of meterd's 72 h catch-up window that is not recorded compute-complete is 1h 7m 0s old. The provider pusher delivers usage only for hours before that minute, so every account's usage waits and cost reports lose coverage (ADR-1162, ADR-20261029180000). A new environment shows this until its first catch-up finishes, about five hours."
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md
   - name: three failed Polar webhook answers in 30 minutes fire
     interval: 1m
@@ -78,5 +78,5 @@ tests:
               code: err
             exp_annotations:
               summary: meterd sample ticks keep failing
-              description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 24 h."
+              description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 72 h."
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md

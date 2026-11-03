@@ -202,3 +202,37 @@ A security audit found two ways around an app's policy.
   self-approval and the release has no recorded deployer, it needs one more
   approval than the policy asks, so at least one approver is someone else.
   The status shows the higher `required_approvals`.
+
+## Amendment 4 (2026-10-31): a person approves, signed in
+
+A release review found that any API key with `deploy:write`, the scope CI holds to deploy, could approve a release, and a bearer key skips MFA. A bot account's key, or a teammate's key in a CI job, could therefore give the second sign-off this ADR exists to require.
+
+- **Approving needs the dashboard session.** `POST /v1/deployments/{id}/approvals` with `decision: approve` answers `403 release_approval_session_required` to any API key or token, including the CLI's login token, with the release's approval page as the hint. The approval page and the notification links already decide with the session, so the organization access, role, MFA and self-approval checks apply as before.
+- **Rejecting stays open to keys.** Stopping a release needs no second person, and keys can already abort a rollout.
+- **The CLI and notices point to the page.** `gregale release approve` fails with the page's link; email notices drop the terminal command; the approval-required problem and the hold text name the approval page.
+
+## Amendment 5 (2026-11-01): the policy cannot be switched off by a mode change or a deploy key
+
+A second release review found two ways around a policy.
+
+- **Leaving request mode.** Approvals wait in a canary stage, so the policy only gates request-mode apps, and setting one on a service, worker or job is refused. But a member who may configure the app (developers included) could switch it to `service`, which still serves HTTP, through `PATCH /v1/apps/{slug}` or a `gregale.yaml` lifecycle block. The policy stayed set and stopped gating. Leaving request mode now answers `409` while the app has a policy; an owner or admin removes the policy first.
+- **Deploy keys.** Changing or removing the policy, deleting a release gate and lifting a freeze accepted any key with `deploy:write`, the scope CI and agents hold. An admin's CI key could remove the policy, deploy and put it back, around amendment 4. These routes now need the `admin` scope: a signed-in session, the CLI's login or an admin key. Creating a gate or a freeze still takes `deploy:write`, since it only adds a guard.
+
+## Amendment 6 (2026-11-01): a policy names who hears a release waits
+
+A policy could name no notification channel. A release then waited at its stage, seen only by `gregale release approval pending`, until the timeout (24 hours by default) aborted it. Setting a policy now needs at least one Slack or email channel in `notify_channels` (`--notify`): `400 validation_failed` otherwise. Existing policies keep working; the next change to one must name a channel.
+
+## Amendment 7 (2026-11-02): the last channel of a policy or schedule cannot be deleted
+
+Amendment 6 makes a policy name a channel, but deleting the channel afterwards left the policy with no destination: its notices were dropped ("none of the policy's channels exist any more") and releases waited unannounced again. The same held for a pending scheduled release's channels. Deleting a notification channel is now refused (`409 notification_channel_in_use`) while it is the last Slack or email channel of a release approval policy or of a pending scheduled release, as it already was for alert rules. The problem names them.
+
+## Amendment 8 (2026-11-02): a GitOps revision approval meets the apps' policies
+
+A production environment synced from Git with `approval_policy: manual` activates a revision once someone approves it in Gregale, and its apps' release approval policies were skipped: the revision approval stood in for them. But the approve route took any key with `deploy:write`, as CI holds, recorded the account rather than who approved, and one approval passed a policy asking for several or for an admin. It undid amendment 4 and the policy's count and roles.
+
+- The revision now records who approved it: the person's account, or `api_key:<id>` for a key or token. Keys still approve revisions, as CI does for apps without a policy.
+- Activating a revision into production holds, as a freeze does, while a member app's policy:
+  - was met only by a key's approval (amendment 4). A person approving the same revision on the environment's GitOps page in the dashboard replaces the key's approval, never the reverse;
+  - asks for more than one approval, since a revision carries one;
+  - on a company app, does not let the approver's role approve.
+- A revision's author is a Git identity, not a Gregale account, so self-approval is not judged, as for a protected-branch revision.

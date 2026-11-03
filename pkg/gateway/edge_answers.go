@@ -201,7 +201,7 @@ func edgeHeadHeaderAllowed(key string) bool {
 // the relevant values for every request, including synthetic HEAD and response
 // cache hits.
 func isPerRequestPlatformHeader(key string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "x-faas-")
+	return api.HasLowerPrefix(strings.TrimSpace(key), "x-faas-")
 }
 
 // serveEdgeAnswer handles the three M1 paths after host resolution and before

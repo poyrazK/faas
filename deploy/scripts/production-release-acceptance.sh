@@ -327,36 +327,54 @@ verify_app_policy_controls() {
 
 # Per-node canary: cd-platform runs it after each compute node activates and
 # before the next one starts. Placement and build claims are fleet-wide, so it
-# deploys fresh apps, alternating both shapes, until the just-activated node
-# serves one and has built one. rc.301's fsn-2 served traffic while its
-# builderd failed every build, and only an operator's manual hold kept fsn-3
-# on the old release. Any failed deployment ends the canary.
+# deploys fresh apps, both shapes, until the just-activated node serves one
+# and has built one. rc.301's fsn-2 served traffic while its builderd failed
+# every build, and only an operator's manual hold kept fsn-3 on the old
+# release. Any failed deployment ends the canary.
+#
+# Each round submits a hello-node and a function-node at once. Every builderd
+# runs one build at a time (pkg/builderd maxBuilderSlots), so another node can
+# take only one of the pair and a healthy activated node claims the other.
+# One deployment at a time let the other node win every build: rc.309's fsn-2
+# canary deployed twice in its 20 minutes, both built on fsn-3, and failed.
 if [[ -n "$ACCEPTANCE_NODE" ]]; then
 	# Slugs stay reserved after cleanup, so each node's apps carry its name
 	# (a valid slug is at most 40 characters).
 	node_tag="$(printf '%s' "${ACCEPTANCE_NODE%%.*}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | cut -c1-10)"
 	node_report="$workdir/node.json"
 	canary_deadline=$((SECONDS + 20 * 60))
-	for ((i=1; i<=NODE_CANARY_MAX_DEPLOYMENTS; i++)); do
-		if ((SECONDS >= canary_deadline)); then
-			break
-		fi
-		template=hello-node
-		if ((i % 2 == 0)); then
-			template=function-node
-		fi
-		canary_slug="ra-${short_sha}-${run_suffix}-${node_tag}-${i}"
-		canary_output="$workdir/${canary_slug}.json"
-		slugs+=("$canary_slug")
-		phase "node canary ${ACCEPTANCE_NODE}: deployment ${i} (${template})"
-		rc=0
-		deploy_one "$template" "$canary_slug" "$canary_output" || rc=$?
-		if (( rc != 0 )); then
-			report_failed_deploy "$canary_slug" "$canary_output" "$rc"
+	i=0
+	while ((i < NODE_CANARY_MAX_DEPLOYMENTS && SECONDS < canary_deadline)); do
+		pids=()
+		round_slugs=()
+		round_outputs=()
+		for template in hello-node function-node; do
+			((i < NODE_CANARY_MAX_DEPLOYMENTS)) || break
+			i=$((i + 1))
+			canary_slug="ra-${short_sha}-${run_suffix}-${node_tag}-${i}"
+			canary_output="$workdir/${canary_slug}.json"
+			slugs+=("$canary_slug")
+			round_slugs+=("$canary_slug")
+			round_outputs+=("$canary_output")
+			phase "node canary ${ACCEPTANCE_NODE}: deployment ${i} (${template})"
+			deploy_one "$template" "$canary_slug" "$canary_output" & pids+=("$!")
+		done
+		failed=0
+		for index in "${!pids[@]}"; do
+			rc=0
+			wait "${pids[$index]}" || rc=$?
+			if (( rc != 0 )); then
+				failed=1
+				report_failed_deploy "${round_slugs[$index]}" "${round_outputs[$index]}" "$rc"
+			fi
+		done
+		if (( failed != 0 )); then
 			echo "node canary deployment for ${ACCEPTANCE_NODE} failed" >&2
 			exit 1
 		fi
-		verify_receipt "$canary_output"
+		for output in "${round_outputs[@]}"; do
+			verify_receipt "$output"
+		done
 		node_exit=0
 		"$GREGALECTL_BIN" release-acceptance verify-node --node "$ACCEPTANCE_NODE" \
 			--slugs "$(IFS=,; echo "${slugs[*]}")" >"$node_report" || node_exit=$?

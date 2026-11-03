@@ -123,6 +123,8 @@ func TestDeployConvergeControlPlaneValidate(t *testing.T) {
 		{name: "missing vars file", mutate: func(o *deployConvergeControlPlaneOptions) { o.AnsibleVarsFile = filepath.Join(dir, "missing") }, want: "--ansible-vars-file"},
 		{name: "missing key", mutate: func(o *deployConvergeControlPlaneOptions) { o.SSHKey = filepath.Join(dir, "missing") }, want: "--ssh-key"},
 		{name: "empty user", mutate: func(o *deployConvergeControlPlaneOptions) { o.SSHUser = "" }, want: "--ssh-user"},
+		{name: "full release without roles", mutate: func(o *deployConvergeControlPlaneOptions) { o.FullRelease = true }, want: "--full-release needs --roles"},
+		{name: "full release with roles", mutate: func(o *deployConvergeControlPlaneOptions) { o.FullRelease, o.Roles = true, []string{"grafana"} }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

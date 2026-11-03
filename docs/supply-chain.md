@@ -11,7 +11,7 @@ such as CAIQ and SIG.
 | --- | --- | --- |
 | Daemon release bundle `release.tar.gz` (daemons, guest init, function runners, guest kernel, Sigstore trusted root) | Keyless cosign signature (`release.cosign.bundle`) and an SLSA provenance attestation | `release.sbom.json` (SPDX), a release asset |
 | CLI archives `gregale_<version>_<os>_<arch>.tar.gz` | SLSA provenance attestation | SPDX SBOM attestation covering every archive's binary |
-| Platform images on ghcr: builder-base (linux/amd64 and linux/arm64) and every runtime base (linux/amd64) | SLSA provenance attestation, pushed to ghcr beside the image | Not attested yet; `make sbom` writes one for any image (below) |
+| Platform images on ghcr: builder-base (linux/amd64 and linux/arm64) and every runtime base (linux/amd64) | SLSA provenance attestation, pushed to ghcr beside the image | SPDX SBOM attestation, pushed beside the image |
 
 All signing is keyless. Each signature comes from a short-lived Sigstore
 certificate issued to the GitHub Actions workflow that built the artifact, and
@@ -34,6 +34,8 @@ Use the GitHub CLI (`gh` 2.50 or later).
 gh attestation verify oci://ghcr.io/poyrazk/runner-node22@sha256:<digest> --owner poyrazK \
   --signer-workflow poyrazK/faas/.github/workflows/images.yml --source-ref refs/heads/main \
   --deny-self-hosted-runners
+gh attestation verify oci://ghcr.io/poyrazk/runner-node22@sha256:<digest> --owner poyrazK \
+  --predicate-type https://spdx.dev/Document/v2.3
 
 # A CLI archive.
 gh attestation verify gregale_<version>_linux_amd64.tar.gz -R poyrazK/faas
@@ -87,8 +89,6 @@ It needs Syft on the PATH. CI uses Syft 1.49.0, pinned by checksum in
 ## Not covered
 
 - **Reproducible builds.** Out of scope for #295.
-- **Attested SBOMs for platform images.** These are not published yet. Until
-  they are, `make sbom` generates one for any image.
 - **Customer images.** The platform does not require provenance for images
   customers deploy. An app can require signed images from its own trusted
   publishers instead (see "App deploy guard" in `docs/security.md`).

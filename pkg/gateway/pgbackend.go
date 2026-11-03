@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -109,6 +110,7 @@ type PlatformTenantHostBinding struct {
 //     and older introspection; they do not affect request selection.
 type targetSet struct {
 	next       atomic.Uint64 // global request round-robin cursor.
+	localNext  atomic.Uint64 // local-first cursor (ADR-20261102081618 §5c).
 	entries    []Target
 	nodeOrder  []string                  // stable node-id order for tie-break
 	subCursors map[string]*atomic.Uint64 // nodeID -> per-node cursor
@@ -366,6 +368,12 @@ type PGBackend struct {
 	// target eviction. Without this guard, a burst that discovers the same
 	// dead instance could start one replacement per failed request.
 	staleTargetRecovery singleflight.Group
+	// routeResolution coalesces route-cache-miss reads of one host
+	// (resolveHostShared).
+	routeResolution singleflight.Group
+	// routeInvalidations orders app and route cache invalidations against
+	// the route reads in flight when they happen (routeInvalidationLog).
+	routeInvalidations routeInvalidationLog
 	// staleTargets quarantines VM lifetimes that the forwarding transport has
 	// proved unusable. The database row can remain RUNNING until vmmd's
 	// liveness report reaches schedd; without this short-lived fence,
@@ -1204,7 +1212,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 			b.stale.Delete(host)
 		}
 	}
-	app, ok, err := b.router.ResolveHost(ctx, host)
+	app, ok, readSeq, err := b.resolveHostShared(ctx, host)
 	if err != nil {
 		return b.lookupStale(ctx, host, err)
 	}
@@ -1221,6 +1229,25 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	if !b.prepareProductionWeights(ctx, app) {
 		return App{}, false
 	}
+	if !b.routeInvalidations.unchangedSince(app.ID, readSeq) {
+		// The app changed while the read was in flight, so the row may be
+		// from before the change: answer this request, cache nothing.
+		return app, true
+	}
+	b.cacheResolvedRoute(host, app)
+	if !b.routeInvalidations.unchangedSince(app.ID, readSeq) {
+		// An invalidation landed between the check and the writes; it may
+		// have run before them, so drop what this read stored.
+		b.routes.Invalidate(host)
+		b.ResetApp(app.ID)
+		b.stale.Delete(host)
+	}
+	return app, true
+}
+
+// cacheResolvedRoute stores a host's resolved route: its target, the app
+// without route-specific fields, and the last-known-good fallback.
+func (b *PGBackend) cacheResolvedRoute(host string, app App) {
 	b.routes.PutTarget(host, RouteTarget{
 		AppID:                 app.ID,
 		RoutedSurfaceID:       app.RoutedSurfaceID,
@@ -1236,7 +1263,6 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	baseApp.CustomDomainRoute = false
 	b.putApp(baseApp)
 	b.stale.Put(host, app)
-	return app, true
 }
 
 // PrepareRouteTarget gives a kind=route target the routing state Lookup
@@ -1333,6 +1359,85 @@ func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host str
 		return false, false // newly linked or moved hostname: resolve afresh
 	}
 	return target.RoutedSurfaceID == "", false // deleted/inactive surface: resolve legacy route afresh
+}
+
+// resolveHostShared resolves a route-cache miss once for every concurrent
+// request to the host. An app change empties the cache, and each request of
+// the burst that followed read the route from Postgres through gatewayd's
+// eight connections: on production-us 93 acquisitions in one minute were
+// canceled and the lookups fell back to stale routes (PulseWatch F13). The
+// shared read keeps the first caller's deadline but not its cancellation;
+// every caller still stops waiting at its own deadline.
+func (b *PGBackend) resolveHostShared(ctx context.Context, host string) (App, bool, uint64, error) {
+	type resolved struct {
+		app App
+		ok  bool
+	}
+	// readSeq precedes the read. Callers after an invalidation get a new key
+	// and their own read, instead of joining one that may hold the row from
+	// before the change.
+	readSeq := b.routeInvalidations.current()
+	key := host + "\x00" + strconv.FormatUint(readSeq, 10)
+	ch := b.routeResolution.DoChan(key, func() (any, error) {
+		readCtx := context.WithoutCancel(ctx)
+		if deadline, bounded := ctx.Deadline(); bounded {
+			var cancel context.CancelFunc
+			readCtx, cancel = context.WithDeadline(readCtx, deadline)
+			defer cancel()
+		}
+		app, ok, err := b.router.ResolveHost(readCtx, host)
+		return resolved{app: app, ok: ok}, err
+	})
+	select {
+	case <-ctx.Done():
+		return App{}, false, readSeq, ctx.Err()
+	case result := <-ch:
+		value, _ := result.Val.(resolved)
+		return value.app, value.ok, readSeq, result.Err
+	}
+}
+
+// routeInvalidationLog orders app and route cache invalidations against the
+// route reads in flight when they happen. A read that an invalidation of its
+// app overtook may hold the row from before the change; storing it refilled
+// the app cache, which has no TTL, with the old settings until the app's next
+// invalidation. PulseWatch F5: `--maintenance` had reached every gateway and
+// requests were still answered 200 for up to two seconds.
+type routeInvalidationLog struct {
+	mu      sync.Mutex
+	seq     uint64
+	flushed uint64            // seq of the last invalidation of every app
+	apps    map[string]uint64 // seq of each app's last invalidation
+}
+
+func (l *routeInvalidationLog) current() uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.seq
+}
+
+// invalidate records an invalidation of appID, or of every app when appID
+// is empty. Callers record it before dropping cache entries.
+func (l *routeInvalidationLog) invalidate(appID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seq++
+	if appID == "" {
+		l.flushed, l.apps = l.seq, nil
+		return
+	}
+	if l.apps == nil {
+		l.apps = map[string]uint64{}
+	}
+	l.apps[appID] = l.seq
+}
+
+// unchangedSince reports whether appID has not been invalidated since a read
+// that began at seq.
+func (l *routeInvalidationLog) unchangedSince(appID string, seq uint64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.flushed <= seq && l.apps[appID] <= seq
 }
 
 // lookupStale is the Router-error branch of Lookup (ADR-190).
@@ -1675,6 +1780,59 @@ func (b *PGBackend) HealthyCount(appID string) int {
 	n := b.routableTargetCountLocked(appID)
 	b.tgtMu.RUnlock()
 	return n
+}
+
+// ReadyNodeCounts returns appID's routable instances per node across its live
+// deployments, sorted by node id (ADR-20261102081618 §5a).
+func (b *PGBackend) ReadyNodeCounts(appID string) []NodeCount {
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return nil
+	}
+	byNode := map[string]int{}
+	for _, set := range picker.sets {
+		for _, t := range set.entries {
+			if t.routeReady() && t.NodeID != "" {
+				byNode[t.NodeID]++
+			}
+		}
+	}
+	counts := make([]NodeCount, 0, len(byNode))
+	for node, n := range byNode {
+		counts = append(counts, NodeCount{NodeID: node, Ready: n})
+	}
+	sort.Slice(counts, func(i, j int) bool { return counts[i].NodeID < counts[j].NodeID })
+	return counts
+}
+
+// LocalReadyTargets returns deploymentID's routable instances on nodeID,
+// starting at a rotating offset so local first spreads a node's requests over
+// its instances (ADR-20261102081618 §5c).
+func (b *PGBackend) LocalReadyTargets(appID, deploymentID, nodeID string) []Target {
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	if picker == nil || nodeID == "" {
+		return nil
+	}
+	set := picker.sets[deploymentID]
+	if set == nil {
+		return nil
+	}
+	var local []Target
+	for _, t := range set.entries {
+		if t.routeReady() && t.NodeID == nodeID {
+			t.DeploymentID = deploymentID
+			local = append(local, t)
+		}
+	}
+	if len(local) > 1 {
+		start := int(set.localNext.Add(1)-1) % len(local)
+		local = append(local[start:], local[:start]...)
+	}
+	return local
 }
 
 // CapacityCount returns all live cached instances, including targets
@@ -2379,7 +2537,7 @@ func (b *PGBackend) RecoverStaleTarget(ctx context.Context, appID, scope string,
 		// Fresh public policy bypasses picker weights. Recovery must reuse a
 		// healthy sibling in this captured cohort, or restore this same cohort
 		// and scope without consulting a later traffic policy.
-		deploymentID, scope = routing.SelectedDeploymentID, routing.Scope
+		deploymentID, scope = routing.SelectedDeploymentID, routing.admissionScope()
 		healthy = func() int { return b.HealthyCountForDeployments(appID, []string{deploymentID}) }
 	}
 	if healthy() > 0 {
@@ -2823,6 +2981,7 @@ func (b *PGBackend) WithMirrorStore(s mirrorRulesStore) *PGBackend {
 // an app_changed / domain_changed notification so a renamed slug, plan change,
 // or deleted app is re-resolved (or 404'd) on the next request.
 func (b *PGBackend) FlushRoutes() {
+	b.routeInvalidations.invalidate("")
 	b.workloadAdmissions.reset()
 	b.routes.Reset()
 	b.rechecks.reset()
@@ -2838,6 +2997,7 @@ func (b *PGBackend) InvalidateRoutesForApp(appID string) {
 	if b == nil || appID == "" {
 		return
 	}
+	b.routeInvalidations.invalidate(appID)
 	b.InvalidateWorkloadAdmission(appID)
 	if b.routes != nil {
 		b.routes.InvalidateApp(appID)
@@ -3068,6 +3228,7 @@ func (b *PGBackend) ResetApp(appID string) {
 	if b == nil {
 		return
 	}
+	b.routeInvalidations.invalidate(appID)
 	b.appsMu.Lock()
 	delete(b.apps, appID)
 	b.appsMu.Unlock()

@@ -1,0 +1,668 @@
+{
+ "apps": 3000,
+ "invocations": 664854336,
+ "plan_table": "adr1430",
+ "currency": "USD",
+ "functions": true,
+ "free_overage_counted": false,
+ "policies": {
+  "today (idle timeout -> park), reservation admission": {
+   "billed_gbh_per_app_month_mean": 46.08,
+   "billed_gbh_by_plan": {
+    "free": 33.72,
+    "hobby": 63.0,
+    "pro": 135.5,
+    "scale": 281.46
+   },
+   "resident_gbh_per_app_month_mean": 46.08,
+   "revenue_per_app_month": 3.972,
+   "overage_per_app_month": 0.012,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.115,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 33.74,
+    "hobby": 11.86,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.1383,
+   "wakes_per_app_week": 1231.0,
+   "wake_tier_share_pct": {
+    "paused": 0.0,
+    "frozen": 0.0,
+    "parked": 100.0,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 340.0,
+   "mean_added_latency_per_request_ms": 1.889,
+   "frozen_hours_per_app_week": 0.0,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 285,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 0.154
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 51,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 2.549
+    }
+   }
+  },
+  "today (idle timeout -> park), measured admission": {
+   "billed_gbh_per_app_month_mean": 46.08,
+   "billed_gbh_by_plan": {
+    "free": 33.72,
+    "hobby": 63.0,
+    "pro": 135.5,
+    "scale": 281.46
+   },
+   "resident_gbh_per_app_month_mean": 46.08,
+   "revenue_per_app_month": 3.972,
+   "overage_per_app_month": 0.012,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.115,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 33.74,
+    "hobby": 11.86,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.1383,
+   "wakes_per_app_week": 1231.0,
+   "wake_tier_share_pct": {
+    "paused": 0.0,
+    "frozen": 0.0,
+    "parked": 100.0,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 340.0,
+   "mean_added_latency_per_request_ms": 1.889,
+   "frozen_hours_per_app_week": 0.0,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 285,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 0.154
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 51,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 2.549
+    }
+   }
+  },
+  "freeze at plan idle timeout -> frozen 1 h -> park (ADR-906 as proposed)": {
+   "billed_gbh_per_app_month_mean": 46.08,
+   "billed_gbh_by_plan": {
+    "free": 33.72,
+    "hobby": 63.0,
+    "pro": 135.5,
+    "scale": 281.46
+   },
+   "resident_gbh_per_app_month_mean": 46.08,
+   "revenue_per_app_month": 3.972,
+   "overage_per_app_month": 0.012,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.115,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 33.74,
+    "hobby": 11.86,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.1383,
+   "wakes_per_app_week": 1231.0,
+   "wake_tier_share_pct": {
+    "paused": 0.0,
+    "frozen": 99.2,
+    "parked": 0.8,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 10.6,
+   "mean_added_latency_per_request_ms": 0.059,
+   "frozen_hours_per_app_week": 57.65,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 285,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 0.154
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 51,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 2.549
+    }
+   }
+  },
+  "freeze 2 s -> frozen 1 h -> park, frozen unbilled": {
+   "billed_gbh_per_app_month_mean": 18.22,
+   "billed_gbh_by_plan": {
+    "free": 13.14,
+    "hobby": 21.4,
+    "pro": 61.73,
+    "scale": 97.5
+   },
+   "resident_gbh_per_app_month_mean": 18.22,
+   "revenue_per_app_month": 3.963,
+   "overage_per_app_month": 0.0028,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.0266,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 14.13,
+    "hobby": 3.21,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.0547,
+   "wakes_per_app_week": 6901.1,
+   "wake_tier_share_pct": {
+    "paused": 0.0,
+    "frozen": 99.8,
+    "parked": 0.2,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 8.5,
+   "mean_added_latency_per_request_ms": 0.265,
+   "frozen_hours_per_app_week": 76.16,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 716,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 0.061
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 118,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 1.102
+    }
+   }
+  },
+  "freeze 2 s -> frozen 1 h, frozen BILLED": {
+   "billed_gbh_per_app_month_mean": 131.44,
+   "billed_gbh_by_plan": {
+    "free": 97.42,
+    "hobby": 197.81,
+    "pro": 359.24,
+    "scale": 676.5
+   },
+   "resident_gbh_per_app_month_mean": 18.22,
+   "revenue_per_app_month": 4.034,
+   "overage_per_app_month": 0.0739,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.711,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 71.01,
+    "hobby": 47.76,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.0547,
+   "wakes_per_app_week": 6901.1,
+   "wake_tier_share_pct": {
+    "paused": 0.0,
+    "frozen": 99.8,
+    "parked": 0.2,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 8.5,
+   "mean_added_latency_per_request_ms": 0.265,
+   "frozen_hours_per_app_week": 76.16,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 716,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 0.061
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 118,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 1.102
+    }
+   }
+  },
+  "freeze 2 s -> frozen 10 min, unbilled": {
+   "billed_gbh_per_app_month_mean": 18.22,
+   "billed_gbh_by_plan": {
+    "free": 13.14,
+    "hobby": 21.4,
+    "pro": 61.73,
+    "scale": 97.5
+   },
+   "resident_gbh_per_app_month_mean": 18.22,
+   "revenue_per_app_month": 3.963,
+   "overage_per_app_month": 0.0028,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.0266,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 14.13,
+    "hobby": 3.21,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.0547,
+   "wakes_per_app_week": 6901.1,
+   "wake_tier_share_pct": {
+    "paused": 0.0,
+    "frozen": 99.1,
+    "parked": 0.9,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 11.0,
+   "mean_added_latency_per_request_ms": 0.342,
+   "frozen_hours_per_app_week": 57.0,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 716,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 0.061
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 118,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 1.102
+    }
+   }
+  },
+  "freeze 10 s -> frozen 1 h, unbilled": {
+   "billed_gbh_per_app_month_mean": 31.59,
+   "billed_gbh_by_plan": {
+    "free": 23.04,
+    "hobby": 40.27,
+    "pro": 98.04,
+    "scale": 189.37
+   },
+   "resident_gbh_per_app_month_mean": 31.59,
+   "revenue_per_app_month": 3.967,
+   "overage_per_app_month": 0.0069,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.0664,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 24.12,
+    "hobby": 6.73,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.0948,
+   "wakes_per_app_week": 2671.4,
+   "wake_tier_share_pct": {
+    "paused": 0.0,
+    "frozen": 99.6,
+    "parked": 0.4,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 9.3,
+   "mean_added_latency_per_request_ms": 0.112,
+   "frozen_hours_per_app_week": 67.28,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 395,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 0.111
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 69,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 1.884
+    }
+   }
+  },
+  "freeze 0.5 s -> frozen 1 h, unbilled": {
+   "billed_gbh_per_app_month_mean": 12.73,
+   "billed_gbh_by_plan": {
+    "free": 9.0,
+    "hobby": 13.24,
+    "pro": 48.15,
+    "scale": 60.66
+   },
+   "resident_gbh_per_app_month_mean": 12.73,
+   "revenue_per_app_month": 3.961,
+   "overage_per_app_month": 0.0011,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.0106,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 9.42,
+    "hobby": 1.6,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.0382,
+   "wakes_per_app_week": 11923.8,
+   "wake_tier_share_pct": {
+    "paused": 0.0,
+    "frozen": 99.9,
+    "parked": 0.1,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 8.3,
+   "mean_added_latency_per_request_ms": 0.446,
+   "frozen_hours_per_app_week": 79.86,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 956,
+     "binding": "ram",
+     "infra_eur_per_app_month": 0.046
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 170,
+     "binding": "ram",
+     "infra_eur_per_app_month": 0.765
+    }
+   }
+  },
+  "idle running VMs hold no vCPU, no pause, park at idle timeout": {
+   "billed_gbh_per_app_month_mean": 46.08,
+   "billed_gbh_by_plan": {
+    "free": 33.72,
+    "hobby": 63.0,
+    "pro": 135.5,
+    "scale": 281.46
+   },
+   "resident_gbh_per_app_month_mean": 46.08,
+   "revenue_per_app_month": 3.972,
+   "overage_per_app_month": 0.012,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.115,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 33.74,
+    "hobby": 11.86,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.1383,
+   "wakes_per_app_week": 1231.0,
+   "wake_tier_share_pct": {
+    "paused": 0.0,
+    "frozen": 0.0,
+    "parked": 100.0,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 340.0,
+   "mean_added_latency_per_request_ms": 1.889,
+   "frozen_hours_per_app_week": 0.0,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 861,
+     "binding": "ram",
+     "infra_eur_per_app_month": 0.051
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 147,
+     "binding": "ram",
+     "infra_eur_per_app_month": 0.884
+    }
+   }
+  },
+  "quiet pause 2 s (billed), park at idle timeout": {
+   "billed_gbh_per_app_month_mean": 46.08,
+   "billed_gbh_by_plan": {
+    "free": 33.72,
+    "hobby": 63.0,
+    "pro": 135.5,
+    "scale": 281.46
+   },
+   "resident_gbh_per_app_month_mean": 46.08,
+   "revenue_per_app_month": 3.972,
+   "overage_per_app_month": 0.012,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.115,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 33.74,
+    "hobby": 11.86,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.1383,
+   "wakes_per_app_week": 6901.1,
+   "wake_tier_share_pct": {
+    "paused": 82.2,
+    "frozen": 0.0,
+    "parked": 17.8,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 62.3,
+   "mean_added_latency_per_request_ms": 1.94,
+   "frozen_hours_per_app_week": 0.0,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 716,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 0.061
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 118,
+     "binding": "vcpu_slots",
+     "infra_eur_per_app_month": 1.102
+    }
+   }
+  },
+  "quiet pause 2 s (billed) + freeze at idle timeout -> 1 h (ADR-1151)": {
+   "billed_gbh_per_app_month_mean": 46.08,
+   "billed_gbh_by_plan": {
+    "free": 33.72,
+    "hobby": 63.0,
+    "pro": 135.5,
+    "scale": 281.46
+   },
+   "resident_gbh_per_app_month_mean": 46.08,
+   "revenue_per_app_month": 3.972,
+   "overage_per_app_month": 0.012,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.115,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 33.74,
+    "hobby": 11.86,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.1383,
+   "wakes_per_app_week": 6901.1,
+   "wake_tier_share_pct": {
+    "paused": 82.2,
+    "frozen": 17.7,
+    "parked": 0.1,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 3.5,
+   "mean_added_latency_per_request_ms": 0.11,
+   "frozen_hours_per_app_week": 57.65,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 634,
+     "binding": "ram",
+     "infra_eur_per_app_month": 0.069
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 109,
+     "binding": "ram",
+     "infra_eur_per_app_month": 1.193
+    }
+   }
+  },
+  "G: quiet pause 2 s UNBILLED + freeze at idle timeout -> 1 h": {
+   "billed_gbh_per_app_month_mean": 18.22,
+   "billed_gbh_by_plan": {
+    "free": 13.14,
+    "hobby": 21.4,
+    "pro": 61.73,
+    "scale": 97.5
+   },
+   "resident_gbh_per_app_month_mean": 46.08,
+   "revenue_per_app_month": 3.963,
+   "overage_per_app_month": 0.0028,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.0266,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 14.13,
+    "hobby": 3.21,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.1383,
+   "wakes_per_app_week": 6901.1,
+   "wake_tier_share_pct": {
+    "paused": 82.2,
+    "frozen": 17.7,
+    "parked": 0.1,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 3.5,
+   "mean_added_latency_per_request_ms": 0.11,
+   "frozen_hours_per_app_week": 57.65,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 634,
+     "binding": "ram",
+     "infra_eur_per_app_month": 0.069
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 109,
+     "binding": "ram",
+     "infra_eur_per_app_month": 1.193
+    }
+   }
+  },
+  "E: quiet pause 2 s (billed) + freeze at idle timeout -> 10 min": {
+   "billed_gbh_per_app_month_mean": 46.08,
+   "billed_gbh_by_plan": {
+    "free": 33.72,
+    "hobby": 63.0,
+    "pro": 135.5,
+    "scale": 281.46
+   },
+   "resident_gbh_per_app_month_mean": 46.08,
+   "revenue_per_app_month": 3.972,
+   "overage_per_app_month": 0.012,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.115,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 33.74,
+    "hobby": 11.86,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.1383,
+   "wakes_per_app_week": 6901.1,
+   "wake_tier_share_pct": {
+    "paused": 82.2,
+    "frozen": 17.0,
+    "parked": 0.8,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 5.9,
+   "mean_added_latency_per_request_ms": 0.182,
+   "frozen_hours_per_app_week": 38.88,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 706,
+     "binding": "ram",
+     "infra_eur_per_app_month": 0.062
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 120,
+     "binding": "ram",
+     "infra_eur_per_app_month": 1.083
+    }
+   }
+  },
+  "G: quiet pause 2 s UNBILLED + freeze at idle timeout -> 10 min": {
+   "billed_gbh_per_app_month_mean": 18.22,
+   "billed_gbh_by_plan": {
+    "free": 13.14,
+    "hobby": 21.4,
+    "pro": 61.73,
+    "scale": 97.5
+   },
+   "resident_gbh_per_app_month_mean": 46.08,
+   "revenue_per_app_month": 3.963,
+   "overage_per_app_month": 0.0028,
+   "overage_by_plan": {
+    "free": 0.0,
+    "hobby": 0.0266,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "apps_over_included_pct_by_plan": {
+    "free": 14.13,
+    "hobby": 3.21,
+    "pro": 0.0,
+    "scale": 0.0
+   },
+   "compute_cogs_per_app_month": 0.1383,
+   "wakes_per_app_week": 6901.1,
+   "wake_tier_share_pct": {
+    "paused": 82.2,
+    "frozen": 17.0,
+    "parked": 0.8,
+    "cold": 0.0
+   },
+   "mean_wake_latency_ms": 5.9,
+   "mean_added_latency_per_request_ms": 0.182,
+   "frozen_hours_per_app_week": 38.88,
+   "nodes": {
+    "EX44 (\u20ac44/mo, 47.6 GB, 160 vCPU slots)": {
+     "apps_per_node": 706,
+     "binding": "ram",
+     "infra_eur_per_app_month": 0.062
+    },
+    "GCP n2-standard-4 (~\u20ac130/mo, 8.6 GB, 32 vCPU slots)": {
+     "apps_per_node": 120,
+     "binding": "ram",
+     "infra_eur_per_app_month": 1.083
+    }
+   }
+  }
+ }
+}

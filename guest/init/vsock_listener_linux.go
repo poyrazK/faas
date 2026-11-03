@@ -21,6 +21,12 @@ type guestVsockListener struct {
 }
 
 func listenGuestVsock(port uint32) (net.Listener, error) {
+	return listenGuestVsockBacklog(port, 1)
+}
+
+// listenGuestVsockBacklog is listenGuestVsock with a caller-chosen accept
+// backlog, for listeners that serve many concurrent sessions (ADR-1027).
+func listenGuestVsockBacklog(port uint32, backlog int) (net.Listener, error) {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK, 0)
 	if err != nil {
 		return nil, fmt.Errorf("vsock socket: %w", err)
@@ -29,7 +35,7 @@ func listenGuestVsock(port uint32) (net.Listener, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("vsock bind port %d: %w", port, err)
 	}
-	if err := unix.Listen(fd, 1); err != nil {
+	if err := unix.Listen(fd, backlog); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("vsock listen: %w", err)
 	}

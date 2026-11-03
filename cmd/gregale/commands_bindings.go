@@ -79,7 +79,7 @@ func cmdBindings(args []string) int {
 	parseErr := fs.Parse(flags)
 	positionals, mergeErr := mergeAppFlag(positionals, *app, 1)
 	if parseErr != nil || mergeErr != nil || fs.NArg() != 0 || len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) {
-		PrintUsage(osStderr, "usage: gregale app binding <app> [--env SCOPE] [--release ID|vN] [--require-complete] | gregale app binding check <app> [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] | gregale app binding object-storage <list|rotate|revoke> ... | gregale app binding verify <app> <service>|--all | gregale app binding smoke <app> <service> --release <id> --path </path>", "bindings")
+		PrintUsage(osStderr, "usage: gregale app binding <app> [--env SCOPE] [--release ID|vN] [--require-complete] | gregale app binding check <app> [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] | gregale app binding object-storage <list|rotate|revoke> ... | gregale app binding verify <app> <service>|--all | gregale app binding call <app> <service> --release <id> --path </path>", "bindings")
 		return 1
 	}
 	if *scope != "" {
@@ -135,7 +135,7 @@ func cmdBindingsObjectStorage(args []string) int {
 	case "revoke":
 		return cmdBindingsObjectStorageRevoke(args[1:])
 	default:
-		_, _ = fmt.Fprintf(osStderr, "unknown object-storage binding subcommand %q\n", args[0])
+		printCommandValidation(osStderr, "unknown object-storage binding subcommand %q\n", args[0])
 		return 1
 	}
 }

@@ -1,7 +1,8 @@
 # ADR-1520 · Rate-limit token leasing
 
-- **Status:** proposed. Built behind `[ratelimit] lease`, off by default
-  (see Implementation).
+- **Status:** accepted (owner, 2026-10-31). `[ratelimit] lease` is on by
+  default in deployments (Ansible `gatewayd_ratelimit_lease: true`);
+  production ran it by hand from 2026-10-25.
 - **Date:** 2026-10-15
 - **Amends:** ADR-104 amendment 5 (central rate-limit mode) and ADR-040
   (per-account limits). Keeps the shared Postgres counter as the authority.
@@ -118,7 +119,11 @@ at most one per backoff per gateway.
   token is debited. At most `N * A` requests per counter can pass beyond the
   shared bucket, and only when the last known remainder was at least `A`.
   With two gateways and `a = 0.05` that is 10% of one burst: 2 requests for a
-  Free app, 200 for a Scale app. Every other admission spent a token that was
+  Free app, 200 for a Scale app. `A` is `floor(a * burst)` with no floor of
+  one (amended 2026-10-31): a counter whose burst is below `1/a` (20), such as
+  a sign-in throttle, gets no allowance, so its requests wait for a lease and
+  none passes beyond the bucket. A floor of one let such a rule admit about
+  one extra request per gateway, half again or more of a burst of 2. Every other admission spent a token that was
   debited first. (The breaker fallback during a Postgres outage is unchanged
   and still admits at the full plan rate per gateway.)
 - **Bounded under-admission:** at most `N * L` tokens can expire unspent
@@ -150,8 +155,10 @@ last answered on that gateway, and refused after that.
 
 ## Configuration and rollout
 
-- `[ratelimit] lease = true` in gatewayd-internal's TOML, default `false`, so
-  central mode keeps its current behaviour until an environment opts in.
+- `[ratelimit] lease = true` in gatewayd-internal's TOML. The Ansible role
+  renders it on by default (2026-10-31; before, an environment opted in), so
+  no request within its limit waits for the control-plane Postgres. A TOML
+  without the key keeps it off, as in local runs.
   `lease_window_ms` (250), `lease_fraction` (0.10) and `allowance_fraction`
   (0.05) are tunables, not plan limits, so they stay in the gateway's TOML
   rather than `pkg/api/limits.go`.
@@ -162,8 +169,8 @@ last answered on that gateway, and refused after that.
   that waited for Postgres, which should only grow for counters at their
   limit.
 - Deploy manifest: `daemons.gatewayd_internal.ratelimit_lease` (omitted
-  renders `false`; refused with `ratelimit_mode: local`), rendered into the
-  `[ratelimit]` table. Ansible: `gatewayd_ratelimit_lease`.
+  keeps the Ansible default, `true`; refused with `ratelimit_mode: local`),
+  rendered into the `[ratelimit]` table. Ansible: `gatewayd_ratelimit_lease`.
 
 ## Verification
 

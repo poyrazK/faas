@@ -238,13 +238,15 @@ jq -n '{format_version: 1, kind: "gregale-host-config", group: "control_plane",
         environment: ("sha256:" + ("e" * 64))}' > "$record"
 contract="sha256:$(printf 'c%.0s' {1..64})"
 bash "$helper" host-record "$record" "$contract" || fail "host-record refused a valid record"
-cmp -s <(jq -S . "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") || fail "host-record changed the record"
+cmp -s <(jq -S --arg c "$contract" '.contract = $c' "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") \
+  || fail "host-record changed the record, or did not name the contract in it"
 [[ "$(cat "$HOST_CONFIG_DIR/control-plane-bootstrap-contract.sha256")" == "$contract" ]] || fail "host-record did not write the contract"
 [[ "$(stat -c %a "$HOST_CONFIG_DIR" 2>/dev/null || stat -f %Lp "$HOST_CONFIG_DIR")" == 700 ]] || fail "host-record left the record directory readable"
 jq 'del(.environment)' "$record" > "$test_root/no-env.json"
 if bash "$helper" host-record "$test_root/no-env.json" "$contract" 2>/dev/null; then fail "a record without its environment hash was accepted"; fi
 if bash "$helper" host-record "$record" "sha256:'; rm -rf /'" 2>/dev/null; then fail "an unsafe contract was accepted"; fi
-cmp -s <(jq -S . "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") || fail "a refused record replaced the old one"
+cmp -s <(jq -S --arg c "$contract" '.contract = $c' "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") \
+  || fail "a refused record replaced the old one"
 
 # 7a. host-stage ships deployctl alone; the restart script runs
 #     restart-changed as root, keeps its report, and marks the activation.

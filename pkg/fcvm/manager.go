@@ -324,7 +324,8 @@ type bringUpTimings struct {
 	coldBootMs   int64
 	restoreError string
 	// restoreFallbackReason is customer-safe only for the application
-	// after_restore failure. Other restore diagnostics stay operator-only.
+	// after_restore failure. RestoreFallbackNodeLocal tells schedd to keep the
+	// snapshot; other restore diagnostics stay operator-only.
 	restoreFallbackReason string
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
@@ -471,6 +472,10 @@ type Instance struct {
 	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
 	// instance keeps running between requests (quiet_pause.go).
 	QuietPauseAfter time.Duration
+	// AgentWaitPauseAfter is an agent run's model-wait pause delay
+	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
+	// running while it waits on the model.
+	AgentWaitPauseAfter time.Duration
 	// Frozen (ADR-1151; freeze.go) marks an instance Freeze paused in place
 	// for the frozen tier, until Thaw resumes it or teardown kills it.
 	// FrozenSince is when that pause took effect. Both are guarded by
@@ -516,9 +521,11 @@ type Instance struct {
 	// operator can distinguish a stale snapshot from a guest resume-hook
 	// failure (including its ACK code).
 	RestoreError string
-	// RestoreFallbackReason is the closed customer-facing reason for a
-	// successful cold-boot fallback after an application restore hook failure.
-	// Empty for other failures, planned cold boots, and successful restores.
+	// RestoreFallbackReason is the closed reason for a successful cold-boot
+	// fallback: WakeReasonAfterRestoreFailed (customer-facing) after an
+	// application restore hook failure, RestoreFallbackNodeLocal (operator
+	// only) when the failure was this node's. Empty for other failures,
+	// planned cold boots, and successful restores.
 	RestoreFallbackReason string
 	// AppID is the apps.id UUID the instance was woken for.
 	// UpdateEgressAllowlist (PR-B, ADR-031+033) uses it to walk
@@ -1333,6 +1340,17 @@ type Manager struct {
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
 
+	// Model-wait pause of agent runs (ADR-20261027090012;
+	// agent_wait_pause.go). agentWaitCPU is nil unless vmmd.toml enables it.
+	// agentWaitMu guards agentWaits and is a leaf lock, like quietMu.
+	agentWaitCPU     AgentWaitCPU
+	agentWaitMetrics *AgentWaitMetrics
+	agentWaitMu      sync.Mutex
+	agentWaits       map[string]*agentWaitState
+	// agentUsageTick is the agent run usage sample interval
+	// (agent_run_usage.go); zero is api.AgentRunUsageSampleMillis.
+	agentUsageTick time.Duration
+
 	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
 	// activity tracker; without it Freeze cannot see forwards in flight.
 	freezeActivity                QuietActivity
@@ -1367,6 +1385,10 @@ type HostRenderer interface {
 	// rules.
 	SetStaticEgressRules(rules []netns.StaticEgressRule)
 }
+
+// JailLeases is the host's jail-identity allocator. Database VMs (ADR-1027)
+// take their jail uid from it so they never share one with an app VM.
+func (m *Manager) JailLeases() *Allocator { return m.alloc }
 
 // NewManager wires a Manager. fcVersion is the running Firecracker version (used
 // to decide snapshot usability, ADR-005). log may be nil (a discard logger).
@@ -2112,7 +2134,7 @@ func (m *Manager) WithLivenessSink(relay LivenessFailedSink) *Manager {
 // observed payload); the only difference is the payload shape
 // (peakMB + planMB ints instead of a closed-set reason string).
 // MemoryPressureSink receives a guest memory-pressure report in MiB.
-type MemoryPressureSink func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int)
+type MemoryPressureSink func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int, profiling bool)
 
 // WithMemoryPressureSink attaches the best-effort memory-pressure relay.
 func (m *Manager) WithMemoryPressureSink(relay MemoryPressureSink) *Manager {
@@ -2122,7 +2144,7 @@ func (m *Manager) WithMemoryPressureSink(relay MemoryPressureSink) *Manager {
 
 // ReportMemoryPressure relays one guest report for a live app instance.
 // Reports for unknown, execution-only or job VMs are dropped.
-func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int, profiling bool) {
 	if m.memoryPressureRelay == nil {
 		return
 	}
@@ -2133,7 +2155,7 @@ func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, a
 	if !ok {
 		return
 	}
-	m.memoryPressureRelay(ctx, instanceID, availableMB, totalMB, anonMB)
+	m.memoryPressureRelay(ctx, instanceID, availableMB, totalMB, anonMB, profiling)
 }
 
 func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
@@ -3766,8 +3788,11 @@ type WakeRequest struct {
 	agentRunOnly     bool
 	agentRunRelay    *AgentRunRelay
 	agentRunInputKey string
-	RehearsalRunID   string // exact durable containment run; ordinary legacy callers may omit it
-	Instance         string
+	// agentRunWaitPauseAfter is the run's model-wait pause delay, accepted
+	// only with agentRunOnly (ADR-20261027090012).
+	agentRunWaitPauseAfter time.Duration
+	RehearsalRunID         string // exact durable containment run; ordinary legacy callers may omit it
+	Instance               string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -5416,9 +5441,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
-		QuietPauseAfter:  quietPauseAfterFor(req, qualificationOnly),
-		ExecutionMode:    req.ExecutionMode,
-		Characterization: report, Runtime: req.Runtime,
+		QuietPauseAfter:     quietPauseAfterFor(req, qualificationOnly),
+		AgentWaitPauseAfter: agentWaitPauseAfterFor(req),
+		ExecutionMode:       req.ExecutionMode,
+		Characterization:    report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 	}
@@ -5679,6 +5705,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				"instance", req.Instance, "storage_key", req.Snapshot.StorageKey, "err", refusal)
 			if timings != nil {
 				timings.restoreError = refusal.Error()
+				if RestoreFailureNodeLocal(refusal) {
+					timings.restoreFallbackReason = RestoreFallbackNodeLocal
+				}
 			}
 			m.metrics.ObserveFallback()
 			if m.wakeFailureMetrics != nil {
@@ -5801,6 +5830,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				timings.restoreError = rErr.Error()
 				if errors.Is(rErr, ErrAfterRestoreHook) {
 					timings.restoreFallbackReason = WakeReasonAfterRestoreFailed
+				} else if RestoreFailureNodeLocal(rErr) {
+					timings.restoreFallbackReason = RestoreFallbackNodeLocal
 				}
 			}
 			m.metrics.ObserveFallback()

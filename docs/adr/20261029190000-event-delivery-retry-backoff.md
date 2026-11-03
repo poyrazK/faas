@@ -64,3 +64,24 @@ or the producer default.
   `gregale.yaml`; a per-subscription handler retry setting is not added.
 - No schema change. An older scheduler keeps retrying event deliveries
   every 5 s; both run side by side.
+
+## Amendment (2026-10-30): keyed deliveries back off only to 30 s
+
+A delivery in a keyed lane (any work policy, ordered or not) holds every
+younger delivery of its key while it is pending, including while it waits
+for a retry (`invocations` claim: an older pending row of the same policy
+and key blocks the claim). With the 5-minute cap, one failing event stalled
+its key for about 20 minutes on Pro and 95 minutes on Scale before it was
+dead-lettered, against 45 seconds and 2 minutes before this ADR.
+
+The owner chose (2026-10-30) a shorter curve for keyed deliveries: 5 s
+doubling to 30 s (`EventDeliveryKeyedRetryMaxSeconds`), still capped by the
+plan's attempts and still overridden by the app's `retry_policy`.
+
+| Plan | Keyed delivery dead-lettered after |
+|---|---|
+| Hobby | about 15 s |
+| Pro | about 4 minutes |
+| Scale | about 11 minutes |
+
+Unkeyed deliveries keep the 5-minute cap.

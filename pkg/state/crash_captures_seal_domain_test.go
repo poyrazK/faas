@@ -63,3 +63,50 @@ func TestCountImagedKeyedCrashCaptures(t *testing.T) {
 		})
 	}
 }
+
+// TestRuntimeCheckQueries pins what the runtime seal domain's contract check
+// reads (ADR 20261022111812): the keys of unexpired captures vmmd sealed at
+// the source, and the short-lived copies filed under another key id.
+func TestRuntimeCheckQueries(t *testing.T) {
+	for name, f := range appForkStores(t) {
+		reader, ok := f.store.(interface {
+			ListSealedCrashCaptureKeys(context.Context, string, int) ([]state.CrashCaptureKey, error)
+			CountRuntimeCopiesOffDomain(context.Context, string) (int, error)
+		})
+		if !ok {
+			continue // seal-domain queries on PgStore alone
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			if n, err := reader.CountRuntimeCopiesOffDomain(ctx, "age1domain"); err != nil || n != 0 {
+				t.Fatalf("copies with no guard or cutover = %d, %v; want 0", n, err)
+			}
+			f.runningInstance(t, state.InstanceModeNormal)
+			requested, err := f.store.RequestManualCrashCapture(ctx, f.accountID, f.appID, crashCooldown, forkT0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.ClaimNextCrashCapture(ctx, forkT0); err != nil {
+				t.Fatal(err)
+			}
+			ready, err := f.store.CompleteCrashCapture(ctx, state.CompleteCrashCaptureParams{
+				ID: requested.ID, StorageKey: "snap/d/warm/captures/c/v2/mem", VMStateStorageKey: "snap/d/warm/captures/c/v2/vmstate",
+				FCVersion: "1.7.0", MemBytes: 1 << 20, CapturedAt: forkT0.Add(time.Second), ExpiresAt: time.Now().Add(time.Hour),
+				SealedKey: []byte("sealed-at-source"),
+			})
+			if err != nil || !ready.Sealed() {
+				t.Fatalf("sealed completion = %+v, %v", ready, err)
+			}
+			keys, err := reader.ListSealedCrashCaptureKeys(ctx, "", 10)
+			if err != nil || len(keys) != 1 || keys[0].ID != ready.ID || string(keys[0].SealedKey) != "sealed-at-source" {
+				t.Fatalf("sealed capture keys = %+v, %v; want the capture's key", keys, err)
+			}
+			if _, err := f.store.ExpireCrashCapture(ctx, ready.ID, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if keys, err := reader.ListSealedCrashCaptureKeys(ctx, "", 10); err != nil || len(keys) != 0 {
+				t.Fatalf("keys once the capture expired = %+v, %v; want none", keys, err)
+			}
+		})
+	}
+}

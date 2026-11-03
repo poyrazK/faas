@@ -47,6 +47,10 @@ type AgentRunConfig struct {
 	// machine shape, captured after the shape's first cold-boot run there
 	// (ADR-20261027090010 §2). Off: every run cold-boots.
 	Snapshots bool
+	// WaitPause marks eligible runs for the model-wait pause
+	// (ADR-20261027090012 §1): vmmd pauses their VM after QuietPauseAfterMillis
+	// of waiting on the relay alone. Off: every run keeps running.
+	WaitPause bool
 }
 
 // AgentRunAdmission is one run's machine (ADR-20261027090010 §5), already checked
@@ -62,6 +66,8 @@ type AgentRunAdmission struct {
 	Relay *AgentRunRelay
 	// InputKey is the run's input drive; empty: none.
 	InputKey string
+	// PauseDuringModelCalls is the version's model-wait pause opt-in.
+	PauseDuringModelCalls bool
 }
 
 // AgentRunRelay is the placement data vmmd mints a run's relay assertion
@@ -175,7 +181,7 @@ func (r *AgentRunner) Run(ctx context.Context, a AgentRunAdmission, run agentrun
 	shape := agentSnapshotShape{node: placement.NodeID, vcpu: a.VCPU, memMiB: a.RAMMB, cpuMilli: a.CPUMillicores}
 	spec := AgentRunSpec{Instance: placement.Instance, AccountID: a.AccountID, Plan: a.Plan, BaseKey: r.cfg.BaseKey,
 		LayerKey: r.cfg.LayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB, CPUMillicores: a.CPUMillicores, Relay: a.Relay,
-		InputKey: a.InputKey, Snapshot: r.snapshotFor(shape)}
+		InputKey: a.InputKey, Snapshot: r.snapshotFor(shape), ModelWaitPauseAfter: r.modelWaitPauseAfter(a)}
 	var method string
 	booted := hooks.Booted
 	hooks.Booted = func(ctx context.Context, m string, bootMs int64) error {
@@ -198,6 +204,18 @@ func (r *AgentRunner) Run(ctx context.Context, a AgentRunAdmission, run agentrun
 		go r.capture(context.WithoutCancel(ctx), placement, a.Plan, shape, release)
 	}
 	return result, nil
+}
+
+// modelWaitPauseAfter is the run's model-wait pause delay (ADR-20261027090012
+// §1): the quiet pause delay when this schedd's switch is on and the run's
+// version has not opted out. An agent run has no private-network attachment
+// and no attach or exec session, the ADR's other conditions; vmmd also pauses
+// only a networkless run VM.
+func (r *AgentRunner) modelWaitPauseAfter(a AgentRunAdmission) time.Duration {
+	if !r.cfg.WaitPause || !a.PauseDuringModelCalls {
+		return 0
+	}
+	return api.QuietPauseAfterMillis * time.Millisecond
 }
 
 func (r *AgentRunner) snapshotFor(shape agentSnapshotShape) *AgentRunSnapshot {

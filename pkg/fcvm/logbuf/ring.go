@@ -272,7 +272,10 @@ func (r *Ring) Write(stream string, p []byte) (int, error) {
 		if i < 0 {
 			break
 		}
-		line := string(r.tail[:i])
+		// Lines travel as proto3 strings (vmmd Logs RPC, schedd, drains),
+		// which must be valid UTF-8: one invalid byte failed every replay
+		// containing the line until it rotated out of the ring.
+		line := strings.ToValidUTF8(string(r.tail[:i]), "�")
 		r.tail = r.tail[i+1:]
 		r.commitLocked(stream, line, now)
 	}
