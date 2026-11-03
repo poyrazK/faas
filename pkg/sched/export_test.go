@@ -314,6 +314,7 @@ var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+var SeedForkTarget = seedForkTarget
 var ReadWakeRPC = readWakeRPC
 
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
@@ -585,10 +586,14 @@ func (r *Loop) ProcessFireNowRequest(p0 context.Context, p1 state.FireNowRequest
 func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time) error {
 	return r.recoverPrimeCandidate(p0, p1, p2)
 }
-func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
-func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
-func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
-func (r *Loop) RunCronTick(p0 context.Context)      { r.runCronTick(p0) }
+func (r *Loop) RunInstanceStats(p0 context.Context)     { r.runInstanceStats(p0) }
+func (r *Loop) RunPrimeRecovery(p0 context.Context)     { r.runPrimeRecovery(p0) }
+func (r *Loop) RunReaper(p0 context.Context)            { r.runReaper(p0) }
+func (r *Loop) RunCronTick(p0 context.Context)          { r.runCronTick(p0) }
+func (r *Loop) RunScheduledJobsTick(p0 context.Context) { r.runScheduledJobsTick(p0) }
+
+// DrainEngine is the engine a drain wakes apps through.
+func DrainEngine(d *Drain) *Engine { return d.engine }
 func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
 	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
 }
@@ -1105,6 +1110,33 @@ func (e *Engine) MarkRestartInFlight(appID string) func() {
 		delete(e.restartInFlight, appID)
 		close(call.done)
 	}
+}
+
+// Broker trigger delivery (ADR-20261101093512).
+func (r *Loop) TriggerClaimRenewInterval() *time.Duration { return &r.triggerClaimRenewInterval }
+
+var WriteTriggerClaimOutcome = writeTriggerClaimOutcome
+var NATSConsumerConfig = natsConsumerConfig
+var NATSRecordID = natsRecordID
+
+type NATSConfig = natsConfig
+type NATSMsg = natsMsg
+
+const TriggerReasonPayloadTooLarge = triggerReasonPayloadTooLarge
+const TriggerReasonRateLimited = triggerReasonRateLimited
+
+// NewNATSPollerWithMessages is a NATS poller holding msgs in flight, keyed
+// by record ID, without a JetStream consumer.
+func NewNATSPollerWithMessages(msgs map[string]NATSMsg) TriggerSource {
+	return &natsPoller{stream: "events", inFlight: msgs}
+}
+
+// RedeliverNATS puts msg back in flight under id, as a Poll would.
+func RedeliverNATS(src TriggerSource, id string, msg NATSMsg) {
+	p := src.(*natsPoller)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inFlight[id] = msg
 }
 
 // WithCronSweepSlice sets how long one pass of the cron sweep may dispatch.

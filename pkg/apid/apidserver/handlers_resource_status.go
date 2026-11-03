@@ -92,6 +92,11 @@ func (s *server) getCronStatus(w http.ResponseWriter, r *http.Request, acct stat
 	if store, ok := s.store.(cronrun.Store); ok {
 		paused = cronrun.Paused(r.Context(), store, app, c)
 	}
+	// The sweep skips crons on an app a compute budget holds (crons audit
+	// 2026-11-03); status said the cron fired on schedule.
+	if paused == "" && c.Enabled && c.SuspendedReason == "" && cronrun.BudgetHeld(r.Context(), s.store, app, time.Now().UTC()) {
+		paused = cronrun.PausedBudgetHeld
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, conditions.Cron(cronResponse(c), last, time.Now(), paused))
 }

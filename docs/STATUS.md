@@ -131,6 +131,17 @@ ADR-20261026201726 amendment 2026-11-03, ADR-20261031162858 amendment 2):
 - Deployment cron staging applies the cron API's path and timezone rules.
 - The dashboard refuses a disabled cron's manual run and names each refusal.
 
+Audit round 5, 2026-11-03 (branch `fix/crons-audit-round5`,
+ADR-20261026201726 amendment 2026-11-03 (2)):
+
+- A cron's schedule policy and failure rules can be removed
+  (`clear_schedule_policy`, `clear_failure_rules`, the matching CLI flags, and
+  Terraform when the configuration drops them).
+- On a preview app a compute budget holds, `gregale cron status` reports
+  `budget_held` and a manual run is refused (`402`) instead of waiting.
+- A disabled cron's manual run is refused (`409`); the scheduler no longer
+  lists disabled crons from PostgreSQL.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of
@@ -450,6 +461,16 @@ to the 2026-11 release, and `FaasGeoIPDatabaseStale` warns when it is more
 than 75 days old. The challenge-pass docs now say a pass is shared by its
 /24 or /48 and User-Agent, and the CLI warns when a gate is scoped by
 headers, cookies or query values the client chooses.
+
+2026-11-03: a fifth review found the scheduler's synth routes
+(`/v1/synthesize`, `/v1/invocations:dispatch`, `:dispatch_batch`) reachable
+from the internet on every app host: anyone with an app ID could wake it or
+invoke it and read the response, past its public auth and edge rules. schedd
+now sends an app-bound scheduler token on every synth request, the gateway
+refuses one without it, and the public edge refuses these paths unless the
+local scheduler sent them (ADR-20261103090000). The same record has
+`validate` check bodies sent with `Connection: Upgrade`, and keeps requests
+with `X-API-Key` or `Proxy-Authorization` out of the shared cache.
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

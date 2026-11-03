@@ -3342,12 +3342,7 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, appRenameWriteProblem(err, req.NewSlug))
 		return
 	}
-	if retargeted, err := s.edgeRules.RetargetRouteRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
-		s.log.Error("app renamed but its route rules still name the old slug", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "retargeted", retargeted, "err", err)
-	}
-	if moved, err := s.edgeRules.RetargetPlatformHostRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
-		s.log.Error("app renamed but rules on its old hostname did not move", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "moved", moved, "err", err)
-	}
+	s.retargetEdgeRulesAfterRename(w, r, acct, updated.ID, oldSlug, req.NewSlug)
 	if prob := s.edgeRules.ApplyReferencedEdit(r.Context(), w, routeEdit, updated.ID, convergences); prob != nil {
 		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)
 	}
@@ -3359,6 +3354,21 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	s.audit.Emit(r.Context(), "app.renamed", &acct.ID, map[string]any{"app_id": updated.ID, "from": oldSlug, "to": req.NewSlug})
 	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
+}
+
+// retargetEdgeRulesAfterRename moves the account's edge rules that name the
+// old slug or its platform hostname. The rename itself has committed; rules
+// that could not be moved are reported to the caller (a Warning header) and
+// in the account's audit trail, not only the daemon log (ADR-091 amendment
+// 2026-11-03, review round 9).
+func (s *server) retargetEdgeRulesAfterRename(w http.ResponseWriter, r *http.Request, acct state.Account, appID, oldSlug, newSlug string) {
+	err := s.edgeRules.RetargetAfterRename(r.Context(), acct.ID, oldSlug, newSlug)
+	if err == nil {
+		return
+	}
+	s.log.Error("app renamed but some edge rules still name its old slug or hostname", "app_id", appID, "from", oldSlug, "to", newSlug, "err", err)
+	s.audit.Emit(r.Context(), "app.rename_edge_rules_incomplete", &acct.ID, map[string]any{"app_id": appID, "from": oldSlug, "to": newSlug})
+	w.Header().Set("Warning", `299 - "the app was renamed, but some edge rules still name `+oldSlug+`; review them with gregale edge rule list `+newSlug+`"`)
 }
 
 // --- instances -------------------------------------------------------------
@@ -4487,6 +4497,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.ClearSchedulePolicy && req.SchedulePolicy != nil || req.ClearFailureRules && req.FailureRules != nil {
+		api.WriteProblem(w, api.ErrValidation("clear_schedule_policy and clear_failure_rules cannot be sent with the field they clear"))
+		return
+	}
 	if req.Schedule != nil {
 		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
 			api.WriteProblem(w, problem)
@@ -4540,9 +4554,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 			return
 		}
 	}
-	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil || req.ClearSchedulePolicy || req.ClearFailureRules {
 		opts := state.CronOptions{RetryMax: c.RetryMax, RetryBackoffSeconds: c.RetryBackoffSeconds,
-			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules}
+			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
+			ClearSchedulePolicy: req.ClearSchedulePolicy, ClearFailureRules: req.ClearFailureRules}
 		if req.RetryMax != nil {
 			opts.RetryMax = *req.RetryMax
 		}
@@ -4595,6 +4610,14 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.RetryMax != nil {
 		oldCron["retry_max"] = c.RetryMax
 		newCron["retry_max"] = updated.RetryMax
+	}
+	if req.ClearSchedulePolicy {
+		oldCron["schedule_policy"] = c.SchedulePolicy != nil
+		newCron["schedule_policy"] = updated.SchedulePolicy != nil
+	}
+	if req.ClearFailureRules {
+		oldCron["failure_rules"] = c.FailureRules != nil
+		newCron["failure_rules"] = updated.FailureRules != nil
 	}
 	if req.RetryBackoffSeconds != nil {
 		oldCron["retry_backoff_seconds"] = c.RetryBackoffSeconds
@@ -5323,6 +5346,11 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			"from", logsanitize.Field(string(acct.Plan)),
 			"to", logsanitize.Field(string(plan)),
 		)
+		// ADR-20261103131742: the customer portal no longer switches plans,
+		// so an existing subscription is upgraded through the provider API.
+		if acct.Plan.RequiresBillingUpgradeTo(plan) && s.upgradeSubscription(w, r, acct, plan) {
+			return
+		}
 		prob := &api.Problem{
 			Status: http.StatusPaymentRequired,
 			Code:   api.CodePayment,
@@ -5352,6 +5380,10 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			// through to the portal URL; any other error is a provider
 			// or store failure the customer should retry.
 			txID, checkoutURL, err := s.beginHostedCheckout(r.Context(), acct, plan)
+			if errors.Is(err, billing.ErrCustomerEmailInUse) {
+				api.WriteProblem(w, api.ErrBillingEmailInUse(acct.ResourceOrgID != ""))
+				return
+			}
 			if err != nil && !errors.Is(err, errNoHostedCheckout) {
 				api.WriteProblem(w, api.ErrCapacity("upgrade unavailable"))
 				return
@@ -5405,36 +5437,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, prob)
 			return
 		}
-		effectiveAt, err := changer.ChangeSubscriptionPlan(r.Context(), billingAcct, plan)
-		if err != nil {
-			s.log.Error("schedule plan change failed",
-				"account", acct.ID,
-				"from", logsanitize.Field(string(acct.Plan)),
-				"to", logsanitize.Field(string(plan)),
-				"err", logsanitize.FieldAny(err))
-			if errors.Is(err, billing.ErrAlreadyCancelled) {
-				api.WriteProblem(w, api.NewProblem(http.StatusConflict,
-					api.CodeConflict, "billing subscription unavailable",
-					"the billing subscription is no longer active; refresh billing and try again"))
-				return
-			}
-			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,
-				"billing_plan_change_failed", "billing plan change failed",
-				"the provider could not schedule this plan change; the current plan remains active"))
-			return
-		}
-		updated, err := state.BillingResourceAccount(r.Context(), s.store, acct.ID)
-		if err != nil {
-			updated = acct
-		}
-		status := "pending_provider_confirmation"
-		response := s.accountResponse(r.Context(), updated, r)
-		response.PlanChangeStatus = status
-		response.RequestedPlan = string(plan)
-		if !effectiveAt.IsZero() {
-			response.EffectiveAt = &effectiveAt
-		}
-		writeJSON(w, http.StatusAccepted, orgbilling.PlanResponse(updated, response))
+		s.scheduleProviderPlanChange(w, r, acct, billingAcct, changer, plan)
 		return
 	}
 	if err := s.setAccountPlan(r.Context(), acct, plan); err != nil {
@@ -7287,6 +7290,15 @@ func combinedOverageCents(provider billing.Provider, plan api.Plan, usedEgressBy
 		return math.MaxInt64
 	}
 	return computeCents + egressCents
+}
+
+// saturatingAddCents adds two non-negative cent amounts, saturating at
+// math.MaxInt64.
+func saturatingAddCents(a, b int64) int64 {
+	if b > math.MaxInt64-a {
+		return math.MaxInt64
+	}
+	return a + b
 }
 
 // accountUsage serves the account-level usage projection. Compute remains

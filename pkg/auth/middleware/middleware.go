@@ -1690,9 +1690,12 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	// A deploy follows the deployment it created; the route
 	// is bound by the deployment's app, not a path slug.
 	deploymentRead := deployTokenDeploymentReads[r.Pattern]
-	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead {
+	// CI waits for its app's PR previews; the route is bound by the
+	// preview's production app (ADR-20261102203228).
+	previewStatusRead := appBoundPreviewStatusReads[r.Pattern]
+	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead && !previewStatusRead {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments"))
+			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments and preview status"))
 		return true
 	}
 	var bound bool
@@ -1700,6 +1703,8 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	switch {
 	case uploadRoute:
 		bound = key.AppID != ""
+	case previewStatusRead:
+		bound, bindErr = m.credentialBoundToPreview(r, key)
 	case deploymentRead:
 		bound, bindErr = m.deployTokenBoundToDeployment(r, key)
 	default:
@@ -1721,6 +1726,37 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 		return true
 	}
 	return false
+}
+
+// appBoundPreviewStatusReads are the PR preview status reads an app-bound
+// credential may make for its own app's previews.
+var appBoundPreviewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// credentialBoundToPreview reports whether the {slug} of a preview status read
+// names a preview of the app the credential is bound to.
+func (m *Middleware) credentialBoundToPreview(r *http.Request, key state.APIKey) (bool, error) {
+	slug := r.PathValue("slug")
+	if slug == "" || key.AppID == "" {
+		return false, nil
+	}
+	preview, err := m.Authn.AppBySlug(r.Context(), slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil || preview.PreviewOfSlug == "" {
+		return false, err
+	}
+	parent, err := m.Authn.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return parent.ID == key.AppID && parent.AccountID == preview.AccountID, nil
 }
 
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {

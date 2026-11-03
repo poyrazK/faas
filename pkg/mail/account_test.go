@@ -93,7 +93,9 @@ func TestSubscriptionEndedBody(t *testing.T) {
 	if !strings.Contains(subject, "Free plan") {
 		t.Errorf("subject = %q, want it to mention the Free plan", subject)
 	}
-	for _, want := range []string{"alice@example.com", "2026-09-05 10:00 UTC", "pro subscription", "20 GB-hours", "256 MB RAM", "gregale plan"} {
+	// ADR-20261103131742: apps outside the Free limits stop waking, and
+	// Free egress is capped.
+	for _, want := range []string{"alice@example.com", "2026-09-05 10:00 UTC", "pro subscription", "20 GB-hours", "256 MB RAM", "10 GiB of egress", "oldest deployed app", "--ram 256", "gregale plan"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q:\n%s", want, body)
 		}

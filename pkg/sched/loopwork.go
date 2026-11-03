@@ -55,7 +55,6 @@ const (
 	workPrimeRecovery        workKind = "prime_recovery"
 	workWorkflowDispatch     workKind = "workflow_dispatch"
 	workWorkflowSchedules    workKind = "workflow_schedules"
-	workWorkflowRetention    workKind = "workflow_retention"
 	workWorkflowAgentRuns    workKind = "workflow_agent_runs"
 	workTriggerDispatch      workKind = "trigger_dispatch"
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
@@ -82,15 +81,36 @@ const (
 	// workInvocationsRetention is the minute's invocation retention pass. It
 	// repeats full batches, so it runs off the loop (ADR-20261029012000).
 	workInvocationsRetention workKind = "invocations_retention"
+	// workTargets, workFloor and workPrewarm are the one-second scaling
+	// triggers. Their admissions wait on vmmd's restore or boot, which held
+	// the loop (the stats tick, cron, the other triggers) for that long
+	// (ADR 20261103131546). Scale-up already ran off the loop.
+	workTargets workKind = "targets"
+	workFloor   workKind = "floor"
+	workPrewarm workKind = "prewarm"
+	// workRetention is the hourly instance, dead-letter and cron-history
+	// retention; workWorkflowRetention and workTriggersRetention are their
+	// siblings (ADR 20261103131546).
+	workRetention         workKind = "retention"
+	workWorkflowRetention workKind = "workflow_retention"
+	workTriggersRetention workKind = "triggers_retention"
+	// workAppPark parks a whole app (an evicted app, a suspended or
+	// abuse-held account, a spend cap) and workAppDelete destroys a deleted
+	// app's VMs. Both snapshot or destroy every live instance, so they run
+	// off the loop and off the reaper (ADR 20261103164725).
+	workAppPark   workKind = "app_park"
+	workAppDelete workKind = "app_delete"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workWorkflowSchedules, workWorkflowRetention, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
+	workWorkflowDispatch, workWorkflowSchedules, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
 	workAppWake, workRuntimeConfigRestart, workWatchdog, workInvocationsRetention,
+	workTargets, workFloor, workPrewarm, workRetention, workWorkflowRetention, workTriggersRetention,
+	workAppPark, workAppDelete,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -149,7 +169,6 @@ var workSpecs = map[workKind]workSpec{
 	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
 	workWorkflowDispatch:     {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
 	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
-	workWorkflowRetention:    {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	workWorkflowAgentRuns:    {slots: 1, overflow: overflowDrop},
 	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
 	// Push-queue lanes (ADR-972) claim durable leases; a dropped lane is
@@ -185,6 +204,24 @@ var workSpecs = map[workKind]workSpec{
 	// One retention pass at a time; a tick while one runs coalesces, and
 	// the next minute's tick carries on where it stopped.
 	workInvocationsRetention: {slots: 1, overflow: overflowDrop},
+	// One tick of each scaling trigger at a time; a tick while one runs
+	// coalesces, and the next second's tick reads the ledger again. Their
+	// admissions go through the engine's per-app locks and caps, as
+	// scale-up's off-loop ticks already do.
+	workTargets: {slots: 1, overflow: overflowDrop},
+	workFloor:   {slots: 1, overflow: overflowDrop},
+	workPrewarm: {slots: 1, overflow: overflowDrop},
+	// One pass of each retention at a time; a tick while one runs
+	// coalesces, and the next pass carries on where it stopped.
+	workRetention:         {slots: 1, overflow: overflowDrop},
+	workWorkflowRetention: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	workTriggersRetention: {slots: 1, overflow: overflowDrop},
+	// Whole-app parks and deleted-app cleanups, one per app (the key) and
+	// four apps at once. A dropped park is retried by the next reaper tick; a
+	// dropped cleanup by the reaper's lifecycle reconciliation, which lists
+	// deleted apps' live instances every tick.
+	workAppPark:   {slots: 4, overflow: overflowDrop},
+	workAppDelete: {slots: 4, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

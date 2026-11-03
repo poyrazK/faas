@@ -2,9 +2,11 @@ package meter
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -22,6 +24,41 @@ func MonthlyUsageGB(usages []state.Usage) float64 {
 		mbSec += u.MBSeconds
 	}
 	return api.InternalMailQuotaWarningUsageGBHours(mbSec)
+}
+
+// MonthlyEgressBytes sums the month's application egress: the host-interface
+// bytes the subject's instances sent (state.Usage.NetTxBytes), the egress
+// meter's source. It saturates rather than wrapping.
+func MonthlyEgressBytes(usages []state.Usage) int64 {
+	var total int64
+	for _, u := range usages {
+		if u.NetTxBytes <= 0 {
+			continue
+		}
+		if u.NetTxBytes > math.MaxInt64-total {
+			return math.MaxInt64
+		}
+		total += u.NetTxBytes
+	}
+	return total
+}
+
+// EgressCeilingBytes is the month's application egress ceiling for plan: the
+// plan's monthly egress while the provider does not bill egress live for it,
+// and none (zero) once it does, when egress above the allowance is overage
+// under the spend cap instead (ADR-20261103131742). Free egress is never
+// billed, so Free always has the ceiling.
+func EgressCeilingBytes(provider billing.Provider, plan api.Plan) int64 {
+	limits, ok := api.LimitsFor(plan)
+	if !ok || limits.MonthlyEgressGiB <= 0 {
+		return 0
+	}
+	if policies, ok := provider.(billing.MeterUsagePolicyProvider); ok {
+		if policy, configured := policies.MeterUsagePolicy(plan, state.BillingMeterEgress); configured && policy.Mode == billing.MeterDeliveryLive {
+			return 0
+		}
+	}
+	return limits.MonthlyEgressGiB << 30
 }
 
 // QuotaResult is the verdict the quota loop hands to the caller. Negative

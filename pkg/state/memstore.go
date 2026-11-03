@@ -786,14 +786,17 @@ type MemStore struct {
 	// invariant is enforced at insert time. MemStore holds no
 	// concurrency control beyond m.mu — the dispatcher's claim
 	// query is a single goroutine today.
-	appWebhooks                     map[string]AppWebhook
-	appWebhookDeliveries            map[string]AppWebhookDelivery
-	appWebhookDeliverySources       map[string]string
-	entityOutboxAcceptances         map[string]string
-	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
-	appWebhookReplayGenerations     map[string]int
-	appWebhookReceiverCooldowns     map[string]time.Time
-	appWebhookRecoveryProbes        map[string]string
+	appWebhooks                 map[string]AppWebhook
+	appWebhookDeliveries        map[string]AppWebhookDelivery
+	appWebhookDeliverySources   map[string]string
+	entityOutboxAcceptances     map[string]string
+	appWebhookDeliveryAttempts  map[string][]AppWebhookDeliveryAttempt
+	appWebhookReplayGenerations map[string]int
+	appWebhookReceiverCooldowns map[string]time.Time
+	appWebhookRecoveryProbes    map[string]string
+	// appWebhookPreviousSecrets mirrors app_webhooks.previous_secret_*
+	// (ADR-20261101093517), kept beside the rows so AppWebhook stays as is.
+	appWebhookPreviousSecrets       map[string]appWebhookPreviousSecret
 	inboundWebhookEndpoints         map[string]InboundWebhookEndpoint
 	webhookAutomationBindings       map[string]WebhookAutomationBinding
 	webhookAutomationReceipts       map[string]WebhookAutomationReceipt
@@ -1806,6 +1809,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		appWebhookDeliveryAttempts:      map[string][]AppWebhookDeliveryAttempt{},
 		appWebhookReplayGenerations:     map[string]int{},
 		appWebhookReceiverCooldowns:     map[string]time.Time{},
+		appWebhookPreviousSecrets:       map[string]appWebhookPreviousSecret{},
 		appWebhookRecoveryProbes:        map[string]string{},
 		inboundWebhookEndpoints:         map[string]InboundWebhookEndpoint{},
 		workflowCallbackWebhookBindings: map[string]WorkflowCallbackWebhookBinding{},
@@ -13704,6 +13708,17 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 		}
 		if opts.FailureRules != nil && !sameWorkPolicy(c.FailureRules, opts.FailureRules) {
 			c.FailureRules = workpolicy.Clone(opts.FailureRules)
+			scheduleChanged = true
+		}
+		if opts.ClearSchedulePolicy && opts.SchedulePolicy != nil || opts.ClearFailureRules && opts.FailureRules != nil {
+			return Cron{}, ErrInvalidArgument
+		}
+		if opts.ClearSchedulePolicy && c.SchedulePolicy != nil {
+			c.SchedulePolicy = nil
+			scheduleChanged = true
+		}
+		if opts.ClearFailureRules && c.FailureRules != nil {
+			c.FailureRules = nil
 			scheduleChanged = true
 		}
 	}
