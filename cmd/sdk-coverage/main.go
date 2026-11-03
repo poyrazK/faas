@@ -553,6 +553,7 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
 	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
 	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
+	"PUT /v1/orgs/{slug}/billing/email":                                                                                "SetOrgBillingEmail",   // ADR-20261103131742
 	"GET /v1/orgs/{slug}/billing/costs":                                                                                "GetOrgFinancialCosts", // ADR-20261031211500
 	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                                     "PreviewOrgFinancialBudget",
 	"GET /v1/orgs/{slug}/billing/budgets":                                                                              "ListOrgFinancialBudgets",
