@@ -55151,6 +55151,37 @@ CREATE TABLE public.safe_release_worker_lease (
 
 
 --
+-- Name: sales_activities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_activities (
+    id uuid NOT NULL,
+    lead_id uuid NOT NULL,
+    actor_id uuid,
+    kind text NOT NULL,
+    summary text NOT NULL,
+    outcome text DEFAULT ''::text NOT NULL,
+    next_step text DEFAULT ''::text NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    follow_up_title text DEFAULT ''::text NOT NULL,
+    follow_up_on date,
+    task_id uuid,
+    CONSTRAINT sales_activities_check CHECK ((occurred_at <= recorded_at)),
+    CONSTRAINT sales_activities_check1 CHECK (((follow_up_title = ''::text) = (follow_up_on IS NULL))),
+    CONSTRAINT sales_activities_follow_up_on_check CHECK (((follow_up_on IS NULL) OR (isfinite(follow_up_on) AND ((follow_up_on >= '2000-01-01'::date) AND (follow_up_on <= '2100-12-31'::date))))),
+    CONSTRAINT sales_activities_follow_up_title_check CHECK ((octet_length(follow_up_title) <= 200)),
+    CONSTRAINT sales_activities_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_activities_kind_check CHECK ((kind = ANY (ARRAY['call'::text, 'email'::text, 'demo'::text, 'note'::text]))),
+    CONSTRAINT sales_activities_next_step_check CHECK ((octet_length(next_step) <= 500)),
+    CONSTRAINT sales_activities_occurred_at_check CHECK ((isfinite(occurred_at) AND (occurred_at >= '2000-01-01 00:00:00+00'::timestamp with time zone))),
+    CONSTRAINT sales_activities_outcome_check CHECK ((octet_length(outcome) <= 500)),
+    CONSTRAINT sales_activities_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT sales_activities_summary_check CHECK (((summary = btrim(summary)) AND ((octet_length(summary) >= 1) AND (octet_length(summary) <= 1000))))
+);
+
+
+--
 -- Name: sales_inquiries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69185,6 +69216,14 @@ ALTER TABLE ONLY public.safe_release_worker_lease
 
 
 --
+-- Name: sales_activities sales_activities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_activities
+    ADD CONSTRAINT sales_activities_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: sales_inquiries sales_inquiries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79643,6 +79682,20 @@ CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations
 --
 
 CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verifications USING btree (next_attempt_at, created_at, operation_id) WHERE (phase = 'pending'::text);
+
+
+--
+-- Name: sales_activities_contact; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_activities_contact ON public.sales_activities USING btree (lead_id, occurred_at DESC) WHERE (kind = ANY (ARRAY['call'::text, 'email'::text, 'demo'::text]));
+
+
+--
+-- Name: sales_activities_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_activities_page ON public.sales_activities USING btree (lead_id, occurred_at DESC, id DESC);
 
 
 --
@@ -102384,6 +102437,30 @@ ALTER TABLE ONLY public.runtime_upgrade_verifications
 
 ALTER TABLE ONLY public.runtime_upgrade_verifications
     ADD CONSTRAINT runtime_upgrade_verifications_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.runtime_upgrade_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_activities sales_activities_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_activities
+    ADD CONSTRAINT sales_activities_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_activities sales_activities_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_activities
+    ADD CONSTRAINT sales_activities_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.sales_leads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_activities sales_activities_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_activities
+    ADD CONSTRAINT sales_activities_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.sales_tasks(id) ON DELETE SET NULL;
 
 
 --

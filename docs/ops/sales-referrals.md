@@ -278,3 +278,44 @@ before acting. No external email or calendar event is sent. Original and latest
 messages persist until database retention/deletion, subject to the existing
 backup and restricted-access controls. The release stores no visitor IP/user
 agent. Disable the intake flag to stop capture while retaining staff access.
+
+## Activity history and leads needing attention
+
+Apply `20261103221800000_sales_activity.sql` before the new apid release. The
+existing `FAAS_SALES_ENABLED` flag covers activity history and attention alerts;
+there is no website build or new public endpoint for this release.
+
+Use **Activity** from a lead row, or **View activity** under **Needs attention**.
+Record a call, email, demo or internal note, the time it occurred, a summary,
+outcome and next step. Times use the browser's local zone and are stored as UTC
+instants with microsecond precision. Text limits are UTF-8 bytes: summary 1000,
+outcome/next step 500 each, optional follow-up title 200. Entries remain as
+recorded; add a correction note if necessary. Choose **Create a follow-up task**
+to save the entry and task together. The lead's current owner receives the task.
+This action records staff activity and does not send a message to the prospect.
+
+History follows the current lead owner. Original authors and recording times
+remain visible after reassignment. Deleting a task keeps its history snapshot;
+deleting a lead deletes its history and tasks, while retaining referral data.
+A network failure keeps the attempted entry unchanged so **Retry save** can
+safely confirm it without duplicating the entry or task. A conflict refreshes
+lead details and keeps the draft for review. **New entry** starts another draft.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `FAAS_SALES_STALE_DAYS` | `14` | Whole 24-hour days without recorded contact before an open lead is stalled; 1–365 |
+
+Ansible exposes this as `faas_sales_stale_days`. Invalid enabled configuration
+refuses startup. **Needs attention** shows stalled open leads and leads with
+overdue tasks. Calls, emails and demos update last recorded contact using the
+occurrence time. Notes, current-note edits and other CRM changes do not. With no
+recorded contact, age starts at lead creation. Won/lost leads remain eligible
+for overdue task alerts; they are excluded from stalled lead counts. A task due
+today is not overdue, and completing it removes that overdue signal.
+
+The owner filter scopes both rows and summary counts. The reason filter selects
+rows; summary counts continue to cover both reasons in that owner scope.
+Visible pages refresh alerts every minute, and dates follow the same local
+calendar as the task inbox. Alerts are computed in the portal and send no email,
+calendar event or external notification. These staff-entered records do not
+establish referral attribution, account access, rewards or commission.

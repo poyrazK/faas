@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	StaleDays          int32
 	IntakeEnabled      bool
 	IntakeFollowupDays int
 	IntakeTimezone     *time.Location
@@ -32,8 +33,16 @@ func FromEnv(getenv func(string) string, origin string) (Config, error) {
 	c.IntakeEnabled = getenv("FAAS_SALES_INTAKE_ENABLED") == "1"
 	c.IntakeFollowupDays = api.SalesIntakeFollowupDefaultDays
 	c.IntakeTimezone = time.UTC
+	c.StaleDays = api.SalesStaleDefaultDays
 	if !c.Enabled {
 		return c, nil
+	}
+	if value := getenv("FAAS_SALES_STALE_DAYS"); value != "" {
+		n, err := strconv.ParseInt(value, 10, 32)
+		if err != nil || n < 1 || n > api.SalesStaleMaxDays {
+			return Config{}, fmt.Errorf("FAAS_SALES_STALE_DAYS must be between 1 and %d", api.SalesStaleMaxDays)
+		}
+		c.StaleDays = int32(n)
 	}
 	if value := getenv("FAAS_SALES_INTAKE_FOLLOWUP_DAYS"); value != "" {
 		n, err := strconv.Atoi(value)

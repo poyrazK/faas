@@ -20066,5 +20066,23 @@
       "nonce"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "sales_activities",
+    "columns": [
+      "actor_id",
+      "follow_up_on",
+      "follow_up_title",
+      "id",
+      "kind",
+      "lead_id",
+      "next_step",
+      "occurred_at",
+      "outcome",
+      "recorded_at",
+      "summary",
+      "task_id"
+    ],
+    "kind": "account_identity"
   }
 ]

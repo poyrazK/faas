@@ -165,3 +165,6 @@ faas_referral_conversion_days: 90
 faas_sales_intake_enabled: false
 faas_sales_intake_followup_days: 1
 faas_sales_intake_timezone: UTC
+
+# Open leads become stalled after this many days without recorded contact.
+faas_sales_stale_days: 14

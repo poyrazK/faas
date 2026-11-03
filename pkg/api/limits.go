@@ -17064,3 +17064,11 @@ const (
 	SalesIntakeRequestsPerMinute   = 10
 	SalesIntakeReceiptPurge        = 100
 )
+
+// Staff conversation history and computed lead attention.
+const (
+	SalesActivitySummaryMaxBytes = 1000
+	SalesActivityDetailMaxBytes  = 500
+	SalesStaleDefaultDays        = 14
+	SalesStaleMaxDays            = 365
+)

@@ -5,7 +5,7 @@
   <meta name="robots" content="noindex,nofollow"><title>{{if .Staff}}Sales workspace{{else}}Your referrals{{end}} · Gregale</title>
   <link rel="stylesheet" href="/dashboard/referral-assets/portal.css">
   <script nonce="{{.Nonce}}" src="/dashboard/referral-assets/portal.js" defer></script>
-  {{if .Staff}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/pipeline.js" defer></script><script nonce="{{.Nonce}}" src="/dashboard/referral-assets/inquiries.js" defer></script>{{end}}
+  {{if .Staff}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/pipeline.js" defer></script><script nonce="{{.Nonce}}" src="/dashboard/referral-assets/inquiries.js" defer></script><script nonce="{{.Nonce}}" src="/dashboard/referral-assets/activity.js" defer></script>{{end}}
   {{if .Manager}}<script nonce="{{.Nonce}}" src="/dashboard/referral-assets/reports.js" defer></script>{{end}}
 </head>
 <body data-staff="{{.Staff}}" data-manager="{{.Manager}}">
@@ -16,7 +16,7 @@
     <nav aria-label="Workspace">
       <a href="#overview" class="nav-item active" aria-current="page"><span>◈</span> Overview</a>
       {{if .Manager}}<a href="#reports" class="nav-item"><span>▥</span> Manager reports</a>{{end}}
-      {{if .Staff}}<a href="#inquiries" class="nav-item"><span>↘</span> Website inquiries</a><a href="#pipeline" class="nav-item"><span>◇</span> Lead pipeline</a><a href="#tasks" class="nav-item"><span>✓</span> Task inbox <span id="task-nav-count" class="task-nav-count" hidden></span></a>{{end}}
+      {{if .Staff}}<a href="#attention" class="nav-item"><span>!</span> Needs attention</a><a href="#inquiries" class="nav-item"><span>↘</span> Website inquiries</a><a href="#pipeline" class="nav-item"><span>◇</span> Lead pipeline</a><a href="#tasks" class="nav-item"><span>✓</span> Task inbox <span id="task-nav-count" class="task-nav-count" hidden></span></a>{{end}}
       <a href="#referrals" class="nav-item"><span>↗</span> {{if .Staff}}Customers & referrals{{else}}Your referrals{{end}}</a>
       {{if .Staff}}<a href="#kit" class="nav-item"><span>▤</span> Sales kit</a>{{end}}
       <a href="/dashboard/" class="nav-item"><span>←</span> Product console</a>
@@ -55,6 +55,12 @@
     </section>
     {{end}}
     {{if .Staff}}
+    <section id="attention" class="page-section">
+      <div class="section-heading"><div><p class="eyebrow">KEEP THE CONVERSATION MOVING</p><h2>Leads needing attention</h2><p id="attention-definition" class="muted">Checking stalled leads and overdue follow-ups…</p></div><button id="attention-refresh" class="button secondary">Refresh alerts</button></div>
+      <p id="attention-error" class="error" role="alert" hidden></p><div id="attention-summary" class="task-summary" aria-live="polite"></div>
+      <div class="filters"><label>Show<select id="attention-kind"><option value="all">All attention</option><option value="stale">Stalled leads</option><option value="overdue">Overdue follow-ups</option></select></label><label id="attention-owner-label" hidden>Owner<select id="attention-owner"><option value="">All salespeople</option></select></label></div>
+      <p id="attention-status" class="muted" role="status">Loading lead alerts…</p><div class="panel table-panel"><div class="table-scroll"><table><thead><tr><th>Lead</th><th>Owner</th><th>Needs attention</th><th>Last contact</th><th>Action</th></tr></thead><tbody id="attention-rows"><tr><td colspan="5" class="empty">Loading lead alerts…</td></tr></tbody></table></div><div class="table-footer"><span>25 leads per page · newest leads first</span><div><button id="attention-first" class="button secondary small" hidden>First page</button><button id="attention-next" class="button secondary small" disabled>Next page →</button></div></div></div>
+    </section>
     <section id="inquiries" class="page-section">
       <div class="section-heading"><div><p class="eyebrow">THE FIRST HELLO</p><h2>Website inquiries</h2><p class="muted">Contact and demo requests, with a follow-up task for every assignment.</p></div><button id="inquiry-refresh" class="button secondary">Refresh inquiries</button></div>
       <p class="muted">Messages and contact details are unverified. Closing an inquiry keeps its lead and tasks. Referral credit is established separately at signup.</p>
@@ -86,6 +92,16 @@
   </main>
   {{if .Staff}}<dialog id="lead-dialog"><form id="lead-form"><div class="dialog-heading"><h2>Customer follow-up</h2><button type="button" id="close-dialog" class="text-button" aria-label="Close">✕</button></div><p id="lead-email" class="muted"></p><label>Stage<select id="lead-stage" required><option>new</option><option>contacted</option><option>qualified</option><option>lost</option></select></label><label>Next follow-up<input type="date" id="lead-follow-up"></label><label>Internal notes<textarea id="lead-note" rows="5" maxlength="2000" placeholder="Context and next steps for this conversation"></textarea></label><p class="muted">Notes are visible to the assigned rep and sales managers. Keep credentials and sensitive payment details out of notes.</p><p id="lead-error" role="alert"></p><button id="save-lead" class="button primary" type="submit">Save follow-up</button></form></dialog>{{end}}
   {{if .Staff}}
+  <dialog id="activity-dialog" aria-labelledby="activity-title"><div class="dialog-heading"><div><p class="eyebrow">THE CONVERSATION SO FAR</p><h2 id="activity-title">Lead activity</h2></div><button id="activity-close" type="button" class="text-button" aria-label="Close activity">✕</button></div>
+    <p id="activity-lead" class="activity-lead"></p><p id="activity-owner" class="muted"></p><p id="activity-load-error" class="error" role="alert" hidden></p>
+    <div class="activity-layout"><section class="activity-history-panel" aria-label="Activity history"><div class="section-heading"><h3>History</h3><button id="activity-refresh" type="button" class="text-button">Refresh history</button></div><p class="muted">Newest occurrence first. Entries keep their original author and recording time.</p><div id="activity-history" aria-live="polite"></div><button id="activity-older" type="button" class="button secondary small" hidden>Load older entries</button></section>
+      <form id="activity-form"><div class="section-heading"><h3>Record activity</h3><button id="activity-new" type="button" class="text-button">New entry</button></div>
+        <div class="form-pair"><label>Type<select id="activity-kind" required><option value="call">Call</option><option value="email">Email</option><option value="demo">Demo</option><option value="note">Internal note</option></select></label><label>Occurred at<input id="activity-when" type="datetime-local" min="2000-01-01T00:00" required></label></div>
+        <label>Summary<textarea id="activity-summary" rows="3" maxlength="1000" required placeholder="What happened in this conversation?"></textarea></label><label>Outcome<textarea id="activity-outcome" rows="2" maxlength="500" placeholder="What did you learn or agree?"></textarea></label><label>Next step<textarea id="activity-next" rows="2" maxlength="500" placeholder="What should happen next?"></textarea></label>
+        <label class="activity-check"><input id="activity-follow-up" type="checkbox"> Create a follow-up task</label><div id="activity-follow-up-fields" hidden><label>Follow-up title<input id="activity-follow-up-title" maxlength="200"></label><label>Follow-up due date<input id="activity-follow-up-on" type="date" min="2000-01-01" max="2100-12-31"></label></div>
+        <p class="muted">Times use your local time zone. Text limits use UTF-8 bytes. Calls, emails and demos update last contact; notes do not. Entries are kept as recorded; add a correction note when needed.</p><p id="activity-form-error" class="form-error" role="alert"></p><button id="activity-save" type="submit" class="button primary" disabled>Record activity</button>
+      </form></div>
+  </dialog>
   <dialog id="prospect-dialog" aria-labelledby="prospect-dialog-title"><form id="prospect-form"><div class="dialog-heading"><h2 id="prospect-dialog-title">Add lead</h2><button type="button" id="prospect-close" class="text-button" aria-label="Close lead">✕</button></div>
     <label>Name<input id="prospect-name" required maxlength="120" autocomplete="name"></label><label>Email<input id="prospect-email" required type="email" maxlength="254" autocomplete="email"></label><label>Company<input id="prospect-company" maxlength="200" autocomplete="organization"></label>
     <div class="form-pair"><label>Stage<select id="prospect-edit-stage"></select></label><label>Assigned salesperson<select id="prospect-edit-owner" required></select></label></div>

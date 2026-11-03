@@ -31,7 +31,7 @@
       const row=node('tr');const name=node('td');name.append(node('strong',lead.name));if(lead.company)name.append(node('small',lead.company));
       const stage=node('td');stage.append(node('span',label(lead.stage),'status'));
       const match=node('td');match.append(node('span',lead.paid?'Paid invoice recorded':lead.registered?'Signed up via owner’s code':'Awaiting matching signup','status'));
-      const actions=node('td');const group=node('div',undefined,'row-actions');group.append(button('Edit lead',()=>openLead(lead)),button('Add task',()=>openTask(null,lead)));actions.append(group);
+      const actions=node('td');const group=node('div',undefined,'row-actions');group.append(button('Activity',()=>document.dispatchEvent(new CustomEvent('sales-open-activity',{detail:{leadId:lead.id}}))),button('Edit lead',()=>openLead(lead)),button('Add task',()=>openTask(null,lead)));actions.append(group);
       row.append(name,node('td',lead.email),node('td',lead.owner_email),stage,match,actions);$('prospect-rows').append(row);
     }
     if(!leads.length)empty('prospect-rows','No leads match these filters. Add a lead to start the next conversation.',6);
@@ -90,7 +90,7 @@
   }
   async function mutate(errorID,fn){
     if(saving)return;pending(true);$(errorID).textContent='';
-    try{await fn();}catch(err){$(errorID).textContent=err.message;if($(errorID).hidden)$(errorID).hidden=false;}finally{pending(false);}
+    try{await fn();document.dispatchEvent(new Event('sales-pipeline-updated'));}catch(err){$(errorID).textContent=err.message;if($(errorID).hidden)$(errorID).hidden=false;}finally{pending(false);}
   }
   $('prospect-form').addEventListener('submit',event=>{
     event.preventDefault();const lead=selectedLead;
@@ -115,6 +115,7 @@
   let searchTimer;$('prospect-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{leadCursor='';loadLeads();},250);});
   $('prospect-next').addEventListener('click',()=>{leadCursor=leadNext;loadLeads();});$('prospect-first').addEventListener('click',()=>{leadCursor='';loadLeads();});
   $('task-next').addEventListener('click',()=>{taskCursor=taskNext;loadTasks();});$('task-first').addEventListener('click',()=>{taskCursor='';loadTasks();});
+  document.addEventListener('sales-activity-updated',()=>{loadLeads();loadTasks();});
   document.addEventListener('sales-inquiry-updated',()=>{loadLeads();loadTasks();});
   $('tasks-refresh').addEventListener('click',loadTasks);$('refresh').addEventListener('click',()=>{if(team)reload();else bootstrap();});
   window.addEventListener('focus',()=>{if(team&&!saving)loadTasks();});

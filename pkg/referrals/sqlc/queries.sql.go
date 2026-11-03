@@ -40,6 +40,78 @@ func (q *Queries) ActiveSalesInquiry(ctx context.Context, db DBTX, email string)
 	return i, err
 }
 
+const activityByID = `-- name: ActivityByID :one
+SELECT id, lead_id, actor_id, kind, summary, outcome, next_step, occurred_at, recorded_at, follow_up_title, follow_up_on, task_id FROM sales_activities WHERE id=$1
+`
+
+func (q *Queries) ActivityByID(ctx context.Context, db DBTX, id pgtype.UUID) (SalesActivity, error) {
+	row := db.QueryRow(ctx, activityByID, id)
+	var i SalesActivity
+	err := row.Scan(
+		&i.ID,
+		&i.LeadID,
+		&i.ActorID,
+		&i.Kind,
+		&i.Summary,
+		&i.Outcome,
+		&i.NextStep,
+		&i.OccurredAt,
+		&i.RecordedAt,
+		&i.FollowUpTitle,
+		&i.FollowUpOn,
+		&i.TaskID,
+	)
+	return i, err
+}
+
+const activityLead = `-- name: ActivityLead :one
+SELECT l.id, l.owner_id, l.name, l.email, l.company, l.stage, l.note, l.version, l.created_by, l.updated_by, l.created_at, l.updated_at,a.email AS owner_email FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
+WHERE l.id=$1 AND (l.owner_id=$2::uuid OR $3::boolean)
+`
+
+type ActivityLeadParams struct {
+	LeadID    pgtype.UUID
+	ActorID   pgtype.UUID
+	AllOwners bool
+}
+
+type ActivityLeadRow struct {
+	ID         pgtype.UUID
+	OwnerID    pgtype.UUID
+	Name       string
+	Email      string
+	Company    string
+	Stage      string
+	Note       string
+	Version    int64
+	CreatedBy  pgtype.UUID
+	UpdatedBy  pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+	OwnerEmail string
+}
+
+func (q *Queries) ActivityLead(ctx context.Context, db DBTX, arg ActivityLeadParams) (ActivityLeadRow, error) {
+	row := db.QueryRow(ctx, activityLead, arg.LeadID, arg.ActorID, arg.AllOwners)
+	var i ActivityLeadRow
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Email,
+		&i.Company,
+		&i.Stage,
+		&i.Note,
+		&i.Version,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerEmail,
+	)
+	return i, err
+}
+
 const advanceSalesIntake = `-- name: AdvanceSalesIntake :exec
 UPDATE sales_intake_routing SET last_owner_id=$1 WHERE id=1
 `
@@ -325,6 +397,42 @@ func (q *Queries) GetLink(ctx context.Context, db DBTX, shareCode pgtype.Text) (
 	return i, err
 }
 
+const insertSalesActivity = `-- name: InsertSalesActivity :exec
+INSERT INTO sales_activities(id,lead_id,actor_id,kind,summary,outcome,next_step,occurred_at,follow_up_title,follow_up_on,task_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+`
+
+type InsertSalesActivityParams struct {
+	ID            pgtype.UUID
+	LeadID        pgtype.UUID
+	ActorID       pgtype.UUID
+	Kind          string
+	Summary       string
+	Outcome       string
+	NextStep      string
+	OccurredAt    pgtype.Timestamptz
+	FollowUpTitle string
+	FollowUpOn    pgtype.Date
+	TaskID        pgtype.UUID
+}
+
+func (q *Queries) InsertSalesActivity(ctx context.Context, db DBTX, arg InsertSalesActivityParams) error {
+	_, err := db.Exec(ctx, insertSalesActivity,
+		arg.ID,
+		arg.LeadID,
+		arg.ActorID,
+		arg.Kind,
+		arg.Summary,
+		arg.Outcome,
+		arg.NextStep,
+		arg.OccurredAt,
+		arg.FollowUpTitle,
+		arg.FollowUpOn,
+		arg.TaskID,
+	)
+	return err
+}
+
 const insertSalesInquiry = `-- name: InsertSalesInquiry :exec
 INSERT INTO sales_inquiries(id,name,email,company,intent,message,requested_code,status,reason,lead_id,task_id)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -387,6 +495,146 @@ func (q *Queries) IntakeTaskOpen(ctx context.Context, db DBTX, id pgtype.UUID) (
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const leadAlertCounts = `-- name: LeadAlertCounts :one
+WITH attention AS (
+ SELECT l.id, l.owner_id, l.name, l.email, l.company, l.stage, l.note, l.version, l.created_by, l.updated_by, l.created_at, l.updated_at,a.email AS owner_email,COALESCE(c.at,l.created_at)::timestamptz AS last_contact_at,(c.at IS NOT NULL)::boolean AS has_contact,
+ (l.stage IN ('new','contacted','qualified','demo') AND COALESCE(c.at,l.created_at)<=$1::timestamptz-make_interval(days=>$2::integer))::boolean AS stale,
+ t.overdue_tasks,t.earliest_due_on
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
+ LEFT JOIN LATERAL (SELECT max(occurred_at) AS at FROM sales_activities WHERE lead_id=l.id AND kind IN ('call','email','demo') AND occurred_at<=$1::timestamptz) c ON true
+ CROSS JOIN LATERAL (SELECT count(*)::bigint AS overdue_tasks,min(due_on)::date AS earliest_due_on FROM sales_tasks WHERE lead_id=l.id AND completed_at IS NULL AND due_on<$3::date) t
+ WHERE (l.owner_id=$4::uuid OR $5::boolean)
+ AND ($6::text='' OR l.owner_id::text=$6::text)
+)
+SELECT count(*) FILTER(WHERE stale OR overdue_tasks>0)::bigint AS leads,
+ count(*) FILTER(WHERE stale)::bigint AS stale,
+ count(*) FILTER(WHERE overdue_tasks>0)::bigint AS overdue_leads,
+ COALESCE(sum(overdue_tasks),0)::bigint AS overdue_tasks FROM attention
+`
+
+type LeadAlertCountsParams struct {
+	AsOf        pgtype.Timestamptz
+	StaleDays   int32
+	OnDate      pgtype.Date
+	ActorID     pgtype.UUID
+	AllOwners   bool
+	OwnerFilter string
+}
+
+type LeadAlertCountsRow struct {
+	Leads        int64
+	Stale        int64
+	OverdueLeads int64
+	OverdueTasks int64
+}
+
+func (q *Queries) LeadAlertCounts(ctx context.Context, db DBTX, arg LeadAlertCountsParams) (LeadAlertCountsRow, error) {
+	row := db.QueryRow(ctx, leadAlertCounts,
+		arg.AsOf,
+		arg.StaleDays,
+		arg.OnDate,
+		arg.ActorID,
+		arg.AllOwners,
+		arg.OwnerFilter,
+	)
+	var i LeadAlertCountsRow
+	err := row.Scan(
+		&i.Leads,
+		&i.Stale,
+		&i.OverdueLeads,
+		&i.OverdueTasks,
+	)
+	return i, err
+}
+
+const listLeadAlerts = `-- name: ListLeadAlerts :many
+WITH attention AS (
+ SELECT l.id, l.owner_id, l.name, l.email, l.company, l.stage, l.note, l.version, l.created_by, l.updated_by, l.created_at, l.updated_at,a.email AS owner_email,COALESCE(c.at,l.created_at)::timestamptz AS last_contact_at,(c.at IS NOT NULL)::boolean AS has_contact,
+ (l.stage IN ('new','contacted','qualified','demo') AND COALESCE(c.at,l.created_at)<=$4::timestamptz-make_interval(days=>$5::integer))::boolean AS stale,
+ t.overdue_tasks,t.earliest_due_on
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
+ LEFT JOIN LATERAL (SELECT max(occurred_at) AS at FROM sales_activities WHERE lead_id=l.id AND kind IN ('call','email','demo') AND occurred_at<=$4::timestamptz) c ON true
+ CROSS JOIN LATERAL (SELECT count(*)::bigint AS overdue_tasks,min(due_on)::date AS earliest_due_on FROM sales_tasks WHERE lead_id=l.id AND completed_at IS NULL AND due_on<$6::date) t
+ WHERE (l.owner_id=$7::uuid OR $8::boolean)
+ AND ($9::text='' OR l.owner_id::text=$9::text)
+)
+SELECT id,name,email,company,stage,owner_id,owner_email,last_contact_at,has_contact,stale,overdue_tasks,earliest_due_on FROM attention
+WHERE (stale OR overdue_tasks>0)
+ AND ($1::text='all' OR ($1::text='stale' AND stale) OR ($1::text='overdue' AND overdue_tasks>0))
+ AND ($2::uuid='00000000-0000-0000-0000-000000000000' OR id<$2::uuid)
+ORDER BY id DESC LIMIT $3::integer
+`
+
+type ListLeadAlertsParams struct {
+	KindFilter  string
+	AfterID     pgtype.UUID
+	RowLimit    int32
+	AsOf        pgtype.Timestamptz
+	StaleDays   int32
+	OnDate      pgtype.Date
+	ActorID     pgtype.UUID
+	AllOwners   bool
+	OwnerFilter string
+}
+
+type ListLeadAlertsRow struct {
+	ID            pgtype.UUID
+	Name          string
+	Email         string
+	Company       string
+	Stage         string
+	OwnerID       pgtype.UUID
+	OwnerEmail    string
+	LastContactAt pgtype.Timestamptz
+	HasContact    bool
+	Stale         bool
+	OverdueTasks  int64
+	EarliestDueOn pgtype.Date
+}
+
+func (q *Queries) ListLeadAlerts(ctx context.Context, db DBTX, arg ListLeadAlertsParams) ([]ListLeadAlertsRow, error) {
+	rows, err := db.Query(ctx, listLeadAlerts,
+		arg.KindFilter,
+		arg.AfterID,
+		arg.RowLimit,
+		arg.AsOf,
+		arg.StaleDays,
+		arg.OnDate,
+		arg.ActorID,
+		arg.AllOwners,
+		arg.OwnerFilter,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLeadAlertsRow{}
+	for rows.Next() {
+		var i ListLeadAlertsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.Company,
+			&i.Stage,
+			&i.OwnerID,
+			&i.OwnerEmail,
+			&i.LastContactAt,
+			&i.HasContact,
+			&i.Stale,
+			&i.OverdueTasks,
+			&i.EarliestDueOn,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProspects = `-- name: ListProspects :many
@@ -524,6 +772,80 @@ func (q *Queries) ListReferrals(ctx context.Context, db DBTX, arg ListReferralsP
 			&i.RewardStatus,
 			&i.RewardCents,
 			&i.ReferredRewardCents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSalesActivities = `-- name: ListSalesActivities :many
+SELECT e.id, e.lead_id, e.actor_id, e.kind, e.summary, e.outcome, e.next_step, e.occurred_at, e.recorded_at, e.follow_up_title, e.follow_up_on, e.task_id,COALESCE(a.email,'')::text AS actor_email
+FROM sales_activities e JOIN sales_leads l ON l.id=e.lead_id LEFT JOIN accounts a ON a.id=e.actor_id
+WHERE e.lead_id=$1 AND (l.owner_id=$2::uuid OR $3::boolean)
+ AND ($4::uuid='00000000-0000-0000-0000-000000000000' OR (e.occurred_at,e.id)<($5::timestamptz,$4::uuid))
+ORDER BY e.occurred_at DESC,e.id DESC LIMIT $6::integer
+`
+
+type ListSalesActivitiesParams struct {
+	LeadID    pgtype.UUID
+	ActorID   pgtype.UUID
+	AllOwners bool
+	AfterID   pgtype.UUID
+	AfterAt   pgtype.Timestamptz
+	RowLimit  int32
+}
+
+type ListSalesActivitiesRow struct {
+	ID            pgtype.UUID
+	LeadID        pgtype.UUID
+	ActorID       pgtype.UUID
+	Kind          string
+	Summary       string
+	Outcome       string
+	NextStep      string
+	OccurredAt    pgtype.Timestamptz
+	RecordedAt    pgtype.Timestamptz
+	FollowUpTitle string
+	FollowUpOn    pgtype.Date
+	TaskID        pgtype.UUID
+	ActorEmail    string
+}
+
+func (q *Queries) ListSalesActivities(ctx context.Context, db DBTX, arg ListSalesActivitiesParams) ([]ListSalesActivitiesRow, error) {
+	rows, err := db.Query(ctx, listSalesActivities,
+		arg.LeadID,
+		arg.ActorID,
+		arg.AllOwners,
+		arg.AfterID,
+		arg.AfterAt,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSalesActivitiesRow{}
+	for rows.Next() {
+		var i ListSalesActivitiesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LeadID,
+			&i.ActorID,
+			&i.Kind,
+			&i.Summary,
+			&i.Outcome,
+			&i.NextStep,
+			&i.OccurredAt,
+			&i.RecordedAt,
+			&i.FollowUpTitle,
+			&i.FollowUpOn,
+			&i.TaskID,
+			&i.ActorEmail,
 		); err != nil {
 			return nil, err
 		}
@@ -701,6 +1023,29 @@ func (q *Queries) ListSalesTasks(ctx context.Context, db DBTX, arg ListSalesTask
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockActivityLead = `-- name: LockActivityLead :one
+SELECT id,version FROM sales_leads
+WHERE id=$1 AND (owner_id=$2::uuid OR $3::boolean) FOR UPDATE
+`
+
+type LockActivityLeadParams struct {
+	LeadID    pgtype.UUID
+	ActorID   pgtype.UUID
+	AllOwners bool
+}
+
+type LockActivityLeadRow struct {
+	ID      pgtype.UUID
+	Version int64
+}
+
+func (q *Queries) LockActivityLead(ctx context.Context, db DBTX, arg LockActivityLeadParams) (LockActivityLeadRow, error) {
+	row := db.QueryRow(ctx, lockActivityLead, arg.LeadID, arg.ActorID, arg.AllOwners)
+	var i LockActivityLeadRow
+	err := row.Scan(&i.ID, &i.Version)
+	return i, err
 }
 
 const lockSalesIntake = `-- name: LockSalesIntake :one

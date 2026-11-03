@@ -234,3 +234,54 @@ WHERE (sqlc.arg(all_owners)::boolean OR (i.status<>'pending' AND l.owner_id=sqlc
  AND (sqlc.arg(status_filter)::text='' OR (CASE WHEN i.status='assigned' AND l.id IS NULL THEN 'pending' ELSE i.status END)=sqlc.arg(status_filter)::text)
  AND (sqlc.arg(after_id)::uuid='00000000-0000-0000-0000-000000000000' OR i.id<sqlc.arg(after_id)::uuid)
 ORDER BY i.id DESC LIMIT sqlc.arg(row_limit);
+
+-- name: ActivityLead :one
+SELECT l.*,a.email AS owner_email FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
+WHERE l.id=sqlc.arg(lead_id) AND (l.owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean);
+-- name: LockActivityLead :one
+SELECT id,version FROM sales_leads
+WHERE id=sqlc.arg(lead_id) AND (owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean) FOR UPDATE;
+-- name: ActivityByID :one
+SELECT * FROM sales_activities WHERE id=$1;
+-- name: InsertSalesActivity :exec
+INSERT INTO sales_activities(id,lead_id,actor_id,kind,summary,outcome,next_step,occurred_at,follow_up_title,follow_up_on,task_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11);
+-- name: ListSalesActivities :many
+SELECT e.*,COALESCE(a.email,'')::text AS actor_email
+FROM sales_activities e JOIN sales_leads l ON l.id=e.lead_id LEFT JOIN accounts a ON a.id=e.actor_id
+WHERE e.lead_id=sqlc.arg(lead_id) AND (l.owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean)
+ AND (sqlc.arg(after_id)::uuid='00000000-0000-0000-0000-000000000000' OR (e.occurred_at,e.id)<(sqlc.arg(after_at)::timestamptz,sqlc.arg(after_id)::uuid))
+ORDER BY e.occurred_at DESC,e.id DESC LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ListLeadAlerts :many
+WITH attention AS (
+ SELECT l.*,a.email AS owner_email,COALESCE(c.at,l.created_at)::timestamptz AS last_contact_at,(c.at IS NOT NULL)::boolean AS has_contact,
+ (l.stage IN ('new','contacted','qualified','demo') AND COALESCE(c.at,l.created_at)<=sqlc.arg(as_of)::timestamptz-make_interval(days=>sqlc.arg(stale_days)::integer))::boolean AS stale,
+ t.overdue_tasks,t.earliest_due_on
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
+ LEFT JOIN LATERAL (SELECT max(occurred_at) AS at FROM sales_activities WHERE lead_id=l.id AND kind IN ('call','email','demo') AND occurred_at<=sqlc.arg(as_of)::timestamptz) c ON true
+ CROSS JOIN LATERAL (SELECT count(*)::bigint AS overdue_tasks,min(due_on)::date AS earliest_due_on FROM sales_tasks WHERE lead_id=l.id AND completed_at IS NULL AND due_on<sqlc.arg(on_date)::date) t
+ WHERE (l.owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean)
+ AND (sqlc.arg(owner_filter)::text='' OR l.owner_id::text=sqlc.arg(owner_filter)::text)
+)
+SELECT id,name,email,company,stage,owner_id,owner_email,last_contact_at,has_contact,stale,overdue_tasks,earliest_due_on FROM attention
+WHERE (stale OR overdue_tasks>0)
+ AND (sqlc.arg(kind_filter)::text='all' OR (sqlc.arg(kind_filter)::text='stale' AND stale) OR (sqlc.arg(kind_filter)::text='overdue' AND overdue_tasks>0))
+ AND (sqlc.arg(after_id)::uuid='00000000-0000-0000-0000-000000000000' OR id<sqlc.arg(after_id)::uuid)
+ORDER BY id DESC LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: LeadAlertCounts :one
+WITH attention AS (
+ SELECT l.*,a.email AS owner_email,COALESCE(c.at,l.created_at)::timestamptz AS last_contact_at,(c.at IS NOT NULL)::boolean AS has_contact,
+ (l.stage IN ('new','contacted','qualified','demo') AND COALESCE(c.at,l.created_at)<=sqlc.arg(as_of)::timestamptz-make_interval(days=>sqlc.arg(stale_days)::integer))::boolean AS stale,
+ t.overdue_tasks,t.earliest_due_on
+ FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
+ LEFT JOIN LATERAL (SELECT max(occurred_at) AS at FROM sales_activities WHERE lead_id=l.id AND kind IN ('call','email','demo') AND occurred_at<=sqlc.arg(as_of)::timestamptz) c ON true
+ CROSS JOIN LATERAL (SELECT count(*)::bigint AS overdue_tasks,min(due_on)::date AS earliest_due_on FROM sales_tasks WHERE lead_id=l.id AND completed_at IS NULL AND due_on<sqlc.arg(on_date)::date) t
+ WHERE (l.owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean)
+ AND (sqlc.arg(owner_filter)::text='' OR l.owner_id::text=sqlc.arg(owner_filter)::text)
+)
+SELECT count(*) FILTER(WHERE stale OR overdue_tasks>0)::bigint AS leads,
+ count(*) FILTER(WHERE stale)::bigint AS stale,
+ count(*) FILTER(WHERE overdue_tasks>0)::bigint AS overdue_leads,
+ COALESCE(sum(overdue_tasks),0)::bigint AS overdue_tasks FROM attention;

@@ -13,3 +13,5 @@ Environment=FAAS_REFERRAL_CONVERSION_DAYS={{ faas_referral_conversion_days }}
 Environment=FAAS_SALES_INTAKE_ENABLED={{ '1' if faas_sales_intake_enabled | bool else '0' }}
 Environment=FAAS_SALES_INTAKE_FOLLOWUP_DAYS={{ faas_sales_intake_followup_days }}
 Environment={{ ('FAAS_SALES_INTAKE_TIMEZONE=' ~ faas_sales_intake_timezone) | to_json }}
+
+Environment=FAAS_SALES_STALE_DAYS={{ faas_sales_stale_days }}
