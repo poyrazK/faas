@@ -51,6 +51,12 @@ const (
 	RtOutcomeInserted    = "inserted"
 	rtOutcomeRateLimited = "rate_limited"
 	rtOutcomeDBError     = "db_error"
+	// rtOutcomeNotRetained answers a row whose app's plan keeps no request
+	// telemetry. Its usage was recorded first, so the row is complete:
+	// gateways accept it instead of retrying it or journaling it as a loss.
+	// A gateway older than this outcome treats it as a rejection, as it did
+	// rate_limited.
+	rtOutcomeNotRetained = "not_retained"
 )
 
 // RequestTelemetryStore is the Store subset the receiver needs.
@@ -416,11 +422,11 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 	}
 	limits := plan.Limits
 	if !limits.DebugTelemetryEnabled {
-		// Plan doesn't include telemetry — same as rate-limit
-		// overflow: drop the row, count as rate_limited (the
-		// gateway should stop sending, same code path).
-		out.Outcome = rtOutcomeRateLimited
-		out.RetryAfterMs = 60_000
+		// The plan keeps no request telemetry. Usage is already durable
+		// above, so the row is done; rate_limited here made every gateway
+		// retry Free-plan rows with backoff and count them as lost.
+		r.observe(rtOutcomeNotRetained)
+		out.Outcome = rtOutcomeNotRetained
 		return out
 	}
 

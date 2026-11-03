@@ -3109,10 +3109,25 @@ func ErrAlertPresetTestRateLimited(limit, retryAfterS int) *Problem {
 // destination of rules, which would fire into nothing (ADR-20261029203000).
 // rules names them as "name (id)".
 func ErrNotificationChannelInUse(rules []string) *Problem {
-	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse,
-		"Notification channel in use",
-		fmt.Sprintf("This channel is the only destination of %d alert rule(s): %s. Give them a webhook or another channel, or delete them, before deleting the channel.",
-			len(rules), strings.Join(rules, ", "))).
+	return ErrNotificationChannelInUseBy(rules, nil)
+}
+
+// ErrNotificationChannelInUseBy refuses deleting the last channel of alert
+// rules, release approval policies or pending scheduled releases: rules would
+// fire into nothing, and releases would wait for approval, start or be blocked
+// without anyone being told.
+func ErrNotificationChannelInUseBy(rules, releases []string) *Problem {
+	var parts []string
+	if len(rules) > 0 {
+		parts = append(parts, fmt.Sprintf("This channel is the only destination of %d alert rule(s): %s. Give them a webhook or another channel, or delete them.",
+			len(rules), strings.Join(rules, ", ")))
+	}
+	if len(releases) > 0 {
+		parts = append(parts, fmt.Sprintf("It is the last channel told about %s. Name another channel there, or remove the policy or schedule.",
+			strings.Join(releases, ", ")))
+	}
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse, "Notification channel in use",
+		strings.Join(parts, " ")+" Then delete the channel.").
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
@@ -4436,6 +4451,25 @@ func ErrPlanEventSubscriptionQuota(plan Plan, scope string, limit, observed int)
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/events#subscription-limits")
+}
+
+// ErrCronConflict is the 409 for a cron another cron of the same app already
+// has the schedule and path (or command) of: an app has one cron per schedule
+// and path, which is how gregale.yaml matches its declared crons.
+func ErrCronConflict() *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron already exists",
+		"this app already has a cron with this schedule and path; change that cron instead, or give this one a distinct path, for example by adding a query string such as ?tz=europe").
+		WithDocs(docsBase + "/crons#create-a-cron")
+}
+
+// ErrCronSuspendedRun is the 409 for a manual run of a suspended cron.
+func ErrCronSuspendedRun(reason string) *Problem {
+	detail := "this cron is suspended (" + reason + ") and does not run until it is resumed"
+	if reason == "no_live_deployment" {
+		detail = "this cron is suspended because the app has no live deployment; deploy the app to resume its crons"
+	}
+	return NewProblem(http.StatusConflict, CodeConflict, "Cron suspended", detail).
+		WithDocs(docsBase + "/crons#suspension")
 }
 
 // ErrCronFireNowBusy is the 429 for a manual run of a cron that already

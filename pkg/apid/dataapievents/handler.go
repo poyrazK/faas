@@ -29,6 +29,7 @@ type Store interface {
 	state.AppOwnerReader
 	AppByID(ctx context.Context, id string) (state.App, error)
 	InstanceByID(ctx context.Context, id string) (state.Instance, error)
+	DeploymentByID(ctx context.Context, id string) (state.Deployment, error)
 }
 
 // Handler publishes a runtime's change events. Only a gregale:data-api:events
@@ -38,12 +39,17 @@ type Handler struct {
 	Verifier  *workloadidentity.Verifier
 	Store     Store
 	Publisher Publisher
-	Now       func() time.Time
+	// Admit decides a publication before any of its events is published:
+	// nil, or the refusal every other publication path gives (events
+	// paused, the account's publish rate). The relay retries a refused
+	// publication after its back-off. Nil admits every publication.
+	Admit func(ctx context.Context, acct state.Account, app state.App, events int) *api.Problem
+	Now   func() time.Time
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	acct, appID, err := h.workload(r)
+	acct, app, err := h.workload(r)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required",
 			"a gregale:data-api:events workload token from a live instance of an active app is required"))
@@ -58,26 +64,32 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, problem)
 		return
 	}
-	source, err := appevents.AppProducerSource(appID)
+	source, err := appevents.AppProducerSource(app.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("application identity"))
 		return
 	}
+	if h.Admit != nil {
+		if problem := h.Admit(r.Context(), acct, app, len(batch.Events)); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.EventPublishBatchTimeout)
 	defer cancel()
-	results := h.publish(ctx, acct, appID, batch.Events)
+	results := h.publish(ctx, acct, app.ID, batch.Events)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(api.DataAPIChangeEventBatchResponse{Source: source, Results: results})
 }
 
 // workload verifies the token and resolves its live app and account.
-func (h Handler) workload(r *http.Request) (state.Account, string, error) {
-	acct, app, err := liveWorkload(r, h.Verifier, h.Store, h.now())
-	return acct, app.ID, err
+func (h Handler) workload(r *http.Request) (state.Account, state.App, error) {
+	return liveWorkload(r, h.Verifier, h.Store, h.now())
 }
 
-// liveWorkload verifies a gregale:data-api:events token and resolves its
-// live app and the account its resources belong to.
+// liveWorkload verifies a gregale:data-api:events token from a live
+// production instance and resolves its app and the account its resources
+// belong to.
 func liveWorkload(r *http.Request, verifier *workloadidentity.Verifier, store Store, now time.Time) (state.Account, state.App, error) {
 	if verifier == nil || store == nil {
 		return state.Account{}, state.App{}, errors.New("workload trust is not configured")
@@ -98,6 +110,17 @@ func liveWorkload(r *http.Request, verifier *workloadidentity.Verifier, store St
 	instance, err := store.InstanceByID(r.Context(), claims.InstanceID)
 	if err != nil || instance.AppID != app.ID || !state.State(instance.State).CountsForConcurrency() {
 		return state.Account{}, state.App{}, errors.New("instance is not live")
+	}
+	// Events carry no deployment scope: a stage's changes would publish
+	// under the production app's source, and a cloned environment copies
+	// the setting and the change table. Only production publishes, as only
+	// production leases queues (ADR-1141 amendment 2026-10-27, bug hunt 36).
+	if !state.ProductionDeploymentScope(claims.Environment) {
+		return state.Account{}, state.App{}, errors.New("token names a stage environment")
+	}
+	deployment, err := store.DeploymentByID(r.Context(), instance.DeploymentID)
+	if err != nil || deployment.AppID != app.ID || !state.ProductionDeploymentScope(deployment.Scope) {
+		return state.Account{}, state.App{}, errors.New("instance does not run a production deployment")
 	}
 	return acct, app, nil
 }

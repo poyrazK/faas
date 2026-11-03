@@ -156,6 +156,9 @@ customers out until the owner has tested production
    `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on`, and the cap emails
    (`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1` on apid and
    maild). Create the [SQL probe](#sql-availability-probe) canary databases.
+   Set `FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT=on` once the release
+   shows [databases past a lowered plan](#databases-past-a-lowered-plan) to
+   the customer.
 4. Approve the production backend ([Production](#production)) with fleet
    ceilings sized to the Neon plan.
 5. Run the customer journey with the owner's account:
@@ -1013,6 +1016,13 @@ apid delivers the charge after each compute cap sweep
 - The month's total is cumulative. Each step sends only the difference from
   the last delivered total, keyed by that total, so a retry is a duplicate,
   never a second charge.
+- A step is reserved in `managed_postgres_overage_pending` before it is sent
+  and recorded with the reservation cleared in one transaction. A step that
+  was sent but not recorded, after a failed write, a crash or a second apid,
+  is sent again unchanged rather than replaced by a new one, so the provider's
+  duplicate holds exactly what is recorded and usage that grew meanwhile is
+  charged by the next step
+  ([ADR-20261101143527](adr/20261101143527-billing-settles-free-hours-and-reserves-postgres-steps.md)).
 - For seven days after a month ends
   (`api.ManagedPostgresOverageCloseWindow`), late provider usage windows still
   add to that month.
@@ -1152,6 +1162,50 @@ The run creates a disposable database, probes it, and deletes it. The probe:
 The command exits non-zero, and `on` refuses the file, if any observation
 fails. If the compute is suspended at the limit, the pool would stop
 databases rather than block writes, and must not be turned on as specified.
+
+### Databases past a lowered plan
+
+A downgrade the customer asks for is refused while their databases do not fit
+the target plan. A plan can also drop without that check: a subscription ends
+and the account falls to Free, or the plan changes in the billing portal or by
+an operator. The compute and storage caps follow the new plan at the next
+sweep. The same sweep suspends the databases the plan no longer includes
+([ADR-20261102125208](adr/20261102125208-managed-postgres-databases-past-a-lowered-plan-are-suspended.md)):
+
+- The subject's databases rank oldest first. A database ranked past the
+  plan's database limit, or in a service class the plan does not include, is
+  past the plan.
+- A restore holding the restore slot, a deleting database and one without a
+  provider resource are not ranked.
+- A database past the plan has its project's compute quota held at its own
+  use, so Neon suspends it and it cannot start. Its data, credentials,
+  bindings and restore history stay, and its storage still counts toward the
+  pool.
+- A project that also holds a database inside the plan (a restore inside its
+  source's project) is left running and logged as shared.
+- Each sweep recomputes the set. Once the subject fits (an upgrade, a deleted
+  database, or a resize to an included class), the next sweep restores the
+  ordinary quota. Nothing is deleted.
+
+`FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres plan excess (shadow)` for each
+  project it would suspend, and writes nothing.
+- `on` writes the quota, only while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` is
+  `on` too; it logs `managed postgres plan excess suspended` when it does.
+- `off` does nothing.
+
+While it is `on`, `GET /v1/postgres/databases` and the read show
+`plan_excess` (`database_limit` or `service_class`) on each such database, as do
+`gregale postgres list` and `get` and the dashboard. With
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=1` on apid and
+maild, the account that owns each suspended database is mailed once per
+suspension ([internal mail](ops/internal-mail.md#managed-postgresql-plan-excess-notices)).
+Turn both on in the release that publishes this. Metrics:
+
+- `apid_managed_postgres_plan_excess_databases`
+- `apid_managed_postgres_plan_excess_scopes{state}`, where `state` is
+  `suspended`, `shadowed` or `shared`
 
 ## Restore-to-new-database safety
 

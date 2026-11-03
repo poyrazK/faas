@@ -36,6 +36,7 @@ type requestTimeseriesView struct {
 	PointsTruncated    bool                 `json:"points_truncated"`
 	Order              string               `json:"order"`
 	SourceCompleteness string               `json:"source_completeness"`
+	TelemetryGaps      []string             `json:"telemetry_gaps,omitempty"`
 	Freshness          string               `json:"freshness"`
 	Basis              string               `json:"basis"`
 	ErrorBasis         string               `json:"error_basis"`
@@ -63,7 +64,7 @@ func projectRequestTimeseries(slug, appID string, n api.RequestAnalyticsTimeseri
 	v := requestTimeseriesView{App: slug, AppID: appID, Scope: "app_wide", SeriesScope: "app_wide", Route: n.Route, Method: n.Method,
 		Status: "no_retained_requests", Since: n.Since, From: n.From, Until: n.Until, AsOf: n.AsOf, WindowClamped: n.WindowClamped, Bucket: n.Bucket,
 		Points: []analyticsPointView{}, NativePointCount: len(n.Points), PointsTruncated: len(n.Points) > limit, Order: "oldest_first",
-		SourceCompleteness: "unknown", Freshness: "unknown", Basis: "retained_requests_weighted_by_collapse_count", ErrorBasis: "http_status_gte_400",
+		SourceCompleteness: analyticsSourceCompleteness(n.TelemetryComplete), TelemetryGaps: n.TelemetryGaps, Freshness: "unknown", Basis: "retained_requests_weighted_by_collapse_count", ErrorBasis: "http_status_gte_400",
 		Limitations: "Native UTC hourly grid, validated before prefix projection. Status describes all native points, including omitted buckets. Zero-filled buckets mean no retained requests, not zero incoming traffic, complete capture or health. Positive-count zero latency is observed; missing latency is omitted. Partial hours cover only window_from/window_until; do not compare their counts as full-hour rates. PostgreSQL microsecond precision can yield no buckets for a sub-microsecond window. Later points omitted by the output limit are not zero traffic. Counts/latency ranks use collapsed request weights, not independent samples. Errors include HTTP 4xx and 5xx. Do not average/sum percentiles or infer deployment causality, statistical significance or guest execution/CPU/memory data. Native plan/retention limits apply. Overview, trends and discovery are independent, not an atomic snapshot; discovery has neither method filtering nor historical until. No grouped dimensions/consumer identities, raw requests, spans, SQL, headers, bodies, costs or deployment payloads are exposed. No request examples are fetched and diagnostic consent grants no other environment/log/write access."}
 	if n.Route != "" {
 		v.SeriesScope = "route_method"

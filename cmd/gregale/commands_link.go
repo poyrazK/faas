@@ -224,7 +224,7 @@ func cmdContext(args []string) int {
 			return printErr("Invalid verification endpoint", err)
 		}
 	}
-	connection := effectiveConnectionContext()
+	connection := displayConnectionContext()
 	overview := projectTargeting(context, path, configPath, connection)
 	var verification *contextVerification
 	if *verify {

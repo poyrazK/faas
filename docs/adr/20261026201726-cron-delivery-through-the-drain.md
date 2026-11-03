@@ -108,3 +108,72 @@ Anything the app answered, including its own 5xx inside the 200 envelope,
 and a dispatch that timed out in flight keep the single attempt. The last
 refused attempt ends `failed`, not dead-lettered. Crons with failure rules
 are unchanged: they already use the plan's retry budget.
+
+## Amendment 2026-11-02: one attempt for every cron without failure rules
+
+A cron with a schedule policy (ADR-385) but no failure rules queued its run
+without the single-attempt policy, so the drain gave it the plan's queue
+retry budget: an app answering 5xx or timing out received the same scheduled
+time up to 3 (Hobby), 10 (Pro) or 25 (Scale) times, then the run was
+dead-lettered. ADR-385 keeps the retry behavior of definitions without
+failure rules, which for an HTTP cron is one delivery. Its runs now carry the
+single-attempt policy and the platform-refusal retries of this ADR's
+2026-10-29 amendment, as plain crons do; a cron with failure rules keeps the
+plan budget its rules may use.
+
+A plain cron whose run could not be queued (a store read or the enqueue
+failed) consumed its claimed occurrence: the claim was not rolled back and the
+run was lost, with only the audit row recording it. Such a failure now rolls
+the claim back, so the next minute's sweep queues the run. An enqueue the
+store refuses for good still consumes the occurrence, so a cron cannot retry
+it every minute.
+
+A cron with a schedule policy on an app with no live deployment is suspended
+(`no_live_deployment`), as a plain cron is, instead of queuing a failing run
+every tick.
+
+The cron sweep runs on schedd's main loop, which also beats the node's
+heartbeat. It now dispatches for at most 10 s per pass and continues in
+further passes within the minute, so a minute with many due crons cannot hold
+the heartbeat past its 90 s staleness.
+
+## Amendment 2026-11-02 (2): held apps, removed crons, interrupted manual runs
+
+A strict compute budget that holds an app makes the drain defer its runs a
+minute at a time without spending them. The cron sweep kept firing, so a cron
+without `skip_if_running` queued a run every scheduled time of the hold and the
+backlog was delivered at once when the hold lifted. The sweep now leaves the
+cron of a held app due, as for a scheduled time Gregale could not reach: it
+runs once after the hold.
+
+Only `DeleteCron` cancelled a removed cron's runs. A cron removed by a deploy's
+`gregale.yaml`, a project apply or an app's deletion left them queued, and
+`invocations.cron_id` is `ON DELETE SET NULL`, so they reached the app with no
+cron to show them. Every cron run is queued with its cron's id, so the drain
+now cancels a cron run whose id is NULL or names a cron that is gone.
+
+Claiming a manual run's request and linking it to the run it queued are
+separate writes. A scheduler that stopped between them left the request
+running forever. The status writes of a request being processed now outlive a
+stopping scheduler, and at start and on each safety tick schedd fails its
+node's running requests older than two minutes that never linked a run, with a
+reason that says the run may already have been queued.
+
+
+## Amendment 2026-11-03: company members, staged crons, dashboard runs
+
+`GET /v1/crons?slug=` found only an app the caller created, so a company
+app's other members got 404 from `gregale crons list --app` and from the
+`gregale.yaml` deploy, which lists the app's crons first. The slug now
+resolves through the same app authorization as the cron writes.
+
+Deployment cron staging (`POST /v1/apps/{slug}/deployment-cron-staging`)
+checked only a leading `/` and a loadable timezone. A `stage` or `prepare`
+now applies the cron API's path rules (`api.ValidateCronPath`) and refuses the
+host-dependent `Local` zone for every cron it adds or changes. A cron carried
+with its stored path and zone, and a `restore` or `cancel` of an intent
+already staged, keep the rules they were written under.
+
+The dashboard's manual run refuses a disabled cron before queuing a request,
+as the scheduler refuses its run, and names each refusal (disabled, too many
+manual runs waiting, suspended, over the plan) instead of a generic failure.

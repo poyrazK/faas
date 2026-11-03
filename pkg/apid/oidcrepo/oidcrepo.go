@@ -14,27 +14,21 @@ package oidcrepo
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Repo is one repository an installation can see.
-type Repo struct {
-	ID       int64
-	FullName string
-}
-
-// RepoLister lists the repositories an account's installation can see.
-// githubd answers it; only githubd calls GitHub.
-type RepoLister interface {
-	ListInstallableRepos(ctx context.Context, accountID string, installationID int64) ([]Repo, error)
+// RepoLookup finds the repository an account's installation sees under a
+// name and returns its GitHub ID, or 0 when it sees none. githubd answers
+// it; only githubd calls GitHub.
+type RepoLookup interface {
+	InstallationRepositoryID(ctx context.Context, accountID string, installationID int64, fullName string) (int64, error)
 }
 
 // Resolver confirms project repository bindings with GitHub.
 type Resolver struct {
 	Store state.OIDCProjectRepositoryResolver
-	Repos RepoLister
+	Repos RepoLookup
 }
 
 // Enabled reports whether the resolver has both its store and GitHub access.
@@ -105,14 +99,9 @@ func (r Resolver) RepositoryID(ctx context.Context, accountID, issuerURL, subjec
 }
 
 func (r Resolver) repositoryID(ctx context.Context, binding state.GitHubProjectRepositoryBinding, fullName string) (int64, error) {
-	repos, err := r.Repos.ListInstallableRepos(ctx, binding.AccountID, binding.InstallationID)
+	id, err := r.Repos.InstallationRepositoryID(ctx, binding.AccountID, binding.InstallationID, fullName)
 	if err != nil {
-		return 0, fmt.Errorf("oidcrepo: list repositories of installation %d: %w", binding.InstallationID, err)
+		return 0, fmt.Errorf("oidcrepo: look up %s through installation %d: %w", fullName, binding.InstallationID, err)
 	}
-	for _, repo := range repos {
-		if repo.ID > 0 && strings.EqualFold(repo.FullName, fullName) {
-			return repo.ID, nil
-		}
-	}
-	return 0, nil
+	return max(id, 0), nil
 }

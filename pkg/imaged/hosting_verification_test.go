@@ -140,3 +140,53 @@ func TestHostingVerificationSkipsPublicSmokeForInternalApps(t *testing.T) {
 		})
 	}
 }
+
+// TestHostingVerificationReleasesOlderCanaryWhenCandidateCannotFit pins Hunt
+// 31 H31-4: with the default max_concurrency of 1 the serving deployment and an
+// in-flight canary used both instances the app may run, so a newer candidate's
+// smoke was refused until its recovery window failed the deploy. The older
+// canary is now superseded before the smoke, and only when the candidate does
+// not fit beside it.
+func TestHostingVerificationReleasesOlderCanaryWhenCandidateCannotFit(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		maxConcurrency    int
+		wantCanaryAtSmoke state.DeploymentStatus
+	}{
+		{"max_concurrency 1: the canary steps aside", 1, state.DeploySuperseded},
+		{"max_concurrency 2: the candidate fits beside it", 2, state.DeployLive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			account, _ := store.CreateAccount(ctx, "canary-verify@example.test", "pro")
+			app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "web", RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: tc.maxConcurrency})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stable, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stable", Scope: state.DefaultEnvScope})
+			if err := store.MarkDeploymentLive(ctx, stable.ID); err != nil {
+				t.Fatal(err)
+			}
+			canary, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:canary", Scope: state.DefaultEnvScope,
+				CanaryPreset: "balanced", CanaryTotalSteps: 4, RolloutState: "pending", TrafficPercent: 1})
+			if err := store.MarkDeploymentLive(ctx, canary.ID); err != nil {
+				t.Fatal(err)
+			}
+			candidate, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate", Scope: state.DefaultEnvScope})
+			_ = store.UpdateDeploymentStatus(ctx, candidate.ID, state.DeploySnapshotting, "")
+			var atSmoke state.Deployment
+			handler := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmokeRequired(true).WithHostingSmoke(func(ctx context.Context, _ state.App, _ state.Deployment) (apihostingreceipt.SmokeResult, error) {
+				atSmoke, _ = store.DeploymentByID(ctx, canary.ID)
+				return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeVerified, Path: "/", StatusCode: http.StatusOK}, nil
+			})
+			handler.HandleNotification(ctx, db.Notification{Channel: db.NotifySnapshotWritten, Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID + `/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`})
+			if atSmoke.Status != tc.wantCanaryAtSmoke {
+				t.Fatalf("in-flight canary at the candidate's smoke = %s (%s), want %s", atSmoke.Status, atSmoke.RolloutState, tc.wantCanaryAtSmoke)
+			}
+			if tc.wantCanaryAtSmoke == state.DeploySuperseded && (atSmoke.RolloutState != "aborted" || atSmoke.RolloutAbortedReason != "superseded by deployment "+candidate.ID) {
+				t.Fatalf("released canary rollout = %s %q, want aborted by %s", atSmoke.RolloutState, atSmoke.RolloutAbortedReason, candidate.ID)
+			}
+		})
+	}
+}

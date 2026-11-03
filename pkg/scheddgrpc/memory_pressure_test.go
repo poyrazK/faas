@@ -14,8 +14,14 @@ import (
 
 type pressureEngine struct {
 	*fakeEngine
-	calls []int
-	fn    func() (bool, string, error)
+	calls    []int
+	recorded []string
+	fn       func() (bool, string, error)
+}
+
+func (e *pressureEngine) RecordMemoryPressure(_ context.Context, instanceID string, _, _, _ int) error {
+	e.recorded = append(e.recorded, instanceID)
+	return nil
 }
 
 func (e *pressureEngine) QueueMemoryPressureCapture(_ context.Context, _ string, availableMB, totalMB, anonMB int) (bool, string, error) {
@@ -41,5 +47,28 @@ func TestReportMemoryPressure(t *testing.T) {
 	}
 	if _, err := srv.ReportMemoryPressure(t.Context(), &scheddpb.ReportMemoryPressureRequest{}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("missing instance: %v", err)
+	}
+}
+
+// Every report is recorded for app health; a heap capture is queued only
+// while the guest's profile collector is active, and a report from an older
+// vmmd, which sets no flag, still captures (ADR-20261102124306).
+func TestReportMemoryPressureRecordsEveryEpisode(t *testing.T) {
+	eng := &pressureEngine{fakeEngine: &fakeEngine{}, fn: func() (bool, string, error) { return true, "", nil }}
+	srv := scheddgrpc.New(eng, wire.NewOpsMetrics("schedd_pressure_record_test"), nil)
+	off, on := false, true
+	for _, tc := range []struct {
+		profiling   *bool
+		wantCapture bool
+	}{{&off, false}, {&on, true}, {nil, true}} {
+		eng.calls = nil
+		ack, err := srv.ReportMemoryPressure(t.Context(), &scheddpb.ReportMemoryPressureRequest{
+			InstanceId: "ins-1", AvailableMb: 30, TotalMb: 246, AnonMb: 190, ProfilingActive: tc.profiling})
+		if err != nil || ack.GetQueued() != tc.wantCapture || (len(eng.calls) > 0) != tc.wantCapture {
+			t.Fatalf("profiling=%v: ack=%v err=%v calls=%v", tc.profiling, ack, err, eng.calls)
+		}
+	}
+	if len(eng.recorded) != 3 {
+		t.Fatalf("recorded %v; want every report", eng.recorded)
 	}
 }

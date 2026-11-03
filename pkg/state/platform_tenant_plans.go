@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // PlatformTenantPlan is a reusable bundle of tenant card terms and an
@@ -79,7 +79,7 @@ var (
 // ErrPlatformTenantPlanLimit reports an account at api.PlatformTenantPlansMax.
 var ErrPlatformTenantPlanLimit = errors.New("state: platform tenant plan limit reached")
 
-var platformTenantPlanNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var platformTenantPlanNameRE = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // ValidatePlatformTenantPlan checks a plan's name and terms like a tenant
 // rate card.

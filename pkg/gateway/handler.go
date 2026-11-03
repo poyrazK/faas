@@ -604,6 +604,10 @@ type RequireAuthnKey struct {
 	// Scopes are the key's authorization scopes. ADR-079: unlocking an app
 	// with a bearer key requires apps:read (or admin) on its account.
 	Scopes []string
+	// OrgID is the organization an org key was minted against ("" for a
+	// personal key), so a key_changed notification that names the
+	// organization drops only its keys from the gateway cache (H93).
+	OrgID string
 }
 
 // RequireAuthnAuditor is the narrow slice of cmd/gatewayd-internal/audit.go's
@@ -1512,7 +1516,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		preAuthLimiter: newPreAuthSourceLimiter(),
 		// The request bodies this gateway holds at once: spooled uploads
 		// on disk, validate-rule bodies in the heap.
-		bodySpoolBudget:  newRequestBodyBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
+		bodySpoolBudget:  newRequestBodySpoolBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
 		keyLookups:       newKeyLookupLimiter(),
 		bodyMemoryBudget: newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
@@ -3155,7 +3159,9 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	if h.applyMCPAliasPolicy(w, r, app) {
 		return true
 	}
-	rule := h.edgeRules.MatchJWT(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleJWTResolved {
+		return h.edgeRules.MatchJWT(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule != nil && rule.Unavailable {
 		h.rejectUnavailableEdgeRule(w, r, "jwt", rule.ID, "jwt_policy_unavailable")
 		return true
@@ -3180,6 +3186,7 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 		})
 		return false
 	}
+	keepFromSharedCaches(w)
 	if rule.MCP != nil {
 		return h.applyMCPResourcePolicy(w, r, app, rule)
 	}
@@ -3201,7 +3208,9 @@ func (h *Handler) applyEdgeRuleJWT(w http.ResponseWriter, r *http.Request, app A
 	// JWT rule before adding the extraction hint; matcher-owned values are
 	// immutable and shared across requests.
 	var extractClaims []string
-	if throttle := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method); throttle != nil &&
+	if throttle := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
+		return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
+	}); throttle != nil &&
 		throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
 		extractClaims = append(extractClaims, throttle.JWTClaimName)
 	}
@@ -3397,7 +3406,9 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchIP(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleIPResolved {
+		return h.edgeRules.MatchIP(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("ip", "miss")
@@ -3420,6 +3431,7 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 		}
 		return false
 	}
+	keepFromSharedCaches(w)
 	clientIP, ok := clientIPFromTrustedXFF(r)
 	if !ok {
 		// Defense-in-depth: gatewayd-public is required to set
@@ -3560,6 +3572,7 @@ func (h *Handler) applyIngressIPAllowlist(w http.ResponseWriter, r *http.Request
 	if app.PublicAuth.Mode != publicAuthModeIPAllowlist {
 		return false
 	}
+	keepFromSharedCaches(w)
 	if len(app.PublicAuth.IPAllowlist) == 0 {
 		// Operator misconfig: ip_allowlist mode without CIDRs.
 		// 500 makes the noise operator-loud — the cold-boot
@@ -3992,7 +4005,7 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 // The hold lasts until the request finishes, since the buffered bytes are
 // forwarded.
 func (h *Handler) holdValidateBody(r *http.Request, cap int64) (*requestBodyLease, bool) {
-	lease, _ := h.bodyMemoryBudget.lease("")
+	lease, _ := h.bodyMemoryBudget.lease("", "")
 	want := cap
 	if r.ContentLength >= 0 && r.ContentLength < cap {
 		want = r.ContentLength
@@ -4466,9 +4479,13 @@ func contentTypeAllowed(ct string, allowed []string) bool {
 // against the trusted XFF client IP via the configured
 // pkg/geoip.Reader.
 //
-// Failure mode: a missing/corrupt DB, an address outside the dataset, or a
-// decode error returns 503. A configured access rule must never disappear
-// because an optional runtime dependency is unavailable.
+// Failure mode: a missing/corrupt DB or a decode error returns 503. A
+// configured access rule must never disappear because an optional runtime
+// dependency is unavailable. An address the database places in no country
+// (a reserved range, or one allocated after the database was built) is
+// answered, not unavailable: it is in no deny list, so a deny-only rule
+// lets it through, and in no allow list, so an allow list refuses it with
+// 403 (ADR-091 amendment 2026-11-02, later).
 //
 // A nil matcher disables the feature; a matched rule with no reader fails
 // closed. Same-account posture mirrors applyEdgeRuleIP.
@@ -4476,7 +4493,9 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	if h.edgeRules == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchGeo(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleGeoResolved {
+		return h.edgeRules.MatchGeo(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("geo", "miss")
@@ -4497,6 +4516,7 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 		}
 		return false
 	}
+	keepFromSharedCaches(w)
 	if h.geoReader == nil {
 		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, "geo_reader_not_configured")
 		return true
@@ -4532,9 +4552,12 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 			h.log.Debug("edge rule geo lookup no country", "ip", clientIP)
 		}
 	}
-	if lerr != nil || !found {
+	if lerr != nil {
 		h.rejectUnavailableEdgeRule(w, r, "geo", rule.ID, geoFailReason(lerr, found))
 		return true
+	}
+	if !found {
+		country = ""
 	}
 	// Deny walks first.
 	if _, denied := rule.Deny[country]; denied {
@@ -4640,7 +4663,9 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 	if h.edgeRules == nil || h.routeLimiter == nil {
 		return false
 	}
-	rule := h.edgeRules.MatchThrottle(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	rule := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
+		return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
+	})
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("throttle", "miss")
@@ -6161,6 +6186,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
+	requestCtx = WithEdgeRuleMethodOverride(requestCtx, r)
 	// ADR-962: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
 	trustedIP, trustedIPOK := clientIPFromTrustedXFF(r)
@@ -6308,6 +6334,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		markTrafficPhase(r.Context(), trafficOwnership)
+		// Cloudflare would otherwise keep serving this 404 for a while
+		// after the app is created.
+		w.Header().Set("Cache-Control", "no-store")
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", appHost)))
 		h.observe(r, rec.status, "", "", false, Target{})
@@ -6895,12 +6924,20 @@ haveApp:
 	if !h.enforcePublicAuth(w, r, rec, app) { //nolint:contextcheck // request ctx is the canonical inbound ctx; the helper uses r.Context() internally so passing ctx separately would shadow it.
 		return
 	}
+	// A preview runs unreviewed code: the credential a platform gate just
+	// verified does not reach it (ADR-20261102100001).
+	withholdPreviewGateCredential(r, app)
 	// The three verified identity sources have all run by this point. Keep
 	// operator-authorized deployment smoke available for rollout readiness.
 	if app.PlatformTenantRequired && !deploymentSmoke && authenticatedFrom(r.Context()).PlatformTenantID == "" {
 		api.WriteProblem(w, api.ErrPlatformTenantRequired())
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
+	}
+	// An answer to a verified caller may depend on who asked; Cloudflare must
+	// not hand it to the next client (ADR-091 amendment 2026-11-02).
+	if authenticatedFrom(r.Context()).carriesVerifiedCredential() {
+		keepFromSharedCaches(w)
 	}
 	// ADR-831 amendment 7 / kind=challenge. After every auth gate, so a
 	// verified credential bypasses it, and before respond, cache and wake, so
@@ -8224,7 +8261,8 @@ haveApp:
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
-				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
+				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
+				defer endTracking()
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -8241,7 +8279,8 @@ haveApp:
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
-				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
+				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
+				defer endTracking()
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
@@ -9100,6 +9139,9 @@ type statusRecorder struct {
 	// Validated candidate probes must remain uncacheable after guest headers
 	// and customer header rules, including gateway failures before forwarding.
 	deploymentSmoke bool
+	// sharedCachePrivate is set when an access control decided the request
+	// (keepFromSharedCaches): no shared cache may store the answer.
+	sharedCachePrivate bool
 
 	// Streaming fields (PR-B, nil → buffered path). Install via
 	// installFlushHook; the fields stay zero otherwise.
@@ -9187,7 +9229,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// reading it here is race-free relative to the underlying
 		// ResponseWriter.
 		s.ContentType = s.ResponseWriter.Header().Get("Content-Type")
-		s.headCachePrivate = responseForbidsSharedCaching(s.Header())
+		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed
 		// BEFORE the status code is committed. The ops run in
@@ -9213,6 +9255,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	}
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
+	}
+	if s.sharedCachePrivate {
+		markSharedCachePrivate(s.Header())
 	}
 }
 

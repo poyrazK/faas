@@ -88,6 +88,44 @@ func TestRequestTelemetryAppIsolation(t *testing.T) {
 	}
 }
 
+// A row the receiver rejects for good (an app over its ingest cap) is dropped
+// and journaled on the first answer. Retrying it held the one publisher
+// goroutine in backoff (3 ms -> 606 ms a batch) while every other app's rows
+// waited, so busy gateways overwrote their ring.
+func TestRequestTelemetryRejectedRowsAreNotRetried(t *testing.T) {
+	good, capped := makeRow(), makeRow()
+	recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 4}, nil)
+	recorder.RecordFromObserve(good)
+	recorder.RecordFromObserve(capped)
+	var coverage RequestTelemetryCoverage
+	calls := 0
+	publisher := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{Enabled: true, FlushBatchSize: 4, MaxRetries: 3,
+		OnCoverage: func(_ context.Context, c RequestTelemetryCoverage) error { coverage = c; return nil },
+	}, recorder, func(_ context.Context, rows []RequestTelemetryRow) error {
+		calls++
+		accepted, rejected := map[uuid.UUID]bool{}, map[uuid.UUID]bool{}
+		for _, row := range rows {
+			if row.AppID == good.AppID {
+				accepted[row.EventID] = true
+			} else {
+				rejected[row.EventID] = true
+			}
+		}
+		return &RequestTelemetryDeliveryError{Accepted: accepted, Rejected: rejected, Cause: errors.New("rate limited")}
+	}, nil)
+	start := time.Now()
+	publisher.tick(context.Background())
+	if elapsed := time.Since(start); calls != 1 || elapsed > 150*time.Millisecond {
+		t.Fatalf("rejected row retried: %d ship calls in %v", calls, elapsed)
+	}
+	if publisher.ShippedTotal() != 1 || publisher.DroppedTotal() != 1 {
+		t.Fatalf("shipping counts: shipped %d dropped %d", publisher.ShippedTotal(), publisher.DroppedTotal())
+	}
+	if len(coverage.AppGaps) != 1 || coverage.AppGaps[0].AppID != capped.AppID || coverage.AppGaps[0].DroppedCount != 1 {
+		t.Fatalf("rejected row missing from the loss journal: %+v", coverage)
+	}
+}
+
 func TestRequestTelemetryAppJournal(t *testing.T) {
 	first, second := makeRow(), makeRow()
 	recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 1}, nil)

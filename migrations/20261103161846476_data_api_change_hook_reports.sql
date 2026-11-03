@@ -1,4 +1,4 @@
--- filename: 20261102200024559_data_api_change_hook_reports.sql
+-- filename: 20261103161846476_data_api_change_hook_reports.sql
 -- migration-compat: expand
 
 -- +goose Up

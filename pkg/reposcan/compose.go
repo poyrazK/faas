@@ -3,7 +3,10 @@ package reposcan
 import (
 	"fmt"
 	"io/fs"
+	"maps"
+	"net/netip"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -398,9 +401,16 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		for _, warning := range exposeWarnings {
 			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 		}
-		ports := parsePorts(s.Ports)
-		if image != "" {
-			ports = parseImagePorts(s.Ports)
+		// The container side of each mapping is the port the service listens
+		// on, for a built service as for an image (ADR-20261103112845);
+		// reconcile makes the first one the serving port.
+		ports := parseImagePorts(s.Ports)
+		// Docker publishes a loopback-bound port only to the machine running
+		// Compose, so the service stays internal (ADR-20261102192943).
+		portsLoopback := len(ports) > 0 && composePortsLoopbackOnly(s.Ports)
+		if portsLoopback {
+			warnings = append(warnings, "reposcan: "+src+": "+name+
+				": ports are bound to a loopback address, which publishes them only on the machine running Compose; the service is internal, with no public URL (remove the address to publish it)")
 		}
 		// build: path — emit a workloadSeed. Class stays empty so an
 		// explicit hint from another detector can fill it. If no hint
@@ -432,12 +442,85 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			renamedFrom:               renamedFrom,
 
 			ports:         ports,
+			portsLoopback: portsLoopback,
 			internalPorts: internalPorts,
 			envKeys:       mergeEnvKeys(envKeys(s.Environment), fileEnvKeys),
 			source:        src + ": " + name,
 		})
 	}
+	warnings = append(warnings, relaxDatastoreHealthGates(src, seeds, managed)...)
 	return seeds, managed, warnings, nil
+}
+
+// relaxDatastoreHealthGates turns a service_healthy gate on a Compose
+// datastore (postgres, redis, …) into a plain service_started dependency.
+// Gregale does not run the datastore as a service, so no deployment of it
+// could become healthy; the dependency stays, so the service still gets the
+// datastore's variable (ADR-20261102192943).
+func relaxDatastoreHealthGates(src string, seeds []workloadSeed, managed []Managed) []string {
+	datastores := make(map[string]bool, len(managed))
+	for _, m := range managed {
+		datastores[strings.ToLower(m.Name)] = true
+	}
+	var warnings []string
+	for i := range seeds {
+		for _, name := range slices.Sorted(maps.Keys(seeds[i].dependsOnConditions)) {
+			if !datastores[name] || seeds[i].dependsOnConditions[name] != api.ComposeDependencyHealthy {
+				continue
+			}
+			seeds[i].dependsOnConditions[name] = api.ComposeDependencyStarted
+			warnings = append(warnings, fmt.Sprintf("reposcan: %s: %s: depends_on %s waits for service_healthy, but %s is a datastore Gregale does not run as a service, so the deploy does not wait for it; make %s retry its connection until %s answers",
+				src, seeds[i].name, name, name, seeds[i].name, name))
+		}
+	}
+	return warnings
+}
+
+// composePortsLoopbackOnly reports whether every entry of a Compose ports:
+// list binds a loopback host address: "127.0.0.1:8081:8080",
+// "[::1]:8081:8080", "localhost:8081:8080", or host_ip in the long form.
+func composePortsLoopbackOnly(items []any) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		host := ""
+		switch value := item.(type) {
+		case string:
+			host = composePortHostIP(value)
+		case map[string]any:
+			host, _ = value["host_ip"].(string)
+		}
+		if !loopbackHost(host) {
+			return false
+		}
+	}
+	return true
+}
+
+// composePortHostIP returns the host address of a short-form port mapping
+// ("HOST:PUBLISHED:TARGET[/PROTO]"), or "" when it names none.
+func composePortHostIP(spec string) string {
+	spec = strings.TrimSpace(spec)
+	if strings.HasPrefix(spec, "[") {
+		if end := strings.IndexByte(spec, ']'); end > 0 {
+			return spec[1:end]
+		}
+		return ""
+	}
+	if parts := strings.Split(spec, ":"); len(parts) == 3 {
+		return parts[0]
+	}
+	return ""
+}
+
+func loopbackHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.IsLoopback()
 }
 
 func normalizeServiceBindingTransport(value string) (ServiceBindingTransport, error) {
@@ -673,6 +756,13 @@ func parsePorts(items []any) []int {
 		switch x := it.(type) {
 		case string:
 			s := strings.TrimSpace(x)
+			// A bracketed IPv6 host ("[::1]:8080:80") would split into
+			// too many parts; composePortsLoopbackOnly reads the address.
+			if strings.HasPrefix(s, "[") {
+				if end := strings.Index(s, "]:"); end > 0 {
+					s = s[end+2:]
+				}
+			}
 			// Strip a "hostip:" prefix if present. We don't track
 			// the binding address; only the published port.
 			if i := strings.Index(s, ":"); i >= 0 {

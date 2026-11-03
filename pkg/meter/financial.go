@@ -148,7 +148,12 @@ func (l *Loop) recordFinancialSample(ctx context.Context, sampler *Sampler, now 
 	// delays its record; leaving it unrecorded held provider delivery for
 	// every account until it aged out of the catch-up window
 	// (ADR-20261029180000). compute_complete only ever turns true.
+	// With cumulative, checkpointed network counters the same minute is
+	// egress-complete as well (ADR-20261101113742); without them nothing ever
+	// recorded egress coverage, so egress budgets never projected and strict
+	// egress could never activate.
 	newest := sampler.newestClosedMinute(now.UTC())
+	egressComplete := sampler.cumulativeNetwork()
 	var errs []error
 	newestRecorded := false
 	if pricingErr == nil {
@@ -156,7 +161,7 @@ func (l *Loop) recordFinancialSample(ctx context.Context, sampler *Sampler, now 
 			if i > api.MeterCatchUpMinutesPerTick {
 				break
 			}
-			if err := store.RecordFinancialSamplingWindow(ctx, minute, true, false); err != nil {
+			if err := store.RecordFinancialSamplingWindow(ctx, minute, true, egressComplete); err != nil {
 				errs = append(errs, err)
 				continue
 			}

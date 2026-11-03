@@ -78,3 +78,27 @@ UPDATE release_approval_events
        next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz,
        delivered_at = sqlc.narg(delivered_at)::timestamptz
  WHERE id = sqlc.arg(id)::uuid AND state = 'pending';
+
+-- name: ListReleaseApprovalPoliciesOnlyNotifyingChannel :many
+-- Approval policies whose only remaining approvals-capable channel is this
+-- one: deleting it would leave releases waiting for approval unannounced
+-- (ADR-20261020085706 amendment 7).
+SELECT a.slug FROM app_release_approval_policies p
+JOIN apps a ON a.id = p.app_id
+WHERE sqlc.arg(channel_id)::uuid = ANY(p.notify_channel_ids)
+  AND NOT EXISTS (
+        SELECT 1 FROM notification_channels c
+         WHERE c.id = ANY(p.notify_channel_ids) AND c.id <> sqlc.arg(channel_id)::uuid AND c.kind <> 'pagerduty')
+ORDER BY a.slug LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: ListScheduledReleasesOnlyNotifyingChannel :many
+-- Pending schedules whose only remaining approvals-capable channel is this
+-- one: deleting it would start or block them unannounced.
+SELECT a.slug, d.revision FROM scheduled_releases s
+JOIN apps a ON a.id = s.app_id
+JOIN deployments d ON d.id = s.deployment_id
+WHERE s.state = 'scheduled' AND sqlc.arg(channel_id)::uuid = ANY(s.notify_channel_ids)
+  AND NOT EXISTS (
+        SELECT 1 FROM notification_channels c
+         WHERE c.id = ANY(s.notify_channel_ids) AND c.id <> sqlc.arg(channel_id)::uuid AND c.kind <> 'pagerduty')
+ORDER BY s.release_at, s.id LIMIT sqlc.arg(max_rows)::integer;

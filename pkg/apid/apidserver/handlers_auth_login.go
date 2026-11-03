@@ -111,7 +111,11 @@ func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	acct, ok := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, ok, err := s.verifyPasswordOrPad(r.Context(), email, password)
+	if err != nil {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if !ok {
 		// Issue #286: emit a failed-login audit row on the
 		// async-batched channel. The discriminator is the same
@@ -156,6 +160,15 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrPasswordTooWeak(err.Error()))
 		return
 	}
+	// The network sign-up cap is checked before the email lookup so a
+	// capped client gets the same 429 whether or not the address has an
+	// account. Checked only on the unbound branch, the 429 told a capped
+	// client "no account" and the bound branch's 401 "account" (H97).
+	// Existing customers sign in through /login meanwhile.
+	if s.signupNetworkCapped(r) {
+		writeSignupNetworkCap(w)
+		return
+	}
 
 	acct, err := s.store.AccountByEmail(r.Context(), email)
 	if err != nil {
@@ -165,6 +178,24 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		// email will return state.ErrConflict; we collapse to the
 		// sign-in path so the duplicate caller signs in (idempotent)
 		// rather than learning "this email is taken".
+		//
+		// The password is hashed before the account exists, so a
+		// saturated hash queue (H96) refuses the attempt without
+		// leaving an account that has no password row and that a
+		// retried /signup could then never sign in to.
+		phc, err := auth.EncodeContext(r.Context(), password)
+		if passwordNotChecked(err) {
+			writePasswordCheckUnavailable(w)
+			return
+		}
+		if err != nil {
+			// NewPassword already passed Validate; this is a
+			// crypto/rand failure, not a user input bug.
+			s.log.Error("signup.argon2id_encode", "err", err)
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
+				"internal_error", "Internal Error", "failed to hash password"))
+			return
+		}
 		res, createErr := s.createSignupAccount(r, signupMethodPassword, signupSourceDirect, state.CreateAccountWithPersonalOrgParams{
 			Email:                    email,
 			Plan:                     api.PlanFree,
@@ -179,7 +210,11 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(createErr, state.ErrConflict) {
 				// Concurrent signup. Re-issue the verify path so
 				// the response shape matches the post-create path.
-				existing, ok := s.verifyPasswordOrPad(r.Context(), email, password)
+				existing, ok, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+				if verr != nil {
+					writePasswordCheckUnavailable(w)
+					return
+				}
 				if !ok {
 					// Newcomer would have set this password; the
 					// existing account has a different one. We
@@ -212,15 +247,6 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 				"internal_error", "Internal Error", "failed to create account"))
 			return
 		}
-		phc, err := auth.Encode(password)
-		if err != nil {
-			// NewPassword already passed Validate; this is a
-			// crypto/rand failure, not a user input bug.
-			s.log.Error("signup.argon2id_encode", "err", err)
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				"internal_error", "Internal Error", "failed to hash password"))
-			return
-		}
 		if err := s.store.SetAccountPassword(r.Context(), created.ID, phc); err != nil {
 			s.log.Error("signup.set_password", "err", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
@@ -239,7 +265,10 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 	hash, err := s.store.AccountPasswordByAccountID(r.Context(), acct.ID)
 	if err != nil {
 		// Bound account with no password row (OAuth-only): pad.
-		_, _ = auth.Verify(auth.DummyPHC, password)
+		if _, verr := auth.VerifyContext(r.Context(), auth.DummyPHC, password); passwordNotChecked(verr) {
+			writePasswordCheckUnavailable(w)
+			return
+		}
 		// Issue #286: emit failed-login (OAuth-only branch).
 		// Same payload shape as the postLoginEmail path so the
 		// audit row is indistinguishable from the /login
@@ -252,7 +281,11 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return
 	}
-	ok, err = auth.Verify(hash, password)
+	ok, err = auth.VerifyContext(r.Context(), hash, password)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if err != nil || !ok {
 		// Issue #286: emit failed-login (wrong-password branch).
 		// This is the canonical "wrong password" audit row, hit
@@ -383,7 +416,11 @@ func (s *server) postReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer clear(raw)
-	phc, err := auth.Encode(plain)
+	phc, err := auth.EncodeContext(r.Context(), plain)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if err != nil {
 		s.log.Error("reset.argon2id_encode")
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to hash password"))
@@ -423,6 +460,10 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	s.revokeSignInKeysAfterPasswordChange(r, acct)
+	if !s.passwordChangedAlertRequested() {
+		// The durable path queued its own alert in the reset transaction.
+		s.alertPasswordChangedInline(r.Context(), acct, "password_reset")
+	}
 	// The reset link proved control of the address: lift a failed-sign-in
 	// pause someone else's guessing put on it.
 	s.loginFailures.reset(auth.HashEmail(acct.Email))
@@ -500,7 +541,11 @@ func (s *server) setInlinePassword(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
-	phc, err := auth.Encode(plain)
+	phc, err := auth.EncodeContext(r.Context(), plain)
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if err != nil {
 		s.log.Error("set_password.argon2id_encode", "err", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
@@ -513,6 +558,7 @@ func (s *server) setInlinePassword(w http.ResponseWriter, r *http.Request, acct 
 			"internal_error", "Internal Error", "failed to set password"))
 		return
 	}
+	s.alertPasswordChangedInline(r.Context(), acct, "dashboard")
 	s.finishSetPassword(w, r, acct, proof, replacing)
 }
 
@@ -618,7 +664,11 @@ func (s *server) setPasswordProof(w http.ResponseWriter, r *http.Request, acct s
 
 	if replacing {
 		current := r.FormValue("current_password")
-		matched, verr := auth.Verify(hash, current)
+		matched, verr := auth.VerifyContext(r.Context(), hash, current)
+		if passwordNotChecked(verr) {
+			writePasswordCheckUnavailable(w)
+			return "", true, false
+		}
 		if verr != nil {
 			// A malformed stored hash is a data problem, not a wrong
 			// guess; Verify's contract is that it must be surfaced.
@@ -698,37 +748,65 @@ func extractEmailFromRequest(r *http.Request) string {
 // the function, but the work done is constant — the
 // DummyPHC pad exists specifically to make the no-account /
 // wrong-password / no-password-row paths identical in CPU cost.
-func (s *server) verifyPasswordOrPad(ctx context.Context, email, password string) (state.Account, bool) {
-	return s.verifyPasswordOrPadWith(ctx, email, password, auth.Verify)
+//
+// A non-nil error means the password was not checked at all: the hash queue
+// was full (auth.ErrPasswordHashBusy) or the request ended while waiting for
+// a slot (H96). Nothing is recorded as a failed login then; the caller
+// answers with writePasswordCheckUnavailable. Every branch hashes once, so
+// the busy answer does not depend on whether the account exists.
+func (s *server) verifyPasswordOrPad(ctx context.Context, email, password string) (state.Account, bool, error) {
+	return s.verifyPasswordOrPadWith(ctx, email, password, auth.VerifyContext)
 }
 
-func (s *server) verifyPasswordOrPadWith(ctx context.Context, email, password string, verify func(string, string) (bool, error)) (state.Account, bool) {
+func (s *server) verifyPasswordOrPadWith(ctx context.Context, email, password string, verify func(context.Context, string, string) (bool, error)) (state.Account, bool, error) {
 	acct, err := s.store.AccountByEmail(ctx, email)
 	if err != nil {
 		// Email unbound. Run the Argon2id pad and return. Unbound
 		// addresses count toward the per-address budget too, so its 429
 		// does not tell which addresses have accounts.
-		_, _ = verify(auth.DummyPHC, password)
+		if _, verr := verify(ctx, auth.DummyPHC, password); passwordNotChecked(verr) {
+			return state.Account{}, false, verr
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			s.recordLoginFailure(ctx, email, nil)
 		}
-		return state.Account{}, false
+		return state.Account{}, false, nil
 	}
 	hash, err := s.store.AccountPasswordByAccountID(ctx, acct.ID)
 	if err != nil {
 		// Bound account, no password row (OAuth-only). Pad.
-		_, _ = verify(auth.DummyPHC, password)
+		if _, verr := verify(ctx, auth.DummyPHC, password); passwordNotChecked(verr) {
+			return state.Account{}, false, verr
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			s.recordLoginFailure(ctx, email, &acct)
 		}
-		return state.Account{}, false
+		return state.Account{}, false, nil
 	}
-	ok, err := verify(hash, password)
+	ok, err := verify(ctx, hash, password)
+	if passwordNotChecked(err) {
+		return state.Account{}, false, err
+	}
 	if err != nil || !ok {
 		s.recordLoginFailure(ctx, email, &acct)
-		return state.Account{}, false
+		// A malformed stored hash refuses the sign-in like a wrong password;
+		// only "not checked" (busy or cancelled) is reported as an error.
+		return state.Account{}, false, nil //nolint:nilerr // see above
 	}
-	return acct, true
+	return acct, true, nil
+}
+
+// passwordNotChecked reports a hash call that never compared the password:
+// the slot queue was full or the request ended while waiting (H96).
+func passwordNotChecked(err error) bool {
+	return errors.Is(err, auth.ErrPasswordHashBusy) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// writePasswordCheckUnavailable answers a password attempt that was not
+// checked because hashing is saturated: 429 with Retry-After, so clients back
+// off instead of queueing behind requests that already gave up.
+func writePasswordCheckUnavailable(w http.ResponseWriter) {
+	api.WriteProblem(w, api.ErrAuthRateLimited(int(api.PasswordHashBusyRetryAfter.Seconds())))
 }
 
 // verifyOAuthAccountEmail records the address proof supplied by an OAuth
@@ -888,6 +966,11 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrPasswordTooWeak(err.Error()))
 		return
 	}
+	// Network sign-up cap before the email lookup, as in postSignup (H97).
+	if s.signupNetworkCapped(r) {
+		writeSignupNetworkCap(w)
+		return
+	}
 
 	// Look up the email up front — used by the create branch (line
 	// ~613) to detect the unbound case and by verifyPasswordOrPad
@@ -899,7 +982,19 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 		// a fresh api_key. Mirrors the postSignup race-closure: a
 		// concurrent signup returns ErrConflict which we collapse to
 		// the idempotent sign-in path so the duplicate caller never
-		// learns "this email is taken".
+		// learns "this email is taken". Hashed before the account
+		// exists, as in postSignup (H96).
+		phc, err := auth.EncodeContext(r.Context(), password)
+		if passwordNotChecked(err) {
+			writePasswordCheckUnavailable(w)
+			return
+		}
+		if err != nil {
+			s.log.Error("v1auth_signup.argon2id_encode", "err", err)
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
+				"internal_error", "Internal Error", "failed to hash password"))
+			return
+		}
 		res, createErr := s.createSignupAccount(r, signupMethodPassword, signupSourceDirect, state.CreateAccountWithPersonalOrgParams{
 			Email:                    email,
 			Plan:                     api.PlanFree,
@@ -911,7 +1006,11 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if errors.Is(createErr, state.ErrConflict) {
-				existing, ok := s.verifyPasswordOrPad(r.Context(), email, password)
+				existing, ok, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+				if verr != nil {
+					writePasswordCheckUnavailable(w)
+					return
+				}
 				if !ok {
 					s.audit.EmitFailedLogin(
 						middleware.ClientIP(r),
@@ -934,13 +1033,6 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		created := res.Account
-		phc, err := auth.Encode(password)
-		if err != nil {
-			s.log.Error("v1auth_signup.argon2id_encode", "err", err)
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-				"internal_error", "Internal Error", "failed to hash password"))
-			return
-		}
 		if err := s.store.SetAccountPassword(r.Context(), created.ID, phc); err != nil {
 			s.log.Error("v1auth_signup.set_password", "err", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
@@ -957,7 +1049,11 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 	// (OAuth-only accounts) stay aligned with postV1AuthLogin and
 	// postLoginEmail. Otherwise the duplicate Argon2id-verify here
 	// would drift from the canonical helper.
-	existing, hit := s.verifyPasswordOrPad(r.Context(), email, password)
+	existing, hit, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+	if verr != nil {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if !hit {
 		s.audit.EmitFailedLogin(
 			middleware.ClientIP(r),
@@ -981,7 +1077,11 @@ func (s *server) postV1AuthLogin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	acct, hit := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, hit, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+	if verr != nil {
+		writePasswordCheckUnavailable(w)
+		return
+	}
 	if !hit {
 		s.audit.EmitFailedLogin(
 			middleware.ClientIP(r),
@@ -1152,19 +1252,37 @@ func liveSignInKeys(keys []state.APIKey, now time.Time) []state.APIKey {
 	return live
 }
 
-// revokeSignInKeysAfterPasswordChange revokes every key a password sign-in
-// minted: they were bought with the old password, which may be the one that
-// leaked. Keys the customer created on purpose stay. Best-effort, like the
+// revokeSignInKeysAfterPasswordChange revokes every key an interactive
+// sign-in minted: they were bought with the old password, which may be the one
+// that leaked. Keys the customer created on purpose stay. Best-effort, like the
 // session revocation beside it.
 func (s *server) revokeSignInKeysAfterPasswordChange(r *http.Request, acct state.Account) {
+	s.revokeInteractiveSignInKeys(r, acct, "password_change")
+}
+
+// interactiveSignInKeyLabels name the keys an interactive sign-in mints: a
+// password sign-in, `gregale login` and an MCP client's consent. A rotation
+// keeps the label. They act as sessions, so the steps that end sessions end
+// them too; only "signup" keys used to be revoked, so a 30-day cli-login or
+// mcp-login key minted with a stolen session survived the owner's password
+// reset and "sign out other devices" (bug hunt 2026-10-28 H71).
+var interactiveSignInKeyLabels = map[string]bool{signInKeyLabel: true, cliLoginKeyLabel: true, api.MCPLoginKeyLabel: true}
+
+// revokeInteractiveSignInKeys revokes the account's live interactive sign-in
+// keys. Best-effort: a failure is logged.
+func (s *server) revokeInteractiveSignInKeys(r *http.Request, acct state.Account, reason string) {
 	keys, err := s.store.ListAPIKeys(r.Context(), acct.ID)
 	if err != nil {
-		s.log.Warn("password change: list keys failed", "account", acct.ID, "err", err)
+		s.log.Warn("revoke sign-in keys: list keys failed", "account", acct.ID, "reason", reason, "err", err)
 		return
 	}
-	for _, k := range liveSignInKeys(keys, time.Now()) {
-		if _, err := s.revokeAPIKeyWithReason(r, acct, k.ID, "password_change"); err != nil {
-			s.log.Warn("password change: revoke key failed", "account", acct.ID, "key", k.ID, "err", err)
+	now := time.Now()
+	for _, k := range keys {
+		if !interactiveSignInKeyLabels[k.Label] || k.Status == "revoked" || (k.ExpiresAt != nil && !k.ExpiresAt.After(now)) {
+			continue
+		}
+		if _, err := s.revokeAPIKeyWithReason(r, acct, k.ID, reason); err != nil {
+			s.log.Warn("revoke sign-in keys: revoke key failed", "account", acct.ID, "key", k.ID, "reason", reason, "err", err)
 		}
 	}
 }

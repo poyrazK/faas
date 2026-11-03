@@ -120,7 +120,7 @@ func (s *server) renderDashboardFireCron(w http.ResponseWriter, r *http.Request,
 		// on a handler-error page where the back button fights
 		// the form re-POST.
 		//nolint:gosec // G710: slug + cronID are regex-gated above (validSlug + dashboardFireCronIDRe) AND IDOR-validated inside fireCronFromDashboard, so the redirect target cannot escape the /dashboard/apps/{slug} prefix.
-		http.Redirect(w, r, "/dashboard/apps/"+slug+"?fired=error", http.StatusFound)
+		http.Redirect(w, r, "/dashboard/apps/"+slug+"?fired="+dashboardFireCronFlag(err), http.StatusFound)
 		return
 	}
 	//nolint:gosec // G710: same gating as the error branch above. Query
@@ -182,10 +182,22 @@ func (s *server) fireCronFromDashboard(ctx context.Context, acct state.Account, 
 	if !ok || limits.CronLimitPerApp == 0 {
 		return ErrDashboardCronPlanBlocked
 	}
+	// A disabled cron is refused here, as the scheduler refuses its run;
+	// the request used to be queued and failed a moment later.
+	if !c.Enabled {
+		return ErrDashboardCronDisabled
+	}
+	if c.SuspendedReason != "" {
+		return ErrDashboardCronSuspended
+	}
 	if s.cronRunOverPlan(ctx, app, c) != nil {
 		return ErrDashboardCronPlanBlocked
 	}
 	requestID, err := s.insertCronFireNowRequest(ctx, c.ID, acct.ID)
+	var capErr *state.FireNowCapError
+	if errors.As(err, &capErr) {
+		return ErrDashboardCronBusy
+	}
 	if err != nil {
 		return fmt.Errorf("insert fire-now: %w", err)
 	}
@@ -227,7 +239,35 @@ var (
 	// ErrPlanCronsNotAllowed 402. Split so we can lift the
 	// message later.
 	ErrDashboardCronPlanBlocked = errors.New("dashboard: cron not allowed on this plan")
+	// ErrDashboardCronSuspended covers a cron suspended until the app is
+	// deployed again; the v1 endpoint answers 409.
+	ErrDashboardCronSuspended = errors.New("dashboard: cron suspended")
+	// ErrDashboardCronDisabled covers a disabled cron; the scheduler
+	// refuses its manual run (the v1 request fails with cron_disabled).
+	ErrDashboardCronDisabled = errors.New("dashboard: cron disabled")
+	// ErrDashboardCronBusy covers a cron already holding
+	// api.CronFireNowActivePerCron manual runs; the v1 endpoint answers 429.
+	ErrDashboardCronBusy = errors.New("dashboard: cron has too many manual runs waiting")
 )
+
+// dashboardFireCronFlag is the ?fired= value naming why a dashboard
+// fire-now was refused, so the banner says what to do instead of a generic
+// failure (crons audit 2026-11-03). The values carry nothing about another
+// account: each refusal follows the ownership check.
+func dashboardFireCronFlag(err error) string {
+	switch {
+	case errors.Is(err, ErrDashboardCronDisabled):
+		return "disabled"
+	case errors.Is(err, ErrDashboardCronBusy):
+		return "busy"
+	case errors.Is(err, ErrDashboardCronSuspended):
+		return "suspended"
+	case errors.Is(err, ErrDashboardCronPlanBlocked):
+		return "plan"
+	default:
+		return "error"
+	}
+}
 
 // projectCronRunRow collapses the CronRun projection down to the
 // four fields the dashboard renders. The handler does all the

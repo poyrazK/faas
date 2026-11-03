@@ -4761,6 +4761,51 @@ func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
 	return err
 }
 
+// cancelDeletedAppPipelineTx cancels the deploys a deleted app still had in
+// progress, and their builds. The customer delete path (ScheduleAppDeletion)
+// left them running: a deploy caught mid-activation stayed "snapshotting" for
+// the whole restore window, imaged retried its snapshot every 10 minutes
+// against an app it could no longer load, and its builds kept a builder slot
+// (Hunt 31 H31-12). imaged acknowledges snapshots of cancelled deployments.
+// Restoring the app brings back its live deployment, not these.
+// The caller holds the app row lock (CreateDeployment's order).
+func cancelDeletedAppPipelineTx(ctx context.Context, tx pgx.Tx, appID string, now time.Time) error {
+	if _, err := tx.Exec(ctx, `
+		update deployments
+		   set status = 'cancelled',
+		       cancelled_at = $2,
+		       cancelled_by_principal = 'system:app-delete',
+		       cancel_reason = 'system'
+		 where app_id = $1
+		   and status in ('pending', 'building', 'imaging', 'snapshotting')`, appID, now); err != nil {
+		return fmt.Errorf("cancel deployments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		with candidates as (
+			select b.id, b.status
+			  from builds b
+			  join deployments d on d.id = b.deployment_id
+			 where d.app_id = $1 and b.status in ('queued', 'running')
+			 for update of b
+		), cancelled as (
+			update builds b
+			   set status = 'cancelled',
+			       cancelled_at = $2,
+			       cancelled_by_deployment_cascade = true
+			  from candidates c
+			 where b.id = c.id
+			returning b.id
+		), cleanup as (
+			insert into builder_vm_cleanup (build_id)
+			select c.id from candidates c where c.status = 'running'
+			on conflict (build_id) do nothing
+		)
+		select count(*) from cancelled`, appID, now); err != nil {
+		return fmt.Errorf("cancel builds: %w", err)
+	}
+	return nil
+}
+
 // ScheduleAppDeletion parks an app in a restorable tombstone. Repeated
 // requests preserve the original deletion timestamp and deadline.
 func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error) {
@@ -4771,6 +4816,9 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if graceUntil.IsZero() {
 		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
+	}
+	if err := cancelDeletedAppPipelineTx(ctx, tx, id, time.Now().UTC()); err != nil {
+		return App{}, fmt.Errorf("state: schedule app deletion: %w", err)
 	}
 	var a App
 	row := tx.QueryRow(ctx, `
@@ -5141,15 +5189,8 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 	}
 	now := time.Now().UTC()
 	deadline := now.Add(AppDeleteGraceDuration())
-	if _, err := tx.Exec(ctx, `
-		update deployments
-		   set status = 'cancelled',
-		       cancelled_at = $2,
-		       cancelled_by_principal = 'system:app-delete',
-		       cancel_reason = 'system'
-		 where app_id = $1
-		   and status in ('pending', 'building', 'imaging', 'snapshotting')`, id, now); err != nil {
-		return App{}, fmt.Errorf("state: soft delete app cancel deployments: %w", err)
+	if err := cancelDeletedAppPipelineTx(ctx, tx, id, now); err != nil {
+		return App{}, fmt.Errorf("state: soft delete app: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `delete from crons where app_id = $1`, id); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app remove crons: %w", err)
@@ -5165,29 +5206,6 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 		       updated_at = $2
 		 where app_id = $1 and status in ('queued', 'restoring', 'running')`, id, now); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app cancel app tasks: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		with candidates as (
-			select b.id, b.status
-			  from builds b
-			  join deployments d on d.id = b.deployment_id
-			 where d.app_id = $1 and b.status in ('queued', 'running')
-			 for update of b
-		), cancelled as (
-			update builds b
-			   set status = 'cancelled',
-			       cancelled_at = $2,
-			       cancelled_by_deployment_cascade = true
-			  from candidates c
-			 where b.id = c.id
-			returning b.id
-		), cleanup as (
-			insert into builder_vm_cleanup (build_id)
-			select c.id from candidates c where c.status = 'running'
-			on conflict (build_id) do nothing
-		)
-		select count(*) from cancelled`, id, now); err != nil {
-		return App{}, fmt.Errorf("state: soft delete app cancel builds: %w", err)
 	}
 	var a App
 	if err := scanAppInto(&a, tx.QueryRow(ctx, `
@@ -5650,16 +5668,29 @@ func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvir
 }
 
 func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error) {
+	// An operation only moves from unfinished to ready, failed or compensated,
+	// and none can target an existing environment, so the single statement
+	// cannot protect a target its clone will refuse to publish or delete.
 	row := s.pool.QueryRow(ctx, `
 		update project_environments e
 		   set protected = $4, updated_at = now()
 		  from projects p
 		 where p.id = e.project_id and p.account_id = $1
 		   and e.project_id = $2 and e.slug = $3
+		   and (not $4 or not exists (
+		        select 1 from project_environment_clone_operations o
+		         where o.account_id = $1 and o.project_id = $2 and o.target_environment = $3
+		           and o.status not in ('ready', 'compensated')))
 		returning e.id, e.account_id, e.project_id, e.slug, e.protected,
 		          e.created_at, e.updated_at
 	`, accountID, projectID, slug, protected)
-	return scanProjectEnvironment(row)
+	environment, err := scanProjectEnvironment(row)
+	if errors.Is(err, ErrNotFound) && protected {
+		if _, lookupErr := s.ProjectEnvironmentBySlug(ctx, accountID, projectID, slug); lookupErr == nil {
+			return ProjectEnvironment{}, ErrProjectEnvironmentCloneUnfinished
+		}
+	}
+	return environment, err
 }
 
 func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {
@@ -6535,7 +6566,42 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 	if b.LinkedAt.IsZero() {
 		b.LinkedAt = time.Now()
 	}
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub bind: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	var previous GitHubBinding
+	var installID, repoID *int64
+	var repoName *string
+	if err := tx.QueryRow(ctx,
+		`select github_install_id, github_repo_id, github_repo_full_name
+		   from apps where id = $1 and account_id = $2 for update`,
+		b.AppID, b.AccountID).Scan(&installID, &repoID, &repoName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("state: read GitHub binding: %w", err)
+	}
+	if installID != nil {
+		previous.InstallID = *installID
+	}
+	if repoID != nil {
+		previous.RepoID = *repoID
+	}
+	if repoName != nil {
+		previous.RepoFullName = *repoName
+	}
+	// Rebinding to another repository or installation retires the previews
+	// of the old one, as an unbind does: its close events no longer reach
+	// them, and a PR with the same number in the new repository would take
+	// the old preview's row (bug hunt 33).
+	if githubBindingRepoChanged(previous, b) {
+		if err := markAppPRPreviewsStaleTx(ctx, tx, b.AppID); err != nil {
+			return fmt.Errorf("state: mark rebound app's PR previews stale: %w", err)
+		}
+	}
+	tag, err := tx.Exec(ctx,
 		`update apps
 		 set github_install_id = $2,
 		     github_repo_full_name = $3,
@@ -6549,9 +6615,104 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 		b.AppID, b.InstallID, nullString(b.RepoFullName), nullableInt64(b.OwnerID), nullableInt64(b.RepoID),
 		nullString(b.ProductionBranch), b.BindingID, b.AccountID, b.LinkedAt,
 	)
-	if err == nil && tag.RowsAffected() == 0 {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	// A project left without an installation by a revoke or a repository
+	// removal takes the installation its app is reconnected through, for the
+	// same repository (ADR-20261102100001).
+	if _, err := tx.Exec(ctx, `
+		update projects p set install_id = $2, updated_at = now()
+		  from apps a
+		 where a.id = $1 and a.account_id = $4 and p.id = a.project_id and p.account_id = a.account_id
+		   and p.install_id is null and lower(p.repo_full_name) = lower($3)`,
+		b.AppID, b.InstallID, b.RepoFullName, b.AccountID); err != nil {
+		return fmt.Errorf("state: restore project GitHub installation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub bind: %w", err)
+	}
+	return nil
+}
+
+// markInstallationPRPreviewsStaleTx retires the PR previews of the apps an
+// installation binds (only those of repos, when repos is non-nil): without the
+// installation, or the repository's access, no close event reaches them. A
+// preview belongs to the production app its PR environment's root previews,
+// so the previews of a project's other services go with the bound app's
+// (ADR-20261102100001); they kept serving PR code to the end of their lease.
+func markInstallationPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, installationID int64, repos []string) error {
+	_, err := tx.Exec(ctx, `
+		update apps set preview_pr_state = $2, preview_expires_at = now()
+		 where id in (
+		   select p.id
+		     from apps p
+		     left join lateral (
+		       select root.preview_of_slug as anchor
+		         from pr_preview_sets s
+		         join apps root on root.id = s.root_app_id
+		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
+		        order by s.updated_at desc
+		        limit 1
+		     ) env on true
+		     join apps parent on parent.account_id = p.account_id
+		                     and parent.slug = coalesce(env.anchor, p.preview_of_slug)
+		    where p.preview_of_slug is not null
+		      and coalesce(p.preview_pr_number, 0) > 0
+		      and p.status <> 'deleted'
+		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
+		      and parent.preview_of_slug is null
+		      and parent.status <> 'deleted'
+		      and parent.github_install_id = $1
+		      and ($5::text[] is null or parent.github_repo_full_name = any($5::text[])))`,
+		installationID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown, repos)
+	return err
+}
+
+// githubBindingRepoChanged reports whether next binds the app to another
+// installation or repository than previous. An app with no binding has
+// nothing to retire.
+func githubBindingRepoChanged(previous, next GitHubBinding) bool {
+	if previous.InstallID == 0 {
+		return false
+	}
+	if previous.InstallID != next.InstallID {
+		return true
+	}
+	if previous.RepoID > 0 && next.RepoID > 0 {
+		return previous.RepoID != next.RepoID
+	}
+	return !strings.EqualFold(previous.RepoFullName, next.RepoFullName)
+}
+
+// markAppPRPreviewsStaleTx marks the PR preview environments of the app's
+// repository stale, for the janitor to tear down. An environment belongs to
+// its root's production app, the anchor the orphan sweep uses
+// (MarkOrphanedPRPreviewsForTeardown).
+func markAppPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, appID string) error {
+	_, err := tx.Exec(ctx, `
+		update apps set preview_pr_state = $2, preview_expires_at = now()
+		 where id in (
+		   select p.id
+		     from apps p
+		     join apps parent on parent.id = $1 and parent.account_id = p.account_id
+		     left join lateral (
+		       select root.preview_of_slug as anchor
+		         from pr_preview_sets s
+		         join apps root on root.id = s.root_app_id
+		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
+		        order by s.updated_at desc
+		        limit 1
+		     ) env on true
+		    where p.preview_of_slug is not null
+		      and coalesce(p.preview_pr_number, 0) > 0
+		      and p.status <> 'deleted'
+		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
+		      and coalesce(env.anchor, p.preview_of_slug) = parent.slug)`,
+		appID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown)
 	return err
 }
 
@@ -6574,28 +6735,7 @@ func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) 
 		return fmt.Errorf("state: begin GitHub unbind: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
-	// An environment belongs to its root's production app, the anchor the
-	// orphan sweep uses (MarkOrphanedPRPreviewsForTeardown).
-	if _, err := tx.Exec(ctx, `
-		update apps set preview_pr_state = $2, preview_expires_at = now()
-		 where id in (
-		   select p.id
-		     from apps p
-		     join apps parent on parent.id = $1 and parent.account_id = p.account_id
-		     left join lateral (
-		       select root.preview_of_slug as anchor
-		         from pr_preview_sets s
-		         join apps root on root.id = s.root_app_id
-		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
-		        order by s.updated_at desc
-		        limit 1
-		     ) env on true
-		    where p.preview_of_slug is not null
-		      and coalesce(p.preview_pr_number, 0) > 0
-		      and p.status <> 'deleted'
-		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
-		      and coalesce(env.anchor, p.preview_of_slug) = parent.slug)`,
-		appID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown); err != nil {
+	if err := markAppPRPreviewsStaleTx(ctx, tx, appID); err != nil {
 		return fmt.Errorf("state: mark unbound app's PR previews stale: %w", err)
 	}
 	tag, err := tx.Exec(ctx,
@@ -6920,20 +7060,11 @@ func (s *PgStore) RevokeGitHubInstallation(ctx context.Context, installationID i
 		return fmt.Errorf("state: begin revoke GitHub installation: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, `
-		update apps p
-		   set preview_pr_state = $2,
-		       preview_expires_at = now()
-		 where p.preview_of_slug is not null
-		   and coalesce(p.preview_pr_state, '') <> $3
-		   and exists (
-			 select 1 from apps parent
-			  where parent.account_id = p.account_id
-				and parent.slug = p.preview_of_slug
-				and parent.github_install_id = $1
-				and parent.status <> 'deleted'
-		   )`, installationID, PreviewPrStateStale, PreviewPrStateTornDown); err != nil {
+	if err := markInstallationPRPreviewsStaleTx(ctx, tx, installationID, nil); err != nil {
 		return fmt.Errorf("state: mark GitHub previews stale: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `update projects set install_id = null, updated_at = now() where install_id = $1`, installationID); err != nil {
+		return fmt.Errorf("state: detach projects from GitHub installation: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		update apps
@@ -6973,21 +7104,13 @@ func (s *PgStore) RemoveGitHubRepositories(ctx context.Context, installationID i
 		return fmt.Errorf("state: begin remove GitHub repositories: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx, `
-		update apps p
-		   set preview_pr_state = $2,
-		       preview_expires_at = now()
-		 where p.preview_of_slug is not null
-		   and coalesce(p.preview_pr_state, '') <> $3
-		   and exists (
-			 select 1 from apps parent
-			  where parent.account_id = p.account_id
-				and parent.slug = p.preview_of_slug
-				and parent.github_install_id = $1
-				and parent.github_repo_full_name = any($4::text[])
-				and parent.status <> 'deleted'
-		   )`, installationID, PreviewPrStateStale, PreviewPrStateTornDown, repoFullNames); err != nil {
+	if err := markInstallationPRPreviewsStaleTx(ctx, tx, installationID, repoFullNames); err != nil {
 		return fmt.Errorf("state: mark removed-repository previews stale: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		update projects set install_id = null, updated_at = now()
+		 where install_id = $1 and repo_full_name = any($2::text[])`, installationID, repoFullNames); err != nil {
+		return fmt.Errorf("state: detach projects from removed GitHub repositories: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		update apps
@@ -7374,6 +7497,7 @@ func (s *PgStore) ListGithubInstallBindingsForAccount(ctx context.Context, accou
 // UUID behavior by leaving d.ID empty.
 func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.eventSubscriptionIntent = deploymentEventSubscriptionIntent(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -7383,6 +7507,7 @@ func (s *PgStore) CreateDeployment(ctx context.Context, d Deployment) (Deploymen
 
 func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.eventSubscriptionIntent = deploymentEventSubscriptionIntent(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -7776,6 +7901,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	}
 	if d.submissionAttemptID != "" {
 		if _, err := attachDeploymentSubmission(ctx, tx, created.AppID, d.submissionAttemptID, created.ID); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if d.eventSubscriptionIntent != nil {
+		if err := recordDeploymentEventSubscriptionIntentTx(ctx, tx, created, *d.eventSubscriptionIntent); err != nil {
 			return Deployment{}, 0, err
 		}
 	}
@@ -10525,7 +10655,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 				return fmt.Errorf("state: check newer deployment revision: %w", err)
 			}
 			if newer {
-				if _, err := tx.Exec(ctx, `update deployments set status = 'superseded', traffic_percent = 0 where id = $1`, id); err != nil {
+				if err := supersedeOutpacedDeploymentTx(ctx, tx, id); err != nil {
 					return fmt.Errorf("state: supersede stale deployment: %w", err)
 				}
 				if err := tx.Commit(ctx); err != nil {
@@ -16960,6 +17090,12 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 	if err != nil {
 		return 0, err
 	}
+	// A pull lease that lapsed on its message's last attempt dead-letters
+	// (ADR-20261101093812); the sweep below requeues the rest.
+	leases, err := exhaustExpiredQueueLeasesTx(ctx, tx, now, limit-operations)
+	if err != nil {
+		return 0, err
+	}
 	var requeued int
 	err = tx.QueryRow(ctx, `
 		with expired as (
@@ -16996,14 +17132,14 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 			  from per_account as p
 			 where q.account_id = p.account_id
 		)
-		select count(*) from requeued`, now.UTC(), limit-operations).Scan(&requeued)
+		select count(*) from requeued`, now.UTC(), limit-operations-leases).Scan(&requeued)
 	if err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("state: invocations reclaim expired commit: %w", err)
 	}
-	return requeued + operations, nil
+	return requeued + operations + leases, nil
 }
 
 func (s *PgStore) CompleteInvocation(ctx context.Context, id string, result json.RawMessage) error {
@@ -22144,25 +22280,28 @@ func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, i
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
 	// missing durable checkpoint therefore means the whole reported value is
-	// new usage. Counter regression means vmmd or the interface restarted: move
-	// the baseline back without turning unsigned wraparound into a huge charge.
+	// new usage. A counter below its checkpoint means vmmd or the interface
+	// restarted and counts from zero again, so its whole value is new usage
+	// too; dropping it lost each restart's first reading of egress
+	// (ADR-20261101113742). The baseline moves to the new value either way, and
+	// a delta is never negative.
 	netTxDelta, netRxDelta := int64(0), int64(0)
 	nextTx, nextRx := previousTx, previousRx
 	nextTxValid, nextRxValid := previousTxValid, previousRxValid
 	if netTxValid {
-		if !previousTxValid {
-			netTxDelta = netTxCumulative
-		} else if netTxCumulative >= previousTx {
+		if previousTxValid && netTxCumulative >= previousTx {
 			netTxDelta = netTxCumulative - previousTx
+		} else {
+			netTxDelta = netTxCumulative
 		}
 		nextTx = netTxCumulative
 		nextTxValid = true
 	}
 	if netRxValid {
-		if !previousRxValid {
-			netRxDelta = netRxCumulative
-		} else if netRxCumulative >= previousRx {
+		if previousRxValid && netRxCumulative >= previousRx {
 			netRxDelta = netRxCumulative - previousRx
+		} else {
+			netRxDelta = netRxCumulative
 		}
 		nextRx = netRxCumulative
 		nextRxValid = true
@@ -29092,8 +29231,14 @@ func (s *PgStore) ListSessions(ctx context.Context, accountID string) ([]Session
 // the supplied sid (the calling session). Returns the count via
 // pgx.RowsAffected.
 func (s *PgStore) RevokeAllSessions(ctx context.Context, accountID, exceptID string) (int, error) {
+	// Signing out everywhere also ends outstanding legacy MFA-disable email
+	// requests (bug hunt 2026-10-28 H98).
 	tag, err := s.pool.Exec(ctx,
-		`update sessions set revoked_at = now()
+		`with legacy as (
+		   update mfa_disable_requests set consumed_at = clock_timestamp()
+		    where account_id = $1 and consumed_at is null
+		 )
+		 update sessions set revoked_at = now()
 		   where account_id = $1 and id <> $2 and revoked_at is null`,
 		accountID, exceptID)
 	if err != nil {
@@ -31034,7 +31179,9 @@ func (s *PgStore) ListRequestTelemetryByPlatformTenant(ctx context.Context, arg 
 // dependency view. The handler performs all redaction and aggregation after
 // this tenant-scoped query returns.
 func (s *PgStore) ListRequestTelemetryDependencySpans(ctx context.Context, arg sqlc.ListRequestTelemetryDependencySpansParams) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {
-	return s.appErrorsQueries().ListRequestTelemetryDependencySpans(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {
+		return s.appErrorsQueries().ListRequestTelemetryDependencySpans(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryCoverage backs the debugger coverage endpoint. The
@@ -31106,44 +31253,58 @@ func (s *PgStore) RequestTelemetryErrorsByRoute(ctx context.Context, arg sqlc.Re
 // request analytics summary. The SQL weights collapsed telemetry rows by
 // their count column and is bounded by the caller's retention window.
 func (s *PgStore) RequestTelemetryAnalyticsSummary(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsSummaryParams) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsSummary(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) (sqlc.RequestTelemetryAnalyticsSummaryRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsSummary(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByDimension backs the bounded top-N customer
 // analytics grouping surface.
 func (s *PgStore) RequestTelemetryAnalyticsByDimension(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDimensionParams) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByDimension(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByDimensionRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByDimension(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByRoute backs the bounded top-route portion of
 // the customer-facing request analytics response.
 func (s *PgStore) RequestTelemetryAnalyticsByRoute(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteParams) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByRouteRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByRoute(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByDeployment returns a bounded request-weighted
 // deployment split for the caller's analytics window. TotalRequests is the
 // full pre-limit count used to calculate the visible __other__ share.
 func (s *PgStore) RequestTelemetryAnalyticsByDeployment(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByDeployment(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByDeployment(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsByRouteDeployment backs the bounded per-route
 // deployment allocation and CPU-comparison surface.
 func (s *PgStore) RequestTelemetryAnalyticsByRouteDeployment(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsByRouteDeployment(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsByRouteDeployment(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsTimeseries backs the zero-filled hourly customer
 // analytics chart. The SQL query weights collapsed telemetry rows by count.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseries(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsTimeseriesRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseries(ctx, db, arg)
+	})
 }
 
 // RequestTelemetryAnalyticsTimeseriesGrouped backs zero-filled hourly series
 // for a bounded top-N analytics dimension.
 func (s *PgStore) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, arg sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
-	return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseriesGrouped(ctx, s.pool, arg)
+	return routeAnalyticsRead(ctx, s, func(db sqlc.DBTX) ([]sqlc.RequestTelemetryAnalyticsTimeseriesGroupedRow, error) {
+		return s.appErrorsQueries().RequestTelemetryAnalyticsTimeseriesGrouped(ctx, db, arg)
+	})
 }
 
 // --- ADR-127 PR-B — regression observation persistence + dashboard reads ---
@@ -32140,17 +32301,44 @@ func pgUUIDString(id pgtype.UUID) string {
 // exp-backoff): the operator verb has no exp-backoff and no
 // last_error carry-over — the operator is signalling "re-drive this
 // record from clean". Returns state.ErrNotFound when the row does
-// not exist so the handler can emit a 404.
-func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) error {
-	tx, err := s.pool.Begin(ctx)
+// not exist, or belongs to another trigger or app, so the handler
+// can emit a 404.
+func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error {
+	params, err := triggerRecordScopeParams(appID, triggerID, recordID)
 	if err != nil {
 		return err
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: retry trigger record begin: %w", err)
+	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := retryTriggerReceiptTx(ctx, tx, id, "", ""); err != nil {
+	owned, err := sqlc.New().TriggerRecordInScope(ctx, tx, params)
+	if err != nil {
+		return fmt.Errorf("state: retry trigger record scope: %w", err)
+	}
+	if !owned {
+		return ErrNotFound
+	}
+	if err := retryTriggerReceiptTx(ctx, tx, recordID, "", appID); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: retry trigger record commit: %w", err)
+	}
+	return nil
+}
+
+// triggerRecordScopeParams parses the ids an operator record verb is
+// scoped by. A malformed id names no record of the trigger.
+func triggerRecordScopeParams(appID, triggerID, recordID string) (sqlc.TriggerRecordInScopeParams, error) {
+	app, appErr := parsePgUUID(appID)
+	trigger, triggerErr := parsePgUUID(triggerID)
+	record, recordErr := parsePgUUID(recordID)
+	if appErr != nil || triggerErr != nil || recordErr != nil {
+		return sqlc.TriggerRecordInScopeParams{}, ErrNotFound
+	}
+	return sqlc.TriggerRecordInScopeParams{ID: record, TriggerID: trigger, AppID: app}, nil
 }
 
 // RetryQueueDeadLetter (ADR-134 PR-C) is the queue counterpart to
@@ -32189,6 +32377,9 @@ func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocatio
 		return Invocation{}, err
 	}
 	if err := refreshEventReplayCapacity(ctx, tx, invocationID); err != nil {
+		return Invocation{}, err
+	}
+	if err := checkQueueReplayAdmissionTx(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}
 	row, err := sqlc.New().RetryProductionQueueDeadLetter(ctx, tx, sqlc.RetryProductionQueueDeadLetterParams{ID: id, AccountID: account})
@@ -32328,6 +32519,9 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		if err := refreshEventReplayCapacity(ctx, tx, ev.SourceID); err != nil {
 			return time.Time{}, mapErr(err)
 		}
+		if err := checkQueueReplayAdmissionTx(ctx, tx, args.EventID); err != nil {
+			return time.Time{}, err
+		}
 		n, updateErr := sqlc.New().ReplayProductionDeadLetterInvocation(ctx, tx, sqlc.ReplayProductionDeadLetterInvocationParams{
 			InvocationID: args.EventID, AccountID: args.AccountID, AppID: args.AppID,
 		})
@@ -32409,14 +32603,19 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 // (which preserves history); this verb preserves no DLQ row. The
 // record's parent trigger is untouched; this is a record-level
 // operation only.
-func (s *PgStore) DropTriggerRecordByOperator(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`delete from trigger_records where id = $1`,
-		id)
+//
+// The record must belong to triggerID, a trigger of appID; any other
+// record answers ErrNotFound.
+func (s *PgStore) DropTriggerRecordByOperator(ctx context.Context, appID, triggerID, recordID string) error {
+	scope, err := triggerRecordScopeParams(appID, triggerID, recordID)
 	if err != nil {
-		return fmt.Errorf("state: drop trigger_record %s: %w", id, err)
+		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().DropTriggerRecordByOperator(ctx, s.pool, sqlc.DropTriggerRecordByOperatorParams(scope))
+	if err != nil {
+		return fmt.Errorf("state: drop trigger_record %s: %w", recordID, err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil

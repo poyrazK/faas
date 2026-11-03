@@ -5,11 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -82,7 +82,7 @@ func (s *PgStore) RegisterGatewayTrafficEpoch(ctx context.Context, node, boot st
 	return GatewayTrafficEpoch{NodeName: node, Generation: generation, BootID: boot}, nil
 }
 
-var gatewayTrafficBackendID = regexp.MustCompile(`^[0-9a-f]{16}$`)
+var gatewayTrafficBackendID = lazyregexp.New(`^[0-9a-f]{16}$`)
 
 func (f GatewayTrafficFeatures) validate() error {
 	if f.RateCounterMode != "central" && f.RateCounterMode != "local" && f.RateCounterMode != "unwired" {

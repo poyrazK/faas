@@ -17,6 +17,9 @@ type CapMetrics struct {
 	storageMode     *prometheus.GaugeVec
 	storageAccounts *prometheus.GaugeVec
 	storageScopes   *prometheus.CounterVec
+
+	planExcessDatabases prometheus.Gauge
+	planExcessScopes    *prometheus.GaugeVec
 }
 
 var (
@@ -25,6 +28,8 @@ var (
 	capMetricScopeOutcomes = []string{"applied", "shadowed", "unchanged"}
 
 	storageCapMetricAccountStates = []string{"enforced", "blocked", "uncapped", "unsupported", "failed"}
+
+	planExcessMetricScopeStates = []string{"suspended", "shadowed", "shared"}
 )
 
 // NewCapMetrics registers the families on reg under the daemon prefix. A nil
@@ -66,8 +71,16 @@ func NewCapMetrics(reg prometheus.Registerer, prefix string, mode, storageMode C
 			Name: prefix + "_managed_postgres_storage_cap_limit_decisions_total",
 			Help: "Managed PostgreSQL storage limit decisions by outcome; shadowed decisions were computed but not sent.",
 		}, []string{"outcome"}),
+		planExcessDatabases: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_managed_postgres_plan_excess_databases",
+			Help: "Managed PostgreSQL databases past their subject's plan in the latest compute cap sweep (ADR-20261102125208).",
+		}),
+		planExcessScopes: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: prefix + "_managed_postgres_plan_excess_scopes",
+			Help: "Managed PostgreSQL quota scopes past their subject's plan in the latest compute cap sweep: suspended, shadowed (only logged), or shared with a database inside the plan and left running.",
+		}, []string{"state"}),
 	}
-	for _, collector := range []prometheus.Collector{m.mode, m.accounts, m.scopesTotal, m.lastSweep, m.storageMode, m.storageAccounts, m.storageScopes} {
+	for _, collector := range []prometheus.Collector{m.mode, m.accounts, m.scopesTotal, m.lastSweep, m.storageMode, m.storageAccounts, m.storageScopes, m.planExcessDatabases, m.planExcessScopes} {
 		if err := reg.Register(collector); err != nil {
 			return nil, err
 		}
@@ -87,6 +100,9 @@ func NewCapMetrics(reg prometheus.Registerer, prefix string, mode, storageMode C
 	}
 	for _, state := range storageCapMetricAccountStates {
 		m.storageAccounts.WithLabelValues(state).Set(0)
+	}
+	for _, state := range planExcessMetricScopeStates {
+		m.planExcessScopes.WithLabelValues(state).Set(0)
 	}
 	m.lastSweep.Set(0)
 	return m, nil
@@ -110,6 +126,10 @@ func (m *CapMetrics) Observe(summary CapSweepSummary) {
 	m.scopesTotal.WithLabelValues("applied").Add(float64(summary.ScopesApplied))
 	m.scopesTotal.WithLabelValues("shadowed").Add(float64(summary.ScopesShadowed))
 	m.scopesTotal.WithLabelValues("unchanged").Add(float64(summary.ScopesUnchanged))
+	m.planExcessDatabases.Set(float64(summary.PlanExcessDatabases))
+	m.planExcessScopes.WithLabelValues("suspended").Set(float64(summary.PlanExcessScopesSuspended))
+	m.planExcessScopes.WithLabelValues("shadowed").Set(float64(summary.PlanExcessScopesShadowed))
+	m.planExcessScopes.WithLabelValues("shared").Set(float64(summary.PlanExcessScopesShared))
 	if summary.Failed == 0 && !summary.CompletedAt.IsZero() {
 		m.lastSweep.Set(float64(summary.CompletedAt.UTC().Unix()))
 	}

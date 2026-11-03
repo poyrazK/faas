@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -111,6 +112,8 @@ func TestFullProjectEnvironmentCloneNamesSchemaBlockersAndFailsClosed(t *testing
 			name := map[bool]string{true: "dedicated", false: "legacy"}[dedicated] + "/" + map[bool]string{true: "read_failure", false: "blockers"}[failed]
 			t.Run(name, func(t *testing.T) {
 				srv, store, acct, project, _ := apidserver.NewProjectLifecycleFixture(t)
+				// The platform's registry gap is named to operators only.
+				srv.WithAdminAllowlist(acct.Email)
 				coverageStore := &cloneSchemaCoverageTestStore{MemStore: store, report: state.ProjectEnvironmentCloneSchemaCoverage{Blockers: []state.ProjectEnvironmentCloneCoverageBlocker{
 					{Table: "queue_bindings", Code: "isolated_strategy_unavailable"},
 					{Table: "app_envs", Column: "new_setting", Code: "unregistered_column"},
@@ -190,8 +193,10 @@ func TestFullProjectEnvironmentCloneHidesInternalHostingBlockers(t *testing.T) {
 							t.Fatalf("unexpected internal table visibility: %s", rec.Body.String())
 						}
 					}
-					if !strings.Contains(rec.Body.String(), "resource_coverage.queue_bindings") {
-						t.Fatalf("public coverage blocker missing: %s", rec.Body.String())
+					// The registry gap is the platform's: operators see it, customers
+					// get only the four resource categories.
+					if strings.Contains(rec.Body.String(), "resource_coverage.queue_bindings") != operator || len(problem.Errors) < 4 {
+						t.Fatalf("registry blockers shown to the wrong caller (operator=%v): %s", operator, rec.Body.String())
 					}
 					if _, err := store.ProjectEnvironmentBySlug(context.Background(), acct.ID, project.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
 						t.Fatalf("partial target exists: %v", err)
@@ -236,5 +241,36 @@ func TestFullProjectEnvironmentCloneRefusesSharedOrganizationAccess(t *testing.T
 	}
 	if _, err := store.ProjectEnvironmentCloneOperationByIdempotencyKey(ctx, org.ID, project.ID, "org-clone"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("shared organization access admitted a clone: %v", err)
+	}
+}
+
+// Refusals that last until the customer changes the source are 409s naming the
+// cause, never a 404 for an environment that exists or a 503 that never clears.
+func TestFullProjectEnvironmentCloneAdmissionMapsSourceRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+		field  string
+	}{
+		{"idempotency key", state.ErrInvalidProjectEnvironmentCloneOperation, http.StatusBadRequest, api.CodeValidation, ""},
+		{"undeployed workload", state.ErrProjectEnvironmentCloneSourceNotDeployed, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.workloads"},
+		{"release pinned", state.ErrReleaseConfigurationTransferUnsupported, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.release_configuration"},
+		{"project secrets", state.ErrProjectSecretCloneTransferUnsupported, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.project_secrets"},
+		{"legacy stage queues", state.ErrProjectEnvironmentQueueCollectionUnavailable, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.queue_bindings"},
+		{"work policies", state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.work_policies"},
+		{"missing source", state.ErrNotFound, http.StatusNotFound, "", ""},
+		{"transient", errors.New("connection reset"), http.StatusServiceUnavailable, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			problem := apidserver.FullProjectEnvironmentCloneAdmissionProblem("shop", "production", false, fmt.Errorf("capture: %w", tc.err))
+			if problem.Status != tc.status || (tc.code != "" && problem.Code != tc.code) {
+				t.Fatalf("problem = %d %s, want %d %s", problem.Status, problem.Code, tc.status, tc.code)
+			}
+			if tc.field != "" && (len(problem.Errors) != 1 || problem.Errors[0].Field != tc.field) {
+				t.Fatalf("errors = %+v, want one naming %s", problem.Errors, tc.field)
+			}
+		})
 	}
 }

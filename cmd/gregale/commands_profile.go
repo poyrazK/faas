@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -167,7 +168,7 @@ func cmdProfile(args []string) int {
 			if exists {
 				return printErr("Profile already exists", errors.New(name))
 			}
-			base, err := validateConfigAPIBase(args[2]) // #nosec G602 -- the add branch sets want to 3 and validates len(args) == want.
+			base, err := validateAcceptedAPIBase(args[2]) // #nosec G602 -- the add branch sets want to 3 and validates len(args) == want.
 			if err != nil {
 				return printErr("Invalid API URL", err)
 			}
@@ -192,6 +193,10 @@ func cmdProfile(args []string) int {
 			}
 			old := profileOverride
 			profileOverride = name
+			// Deleting the stored token alone would leave its CLI key live.
+			if login := currentManagedLogin(); login.token != "" {
+				revokeReplacedLogin(context.Background(), login)
+			}
 			deleteToken()
 			clearManagedSession()
 			profileOverride = old
@@ -230,8 +235,15 @@ func effectiveConnectionContext() *connectionContext {
 	entry, _ := configEntry(effectiveConfigEntries(cfg), configKeyAPIBase)
 	return &connectionContext{selectedProfile(cfg), source, entry.Value, entry.Source}
 }
+
+// displayConnectionContext is effectiveConnectionContext for printing: the
+// API address loses credentials an FAAS_API URL may embed.
+func displayConnectionContext() *connectionContext {
+	return configuredDisplayConnection().connectionContext
+}
+
 func renderConnectionContext() {
-	c := effectiveConnectionContext()
+	c := displayConnectionContext()
 	_, _ = fmt.Fprintf(osStdout, "Profile: %s (source=%s)\nAPI: %s (source=%s)\n", c.Profile, c.ProfileSource, c.APIBase, c.APISource)
 }
 

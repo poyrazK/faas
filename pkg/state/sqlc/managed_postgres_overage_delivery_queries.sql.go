@@ -11,6 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearManagedPostgresOveragePending = `-- name: ClearManagedPostgresOveragePending :exec
+DELETE FROM managed_postgres_overage_pending
+WHERE provider = $1::text AND subject_id = $2::uuid
+  AND period_start = $3::timestamptz AND target_millicents = $4::bigint
+`
+
+type ClearManagedPostgresOveragePendingParams struct {
+	Provider         string
+	SubjectID        pgtype.UUID
+	PeriodStart      pgtype.Timestamptz
+	TargetMillicents int64
+}
+
+func (q *Queries) ClearManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ClearManagedPostgresOveragePendingParams) error {
+	_, err := db.Exec(ctx, clearManagedPostgresOveragePending,
+		arg.Provider,
+		arg.SubjectID,
+		arg.PeriodStart,
+		arg.TargetMillicents,
+	)
+	return err
+}
+
 const managedPostgresOverageDelivered = `-- name: ManagedPostgresOverageDelivered :one
 SELECT d.live, d.billed_unit_seconds, d.delivered_millicents, d.updated_at, d.billed_storage_byte_seconds
 FROM managed_postgres_overage_deliveries d
@@ -41,6 +64,60 @@ func (q *Queries) ManagedPostgresOverageDelivered(ctx context.Context, db DBTX, 
 		&i.DeliveredMillicents,
 		&i.UpdatedAt,
 		&i.BilledStorageByteSeconds,
+	)
+	return i, err
+}
+
+const managedPostgresOveragePending = `-- name: ManagedPostgresOveragePending :one
+
+SELECT p.live, p.step_at, p.used_unit_seconds, p.allowance_unit_seconds, p.billed_unit_seconds,
+    p.from_millicents, p.target_millicents, p.used_storage_byte_seconds, p.storage_pool_bytes,
+    p.billed_storage_byte_seconds, p.previous_millicents, p.previous_live
+FROM managed_postgres_overage_pending p
+WHERE p.provider = $1::text AND p.subject_id = $2::uuid
+  AND p.period_start = $3::timestamptz
+`
+
+type ManagedPostgresOveragePendingParams struct {
+	Provider    string
+	SubjectID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+type ManagedPostgresOveragePendingRow struct {
+	Live                     bool
+	StepAt                   pgtype.Timestamptz
+	UsedUnitSeconds          int64
+	AllowanceUnitSeconds     int64
+	BilledUnitSeconds        int64
+	FromMillicents           int64
+	TargetMillicents         int64
+	UsedStorageByteSeconds   int64
+	StoragePoolBytes         int64
+	BilledStorageByteSeconds int64
+	PreviousMillicents       int64
+	PreviousLive             bool
+}
+
+// ADR-20261101143527: a step is reserved before apid sends it to the
+// provider, so a step that was sent but not recorded is sent again with the
+// same target instead of a new one charged on top of it.
+func (q *Queries) ManagedPostgresOveragePending(ctx context.Context, db DBTX, arg ManagedPostgresOveragePendingParams) (ManagedPostgresOveragePendingRow, error) {
+	row := db.QueryRow(ctx, managedPostgresOveragePending, arg.Provider, arg.SubjectID, arg.PeriodStart)
+	var i ManagedPostgresOveragePendingRow
+	err := row.Scan(
+		&i.Live,
+		&i.StepAt,
+		&i.UsedUnitSeconds,
+		&i.AllowanceUnitSeconds,
+		&i.BilledUnitSeconds,
+		&i.FromMillicents,
+		&i.TargetMillicents,
+		&i.UsedStorageByteSeconds,
+		&i.StoragePoolBytes,
+		&i.BilledStorageByteSeconds,
+		&i.PreviousMillicents,
+		&i.PreviousLive,
 	)
 	return i, err
 }
@@ -148,4 +225,62 @@ func (q *Queries) RecordManagedPostgresOverageDelivery(ctx context.Context, db D
 	var recorded bool
 	err := row.Scan(&recorded)
 	return recorded, err
+}
+
+const reserveManagedPostgresOverage = `-- name: ReserveManagedPostgresOverage :one
+INSERT INTO managed_postgres_overage_pending (provider, subject_id, period_start, live, step_at,
+    used_unit_seconds, allowance_unit_seconds, billed_unit_seconds, from_millicents, target_millicents,
+    used_storage_byte_seconds, storage_pool_bytes, billed_storage_byte_seconds, previous_millicents, previous_live)
+VALUES ($1::text, $2::uuid, $3::timestamptz,
+    $4::boolean, $5::timestamptz, $6::bigint,
+    $7::bigint, $8::bigint,
+    $9::bigint, $10::bigint,
+    $11::bigint, $12::bigint,
+    $13::bigint, $14::bigint,
+    $15::boolean)
+ON CONFLICT (provider, subject_id, period_start) DO NOTHING
+RETURNING true AS reserved
+`
+
+type ReserveManagedPostgresOverageParams struct {
+	Provider                 string
+	SubjectID                pgtype.UUID
+	PeriodStart              pgtype.Timestamptz
+	Live                     bool
+	StepAt                   pgtype.Timestamptz
+	UsedUnitSeconds          int64
+	AllowanceUnitSeconds     int64
+	BilledUnitSeconds        int64
+	FromMillicents           int64
+	TargetMillicents         int64
+	UsedStorageByteSeconds   int64
+	StoragePoolBytes         int64
+	BilledStorageByteSeconds int64
+	PreviousMillicents       int64
+	PreviousLive             bool
+}
+
+// One reservation per provider, subject and month: a replica that finds one
+// reserves nothing.
+func (q *Queries) ReserveManagedPostgresOverage(ctx context.Context, db DBTX, arg ReserveManagedPostgresOverageParams) (bool, error) {
+	row := db.QueryRow(ctx, reserveManagedPostgresOverage,
+		arg.Provider,
+		arg.SubjectID,
+		arg.PeriodStart,
+		arg.Live,
+		arg.StepAt,
+		arg.UsedUnitSeconds,
+		arg.AllowanceUnitSeconds,
+		arg.BilledUnitSeconds,
+		arg.FromMillicents,
+		arg.TargetMillicents,
+		arg.UsedStorageByteSeconds,
+		arg.StoragePoolBytes,
+		arg.BilledStorageByteSeconds,
+		arg.PreviousMillicents,
+		arg.PreviousLive,
+	)
+	var reserved bool
+	err := row.Scan(&reserved)
+	return reserved, err
 }
