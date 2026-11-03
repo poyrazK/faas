@@ -1,7 +1,9 @@
 package fcvm
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"os/exec"
 	"time"
 )
@@ -16,17 +18,29 @@ import (
 // fallback) can therefore see umount(8) report the target busy, and the wake
 // then fails instead of falling back. The holder is transient, so the unmount
 // is retried for a bounded interval while the mount is still present.
+//
+// The release is asynchronous, so it slows with the host. On a loaded 2-vCPU
+// node one second was not enough: teardown kept the bind and failed, and the
+// leaked mounts then failed every later leak check (2026-10-29). Retrying
+// costs time only while the mount stays busy.
 const (
 	umountBusyRetryInterval = 25 * time.Millisecond
-	umountBusyRetryBudget   = time.Second
+	umountBusyRetryBudget   = 5 * time.Second
 )
 
 // umountRetryBusy runs umount(8) on mountpoint, retrying while the mount is
 // still present for up to umountBusyRetryBudget. It returns nil once the
-// mount is gone, whatever the individual attempts reported.
+// mount is gone, whatever the individual attempts reported. A final failure
+// carries umount's own message (for example "target is busy").
 func umountRetryBusy(mountpoint string) error {
 	return retryUmountWhileMounted(mountpoint,
-		func(mp string) error { return exec.Command("umount", mp).Run() },
+		func(mp string) error {
+			out, err := exec.Command("umount", mp).CombinedOutput()
+			if err != nil && len(bytes.TrimSpace(out)) > 0 {
+				return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+			}
+			return err
+		},
 		func(mp string) (bool, error) {
 			current, err := resourceMountAt(mp)
 			return current != nil, err
