@@ -29,6 +29,7 @@ type Store interface {
 	state.AppOwnerReader
 	AppByID(ctx context.Context, id string) (state.App, error)
 	InstanceByID(ctx context.Context, id string) (state.Instance, error)
+	DeploymentByID(ctx context.Context, id string) (state.Deployment, error)
 }
 
 // Handler publishes a runtime's change events. Only a gregale:data-api:events
@@ -102,6 +103,17 @@ func (h Handler) workload(r *http.Request) (state.Account, state.App, error) {
 	instance, err := h.Store.InstanceByID(r.Context(), claims.InstanceID)
 	if err != nil || instance.AppID != app.ID || !state.State(instance.State).CountsForConcurrency() {
 		return state.Account{}, state.App{}, errors.New("instance is not live")
+	}
+	// Events carry no deployment scope: a stage's changes would publish
+	// under the production app's source, and a cloned environment copies
+	// the setting and the change table. Only production publishes, as only
+	// production leases queues (ADR-1141 amendment 2026-10-27, bug hunt 36).
+	if !state.ProductionDeploymentScope(claims.Environment) {
+		return state.Account{}, state.App{}, errors.New("token names a stage environment")
+	}
+	deployment, err := h.Store.DeploymentByID(r.Context(), instance.DeploymentID)
+	if err != nil || deployment.AppID != app.ID || !state.ProductionDeploymentScope(deployment.Scope) {
+		return state.Account{}, state.App{}, errors.New("instance does not run a production deployment")
 	}
 	return acct, app, nil
 }

@@ -23,9 +23,17 @@ import (
 var now = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 
 type fakeStore struct {
-	app      state.App
-	account  state.Account
-	instance state.Instance
+	app        state.App
+	account    state.Account
+	instance   state.Instance
+	deployment state.Deployment
+}
+
+func (s fakeStore) DeploymentByID(_ context.Context, id string) (state.Deployment, error) {
+	if id != s.deployment.ID {
+		return state.Deployment{}, state.ErrNotFound
+	}
+	return s.deployment, nil
 }
 
 func (s fakeStore) AppByID(_ context.Context, id string) (state.App, error) {
@@ -90,11 +98,12 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	account, app := uuid.NewString(), uuid.NewString()
+	account, app, deployment := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	store := &fakeStore{
-		app:      state.App{ID: app, AccountID: account, Slug: "shop-data", Status: state.AppActive},
-		account:  state.Account{ID: account, Status: state.AccountActive},
-		instance: state.Instance{ID: uuid.NewString(), AppID: app, State: string(state.StateRunning)},
+		app:        state.App{ID: app, AccountID: account, Slug: "shop-data", Status: state.AppActive},
+		account:    state.Account{ID: account, Status: state.AccountActive},
+		instance:   state.Instance{ID: uuid.NewString(), AppID: app, DeploymentID: deployment, State: string(state.StateRunning)},
+		deployment: state.Deployment{ID: deployment, AppID: app, Scope: "production"},
 	}
 	publisher := &fakePublisher{}
 	return &fixture{handler: Handler{Verifier: verifier, Store: store, Publisher: publisher, Now: func() time.Time { return now }}, publisher: publisher, signer: signer, store: store}
@@ -173,6 +182,16 @@ func TestHandlerAcceptsOnlyLiveWorkloadsOfActiveApps(t *testing.T) {
 		{"suspended account", func(f *fixture) { f.store.account.Status = state.AccountSuspended }, nil},
 		{"parked instance", func(f *fixture) { f.store.instance.State = string(state.StateParked) }, nil},
 		{"another app's instance", func(f *fixture) { f.store.instance.AppID = uuid.NewString() }, nil},
+		// A stage's changes would publish under the production app's source.
+		{"stage token", nil, func(t *testing.T, f *fixture) string {
+			token, err := f.signer.MintEnvironment(now, f.store.account.ID, f.store.app.ID, f.store.instance.ID, "staging", workloadidentity.DataAPIEventsAudience)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return token.AccessToken
+		}},
+		{"stage deployment", func(f *fixture) { f.store.deployment.Scope = "staging" }, nil},
+		{"another app's deployment", func(f *fixture) { f.store.deployment.AppID = uuid.NewString() }, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
