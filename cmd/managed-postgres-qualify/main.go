@@ -18,7 +18,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
-	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
 )
 
 type qualificationOutput struct {
@@ -64,11 +63,25 @@ func main() {
 		}
 		os.Exit(runComputeCap(os.Getenv, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "--storage-cap" {
+		if len(os.Args) != 2 {
+			_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify --storage-cap")
+			os.Exit(2)
+		}
+		os.Exit(runStorageCap(os.Getenv, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "--check-production" {
+		if len(os.Args) != 2 {
+			_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify --check-production")
+			os.Exit(2)
+		}
+		os.Exit(runProductionCheck(os.Getenv, time.Now(), os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--verify" {
 		os.Exit(runVerificationArguments(os.Args[2:], os.Getenv, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 {
-		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --compute-cap | --verify [--approval PATH] [--rollout --guest-report PATH --runtime-manifest PATH]]")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --check-production | --compute-cap | --storage-cap | --verify [--approval PATH] [--rollout --guest-report PATH --runtime-manifest PATH]]")
 		os.Exit(2)
 	}
 	os.Exit(run(os.Getenv, os.Stdout, os.Stderr))
@@ -93,7 +106,7 @@ func runConfigurationPreflight(getenv func(string) string, output, errorOutput i
 	if configPath == "" {
 		return writeConfigurationPreflight(result, failed, errorOutput, output)
 	}
-	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	registry, err := managedpostgres.Load(getenv, describeFactories())
 	addCheck("configuration_valid", err == nil && registry != nil, "configuration_invalid")
 	if err != nil || registry == nil {
 		return writeConfigurationPreflight(result, failed, errorOutput, output)
@@ -216,6 +229,9 @@ type liveQualification struct {
 	resourceID string
 	spec       managedpostgres.Spec
 	timeout    time.Duration
+	// close releases the native backend's control-plane pool; the caller
+	// defers it once the run is over.
+	close func()
 }
 
 func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (liveQualification, bool) {
@@ -223,7 +239,18 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification requires FAAS_ENVIRONMENT=staging and FAAS_MANAGED_POSTGRES_QUALIFY_LIVE=true")
 		return liveQualification{}, false
 	}
-	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	factories, closeFactories, err := liveFactories(context.Background(), getenv)
+	if err != nil {
+		_, _ = fmt.Fprintln(errorOutput, nativeDatabaseURLEnv+" is invalid")
+		return liveQualification{}, false
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			closeFactories()
+		}
+	}()
+	registry, err := managedpostgres.Load(getenv, factories)
 	if err != nil || registry == nil {
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification configuration is unavailable")
 		return liveQualification{}, false
@@ -242,6 +269,10 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 		_, _ = fmt.Fprintln(errorOutput, "qualification region has no configured backend")
 		return liveQualification{}, false
 	}
+	if !liveNativeReady(getenv, backend) {
+		_, _ = fmt.Fprintln(errorOutput, "qualifying the native backend requires "+nativeDatabaseURLEnv+", the database pgproxyd reads role verifiers from")
+		return liveQualification{}, false
+	}
 	spec, err := qualificationSpec(backend, region)
 	if err != nil {
 		_, _ = fmt.Fprintln(errorOutput, "configured backend cannot produce a qualification spec")
@@ -255,7 +286,8 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 			return liveQualification{}, false
 		}
 	}
-	return liveQualification{registry: registry, backend: backend, resourceID: resourceID, spec: spec, timeout: timeout}, true
+	ok = true
+	return liveQualification{registry: registry, backend: backend, resourceID: resourceID, spec: spec, timeout: timeout, close: closeFactories}, true
 }
 
 // runComputeCap qualifies compute caps (ADR-20261025094915 decision 10) on a
@@ -267,6 +299,7 @@ func runComputeCap(getenv func(string) string, output, errorOutput io.Writer) in
 	if !ok {
 		return 2
 	}
+	defer live.close()
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), live.backend.Provider, managedpostgres.QualificationOptions{
 		ProviderName: live.backend.Driver,
 		ResourceID:   live.resourceID,
@@ -294,11 +327,48 @@ func runComputeCap(getenv func(string) string, output, errorOutput io.Writer) in
 	return 0
 }
 
+// runStorageCap qualifies the storage pool (ADR-20261025094915 decisions 9
+// and 10) on a disposable resource and writes the artifact that
+// FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on requires.
+func runStorageCap(getenv func(string) string, output, errorOutput io.Writer) int {
+	live, ok := loadLiveQualification(getenv, errorOutput)
+	if !ok {
+		return 2
+	}
+	defer live.close()
+	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), live.backend.Provider, managedpostgres.QualificationOptions{
+		ProviderName: live.backend.Driver,
+		ResourceID:   live.resourceID,
+		Spec:         live.spec,
+		Timeout:      live.timeout,
+		Mutating:     true,
+		StorageCap:   true,
+	})
+	artifact := managedpostgres.StorageCapQualification{
+		Version: managedpostgres.StorageCapQualificationVersion, BackendID: live.backend.ID,
+		BackendFingerprint: live.backend.Fingerprint, CompletedAt: report.CompletedAt, Checks: report.Checks,
+	}
+	if report.StorageCap != nil {
+		artifact.Evidence = *report.StorageCap
+	}
+	encoder := json.NewEncoder(output)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(artifact); err != nil {
+		return 1
+	}
+	if qualificationErr != nil || live.registry.VerifyStorageCapQualification(artifact) != nil {
+		_, _ = fmt.Fprintln(errorOutput, "storage cap qualification failed; see the checks and evidence")
+		return 1
+	}
+	return 0
+}
+
 func run(getenv func(string) string, output, errorOutput io.Writer) int {
 	live, ok := loadLiveQualification(getenv, errorOutput)
 	if !ok {
 		return 2
 	}
+	defer live.close()
 	registry, backend, resourceID, spec, timeout := live.registry, live.backend, live.resourceID, live.spec, live.timeout
 	approvalTTL, err := parseQualificationApprovalTTL(getenv)
 	if err != nil {
@@ -480,7 +550,7 @@ func runVerify(getenv func(string) string, path string, output, errorOutput io.W
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification approval artifact is unavailable")
 		return 2
 	}
-	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	registry, err := managedpostgres.Load(getenv, describeFactories())
 	if err != nil || registry == nil {
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification configuration is unavailable")
 		return 2

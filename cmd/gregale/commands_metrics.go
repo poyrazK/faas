@@ -54,7 +54,7 @@ func cmdMetrics(args []string) int {
 	fs := newFlagSet("metrics", flag.ContinueOnError)
 	rng := fs.String("range", "5m", "time window (5m, 15m, 1h, 6h, 24h)")
 	account := fs.Bool("account", false, "account-wide rollup (GET /v1/apps/metrics) — mutually exclusive with <slug>")
-	services := fs.Bool("services", false, "account service map of app-to-app calls (GET /v1/service-map)")
+	services := fs.Bool("services", false, "account service map of app-to-app calls, a preview not enabled on every account (GET /v1/service-map)")
 	app := fs.String("app", "", appSlugFlagUsage)
 	custom := fs.String("custom", "", "show the history of one pushed custom metric (ADR-745)")
 	flags, pos := splitArgsForFlags(args, "account", "services")
@@ -210,6 +210,15 @@ func renderAppsMetrics(w io.Writer, m api.AppsMetricsResponse) {
 	}
 }
 
+// printServiceMapUnavailable explains --services on an account the service map
+// preview is not released to: apid answers its route as absent
+// (ADR-20261023115741), and the CLI printed only "Not found: no such API
+// route".
+func printServiceMapUnavailable() int {
+	PrintUsage(osStderr, "The service map (--services) is a preview that is not enabled for this account; run 'gregale metrics <app>' for per-app metrics", metricsCmdDocsTopic)
+	return 2
+}
+
 // cmdMetricsServices implements `gregale metrics --services` (ADR-1131).
 func cmdMetricsServices(rng string) int {
 	client, err := authedClient()
@@ -218,6 +227,9 @@ func cmdMetricsServices(rng string) int {
 	}
 	m, err := client.GetServiceMap(context.Background(), rng)
 	if err != nil {
+		if routeNotOffered(err) {
+			return printServiceMapUnavailable()
+		}
 		return printErr("Could not fetch service map", err)
 	}
 	if jsonOutput {
@@ -261,7 +273,7 @@ func renderServiceMap(w io.Writer, m api.ServiceMapResponse) {
 			_, _ = fmt.Fprintf(w, "  Wake-ahead: %d of %d restores used\n", e.WakeAheadUsed, e.WakeAheadStarted)
 		}
 		if e.SuggestWakeAhead {
-			_, _ = fmt.Fprintf(w, "  Tip:        run `gregale wake-ahead %s on` to restore %s while %s wakes\n", e.CallerAppSlug, e.TargetAppSlug, e.CallerAppSlug)
+			_, _ = fmt.Fprintf(w, "  Tip:        run `gregale app wake-ahead %s on` to restore %s while %s wakes\n", e.CallerAppSlug, e.TargetAppSlug, e.CallerAppSlug)
 		}
 	}
 	if m.Truncated {

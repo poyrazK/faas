@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
-	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -188,41 +187,49 @@ func readTarballFile(path, entryName string) string {
 }
 
 func readTarballFileAtRoot(path, entryName, sourceRoot string) string {
+	return readTarballFilesAtRoot(path, sourceRoot, entryName)[entryName]
+}
+
+// readTarballFilesAtRoot reads several marker files in one pass over the
+// archive. A missing, oversized or unreadable file is absent from the map.
+func readTarballFilesAtRoot(path, sourceRoot string, entryNames ...string) map[string]string {
+	found := map[string]string{}
 	root, err := sourcecontext.Normalize(sourceRoot)
 	if err != nil {
-		return ""
+		return found
 	}
 	logicalRoot, err := tarball.ResolveSourceRoot(path, sourceRoot)
 	if err != nil {
-		return ""
+		return found
 	}
 	//nolint:forbidigo // path is the apid-spooled tarball; same trust rationale as DetectFromTarball.
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return found
 	}
 	defer func() { _ = f.Close() }()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return ""
+		return found
 	}
 	defer func() { _ = gz.Close() }()
 
 	tr := tar.NewReader(gz)
-	needle := strings.ToLower(tarball.TrimLeadingDotSlash(entryName))
-	if root != sourcecontext.DefaultRoot {
-		needle = strings.ToLower(logicalRoot + "/" + needle)
-	} else if logicalRoot != "" {
-		needle = strings.ToLower(logicalRoot + "/" + needle)
-	}
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return ""
+	needles := make(map[string]string, len(entryNames))
+	for _, entryName := range entryNames {
+		needle := strings.ToLower(tarball.TrimLeadingDotSlash(entryName))
+		if root != sourcecontext.DefaultRoot {
+			needle = strings.ToLower(logicalRoot + "/" + needle)
+		} else if logicalRoot != "" {
+			needle = strings.ToLower(logicalRoot + "/" + needle)
 		}
+		needles[needle] = entryName
+	}
+	for len(needles) > 0 {
+		hdr, err := tr.Next()
 		if err != nil {
-			return ""
+			return found
 		}
 		// Ignore archive metadata and directories. The shared root prefix
 		// above promotes only the one transport wrapper used by GitHub
@@ -233,22 +240,25 @@ func readTarballFileAtRoot(path, entryName, sourceRoot string) string {
 			continue
 		}
 		name := strings.ToLower(tarball.TrimLeadingDotSlash(hdr.Name))
-		if name != needle {
+		entryName, ok := needles[name]
+		if !ok {
 			continue
 		}
+		// The first entry with a name decides it, as before.
+		delete(needles, name)
 		// Cap read. io.LimitReader silently truncates at N; we use
 		// ReadAll with a hard cap so a 1 GB file doesn't OOM the
 		// build goroutine.
 		lr := io.LimitReader(tr, maxVersionFileBytes+1)
 		buf, err := io.ReadAll(lr)
 		if err != nil {
-			return ""
+			return found
 		}
-		if len(buf) > maxVersionFileBytes {
-			return "" // treat as missing
+		if len(buf) <= maxVersionFileBytes {
+			found[entryName] = string(buf)
 		}
-		return string(buf)
 	}
+	return found
 }
 
 // stripLines returns the first non-empty trimmed line of s.

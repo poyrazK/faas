@@ -118,8 +118,8 @@ def sync_detailed(
 ) -> Response[Problem | str]:
     """Export a day range of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1438). Streams every tag row of the UTC days from through to,
-    optionally of one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of
+     Requires MFA and read scope. Streams every tag row of the UTC days from through to, optionally of
+    one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of
     OutboundAITagUsageExportRow.
 
     Args:
@@ -163,8 +163,8 @@ def sync(
 ) -> Problem | str | None:
     """Export a day range of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1438). Streams every tag row of the UTC days from through to,
-    optionally of one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of
+     Requires MFA and read scope. Streams every tag row of the UTC days from through to, optionally of
+    one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of
     OutboundAITagUsageExportRow.
 
     Args:
@@ -203,8 +203,8 @@ async def asyncio_detailed(
 ) -> Response[Problem | str]:
     """Export a day range of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1438). Streams every tag row of the UTC days from through to,
-    optionally of one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of
+     Requires MFA and read scope. Streams every tag row of the UTC days from through to, optionally of
+    one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of
     OutboundAITagUsageExportRow.
 
     Args:
@@ -246,8 +246,8 @@ async def asyncio(
 ) -> Problem | str | None:
     """Export a day range of AI gateway usage by tag.
 
-     Requires MFA and read scope (ADR-1438). Streams every tag row of the UTC days from through to,
-    optionally of one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of
+     Requires MFA and read scope. Streams every tag row of the UTC days from through to, optionally of
+    one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of
     OutboundAITagUsageExportRow.
 
     Args:

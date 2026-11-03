@@ -16,7 +16,9 @@ import (
 // entity preview (ADR-712) is not a customer product; its routes answer like
 // unregistered ones unless an operator enables it. OpenAPIYAML stays complete
 // for SDK generation, contract diffs and the route compliance gate.
-var publicHiddenPathPrefixes = []string{"/v1/apps/{slug}/entities"}
+// gatewayd-public's trace ring answers only the operator's observer token
+// (X-Faas-Trace-Auth); customers read traces through /v1/account/traces.
+var publicHiddenPathPrefixes = []string{"/v1/apps/{slug}/entities", "/v1/traces/{trace_id}"}
 
 // Visibility names the unreleased features the served spec publishes.
 type Visibility struct {

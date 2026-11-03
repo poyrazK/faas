@@ -63,7 +63,7 @@ def sync_detailed(
     """Remove the account's key for one billing provider.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -92,7 +92,7 @@ def sync(
     """Remove the account's key for one billing provider.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -116,7 +116,7 @@ async def asyncio_detailed(
     """Remove the account's key for one billing provider.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,7 +143,7 @@ async def asyncio(
     """Remove the account's key for one billing provider.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

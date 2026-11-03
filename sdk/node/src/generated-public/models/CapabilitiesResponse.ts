@@ -18,7 +18,7 @@ export type CapabilitiesResponse = {
   plan: 'free' | 'hobby' | 'pro' | 'scale';
   capabilities: Array<CapabilityStatus>;
   /**
-   * Catalog capabilities, internal ones included, whose platform flag is off for this account (ADR-20261023115741). Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
+   * Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
    */
   hidden_capabilities?: Array<string>;
 };

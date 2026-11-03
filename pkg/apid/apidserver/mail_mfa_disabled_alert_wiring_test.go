@@ -142,7 +142,7 @@ func TestMFADisabledAlertPublicPathsAndFailureBoundaries(t *testing.T) {
 						}
 					} else {
 						for _, field := range strings.Fields(recorder.messages[0].TextBody) {
-							if strings.Contains(field, "/disable-email/confirm?token=") {
+							if strings.Contains(field, "/auth/reset/mfa?token=") {
 								u, err := url.Parse(field)
 								if err != nil {
 									t.Fatal(err)
@@ -223,6 +223,11 @@ func TestMFADisabledAlertPublicPathsAndFailureBoundaries(t *testing.T) {
 				expectedInline := 0
 				if method == "legacy_email" {
 					expectedInline = 1
+				}
+				if mode == "off" && want == http.StatusOK {
+					// With the alert outbox off, the removal mails the owner
+					// inline (bug hunt H99).
+					expectedInline++
 				}
 				if len(recorder.messages) != expectedInline {
 					t.Fatal("disabled alert sent inline or duplicated")

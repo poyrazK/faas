@@ -11,6 +11,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -24,9 +25,12 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capflags"
+	core "github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -57,6 +61,7 @@ type QueuePoller = queuePoller
 type ReadCountingStore = readCountingStore
 type RealtimeTriggerRecord = realtimeTriggerRecord
 type RecordingJobVMM = recordingJobVMM
+type RecordingSynth = recordingSynth
 type RuntimeConfigDrainReason = runtimeConfigDrainReason
 type RuntimeSnapshotVerifierFunc = runtimeSnapshotVerifierFunc
 type ScheduleStepExecutor = scheduleStepExecutor
@@ -85,6 +90,9 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const DueWalkHeadPages = dueWalkHeadPages
+const WorkAppReconcile = workAppReconcile
+const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
 
 // Package-level vars
@@ -94,6 +102,7 @@ var RouterCloseGrace = &routerCloseGrace
 
 // Package-level funcs
 var AppTaskFailureStage = appTaskFailureStage
+var DeploymentStaticEgressIP = deploymentStaticEgressIP
 var AppTaskGRPCCode = appTaskGRPCCode
 var AppTaskResultFromResponse = appTaskResultFromResponse
 var AppendEnvironmentGitOpsJobServiceBindings = appendEnvironmentGitOpsJobServiceBindings
@@ -126,6 +135,7 @@ var ExerciseServiceRecoveryRestart = exerciseServiceRecoveryRestart
 var ExerciseStandardEnvironmentRefresh = exerciseStandardEnvironmentRefresh
 var ExerciseStandardServingRestore = exerciseStandardServingRestore
 var ExerciseWorkerRecoveryRestart = exerciseWorkerRecoveryRestart
+var FinishProfileCapture = finishProfileCapture
 var ExpectTaskCohort = expectTaskCohort
 var GetMetricsBody = getMetricsBody
 var GuardOrchestrationStores = guardOrchestrationStores
@@ -139,6 +149,7 @@ var KafkaSASLMechanism = kafkaSASLMechanism
 var KindsOf = kindsOf
 var ListServiceReplicas = listServiceReplicas
 var LiveCount = liveCount
+var DeliverCronInvocations = deliverCronInvocations
 var MakeEngine = makeEngine
 var MakeLoopForDLQ = makeLoopForDLQ
 var MarshalJSON = marshalJSON
@@ -176,10 +187,14 @@ type NATSBroker = natsBroker
 // NewNATSBrokerPool is a broker pool that dials with dial instead of
 // connecting to NATS.
 func NewNATSBrokerPool(dial func(rawURL string) (*NATSBroker, error)) *natsBrokerPool {
-	return &natsBrokerPool{dial: dial, brokers: map[string]*natsBroker{}}
+	return newNATSBrokerPool(dial, time.Hour)
 }
 
-func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) { return p.forURL(rawURL) }
+// ForURL acquires rawURL's broker and keeps the reference.
+func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) {
+	broker, _, err := p.acquire(rawURL)
+	return broker, err
+}
 
 // NewRedisStreamPoller wraps an already connected client, as newRedisPoller
 // does after its ping and group creation; the egress dialer refuses the
@@ -195,6 +210,7 @@ var NewWakeCoord = newWakeCoord
 var NewWarmHintBroadcaster = newWarmHintBroadcaster
 var Node = node
 var ObservationTask = observationTask
+var OOMFailsDeployment = oomFailsDeployment
 var OutcomeFromProtocolResult = outcomeFromProtocolResult
 var ParentBaseKeyAliases = storagekey.ParentBaseAliases
 var ParseJSONHeaders = parseJSONHeaders
@@ -206,14 +222,21 @@ var PrimeObservationCandidate = primeObservationCandidate
 var PrimeObservationInstance = primeObservationInstance
 var PrimeRunPlusFrameworkReady = primeRunPlusFrameworkReady
 var PrimeStartupExtension = primeStartupExtension
+var ProfileCaptureOutcomeOf = profileCaptureOutcome
+var ProfileCaptureResultLabel = profileCaptureResultLabel
 var QuietEffective = quietEffective
 var QuietLog = quietLog
+var NewWorkPool = newWorkPool
 var QuietPauseAfterMS = quietPauseAfterMS
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
 var ReaperAbortedCanary = reaperAbortedCanary
 var RequireWorkerBlocker = requireWorkerBlocker
-var ResolvePriority = resolvePriority
+
+func ResolvePriority(snapshot []InstanceInfo, instanceID string) (string, bool) {
+	return resolvePriority(indexInstanceInfos(snapshot), instanceID)
+}
+
 var RowState = rowState
 var RunningInstance = runningInstance
 var RunningTransitions = runningTransitions
@@ -243,6 +266,14 @@ var TruncateCodeError = truncateCodeError
 
 var JobDispatchResult = jobDispatchResult
 
+// SidecarsForDeploymentOn builds a deployment's sidecar workload specs, as a
+// wake does, on an engine over store.
+func SidecarsForDeploymentOn(ctx context.Context, store state.Store, dep state.Deployment, accountID string) ([]fcvm.WorkloadSpec, error) {
+	e := &Engine{store: store, log: testLog()}
+	specs, _, err := e.sidecarsForDeployment(ctx, dep, accountID)
+	return specs, err
+}
+
 // Dispatch DB-phase tokens (ADR-20261025232118).
 func (o *WorkflowOrchestrator) SetDBPhaseSlotsForTest(slots int) {
 	o.dbPhase = newWorkflowDBPhase(slots)
@@ -255,6 +286,12 @@ func (o *WorkflowOrchestrator) ChildDBPhaseForTest(ctx context.Context) (context
 }
 func OutsideDBPhaseForTest(ctx context.Context, wait func()) { outsideDBPhase(ctx, wait) }
 
+// SetPlatformRetryDelayForTest shortens the wait before retrying a step
+// attempt Gregale refused before delivery (ADR-081 amendment 2026-11-02).
+func (o *WorkflowOrchestrator) SetPlatformRetryDelayForTest(d time.Duration) {
+	o.platformRetryDelay = d
+}
+
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot
@@ -264,6 +301,7 @@ var WaitFor = waitFor
 var WakeEngineWithEvents = wakeEngineWithEvents
 var WakeN = wakeN
 var WireRenderMetrics = wireRenderMetrics
+var WorkerQueueDepthLimit = workerQueueDepthLimit
 var WithAppTaskStage = withAppTaskStage
 var WithRequestedWakeID = withRequestedWakeID
 var WithServiceReplicaPlacementSpread = withServiceReplicaPlacementSpread
@@ -272,6 +310,7 @@ var WorkflowFinalOutput = workflowFinalOutput
 var WorkflowJSONEqual = workflowJSONEqual
 var WorkflowStepIdempotencyKey = workflowStepIdempotencyKey
 var XBaseKey = baseKey
+var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
@@ -280,12 +319,54 @@ var ReadWakeRPC = readWakeRPC
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
 func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget() }
 
+// XSpendCapSubject is the billing subject whose spend cap governs app.
+func (e *Engine) XSpendCapSubject(ctx context.Context, app state.App) string {
+	return e.spendCapSubject(ctx, app)
+}
+
 // XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
 // benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).
 // adr: 647 — the sweep admits independently routed recipients.
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XRunTriggerTick runs one trigger tick as the loop's trigger work does.
+// adr: 20261027162741 — broker triggers run on lanes of their own.
+func (l *Loop) XRunTriggerTick(ctx context.Context) { l.runTriggerTick(ctx) }
+
+// XBrokerLanesHeld is how many broker trigger lanes the account holds.
+// adr: 20261101093015 — the lanes are shared between accounts.
+func (l *Loop) XBrokerLanesHeld(accountID string) int {
+	l.brokerLanes.mu.Lock()
+	defer l.brokerLanes.mu.Unlock()
+	return l.brokerLanes.held[accountID]
+}
+
+// XBrokerTriggerLaneSlots is the node's broker trigger lanes.
+const XBrokerTriggerLaneSlots = api.BrokerTriggerDispatchSlotsPerNode
+
+// XNewTriggerRecordRateLimiter returns a record rate limiter on a fake clock.
+// adr: 20261101093015 — the per-plan record rate defers, never drops.
+func XNewTriggerRecordRateLimiter(now func() time.Time) *TriggerRecordRateLimiter {
+	return newTriggerRecordRateLimiter(now)
+}
+
+// XWaitDispatches waits for every dispatch the drain started, including those
+// that outlived their tick.
+// adr: 20261027160930 — a slow dispatch finishes after its tick returns.
+func (d *Drain) XWaitDispatches() { d.inline.Wait() }
+
+// XEventRoutingHealthDue is the sweep's routing-health throttle.
+// adr: 614 — a node reads routing health at most every 15 s.
+func (l *Loop) XEventRoutingHealthDue(now time.Time) bool { return l.eventRoutingHealthDue(now) }
+
+// XRunEventFanoutSweepAt runs the sweep with the loop's clock at now.
+// adr: 20261027125625 — held recipients route once their wait has passed.
+func (l *Loop) XRunEventFanoutSweepAt(ctx context.Context, now time.Time) {
+	l.now = func() time.Time { return now }
+	l.runEventFanoutSweep(ctx)
+}
 
 // XDispatchExplicitWake is Loop.Run's arm for app_wake and
 // runtime_config_restart deliveries.
@@ -320,6 +401,13 @@ func (r *EgressCircuitBreaker) Resolve() *EgressResolver { return &r.resolve }
 func (r *Drain) Engine() **Engine       { return &r.engine }
 func (r *Drain) Now() *func() time.Time { return &r.now }
 
+// XObserveWith attaches a metrics registry and rebuilds the account cache
+// on the drain's current clock, as the delayed-task metric test does.
+func (r *Drain) XObserveWith(ops *wire.OpsMetrics) {
+	r.ops = ops
+	r.accts = newAcctCache(r.now)
+}
+
 // Members of EgressCircuitLoop
 func (r *EgressCircuitLoop) Seen() *map[string]time.Time { return &r.seen }
 
@@ -330,12 +418,21 @@ func (r EgressUpstream) Key() string { return r.key() }
 func (r *Engine) BootBudget() *func(state.State) time.Duration { return &r.bootBudget }
 func (r *Engine) DeadNodeSettle() *storeSettle                 { return &r.deadNodeSettle }
 func (r *Engine) DefaultLocalNodeID() *string                  { return &r.defaultLocalNodeID }
-func (r *Engine) FrozenFastPath() *atomic.Bool                 { return &r.frozenFastPath }
-func (r *Engine) Log() **slog.Logger                           { return &r.log }
-func (r *Engine) NodePresence() **nodePresenceTracker          { return &r.nodePresence }
-func (r *Engine) Now() *func() time.Time                       { return &r.now }
-func (r *Engine) Ops() **wire.OpsMetrics                       { return &r.ops }
-func (r *Engine) Owners() *ownerCache                          { return &r.owners }
+func (r *Engine) FrozenCompressOne() *func(context.Context, string) string {
+	return &r.frozenCompressOne
+}
+func (r *Engine) FrozenYieldOne() *func(context.Context, string, string) bool {
+	return &r.frozenYieldOne
+}
+func (r *Engine) ParkFrozenToYield(ctx context.Context, id, reason string) bool {
+	return r.parkFrozenToYield(ctx, id, reason)
+}
+func (r *Engine) FrozenFastPath() *atomic.Bool        { return &r.frozenFastPath }
+func (r *Engine) Log() **slog.Logger                  { return &r.log }
+func (r *Engine) NodePresence() **nodePresenceTracker { return &r.nodePresence }
+func (r *Engine) Now() *func() time.Time              { return &r.now }
+func (r *Engine) Ops() **wire.OpsMetrics              { return &r.ops }
+func (r *Engine) Owners() *ownerCache                 { return &r.owners }
 func (r *Engine) ServiceReconcileSubmit() *func(context.Context, string) {
 	return &r.serviceReconcileSubmit
 }
@@ -352,7 +449,6 @@ func (r *Engine) AdmitAndDispatchWithOptions(p0 context.Context, p1 string, p2 s
 func (r *Engine) AppMustPark(p0 context.Context, p1 state.App, p2 state.Account) bool {
 	return r.appMustPark(p0, p1, p2)
 }
-func (r *Engine) AppMutex(p0 string) *sync.Mutex { return r.appMutex(p0) }
 func (r *Engine) ApplyLiveCapacityMB(p0 context.Context, p1 string) int64 {
 	return r.applyLiveCapacityMB(p0, p1)
 }
@@ -489,9 +585,14 @@ func (r *Loop) ProcessFireNowRequest(p0 context.Context, p1 state.FireNowRequest
 func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time) error {
 	return r.recoverPrimeCandidate(p0, p1, p2)
 }
-func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
-func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
-func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
+func (r *Loop) RunInstanceStats(p0 context.Context)     { r.runInstanceStats(p0) }
+func (r *Loop) RunPrimeRecovery(p0 context.Context)     { r.runPrimeRecovery(p0) }
+func (r *Loop) RunReaper(p0 context.Context)            { r.runReaper(p0) }
+func (r *Loop) RunCronTick(p0 context.Context)          { r.runCronTick(p0) }
+func (r *Loop) RunScheduledJobsTick(p0 context.Context) { r.runScheduledJobsTick(p0) }
+
+// DrainEngine is the engine a drain wakes apps through.
+func DrainEngine(d *Drain) *Engine { return d.engine }
 func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
 	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
 }
@@ -518,11 +619,12 @@ func (r *MemLeaser) Now() *func() time.Time { return &r.now }
 func (r *NodeAwareFlowCounter) Now() *func() time.Time { return &r.now }
 
 // Members of NodeLedger
-func (r *NodeLedger) Entries() *map[string]*reservation      { return &r.entries }
-func (r *NodeLedger) Now() *func() time.Time                 { return &r.now }
-func (r *NodeLedger) PerApp() *map[string]int                { return &r.perApp }
-func (r *NodeLedger) PerAppEnvironment() *map[string]int     { return &r.perAppEnvironment }
-func (r *NodeLedger) Resident() *map[string]*nodeReservation { return &r.resident }
+func (r *NodeLedger) CPUPressured() *func(string, time.Time) bool { return &r.cpuPressured }
+func (r *NodeLedger) Entries() *map[string]*reservation           { return &r.entries }
+func (r *NodeLedger) Now() *func() time.Time                      { return &r.now }
+func (r *NodeLedger) PerApp() *map[string]int                     { return &r.perApp }
+func (r *NodeLedger) PerAppEnvironment() *map[string]int          { return &r.perAppEnvironment }
+func (r *NodeLedger) Resident() *map[string]*nodeReservation      { return &r.resident }
 func (r *NodeLedger) CeilingForNode_locked(p0 string, p1 api.Limits) int {
 	return r.ceilingForNode_locked(p0, p1)
 }
@@ -564,6 +666,25 @@ func (r *composedWaveNativeVMM) Identity() *runtimeadmission.Identity { return &
 // Members of drainSynth
 func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
+func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
+
+// AppStatus makes the fake gateway answer as if the app's own code returned
+// that status (ADR-20261031100001).
+func (r *drainSynth) AppStatus() *atomic.Int64 { return &r.appStatus }
+
+// XHTTPGatewaySynth is the drain's real gateway client pointed at base.
+func XHTTPGatewaySynth(client *http.Client, base string) interface {
+	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)
+} {
+	return &httpGatewaySynth{client: client, basePrefix: base}
+}
+
+// XWorkflowGatewaySynth is the gateway transport workflow steps use, with a
+// test token minter: workflow dispatches always carry an internal token.
+func XWorkflowGatewaySynth(client *http.Client, base string) WorkflowStepExecutor {
+	return &httpGatewaySynth{client: client, basePrefix: base,
+		mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
+}
 
 // Members of fakeNotifier
 func (r *fakeNotifier) Events() *[]notifyEvent { return &r.events }
@@ -590,6 +711,13 @@ func (h *heartbeatFakeDialer) SetPingResult(target string, bases []BaseGeneratio
 
 var EvaluateNodeReadiness = evaluateNodeReadiness
 
+// LiftErr is vmmclient's gRPC error lift (ADR-20261022184531 step 3 adds the
+// wake_stage marker).
+var LiftErr = liftErr
+
+// NewVMMWakeNotStarted is the error liftErr returns for a pre-start failure.
+func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{p} }
+
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
@@ -610,9 +738,10 @@ func (r *fakeVMM) WarmSnapshotHook() *func() { return &r.warmSnapshotHook }
 func (r *fakeVMM) WarmSnapshots() *int       { return &r.warmSnapshots }
 
 // Members of fireNowHarness
-func (r *fireNowHarness) Loop() **Loop            { return &r.loop }
-func (r *fireNowHarness) Store() *state.Store     { return &r.store }
-func (r *fireNowHarness) Synth() **recordingSynth { return &r.synth }
+func (r *fireNowHarness) DeliverInvocations(p0 context.Context) { r.deliverInvocations(p0) }
+func (r *fireNowHarness) Loop() **Loop                          { return &r.loop }
+func (r *fireNowHarness) Store() *state.Store                   { return &r.store }
+func (r *fireNowHarness) Synth() **recordingSynth               { return &r.synth }
 
 // Members of frozenFakeVMM
 func (r *frozenFakeVMM) Thaws() *int { return &r.thaws }
@@ -870,4 +999,224 @@ func MarkPreWakeForTest(ctx context.Context) {
 	markPreWake(ctx, preWakeLeader)
 }
 
+// WithAgentsAllowedForTest sets the agents capability decision a standalone
+// orchestrator holds runs with an agent step by.
+func (o *WorkflowOrchestrator) WithAgentsAllowedForTest(allowed func(ctx context.Context, appID string) bool) *WorkflowOrchestrator {
+	o.agentsAllowed = allowed
+	return o
+}
+
+// WithCapabilitiesForTest gives a test loop an engine over store that
+// decides capability flags with d.
+func (l *Loop) WithCapabilitiesForTest(store state.Store, d *capflags.Decider) *Loop {
+	l.engine = &Engine{store: store, capabilities: d}
+	return l
+}
+
 var LogVMMBootFailure = logVMMBootFailure
+var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
+
+// NewCronPlanGate exposes the cron plan gate's admit decision.
+func NewCronPlanGate(store state.AppOwnerReader) func(context.Context, state.App, state.Cron) bool {
+	return newCronPlanGate(store).admit
+}
+
+var CronDue = cronDue
+
+// XRunCronHistoryRetention runs the hourly cron history sweep once.
+func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }
+
+// XEventJobContinue is the recovery and backfill sweeps' failure decision.
+// adr: 20261028095548 — a job whose own work failed was backed off, so the
+// sweep goes on to the next one.
+func (l *Loop) XEventJobContinue(work string, err error) bool { return l.eventJobContinue(work, err) }
+
+// XKeepEventClaims runs the sweep's claim keeper with a test interval.
+// adr: 20261028131500 — a sweep renews the claims it still holds.
+func (l *Loop) XKeepEventClaims(ctx context.Context, every time.Duration, renew func(context.Context, time.Time) error) func() {
+	l.eventClaimRenewalEvery = every
+	return l.keepEventClaims(ctx, renew)
+}
+
+// XDispatchEventFanoutSweep submits a fanout sweep as the loop's wakes and
+// safety tick do.
+// adr: 20261029012000 — a pass that used its whole budget runs the next.
+func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventFanoutSweep(ctx) }
+
+// XRepeatFullBatches is invocation retention's batch repeater.
+// adr: 20261029012000 — a step repeats while its batches come back full.
+var XRepeatFullBatches = repeatFullBatches
+
+// XTriggerAppConsumes is the broker trigger's may-take-records check.
+var XTriggerAppConsumes = triggerAppConsumes
+
+// adr: 20261029190000 — event deliveries retry by their app's policy or the
+// event delivery backoff.
+func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation) time.Duration {
+	return d.invocationRetryDelay(ctx, inv)
+}
+
+func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
+	return d.invocationAttemptBudget(ctx, inv)
+}
+
+// XCronDueOccurrences is the catch-up walk for schedule-policy and command crons.
+var XCronDueOccurrences = cronDueOccurrences
+
+// XHoldFinancialAdmission makes the drain's budget admission refuse every
+// app with err, as a held strict compute budget does.
+func (d *Drain) XHoldFinancialAdmission(err error) {
+	d.financialAdmission = func(context.Context, state.Store, state.App, string, string, time.Time) error { return err }
+}
+
+// CustomerCapacityProblem exposes the customer restatement of a node-budget
+// refusal, built from a refusal carrying the given blockers.
+func CustomerCapacityProblem(detail string, blockers ...api.WorkerAdmissionBlocker) *api.Problem {
+	return customerCapacityProblem(explainAdmission(api.ErrCapacity(detail), blockers...))
+}
+
+// NodeCapacityProblem and AdmissionBlockers reach the durable guard's refusal
+// mapping (ADR 20261031190030).
+func (r *Engine) NodeCapacityProblem(err error) error { return r.nodeCapacityProblem(err) }
+func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
+	return admissionBlockers(err)
+}
+
+// ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
+// memory report (ADR 20261101091815).
+func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
+	r.reportNodeMemory(ctx, r.store.(state.NodeMemoryReportStore), now)
+}
+func (r *Engine) NodeFrozenCount(nodeID string) int { return r.nodeFrozenCount(nodeID) }
+func (r *Engine) UnreportedNodeUsedMB(node state.ComputeNode, bookedMB int64) int64 {
+	return r.unreportedNodeUsedMB(node, bookedMB)
+}
+
+// MarkRestartInFlight records appID as restarting, as restartApp does, until
+// the returned func runs.
+func (e *Engine) MarkRestartInFlight(appID string) func() {
+	e.restartMu.Lock()
+	defer e.restartMu.Unlock()
+	if e.restartInFlight == nil {
+		e.restartInFlight = make(map[string]*restartCall)
+	}
+	call := &restartCall{done: make(chan struct{})}
+	e.restartInFlight[appID] = call
+	return func() {
+		e.restartMu.Lock()
+		defer e.restartMu.Unlock()
+		delete(e.restartInFlight, appID)
+		close(call.done)
+	}
+}
+
+// WithCronSweepSlice sets how long one pass of the cron sweep may dispatch.
+func (r *Loop) WithCronSweepSlice(d time.Duration) *Loop { r.cronSweepSlice = d; return r }
+
+// RunCronSweep runs one continuation pass of the minute's cron sweep.
+func (r *Loop) RunCronSweep(ctx context.Context) { r.runCronSweep(ctx) }
+
+// TakeCronSweepResume reports, and consumes, a pending request to continue
+// the cron sweep.
+func (r *Loop) TakeCronSweepResume() bool {
+	select {
+	case <-r.cronResume:
+		return true
+	default:
+		return false
+	}
+}
+
+// XFireNowRefusal is the requester-facing reason for a refused manual run.
+var XFireNowRefusal = fireNowRefusal
+
+// CoalesceInvocationDue exposes the drain's notification burst collapse.
+var CoalesceInvocationDue = coalesceInvocationDue
+
+// DrainLeaseRecoveryDue replays nows through one drain lease recovery clock.
+func DrainLeaseRecoveryDue(every time.Duration, nows ...time.Time) []bool {
+	r := drainLeaseRecovery{every: every}
+	due := make([]bool, len(nows))
+	for i, now := range nows {
+		due[i] = r.due(now)
+	}
+	return due
+}
+
+// ReconcileFinancialBudgetStopsForTick runs the reaper tick's strict compute
+// sweep over apps: one bulk read, then each app (ADR 20261102160622).
+func (r *Engine) ReconcileFinancialBudgetStopsForTick(ctx context.Context, apps []state.App) error {
+	pre := r.loadStrictComputePreload(ctx, apps)
+	if pre == nil {
+		return errors.New("the store cannot preload the strict compute sweep")
+	}
+	var errs []error
+	for _, app := range apps {
+		errs = append(errs, r.reconcileFinancialBudgetStops(ctx, app.ID, pre))
+	}
+	return errors.Join(errs...)
+}
+
+// ReconcileFinancialBudgetStopsWithPreload runs one app's sweep with a given
+// tick preload.
+func (r *Engine) ReconcileFinancialBudgetStopsWithPreload(ctx context.Context, appID string, rows []state.Instance, leases map[string]financial.ComputeLease) error {
+	return r.reconcileFinancialBudgetStops(ctx, appID, &strictComputePreload{rows: map[string][]state.Instance{appID: rows}, leases: leases})
+}
+
+// RecordRunningReasonObservations runs the reaper's "why is it running"
+// recorder (ADR 20261102205122).
+func (l *Loop) RecordRunningReasonObservations(ctx context.Context, apps []state.App, snapshot []InstanceInfo, now time.Time) {
+	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
+}
+
+// StrictComputeSweepIdle reports whether the reaper tick's strict compute
+// sweep skips app (ADR 20261102205122).
+func (r *Engine) StrictComputeSweepIdle(ctx context.Context, apps []state.App, app state.App) bool {
+	return r.loadStrictComputePreload(ctx, apps).idle(app, r.financialBudgetNow())
+}
+
+// LockApp, TryLockApp and AppLocks reach the per-app serialisation locks
+// (ADR 20261102160622).
+func (r *Engine) LockApp(appID string) func() { return r.lockApp(appID) }
+func (r *Engine) TryLockApp(appID string) (func(), bool) {
+	return r.tryLockApp(appID)
+}
+func (r *Engine) AppLocks() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.appMu)
+}
+
+// OpenWorkflowDueGate is one dispatch tick's workflow due gate over read.
+func OpenWorkflowDueGate(read state.WorkflowRunDueReader) func(context.Context) bool {
+	g := &workflowDueGate{read: read}
+	return g.open
+}
+
+// DataRepairRecoveryDue replays nows through one rehearsal coordinator's
+// recovery spacing; pending keeps a claim pending throughout.
+func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
+	c := &DataRepairRehearsalCoordinator{pendingClaims: map[string]core.RehearsalFrame{}}
+	if pending {
+		c.pendingClaims["claim"] = core.RehearsalFrame{}
+	}
+	due := make([]bool, len(nows))
+	for i, now := range nows {
+		due[i] = c.recoveryDue(now)
+	}
+	return due
+}
+
+// NextLogFollowPoll exposes the follow stream's discovery backoff (O20).
+var NextLogFollowPoll = nextLogFollowPoll
+
+// Bounds of the follow stream's discovery poll.
+const (
+	LogFollowPollMin = logFollowPollMin
+	LogFollowPollMax = logFollowPollMax
+)
+
+// FailInterruptedFireNowRequests runs the interrupted manual-run sweep once.
+func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
+	r.failInterruptedFireNowRequests(ctx)
+}

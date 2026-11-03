@@ -1,6 +1,7 @@
 package livekeys_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -34,7 +35,7 @@ func open(t *testing.T) *pgxpool.Pool {
 			access text NOT NULL DEFAULT 'read_write', provider_identity_id text, state text NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(), deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql"} {
+	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql", "20261028161544217_managed_postgres_live_signatures.sql", "20261028161546331_managed_postgres_live_signatures_validate.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -384,14 +385,105 @@ func TestStoreResealSwapsOnlyTheSealItRead(t *testing.T) {
 	if rest, err := store.SealedLoginsAfter(ctx, logins[0].ID, 10); err != nil || len(rest) != 0 {
 		t.Fatalf("login page after the last = %+v, %v", rest, err)
 	}
-	if swapped, err := store.ResealLogin(ctx, logins[0], []byte("bound-login")); err != nil || !swapped {
-		t.Fatalf("re-seal login = %v, %v", swapped, err)
+	stale := logins[0]
+	stale.Blob = []byte("another-login")
+	if dropped, err := store.DropLegacyLogin(ctx, stale); err != nil || dropped {
+		t.Fatalf("drop login from a stale read = %v, %v; want it refused", dropped, err)
 	}
-	if swapped, err := store.ResealLogin(ctx, logins[0], []byte("bound-again")); err != nil || swapped {
-		t.Fatalf("re-seal login from a stale read = %v, %v; want it refused", swapped, err)
+	if missing, err := store.DatabasesWithoutLogin(ctx, 10); err != nil || len(missing) != 0 {
+		t.Fatalf("databases without a login before the drop = %+v, %v", missing, err)
+	}
+	if dropped, err := store.DropLegacyLogin(ctx, logins[0]); err != nil || !dropped {
+		t.Fatalf("drop legacy login = %v, %v", dropped, err)
+	}
+	// The database keeps its keys and has no login: apid issues one.
+	missing, err := store.DatabasesWithoutLogin(ctx, 10)
+	if err != nil || len(missing) != 1 || missing[0].DatabaseID != dbID || missing[0].AccountID != account {
+		t.Fatalf("databases without a login = %+v, %v", missing, err)
+	}
+	issued, err := store.IssueMissingLogin(ctx, account, dbID, func(context.Context) (*livekeys.Login, error) {
+		return &livekeys.Login{Sealed: []byte("bound-login"), Recipient: recipient, Identity: "gregale_live_x", Slot: "slot"}, nil
+	})
+	if err != nil || !issued {
+		t.Fatalf("issue the missing login = %v, %v", issued, err)
+	}
+	again, err := store.IssueMissingLogin(ctx, account, dbID, func(context.Context) (*livekeys.Login, error) {
+		t.Fatal("a database that has a login was issued another")
+		return nil, nil
+	})
+	if err != nil || again {
+		t.Fatalf("issue for a database that has a login = %v, %v", again, err)
 	}
 	dbs, err := store.LiveDatabases(ctx, []string{"native-a"})
 	if err != nil || len(dbs) != 1 || string(dbs[0].Sealed) != "bound-login" {
-		t.Fatalf("discovered after re-seal = %+v, %v", dbs, err)
+		t.Fatalf("discovered after the new login = %+v, %v", dbs, err)
+	}
+}
+
+// A key or login stores its writer signature beside the ciphertext, and the
+// readers get it back (ADR 20261028161502). A re-seal changes the
+// ciphertext, so it clears the key's signature; the backfill signs an
+// unsigned row only while the row still holds what it read.
+func TestStoreKeepsWriterSignatures(t *testing.T) {
+	pool := open(t)
+	store := livekeys.New(pool)
+	ctx := context.Background()
+	sig := func(b byte) []byte { return bytes.Repeat([]byte{b}, 64) }
+	signed := key("aaaaaaaaaaaaaaaa")
+	signed.Signature = sig(1)
+	login := &livekeys.Login{Sealed: []byte("sealed-login"), Recipient: recipient, Identity: "gregale_live_ab12", Slot: "gregale_live_db", Signature: sig(2)}
+	if err := store.Enable(ctx, account, dbID, signed, func(context.Context) (*livekeys.Login, error) { return login, nil }); err != nil {
+		t.Fatal(err)
+	}
+	ring, err := store.Ring(ctx, dbID)
+	if err != nil || len(ring) != 1 || !bytes.Equal(ring[0].Signature, sig(1)) {
+		t.Fatalf("ring = %+v, %v; want the key's signature", ring, err)
+	}
+	dbs, err := store.LiveDatabases(ctx, []string{"native-a"})
+	if err != nil || len(dbs) != 1 || !bytes.Equal(dbs[0].Signature, sig(2)) {
+		t.Fatalf("discovered = %+v, %v; want the login's signature", dbs, err)
+	}
+
+	keys, err := store.SealedKeysAfter(ctx, "", 10)
+	if err != nil || len(keys) != 1 || !bytes.Equal(keys[0].Signature, sig(1)) {
+		t.Fatalf("key page = %+v, %v", keys, err)
+	}
+	if swapped, err := store.ResealKey(ctx, keys[0], []byte("bound-a")); err != nil || !swapped {
+		t.Fatalf("re-seal = %v, %v", swapped, err)
+	}
+	keys, err = store.SealedKeysAfter(ctx, "", 10)
+	if err != nil || len(keys) != 1 || len(keys[0].Signature) != 0 {
+		t.Fatalf("key after re-seal = %+v, %v; want its signature cleared", keys, err)
+	}
+	stale := keys[0]
+	stale.Blob = []byte("other")
+	if ok, err := store.SignKey(ctx, stale, sig(3)); err != nil || ok {
+		t.Fatalf("sign from a stale read = %v, %v; want it refused", ok, err)
+	}
+	if ok, err := store.SignKey(ctx, keys[0], sig(3)); err != nil || !ok {
+		t.Fatalf("sign the unsigned key = %v, %v", ok, err)
+	}
+	if ok, err := store.SignKey(ctx, keys[0], sig(4)); err != nil || ok {
+		t.Fatalf("sign a signed key = %v, %v; want it refused", ok, err)
+	}
+	logins, err := store.SealedLoginsAfter(ctx, "", 10)
+	if err != nil || len(logins) != 1 || !bytes.Equal(logins[0].Signature, sig(2)) {
+		t.Fatalf("login page = %+v, %v", logins, err)
+	}
+	staleLogin := logins[0]
+	staleLogin.Signature = sig(9)
+	if ok, err := store.SignLogin(ctx, staleLogin, sig(5)); err != nil || ok {
+		t.Fatalf("re-sign from a stale signature = %v, %v; want it refused", ok, err)
+	}
+	// A key rotation signs a signed row again, compared on the signature read.
+	if ok, err := store.SignLogin(ctx, logins[0], sig(5)); err != nil || !ok {
+		t.Fatalf("re-sign the login = %v, %v", ok, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_live_logins SET sealed_login_sig=NULL`); err != nil {
+		t.Fatal(err)
+	}
+	logins[0].Signature = nil
+	if ok, err := store.SignLogin(ctx, logins[0], sig(6)); err != nil || !ok {
+		t.Fatalf("sign the unsigned login = %v, %v", ok, err)
 	}
 }

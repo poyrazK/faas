@@ -14,7 +14,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"log/slog"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,9 +35,12 @@ type Host interface {
 	EmitAudit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	// Ops is nil when apid runs without operational metrics.
 	Ops() *wire.OpsMetrics
-	// SecretRecipient seals push targets and provider configs; nil when the
-	// host secrets are not installed.
-	SecretRecipient() *age.X25519Recipient
+	// SecretRecipients seal endpoint credentials, push targets and provider
+	// configs, account seal-domain values (ADR 20261022111812): the domain
+	// and the fleet recipient while the domain rolls out; an error when no
+	// recipient is installed. HostIdentitiesForUnseal opens them, the domain
+	// first.
+	SecretRecipients() ([]*age.X25519Recipient, error)
 	HostIdentitiesForUnseal(ctx context.Context) []*age.X25519Identity
 	// ResolveAndCheckEgress applies the tenant egress policy to a callback URL.
 	ResolveAndCheckEgress(ctx context.Context, rawURL string) *api.Problem
@@ -50,8 +52,7 @@ type Host interface {
 type Service struct {
 	AccessPreviewEnabled  bool
 	TicketsPreviewEnabled bool
-	ClaimWaitOnce         sync.Once
-	ClaimWaitSlots        chan struct{}
+	claimWaiters          claimWaiters
 	AuthLimiter           *middleware.Limiter
 	Host                  Host
 
@@ -98,6 +99,9 @@ type Service struct {
 	RealtimeReleased func(ctx context.Context, accountID, appID string) bool
 
 	publishIdempotencySweep atomic.Uint64
+	// writeBudget is each account's realtime write rate on control-plane
+	// Postgres (RealtimeLimits.RetainedWritesPerSecond).
+	writeBudget writeBudget
 }
 
 // Registry is the registry the metrics were registered on, so apid can tell
@@ -117,6 +121,9 @@ type publishCaptureWriter struct {
 	http.ResponseWriter
 	status int
 	body   bytes.Buffer
+	// unwritten marks a refusal that wrote nothing, such as the account's
+	// realtime write rate: its key is released so a retry runs again.
+	unwritten bool
 }
 
 func (c *publishCaptureWriter) WriteHeader(status int) {

@@ -8,6 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -51,6 +52,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	if err := outbox.ConfigureDeploymentFailed(ctx, getenv); err != nil {
 		return err
 	}
+	if err := outbox.ConfigureAgentRunDelivered(ctx, getenv); err != nil {
+		return err
+	}
 	if err := outbox.ConfigureSubscriptionEnded(ctx, getenv); err != nil {
 		return err
 	}
@@ -79,6 +83,15 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 		return err
 	}
 	if err := outbox.ConfigureMFARecoveryAlert(ctx, getenv); err != nil {
+		return err
+	}
+	if err := outbox.ConfigureManagedPostgresCap(ctx, getenv); err != nil {
+		return err
+	}
+	if err := outbox.ConfigureManagedPostgresRestoreSlot(ctx, getenv); err != nil {
+		return err
+	}
+	if err := outbox.ConfigureManagedPostgresPlanExcess(ctx, getenv); err != nil {
 		return err
 	}
 	if outbox != nil {
@@ -128,6 +141,58 @@ func (s *server) sendInlineDeletionNotice(ctx context.Context, account state.Acc
 	if err := s.mailer.Send(ctx, Message{To: []string{account.Email}, Subject: subject, TextBody: body}); err != nil {
 		s.log.Warn("apid: pending deletion email send failed", "account", account.ID, "err", err)
 	}
+}
+
+// noticeManagedPostgresCap queues the compute cap email for one threshold
+// (ADR-20261025094915 decision 8). A personal subject is its account; an
+// organization subject has no account row and gets no email yet. With the
+// outbox off there is nothing to queue and nothing to retry.
+func (s *server) noticeManagedPostgresCap(ctx context.Context, event managedpostgres.CapEvent) error {
+	if s.deletionMailOutbox == nil {
+		return nil
+	}
+	err := s.deletionMailOutbox.NoticeManagedPostgresCap(ctx, event.SubjectID, mailoutbox.ManagedPostgresCapEvent{
+		SubjectID: event.SubjectID, PeriodStart: event.PeriodStart, Threshold: event.Threshold, ReachedAt: event.ReachedAt,
+		Used: event.Used, Allowance: event.Allowance, Ceiling: event.Ceiling, Overage: event.Overage,
+	})
+	if errors.Is(err, internalmail.ErrDisabled) {
+		return nil
+	}
+	return err
+}
+
+// noticeManagedPostgresRestoreSlot queues the restore slot email for one
+// recorded notice (ADR-20261031123259) to the account that restored the copy.
+// With the outbox off there is nothing to queue and nothing to retry.
+func (s *server) noticeManagedPostgresRestoreSlot(ctx context.Context, notice managedpostgres.RestoreSlotNotice) error {
+	if s.deletionMailOutbox == nil {
+		return nil
+	}
+	err := s.deletionMailOutbox.NoticeManagedPostgresRestoreSlot(ctx, notice.AccountID, mailoutbox.ManagedPostgresRestoreSlotNotice{
+		DatabaseID: notice.DatabaseID, DatabaseName: notice.DatabaseName, Kind: notice.Kind, SlotUntil: notice.SlotUntil,
+		RestorableUntil: notice.RestorableUntil, RecordedAt: notice.RecordedAt,
+	})
+	if errors.Is(err, internalmail.ErrDisabled) {
+		return nil
+	}
+	return err
+}
+
+// noticeManagedPostgresPlanExcess queues the email for one database the cap
+// sweep suspended past its plan (ADR-20261102125208) to the account that owns
+// it. With the outbox off there is nothing to queue and nothing to retry.
+func (s *server) noticeManagedPostgresPlanExcess(ctx context.Context, notice managedpostgres.PlanExcessNotice) error {
+	if s.deletionMailOutbox == nil {
+		return nil
+	}
+	err := s.deletionMailOutbox.NoticeManagedPostgresPlanExcess(ctx, notice.AccountID, mailoutbox.ManagedPostgresPlanExcessNotice{
+		DatabaseID: notice.DatabaseID, DatabaseName: notice.DatabaseName, ServiceClass: string(notice.ServiceClass),
+		Reason: notice.Reason, RecordedAt: notice.RecordedAt,
+	})
+	if errors.Is(err, internalmail.ErrDisabled) {
+		return nil
+	}
+	return err
 }
 
 func (s *server) runMailOutbox(ctx context.Context) {

@@ -76,7 +76,7 @@ func cmdWakeTimeline(args []string) int {
 	}
 	pos, mergeErr := mergeAppFlag(pos, *app, 2)
 	if mergeErr != nil || len(pos) < 1 || len(pos) > 2 {
-		PrintUsage(os.Stderr, "usage: gregale wake-timeline [<slug>] <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose]", "wake-timeline")
+		PrintUsage(os.Stderr, "usage: gregale app wake-timeline [<slug>] <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose]", "wake-timeline")
 		return 1
 	}
 	if *limit < 1 || *limit > wakeTimelineMaxLimit {
@@ -97,7 +97,7 @@ func cmdWakeTimeline(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale wake-timeline [<slug>] <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose] (or run `gregale link <project-slug>`)", "wake-timeline")
+				PrintUsage(os.Stderr, "usage: gregale app wake-timeline [<slug>] <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose] (or run `gregale link <project-slug>`)", "wake-timeline")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)

@@ -124,11 +124,11 @@ def sync_detailed(
 ) -> Response[LogEventsResponse | Problem]:
     """Search an app's log events.
 
-     ADR-20261018083536 internal preview, enabled by
+     Internal preview, enabled by
     `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
     Requires apps:read or admin.
 
-    Returns one newest-first page of the app's ADR-213 log ledger. Filters
+    Returns one newest-first page of the app's log ledger. Filters
     combine with AND. A text search (`q`) covers at most 24 hours and
     answers 400 `log_search_window_too_large` beyond that; every search
     runs under a 5 second statement timeout and answers 503
@@ -205,11 +205,11 @@ def sync(
 ) -> LogEventsResponse | Problem | None:
     """Search an app's log events.
 
-     ADR-20261018083536 internal preview, enabled by
+     Internal preview, enabled by
     `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
     Requires apps:read or admin.
 
-    Returns one newest-first page of the app's ADR-213 log ledger. Filters
+    Returns one newest-first page of the app's log ledger. Filters
     combine with AND. A text search (`q`) covers at most 24 hours and
     answers 400 `log_search_window_too_large` beyond that; every search
     runs under a 5 second statement timeout and answers 503
@@ -281,11 +281,11 @@ async def asyncio_detailed(
 ) -> Response[LogEventsResponse | Problem]:
     """Search an app's log events.
 
-     ADR-20261018083536 internal preview, enabled by
+     Internal preview, enabled by
     `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
     Requires apps:read or admin.
 
-    Returns one newest-first page of the app's ADR-213 log ledger. Filters
+    Returns one newest-first page of the app's log ledger. Filters
     combine with AND. A text search (`q`) covers at most 24 hours and
     answers 400 `log_search_window_too_large` beyond that; every search
     runs under a 5 second statement timeout and answers 503
@@ -360,11 +360,11 @@ async def asyncio(
 ) -> LogEventsResponse | Problem | None:
     """Search an app's log events.
 
-     ADR-20261018083536 internal preview, enabled by
+     Internal preview, enabled by
     `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
     Requires apps:read or admin.
 
-    Returns one newest-first page of the app's ADR-213 log ledger. Filters
+    Returns one newest-first page of the app's log ledger. Filters
     combine with AND. A text search (`q`) covers at most 24 hours and
     answers 400 `log_search_window_too_large` beyond that; every search
     runs under a 5 second statement timeout and answers 503

@@ -31,19 +31,25 @@ func loadServiceRoutingSnapshot(ctx context.Context, source state.ServicePolicyR
 			return routing, nil
 		}
 	}
+	// The call stays in the caller's environment: production reaches only the
+	// target's production lane and a stage only its own deployment.
+	environment, err := reader.ServiceCallerEnvironment(ctx, policy.Caller.AppID, inputs.CallerDeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	routing.CallerEnvironment = environment
 	if inputs.OverridePresent {
 		routing.OverrideDeploymentID = inputs.OverrideDeploymentID
 		if inputs.OverrideValid {
 			routing.OverrideChecked = true
-			var err error
-			routing.OverrideAllowed, err = reader.ServiceDeploymentOverrideAllowed(ctx, policy.Target.AppID, inputs.OverrideDeploymentID)
+			routing.OverrideAllowed, err = reader.ServiceDeploymentOverrideAllowed(ctx, policy.Target.AppID, inputs.OverrideDeploymentID, environment)
 			if err != nil {
 				return nil, err
 			}
 		}
 		return routing, nil
 	}
-	weights, err := reader.ServiceDeploymentWeights(ctx, policy.Target.AppID)
+	weights, err := reader.ServiceDeploymentWeights(ctx, policy.Target.AppID, environment)
 	if err != nil {
 		return nil, err
 	}

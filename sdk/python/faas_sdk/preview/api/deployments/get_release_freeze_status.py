@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseFreezeStatus]:
-    """Whether production releases of an app are frozen now (ADR-20261019071733).
+    """Whether production releases of an app are frozen now.
 
      Lists the freezes that would refuse a production release of the app now, and the freeze that starts
     next within a week.
@@ -102,7 +102,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseFreezeStatus | None:
-    """Whether production releases of an app are frozen now (ADR-20261019071733).
+    """Whether production releases of an app are frozen now.
 
      Lists the freezes that would refuse a production release of the app now, and the freeze that starts
     next within a week.
@@ -129,7 +129,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseFreezeStatus]:
-    """Whether production releases of an app are frozen now (ADR-20261019071733).
+    """Whether production releases of an app are frozen now.
 
      Lists the freezes that would refuse a production release of the app now, and the freeze that starts
     next within a week.
@@ -159,7 +159,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseFreezeStatus | None:
-    """Whether production releases of an app are frozen now (ADR-20261019071733).
+    """Whether production releases of an app are frozen now.
 
      Lists the freezes that would refuse a production release of the app now, and the freeze that starts
     next within a week.

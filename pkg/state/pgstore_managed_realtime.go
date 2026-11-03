@@ -18,14 +18,9 @@ func (s *PgStore) CreateManagedRealtimeEndpointIfUnderQuota(ctx context.Context,
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 
-	var accountID string
-	if err := tx.QueryRow(ctx, `
-		select account_id from apps where id = $1 and status <> 'deleted' for update
-	`, in.AppID).Scan(&accountID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ManagedRealtimeEndpoint{}, ErrNotFound
-		}
-		return ManagedRealtimeEndpoint{}, fmt.Errorf("state: lock app for realtime endpoint: %w", err)
+	subject, accountID, err := lockQuotaSubjectTx(ctx, tx, in.AppID)
+	if err != nil {
+		return ManagedRealtimeEndpoint{}, err
 	}
 	if accountID != in.AccountID {
 		return ManagedRealtimeEndpoint{}, ErrNotFound
@@ -41,8 +36,9 @@ func (s *PgStore) CreateManagedRealtimeEndpointIfUnderQuota(ctx context.Context,
 	if err := tx.QueryRow(ctx, `
 		select count(*) from managed_realtime_endpoints e
 		join apps a on a.id = e.app_id
-		where a.account_id = $1 and a.status <> 'deleted'
-	`, accountID).Scan(&accountCount); err != nil {
+		left join orgs o on o.id = a.org_id
+		where `+quotaSubjectSQL+` = $1::uuid and a.status <> 'deleted'
+	`, subject).Scan(&accountCount); err != nil {
 		return ManagedRealtimeEndpoint{}, fmt.Errorf("state: count realtime endpoints for account: %w", err)
 	}
 	if accountCount >= perAccount {

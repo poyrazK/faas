@@ -8,18 +8,18 @@ app never wakes for it.
 
 ```sh
 # Redirect an old path, permanently.
-gregale edge-rules create --app my-api --kind redirect \
+gregale edge rule create --app my-api --kind redirect \
   --match-host api.example.com --match-path /docs --redirect-status 308 --redirect-to https://docs.example.com/
 
 # Allow at most 5 searches a second, with bursts of 10.
-gregale edge-rules create --app my-api --kind throttle \
+gregale edge rule create --app my-api --kind throttle \
   --match-host @app --match-path '/search/**' \
   --throttle-requests-per-second 5 --throttle-burst 10
 
-gregale edge-rules list --app my-api
+gregale edge rule list --app my-api
 ```
 
-Every flag is listed under [`gregale edge-rules create`](cli#edge-rules-create).
+Every flag is listed under [`gregale edge rule create`](cli#edge-rules-create).
 The API is `POST /v1/apps/{slug}/edge-rules`, `GET`, `PATCH` and `DELETE
 /v1/edge-rules/{id}`.
 
@@ -31,15 +31,49 @@ A rule applies to a request when every selector it sets matches.
 |---|---|
 | `match_host` (required) | An exact host (`api.example.com`), `*` for any host, a glob such as `*.example.com` (subdomains, not the apex), or `@app` for every host the rule's app serves, including custom domains you add later. Hosts compare case-insensitively. |
 | `match_path` | A path glob; see below. Defaults to `/`, which matches only the root path. |
-| `match_methods` | HTTP methods. Empty matches any method. |
+| `match_methods` | HTTP methods: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `CONNECT`, `TRACE`, in any letter case. Empty matches any method; `*` is rejected, so leave the field out instead. |
 | `match_headers` | Up to 10 request headers that must be present with an exact value. Names compare case-insensitively; any value of a repeated header can match. |
 | `match` | An optional condition over more request fields, ANDed with the selectors above. |
 
+Your app is always served at its own `<slug>.gregale.dev` address, and at any
+companion hostnames, as well as at its custom domains. A rule that protects
+the app (`jwt`, `ip`, `geo`, `waf`, `challenge` and the other gates) should
+use `@app`: one that names a single host leaves the app's other hosts open,
+and `gregale edge rule create` warns when it does.
+
+In an organization, members who can read an app read its rules, history,
+events and traces; owners and admins create, change and delete them, roll
+them back and switch attack mode, whoever created the app. Lists and CORS
+presets stay with the account that holds the app's rules; an organization
+app's dashboard page manages the lists its rules use.
+
 A rule only ever applies to hosts your account owns: another account's rule
 never runs on your traffic, even with `match_host` `*`. A host pattern other
-than `@app` covers every host of your account that it matches, including
-hosts of your other apps. To keep a rule to one app, use `@app` or the app's
-own hostnames.
+than `@app` covers every host it matches among the apps with the same owner
+as the rule's app: a rule on one of your personal apps covers your other
+personal apps' hosts, and a rule on an organization's app covers that
+organization's apps' hosts. It never crosses between the two, although apps
+you create for an organization stay under your account. To keep a rule to one
+app, use `@app` or the app's own hostnames.
+
+A PR preview applies its production app's `@app` rules as well as its own, so
+a `jwt`, `ip`, `geo`, `waf` or `challenge` rule on production also gates the
+preview's hosts. `route` and `async` rules are the exception: a preview serves
+its own code. An inherited `throttle` rule shares production's buckets.
+
+Edge rules do not run for managed realtime connections
+(`/__gregale/realtime/`), which authenticate with their own tokens, for
+requests to a production fork, which carry the fork's token, or for the
+`robots.txt`, `favicon.ico` and health-check answers the gateway serves itself
+when your manifest configures them.
+
+Edge rules apply to requests that arrive at your public hosts. A call from one
+of your apps to another over the internal service network goes straight to the
+target and skips the target's edge rules, `jwt`, `ip`, `waf`, `challenge` and
+`throttle` included. Which apps may make such calls is set by the service
+policy and `x-gregale-allow-callers` (see
+[Internal services](networking.md#internal-services)); check credentials in the
+app itself when a caller must prove more than which app it is.
 
 ### Path globs
 
@@ -62,7 +96,21 @@ Rules that refuse or limit requests (`ip`, `geo`, `jwt`, `limit`, `throttle`,
 normalized form, with `.` and `..` segments and repeated slashes resolved, and
 compare it case-insensitively. `/public/../admin/x`, `//admin/x` and
 `/ADMIN/x` are all covered by a rule on `/admin/*`, because many frameworks
-serve them as `/admin/x`.
+serve them as `/admin/x`. They also match the path with each segment's `;`
+parameters removed, so `/admin;jsessionid=1/x` is covered too, as Java servlet
+containers and Spring serve it as `/admin/x`. For the same reason, such a rule
+that lists `GET` in `match_methods` also covers `HEAD`, which servers answer
+with the `GET` handler, and one that lists `DELETE`, `PUT` or `PATCH` also
+covers a request that asks the app to run it as that method through an
+`X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header or a
+`_method` query parameter. A `_method` field in a form body is not read at
+the edge: if your app honours one, leave `match_methods` off the rule.
+
+A gate scoped by `match_headers`, or by a `header:`, `cookie:` or `query:`
+field in `match`, applies only when the client sends that value, and the
+client chooses what it sends: one that leaves the header out is not checked.
+Scope gates by path, method, `client_ip`, `country` or `asn`;
+`gregale edge rule create` warns when a gate reads client-chosen fields.
 
 ### Conditions
 
@@ -93,12 +141,14 @@ described under [AI crawlers](security#ai-crawlers).
 `in_list` names a reusable list on your account, so one list of office IPs or
 blocked countries can serve many rules. A list has a kind (`ip`, `country`,
 `host`, `string` or `asn`) that must fit the field it is used with. Editing a
-list reaches every rule that uses it within seconds, and a list cannot be
-deleted while a rule uses it.
+list is applied like a rule change (see [Changing rules](#changing-rules)),
+and a list cannot be deleted while a rule uses it. A rule that names a list
+your account does not have is rejected. If a rule's list cannot be loaded,
+requests to the rule's hosts get 503 rather than skipping the rule.
 
 ```sh
-gregale edge-rule-lists create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
-gregale edge-rule-lists update office-ips --add 198.51.100.7
+gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
+gregale edge rule-list update office-ips --add 198.51.100.7
 ```
 
 Lists are available on Hobby and above; see [Limits](#limits).
@@ -113,15 +163,15 @@ get headers from another and be rate-limited by a third.
 
 A rule in `mode: log` is matched and counted but never acts, and it does not
 stop an enforced rule of the same kind from acting. Start a risky rule in log
-mode, check what it matched with `gregale edge-rules events --outcome logged`,
-then switch it to `enforce`. `gregale edge-rules review` lists log-mode rules
+mode, check what it matched with `gregale edge rule events --outcome logged`,
+then switch it to `enforce`. `gregale edge rule review` lists log-mode rules
 that look ready.
 
 A disabled rule (`enabled: false`) is skipped. A rule with `expires_at` stops
 applying at that time, which suits temporary blocks:
 
 ```sh
-gregale edge-rules create --app my-api --kind ip --match-host @app --match-path '/**' \
+gregale edge rule create --app my-api --kind ip --match-host @app --match-path '/**' \
   --ip-deny 192.0.2.0/24 --expires-in 2h --name "block scraper"
 ```
 
@@ -146,6 +196,12 @@ ends it, and later kinds do not run.
 14. `respond`.
 15. `cache` and `async`.
 16. `budget`, `retry` and `circuit_breaker` while the request is forwarded.
+
+`ip`, `geo`, `jwt`, `throttle`, `waf` and `challenge` match the path the
+client sent, and the rewritten path when a `rewrite` changed it: a gate on
+`/api/**` keeps applying after a rewrite takes `/api` away, and a gate written
+for the rewritten path still applies. The kinds after them (`limit`,
+`validate`, `respond`, `cache`, `async`) see the rewritten path.
 
 Refusals are ordered from cheapest to most expensive, so a request blocked by
 IP or country never costs a token check or a body read, and a request
@@ -172,12 +228,17 @@ Each rule has one `kind` and an `action` object whose fields depend on it.
 | [`maintenance`](#maintenance) | Answers 503 for a route | All |
 | [`budget`](#budget) | Sets a route's time budget | All |
 | [`cache`](#cache) | Caches responses at the edge | Hobby+ |
-| [`retry`](#retry) | Tunes replay of requests that failed in transport | Hobby+ |
-| [`circuit_breaker`](#circuit_breaker) | Tunes when a failing instance is taken out | Hobby+ |
-| [`async`](#async) | Accepts the request and runs it later | Hobby+ |
+| [`retry`](#retry) | Tunes replay of requests that failed in transport | Hobby+, on request* |
+| [`circuit_breaker`](#circuit_breaker) | Tunes when a failing instance is taken out | Hobby+, on request* |
+| [`async`](#async) | Accepts the request and runs it later | Hobby+, preview* |
 | [`respond`](#respond) | Answers with fixed JSON (preview apps only) | All |
 | `waf` | Checks requests against the OWASP Core Rule Set; see [Web application firewall](security#web-application-firewall) | Pro+ |
 | `challenge` | Asks browsers for a proof of work; see [Browser challenge](security#browser-challenge) | Hobby+ |
+
+\* `retry` and `circuit_breaker` are not yet generally available, and `async`
+is in preview. Each is enabled per account: until it is enabled for yours,
+creating such a rule returns 403 `capability_not_released`. Contact support
+to have one enabled.
 
 `ip`, `geo`, `throttle` and blocking `waf` rules can also put a client they
 keep refusing in a penalty box for the whole app; see
@@ -191,7 +252,17 @@ keep refusing in a penalty box for the whole app; see
 ```
 
 The matched request is served by `target_app_slug`, which must be an app of
-the same account. The path is unchanged; add a `rewrite` rule to change it.
+the same account and owner: one of your personal apps for a rule on a personal
+app, or an app of the same organization for a rule on an organization's app.
+The path is unchanged; add a `rewrite` rule to change it.
+Renaming the target app updates the route rules that name it. A deploy
+token, or another credential bound to one app, may write a route rule only
+to that app itself; routing to another app needs an account API key.
+
+The rest of a routed request runs as the target app's: its `@app` rules
+apply, and the source app's `@app` rules do not. Rules written for the host
+itself (an exact host, `*` or a glob) still apply. To gate routed paths too,
+put the gate on the host, or on the target app's `@app`.
 
 ### rewrite
 
@@ -204,7 +275,9 @@ the same account. The path is unchanged; add a `rewrite` rule to change it.
 becomes `/v1/users`. A `to` of `/` strips the prefix (`/api/users` becomes
 `/users`, `/api` becomes `/`), and a `from` of `*` puts `to` in front of every
 path. The client still sees its original URL. `from` is a plain prefix, so
-pair it with a `match_path` that selects the requests you mean.
+pair it with a `match_path` that selects the requests you mean. Access gates
+(`ip`, `geo`, `jwt`, `throttle`, `waf`, `challenge`) match both the original
+and the rewritten path; see [Order of kinds](#order-of-kinds).
 
 ### redirect
 
@@ -238,9 +311,15 @@ most 64 characters, and values at most 4096 characters without control
 characters. `template` expands `${name}` values as for `redirect`; each
 expanded value is capped at 1 KiB and loses control characters.
 
-`Host`, `Content-Length`, `Transfer-Encoding`, `Connection` and any
-`X-Faas-` header are reserved in any letter case; a rule that names one is
-rejected. Request headers are changed before authentication. Use `set`, not
+`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`,
+`X-Forwarded-For`, `Forwarded` and any `X-Faas-` header are reserved in any
+letter case; a rule that names one is rejected. The client address that IP,
+`geo`, `throttle` and `challenge` rules use, and that your app receives in
+`X-Faas-Client-Ip` and `X-Real-IP`, is the one the request arrived with,
+whatever a `headers` rule does. A `Set-Cookie` value, here or in a
+`redirect` rule's headers, loses a `Domain` attribute that names the shared
+apps or platform domain, as your app's own cookies do, so the cookie stays
+with the host that set it; your custom domain's `Domain` is kept. Request headers are changed before authentication. Use `set`, not
 `add`, for a header your app relies on, so a client cannot supply its own
 value alongside it. For common security headers,
 [Security headers on your app](security#security-headers-on-your-app) sets a
@@ -260,9 +339,13 @@ waking the app; other requests from an allowed origin get the CORS response
 headers. An origin is
 `*`, `https://host[:port]`, `https://*.host` for subdomains, or
 `https://host:*` for any port. `*` cannot be combined with
-`allow_credentials`. `max_age_seconds` is at most 86400. Instead of inline
-fields, `cors_preset_id` can name a CORS preset shared by several rules
-(`/v1/cors-presets`). `gregale cors allow` creates a simple rule.
+`allow_credentials`, and neither can a subdomain wildcard under a Gregale
+domain (`https://*.<your apps domain>`): other customers' apps are served
+there. List your app origins instead. `max_age_seconds` is at most 86400.
+Instead of inline fields, `cors_preset_id` can name a CORS preset shared by
+several rules (`/v1/cors-presets`). Editing or deleting a preset is applied
+like a rule change to every rule that uses it. `gregale edge cors allow`
+creates a simple rule.
 
 ### jwt
 
@@ -278,6 +361,11 @@ A request needs `Authorization: Bearer <token>` signed by a key from
 and each of `required_claims` as a string claim with exactly that value. A missing or invalid token
 gets 401. The key's `alg` must match the token's, and encryption keys are not
 used for signatures.
+
+A new or edited rule needs `audience` or at least one `required_claims`
+entry. Without one, every token the issuer signs would pass, and a shared
+issuer (GitHub Actions, Google) signs tokens for anyone who asks. Rules saved
+before this check keep working until you edit them.
 
 `require_exp` defaults to true: a token without an `exp` claim is rejected,
 because it never expires. Set `require_exp: false` to accept such tokens.
@@ -301,6 +389,13 @@ Refusals get 403 `ip_denied`. The client IP is the one the platform's proxy
 chain vouches for, not a `X-Forwarded-For` value the client sent. For lists
 of ranges you reuse, use a `match` condition with `in_list`.
 
+The CDN in front of Gregale caches responses by URL, so a response one
+client was allowed to see could otherwise reach clients the rule refuses.
+Responses to requests an `ip`, `geo` or `jwt` rule covers, and to requests
+that carried a verified key or token, are sent with
+`Cloudflare-CDN-Cache-Control: private` and `CDN-Cache-Control: private`, so
+the CDN does not store them; how browsers cache them is unchanged.
+
 ### geo
 
 ```json
@@ -309,8 +404,13 @@ of ranges you reuse, use a `match` condition with `in_list`.
 ```
 
 `allow` and `deny` hold ISO 3166-1 alpha-2 codes and work like `ip`; refusals
-get 403 `geo_denied`. A request whose country cannot be resolved (a private
-address, an address in no country) passes: geo rules fail open.
+get 403 `geo_denied`. An address the country database places in no country
+(a reserved range, or one allocated after the database was built) is in no
+list: a rule with only `deny` lets it through, and a rule with `allow`
+refuses it with 403 `geo_denied`. If the database cannot be read, a matched
+geo rule answers 503 rather than skip the check. Countries come from the
+DB-IP country database the platform installs and updates monthly, not from
+headers the client or a CDN sends.
 
 ### limit
 
@@ -391,7 +491,10 @@ request through and counts it; `warn` also adds `X-Validation-Warning: <rule
 id>` to the response. A `Content-Type` outside `content_types` gets 415.
 
 The body is read into memory to validate it, up to `max_body_bytes`. Unset,
-the cap is 25 MiB, or your plan's request body cap if that is lower. Set
+the cap is 25 MiB, or your plan's request body cap if that is lower. Each
+gateway bounds the request bodies it holds in memory at once; when that bound
+is reached, a request gets 503 `capacity_unavailable` with `Retry-After`
+before its body is read. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
 and `apply_while_streaming` to validate requests the gateway would otherwise
 stream to the app.
@@ -420,10 +523,11 @@ the app woken and capacity found. `total_deadline_ms` (optional) bounds the
 whole request from arrival, including upload, wake and queueing. Both are
 capped by your plan: 30 s on Free, 60 s on Hobby, 5 minutes on Pro and
 15 minutes on Scale. A request past its budget before the response starts
-gets 504 `request_budget_exceeded`. A client may lower or raise the execution
-budget within the plan ceiling with the `x-faas-budget-ms` header, or the
-header named in `allow_override_header`; it never extends
-`total_deadline_ms`.
+gets 503 `request_budget_exceeded`. A client may lower the execution budget
+with the `x-faas-budget-ms` header. To let callers also raise it, within the
+plan ceiling, name a header in `allow_override_header` that only your trusted
+callers send; any caller can send `x-faas-budget-ms`, so on its own it never
+raises the rule's budget. Neither header extends `total_deadline_ms`.
 
 ### cache
 
@@ -438,12 +542,16 @@ app. After that,
 `stale_while_revalidate_seconds` (at most 300) serves the old response while
 one request refreshes it, and `stale_if_error_seconds` (at most 300; 0
 turns it off) serves it when the app fails. `vary_on` adds `Accept-Language`
-or `Accept-Encoding` to the cache key.
+or `Accept-Encoding` to the cache key. Responses over 1 MiB are not cached,
+and each gateway keeps at most 16 MiB of one app's responses: past that, the
+app's least recently used responses are dropped first.
 
 Requests with credentials (`Authorization`, cookies) are never cached or
 served from the cache, and neither are responses with `Set-Cookie` or
-`Cache-Control: no-store` or `private`. `gregale cache purge` removes cached
-responses.
+`Cache-Control: no-store` or `private`. `gregale edge cache purge` removes cached
+responses. Changing an edge rule also clears the cached responses of the
+apps it covers; a `*` or glob host pattern clears all of your account's
+apps.
 
 ### retry
 
@@ -475,7 +583,10 @@ least `min_requests` requests in `window_seconds` failed at
 `failure_threshold` or more (a ratio). It gets one probe request after
 `open_seconds`, then twice as long after each failed probe, up to
 `max_open_seconds`. The breaker is per app: the highest-priority rule tunes
-it for every instance, and selectors do not split it by route.
+it for every instance, and selectors do not split it by route. Independently
+of the breaker, an instance that fails at the transport layer gets no
+traffic for 30 seconds, so an `open_seconds` below 30 shows only after
+repeated failures. A rule change reaches the breaker within 30 seconds.
 
 ### async
 
@@ -507,10 +618,14 @@ apps accept this kind.
 
 Creating, changing or deleting a rule returns once the gateways serving your
 app have the new rules, and from then on no gateway serves the old ones.
-While a change is being applied, requests to the hosts it covers get 503
-`capacity_unavailable` ("Edge policy update in progress") with
-`Retry-After: 1`. If the gateways cannot be reached, the change is refused
-with 503 and nothing changes; retry it. Changes to one account's rules are
+While a change is being applied, your hosts keep serving: each gateway uses
+the rules it has until it takes the new ones, so for a second or two some
+requests run under the old rules and some under the new. Each request runs
+under one set from start to finish. The one exception is a `route` rule
+whose target app is being renamed: until the change lands, its requests get
+503 `traffic_policy_unavailable` with `Retry-After: 1` rather than being
+served by the app the host belongs to. If the gateways cannot be reached,
+the change is refused with 503 and nothing changes; retry it. Changes to one account's rules are
 applied one at a time; other accounts' changes never wait for yours.
 
 Two people editing the same app's rules at once cannot overwrite each other:
@@ -522,27 +637,40 @@ change made since answers 412.
 Every change records a version of the app's whole rule set.
 
 ```sh
-gregale edge-rules history --app my-api              # versions
-gregale edge-rules history --app my-api --version 12 # the rules in version 12
-gregale edge-rules rollback --app my-api --to 12
+gregale edge rule history --app my-api              # versions
+gregale edge rule history --app my-api --version 12 # the rules in version 12
+gregale edge rule rollback --app my-api --to 12
 ```
 
-A deployment also records the rules it went live with.
+A rollback checks every restored rule as a new rule is checked: a version is
+refused if one of its rules uses a kind your plan no longer includes, a
+feature your account no longer has, a list that was deleted, or a route to an
+app that is now internal. A deployment also records the rules it went live
+with.
+
+Deleting an app keeps its rules, so restoring the app brings them back, but
+they stop applying within 30 seconds, including rules on `*` or a wildcard
+that covered your other apps' hosts. A restored app's rules apply again within
+the same time.
 
 ## Testing and observing
 
-- `gregale edge-rules trace` shows which rules a request would match and
+- `gregale edge rule trace` shows which rules a request would match and
   what each would do, and can compare a proposed change; see
-  [Reusable edge-rule trace scenarios](edge-rule-trace).
+  [Reusable edge-rule trace scenarios](edge-rule-trace). It includes the
+  `*` and host-pattern rules of your other apps with the same owner that
+  cover the host, as the gateway applies them; `GET
+  /v1/apps/{slug}/edge-rules?covering=true` lists them with each rule's
+  `app_id`.
 - Log mode counts what a rule would do without acting.
-- `gregale edge-rules stats` shows match counts per rule for the last hour,
+- `gregale edge rule stats` shows match counts per rule for the last hour,
   day or week.
-- `gregale edge-rules events` shows sampled requests each rule matched: up to
+- `gregale edge rule events` shows sampled requests each rule matched: up to
   10 per rule per minute, kept for your plan's event window.
-- `gregale edge-rules summary` shows what the edge refused for an app, by
+- `gregale edge rule summary` shows what the edge refused for an app, by
   reason and status.
-- `gregale edge-rules suggest` proposes rules from your recent traffic, and
-  `gregale edge-rules recipes` lists ready-made rules that start in log mode.
+- `gregale edge rule suggest` proposes rules from your recent traffic, and
+  `gregale edge rule recipes` lists ready-made rules that start in log mode.
 
 ## Limits
 
@@ -564,10 +692,15 @@ A deployment also records the rules it went live with.
 | Items per list | 0 | 100 | 1000 | 10000 |
 | Event history | 24 hours | 72 hours | 7 days | 7 days |
 
-A rule past a count limit is refused with 402
+A rule past a count limit is refused with 403
 `plan_edge_rule_kind_quota_reached` (or `plan_limit_edge_rules` for the rule
-total), and a kind your plan does not include with 402
-`plan_edge_rule_kind_not_allowed`.
+total), a kind your plan does not include with 402
+`plan_edge_rule_kind_not_allowed`, and a kind not enabled for your account
+with 403 `capability_not_released`.
+
+After a downgrade, rules your new plan would not allow keep applying, so a
+gate you set up does not open on its own; new rules of those kinds are
+refused until the plan allows them again. Delete the ones you no longer need.
 
 ## Responses from the edge
 
@@ -588,7 +721,7 @@ total), and a kind your plan does not include with 402
 | 429 `rate_limited` | `throttle` |
 | 503 `edge_rule_maintenance` | `maintenance` |
 | 503 `capacity_unavailable` | a rule change being applied, rules the gateway cannot load, an unreachable JWKS |
-| 504 `request_budget_exceeded` | `budget` |
+| 503 `request_budget_exceeded` | `budget` |
 
-Errors use the [problem format](errors); `gregale edge-rules events
+Errors use the [problem format](errors); `gregale edge rule events
 --request-id <id>` finds the rule behind a refused request.

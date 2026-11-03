@@ -32,7 +32,7 @@ func TestApplyEdgeRuleChallengeRecordsOutcomeEvents(t *testing.T) {
 		}, want: EdgeRuleEventRejected},
 		{name: "a valid pass is not an event", req: func() *http.Request {
 			r := browserRequest(http.MethodGet, "/account")
-			v := sealChallenge(challengeTestKey, "pass", challengePassPrefix, challengePass{AppID: "app-1", Expires: now.Add(time.Hour).Unix()}, bindingFor(r))
+			v := sealChallenge(challengeTestKey, "pass", challengePassPrefix, challengePass{AccountID: "acct-1", Host: "shop.example.test", Expires: now.Add(time.Hour).Unix()}, bindingFor(r))
 			r.AddCookie(&http.Cookie{Name: ChallengeCookieName, Value: v})
 			return r
 		}},

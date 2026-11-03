@@ -12,11 +12,10 @@ T = TypeVar("T", bound="ThrottleSuggestionRow")
 @_attrs_define
 class ThrottleSuggestionRow:
     """One (route → suggested rate) row in the payload returned by
-    `GET /v1/apps/{slug}/throttle-suggestions` (ADR-091 D20.5
-    amendment, issue #881). The recommender is read-only — it
+    `GET /v1/apps/{slug}/throttle-suggestions`. The recommender is read-only — it
     never auto-applies — and the suggestion is always ≤ the
     customer's plan ceiling so a customer can act on it
-    without a 422 from apid's sub-plan validator.
+    without a 422 from the API's sub-plan validator.
 
     """
 

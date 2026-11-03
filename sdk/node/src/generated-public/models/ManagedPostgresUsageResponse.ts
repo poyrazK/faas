@@ -21,7 +21,7 @@ export type ManagedPostgresUsageResponse = {
   history_byte_seconds: number;
   egress_bytes: number;
   /**
-   * The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases (ADR-20261025094915).
+   * The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.
    */
   compute_allowance_unit_seconds?: number;
   /**
@@ -36,5 +36,9 @@ export type ManagedPostgresUsageResponse = {
    * True while the account runs its databases past the allowance, up to the ceiling.
    */
   overage_enabled?: boolean;
+  /**
+   * When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
+   */
+  compute_suspended_at?: string;
 };
 

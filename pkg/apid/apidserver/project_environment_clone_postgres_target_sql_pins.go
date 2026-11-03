@@ -29,7 +29,7 @@ func (s *server) projectEnvironmentClonePostgresTargetSQLPins(ctx context.Contex
 	if !clonePostgresInventoryMatchesSource(l, source, scope) {
 		return copyarchive.RestoreTarget{}, managedpostgres.ErrConflict
 	}
-	identities := mfaIdentities()
+	identities := accountIdentities()
 	receipt, err := pins.ProjectEnvironmentClonePostgresTargetSQLPinsForLease(ctx, l, source.source.ID)
 	if err == nil {
 		if receipt.InventoryFingerprint != inventory.Sealed.Fingerprint {
@@ -43,7 +43,7 @@ func (s *server) projectEnvironmentClonePostgresTargetSQLPins(ctx context.Contex
 	if l.Operation.Status != state.CloneOperationCapturing || s.managedPostgres == nil || setSecretRecipient == nil {
 		return copyarchive.RestoreTarget{}, managedpostgres.ErrUnavailable
 	}
-	recipient := hostSecretRecipient()
+	recipient := cloneSealRecipient()
 	if !cloneInventoryCanOpen(recipient, identities) {
 		return copyarchive.RestoreTarget{}, managedpostgres.ErrUnavailable
 	}

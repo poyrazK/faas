@@ -4,14 +4,18 @@
 /* eslint-disable */
 import type { ReleaseFreezeWeekly } from './ReleaseFreezeWeekly.js';
 /**
- * A deploy freeze on production releases of one app or, without `app`, of every app of the account (ADR-20261019071733).
+ * A deploy freeze on production releases of one app or, without `app`, of every app of its owner. An account's freezes cover its personal apps; a company organization's freezes (`org`) cover the organization's apps.
  */
 export type ReleaseFreeze = {
   id: string;
   /**
-   * The covered app's slug; omitted for an account-wide freeze.
+   * The covered app's slug; omitted for a freeze on all of the owner's apps.
    */
   app?: string;
+  /**
+   * Slug of the company organization that owns the freeze; omitted for an account's freeze.
+   */
+  org?: string;
   kind: 'window' | 'weekly' | 'after_rollback';
   /**
    * Window start.

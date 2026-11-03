@@ -67,9 +67,14 @@ func (c adoptionClassifier) inventory(ctx context.Context, j *ResourceJournal) (
 			return nil, fmt.Errorf("adoption inventory: encode %s: %w", r.Lease.Instance, err)
 		}
 		item := AdoptionInventoryRecord{Record: raw, ProofReason: adoptionRefusedNoRecord, ProofDetail: "no launched guest with an adoption block"}
-		if r.Process != nil && r.Adoption != nil {
+		switch gone, isGone := c.guestGone(r); {
+		case r.Process != nil && r.Adoption != nil:
 			_, v, ok := c.prove(ctx, r)
 			item = AdoptionInventoryRecord{Record: raw, ProofOK: ok, ProofReason: v.Reason, ProofDetail: v.Detail}
+		case isGone:
+			// An older record without an adoption block: its guest is gone,
+			// so the candidate need not adopt it.
+			item.ProofReason, item.ProofDetail = gone.Reason, gone.Detail
 		}
 		out = append(out, item)
 		if err := ctx.Err(); err != nil {
@@ -87,6 +92,14 @@ func (c adoptionClassifier) inventory(ctx context.Context, j *ResourceJournal) (
 func CandidateAdoptionVerdicts(items []AdoptionInventoryRecord, chrootRoot func(string) string, adoptAdmitted bool) []AdoptionVerdict {
 	out := make([]AdoptionVerdict, 0, len(items))
 	for _, item := range items {
+		if !item.ProofOK && AdoptionGuestGone(item.ProofReason) {
+			// The running vmmd proved the guest process gone: a restart
+			// loses nothing, whatever the record's schema.
+			v := refuse(recordInstance(item.Record), item.ProofReason, item.ProofDetail)
+			v.Gone = true
+			out = append(out, v)
+			continue
+		}
 		r, err := decodeResourceJournalRecord(item.Record)
 		if err != nil {
 			out = append(out, refuse(recordInstance(item.Record), adoptionRefusedUndecodable, err.Error()))

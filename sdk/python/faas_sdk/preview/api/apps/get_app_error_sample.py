@@ -73,7 +73,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[AppErrorSampleResponse | Problem]:
-    r"""Single oldest sample row + redacted headers (ADR-096 / PR-B).
+    r"""Single oldest sample row + redacted headers.
 
      Returns the OLDEST request row for the fingerprint plus
     the redacted `headers_sample` (jsonb-decoded) and the
@@ -111,7 +111,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> AppErrorSampleResponse | Problem | None:
-    r"""Single oldest sample row + redacted headers (ADR-096 / PR-B).
+    r"""Single oldest sample row + redacted headers.
 
      Returns the OLDEST request row for the fingerprint plus
     the redacted `headers_sample` (jsonb-decoded) and the
@@ -144,7 +144,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[AppErrorSampleResponse | Problem]:
-    r"""Single oldest sample row + redacted headers (ADR-096 / PR-B).
+    r"""Single oldest sample row + redacted headers.
 
      Returns the OLDEST request row for the fingerprint plus
     the redacted `headers_sample` (jsonb-decoded) and the
@@ -180,7 +180,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> AppErrorSampleResponse | Problem | None:
-    r"""Single oldest sample row + redacted headers (ADR-096 / PR-B).
+    r"""Single oldest sample row + redacted headers.
 
      Returns the OLDEST request row for the fingerprint plus
     the redacted `headers_sample` (jsonb-decoded) and the

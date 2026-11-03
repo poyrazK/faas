@@ -17,7 +17,7 @@ import (
 // or secrets, keep their values. Every app's quota is checked before the
 // first write; no value reaches a log, audit event or problem.
 func (s *server) importComposeEnv(r *http.Request, acct state.Account, projectID, scope string, env reposcan.ComposeEnv, workloads []reposcan.Workload, limits api.Limits) *api.Problem {
-	if !env.Import {
+	if !env.ImportsAny() {
 		return nil
 	}
 	apps, err := s.store.AppsForProject(r.Context(), acct.ID, projectID)
@@ -37,7 +37,7 @@ func (s *server) importComposeEnv(r *http.Request, acct state.Account, projectID
 		callable = append(callable, app.WorkloadName)
 	}
 	for _, w := range workloads {
-		values := projectsetup.PlanEnvImport(env, w.Name, callable, limits).Values
+		values := projectsetup.PlanEnvImport(env, w.Name, callable, limits, s.privateServiceHTTPS(acct)).Values
 		if len(values) == 0 {
 			continue
 		}

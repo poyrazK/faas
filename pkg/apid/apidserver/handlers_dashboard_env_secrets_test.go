@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -30,6 +31,13 @@ func TestDashboardHandler_AppEnvSecrets(t *testing.T) {
 		t.Fatalf("seed secret: %v", err)
 	}
 
+	// The dashboard shows the owner-keyed fingerprint (bug hunt 2026-10-28 H37).
+	key := []byte("dashboard-test-host-hmac-key-012")
+	previousKey := hostHMACKey
+	hostHMACKey = func() []byte { return key }
+	t.Cleanup(func() { hostHMACKey = previousKey })
+	prefix := secretbox.OwnerValueFingerprint("deadbeef12345678", acct.ID, key)[:8]
+
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/config-app/env?scope=__all__", nil)
 	r.AddCookie(cookie)
@@ -44,7 +52,7 @@ func TestDashboardHandler_AppEnvSecrets(t *testing.T) {
 		"debug",
 		"FEATURE_X",
 		"DATABASE_URL",
-		"deadbeef…",
+		prefix + "…",
 		"write-only",
 		"all scopes",
 	} {

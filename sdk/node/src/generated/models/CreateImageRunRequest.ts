@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ImageRunRegistryAuth } from './ImageRunRegistryAuth.js';
 /**
- * Body of POST /v1/image-runs (ADR-1161).
+ * Body of POST /v1/image-runs.
  */
 export type CreateImageRunRequest = {
   /**
@@ -36,7 +36,7 @@ export type CreateImageRunRequest = {
    */
   pull?: 'missing' | 'always';
   /**
-   * ADR-1330: hold the command until one client attaches to the run's task. The run has no retries and timeout_sec is at most 3600. Needs the operator gate FAAS_INTERACTIVE_IMAGE_RUNS; otherwise 501.
+   * Hold the command until one client attaches to the run's task. The run has no retries and timeout_sec is at most 3600. Needs the operator gate FAAS_INTERACTIVE_IMAGE_RUNS; otherwise 501.
    */
   interactive?: boolean;
   /**
@@ -44,11 +44,11 @@ export type CreateImageRunRequest = {
    */
   tty?: boolean;
   /**
-   * ADR-1790: run as name|uid[:group|gid], resolved in the image's passwd and group files, instead of the image USER (docker run -u).
+   * Run as name|uid[:group|gid], resolved in the image's passwd and group files, instead of the image USER (docker run -u).
    */
   user?: string;
   /**
-   * ADR-1790: absolute working directory instead of the image WORKDIR (docker run -w); created when missing.
+   * Absolute working directory instead of the image WORKDIR (docker run -w); created when missing.
    */
   workdir?: string;
   registry_auth?: ImageRunRegistryAuth;

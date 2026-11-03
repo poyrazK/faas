@@ -7,8 +7,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -251,8 +249,7 @@ func TestNodeAdmissionPostgresAtomicInsertFailures(t *testing.T) {
 }
 
 func TestNodeAdmissionPostgresMigrationRoundTrip(t *testing.T) {
-	_, source, _, _ := runtime.Caller(0)
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../migrations/20261017140000002_node_admission_fencing.sql"))
+	body, err := os.ReadFile("../../migrations/20261017140000002_node_admission_fencing.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

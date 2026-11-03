@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Compute caps on running databases (ADR-20261025094915). After each usage
@@ -36,6 +38,22 @@ func ParseCapEnforcementMode(value string) (CapEnforcementMode, error) {
 	default:
 		return "", fmt.Errorf("%s=%q: want off, shadow or on: %w", CapEnforcementEnv, value, ErrInvalid)
 	}
+}
+
+// CapsEnforced reports whether both the compute and the storage cap are on.
+// A malformed mode counts as not enforced. Until both are on, the production
+// release holds managed PostgreSQL to accounts a flag rule names
+// (ADR-20261031091607).
+func CapsEnforced(getenv func(string) string) bool {
+	if getenv == nil {
+		return false
+	}
+	compute, err := ParseCapEnforcementMode(getenv(CapEnforcementEnv))
+	if err != nil || compute != CapEnforcementOn {
+		return false
+	}
+	storage, err := ParseStorageCapEnforcementMode(getenv(StorageCapEnforcementEnv))
+	return err == nil && storage == CapEnforcementOn
 }
 
 // ComputeCapProvider is an optional Provider capability: a monthly compute
@@ -136,21 +154,115 @@ func capQuotaNeedsWrite(current, target, used int64) bool {
 	}
 }
 
-// CapCeiling returns a usage subject's monthly compute ceiling in
-// compute-unit seconds: an account, or an organization that owns resources.
-// Zero means the subject is not capped.
-type CapCeiling func(ctx context.Context, accountID string) (int64, error)
+// CapLimits are a usage subject's monthly compute limits in compute-unit
+// seconds. Allowance is the plan's; Ceiling is where databases are suspended,
+// the allowance or twice it with overage on. A zero Ceiling means uncapped.
+// StoragePool is the subject's pooled storage in bytes (decision 9), twice
+// the plan's with overage on; zero means uncapped.
+type CapLimits struct {
+	Allowance   int64
+	Ceiling     int64
+	Overage     bool
+	StoragePool int64
+
+	// StorageAllowance is the plan's pool in bytes, before overage doubles
+	// it: storage past it is charged (ADR-20261031110037 amendment 2).
+	StorageAllowance int64
+
+	// Entitlement is the subject's plan: databases it no longer includes
+	// are suspended (ADR-20261102125208). A zero database limit means the
+	// plan is unknown, and nothing is suspended for it.
+	Entitlement api.ManagedPostgresPlanLimits
+}
+
+// CapCeiling returns a usage subject's limits: an account, or an
+// organization that owns resources.
+type CapCeiling func(ctx context.Context, subjectID string) (CapLimits, error)
+
+// Cap thresholds (ADR-20261025094915 decision 8), recorded once per subject
+// and UTC month while caps are enforced.
+const (
+	CapThresholdWarning        = "warning"
+	CapThresholdAllowance      = "allowance"
+	CapThresholdCeilingWarning = "ceiling_warning"
+	CapThresholdSuspended      = "suspended"
+)
+
+// CapEvent is one threshold a subject reached in a month.
+type CapEvent struct {
+	SubjectID   string
+	PeriodStart time.Time
+	Threshold   string
+	ReachedAt   time.Time
+	Used        int64
+	Allowance   int64
+	Ceiling     int64
+	Overage     bool
+	// Mailed is read only: an email is linked to the event.
+	Mailed bool
+}
+
+// CapEventStore is an optional UsageStore capability. RecordCapEvent reports
+// whether the event is new; a repeat for the same subject, month and
+// threshold is a no-op. MostSevereCapEvent returns the subject's most severe
+// threshold of the month, or nil.
+type CapEventStore interface {
+	RecordCapEvent(ctx context.Context, event CapEvent) (bool, error)
+	CapSuspendedAt(ctx context.Context, subjectID string, periodStart time.Time) (*time.Time, error)
+	MostSevereCapEvent(ctx context.Context, subjectID string, periodStart time.Time) (*CapEvent, error)
+}
+
+// capMailWindow is how long after a threshold is reached its email may still
+// be queued; it matches api.InternalMailManagedPostgresCapTTL.
+const capMailWindow = 24 * time.Hour
+
+// capThresholds lists the thresholds used reaches: 80% of the allowance, the
+// allowance, 80% of the ceiling when overage raises it, and the ceiling.
+func capThresholds(used int64, limits CapLimits, ceiling int64) []string {
+	var reached []string
+	if limits.Allowance > 0 && used >= limits.Allowance-limits.Allowance/5 {
+		reached = append(reached, CapThresholdWarning)
+	}
+	if limits.Allowance > 0 && used >= limits.Allowance {
+		reached = append(reached, CapThresholdAllowance)
+	}
+	if limits.Overage && ceiling > limits.Allowance && used >= ceiling-ceiling/5 {
+		reached = append(reached, CapThresholdCeilingWarning)
+	}
+	if used >= ceiling {
+		reached = append(reached, CapThresholdSuspended)
+	}
+	return reached
+}
 
 type CapEnforcerOptions struct {
-	Mode    CapEnforcementMode
-	Ceiling CapCeiling
-	Now     func() time.Time
-	Logger  *slog.Logger
-	Observe func(CapSweepSummary)
+	Mode CapEnforcementMode
+	// StorageMode runs the storage pool pass (decision 9): off, shadow or on.
+	StorageMode CapEnforcementMode
+	// StorageQualification is the staging evidence storage `on` requires.
+	StorageQualification *StorageCapQualification
+	Ceiling              CapCeiling
+	Now                  func() time.Time
+	Logger               *slog.Logger
+	Observe              func(CapSweepSummary)
 	// BatchSize pages the catalog; zero uses the usage collector's default.
 	BatchSize int
 	// Qualification is the staging evidence `on` requires (decision 10).
 	Qualification *ComputeCapQualification
+	// Notify queues the email for a subject's most severe threshold of the
+	// month (decision 8). The sweep calls it only in mode on, after the
+	// subject's quotas are written, and again on later sweeps until the
+	// threshold is mailed or a day has passed. Nil sends no email.
+	Notify func(ctx context.Context, event CapEvent) error
+	// PlanExcessMode suspends databases past the subject's plan
+	// (ADR-20261102125208): off (the zero value), shadow or on. On writes
+	// only while Mode is on too.
+	PlanExcessMode CapEnforcementMode
+	// NotifyPlanExcess queues the email for a database the sweep suspended
+	// past its plan (ADR-20261102125208 step 3). It is retried each sweep
+	// until it links an email to the notice or the notice is a day old, so
+	// it must mail a notice at most once. Nil sends no email.
+	NotifyPlanExcess func(ctx context.Context, notice PlanExcessNotice) error
 }
 
 // CapSweepSummary counts one enforcement sweep. Scopes are provider quota
@@ -166,19 +278,47 @@ type CapSweepSummary struct {
 	ScopesUnchanged   int
 	ScopesApplied     int
 	ScopesShadowed    int
+	EventsRecorded    int
+	NotifyFailed      int
 	CompletedAt       time.Time
+	// The storage pool pass, counted apart so its failures never mark the
+	// compute sweep stale.
+	StorageMode            CapEnforcementMode
+	StorageAccounts        int
+	StorageBlockedAccounts int
+	StorageUncapped        int
+	StorageUnsupported     int
+	StorageFailed          int
+	StorageScopesUnchanged int
+	StorageScopesShadowed  int
+	StorageScopesApplied   int
+
+	// Databases past their subject's plan (ADR-20261102125208). Shared
+	// counts scopes left running because a database inside the plan shares
+	// them.
+	PlanExcessMode            CapEnforcementMode
+	PlanExcessDatabases       int
+	PlanExcessScopesSuspended int
+	PlanExcessScopesShadowed  int
+	PlanExcessScopesShared    int
+	PlanExcessNoticed         int
+	PlanExcessNotifyFailed    int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
 type CapEnforcer struct {
-	registry  *Registry
-	store     UsageStore
-	mode      CapEnforcementMode
-	ceiling   CapCeiling
-	now       func() time.Time
-	logger    *slog.Logger
-	observe   func(CapSweepSummary)
-	batchSize int
+	registry    *Registry
+	store       UsageStore
+	mode        CapEnforcementMode
+	storageMode CapEnforcementMode
+	ceiling     CapCeiling
+	now         func() time.Time
+	logger      *slog.Logger
+	observe     func(CapSweepSummary)
+	notify      func(context.Context, CapEvent) error
+	batchSize   int
+	planExcess  CapEnforcementMode
+	planNotify  func(context.Context, PlanExcessNotice) error
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -201,6 +341,27 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	default:
 		return nil, ErrInvalid
 	}
+	switch options.StorageMode {
+	case "":
+		options.StorageMode = CapEnforcementOff
+	case CapEnforcementOff, CapEnforcementShadow:
+	case CapEnforcementOn:
+		if options.StorageQualification == nil {
+			return nil, fmt.Errorf("%s=on needs a storage cap qualification at %s: %w", StorageCapEnforcementEnv, StorageCapQualificationPathEnv, ErrInvalid)
+		}
+		if err := registry.VerifyStorageCapQualification(*options.StorageQualification); err != nil {
+			return nil, fmt.Errorf("%s=on: %w", StorageCapEnforcementEnv, err)
+		}
+	default:
+		return nil, ErrInvalid
+	}
+	switch options.PlanExcessMode {
+	case "":
+		options.PlanExcessMode = CapEnforcementOff
+	case CapEnforcementOff, CapEnforcementShadow, CapEnforcementOn:
+	default:
+		return nil, ErrInvalid
+	}
 	if options.BatchSize == 0 {
 		options.BatchSize = defaultUsageBatchSize
 	}
@@ -214,22 +375,24 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 		options.Logger = slog.Default()
 	}
 	return &CapEnforcer{
-		registry: registry, store: store, mode: options.Mode, ceiling: options.Ceiling,
-		now: options.Now, logger: options.Logger, observe: options.Observe, batchSize: options.BatchSize,
+		registry: registry, store: store, mode: options.Mode, storageMode: options.StorageMode, ceiling: options.Ceiling,
+		now: options.Now, logger: options.Logger, observe: options.Observe, notify: options.Notify,
+		batchSize: options.BatchSize, planExcess: options.PlanExcessMode, planNotify: options.NotifyPlanExcess,
 	}, nil
 }
 
 // Enforce runs one sweep. A failure for one account never stops the others;
 // the returned error joins them.
 func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err error) {
-	summary.Mode = e.mode
+	ctx = WithBackgroundRequests(ctx)
+	summary.Mode, summary.StorageMode, summary.PlanExcessMode = e.mode, e.storageMode, e.planExcess
 	defer func() {
 		summary.CompletedAt = e.now().UTC()
 		if e.observe != nil {
 			e.observe(summary)
 		}
 	}()
-	if e.mode == CapEnforcementOff {
+	if e.mode == CapEnforcementOff && e.storageMode == CapEnforcementOff {
 		return summary, nil
 	}
 	accounts, err := e.liveDatabasesBySubject(ctx)
@@ -246,12 +409,29 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		summary.Accounts++
-		if err := e.enforceAccount(ctx, accountID, accounts[accountID], &summary); err != nil {
-			summary.Failed++
-			failures = append(failures, fmt.Errorf("account %s: %w", accountID, err))
+		limits, err := e.ceiling(ctx, accountID)
+		if e.mode != CapEnforcementOff {
+			summary.Accounts++
+			if err == nil {
+				err = e.enforceAccount(ctx, accountID, accounts[accountID], limits, &summary)
+			}
+			if err != nil {
+				summary.Failed++
+				failures = append(failures, fmt.Errorf("account %s: %w", accountID, err))
+			}
+		}
+		if e.storageMode != CapEnforcementOff {
+			summary.StorageAccounts++
+			if err == nil {
+				err = e.enforceStoragePool(ctx, accountID, accounts[accountID], limits, &summary)
+			}
+			if err != nil {
+				summary.StorageFailed++
+				e.logger.Warn("managed postgres storage cap sweep failed", "subject_id", accountID, "error", err)
+			}
 		}
 	}
+	e.mailPlanExcessNotices(ctx, &summary)
 	return summary, errors.Join(failures...)
 }
 
@@ -315,11 +495,8 @@ func capEnforceable(database Database) bool {
 	}
 }
 
-func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, summary *CapSweepSummary) error {
-	ceiling, err := e.ceiling(ctx, accountID)
-	if err != nil {
-		return err
-	}
+func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, limits CapLimits, summary *CapSweepSummary) error {
+	ceiling := limits.Ceiling
 	if ceiling <= 0 {
 		summary.Uncapped++
 		return nil
@@ -343,7 +520,13 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	if plan.suspended() {
 		summary.SuspendedAccounts++
 	}
+	suspended := e.suspendPlanExcess(accountID, databases, limits, &plan, summary)
 	var failures []error
+	if e.mode == CapEnforcementOn {
+		if err := e.recordCapEvents(ctx, accountID, now, plan.used, limits, plan.ceiling, summary); err != nil {
+			failures = append(failures, err)
+		}
+	}
 	for _, decision := range plan.decisions {
 		if !decision.apply {
 			summary.ScopesUnchanged++
@@ -365,7 +548,59 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		summary.ScopesApplied++
 		e.logger.Info("managed postgres compute cap applied", attrs...)
 	}
+	if e.mode == CapEnforcementOn && len(failures) == 0 {
+		e.notifyCapEvent(ctx, accountID, now, summary)
+	}
+	if e.planExcessEnforced() && len(failures) == 0 {
+		e.recordPlanExcessNotices(ctx, databases, suspended, now, summary)
+	}
 	return errors.Join(failures...)
+}
+
+// notifyCapEvent mails the subject's most severe threshold of the month once:
+// a sweep that jumps past several thresholds sends one email. A failed email
+// does not fail the sweep; the next sweep retries it.
+func (e *CapEnforcer) notifyCapEvent(ctx context.Context, subjectID string, now time.Time, summary *CapSweepSummary) {
+	store, ok := e.store.(CapEventStore)
+	if !ok || e.notify == nil {
+		return
+	}
+	event, err := store.MostSevereCapEvent(ctx, subjectID, now)
+	if err == nil && (event == nil || event.Mailed || now.Sub(event.ReachedAt) >= capMailWindow) {
+		return
+	}
+	if err == nil {
+		err = e.notify(ctx, *event)
+	}
+	if err != nil {
+		summary.NotifyFailed++
+		e.logger.Warn("managed postgres compute cap email not queued", "subject_id", subjectID, "error", err)
+	}
+}
+
+// recordCapEvents records each threshold the subject reached this month the
+// first time a sweep sees it. Shadow mode records nothing: no customer is
+// told about a suspension that is not happening.
+func (e *CapEnforcer) recordCapEvents(ctx context.Context, subjectID string, now time.Time, used int64, limits CapLimits, ceiling int64, summary *CapSweepSummary) error {
+	store, ok := e.store.(CapEventStore)
+	if !ok {
+		return nil
+	}
+	for _, threshold := range capThresholds(used, limits, ceiling) {
+		recorded, err := store.RecordCapEvent(ctx, CapEvent{
+			SubjectID: subjectID, PeriodStart: monthStart(now), Threshold: threshold, ReachedAt: now,
+			Used: used, Allowance: max(limits.Allowance, 1), Ceiling: max(ceiling, limits.Allowance, 1), Overage: limits.Overage,
+		})
+		if err != nil {
+			return err
+		}
+		if recorded {
+			summary.EventsRecorded++
+			e.logger.Info("managed postgres compute cap threshold reached", "subject_id", subjectID,
+				"threshold", threshold, "used_unit_seconds", used, "ceiling_unit_seconds", ceiling, "overage", limits.Overage)
+		}
+	}
+	return nil
 }
 
 // observeScopes reads each database's provider quota and groups databases

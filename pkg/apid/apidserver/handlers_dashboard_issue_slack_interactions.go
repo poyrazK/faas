@@ -22,10 +22,11 @@ func (s *server) dashboardSlackInteractionAction(w http.ResponseWriter, r *http.
 	in := state.IssueSlackInteractionPolicy{Enabled: r.PostForm.Get("enabled") == "1", Revision: revision, WorkspaceID: r.PostForm.Get("workspace_id"), SlackAppID: r.PostForm.Get("slack_app_id")}
 	if err == nil && r.PostForm.Get("signing_secret") != "" {
 		secret := r.PostForm.Get("signing_secret")
-		if !issueslack.ValidSigningSecret(secret) || setSecretRecipient == nil || setSecretRecipient() == nil {
+		recipients, recipientErr := accountRecipients(hostSecretRecipient())
+		if !issueslack.ValidSigningSecret(secret) || recipientErr != nil {
 			err = state.ErrInvalidArgument
 		} else {
-			in.SecretSealed, err = secretbox.SealBytes(setSecretRecipient(), state.IssueSlackSigningSecretNamespace, []byte(secret), api.IssueSlackSigningSecretBytes)
+			in.SecretSealed, err = secretbox.SealBytesTo(recipients, state.IssueSlackSigningSecretNamespace, []byte(secret), api.IssueSlackSigningSecretBytes)
 		}
 	}
 	if err == nil {

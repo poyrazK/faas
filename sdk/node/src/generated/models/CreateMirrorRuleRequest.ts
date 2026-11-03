@@ -12,7 +12,7 @@
  * `redact_headers` is the
  * customer's additive list on top of the always-stripped list
  * (Authorization, Cookie, Set-Cookie, X-API-Key, Proxy-Authorization,
- * WWW-Authenticate — applied by PR-A3's redaction layer, NOT by
+ * WWW-Authenticate — applied by the redaction layer, NOT by
  * A2's storage layer). Requests whose bodies exceed the 64 KiB mirror
  * snapshot cap are safely skipped rather than sending a partial request
  * to the mirror deployment.

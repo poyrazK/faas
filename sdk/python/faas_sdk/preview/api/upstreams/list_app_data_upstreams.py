@@ -84,14 +84,14 @@ def sync_detailed(
 
      Returns every captured (host_redacted_hash, kind, port) tuple
     on the app. The plaintext host NEVER appears in the response —
-    only the SHA-256 hash of (salt||host). See spec §11.
+    only the SHA-256 hash of (salt||host).
 
     The list is bounded by the per-plan `api.DataPlacementHintsPerApp`
     quota (Free=0, Hobby=3, Pro=10, Scale=50). When FAAS_DATA_PLACEMENT
     is on the classifier derives entries on env mutation; when OFF
     the table stays empty and the response is `[]`.
 
-    ADR-098 amendment (issue #954): `?deployment_scope=` narrows
+    `?deployment_scope=` narrows
     the list to one deployment so the dashboard can render
     staging-vs-prod independently. Omitted = \"all deployments\".
 
@@ -129,14 +129,14 @@ def sync(
 
      Returns every captured (host_redacted_hash, kind, port) tuple
     on the app. The plaintext host NEVER appears in the response —
-    only the SHA-256 hash of (salt||host). See spec §11.
+    only the SHA-256 hash of (salt||host).
 
     The list is bounded by the per-plan `api.DataPlacementHintsPerApp`
     quota (Free=0, Hobby=3, Pro=10, Scale=50). When FAAS_DATA_PLACEMENT
     is on the classifier derives entries on env mutation; when OFF
     the table stays empty and the response is `[]`.
 
-    ADR-098 amendment (issue #954): `?deployment_scope=` narrows
+    `?deployment_scope=` narrows
     the list to one deployment so the dashboard can render
     staging-vs-prod independently. Omitted = \"all deployments\".
 
@@ -169,14 +169,14 @@ async def asyncio_detailed(
 
      Returns every captured (host_redacted_hash, kind, port) tuple
     on the app. The plaintext host NEVER appears in the response —
-    only the SHA-256 hash of (salt||host). See spec §11.
+    only the SHA-256 hash of (salt||host).
 
     The list is bounded by the per-plan `api.DataPlacementHintsPerApp`
     quota (Free=0, Hobby=3, Pro=10, Scale=50). When FAAS_DATA_PLACEMENT
     is on the classifier derives entries on env mutation; when OFF
     the table stays empty and the response is `[]`.
 
-    ADR-098 amendment (issue #954): `?deployment_scope=` narrows
+    `?deployment_scope=` narrows
     the list to one deployment so the dashboard can render
     staging-vs-prod independently. Omitted = \"all deployments\".
 
@@ -212,14 +212,14 @@ async def asyncio(
 
      Returns every captured (host_redacted_hash, kind, port) tuple
     on the app. The plaintext host NEVER appears in the response —
-    only the SHA-256 hash of (salt||host). See spec §11.
+    only the SHA-256 hash of (salt||host).
 
     The list is bounded by the per-plan `api.DataPlacementHintsPerApp`
     quota (Free=0, Hobby=3, Pro=10, Scale=50). When FAAS_DATA_PLACEMENT
     is on the classifier derives entries on env mutation; when OFF
     the table stays empty and the response is `[]`.
 
-    ADR-098 amendment (issue #954): `?deployment_scope=` narrows
+    `?deployment_scope=` narrows
     the list to one deployment so the dashboard can render
     staging-vs-prod independently. Omitted = \"all deployments\".
 

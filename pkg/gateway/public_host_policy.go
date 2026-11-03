@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -79,11 +80,26 @@ func (h *Handler) lookupAppPolicy(r *http.Request, host string) (App, bool, erro
 		app, found := h.backend.Lookup(r.Context(), host)
 		return app, found, nil
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), api.TrafficPublicHostReadTimeout)
+	// The first attempt keeps the host read bound. A failed one is retried
+	// once within the cold bound: a host that misses the route cache reads
+	// the store, and a cold backend or a short control-plane stall refused
+	// a new app's first request (ADR-20261027085556 amendment 2). A store
+	// answer, an unknown host included, is never retried.
+	cold, cancel := context.WithTimeout(r.Context(), api.TrafficPublicHostColdReadTimeout)
+	defer cancel()
+	app, found, err := lookupHostPolicyAttempt(cold, backend, host, api.TrafficPublicHostReadTimeout)
+	if err != nil && cold.Err() == nil {
+		app, found, err = lookupHostPolicyAttempt(cold, backend, host, api.TrafficPublicHostColdReadTimeout)
+	}
+	return app, found && err == nil, err
+}
+
+func lookupHostPolicyAttempt(ctx context.Context, backend HostPolicyBackend, host string, bound time.Duration) (App, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 	app, found, err := backend.LookupHostPolicy(ctx, host)
 	if err == nil {
 		err = ctx.Err()
 	}
-	return app, found && err == nil, err
+	return app, found, err
 }

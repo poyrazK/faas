@@ -72,12 +72,11 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    r"""Revoke an API key (org-scoped).
+    """Revoke an API key (org-scoped).
 
      Soft-delete mirror of `DELETE /v1/keys/{id}`. Status flips to
     'revoked'; subsequent bearer-auth attempts hit `ErrAPIKeyRevoked`
-    (401 unauthenticated). The audit row carries `org_id` (PR 6
-    closes the ADR-061 §E \"audit scoped to org\" gap).
+    (401 unauthenticated). The audit row carries `org_id`.
 
     Args:
         slug (str):
@@ -109,12 +108,11 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    r"""Revoke an API key (org-scoped).
+    """Revoke an API key (org-scoped).
 
      Soft-delete mirror of `DELETE /v1/keys/{id}`. Status flips to
     'revoked'; subsequent bearer-auth attempts hit `ErrAPIKeyRevoked`
-    (401 unauthenticated). The audit row carries `org_id` (PR 6
-    closes the ADR-061 §E \"audit scoped to org\" gap).
+    (401 unauthenticated). The audit row carries `org_id`.
 
     Args:
         slug (str):
@@ -141,12 +139,11 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    r"""Revoke an API key (org-scoped).
+    """Revoke an API key (org-scoped).
 
      Soft-delete mirror of `DELETE /v1/keys/{id}`. Status flips to
     'revoked'; subsequent bearer-auth attempts hit `ErrAPIKeyRevoked`
-    (401 unauthenticated). The audit row carries `org_id` (PR 6
-    closes the ADR-061 §E \"audit scoped to org\" gap).
+    (401 unauthenticated). The audit row carries `org_id`.
 
     Args:
         slug (str):
@@ -176,12 +173,11 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    r"""Revoke an API key (org-scoped).
+    """Revoke an API key (org-scoped).
 
      Soft-delete mirror of `DELETE /v1/keys/{id}`. Status flips to
     'revoked'; subsequent bearer-auth attempts hit `ErrAPIKeyRevoked`
-    (401 unauthenticated). The audit row carries `org_id` (PR 6
-    closes the ADR-061 §E \"audit scoped to org\" gap).
+    (401 unauthenticated). The audit row carries `org_id`.
 
     Args:
         slug (str):

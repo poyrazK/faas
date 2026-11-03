@@ -90,14 +90,14 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: DebugCompareRequest,
 ) -> Response[DebugCompareResponse | Problem]:
-    """Per-route latency compare (ADR-127 / PR-B).
+    """Per-route latency compare.
 
      Compares two deployments' per-route latency
     distributions in a shared time window. Body holds the
     two deployment ids + optional route filter + optional
     since/until bounds. Returns merged per-route stats with
     per-deployment p50/p95/p99 + represented request counts. Includes
-    the effective window and retention-clamping metadata (ADR-1623).
+    the effective window and retention-clamping metadata.
     Invalid lookbacks, invalid/future until values, and windows wholly
     outside current plan retention are rejected. Reads retained telemetry
     without replaying requests or writing platform state. Plan-gated by
@@ -105,7 +105,7 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (DebugCompareRequest): POST body for /v1/apps/{slug}/debug/compare (ADR-127 / PR-B).
+        body (DebugCompareRequest): POST body for /v1/apps/{slug}/debug/compare.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -133,14 +133,14 @@ def sync(
     client: AuthenticatedClient | Client,
     body: DebugCompareRequest,
 ) -> DebugCompareResponse | Problem | None:
-    """Per-route latency compare (ADR-127 / PR-B).
+    """Per-route latency compare.
 
      Compares two deployments' per-route latency
     distributions in a shared time window. Body holds the
     two deployment ids + optional route filter + optional
     since/until bounds. Returns merged per-route stats with
     per-deployment p50/p95/p99 + represented request counts. Includes
-    the effective window and retention-clamping metadata (ADR-1623).
+    the effective window and retention-clamping metadata.
     Invalid lookbacks, invalid/future until values, and windows wholly
     outside current plan retention are rejected. Reads retained telemetry
     without replaying requests or writing platform state. Plan-gated by
@@ -148,7 +148,7 @@ def sync(
 
     Args:
         slug (str):
-        body (DebugCompareRequest): POST body for /v1/apps/{slug}/debug/compare (ADR-127 / PR-B).
+        body (DebugCompareRequest): POST body for /v1/apps/{slug}/debug/compare.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,14 +171,14 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: DebugCompareRequest,
 ) -> Response[DebugCompareResponse | Problem]:
-    """Per-route latency compare (ADR-127 / PR-B).
+    """Per-route latency compare.
 
      Compares two deployments' per-route latency
     distributions in a shared time window. Body holds the
     two deployment ids + optional route filter + optional
     since/until bounds. Returns merged per-route stats with
     per-deployment p50/p95/p99 + represented request counts. Includes
-    the effective window and retention-clamping metadata (ADR-1623).
+    the effective window and retention-clamping metadata.
     Invalid lookbacks, invalid/future until values, and windows wholly
     outside current plan retention are rejected. Reads retained telemetry
     without replaying requests or writing platform state. Plan-gated by
@@ -186,7 +186,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (DebugCompareRequest): POST body for /v1/apps/{slug}/debug/compare (ADR-127 / PR-B).
+        body (DebugCompareRequest): POST body for /v1/apps/{slug}/debug/compare.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -212,14 +212,14 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: DebugCompareRequest,
 ) -> DebugCompareResponse | Problem | None:
-    """Per-route latency compare (ADR-127 / PR-B).
+    """Per-route latency compare.
 
      Compares two deployments' per-route latency
     distributions in a shared time window. Body holds the
     two deployment ids + optional route filter + optional
     since/until bounds. Returns merged per-route stats with
     per-deployment p50/p95/p99 + represented request counts. Includes
-    the effective window and retention-clamping metadata (ADR-1623).
+    the effective window and retention-clamping metadata.
     Invalid lookbacks, invalid/future until values, and windows wholly
     outside current plan retention are rejected. Reads retained telemetry
     without replaying requests or writing platform state. Plan-gated by
@@ -227,7 +227,7 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (DebugCompareRequest): POST body for /v1/apps/{slug}/debug/compare (ADR-127 / PR-B).
+        body (DebugCompareRequest): POST body for /v1/apps/{slug}/debug/compare.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

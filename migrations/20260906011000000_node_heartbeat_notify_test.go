@@ -93,6 +93,10 @@ func TestComputeNodeNotify_HeartbeatKeepsClients(t *testing.T) {
 		want int
 	}{
 		{"heartbeat", update("UPDATE compute_nodes SET last_heartbeat_at = last_heartbeat_at + interval '30 seconds' WHERE id = $1"), 0},
+		// gatewayd-internal stamps its edge-rule listener every 10 s (ADR-091);
+		// notifying on it closed every cached client and aborted wakes.
+		{"edge listener heartbeat", update("UPDATE compute_nodes SET edge_listener_heartbeat_at = now() WHERE id = $1"), 0},
+		{"both heartbeats", update("UPDATE compute_nodes SET last_heartbeat_at = now(), edge_listener_heartbeat_at = now() WHERE id = $1"), 0},
 		{"unchanged lifecycle", update("UPDATE compute_nodes SET lifecycle = lifecycle WHERE id = $1"), 0},
 		{"target rotation", update("UPDATE compute_nodes SET target_url = 'unix:///run/rotated.sock' WHERE id = $1"), 1},
 		{"schedd rotation", update("UPDATE compute_nodes SET schedd_target_url = 'tcp://127.0.0.1:9091' WHERE id = $1"), 1},
@@ -129,6 +133,32 @@ func TestComputeNodeNotify_HeartbeatKeepsClients(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := pool.Exec(ctx, "UPDATE compute_nodes SET last_heartbeat_at = now() WHERE id = $1", nodeID); err != nil {
+				t.Fatal(err)
+			}
+			check(t, tc.want)
+		})
+	}
+	// The same contract for the edge-rule listener stamp
+	// (20261027213512170): its down restores notifying on the stamp, its up
+	// stops it again.
+	source, err = migrations.FS.ReadFile("20261027213512170_node_notify_ignores_edge_heartbeat.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, down, ok = strings.Cut(string(source), "-- +goose Down")
+	if !ok {
+		t.Fatal("missing down migration")
+	}
+	for _, tc := range []struct {
+		name string
+		sql  string
+		want int
+	}{{"edge rollback", down, 1}, {"edge reapply", up, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, tc.sql); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, "UPDATE compute_nodes SET edge_listener_heartbeat_at = now() WHERE id = $1", nodeID); err != nil {
 				t.Fatal(err)
 			}
 			check(t, tc.want)

@@ -73,6 +73,11 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_client_request import AgentClientRequest
+from .agent_connection_response import AgentConnectionResponse
+from .agent_connection_response_kind import AgentConnectionResponseKind
+from .agent_connections_response import AgentConnectionsResponse
+from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
 from .ai_deployment_usage import AIDeploymentUsage
 from .ai_deployment_usage_list import AIDeploymentUsageList
 from .alert_delivery_response import AlertDeliveryResponse
@@ -744,6 +749,9 @@ from .compose_process import ComposeProcess
 from .compose_process_stop_signal import ComposeProcessStopSignal
 from .compose_resources import ComposeResources
 from .compose_resources_cpu_millicores import ComposeResourcesCpuMillicores
+from .condition import Condition
+from .condition_status import ConditionStatus
+from .condition_type import ConditionType
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -873,6 +881,8 @@ from .create_consumer_signup_response import CreateConsumerSignupResponse
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_data_api_contract_task_request import CreateDataAPIContractTaskRequest
+from .create_data_api_contract_task_request_kind import CreateDataAPIContractTaskRequestKind
 from .create_data_connection_request import CreateDataConnectionRequest
 from .create_data_pipeline_request import CreateDataPipelineRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
@@ -1050,6 +1060,7 @@ from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
+from .custom_domain_hosts_response import CustomDomainHostsResponse
 from .custom_domain_response import CustomDomainResponse
 from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
@@ -1079,9 +1090,14 @@ from .dashboard_widget_window import DashboardWidgetWindow
 from .dashboards_response import DashboardsResponse
 from .data_api_access_config import DataAPIAccessConfig
 from .data_api_access_config_version import DataAPIAccessConfigVersion
+from .data_api_change_event import DataAPIChangeEvent
+from .data_api_change_event_batch import DataAPIChangeEventBatch
+from .data_api_change_event_batch_response import DataAPIChangeEventBatchResponse
+from .data_api_change_event_batch_version import DataAPIChangeEventBatchVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
+from .data_api_runtime import DataAPIRuntime
 from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
 from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
@@ -1174,6 +1190,7 @@ from .debug_evidence_explanation_generated_by import DebugEvidenceExplanationGen
 from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
 from .debug_evidence_finding import DebugEvidenceFinding
 from .debug_evidence_finding_confidence import DebugEvidenceFindingConfidence
+from .debug_evidence_log_line import DebugEvidenceLogLine
 from .debug_evidence_recommendation import DebugEvidenceRecommendation
 from .debug_evidence_ref import DebugEvidenceRef
 from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
@@ -1201,6 +1218,9 @@ from .debug_request_critical_path import DebugRequestCriticalPath
 from .debug_request_dependency_latency import DebugRequestDependencyLatency
 from .debug_request_dependency_latency_type import DebugRequestDependencyLatencyType
 from .debug_request_evidence_response import DebugRequestEvidenceResponse
+from .debug_rollout_explanation import DebugRolloutExplanation
+from .debug_rollout_explanation_state import DebugRolloutExplanationState
+from .debug_rollout_route import DebugRolloutRoute
 from .debug_running_cause import DebugRunningCause
 from .debug_running_cause_code import DebugRunningCauseCode
 from .debug_running_config import DebugRunningConfig
@@ -1208,6 +1228,11 @@ from .debug_running_flow_summary import DebugRunningFlowSummary
 from .debug_running_observation import DebugRunningObservation
 from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
+from .debug_status_deployment import DebugStatusDeployment
+from .debug_status_health import DebugStatusHealth
+from .debug_status_oom_kill import DebugStatusOOMKill
+from .debug_status_response import DebugStatusResponse
+from .debug_status_response_verdict import DebugStatusResponseVerdict
 from .debug_suspected_dependency import DebugSuspectedDependency
 from .debug_suspected_dependency_reason import DebugSuspectedDependencyReason
 from .debug_suspected_dependency_type import DebugSuspectedDependencyType
@@ -1879,6 +1904,7 @@ from .event_replay_backfill_items_response import EventReplayBackfillItemsRespon
 from .event_replay_backfill_job_response import EventReplayBackfillJobResponse
 from .event_replay_backfill_job_response_consumer_kind import EventReplayBackfillJobResponseConsumerKind
 from .event_replay_backfill_job_response_duplicate_policy import EventReplayBackfillJobResponseDuplicatePolicy
+from .event_replay_backfill_job_response_last_failure import EventReplayBackfillJobResponseLastFailure
 from .event_replay_backfill_job_response_state import EventReplayBackfillJobResponseState
 from .event_replay_backfill_progress import EventReplayBackfillProgress
 from .event_replay_backfill_request import EventReplayBackfillRequest
@@ -2180,6 +2206,7 @@ from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBra
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .git_hub_installation_summary import GitHubInstallationSummary
 from .git_hub_webhook_activity import GitHubWebhookActivity
 from .git_hub_webhook_activity_status import GitHubWebhookActivityStatus
 from .github_check_update_record import GithubCheckUpdateRecord
@@ -2389,6 +2416,10 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .label_change import LabelChange
+from .label_change_set import LabelChangeSet
+from .labels_response import LabelsResponse
+from .labels_response_labels import LabelsResponseLabels
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .link_platform_tenant_consumer_request import LinkPlatformTenantConsumerRequest
 from .link_platform_tenant_surface_request import LinkPlatformTenantSurfaceRequest
@@ -2615,6 +2646,7 @@ from .managed_postgres_cutover_writer_isolation_state import ManagedPostgresCuto
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
+from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
 from .managed_postgres_health import ManagedPostgresHealth
@@ -2628,6 +2660,7 @@ from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_import_reading import ManagedPostgresUsageImportReading
 from .managed_postgres_usage_import_reading_meter import ManagedPostgresUsageImportReadingMeter
 from .managed_postgres_usage_import_request import ManagedPostgresUsageImportRequest
@@ -4981,6 +5014,10 @@ from .release_gate_kind import ReleaseGateKind
 from .release_gate_result import ReleaseGateResult
 from .release_gate_result_kind import ReleaseGateResultKind
 from .release_restore_point import ReleaseRestorePoint
+from .release_timeline import ReleaseTimeline
+from .release_timeline_event import ReleaseTimelineEvent
+from .release_timeline_event_kind import ReleaseTimelineEventKind
+from .release_timeline_phase import ReleaseTimelinePhase
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
@@ -5008,6 +5045,7 @@ from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
 from .request_analytics_route import RequestAnalyticsRoute
 from .request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
+from .request_analytics_telemetry_gap import RequestAnalyticsTelemetryGap
 from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
 from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
@@ -5023,6 +5061,8 @@ from .resize_managed_postgres_database_request import ResizeManagedPostgresDatab
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
+from .resource_status import ResourceStatus
+from .resource_status_kind import ResourceStatusKind
 from .restore_app_body import RestoreAppBody
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_deleted_app_body import RestoreDeletedAppBody
@@ -5171,6 +5211,7 @@ from .route_health_history_entry_purpose import RouteHealthHistoryEntryPurpose
 from .route_health_history_entry_source import RouteHealthHistoryEntrySource
 from .route_health_history_entry_version import RouteHealthHistoryEntryVersion
 from .route_health_history_page import RouteHealthHistoryPage
+from .route_health_hold import RouteHealthHold
 from .route_health_investigation import RouteHealthInvestigation
 from .route_health_investigation_coverage import RouteHealthInvestigationCoverage
 from .route_health_investigation_evidence_status import RouteHealthInvestigationEvidenceStatus
@@ -5590,6 +5631,7 @@ from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequ
 from .set_canary_route_gate_request import SetCanaryRouteGateRequest
 from .set_canary_route_gate_request_mode import SetCanaryRouteGateRequestMode
 from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
+from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
@@ -6280,6 +6322,11 @@ __all__ = (
     "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentClientRequest",
+    "AgentConnectionResponse",
+    "AgentConnectionResponseKind",
+    "AgentConnectionsResponse",
+    "AgentConnectionsRevokeAllResponse",
     "AIDeploymentUsage",
     "AIDeploymentUsageList",
     "AlertDeliveryResponse",
@@ -6937,6 +6984,9 @@ __all__ = (
     "ComposeProcessStopSignal",
     "ComposeResources",
     "ComposeResourcesCpuMillicores",
+    "Condition",
+    "ConditionStatus",
+    "ConditionType",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -7064,6 +7114,8 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDataAPIContractTaskRequest",
+    "CreateDataAPIContractTaskRequestKind",
     "CreateDataConnectionRequest",
     "CreateDataPipelineRequest",
     "CreateDeploymentFilesBody",
@@ -7223,6 +7275,7 @@ __all__ = (
     "CronRun",
     "CronRunOutcome",
     "CSRFTokenResponse",
+    "CustomDomainHostsResponse",
     "CustomDomainResponse",
     "CustomMetricListResponse",
     "CustomMetricRequest",
@@ -7252,9 +7305,14 @@ __all__ = (
     "DashboardWidgetWindow",
     "DataAPIAccessConfig",
     "DataAPIAccessConfigVersion",
+    "DataAPIChangeEvent",
+    "DataAPIChangeEventBatch",
+    "DataAPIChangeEventBatchResponse",
+    "DataAPIChangeEventBatchVersion",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
+    "DataAPIRuntime",
     "DataAPIRuntimeConnectionReport",
     "DataAPIRuntimeConnectionReportRuntimeModel",
     "DataAPIRuntimeConnectionReportState",
@@ -7347,6 +7405,7 @@ __all__ = (
     "DebugEvidenceExplanationStatus",
     "DebugEvidenceFinding",
     "DebugEvidenceFindingConfidence",
+    "DebugEvidenceLogLine",
     "DebugEvidenceRecommendation",
     "DebugEvidenceRef",
     "DebugGuestExecutionEvidence",
@@ -7374,6 +7433,9 @@ __all__ = (
     "DebugRequestDependencyLatency",
     "DebugRequestDependencyLatencyType",
     "DebugRequestEvidenceResponse",
+    "DebugRolloutExplanation",
+    "DebugRolloutExplanationState",
+    "DebugRolloutRoute",
     "DebugRunningCause",
     "DebugRunningCauseCode",
     "DebugRunningConfig",
@@ -7381,6 +7443,11 @@ __all__ = (
     "DebugRunningObservation",
     "DebugRunningRequestAttribution",
     "DebugRunningResponse",
+    "DebugStatusDeployment",
+    "DebugStatusHealth",
+    "DebugStatusOOMKill",
+    "DebugStatusResponse",
+    "DebugStatusResponseVerdict",
     "DebugSuspectedDependency",
     "DebugSuspectedDependencyReason",
     "DebugSuspectedDependencyType",
@@ -8024,6 +8091,7 @@ __all__ = (
     "EventReplayBackfillJobResponse",
     "EventReplayBackfillJobResponseConsumerKind",
     "EventReplayBackfillJobResponseDuplicatePolicy",
+    "EventReplayBackfillJobResponseLastFailure",
     "EventReplayBackfillJobResponseState",
     "EventReplayBackfillProgress",
     "EventReplayBackfillRequest",
@@ -8307,6 +8375,7 @@ __all__ = (
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
+    "GitHubInstallationSummary",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusDeployBranches",
@@ -8520,6 +8589,10 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "LabelChange",
+    "LabelChangeSet",
+    "LabelsResponse",
+    "LabelsResponseLabels",
     "LatestDeploymentsByAppResponse",
     "LinkPlatformTenantConsumerRequest",
     "LinkPlatformTenantSurfaceRequest",
@@ -8706,6 +8779,7 @@ __all__ = (
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
+    "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
     "ManagedPostgresHealth",
@@ -8719,6 +8793,7 @@ __all__ = (
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageImportReading",
     "ManagedPostgresUsageImportReadingMeter",
     "ManagedPostgresUsageImportRequest",
@@ -10878,6 +10953,10 @@ __all__ = (
     "ReleaseGateResult",
     "ReleaseGateResultKind",
     "ReleaseRestorePoint",
+    "ReleaseTimeline",
+    "ReleaseTimelineEvent",
+    "ReleaseTimelineEventKind",
+    "ReleaseTimelinePhase",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
     "ReorderDeploymentBody",
@@ -10905,6 +10984,7 @@ __all__ = (
     "RequestAnalyticsRoute",
     "RequestAnalyticsRouteDeploymentObservation",
     "RequestAnalyticsRouteMethod",
+    "RequestAnalyticsTelemetryGap",
     "RequestAnalyticsTimeseriesPoint",
     "RequestAnalyticsTimeseriesResponse",
     "RequestAnalyticsTimeseriesResponseBucket",
@@ -10920,6 +11000,8 @@ __all__ = (
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
+    "ResourceStatus",
+    "ResourceStatusKind",
     "RestoreAppBody",
     "RestoreAutomationRevisionRequest",
     "RestoreDeletedAppBody",
@@ -11062,6 +11144,7 @@ __all__ = (
     "RouteHealthHistoryEntrySource",
     "RouteHealthHistoryEntryVersion",
     "RouteHealthHistoryPage",
+    "RouteHealthHold",
     "RouteHealthInvestigation",
     "RouteHealthInvestigationCoverage",
     "RouteHealthInvestigationEvidenceStatus",
@@ -11477,6 +11560,7 @@ __all__ = (
     "SetCanaryRouteGateRequest",
     "SetCanaryRouteGateRequestMode",
     "SetCommitSourceEnabledBody",
+    "SetCustomDomainHostsRequest",
     "SetDeploymentAliasRequest",
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",

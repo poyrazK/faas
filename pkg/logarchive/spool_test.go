@@ -9,6 +9,7 @@
 package logarchive
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -266,3 +267,61 @@ func TestSpool_PrepareUploadRotatesAndMergesRetry(t *testing.T) {
 // expects. A future ring field change should bump this
 // test alongside the field doc on Ring.onEvict.
 var _ = func(_ *logbuf.Ring) {} // keeps logbuf imported
+
+// One instance writing fast, or an upload outage, made every other tenant's
+// evicted lines fail with ErrSpoolFull (bug hunt 2026-10-27 H13). An
+// instance now holds at most 1/InstanceShareDivisor of the budget.
+func TestSpool_InstanceShare(t *testing.T) {
+	const budget = 64 * 1024
+	s := NewSpool(t.TempDir(), budget)
+	line := strings.Repeat("x", 512)
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	var noisyErr error
+	for i := 0; i < budget; i++ {
+		if _, noisyErr = s.Write("noisy", int64(i), "stdout", now, line); noisyErr != nil {
+			break
+		}
+	}
+	if !errors.Is(noisyErr, ErrSpoolFull) {
+		t.Fatalf("noisy instance never hit its share: %v", noisyErr)
+	}
+	if _, err := s.Write("quiet", 1, "stdout", now, line); err != nil {
+		t.Fatalf("another instance refused while the budget has room: %v", err)
+	}
+}
+
+// A shipped upload gives its bytes back to the instance's share in both
+// upload modes. The whole-day commit used to release only the spool total,
+// so once an instance had spooled its share it failed with ErrSpoolFull for
+// the rest of the process, whatever had been shipped.
+func TestSpool_InstanceShareReleasedAfterShip(t *testing.T) {
+	for _, parts := range []bool{false, true} {
+		t.Run(map[bool]string{false: "whole-day", true: "part objects"}[parts], func(t *testing.T) {
+			sh, _, _ := newTestShipper(t, 7)
+			sh.cfg.PartObjects = parts
+			line := strings.Repeat("x", 512)
+			now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+			fill := func() {
+				t.Helper()
+				for i := 0; ; i++ {
+					if _, err := sh.spool.Write("chatty", int64(i), "stdout", now, line); err != nil {
+						if !errors.Is(err, ErrSpoolFull) {
+							t.Fatalf("write: %v", err)
+						}
+						return
+					}
+				}
+			}
+			fill()
+			if err := sh.spool.CloseAll(); err != nil {
+				t.Fatal(err)
+			}
+			if n, _, err := sh.RunOnce(context.Background()); err != nil || n != 1 {
+				t.Fatalf("RunOnce = %d, %v; want the instance's day shipped", n, err)
+			}
+			if _, err := sh.spool.Write("chatty", 1, "stdout", now, line); err != nil {
+				t.Fatalf("instance still refused after its bytes were shipped: %v", err)
+			}
+		})
+	}
+}

@@ -60,9 +60,12 @@ func TestWorkloadSecretReloadPublishesAndReportsItsOwnIdentity(t *testing.T) {
 							fresh := map[string]string{"SHARED": "new-" + workload}
 							response = runtimeConfigResponse{Secrets: &fresh, Revision: strings.Repeat("b", 64)}
 						}
+						// Record the request before answering it: the answer lets the
+						// reloader send its next request, which must not be recorded
+						// first (a race a loaded host exposed).
+						requests <- request
 						encoded, _ := json.Marshal(response)
 						_ = writeRuntimeConfigFrame(server, encoded)
-						requests <- request
 					}()
 					return client, nil
 				}

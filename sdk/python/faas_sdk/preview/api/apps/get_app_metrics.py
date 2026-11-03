@@ -95,7 +95,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     range_: GetAppMetricsRange | Unset = "5m",
 ) -> Response[AppMetricsResponse | Problem]:
-    r"""Per-app request metrics (issue
+    r"""Per-app request metrics.
 
      Time-windowed rollup of one app's gateway activity. The `range`
     parameter is a closed vocabulary bounded by Prometheus
@@ -139,7 +139,7 @@ def sync(
     client: AuthenticatedClient | Client,
     range_: GetAppMetricsRange | Unset = "5m",
 ) -> AppMetricsResponse | Problem | None:
-    r"""Per-app request metrics (issue
+    r"""Per-app request metrics.
 
      Time-windowed rollup of one app's gateway activity. The `range`
     parameter is a closed vocabulary bounded by Prometheus
@@ -178,7 +178,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     range_: GetAppMetricsRange | Unset = "5m",
 ) -> Response[AppMetricsResponse | Problem]:
-    r"""Per-app request metrics (issue
+    r"""Per-app request metrics.
 
      Time-windowed rollup of one app's gateway activity. The `range`
     parameter is a closed vocabulary bounded by Prometheus
@@ -220,7 +220,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     range_: GetAppMetricsRange | Unset = "5m",
 ) -> AppMetricsResponse | Problem | None:
-    r"""Per-app request metrics (issue
+    r"""Per-app request metrics.
 
      Time-windowed rollup of one app's gateway activity. The `range`
     parameter is a closed vocabulary bounded by Prometheus

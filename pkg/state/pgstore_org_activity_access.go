@@ -34,7 +34,7 @@ func (s *PgStore) CreateOrgInvitationWithActivity(ctx context.Context, invitatio
 			id, org_id, email, role, token_hash, invited_by_account_id,
 			expires_at, created_at
 		) values ($1,$2,$3,$4,$5,$6,$7,$8)
-	`, invitation.ID, invitation.OrgID, invitation.Email, string(invitation.Role), invitation.TokenHash,
+	`, invitation.ID, invitation.OrgID, invitation.Email, string(invitation.Role), storedCredential(credTagOrgInvitation, invitation.TokenHash),
 		invitation.InvitedByAccountID, invitation.ExpiresAt, invitation.CreatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -70,11 +70,13 @@ func (s *PgStore) ConsumeOrgInvitationWithActivity(ctx context.Context, hash []b
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	inv, err := scanOrgInvitation(tx.QueryRow(ctx, `
-		select id, org_id, email::text, role, token_hash, invited_by_account_id,
-		       expires_at, consumed_at, revoked_at, accepting_account_id, created_at
-		  from org_invitations where token_hash = $1 for update
-	`, hash))
+	inv, err := firstCredential(ctx, credentialLookups(credTagOrgInvitation, hash), func(ctx context.Context, value []byte) (OrgInvitation, error) {
+		return scanOrgInvitation(tx.QueryRow(ctx, `
+			select id, org_id, email::text, role, token_hash, invited_by_account_id,
+			       expires_at, consumed_at, revoked_at, accepting_account_id, created_at
+			  from org_invitations where token_hash = $1 for update
+		`, value))
+	})
 	if err != nil {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, err
 	}

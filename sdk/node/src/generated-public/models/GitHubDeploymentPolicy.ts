@@ -18,6 +18,14 @@ export type GitHubDeploymentPolicy = {
   preview_enabled: boolean;
   preview_ttl_hours: number;
   /**
+   * Preview pull requests opened by bots such as Dependabot and Renovate. Off by default so they do not use up the preview allowance.
+   */
+  preview_bot_prs?: boolean;
+  /**
+   * Preview draft pull requests. When off, a draft gets its preview once it is marked ready for review.
+   */
+  preview_draft_prs?: boolean;
+  /**
    * Controls calls from project previews to production internal
    * services. `deny` rejects the call before discovery or wake-up;
    * `allow_marked` permits it and marks the request as preview-origin

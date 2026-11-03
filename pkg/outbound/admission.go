@@ -78,9 +78,13 @@ type Integration struct {
 	AccountPlan api.Plan
 	// AccountStatus is the owning account's status; a suspended account's
 	// customer integrations refuse calls (ADR 20261027132936).
-	AccountStatus                  string
-	Origin                         *url.URL
-	TokenHash                      [32]byte
+	AccountStatus string
+	Origin        *url.URL
+	TokenHash     [32]byte
+	// StoredTokenHash is the token hash as the database holds it, plain or
+	// keyed under the outbound ring (ADR 20261029202403 amendment 1); set
+	// for an integration read from the database.
+	StoredTokenHash                []byte
 	AppIDs                         map[string]struct{}
 	OperatorAppIDs                 map[string]struct{}
 	BindingAppIDs                  map[string]struct{}
@@ -228,7 +232,7 @@ func (i Integration) Validate() error {
 	if strings.TrimSpace(i.ID) == "" || i.Origin == nil {
 		return fmt.Errorf("%w: id and origin are required", ErrInvalidIntegration)
 	}
-	if i.TokenHash == ([32]byte{}) && i.ProviderAuthMode != ProviderAuthManaged {
+	if i.TokenHash == ([32]byte{}) && len(i.StoredTokenHash) == 0 && i.ProviderAuthMode != ProviderAuthManaged {
 		return fmt.Errorf("%w: token hash is required", ErrInvalidIntegration)
 	}
 	if i.Origin.Scheme != "https" || i.Origin.Host == "" || i.Origin.User != nil || i.Origin.RawQuery != "" || i.Origin.Fragment != "" {
@@ -394,8 +398,13 @@ type AdmissionSpec struct {
 	AITraceNamed bool
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
-	BindingAppID                   string
-	BindingDailyRequestLimit       *int64
+	BindingAppID             string
+	BindingDailyRequestLimit *int64
+	// AgentRun admits an agent run's relayed call (ADR-20261027090010 §7). Its run
+	// grant authorizes it instead of an app binding, so a customer
+	// integration admits it without a BindingAppID; the integration's own
+	// limits still apply, and the run's spend cap holds its cost.
+	AgentRun                       bool
 	CircuitBreakerFailureThreshold int
 	CircuitBreakerOpenSeconds      int
 	RetryBudgetPerMinute           int

@@ -6,14 +6,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 var (
-	ErrProjectEnvironmentCloneBindingCapture            = fmt.Errorf("clone binding catalogue is incomplete or not ready: %w", ErrConflict)
+	ErrProjectEnvironmentCloneBindingCapture = fmt.Errorf("clone binding catalogue is incomplete or not ready: %w", ErrConflict)
+	// A bound managed database without a restore window cannot be copied at
+	// a clone's point in time (ADR-20261024224230).
+	ErrProjectEnvironmentCloneRestoreWindowUnavailable  = fmt.Errorf("a bound managed database has no point-in-time restore window: %w", ErrProjectEnvironmentCloneBindingCapture)
 	ErrProjectEnvironmentCloneBindingCaptureUnavailable = fmt.Errorf("clone binding catalogue capture is unavailable: %w", ErrConflict)
 	ErrProjectEnvironmentCloneResourcePublicationProof  = fmt.Errorf("isolated resource publication proof is unavailable: %w", ErrConflict)
 )
@@ -96,6 +100,9 @@ func normalizeCloneBindingDefinitions(appID, scope string, values projectCloneWo
 	databaseDefinitions := map[string]ProjectEnvironmentClonePostgresBinding{}
 	keys := map[string]bool{}
 	for i, binding := range definitions.Postgres {
+		if binding.RestoreWindowSeconds <= 0 {
+			return definitions, ErrProjectEnvironmentCloneRestoreWindowUnavailable
+		}
 		if !validClonePostgresBinding(binding) || (i > 0 && definitions.Postgres[i-1].ID == binding.ID) || keys[binding.EnvironmentKey] {
 			return definitions, ErrProjectEnvironmentCloneBindingCapture
 		}
@@ -177,11 +184,11 @@ func normalizeCloneBindingDefinitions(appID, scope string, values projectCloneWo
 }
 
 var (
-	cloneBindingNameRE           = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	cloneBindingPublicPathRE     = regexp.MustCompile(`^/[A-Za-z0-9][A-Za-z0-9._~/-]*$`)
-	cloneBindingFingerprintRE    = regexp.MustCompile(`^[a-f0-9]{64}$`)
-	cloneBindingPrefixRE         = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,47}$`)
-	cloneBindingEnvironmentKeyRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,126}$`)
+	cloneBindingNameRE           = lazyregexp.New(`^[a-z][a-z0-9-]{0,62}$`)
+	cloneBindingPublicPathRE     = lazyregexp.New(`^/[A-Za-z0-9][A-Za-z0-9._~/-]*$`)
+	cloneBindingFingerprintRE    = lazyregexp.New(`^[a-f0-9]{64}$`)
+	cloneBindingPrefixRE         = lazyregexp.New(`^[A-Z][A-Z0-9_]{0,47}$`)
+	cloneBindingEnvironmentKeyRE = lazyregexp.New(`^[A-Z_][A-Z0-9_]{0,126}$`)
 )
 
 func validClonePostgresBinding(b ProjectEnvironmentClonePostgresBinding) bool {

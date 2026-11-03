@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { SyntheticCheckRun } from './SyntheticCheckRun.js';
 /**
- * Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id} (ADR-748).
+ * Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id}.
  */
 export type SyntheticCheckResults = {
   /**

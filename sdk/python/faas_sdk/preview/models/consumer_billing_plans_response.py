@@ -18,7 +18,7 @@ T = TypeVar("T", bound="ConsumerBillingPlansResponse")
 
 @_attrs_define
 class ConsumerBillingPlansResponse:
-    """The plans a consumer can switch between (ADR-20261021183000)."""
+    """The plans a consumer can switch between."""
 
     can_change: bool
     can_close: bool

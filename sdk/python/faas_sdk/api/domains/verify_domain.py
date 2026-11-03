@@ -82,7 +82,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[CustomDomainResponse | Problem]:
-    """Re-verify a domain's DNS + cert (issue
+    """Re-verify a domain's DNS + cert.
 
      Re-runs the DNS verifier + cert dial; returns the canonical
     CustomDomainResponse. Used by `gregale domains verify
@@ -119,7 +119,7 @@ def sync(
     client: AuthenticatedClient | Client,
     idempotency_key: str | Unset = UNSET,
 ) -> CustomDomainResponse | Problem | None:
-    """Re-verify a domain's DNS + cert (issue
+    """Re-verify a domain's DNS + cert.
 
      Re-runs the DNS verifier + cert dial; returns the canonical
     CustomDomainResponse. Used by `gregale domains verify
@@ -151,7 +151,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[CustomDomainResponse | Problem]:
-    """Re-verify a domain's DNS + cert (issue
+    """Re-verify a domain's DNS + cert.
 
      Re-runs the DNS verifier + cert dial; returns the canonical
     CustomDomainResponse. Used by `gregale domains verify
@@ -186,7 +186,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     idempotency_key: str | Unset = UNSET,
 ) -> CustomDomainResponse | Problem | None:
-    """Re-verify a domain's DNS + cert (issue
+    """Re-verify a domain's DNS + cert.
 
      Re-runs the DNS verifier + cert dial; returns the canonical
     CustomDomainResponse. Used by `gregale domains verify

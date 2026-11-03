@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
@@ -31,6 +32,14 @@ type MemoryStore struct {
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
 	overage                   map[string]bool
+	capEvents                 map[memoryCapEventKey]CapEvent
+	capEventsMailed           map[memoryCapEventKey]bool
+	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
+	restoreSlotNoticesMailed  map[memoryRestoreSlotNoticeKey]bool
+	planExcessNotices         map[string]memoryPlanExcessNotice
+	overageDeliveries         map[memoryOverageKey]OverageDelivery
+	overagePending            map[memoryOverageKey]OveragePendingStep
+	usageWaivers              map[string][]usageWaiver
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -53,6 +62,14 @@ func NewMemoryStore() *MemoryStore {
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
 		overage:                   map[string]bool{},
+		capEvents:                 map[memoryCapEventKey]CapEvent{},
+		capEventsMailed:           map[memoryCapEventKey]bool{},
+		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
+		restoreSlotNoticesMailed:  map[memoryRestoreSlotNoticeKey]bool{},
+		planExcessNotices:         map[string]memoryPlanExcessNotice{},
+		overageDeliveries:         map[memoryOverageKey]OverageDelivery{},
+		overagePending:            map[memoryOverageKey]OveragePendingStep{},
+		usageWaivers:              map[string][]usageWaiver{},
 	}
 }
 
@@ -103,7 +120,21 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 		}
 	}
 	if active >= limit {
-		return Database{}, false, ErrQuotaExceeded
+		// Only a restore may go one database past the limit, while no other
+		// database of the owner holds the slot (ADR-20261031123259), and
+		// not one that must fit inside it.
+		if database.RestoreSourceDatabaseID == "" || !restoreSlotAllowed(ctx) {
+			return Database{}, false, ErrQuotaExceeded
+		}
+		for _, existing := range s.databases {
+			if s.sameQuotaOwner(ctx, existing, database) && existing.State != StateDeleted && !existing.RestoreSlotUntil.IsZero() {
+				return Database{}, false, ErrRestoreSlotInUse
+			}
+		}
+		if active >= limit+api.ManagedPostgresRestoreSlots {
+			return Database{}, false, ErrQuotaExceeded
+		}
+		database.RestoreSlotUntil = database.CreatedAt.Add(api.ManagedPostgresRestoreSlotWindow)
 	}
 	s.databases[database.ID] = cloneDatabase(database)
 	s.billingSubjects[database.ID] = PolicySubject(ctx, database.AccountID)
@@ -266,12 +297,16 @@ func (s *MemoryStore) ClaimDelete(ctx context.Context, accountID, databaseID, le
 	if database.AttemptCount < 30 {
 		database.AttemptCount++
 	}
+	before := database
 	database.State = StateDeleting
+	// An immediate delete ends any scheduled window (ADR-20261029174950).
+	database.PurgeAfter = time.Time{}
 	database.LeaseToken = leaseToken
 	database.LeaseUntil = leaseUntil
 	database.UpdatedAt = now
 	database.RetryAt = now
 	s.databases[databaseID] = database
+	s.trackUsageWaiverLocked(before, database)
 	return cloneDatabase(database), nil
 }
 

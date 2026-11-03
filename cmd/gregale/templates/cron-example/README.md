@@ -11,7 +11,7 @@ gregale deploy --template cron-example --name <slug>
 ## Schedule it
 
 ```
-gregale crons add --app <slug> --schedule '*/5 * * * *' --path /
+gregale cron create --app <slug> --schedule '*/5 * * * *' --path /
 ```
 
 Every 5 minutes gregale will POST `{"ping":"cron"}` (or whatever you

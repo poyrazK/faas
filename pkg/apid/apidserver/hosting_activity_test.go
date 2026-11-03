@@ -79,7 +79,7 @@ func TestHostingActivityFlagsRoutesAndCICredentialDenial(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, ops := range [][]string{{"stage"}, {"preview"}, {"stage", "preview"}} {
-		minted := env.Do(t, "POST", root+"/automation-credentials", api.CreateHostingAutomationCredentialRequest{Label: "activity", Operations: ops}, nil)
+		minted := env.DoOperator(t, "POST", root+"/automation-credentials", api.CreateHostingAutomationCredentialRequest{Label: "activity", Operations: ops}, nil)
 		var credential api.HostingAutomationCredentialResponse
 		if minted.Code != 201 || json.Unmarshal(minted.Body.Bytes(), &credential) != nil {
 			t.Fatal(minted.Code, minted.Body)

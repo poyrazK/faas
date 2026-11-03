@@ -21,6 +21,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -50,7 +51,7 @@ func parseAppEdgeRulesPath(rest string) (string, bool) {
 func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string, traceForm *dashboard.EdgeRuleTraceFormData, traceInput *edgeruletrace.Input) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -61,6 +62,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	}
 	data.Protection = s.edgeRules.AppEdgeProtection(ctx, app, edgerules.EdgeProtectionDefaultRange)
 	data.AttackModeAvailable = s.edgeRules.AttackModeReleased(acct)
+	data.ChallengeAvailable = s.edgeRules.FeatureReleased(acct, api.EdgeFeatureChallenge)
 	data.Trace = dashboard.EdgeRuleTraceFormData{Host: app.Slug, Path: "/", Method: http.MethodGet}
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()
@@ -90,6 +92,8 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			data.Review = dashboardEdgeRuleReview(rules, data.Rules, hits)
 		}
 		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
+		data.Lists = s.loadDashboardEdgeRuleLists(r, log, acct)
+		data.Versions = s.loadDashboardEdgeRuleVersions(r, log, acct, app)
 		data.WAFReview = s.loadDashboardEdgeWAFReview(r, log, acct, app, rules)
 		for _, rule := range rules {
 			if isSecurityHeadersRule(rule) && rule.Enabled {
@@ -155,6 +159,8 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			for _, rule := range rules {
 				apiRules = append(apiRules, s.edgeRules.RuleResponse(acct, rule))
 			}
+			apiRules = append(apiRules, s.dashboardPreviewInheritedRules(ctx, log, acct, app)...)
+			apiRules = append(apiRules, s.dashboardCoveringRules(r, log, acct, app)...)
 			if names := edgeruletrace.ReferencedEdgeRuleLists(apiRules); len(names) > 0 {
 				if store, ok := s.store.(state.EdgeRuleListStore); ok {
 					lists, listErr := store.EdgeRuleListsByName(ctx, acct.ID, names)
@@ -177,9 +183,9 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		}
 	}
 	if s.sessions != nil {
-		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardEdgeRulesAction, actorAccount(r, acct).ID, dashboardEdgeRulesCSRFCookie)
 		if tokenErr != nil {
-			log.Warn("dashboard edge rules: issue csrf", "account_id", acct.ID, "app_id", app.ID, "err", tokenErr)
+			log.Warn("dashboard edge rules: issue csrf", "account_id", actorAccount(r, acct).ID, "app_id", app.ID, "err", tokenErr)
 		} else {
 			data.ActionCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token, Path: "/", HttpOnly: true,
@@ -280,7 +286,7 @@ func projectDashboardEdgeRules(rows []state.EdgeRule, unreleased func(state.Edge
 		item := dashboard.EdgeRulePageItem{
 			ID: row.ID, Kind: string(row.Kind), MatchHost: row.MatchHost, MatchPath: row.MatchPath,
 			MatchMethods: strings.Join(row.MatchMethods, ", "), Priority: row.Priority, Enabled: row.Enabled,
-			ActionJSON: string(actionJSON), ActionSummary: edgeRuleActionSummary(row),
+			ActionJSON: string(actionJSON), ActionSummary: edgeRuleActionSummary(row), EditActionJSON: edgeRuleEditActionJSON(row),
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 			SecurityPreset: isSecurityHeadersRule(row),
 			Name:           row.Name, Mode: edgeRuleModeOrDefault(row.Mode),
@@ -356,13 +362,55 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
 	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log", "recipe_log", "recipe_enforce",
-		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off", "waf_excluded":
+		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off", "waf_excluded",
+		"rolled_back", "list_created", "list_updated", "list_deleted":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"
 	default:
 		return ""
 	}
+}
+
+// dashboardCoveringRules returns the rules of the account's other apps whose
+// host pattern can cover app's hosts (ADR-091 amendment 2026-10-31), so the
+// trace matches the gateway. A read failure leaves the trace with the app's
+// own rules and is logged.
+func (s *server) dashboardCoveringRules(r *http.Request, log *slog.Logger, acct state.Account, app state.App) []api.EdgeRuleResponse {
+	rules, err := s.edgeRules.VisibleCoveringRules(r, acct, app)
+	if err != nil {
+		log.Warn("dashboard edge rules: list covering rules for trace", "app_id", app.ID, "err", err)
+		return nil
+	}
+	responses := make([]api.EdgeRuleResponse, 0, len(rules))
+	for _, rule := range rules {
+		responses = append(responses, s.edgeRules.RuleResponse(acct, rule))
+	}
+	return responses
+}
+
+// dashboardPreviewInheritedRules returns, for a PR preview, the production
+// app's rules the preview also applies (ADR-091 amendment 2026-10-30), so the
+// trace matches the gateway. Read failures leave the trace with the preview's
+// own rules and are logged.
+func (s *server) dashboardPreviewInheritedRules(ctx context.Context, log *slog.Logger, acct state.Account, app state.App) []api.EdgeRuleResponse {
+	if app.PreviewOfSlug == "" {
+		return nil
+	}
+	production, err := s.store.AppBySlug(ctx, app.PreviewOfSlug)
+	if err != nil || production.AccountID != app.AccountID {
+		return nil
+	}
+	rules, err := s.store.ListEdgeRulesForApp(ctx, production.ID)
+	if err != nil {
+		log.Warn("dashboard edge rules: list production rules for preview trace", "app_id", app.ID, "err", err)
+		return nil
+	}
+	responses := make([]api.EdgeRuleResponse, 0, len(rules))
+	for _, rule := range rules {
+		responses = append(responses, s.edgeRules.RuleResponse(acct, rule))
+	}
+	return edgeruletrace.PreviewInheritedRules(responses)
 }
 
 func (s *server) dashboardCreateEdgeRule(w http.ResponseWriter, r *http.Request) {
@@ -440,7 +488,7 @@ func (s *server) dashboardToggleEdgeRule(w http.ResponseWriter, r *http.Request)
 	}
 	slug, id := r.PathValue("slug"), r.PathValue("id")
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -472,7 +520,7 @@ func (s *server) dashboardDeleteEdgeRule(w http.ResponseWriter, r *http.Request)
 	// be that app's, as the toggle and mode handlers require. Company apps and
 	// their creator's personal apps share AccountID.
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -499,7 +547,7 @@ func (s *server) dashboardSecurityHeaders(w http.ResponseWriter, r *http.Request
 	}
 	slug := r.PathValue("slug")
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -591,7 +639,16 @@ func (s *server) forwardDashboardEdgeRuleJSON(r *http.Request, acct state.Accoun
 	if body != nil {
 		payload, _ = json.Marshal(body)
 	}
-	req := r.Clone(r.Context())
+	ctx := r.Context()
+	// A browser session carries no API principal, and the organization check
+	// for apps a request changes without naming them (authorizeNamedApp, e.g.
+	// the apps whose rules use an edited list) is skipped without one. The
+	// dashboard gate only checked the app in the URL (ADR-091 amendment
+	// 2026-10-30, round 5), so the session account acts as the principal.
+	if _, _, _, ok := authmw.PrincipalFrom(r); !ok {
+		ctx = authmw.WithPrincipal(ctx, acct, nil, nil)
+	}
+	req := r.Clone(ctx)
 	req.Method = method
 	req.URL = cloneDashboardURL(r.URL, path, "")
 	req.Body = io.NopCloser(bytes.NewReader(payload))
@@ -600,6 +657,8 @@ func (s *server) forwardDashboardEdgeRuleJSON(r *http.Request, acct state.Accoun
 	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("slug", r.PathValue("slug"))
 	req.SetPathValue("id", id)
+	// The rule-list routes name their list by {name}.
+	req.SetPathValue("name", id)
 	resp := httptest.NewRecorder()
 	handler(resp, req, acct)
 	return resp
@@ -623,7 +682,7 @@ func (s *server) dashboardApplyEdgeRuleRecipe(w http.ResponseWriter, r *http.Req
 	}
 	slug := r.PathValue("slug")
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}

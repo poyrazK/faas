@@ -10,7 +10,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -115,6 +117,32 @@ func (s *Service) visibleEventReplayBackfill(ctx context.Context, store state.Ev
 	return job, err
 }
 
+// writableEventReplayBackfill is visibleEventReplayBackfill for retry and
+// cancel: seeing the job's app is not enough, the caller's role must still
+// deploy it. A refused job answers ErrNotFound, like one the caller cannot see.
+func (s *Service) writableEventReplayBackfill(ctx context.Context, store state.EventReplayBackfillStore, acct state.Account, jobID string) error {
+	job, err := s.visibleEventReplayBackfill(ctx, store, acct, jobID)
+	if err != nil || job.AppSlug == "" {
+		return err
+	}
+	apps, ok := s.Host.Store().(appaccess.Store)
+	if !ok {
+		return errors.New("event replay access needs the organization access store")
+	}
+	app, err := apps.AppBySlug(ctx, job.AppSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	deploys, err := appaccess.Standing(ctx, apps, acct.ID, app, authz.OrgActionDeployApp)
+	if err == nil && !deploys {
+		err = state.ErrNotFound
+	}
+	return err
+}
+
 func (s *Service) ListEventReplayBackfillItems(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	ctx, cancel := context.WithTimeout(r.Context(), api.EventReplayBackfillRequestTimeout)
@@ -167,7 +195,7 @@ func (s *Service) RetryFailedEventReplayBackfill(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
 		return
 	}
-	if _, err := s.visibleEventReplayBackfill(ctx, store, acct, r.PathValue("jobID")); err != nil {
+	if err := s.writableEventReplayBackfill(ctx, store, acct, r.PathValue("jobID")); err != nil {
 		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
 		return
 	}
@@ -177,6 +205,30 @@ func (s *Service) RetryFailedEventReplayBackfill(w http.ResponseWriter, r *http.
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, result)
+}
+
+// CancelEventReplayBackfill ends a running backfill as cancelled
+// (ADR-20261028095548). Cancelling an ended job returns it unchanged.
+func (s *Service) CancelEventReplayBackfill(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventReplayBackfillRequestTimeout)
+	defer cancel()
+	store, ok := s.Host.Store().(state.EventReplayBackfillStore)
+	lifecycle, canEnd := s.Host.Store().(state.EventReplayBackfillLifecycleStore)
+	if !ok || !canEnd {
+		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
+		return
+	}
+	if err := s.writableEventReplayBackfill(ctx, store, acct, r.PathValue("jobID")); err != nil {
+		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
+		return
+	}
+	job, err := lifecycle.CancelEventReplayBackfill(ctx, acct.ID, r.PathValue("jobID"))
+	if err != nil {
+		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, job)
 }
 
 func decodeEventReplayBackfillRequest(r *http.Request) (api.EventReplayBackfillRequest, *api.Problem) {
@@ -204,7 +256,7 @@ func parseEventReplayBackfillItemsQuery(values url.Values) (api.EventReplayBackf
 		return query, api.ErrValidation("after must be a valid continuation cursor")
 	}
 	switch query.State {
-	case "", "pending", "processing", "enqueued", "filtered", "failed", "skipped_captured", "skipped_unknown", "skipped_existing", "skipped_unsettled":
+	case "", "pending", "processing", "enqueued", "filtered", "failed", "skipped_captured", "skipped_unknown", "skipped_existing", "skipped_unsettled", "cancelled":
 	default:
 		return query, api.ErrValidation("state must be a supported backfill item state")
 	}

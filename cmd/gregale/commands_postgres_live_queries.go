@@ -97,7 +97,7 @@ func cmdPostgresLiveIssue(action string, args []string) int {
 	if *app != "" {
 		if err := client.SetSecretWithScope(context.Background(), *app, *env, state.Secret, *scope); err != nil {
 			// The secret cannot be read again, so it is printed rather than lost.
-			_, _ = fmt.Fprintf(os.Stderr, "Could not store the live secret on %s (%v); it is printed below. Store it yourself: gregale secrets set %s=... --app %s\n", *app, err, *env, *app)
+			_, _ = fmt.Fprintf(os.Stderr, "Could not store the live secret on %s (%v); it is printed below. Store it yourself: gregale env set %s=... --app %s\n", *app, err, *env, *app)
 		} else {
 			stored = true
 		}

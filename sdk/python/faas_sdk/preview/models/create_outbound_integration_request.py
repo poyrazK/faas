@@ -39,8 +39,7 @@ class CreateOutboundIntegrationRequest:
     request_policy: OutboundRequestPolicy | Unset = UNSET
     """Effective customer-selected per-integration policy, bounded by the account plan."""
     ai_provider: CreateOutboundIntegrationRequestAiProvider | Unset = UNSET
-    """Optional AI gateway mode (ADR-988, ADR-991). Enables token usage extraction for that provider's response
-    format."""
+    """Optional AI gateway mode. Enables token usage extraction for that provider's response format."""
     ai_daily_token_limit: int | None | Unset = UNSET
     """Optional UTC-day input plus output token limit. Requires ai_provider."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

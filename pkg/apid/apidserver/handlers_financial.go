@@ -53,7 +53,9 @@ func (s *server) getFinancialForecast(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
-	writeJSON(w, http.StatusOK, api.FinancialForecastResponse{PeriodStart: report.PeriodStart, PeriodEnd: report.PeriodEnd, AsOf: report.AsOf, Currency: report.Currency, Meters: report.Meters, MissingBillComponents: report.MissingBillComponents})
+	subtotal := billing.ProjectedSubtotal(acct.Plan, report.Meters)
+	writeJSON(w, http.StatusOK, api.FinancialForecastResponse{PeriodStart: report.PeriodStart, PeriodEnd: report.PeriodEnd, AsOf: report.AsOf, Currency: report.Currency, Meters: report.Meters,
+		ProjectedSubtotalMillicents: subtotal, MissingBillComponents: billing.ForecastMissingComponents(report.MissingBillComponents, subtotal)})
 }
 
 func financialMonth(r *http.Request, now time.Time) (time.Time, *api.Problem) {

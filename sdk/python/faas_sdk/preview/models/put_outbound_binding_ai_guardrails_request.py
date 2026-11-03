@@ -13,7 +13,7 @@ T = TypeVar("T", bound="PutOutboundBindingAIGuardrailsRequest")
 
 @_attrs_define
 class PutOutboundBindingAIGuardrailsRequest:
-    """Replace an app's AI guardrails on one integration (ADR-991). Null fields remove that guardrail."""
+    """Replace an app's AI guardrails on one integration. Null fields remove that guardrail."""
 
     requests_per_minute: int | None | Unset = UNSET
     tokens_per_minute: int | None | Unset = UNSET

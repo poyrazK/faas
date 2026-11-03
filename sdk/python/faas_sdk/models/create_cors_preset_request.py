@@ -20,7 +20,7 @@ class CreateCorsPresetRequest:
     non-nil = "app-scoped"); the handler maps the
     pointer-nil case to a SQL NULL on insert. Name length
     is 1..64 characters (cors_presets_name_check). The
-    *+credentials footgun (ADR-091 D12) is enforced at
+    *+credentials footgun is enforced at
     validate-time.
 
     """

@@ -98,7 +98,7 @@ def sync_detailed(
     """Turn 5xx crash snapshots on or off for an app.
 
      When on, the first 5xx answered by one of the app's instances
-    captures that instance's memory (ADR-733), at most one in flight and
+    captures that instance's memory, at most one in flight and
     none within 10 minutes of the last. Pro and Scale only. Answers 501
     `crash_snapshots_not_enabled` until the operator enables the feature.
 
@@ -136,7 +136,7 @@ def sync(
     """Turn 5xx crash snapshots on or off for an app.
 
      When on, the first 5xx answered by one of the app's instances
-    captures that instance's memory (ADR-733), at most one in flight and
+    captures that instance's memory, at most one in flight and
     none within 10 minutes of the last. Pro and Scale only. Answers 501
     `crash_snapshots_not_enabled` until the operator enables the feature.
 
@@ -169,7 +169,7 @@ async def asyncio_detailed(
     """Turn 5xx crash snapshots on or off for an app.
 
      When on, the first 5xx answered by one of the app's instances
-    captures that instance's memory (ADR-733), at most one in flight and
+    captures that instance's memory, at most one in flight and
     none within 10 minutes of the last. Pro and Scale only. Answers 501
     `crash_snapshots_not_enabled` until the operator enables the feature.
 
@@ -205,7 +205,7 @@ async def asyncio(
     """Turn 5xx crash snapshots on or off for an app.
 
      When on, the first 5xx answered by one of the app's instances
-    captures that instance's memory (ADR-733), at most one in flight and
+    captures that instance's memory, at most one in flight and
     none within 10 minutes of the last. Pro and Scale only. Answers 501
     `crash_snapshots_not_enabled` until the operator enables the feature.
 

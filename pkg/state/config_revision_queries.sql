@@ -119,9 +119,13 @@ SELECT * FROM app_config_guard_secrets WHERE guard_id = sqlc.arg(guard_id)::uuid
 -- minute. Only deployments that existed when the guard opened count: a
 -- release deployed during the guard is judged by its own rollout, not
 -- blamed on the config. Uses request_telemetry_app_dep_received_idx.
+-- A default-scope value overlays every environment, so its guard also judges
+-- the project production lane (ADR-1451 amendment 1).
 WITH scoped AS (
     SELECT d.id FROM deployments d
-    WHERE d.app_id = sqlc.arg(app_id)::uuid AND COALESCE(NULLIF(d.scope, ''), 'default') = sqlc.arg(scope)::text
+    WHERE d.app_id = sqlc.arg(app_id)::uuid
+      AND (COALESCE(NULLIF(d.scope, ''), 'default') = sqlc.arg(scope)::text
+           OR (sqlc.arg(scope)::text = 'default' AND d.scope = 'production'))
       AND d.created_at <= sqlc.arg(opened_at)::timestamptz
 ), rows AS (
     SELECT t.count::bigint AS weight, t.status,

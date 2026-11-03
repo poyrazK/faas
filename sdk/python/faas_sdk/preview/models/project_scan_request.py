@@ -53,7 +53,7 @@ class ProjectScanRequest:
     Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as
     scan."""
     override_freeze: str | Unset = UNSET
-    """Apply only: release frozen apps to production anyway; the reason is audited (ADR-20261019071733)."""
+    """Apply only: release frozen apps to production anyway; the reason is audited."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

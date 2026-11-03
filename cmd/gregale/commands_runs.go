@@ -260,7 +260,7 @@ func cmdRunsWorkflow(args []string) int {
 	}
 	flags, positional := splitArgsForFlags(args)
 	if len(flags) != 0 || len(positional) != 1 {
-		PrintUsage(osStderr, "usage: gregale runs workflow <workflow-id> [--json]", "runs")
+		PrintUsage(osStderr, "usage: gregale sandbox workflow <workflow-id> [--json]", "runs")
 		return 1
 	}
 	client, err := authedClient()
@@ -298,7 +298,7 @@ func cmdRunsWorkflowRun(args []string) int {
 		return 1
 	}
 	if *manifestPath == "" || len(fs.Args()) != 0 || *pollInterval <= 0 || *waitTimeout <= 0 {
-		PrintUsage(osStderr, "usage: gregale runs workflow run --manifest PLAN.json [--managed] [--dry-run] [--poll-interval D] [--wait-timeout D]", "runs")
+		PrintUsage(osStderr, "usage: gregale sandbox workflow run --manifest PLAN.json [--managed] [--dry-run] [--poll-interval D] [--wait-timeout D]", "runs")
 		return 1
 	}
 	plan, err := loadExecutionWorkflowPlan(*manifestPath)
@@ -430,7 +430,7 @@ func managedExecutionWorkflowRequest(plan executionWorkflowPlan) (api.CreateMana
 
 func cmdRunsCapabilities(args []string) int {
 	if len(args) != 0 {
-		PrintUsage(osStderr, "usage: gregale runs capabilities [--json]", "runs")
+		PrintUsage(osStderr, "usage: gregale sandbox capabilities [--json]", "runs")
 		return 1
 	}
 	client, err := authedClient()
@@ -500,12 +500,12 @@ func cmdRunsList(args []string) int {
 		return 1
 	}
 	if len(positional) != 0 || validateCLILimit("limit", *limit, 200) != nil || *offset < 0 {
-		PrintUsage(osStderr, "usage: gregale runs list [--limit N] [--offset N] [--status STATUS] [--workflow-id ID]", "runs")
+		PrintUsage(osStderr, "usage: gregale sandbox list [--limit N] [--offset N] [--status STATUS] [--workflow-id ID]", "runs")
 		return 1
 	}
 	filter := api.ExecutionStatus(*status)
 	if filter != "" && !filter.Valid() {
-		PrintUsage(osStderr, "usage: gregale runs list [--limit N] [--offset N] [--status STATUS] [--workflow-id ID]", "runs")
+		PrintUsage(osStderr, "usage: gregale sandbox list [--limit N] [--offset N] [--status STATUS] [--workflow-id ID]", "runs")
 		return 1
 	}
 	client, err := authedClient()

@@ -93,12 +93,23 @@ const (
 	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
 	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
 	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
+	releaseTimelineFile              = "release_timeline.go"     // ADR-20261022120744 release page timeline
 	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
 	databaseSwitchFile               = "database_switch.go"      // ADR-20261023181931 rollbacks that restore the database
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
 )
+
+// previewFields are DTO fields that apid shows only to accounts in a
+// preview's rollout and omits for everyone else, so they stay out of the
+// public spec and generated SDKs until launch.
+var previewFields = map[string]map[string]bool{
+	// ADR-1027 storage growth (FAAS_MANAGED_POSTGRES_STORAGE_RESIZE_ACCOUNTS).
+	"ResizeManagedPostgresDatabaseRequest": {"storage_limit_bytes": true},
+	"ManagedPostgresResize":                {"from_storage_limit_bytes": true, "target_storage_limit_bytes": true},
+	"ManagedPostgresCapabilities":          {"storage_resize": true},
+}
 
 // routeExclude lists server.go routes that are deliberately not in the
 // public OpenAPI spec. Keep this in sync with the explanatory comments in
@@ -195,6 +206,14 @@ var routeExclude = map[string]bool{
 	"PUT /v1/internal/hosting/sites/{site}/retention":                              true,
 	"PUT /v1/internal/hosting/sites/{site}/suspension":                             true,
 
+	// ADR-1027 in-place major upgrades: a preview gated by
+	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered
+	// routes outside it, so it stays out of the public OpenAPI spec and
+	// generated SDKs until launch. pkg/api keeps its client for the CLI.
+	// Mirror across this list AND cmd/sdk-coverage/main.go::routeExclude.
+	"POST /v1/postgres/databases/{id}/upgrade":              true,
+	"GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}": true,
+
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
 	"POST /integrations/slack/issues/{app_id}":             true, // ADR-1496 Slack-signed provider callback; no account credentials
@@ -221,7 +240,9 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
 	"POST /dashboard/mcp/retirements/{id}":                             true,
 
+	"GET /dashboard/apps/{slug}/profiles/captures":                           true, // ADR-1155 HTML captures page over the profile capture API
 	"POST /dashboard/apps/{slug}/profiles/captures":                          true, // ADR-1155 session + CSRF adapter for the profile capture API
+	"POST /dashboard/apps/{slug}/profiles/captures/{id}/delete":              true, // ADR-1155 session + CSRF adapter for capture delete
 	"GET /dashboard/apps/{slug}/profiles/captures/{id}":                      true, // ADR-1155 HTML capture page over the profile capture API
 	"GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof":                true, // ADR-1155 session-authenticated download adapter
 	"GET /dashboard/apps/{slug}/profiles/captures/{id}/diff":                 true, // ADR-1155 HTML comparison page over the capture diff API
@@ -388,6 +409,29 @@ var routeExclude = map[string]bool{
 	"DELETE /v1/postgres/databases/{id}/live":      true,
 	"POST /v1/postgres/databases/{id}/live/rotate": true,
 
+	// ADR-20261027090010 agents: the internal agents capability, answering like
+	// unregistered routes to every account it is not released to, so it stays
+	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
+	// across this list AND cmd/sdk-coverage/main.go::routeExclude.
+	"POST /v1/agents":                                 true,
+	"POST /v1/agent-callbacks":                        true,
+	"POST /v1/agent-callbacks/{token}":                true,
+	"POST /v1/agent-callbacks/revocations":            true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
+	"POST /v1/agent-tools/invoke":                     true,
+	"POST /v1/agent-tools/close_thread":               true,
+	"GET /v1/agents":                                  true,
+	"GET /v1/agents/{agent}":                          true,
+	"DELETE /v1/agents/{agent}":                       true,
+	"POST /v1/agents/{agent}/versions":                true,
+	"GET /v1/agents/{agent}/versions/{version}":       true,
+	"POST /v1/agents/{agent}/runs":                    true,
+	"GET /v1/agent-runs":                              true,
+	"GET /v1/agent-runs/{id}":                         true,
+	"DELETE /v1/agent-runs/{id}":                      true,
+	"GET /v1/agent-runs/{id}/outputs":                 true,
+	"GET /v1/agent-runs/{id}/outputs/files/{name...}": true,
+
 	"POST /v1/apps/{slug}/operation-schedules/{id}/cancel":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules":             true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/cancel": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
@@ -459,6 +503,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/suspend":                      true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/restore":                      true, // operator-only tenant lifecycle control
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
+	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/force-drain":                   true, // operator-only destructive node lifecycle control
 	"POST /v1/admin/ops/nodes/{name}/activate":                      true, // operator-only node lifecycle control
@@ -470,6 +515,7 @@ var routeExclude = map[string]bool{
 	"GET /login":                                                    true, // dashboard magic-link GET (HTML form, browser-only)
 	"POST /logout":                                                  true, // dashboard logout (HTML form, browser-only)
 	"GET /auth/verify":                                              true, // magic-link consume (legacy; PR #1 closed; kept for compat)
+	"POST /auth/verify":                                             true, // magic-link confirm page for a link reached from another site
 	"GET /oauth/callback":                                           true, // GitHub App install callback
 	"GET /oauth/code-callback":                                      true, // GitHub App user-to-server OAuth callback (PR-C)
 	"POST /v1/gitlab/connect":                                       true, // GitLab.com OAuth session + CSRF form
@@ -530,6 +576,11 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/waf-exclusions":    true, // HTML form, WAF review exclude button (ADR-831 amendment 13)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":       true, // HTML form, security-headers preset (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/recipes":                true, // HTML form, protection recipe (ADR-986)
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/edit":              true, // HTML form, edge-rule edit (ADR-091 amendment 2026-10-30)
+	"POST /dashboard/apps/{slug}/edge-rules/rollback":               true, // HTML form, rule-set rollback (ADR-091 amendment 2026-10-30)
+	"POST /dashboard/apps/{slug}/edge-rule-lists":                   true, // HTML form, rule list create (ADR-091 amendment 2026-10-30)
+	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/update":     true, // HTML form, rule list edit (ADR-091 amendment 2026-10-30)
+	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/delete":     true, // HTML form, rule list delete (ADR-091 amendment 2026-10-30)
 	"POST /dashboard/apps/{slug}/edge-protection/attack-mode":       true, // HTML form, attack mode switch (ADR-20261021220456)
 	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay":    true, // HTML form, queue DLQ replay (issue #1397 G7)
 	"POST /dashboard/jobs/{name}/policy":                            true, // HTML form, scheduled-work policy editor (ADR-385)
@@ -548,6 +599,7 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/incidents/{id}":                                 true, // ADR-20261022193512 HTML view of GET /v1/incidents/{id}
 	"POST /dashboard/incidents/{id}/acknowledge":                    true, // ADR-20261022193512 CSRF form over POST /v1/incidents/{id}/acknowledge
 	"POST /dashboard/incidents/{id}/notes":                          true, // ADR-20261022193512 CSRF form over POST /v1/incidents/{id}/notes
+	"GET /dashboard/releases/{id}":                                  true, // ADR-20261022120744 HTML page over GET /v1/deployments/{id}/timeline
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
 	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
 	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
@@ -885,12 +937,13 @@ var dtoExclude = map[string]bool{
 	// surface; intentionally undocumented for public consumers.
 	// The C7 follow-on registers ONLY the new ObsHealthResponse —
 	// every other Obs* DTO stays admin-only and is excluded here.
-	"ObsAccountMutationResponse": true,
-	"ObsAppDetail":               true,
-	"ObsAppDetailResponse":       true,
-	"ObsAppHealth":               true,
-	"ObsAppSnapshot":             true, // obs app snapshot rows, same private surface
-	"ObsAuditActivityRow":        true,
+	"ObsAccountMutationResponse":      true,
+	"ObsObjectStorageCeilingResponse": true, // operator-only support grant view (ADR-20261101214152)
+	"ObsAppDetail":                    true,
+	"ObsAppDetailResponse":            true,
+	"ObsAppHealth":                    true,
+	"ObsAppSnapshot":                  true, // obs app snapshot rows, same private surface
+	"ObsAuditActivityRow":             true,
 	// ADR-115 capacity PR (post-PR #1111): admin-only capacity
 	// snapshot shapes — same admin-only posture as the other
 	// Obs* DTOs above; not registered in api/openapi.yaml.
@@ -910,6 +963,12 @@ var dtoExclude = map[string]bool{
 	"ObsNodeDetailResponse":   true,
 	"ObsNodeDrainStatus":      true,
 	"ObsNodeMutationResponse": true,
+	// ADR-1027 operator moves, restarts and switchovers of native
+	// databases (/v1/admin/ops/databases/*): admin-only, like the node
+	// mutations.
+	"ObsDatabaseMoveResponse":       true,
+	"ObsDatabaseRestartResponse":    true,
+	"ObsDatabaseSwitchoverResponse": true,
 	// ObsTenant360Response / ObsTenantBilling / ObsTenantUsage*:
 	// PR #1099 P4 (post-PR #1111); admin-only tenant 360 + billing
 	// + usage shapes; intentionally undocumented.
@@ -1038,21 +1097,22 @@ var schemaSpecOnly = map[string]bool{
 	// Same pattern as TriggerKind above: the DTO scanner walks
 	// struct types only; a `type X string` definition isn't a
 	// struct so it doesn't surface as a scanner name.
-	"FilterCriteriaOp":           true,
-	"KafkaSASLMechanism":         true,
-	"EnvDiffKind":                true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
-	"ResourceProfile":            true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
-	"ServiceBindingPolicy":       true, // Typed-string enum in pkg/api/service_bindings.go; the schema is still part of the wire contract.
-	"ServiceBindingTransport":    true, // Typed-string enum in pkg/api/service_bindings.go; the schema is part of the binding transport wire contract.
-	"ServiceReliabilityPolicies": true, // Named map schema for the per-binding policy object.
-	"PreviewServiceCallsPolicy":  true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
-	"ServiceCallerScopes":        true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
-	"ProjectInitialSecrets":      true, // Named nested map DTO; request serialization is covered by Go, Node and Python wire tests.
-	"ProjectServiceConnections":  true, // Named nested map DTO; connection choices are covered by migration wire and persistence tests.
-	"ProjectPublicBuildURLs":     true, // Named nested map; public URL wire and validation coverage.
-	"BillingRunExport":           true, // ADR-1503: enum shared by run and schedule DTOs, which carry it as a string field.
-	"BillingRunSources":          true, // ADR-1503: array enum shared by run and schedule DTOs, which carry it as []string.
-	"BillingProvider":            true, // ADR-1507: enum shared by connection and export DTOs, which carry it as a string field.
+	"FilterCriteriaOp":             true,
+	"KafkaSASLMechanism":           true,
+	"EnvDiffKind":                  true, // ADR-117 PR-C: typed-string discriminator in pkg/api/env_diff.go (scanner only sees *ast.StructType)
+	"RequestAnalyticsTelemetryGap": true, // closed string enum for RequestAnalytics*Response.telemetry_gaps ([]string in pkg/api)
+	"ResourceProfile":              true, // Named resource profile is a typed string; the scanner registers struct DTOs only.
+	"ServiceBindingPolicy":         true, // Typed-string enum in pkg/api/service_bindings.go; the schema is still part of the wire contract.
+	"ServiceBindingTransport":      true, // Typed-string enum in pkg/api/service_bindings.go; the schema is part of the binding transport wire contract.
+	"ServiceReliabilityPolicies":   true, // Named map schema for the per-binding policy object.
+	"PreviewServiceCallsPolicy":    true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
+	"ServiceCallerScopes":          true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
+	"ProjectInitialSecrets":        true, // Named nested map DTO; request serialization is covered by Go, Node and Python wire tests.
+	"ProjectServiceConnections":    true, // Named nested map DTO; connection choices are covered by migration wire and persistence tests.
+	"ProjectPublicBuildURLs":       true, // Named nested map; public URL wire and validation coverage.
+	"BillingRunExport":             true, // ADR-1503: enum shared by run and schedule DTOs, which carry it as a string field.
+	"BillingRunSources":            true, // ADR-1503: array enum shared by run and schedule DTOs, which carry it as []string.
+	"BillingProvider":              true, // ADR-1507: enum shared by connection and export DTOs, which carry it as a string field.
 	// Scheduled-work policy structs live in pkg/workpolicy and are embedded
 	// in the pkg/api request/response DTOs. This scanner only indexes structs
 	// declared directly in pkg/api; request field parity still checks them.
@@ -1510,6 +1570,23 @@ func strconvUnescape(s string) (string, error) {
 
 // --- Schemas parity --------------------------------------------------------
 
+// previewFieldExclude lists preview fields of public DTOs that stay out of
+// the spec until launch, by schema and JSON name.
+var previewFieldExclude = map[string]map[string]bool{
+	// ADR-20261027090010 §9: the automation agent step and agent trigger targets,
+	// behind the agents capability.
+	"WorkflowStepSpec":     {"agent": true},
+	"CreateTriggerRequest": {"agent": true},
+	"Trigger":              {"agent": true},
+	// ADR-20261031100025: labels on apps, databases, crons and jobs, behind the
+	// resource-labels capability; the PATCH .../labels routes document them
+	// until beta.
+	"AppResponse":             {"labels": true},
+	"CronResponse":            {"labels": true},
+	"JobResponse":             {"labels": true},
+	"ManagedPostgresDatabase": {"labels": true},
+}
+
 func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
@@ -1517,7 +1594,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1730 private runtime reporting.
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
+		filepath.Join(root, "pkg", "api", "data_api_change_events.go"),       // ADR-20261022121642 runtime change hook publications.
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
+		filepath.Join(root, "pkg", "api", "data_api_contract_tasks.go"),      // ADR-20261027123814 Data API contract tasks.
+		filepath.Join(root, "pkg", "api", "data_api_runtime.go"),             // ADR-20261031095954 runtime served by apid.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"),   // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "compose_resources.go"), // ADR-20261023120000 Compose deploy resources and replicas.
@@ -1723,6 +1803,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_challenge.go"),             // kind=challenge action (ADR-831)
 		filepath.Join(root, "pkg", "api", "edge_attack_mode.go"),                // attack mode (ADR-20261021220456)
 		filepath.Join(root, "pkg", "api", "edge_rule_penalty.go"),               // rule penalty box (ADR-20261022105846)
+		filepath.Join(root, "pkg", "api", "conditions.go"),                      // resource conditions (ADR-20261030151810)
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
 		filepath.Join(root, "pkg", "api", "source_review.go"),
@@ -1847,6 +1928,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", releaseGatesFile),
 		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
 		filepath.Join(root, "pkg", "api", releaseDiffFile),
+		filepath.Join(root, "pkg", "api", releaseTimelineFile),
 		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
 		filepath.Join(root, "pkg", "api", databaseSwitchFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
@@ -1936,6 +2018,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
+		filepath.Join(root, "pkg", "api", "debug_rollout.go"),     // ADR-1447 amendment: rollout explanation + debug status
+		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
@@ -2103,8 +2187,12 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	}
 
 	// Per-schema: every JSON-named field must appear in the spec properties.
-	// Catches: field added to DTO but not to spec, renamed, etc.
+	// Catches: field added to DTO but not to spec, renamed, etc. Preview
+	// fields of public DTOs stay out of the spec until launch.
 	for name, fields := range dtos {
+		for f := range previewFields[name] {
+			delete(fields, f)
+		}
 		specBody, ok := spec.Schemas[name]
 		if !ok {
 			continue
@@ -2115,7 +2203,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		}
 		var missing []string
 		for f := range fields {
-			if !propSet[f] {
+			if !propSet[f] && !previewFieldExclude[name][f] {
 				missing = append(missing, f)
 			}
 		}

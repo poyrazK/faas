@@ -40,7 +40,9 @@ func startTestEnvironment(t *testing.T) (*bytes.Buffer, func() string) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
-	t.Setenv("FAAS_TOKEN", "start-test-token")
+	// start refuses while FAAS_TOKEN is set; it uses the saved login.
+	t.Setenv("FAAS_TOKEN", "")
+	setFakeKeyring(t, withEntry(keyringService, keyringAccount, testAPIKey('e')))
 	oldTTY := testOnlyTTY
 	tty := true
 	testOnlyTTY = &tty
@@ -391,7 +393,7 @@ func TestStartAcceptanceSaveFailureStopsWaiting(t *testing.T) {
 		}
 		return 130
 	}
-	if code, _ := runner.reviewAndDeploy(); code == 0 || !strings.Contains(stderr(), "could not be saved") || !strings.Contains(stdout.String(), "deployment wait d-accepted") {
+	if code, _ := runner.reviewAndDeploy(); code == 0 || !strings.Contains(stderr(), "could not be saved") || !strings.Contains(stdout.String(), "release wait d-accepted") {
 		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr(), stdout)
 	}
 }

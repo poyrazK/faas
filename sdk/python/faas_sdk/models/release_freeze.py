@@ -21,8 +21,8 @@ T = TypeVar("T", bound="ReleaseFreeze")
 
 @_attrs_define
 class ReleaseFreeze:
-    """A deploy freeze on production releases of one app or, without `app`, of every app of the account
-    (ADR-20261019071733).
+    """A deploy freeze on production releases of one app or, without `app`, of every app of its owner. An account's freezes
+    cover its personal apps; a company organization's freezes (`org`) cover the organization's apps.
 
     """
 
@@ -36,7 +36,9 @@ class ReleaseFreeze:
     active: bool
     """Whether the freeze withholds production releases now."""
     app: str | Unset = UNSET
-    """The covered app's slug; omitted for an account-wide freeze."""
+    """The covered app's slug; omitted for a freeze on all of the owner's apps."""
+    org: str | Unset = UNSET
+    """Slug of the company organization that owns the freeze; omitted for an account's freeze."""
     starts_at: datetime.datetime | Unset = UNSET
     """Window start."""
     ends_at: datetime.datetime | Unset = UNSET
@@ -68,6 +70,8 @@ class ReleaseFreeze:
         active = self.active
 
         app = self.app
+
+        org = self.org
 
         starts_at: str | Unset = UNSET
         if not isinstance(self.starts_at, Unset):
@@ -106,6 +110,8 @@ class ReleaseFreeze:
         )
         if app is not UNSET:
             field_dict["app"] = app
+        if org is not UNSET:
+            field_dict["org"] = org
         if starts_at is not UNSET:
             field_dict["starts_at"] = starts_at
         if ends_at is not UNSET:
@@ -141,6 +147,8 @@ class ReleaseFreeze:
         active = d.pop("active")
 
         app = d.pop("app", UNSET)
+
+        org = d.pop("org", UNSET)
 
         _starts_at = d.pop("starts_at", UNSET)
         starts_at: datetime.datetime | Unset
@@ -188,6 +196,7 @@ class ReleaseFreeze:
             created_at=created_at,
             active=active,
             app=app,
+            org=org,
             starts_at=starts_at,
             ends_at=ends_at,
             weekly=weekly,

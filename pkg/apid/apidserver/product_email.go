@@ -22,15 +22,22 @@ func (s *server) configureProductEmail(getenv func(string) string) error {
 		return errors.New("invalid Product Control email webhook signing secret")
 	}
 	p.EmailTransport = nil
-	p.EmailReady = func() bool { return mfaIdentity != nil && mfaIdentity() != nil && len(productEmailIdentities()) > 0 }
+	// Grants, recipient evidence and unsubscribe tokens are account values
+	// (ADR 20261022111812): sealed to the account recipients, opened with
+	// the account identity first.
+	p.EmailReady = func() bool {
+		_, err := productEmailRecipients()
+		return err == nil && len(accountIdentitiesWith(productEmailIdentities())) > 0
+	}
 	p.EmailSeal = func(id, token string) ([]byte, error) {
-		if mfaIdentity == nil {
+		recipients, err := productEmailRecipients()
+		if err != nil {
 			return nil, errors.New("product email encryption unavailable")
 		}
-		return productemail.Seal(mfaIdentity(), id, token)
+		return productemail.SealTo(recipients, id, token)
 	}
 	p.EmailOpen = func(id string, sealed []byte) (string, error) {
-		return productemail.Open(productEmailIdentities(), id, sealed)
+		return productemail.Open(accountIdentitiesWith(productEmailIdentities()), id, sealed)
 	}
 	p.EmailOrigin = "https://" + s.platformHost()
 	mode := getenv("FAAS_PRODUCT_CONTROL_EMAIL_MODE")
@@ -59,6 +66,20 @@ func (s *server) configureProductEmail(getenv func(string) string) error {
 	}
 	return nil
 }
+
+// productEmailRecipients returns who product email values are sealed to:
+// apid's own identity's recipient until the account domain is staged, then
+// the domain and that recipient, then the domain alone.
+func productEmailRecipients() ([]*age.X25519Recipient, error) {
+	var legacy *age.X25519Recipient
+	if mfaIdentity != nil {
+		if id := mfaIdentity(); id != nil {
+			legacy = id.Recipient()
+		}
+	}
+	return accountRecipients(legacy)
+}
+
 func productEmailIdentities() []*age.X25519Identity {
 	if mfaIdentities != nil {
 		if ids := mfaIdentities(); len(ids) > 0 {

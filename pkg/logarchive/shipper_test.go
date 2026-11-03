@@ -18,12 +18,15 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/md5" // #nosec G501 -- fake store ETag, as S3 computes it.
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -36,10 +39,13 @@ import (
 // in isolation to keep the per-file fixtures focused.
 type fakeS3Bucket struct {
 	objects     map[string][]byte
-	failNext    bool
-	failStatus  int
-	failCode    string
-	failMessage string
+	notModified int // conditional GETs answered 304
+	// acceptThenFail stores the next PUT but answers 500.
+	acceptThenFail bool
+	failNext       bool
+	failStatus     int
+	failCode       string
+	failMessage    string
 }
 
 func newFakeS3Bucket() *fakeS3Bucket {
@@ -59,6 +65,10 @@ func (f *fakeS3Bucket) handler() http.Handler {
 		// path = /bucket/key
 		key := strings.TrimPrefix(r.URL.Path, "/"+bucketFromPath(r.URL.Path))
 		key = strings.TrimPrefix(key, "/")
+		if r.Method == http.MethodGet && r.URL.Query().Has("prefix") {
+			f.writeList(w, r.URL.Query().Get("prefix"))
+			return
+		}
 		if r.Method == http.MethodGet {
 			object, ok := f.objects[key]
 			if !ok {
@@ -66,12 +76,46 @@ func (f *fakeS3Bucket) handler() http.Handler {
 				_, _ = w.Write([]byte(`<Error><Code>NoSuchKey</Code><Message>missing</Message></Error>`))
 				return
 			}
+			// A single PUT's ETag is the body's MD5, as on S3 and GCS.
+			sum := md5.Sum(object)
+			etag := `"` + hex.EncodeToString(sum[:]) + `"`
+			w.Header().Set("ETag", etag)
+			if r.Header.Get("If-None-Match") == etag {
+				f.notModified++
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
 			_, _ = w.Write(object)
 			return
 		}
 		f.objects[key] = body
+		if f.acceptThenFail {
+			// The store kept the object, but the client sees an error.
+			f.acceptThenFail = false
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(200)
 	})
+}
+
+// writeList answers a ListObjects request with every key under prefix, in
+// key order, on one page.
+func (f *fakeS3Bucket) writeList(w http.ResponseWriter, prefix string) {
+	var keys []string
+	for key := range f.objects {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("<ListBucketResult><IsTruncated>false</IsTruncated>")
+	for _, key := range keys {
+		b.WriteString("<Contents><Key>" + key + "</Key></Contents>")
+	}
+	b.WriteString("</ListBucketResult>")
+	_, _ = io.WriteString(w, b.String())
 }
 
 // bucketFromPath peels the bucket prefix off /bucket/key.
@@ -88,11 +132,19 @@ func bucketFromPath(p string) string {
 // recording metrics instance.
 func newTestShipper(t *testing.T, retentionDays int) (*Shipper, *fakeS3Bucket, *recordingMetrics) {
 	t.Helper()
-	root := t.TempDir()
 	fake := newFakeS3Bucket()
 	srv := httptest.NewServer(fake.handler())
 	t.Cleanup(srv.Close)
-	s3, err := NewS3Client(srv.URL, "us-east-1", "mybucket", "AKIA", "secret")
+	sh, m := newTestShipperOn(t, srv.URL, retentionDays)
+	return sh, fake, m
+}
+
+// newTestShipperOn wires a Shipper with its own spool against an existing
+// fake bucket, as a second node shipping to the same bucket would be.
+func newTestShipperOn(t *testing.T, endpoint string, retentionDays int) (*Shipper, *recordingMetrics) {
+	t.Helper()
+	root := t.TempDir()
+	s3, err := NewS3Client(endpoint, "us-east-1", "mybucket", "AKIA", "secret")
 	if err != nil {
 		t.Fatalf("NewS3Client: %v", err)
 	}
@@ -107,7 +159,7 @@ func newTestShipper(t *testing.T, retentionDays int) (*Shipper, *fakeS3Bucket, *
 	if err != nil {
 		t.Fatalf("NewShipper: %v", err)
 	}
-	return sh, fake, m
+	return sh, m
 }
 
 // TestShipper_Disabled_NoOp covers the empty-bucket branch:

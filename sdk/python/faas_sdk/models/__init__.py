@@ -32,6 +32,11 @@ from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_client_request import AgentClientRequest
+from .agent_connection_response import AgentConnectionResponse
+from .agent_connection_response_kind import AgentConnectionResponseKind
+from .agent_connections_response import AgentConnectionsResponse
+from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
@@ -188,6 +193,10 @@ from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilte
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
+from .applied_build import AppliedBuild
+from .apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
+from .apply_response import ApplyResponse
+from .apply_response_apps_item import ApplyResponseAppsItem
 from .apps_metrics_response import AppsMetricsResponse
 from .apps_metrics_response_apps_type_0 import AppsMetricsResponseAppsType0
 from .apps_metrics_response_range import AppsMetricsResponseRange
@@ -296,6 +305,7 @@ from .capability_status import CapabilityStatus
 from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
+from .change_managed_postgres_compute_policy_request import ChangeManagedPostgresComputePolicyRequest
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
@@ -324,6 +334,15 @@ from .config_revision_source import ConfigRevisionSource
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
+from .connection_budget_capacity import ConnectionBudgetCapacity
+from .connection_budget_capacity_source import ConnectionBudgetCapacitySource
+from .connection_budget_capacity_state import ConnectionBudgetCapacityState
+from .connection_budget_demand import ConnectionBudgetDemand
+from .connection_budget_inventory import ConnectionBudgetInventory
+from .connection_budget_runtime_observations import ConnectionBudgetRuntimeObservations
+from .connection_budget_runtime_observations_source import ConnectionBudgetRuntimeObservationsSource
+from .connection_budget_runtime_observations_state import ConnectionBudgetRuntimeObservationsState
+from .control_project_release_action import ControlProjectReleaseAction
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
 from .cors_preset_list_response import CorsPresetListResponse
@@ -400,6 +419,11 @@ from .create_managed_execution_workflow_step import CreateManagedExecutionWorkfl
 from .create_managed_execution_workflow_step_result_schema_type_0 import (
     CreateManagedExecutionWorkflowStepResultSchemaType0,
 )
+from .create_managed_postgres_binding_request import CreateManagedPostgresBindingRequest
+from .create_managed_postgres_binding_request_access import CreateManagedPostgresBindingRequestAccess
+from .create_managed_postgres_database_request import CreateManagedPostgresDatabaseRequest
+from .create_managed_postgres_database_request_availability import CreateManagedPostgresDatabaseRequestAvailability
+from .create_managed_postgres_database_request_service_class import CreateManagedPostgresDatabaseRequestServiceClass
 from .create_notification_channel_request import CreateNotificationChannelRequest
 from .create_notification_channel_request_kind import CreateNotificationChannelRequestKind
 from .create_notification_channel_request_pagerduty_region import CreateNotificationChannelRequestPagerdutyRegion
@@ -414,6 +438,7 @@ from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
+from .custom_domain_hosts_response import CustomDomainHostsResponse
 from .custom_domain_response import CustomDomainResponse
 from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
@@ -469,6 +494,7 @@ from .delayed_task_at_request_payload import DelayedTaskAtRequestPayload
 from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
+from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
 from .delete_financial_budget_request import DeleteFinancialBudgetRequest
 from .delete_secret_prefer import DeleteSecretPrefer
 from .deleted_app_list_response import DeletedAppListResponse
@@ -821,6 +847,7 @@ from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBra
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .git_hub_installation_summary import GitHubInstallationSummary
 from .git_hub_webhook_activity import GitHubWebhookActivity
 from .git_hub_webhook_activity_status import GitHubWebhookActivityStatus
 from .grace_window_response import GraceWindowResponse
@@ -985,6 +1012,36 @@ from .managed_execution_workflow_response_status import ManagedExecutionWorkflow
 from .managed_operation_effect import ManagedOperationEffect
 from .managed_operation_result import ManagedOperationResult
 from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
+from .managed_postgres_binding import ManagedPostgresBinding
+from .managed_postgres_binding_access import ManagedPostgresBindingAccess
+from .managed_postgres_binding_list import ManagedPostgresBindingList
+from .managed_postgres_binding_state import ManagedPostgresBindingState
+from .managed_postgres_capabilities import ManagedPostgresCapabilities
+from .managed_postgres_capabilities_availability_item import ManagedPostgresCapabilitiesAvailabilityItem
+from .managed_postgres_capabilities_credential_access_item import ManagedPostgresCapabilitiesCredentialAccessItem
+from .managed_postgres_capabilities_service_classes_item import ManagedPostgresCapabilitiesServiceClassesItem
+from .managed_postgres_compute_policy_change import ManagedPostgresComputePolicyChange
+from .managed_postgres_compute_policy_change_state import ManagedPostgresComputePolicyChangeState
+from .managed_postgres_connection_budget import ManagedPostgresConnectionBudget
+from .managed_postgres_connection_budget_model import ManagedPostgresConnectionBudgetModel
+from .managed_postgres_connection_budget_state import ManagedPostgresConnectionBudgetState
+from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
+from .managed_postgres_database import ManagedPostgresDatabase
+from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
+from .managed_postgres_database_list import ManagedPostgresDatabaseList
+from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
+from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
+from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_health import ManagedPostgresHealth
+from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
+from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
+from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
+from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_resize import ManagedPostgresResize
+from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
+from .managed_postgres_resize_state import ManagedPostgresResizeState
+from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
@@ -1596,6 +1653,9 @@ from .org_membership_export_response import OrgMembershipExportResponse
 from .org_membership_export_response_role import OrgMembershipExportResponseRole
 from .org_plan_response import OrgPlanResponse
 from .org_plan_response_plan import OrgPlanResponsePlan
+from .org_project_delete_deployment_scope_exclusion_response_200 import (
+    OrgProjectDeleteDeploymentScopeExclusionResponse200,
+)
 from .org_response import OrgResponse
 from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
@@ -1758,11 +1818,24 @@ from .programmatic_auth_response import ProgrammaticAuthResponse
 from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
 from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagicLinkResponse200
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
+from .project_apply_request import ProjectApplyRequest
+from .project_apply_request_app_slugs import ProjectApplyRequestAppSlugs
+from .project_delete_preview_response import ProjectDeletePreviewResponse
+from .project_deployment_check import ProjectDeploymentCheck
+from .project_deployment_check_request import ProjectDeploymentCheckRequest
+from .project_deployment_check_status import ProjectDeploymentCheckStatus
+from .project_deployment_check_workload import ProjectDeploymentCheckWorkload
+from .project_deployment_readiness import ProjectDeploymentReadiness
+from .project_deployment_readiness_schema_version import ProjectDeploymentReadinessSchemaVersion
+from .project_deployment_readiness_status import ProjectDeploymentReadinessStatus
+from .project_initial_secrets import ProjectInitialSecrets
+from .project_initial_secrets_additional_property import ProjectInitialSecretsAdditionalProperty
 from .project_migration_baseline_verification import ProjectMigrationBaselineVerification
 from .project_migration_baseline_verification_status import ProjectMigrationBaselineVerificationStatus
 from .project_migration_contract import ProjectMigrationContract
 from .project_migration_contract_status import ProjectMigrationContractStatus
 from .project_migration_recovery import ProjectMigrationRecovery
+from .project_migration_recovery_request import ProjectMigrationRecoveryRequest
 from .project_migration_recovery_status import ProjectMigrationRecoveryStatus
 from .project_release_addition import ProjectReleaseAddition
 from .project_release_command import ProjectReleaseCommand
@@ -1771,10 +1844,17 @@ from .project_release_command_status import ProjectReleaseCommandStatus
 from .project_release_configuration import ProjectReleaseConfiguration
 from .project_release_control import ProjectReleaseControl
 from .project_release_control_action import ProjectReleaseControlAction
+from .project_release_control_request import ProjectReleaseControlRequest
 from .project_release_control_status import ProjectReleaseControlStatus
 from .project_release_probe import ProjectReleaseProbe
 from .project_release_probe_evidence import ProjectReleaseProbeEvidence
 from .project_release_secret_configuration import ProjectReleaseSecretConfiguration
+from .project_release_secret_stage_request import ProjectReleaseSecretStageRequest
+from .project_release_secret_stage_request_workloads import ProjectReleaseSecretStageRequestWorkloads
+from .project_release_secret_stage_request_workloads_additional_property import (
+    ProjectReleaseSecretStageRequestWorkloadsAdditionalProperty,
+)
+from .project_release_secret_stage_response import ProjectReleaseSecretStageResponse
 from .project_release_secret_version_map import ProjectReleaseSecretVersionMap
 from .project_release_secret_version_map_additional_property import ProjectReleaseSecretVersionMapAdditionalProperty
 from .project_release_stabilization import ProjectReleaseStabilization
@@ -1785,13 +1865,20 @@ from .project_release_verification_actions_item import ProjectReleaseVerificatio
 from .project_release_verification_percent import ProjectReleaseVerificationPercent
 from .project_release_worker import ProjectReleaseWorker
 from .project_release_worker_status import ProjectReleaseWorkerStatus
+from .project_response import ProjectResponse
 from .project_safe_release import ProjectSafeRelease
 from .project_safe_release_status import ProjectSafeReleaseStatus
+from .project_scan_request import ProjectScanRequest
+from .project_scan_request_app_slugs import ProjectScanRequestAppSlugs
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
+from .project_submission_receipt import ProjectSubmissionReceipt
+from .project_submission_receipt_status import ProjectSubmissionReceiptStatus
+from .project_summary_response import ProjectSummaryResponse
 from .project_worker_health import ProjectWorkerHealth
 from .project_worker_health_status import ProjectWorkerHealthStatus
 from .project_worker_job_sample import ProjectWorkerJobSample
+from .project_workload_response import ProjectWorkloadResponse
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -1858,6 +1945,10 @@ from .release_freeze_weekly_days_item import ReleaseFreezeWeeklyDaysItem
 from .release_gate_result import ReleaseGateResult
 from .release_gate_result_kind import ReleaseGateResultKind
 from .release_restore_point import ReleaseRestorePoint
+from .release_timeline import ReleaseTimeline
+from .release_timeline_event import ReleaseTimelineEvent
+from .release_timeline_event_kind import ReleaseTimelineEventKind
+from .release_timeline_phase import ReleaseTimelinePhase
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
@@ -1877,6 +1968,7 @@ from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
 from .request_analytics_route import RequestAnalyticsRoute
 from .request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
+from .request_analytics_telemetry_gap import RequestAnalyticsTelemetryGap
 from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
 from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
@@ -1886,9 +1978,12 @@ from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSerie
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
+from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
+from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resource_profile import ResourceProfile
 from .restore_app_body import RestoreAppBody
 from .restore_deleted_app_body import RestoreDeletedAppBody
+from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
@@ -1972,11 +2067,21 @@ from .runtime_release_response_runtime import RuntimeReleaseResponseRuntime
 from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
+from .safe_apply_project_project_add_services import SafeApplyProjectProjectAddServices
+from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgressive
+from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
+from .safe_apply_project_project_stabilization import SafeApplyProjectProjectStabilization
+from .safe_apply_project_project_worker_health import SafeApplyProjectProjectWorkerHealth
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_schedule import ScalingSchedule
 from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
+from .scan_project_project_add_services import ScanProjectProjectAddServices
+from .scan_project_project_progressive import ScanProjectProjectProgressive
+from .scan_project_project_release_mode import ScanProjectProjectReleaseMode
+from .scan_project_project_stabilization import ScanProjectProjectStabilization
+from .scan_project_project_worker_health import ScanProjectProjectWorkerHealth
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
@@ -2061,6 +2166,7 @@ from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
 from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
+from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
@@ -2191,6 +2297,7 @@ from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpoin
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
+from .update_project_request import UpdateProjectRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
 from .upload_session_response_status import UploadSessionResponseStatus
@@ -2480,6 +2587,11 @@ __all__ = (
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentClientRequest",
+    "AgentConnectionResponse",
+    "AgentConnectionResponseKind",
+    "AgentConnectionsResponse",
+    "AgentConnectionsRevokeAllResponse",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
@@ -2541,6 +2653,7 @@ __all__ = (
     "AppHealthResponse",
     "AppHealthResponsePhase",
     "AppHealthResponseStatus",
+    "AppliedBuild",
     "AppLogDrainAnalyticsBucket",
     "AppLogDrainAnalyticsResponse",
     "AppLogDrainAnalyticsResponseBucketInterval",
@@ -2551,6 +2664,9 @@ __all__ = (
     "AppLogDrainResponse",
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
+    "ApplyCachedProjectPlanRequest",
+    "ApplyResponse",
+    "ApplyResponseAppsItem",
     "AppManifest",
     "AppManifestCrawlerPolicy",
     "AppManifestEnv",
@@ -2742,6 +2858,7 @@ __all__ = (
     "CapabilityStatusMaturity",
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
+    "ChangeManagedPostgresComputePolicyRequest",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
@@ -2770,6 +2887,15 @@ __all__ = (
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
+    "ConnectionBudgetCapacity",
+    "ConnectionBudgetCapacitySource",
+    "ConnectionBudgetCapacityState",
+    "ConnectionBudgetDemand",
+    "ConnectionBudgetInventory",
+    "ConnectionBudgetRuntimeObservations",
+    "ConnectionBudgetRuntimeObservationsSource",
+    "ConnectionBudgetRuntimeObservationsState",
+    "ControlProjectReleaseAction",
     "ControlWorkflowRecoveryPolicyRequest",
     "ControlWorkflowRecoveryPolicyRequestOperation",
     "CorsPresetListResponse",
@@ -2844,6 +2970,11 @@ __all__ = (
     "CreateManagedExecutionWorkflowRequestFailurePolicy",
     "CreateManagedExecutionWorkflowStep",
     "CreateManagedExecutionWorkflowStepResultSchemaType0",
+    "CreateManagedPostgresBindingRequest",
+    "CreateManagedPostgresBindingRequestAccess",
+    "CreateManagedPostgresDatabaseRequest",
+    "CreateManagedPostgresDatabaseRequestAvailability",
+    "CreateManagedPostgresDatabaseRequestServiceClass",
     "CreateNotificationChannelRequest",
     "CreateNotificationChannelRequestKind",
     "CreateNotificationChannelRequestPagerdutyRegion",
@@ -2858,6 +2989,7 @@ __all__ = (
     "CronRun",
     "CronRunOutcome",
     "CSRFTokenResponse",
+    "CustomDomainHostsResponse",
     "CustomDomainResponse",
     "CustomMetricListResponse",
     "CustomMetricRequest",
@@ -2916,6 +3048,7 @@ __all__ = (
     "DeletedAppListResponse",
     "DeletedAppSummary",
     "DeletedAppSummaryRestoreBlocker",
+    "DeleteDeploymentScopeExclusionResponse200",
     "DeleteFinancialBudgetRequest",
     "DeleteSecretPrefer",
     "DeployDevSourceBody",
@@ -3247,6 +3380,7 @@ __all__ = (
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
+    "GitHubInstallationSummary",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusDeployBranches",
@@ -3409,6 +3543,36 @@ __all__ = (
     "ManagedOperationEffect",
     "ManagedOperationResult",
     "ManagedOperationResultGregaleOperationResult",
+    "ManagedPostgresBinding",
+    "ManagedPostgresBindingAccess",
+    "ManagedPostgresBindingList",
+    "ManagedPostgresBindingState",
+    "ManagedPostgresCapabilities",
+    "ManagedPostgresCapabilitiesAvailabilityItem",
+    "ManagedPostgresCapabilitiesCredentialAccessItem",
+    "ManagedPostgresCapabilitiesServiceClassesItem",
+    "ManagedPostgresComputePolicyChange",
+    "ManagedPostgresComputePolicyChangeState",
+    "ManagedPostgresConnectionBudget",
+    "ManagedPostgresConnectionBudgetModel",
+    "ManagedPostgresConnectionBudgetState",
+    "ManagedPostgresConnectionBudgetVersion",
+    "ManagedPostgresDatabase",
+    "ManagedPostgresDatabaseAvailability",
+    "ManagedPostgresDatabaseList",
+    "ManagedPostgresDatabasePlanExcess",
+    "ManagedPostgresDatabaseServiceClass",
+    "ManagedPostgresDatabaseState",
+    "ManagedPostgresHealth",
+    "ManagedPostgresHealthComputeState",
+    "ManagedPostgresHealthLastErrorCode",
+    "ManagedPostgresHealthProviderStatus",
+    "ManagedPostgresHealthStatus",
+    "ManagedPostgresResize",
+    "ManagedPostgresResizeFromClass",
+    "ManagedPostgresResizeState",
+    "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",
@@ -3914,6 +4078,7 @@ __all__ = (
     "OrgMeResponse",
     "OrgPlanResponse",
     "OrgPlanResponsePlan",
+    "OrgProjectDeleteDeploymentScopeExclusionResponse200",
     "OrgResponse",
     "OrgResponsePlan",
     "OrgResponseStatus",
@@ -4062,11 +4227,24 @@ __all__ = (
     "ProgrammaticAuthResponsePlan",
     "ProgrammaticSignupMagicLinkResponse200",
     "ProgrammaticSignupMagicLinkResponse200Status",
+    "ProjectApplyRequest",
+    "ProjectApplyRequestAppSlugs",
+    "ProjectDeletePreviewResponse",
+    "ProjectDeploymentCheck",
+    "ProjectDeploymentCheckRequest",
+    "ProjectDeploymentCheckStatus",
+    "ProjectDeploymentCheckWorkload",
+    "ProjectDeploymentReadiness",
+    "ProjectDeploymentReadinessSchemaVersion",
+    "ProjectDeploymentReadinessStatus",
+    "ProjectInitialSecrets",
+    "ProjectInitialSecretsAdditionalProperty",
     "ProjectMigrationBaselineVerification",
     "ProjectMigrationBaselineVerificationStatus",
     "ProjectMigrationContract",
     "ProjectMigrationContractStatus",
     "ProjectMigrationRecovery",
+    "ProjectMigrationRecoveryRequest",
     "ProjectMigrationRecoveryStatus",
     "ProjectReleaseAddition",
     "ProjectReleaseCommand",
@@ -4075,10 +4253,15 @@ __all__ = (
     "ProjectReleaseConfiguration",
     "ProjectReleaseControl",
     "ProjectReleaseControlAction",
+    "ProjectReleaseControlRequest",
     "ProjectReleaseControlStatus",
     "ProjectReleaseProbe",
     "ProjectReleaseProbeEvidence",
     "ProjectReleaseSecretConfiguration",
+    "ProjectReleaseSecretStageRequest",
+    "ProjectReleaseSecretStageRequestWorkloads",
+    "ProjectReleaseSecretStageRequestWorkloadsAdditionalProperty",
+    "ProjectReleaseSecretStageResponse",
     "ProjectReleaseSecretVersionMap",
     "ProjectReleaseSecretVersionMapAdditionalProperty",
     "ProjectReleaseStabilization",
@@ -4089,13 +4272,20 @@ __all__ = (
     "ProjectReleaseVerificationPercent",
     "ProjectReleaseWorker",
     "ProjectReleaseWorkerStatus",
+    "ProjectResponse",
     "ProjectSafeRelease",
     "ProjectSafeReleaseStatus",
+    "ProjectScanRequest",
+    "ProjectScanRequestAppSlugs",
     "ProjectSourceRefScanRequest",
     "ProjectSourceRefScanRequestAppSlugs",
+    "ProjectSubmissionReceipt",
+    "ProjectSubmissionReceiptStatus",
+    "ProjectSummaryResponse",
     "ProjectWorkerHealth",
     "ProjectWorkerHealthStatus",
     "ProjectWorkerJobSample",
+    "ProjectWorkloadResponse",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",
@@ -4162,6 +4352,10 @@ __all__ = (
     "ReleaseGateResult",
     "ReleaseGateResultKind",
     "ReleaseRestorePoint",
+    "ReleaseTimeline",
+    "ReleaseTimelineEvent",
+    "ReleaseTimelineEventKind",
+    "ReleaseTimelinePhase",
     "RenameAppRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
@@ -4181,6 +4375,7 @@ __all__ = (
     "RequestAnalyticsRoute",
     "RequestAnalyticsRouteDeploymentObservation",
     "RequestAnalyticsRouteMethod",
+    "RequestAnalyticsTelemetryGap",
     "RequestAnalyticsTimeseriesPoint",
     "RequestAnalyticsTimeseriesResponse",
     "RequestAnalyticsTimeseriesResponseBucket",
@@ -4190,9 +4385,12 @@ __all__ = (
     "RequestAnalyticsTimeseriesSeriesMethod",
     "RequestAuditListResponse",
     "RequestAuditRecord",
+    "ResizeManagedPostgresDatabaseRequest",
+    "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResourceProfile",
     "RestoreAppBody",
     "RestoreDeletedAppBody",
+    "RestoreManagedPostgresDatabaseRequest",
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
@@ -4274,11 +4472,21 @@ __all__ = (
     "RuntimeUpgradePreviewResponse",
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
+    "SafeApplyProjectProjectAddServices",
+    "SafeApplyProjectProjectProgressive",
+    "SafeApplyProjectProjectReleaseMode",
+    "SafeApplyProjectProjectStabilization",
+    "SafeApplyProjectProjectWorkerHealth",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",
     "ScalingTarget",
     "ScalingTargetMetric",
+    "ScanProjectProjectAddServices",
+    "ScanProjectProjectProgressive",
+    "ScanProjectProjectReleaseMode",
+    "ScanProjectProjectStabilization",
+    "ScanProjectProjectWorkerHealth",
     "ScanResult",
     "ScanResultStatus",
     "ScheduledRelease",
@@ -4359,6 +4567,7 @@ __all__ = (
     "SetAccountEgressAllowlistExtraRequest",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",
+    "SetCustomDomainHostsRequest",
     "SetDeploymentAliasRequest",
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
@@ -4483,6 +4692,7 @@ __all__ = (
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
+    "UpdateProjectRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",
     "UploadSessionResponseStatus",

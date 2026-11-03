@@ -11,6 +11,13 @@ const (
 	RuntimeNode24 = "node24"
 )
 
+// MuslRunner reports whether runtime's runner base is musl: runner-node22 is
+// Alpine. A source build's toolchain and native addons are glibc builds
+// (Railpack's mise Node), so on that base neither the full-layer fallback of
+// an ineligible build nor an eligible app's addon can run. Builds for such a
+// runtime keep their own base (ADR-20261029103512).
+func MuslRunner(runtime string) bool { return runtime == RuntimeNode22 }
+
 // nodeLTS maps the LTS codenames of the shared bases' majors.
 var nodeLTS = map[string]string{"lts/jod": RuntimeNode22, "lts/krypton": RuntimeNode24, "lts/*": RuntimeNode24}
 
@@ -62,6 +69,24 @@ func NodeRuntimeForSpec(spec string) string {
 		}
 	}
 	return ""
+}
+
+// NodeRuntimeForSpecs is NodeRuntimeForSpec over every declaration a source
+// makes (.nvmrc or engines.node, and railpack.json's packages.node, which the
+// builder's pin would otherwise overwrite): all must pick the same base.
+func NodeRuntimeForSpecs(specs []string) string {
+	runtime := ""
+	for _, spec := range specs {
+		r := NodeRuntimeForSpec(spec)
+		if r == "" || runtime != "" && r != runtime {
+			return ""
+		}
+		runtime = r
+	}
+	if runtime == "" {
+		return RuntimeNode24
+	}
+	return runtime
 }
 
 // versionTail accepts what may follow a major: nothing, or dotted minor and

@@ -162,7 +162,7 @@ func TestFromRequest(t *testing.T) {
 		{name: "unknown kind", req: api.CreateReleaseFreezeRequest{Kind: "forever", Reason: "x"}, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f, p := FromRequest(tc.req, "acct", "", "user:test", now)
+			f, p := FromRequest(tc.req, state.ReleaseFreezeOwner{AccountID: "acct"}, "", "user:test", now)
 			if tc.wantErr != (p != nil) {
 				t.Fatalf("problem = %v, wantErr %v", p, tc.wantErr)
 			}
@@ -182,5 +182,65 @@ func TestViewRendersWeeklyDays(t *testing.T) {
 	}
 	if v.Active || v.NextStartsAt != "2026-10-23T16:30:00Z" {
 		t.Fatalf("active=%v next=%s", v.Active, v.NextStartsAt)
+	}
+}
+
+// adr: 20261019071733 amendment 4 — a company app's freezes are its
+// organization's; its creator's account freezes do not cover it, and a
+// personal organization's apps keep their account's freezes. Runtime
+// upgrades, GitOps and GitHub pushes resolve the owner the same way.
+func TestActiveForResolvesTheAppsOwner(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "creator@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	company, err := store.CreateOrg(ctx, state.Org{Slug: "acme", Name: "Acme", Plan: api.PlanPro, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	personal, err := store.CreateOrg(ctx, state.Org{Slug: state.PersonalOrgSlug(acct.ID), Name: "Personal", Personal: true,
+		PersonalOwnerAccountID: &acct.ID, Plan: api.PlanPro, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	companyApp, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, OrgID: company.ID, Slug: "acme-api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	personalApp, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, OrgID: personal.ID, Slug: "my-api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	freezeAll := func(owner state.ReleaseFreezeOwner, reason string) state.ReleaseFreeze {
+		f, err := store.CreateReleaseFreeze(ctx, state.ReleaseFreeze{AccountID: owner.AccountID, OrgID: owner.OrgID,
+			Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: reason, CreatedBy: "user:test"}, api.ReleaseFreezesMax, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	byAccount := freezeAll(state.ReleaseFreezeOwner{AccountID: acct.ID}, "my apps")
+	byCompany := freezeAll(state.ReleaseFreezeOwner{OrgID: company.ID}, "company holiday")
+
+	for _, tc := range []struct {
+		app  state.App
+		want string
+	}{{companyApp, byCompany.ID}, {personalApp, byAccount.ID}} {
+		active, err := ActiveForAppID(ctx, store, tc.app.ID, "", now.Add(time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(active) != 1 || active[0].ID != tc.want {
+			t.Fatalf("%s: active = %+v, want only %s", tc.app.Slug, active, tc.want)
+		}
+	}
+	if active, err := ActiveFor(ctx, store, companyApp, "preview", now.Add(time.Second)); err != nil || len(active) != 0 {
+		t.Fatalf("preview scope = %+v, %v; freezes withhold only production", active, err)
+	}
+	if _, err := ActiveForAppID(ctx, store, "00000000-0000-0000-0000-000000000000", "", now); err == nil {
+		t.Fatal("an unreadable app must fail, so runtime upgrades hold")
 	}
 }

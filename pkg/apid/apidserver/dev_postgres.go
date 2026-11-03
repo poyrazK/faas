@@ -29,6 +29,9 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 	if !ok || limits.DatabasesMax == 0 || !limits.DevelopmentAllowed {
 		return nil, managedpostgres.ErrQuotaExceeded
 	}
+	if managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
+		return nil, managedpostgres.ErrNotInPlan
+	}
 	ctx, err := postgresaccess.PersonalContext(ctx, s.store, acct.ID)
 	if err != nil {
 		return nil, err

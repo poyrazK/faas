@@ -88,7 +88,7 @@ def sync_detailed(
 ) -> Response[OutboundAIEvaluationList | Problem]:
     """List an AI route's latest evaluations.
 
-     Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1431).
+     Requires MFA and read scope. Newest first, at most 100, without their samples.
 
     Args:
         route (UUID):
@@ -119,7 +119,7 @@ def sync(
 ) -> OutboundAIEvaluationList | Problem | None:
     """List an AI route's latest evaluations.
 
-     Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1431).
+     Requires MFA and read scope. Newest first, at most 100, without their samples.
 
     Args:
         route (UUID):
@@ -145,7 +145,7 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIEvaluationList | Problem]:
     """List an AI route's latest evaluations.
 
-     Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1431).
+     Requires MFA and read scope. Newest first, at most 100, without their samples.
 
     Args:
         route (UUID):
@@ -174,7 +174,7 @@ async def asyncio(
 ) -> OutboundAIEvaluationList | Problem | None:
     """List an AI route's latest evaluations.
 
-     Requires MFA and read scope. Newest first, at most 100, without their samples (ADR-1431).
+     Requires MFA and read scope. Newest first, at most 100, without their samples.
 
     Args:
         route (UUID):

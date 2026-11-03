@@ -88,18 +88,28 @@ func (f *routesFixture) respond(path string, status int, body string, headers ..
 	f.vmmd.SetResponseForPath(f.instance.ID, path, e2etest.FakeResponse{Status: status, Headers: headers, Body: []byte(body)})
 }
 
-// get sends one anonymous customer request through the public edge. The
-// gateway refuses a request with 503 rate_limit_unavailable and Retry-After
-// when its shared rate allowance cannot be verified in time (ADR-570), which
-// a loaded CI runner hits; get retries that refusal as a client would.
+// get sends one anonymous customer request through the public edge.
 func (f *routesFixture) get(t *testing.T, path string) (http.Header, []byte, int) {
 	t.Helper()
+	return edgeRetry(t, http.MethodGet+" "+path, func() (http.Header, []byte, int) {
+		return doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
+	})
+}
+
+// edgeRetry retries the gateway's transient 503 refusals that carry
+// Retry-After, as a client would (ADR-570): rate_limit_unavailable when the
+// shared rate allowance cannot be verified in time, which a loaded CI runner
+// hits, and traffic_policy_unavailable when a request races the edge policy
+// generation change that follows a rule write.
+func edgeRetry(t *testing.T, what string, do func() (http.Header, []byte, int)) (http.Header, []byte, int) {
+	t.Helper()
 	for attempt := 1; ; attempt++ {
-		headers, body, status := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
-		if status != http.StatusServiceUnavailable || !strings.Contains(string(body), `"rate_limit_unavailable"`) || attempt == 10 {
+		headers, body, status := do()
+		transient := strings.Contains(string(body), `"rate_limit_unavailable"`) || strings.Contains(string(body), `"traffic_policy_unavailable"`)
+		if status != http.StatusServiceUnavailable || !transient || attempt == 10 {
 			return headers, body, status
 		}
-		t.Logf("GET %s: shared rate allowance unavailable, retrying", path)
+		t.Logf("%s: transient gateway refusal, retrying: %s", what, body)
 		time.Sleep(time.Second)
 	}
 }

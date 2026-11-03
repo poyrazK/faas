@@ -73,17 +73,37 @@ func (c Client) Probe(ctx context.Context, slug, deploymentID, token, method, pa
 func (c Client) ProbeCritical(ctx context.Context, slug, deploymentID, token, method, path string) (Outcome, error) {
 	return c.probe(ctx, slug, deploymentID, token, method, path, true)
 }
+
+// ProbeStatus sends one bodyless request and returns its status code, and
+// whether the gateway proved the response came from deploymentID. Synthetic
+// release gates (ADR-20261022082305) judge the code against their check.
+func (c Client) ProbeStatus(ctx context.Context, slug, deploymentID, token, method, path string) (int, bool, error) {
+	return c.send(ctx, slug, deploymentID, token, method, path)
+}
+
 func (c Client) probe(ctx context.Context, slug, deploymentID, token, method, path string, critical bool) (Outcome, error) {
+	status, attributed, err := c.send(ctx, slug, deploymentID, token, method, path)
+	if err != nil || !attributed {
+		return Unattributed, err
+	}
+	outcome := Classify(status)
+	if critical && outcome == Success && (status < 200 || status >= 300) {
+		outcome = UnexpectedStatus
+	}
+	return outcome, nil
+}
+
+func (c Client) send(ctx context.Context, slug, deploymentID, token, method, path string) (int, bool, error) {
 	if !c.Configured() {
-		return Unattributed, errors.New("route probes are not configured")
+		return 0, false, errors.New("route probes are not configured")
 	}
 	origin, err := url.Parse(strings.TrimRight(c.BaseURL, "/"))
 	if err != nil || origin.Scheme == "" || origin.Host == "" {
-		return Unattributed, fmt.Errorf("invalid probe origin")
+		return 0, false, fmt.Errorf("invalid probe origin")
 	}
 	req, err := http.NewRequestWithContext(ctx, method, origin.String()+path, nil)
 	if err != nil {
-		return Unattributed, err
+		return 0, false, err
 	}
 	req.Host = slug + "." + strings.Trim(c.AppsDomain, ".")
 	req.Header.Set(TokenHeader, token)
@@ -98,18 +118,14 @@ func (c Client) probe(ctx context.Context, slug, deploymentID, token, method, pa
 	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := noRedirect.Do(req)
 	if err != nil {
-		return Unattributed, err
+		return 0, false, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBodyBytes))
 	if resp.Header.Get(apihostingreceipt.ServedResponseHeader) != apihostingreceipt.CandidateResponseProof(deploymentID, token) {
-		return Unattributed, nil
+		return resp.StatusCode, false, nil
 	}
-	outcome := Classify(resp.StatusCode)
-	if critical && outcome == Success && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
-		outcome = UnexpectedStatus
-	}
-	return outcome, nil
+	return resp.StatusCode, true, nil
 }
 
 // Classify maps an attributed status code to a probe outcome.

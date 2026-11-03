@@ -21,9 +21,7 @@ package apidserver_test
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -110,17 +108,15 @@ func (f *oauthCodeCallbackFake) StreamSourceRef(context.Context, string, int64, 
 }
 func (f *oauthCodeCallbackFake) Close() error { return nil }
 
-// mintStateToken returns a 32-char hex token (16 bytes from crypto/rand)
-// matching the generator inside issueOAuthCodeState. Test-local
-// helper so the test doesn't have to round-trip through the cookie
-// writer to forge a value.
-func mintStateToken(t *testing.T) string {
+// mintStateToken seals a Connect GitHub state for accountID the way the
+// server does (H64): a random token no longer passes the callback.
+func mintStateToken(t *testing.T, mgr *session.Manager, accountID string) string {
 	t.Helper()
-	tokenBytes := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, tokenBytes); err != nil {
-		t.Fatalf("rand: %v", err)
+	token, err := apidserver.SealOAuthCodeState(mgr, accountID, 0)
+	if err != nil {
+		t.Fatalf("seal state: %v", err)
 	}
-	return hex.EncodeToString(tokenBytes)
+	return token
 }
 
 // newOAuthCodeCallbackServer wires a session-authed apid handler
@@ -152,8 +148,8 @@ func newOAuthCodeCallbackServer(t *testing.T, gh *oauthCodeCallbackFake) (http.H
 // in the query. The state cookie is cleared on success (single-use).
 func TestRenderOAuthCodeCallback_HappyPath(t *testing.T) {
 	gh := &oauthCodeCallbackFake{installID: "9999", defaultBranch: "main"}
-	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
-	stateToken := mintStateToken(t)
+	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	stateToken := mintStateToken(t, mgr, accountID)
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
@@ -221,6 +217,30 @@ func TestRenderOAuthCodeCallback_StateMismatch(t *testing.T) {
 	}
 }
 
+// A tenant page on a sibling host could plant a state cookie and send a
+// signed-in customer to the callback with its own state and GitHub code,
+// attaching the attacker's installation to the victim (bug hunt 2026-10-28
+// H64). A matching cookie is no longer enough: the state must be sealed for
+// the signed-in account.
+func TestRenderOAuthCodeCallback_PlantedStateForAnotherAccount(t *testing.T) {
+	gh := &oauthCodeCallbackFake{installID: "9999", defaultBranch: "main"}
+	srv, mgr, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	for name, state := range map[string]string{
+		"random token":       "0123456789abcdef0123456789abcdef",
+		"another account's":  mintStateToken(t, mgr, "attacker-account"),
+		"tampered installed": mintStateToken(t, mgr, "attacker-account") + ".42",
+	} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=attacker-code&state="+url.QueryEscape(state), nil)
+		r.AddCookie(sessionCookie)
+		r.AddCookie(&http.Cookie{Name: apidserver.OauthCodeStateCookie, Value: state, Path: apidserver.OauthCodeCallbackPath})
+		srv.ServeHTTP(rec, r)
+		if rec.Code != http.StatusForbidden || gh.gotCalls != 0 {
+			t.Fatalf("%s state with a matching cookie: %d (githubd calls %d), want 403 and no exchange", name, rec.Code, gh.gotCalls)
+		}
+	}
+}
+
 // Account ownership conflicts are actionable 409 responses in both JSON and
 // browser HTML. Neither response may disclose upstream diagnostics.
 func TestRenderOAuthCodeCallback_AccountConflict(t *testing.T) {
@@ -229,8 +249,8 @@ func TestRenderOAuthCodeCallback_AccountConflict(t *testing.T) {
 			upstream := api.ErrGitHubAccountConflict()
 			upstream.Detail, upstream.Hint = "private-owner@example.com", "private-database-diagnostic"
 			gh := &oauthCodeCallbackFake{exchangeErr: upstream}
-			srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
-			stateToken := mintStateToken(t)
+			srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+			stateToken := mintStateToken(t, mgr, accountID)
 			r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
 			r.Header.Set("Accept", accept)
 			r.AddCookie(sessionCookie)
@@ -261,8 +281,8 @@ func TestRenderOAuthCodeCallback_AccountConflict(t *testing.T) {
 // Transport failures remain 502 responses with code=github_unreachable.
 func TestRenderOAuthCodeCallback_GithubdErrorPropagates(t *testing.T) {
 	gh := &oauthCodeCallbackFake{exchangeErr: errors.New("dial tcp: connection refused")}
-	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
-	stateToken := mintStateToken(t)
+	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	stateToken := mintStateToken(t, mgr, accountID)
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
@@ -290,8 +310,8 @@ func TestRenderOAuthCodeCallback_MissingInstallationResumesInstallFlow(t *testin
 	gh := &oauthCodeCallbackFake{
 		exchangeErr: errors.New("rpc error: code = Internal desc = githubd: user has no app installations"),
 	}
-	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
-	stateToken := mintStateToken(t)
+	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	stateToken := mintStateToken(t, mgr, accountID)
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?code=oauth-code-xyz&state="+stateToken, nil)
@@ -450,11 +470,18 @@ func TestRedirectToGitHubAuthorization_PublicConsoleCallback(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("FAAS_GITHUB_APP_REDIRECT_URI", tc.override)
 			log := slog.New(slog.NewTextHandler(io.Discard, nil))
-			srv := apidserver.NewServerWithDeps(state.NewMemStore(), log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, nil, nil, nil, 15*time.Minute, "")
+			// The state is sealed to the signed-in account (H64), as on the
+			// session-authenticated route that calls this.
+			mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := apidserver.NewServerWithDeps(state.NewMemStore(), log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, nil, mgr, nil, 15*time.Minute, "")
 			if tc.consoleBase != "" {
 				srv.WithCLIAuthURLBase(tc.consoleBase)
 			}
 			r := httptest.NewRequest(http.MethodPost, tc.requestURL, nil)
+			r = r.WithContext(apidserver.WithAccount(r.Context(), state.Account{ID: "acct-connect"}))
 			rec := httptest.NewRecorder()
 			if !srv.RedirectToGitHubAuthorization(rec, r, 0) || rec.Code != http.StatusFound {
 				t.Fatalf("authorization: status = %d, body = %s", rec.Code, rec.Body.String())
@@ -511,8 +538,8 @@ func TestRenderOAuthCodeCallback_MissingState(t *testing.T) {
 // the App's redirect URL? user rejected the dialog?).
 func TestRenderOAuthCodeCallback_MissingCode(t *testing.T) {
 	gh := &oauthCodeCallbackFake{installID: "9999", defaultBranch: "main"}
-	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
-	stateToken := mintStateToken(t)
+	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	stateToken := mintStateToken(t, mgr, accountID)
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oauth/code-callback?state="+stateToken, nil)

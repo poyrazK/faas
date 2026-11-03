@@ -15,24 +15,14 @@
 //     account-scoped; an unauthenticated callback is a forged one.
 //  2. Read installation_id from the query (the GitHub App install
 //     callback shape: ?installation_id=N&setup_action=install).
-//  3. Read the sealed session cookie and pull env.GithubLogin. If
-//     the dashboard user hasn't completed /v1/auth/github yet, this
-//     is empty — refuse the install-takeover and 302 them to the
-//     GitHub connect flow. This is the PR-B §11 ownership assertion.
-//  4. Call githubd.VerifyInstallation over gRPC, passing
-//     env.GithubLogin as expectedLogin. githubd fetches the install
-//     from api.github.com and confirms the install's
-//     account.login == expectedLogin. Mismatch → verified=false
-//     (caller could not possibly own this install) and the handler
-//     returns 403 forged. 404 / transport errors → verified=false
-//     + 302 / 502. Either way we DO NOT persist anything the
-//     customer didn't authorize.
-//  5. On verified=true: hand off to the dashboard via a 302 to
-//     /dashboard/apps/new?install=<id>&default_branch=<branch>
-//     so the user picks which app + repo to bind to this install.
-//     The actual apps.github_install_id write happens at the bind
-//     step (cmd/apid/handlers_install_github.go bindAppToRepo),
-//     which also re-verifies and re-checks uniqueness.
+//  3. Call githubd.VerifyInstallation over gRPC to confirm the ID is an
+//     installation of this GitHub App. 404 / transport errors →
+//     302 / 502. Nothing is persisted here.
+//  4. On verified=true: redirect to GitHub's user authorization with the
+//     installation bound into the OAuth state. /oauth/code-callback then
+//     proves that the GitHub user may connect it (its owner, or an admin
+//     of its organization) and persists the connection. A GitHub sign-in
+//     on the Gregale session is not required (ADR-20261101160300).
 //
 // Mounted on the dashboard router so it shares the §11 middleware
 // stack (RequestID + Recovery) but NOT behind s.auth (which is
@@ -46,7 +36,6 @@ import (
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 // stripLogInt is defined in handlers_install_github.go (same package);
@@ -61,34 +50,18 @@ const oauthCallbackPath = "/oauth/callback"
 
 // renderOAuthCallback is the GET /oauth/callback handler. It is
 // mounted in server.go behind sessionAuth so the request already
-// carries an authenticated account in the context. Mounting it on
-// the dashboard router (not the API router) is deliberate: GitHub's
-// install-redirect URL is set in the GitHub App config to a
-// dashboard path, and we want one consistent middleware chain for
-// cookie-bearing browser flows.
-//
-// §11 ownership proof (PR-B): the cookie envelope's github_login
-// field carries the GitHub identity the dashboard user established
-// via /v1/auth/github. githubd.VerifyInstallation compares that to
-// the install's account.login; mismatch → 403 forged. Empty
-// github_login → 302 unauthenticated (the user clicked "Connect
-// GitHub" but never completed /v1/auth/github; we refuse to bind
-// the install rather than silently bind it under the wrong identity).
+// carries an authenticated account in the context. GitHub's
+// install-redirect (Setup URL) points here.
 //
 // Failure surfaces:
 //   - missing/invalid installation_id     → 400 problem
-//   - session envelope lacks github_login  → 302 to
-//     /dashboard/account?github=unauthenticated
-//   - install account.login != github_login → 403 forged
 //   - account suspended                   → 302 to /login (handled
-//     by sessionAuth; should
-//     not reach the handler)
+//     by sessionAuth; should not reach the handler)
 //   - githubd.VerifyInstallation returns  → 302 to
 //     verified=false (install unknown)      /dashboard/account?github=forged
-//   - githubd.VerifyInstallation errs     → 502 problem with the
-//     underlying gRPC error
-//   - success                             → 302 to
-//     /dashboard/apps/new?install=…&branch=…
+//   - githubd.VerifyInstallation errs     → 502 problem
+//   - success                             → 302 to GitHub's user
+//     authorization, then /oauth/code-callback
 func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	const op = "renderOAuthCallback"
 	log := s.log.With("op", op)
@@ -132,96 +105,25 @@ func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		"installation_id", stripLogInt(installationID),
 		"setup_action", stripLogCRLF(setupAction))
 
-	// PR-B §11 ownership proof. Re-read the sealed cookie inside the
-	// handler so we have the envelope's github_login field — the
-	// sessionAuth middleware only forwards the resolved account, not
-	// the envelope. sessionAuth guarantees the cookie was already
-	// verified once (else the request would have 401'd before this
-	// line), so a second Verify is cheap and the envelope is
-	// trustworthy.
-	var expectedLogin string
-	if c, cerr := sessioncookie.Get(r); cerr == nil && c.Value != "" {
-		if env, verr := s.sessions.Verify(c.Value); verr == nil {
-			expectedLogin = env.GithubLogin
-		} else {
-			// Cookie present but Verify failed (clock skew, key
-			// rotation, tamper). Treat as unauthenticated — safer
-			// than passing an empty expectedLogin and silently
-			// accepting an unverified install.
-			log.Warn("oauth callback: session verify failed",
-				"account_id", acct.ID, "err", verr)
-			http.Redirect(w, r, "/dashboard/account?github=unauthenticated", http.StatusFound)
-			return
-		}
-	}
-	if expectedLogin == "" {
-		// User has a valid FaaS session but never completed
-		// /v1/auth/github — we cannot prove the install belongs to
-		// them. Refuse the takeover rather than silently binding
-		// the install under an unverified identity.
-		log.Warn("oauth callback: session missing github_login",
-			"account_id", acct.ID, "install_id", stripLogInt(installationID))
-		acctID := acct.ID
-		s.audit.Emit(r.Context(), "auth.install.unauthenticated", &acctID, map[string]any{
-			"install_id": installationID,
-			"reason":     "session_github_login_empty",
-		})
-		http.Redirect(w, r, "/dashboard/account?github=unauthenticated", http.StatusFound)
-		return
-	}
-
-	// Confirm that the ID belongs to this GitHub App, then obtain the actual
-	// user-to-installation ownership proof through /user/installations. A direct
-	// login comparison is valid for personal installs but rejects organizations
-	// because their account.login is the organization name.
+	// Confirm that the ID belongs to this GitHub App. This callback persists
+	// nothing: the OAuth step it redirects to proves that the signed-in
+	// GitHub user may connect the installation, whatever provider the
+	// Gregale session signed in with (ADR-20261101160300 amends ADR-1345,
+	// which kept a GitHub sign-in gate here and stranded Google and password
+	// accounts after installing the App).
 	verified, accountLogin, defaultBranch, err := s.githubd.VerifyInstallation(r.Context(), installationID, "")
 	if err != nil {
 		log.Warn("verify installation failed",
 			"account_id", acct.ID,
 			"install_id", stripLogInt(installationID),
-			// expected_login is the session's github_login; it
-			// comes from the AEAD-sealed cookie but the cookie is
-			// attacker-modifiable in principle, so the
-			// CodeQL go/log-injection (CWE-117) alert flags the
-			// raw write. stripLogCRLF drops CR/LF so a hostile
-			// cookie can't inject a CRLF into the log stream.
-			"expected_login", stripLogCRLF(expectedLogin),
 			"err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "github_unreachable",
-			"Could not reach GitHub", "retry the connect flow in a minute: https://docs/connect-github"))
+		api.WriteProblem(w, githubUnreachableProblem("Retry the connect flow in a minute."))
 		return
 	}
 	if !verified {
-		// Two distinct "not verified" cases. (1) install exists but
-		// belongs to a different GitHub user → §11 takeover
-		// attempt → 403 forged (auditable, hard stop). (2)
-		// install doesn't exist on api.github.com (404) →
-		// verified=false with accountLogin="" — softer 302, since
-		// this could be a stale tab, a botched callback, or a
-		// typed-in ID, and the §11 proof is moot. The install's
-		// account.login is empty in case (2) because githubd never
-		// got a response body to extract it from.
-		if accountLogin != "" {
-			log.Warn("verify installation: install belongs to a different GitHub user (§11 takeover attempt)",
-				"account_id", acct.ID,
-				"install_id", stripLogInt(installationID),
-				"expected_login", stripLogCRLF(expectedLogin),
-				"actual_account_login", stripLogCRLF(accountLogin))
-			acctID := acct.ID
-			s.audit.Emit(r.Context(), "auth.install.takeover_rejected", &acctID, map[string]any{
-				"install_id":           installationID,
-				"expected_login":       expectedLogin,
-				"actual_account_login": accountLogin,
-			})
-			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "forged",
-				"This installation belongs to a different GitHub user",
-				"the install is bound to a different GitHub identity than the one you signed in with"))
-			return
-		}
 		log.Warn("verify installation: forged or unknown install_id",
 			"account_id", acct.ID,
-			"install_id", stripLogInt(installationID),
-			"expected_login", stripLogCRLF(expectedLogin))
+			"install_id", stripLogInt(installationID))
 		http.Redirect(w, r, "/dashboard/account?github=forged", http.StatusFound)
 		return
 	}
@@ -232,7 +134,6 @@ func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	acctID := acct.ID
 	s.audit.Emit(r.Context(), "auth.install.verified", &acctID, map[string]any{
 		"install_id":     installationID,
-		"github_login":   expectedLogin,
 		"install_owner":  accountLogin,
 		"default_branch": defaultBranch,
 	})

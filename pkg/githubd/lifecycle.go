@@ -17,6 +17,13 @@ type InstallationLifecycleStore interface {
 	RenameGitHubRepository(ctx context.Context, installationID int64, oldRepoFullName, newRepoFullName string) error
 }
 
+// AccountRenameStore moves an installation's bindings, projects and PR
+// preview environments to a renamed user's or organization's repository
+// names (ADR-20261101160300).
+type AccountRenameStore interface {
+	RenameGitHubAccount(ctx context.Context, installationID int64, oldLogin, newLogin string) error
+}
+
 // HandleInstallationLifecycle processes GitHub App installation and repository
 // access changes. Unknown actions are acknowledged deliberately; GitHub emits
 // actions unrelated to deployment access and retrying those forever would fill
@@ -26,14 +33,27 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 	case "installation":
 		ev, err := DecodeInstallation(body)
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if s.Lifecycle == nil {
 			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", logsanitize.Field(eventType))
 			return nil
 		}
 		switch strings.ToLower(ev.Action) {
-		case "deleted", "suspend", "suspended":
+		case "suspend", "suspended", "unsuspend", "unsuspended":
+			// Suspension is reversible: GitHub stops minting tokens and
+			// sending events for the installation while it lasts. It used to
+			// detach every bound app, so after unsuspend pushes were ignored
+			// until each app was reconnected by hand (bug hunt 2026-10-28
+			// B29). Keep the bindings; drop cached tokens either way.
+			if s.InvalidateInstallation != nil {
+				s.InvalidateInstallation(ev.Installation.ID)
+			}
+			if s.InvalidateInstallationSecrets != nil {
+				s.InvalidateInstallationSecrets(ev.Installation.ID)
+			}
+			s.Log.Info("githubd: GitHub installation suspension changed; bindings kept", "installation_id", ev.Installation.ID, "action", logsanitize.Field(ev.Action), "sender", logsanitize.Field(ev.Sender.Login))
+		case "deleted":
 			if err := s.Lifecycle.RevokeGitHubInstallation(ctx, ev.Installation.ID); err != nil {
 				return fmt.Errorf("githubd: revoke installation %d: %w", ev.Installation.ID, err)
 			}
@@ -52,7 +72,7 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 	case "installation_repositories":
 		ev, err := DecodeInstallationRepositories(body)
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if s.Lifecycle == nil {
 			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", logsanitize.Field(eventType))
@@ -74,14 +94,18 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 	case "repository":
 		ev, err := DecodeRepository(body)
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if s.Lifecycle == nil {
 			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", logsanitize.Field(eventType))
 			return nil
 		}
 		switch strings.ToLower(ev.Action) {
-		case "deleted", "archived":
+		case "archived", "unarchived":
+			// An archived repository receives no pushes and can be
+			// unarchived; keep its binding (B29).
+			s.Log.Info("githubd: repository archive state changed; binding kept", "installation_id", ev.Installation.ID, "repo", logsanitize.Field(ev.Repository.FullName), "action", logsanitize.Field(ev.Action))
+		case "deleted":
 			if err := s.Lifecycle.RemoveGitHubRepositories(ctx, ev.Installation.ID, []string{ev.Repository.FullName}); err != nil {
 				return fmt.Errorf("githubd: detach repository %q: %w", ev.Repository.FullName, err)
 			}
@@ -90,8 +114,8 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 			}
 		case "renamed", "transferred":
 			oldName := ev.Changes.Repository.Name.From
-			if strings.EqualFold(ev.Action, "transferred") && ev.Changes.Owner.From.Login != "" {
-				oldName = ev.Changes.Owner.From.Login + "/" + ev.Repository.Name
+			if previous := ev.Changes.Owner.From.PreviousLogin(); strings.EqualFold(ev.Action, "transferred") && previous != "" {
+				oldName = previous + "/" + ev.Repository.Name
 			}
 			if oldName == "" {
 				// GitHub normally includes changes.repository.name.from;
@@ -112,6 +136,30 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 				s.InvalidateInstallationBindings(ev.Installation.ID)
 			}
 		}
+		return nil
+	case "installation_target":
+		ev, err := DecodeInstallationTarget(body)
+		if err != nil {
+			return unprocessableWebhook(err)
+		}
+		oldLogin, newLogin := ev.Changes.Login.From, ev.Account.Login
+		if !strings.EqualFold(ev.Action, "renamed") || oldLogin == "" || newLogin == "" || oldLogin == newLogin {
+			s.Log.Debug("githubd: acknowledged installation_target action", "installation_id", ev.Installation.ID, "action", logsanitize.Field(ev.Action))
+			return nil
+		}
+		renamer, ok := s.Lifecycle.(AccountRenameStore)
+		if !ok {
+			s.Log.Warn("githubd: account rename received without a rename store", "installation_id", ev.Installation.ID)
+			return nil
+		}
+		if err := renamer.RenameGitHubAccount(ctx, ev.Installation.ID, oldLogin, newLogin); err != nil {
+			return fmt.Errorf("githubd: rename account %q to %q: %w", oldLogin, newLogin, err)
+		}
+		if s.InvalidateInstallationBindings != nil {
+			s.InvalidateInstallationBindings(ev.Installation.ID)
+		}
+		s.Log.Info("githubd: GitHub account renamed; bindings moved", "installation_id", ev.Installation.ID,
+			"from", logsanitize.Field(oldLogin), "to", logsanitize.Field(newLogin))
 		return nil
 	default:
 		return fmt.Errorf("githubd: unsupported lifecycle event %q", eventType)

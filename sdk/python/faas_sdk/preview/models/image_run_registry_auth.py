@@ -11,9 +11,9 @@ T = TypeVar("T", bound="ImageRunRegistryAuth")
 
 @_attrs_define
 class ImageRunRegistryAuth:
-    """ADR-1790: credential for a private image's registry. apid stores it sealed on the image's runner job for that
-    registry host, exactly as PUT /v1/jobs/{name}/registry-credentials does, and never returns it. Every run that
-    supplies it refreshes it.
+    """Credential for a private image's registry. The API stores it sealed on the image's runner job for that registry
+    host, exactly as PUT /v1/jobs/{name}/registry-credentials does, and never returns it. Every run that supplies it
+    refreshes it.
 
     """
 

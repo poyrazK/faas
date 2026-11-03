@@ -9,6 +9,10 @@ The schedd publishes bounded per-app gauges for the durable queue:
 - `schedd_queue_binding_worker_demand` is the uncapped worker demand for each
   queue binding before app and account caps are applied.
 
+schedd refreshes these every 30 seconds for every worker app and every app
+that scales on its queue. Binding counts stop at 100,000, so a larger backlog
+reads 100,000; the oldest-pending age is that of the first message due.
+
 Kafka bindings also publish `schedd_esm_consumer_lag_messages` and
 `schedd_esm_consumer_lag_age_seconds` by bounded source shard. These are
 broker-native lag snapshots, distinct from the dispatch latency histogram.

@@ -112,3 +112,34 @@ func TestProjectEnvironmentRoutesRejectInvalidAndCrossProject(t *testing.T) {
 		t.Fatalf("cross-project write: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestProjectEnvironmentRoutesProtectedStageRequiresPlanOrPromotion(t *testing.T) {
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "release", Protected: true}); err != nil {
+		t.Fatal(err)
+	}
+	put := func(environment string) int {
+		t.Helper()
+		req, rec := apidserver.ProjectRequest(http.MethodPut, "/v1/projects/shop/environments/"+environment+"/workloads/shop-api/routes", "shop",
+			[]byte(`{"only_allow_declared_routes":true,"declared_routes":[{"path":"/health","methods":["GET"]}]}`))
+		req.SetPathValue("environment", environment)
+		req.SetPathValue("workload", app.Slug)
+		srv.UpdateProjectEnvironmentRoutes(rec, req, acct)
+		return rec.Code
+	}
+	if code := put("release"); code != http.StatusConflict {
+		t.Fatalf("protected stage route write = %d, want 409", code)
+	}
+	if _, err := store.GetProjectEnvironmentRoutePolicy(ctx, acct.ID, app.ID, "release"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("refused route write persisted: %v", err)
+	}
+	// Production is protected too, but keeps its direct route contract edit.
+	production, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "production")
+	if err != nil || !production.Protected {
+		t.Fatalf("fixture production should be protected: %+v, %v", production, err)
+	}
+	if code := put("production"); code != http.StatusOK {
+		t.Fatalf("production route write = %d, want 200", code)
+	}
+}

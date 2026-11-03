@@ -13,7 +13,7 @@ T = TypeVar("T", bound="SecretEntryRequest")
 
 @_attrs_define
 class SecretEntryRequest:
-    """A secret the account owner is asked to enter on a one-time page (ADR-20261026174727)."""
+    """A secret the account owner is asked to enter on a one-time page."""
 
     key: str
     reason: str

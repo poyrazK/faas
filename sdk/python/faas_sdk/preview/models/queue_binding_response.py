@@ -42,13 +42,12 @@ class QueueBindingResponse:
     environment_id: UUID | Unset = UNSET
     """Original catalog environment identity; omitted for a shared legacy binding."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
-    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
+    """Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
     account plan and never means unlimited. Durable invocation
     producers materialize the effective plan-capped value, and the
     scheduler re-clamps it at dispatch time to account for later plan
-    downgrades. Lives in pkg/api so the SDK can type the policy
-    without importing pkg/dispatch directly.
+    downgrades.
     """
     retired_at: datetime.datetime | Unset = UNSET
     """Retirement hold timestamp; present only for a retained retired binding."""

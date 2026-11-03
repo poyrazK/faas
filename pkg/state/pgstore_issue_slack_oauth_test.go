@@ -45,7 +45,7 @@ func TestPg_SlackOAuthInstallationLifecycle(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})})
-	service := issueslack.OAuthService{Store: s, Client: client, Config: cfg, Recipient: id.Recipient(), Identities: []*age.X25519Identity{id}}
+	service := issueslack.OAuthService{Store: s, Client: client, Config: cfg, Recipients: []*age.X25519Recipient{id.Recipient()}, Identities: []*age.X25519Identity{id}}
 	start := func(a state.App, actor string, rev int64) string {
 		t.Helper()
 		nonce, _, e := service.Start(ctx, a.ID, actor, rev)

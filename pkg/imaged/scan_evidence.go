@@ -14,19 +14,9 @@ import (
 // returns the ext4 path directly. The hash is evidence about the bytes that
 // were selected for scanning, not a replacement for the OCI image digest.
 func digestScanArtifact(path string) (string, error) {
-	info, err := os.Stat(path)
+	path, _, err := scanArtifactFile(path)
 	if err != nil {
-		return "", fmt.Errorf("stat scan artifact: %w", err)
-	}
-	if info.IsDir() {
-		path = filepath.Join(path, "rootfs.ext4")
-		info, err = os.Stat(path)
-		if err != nil {
-			return "", fmt.Errorf("stat staged rootfs: %w", err)
-		}
-		if info.IsDir() {
-			return "", fmt.Errorf("scan artifact %q is a directory", path)
-		}
+		return "", err
 	}
 	// The path is selected by the daemon's storage backend (local app
 	// artifact or its freshly staged remote copy), not customer input.
@@ -40,4 +30,23 @@ func digestScanArtifact(path string) (string, error) {
 		return "", fmt.Errorf("hash scan artifact: %w", err)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// scanArtifactFile resolves a scan artifact path to the ext4 file itself.
+func scanArtifactFile(path string) (string, os.FileInfo, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("stat scan artifact: %w", err)
+	}
+	if info.IsDir() {
+		path = filepath.Join(path, "rootfs.ext4")
+		info, err = os.Stat(path)
+		if err != nil {
+			return "", nil, fmt.Errorf("stat staged rootfs: %w", err)
+		}
+		if info.IsDir() {
+			return "", nil, fmt.Errorf("scan artifact %q is a directory", path)
+		}
+	}
+	return path, info, nil
 }

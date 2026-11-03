@@ -11,9 +11,9 @@ Pro, and Scale once enabled for your deployment.
 ## Read the map
 
 ```sh
-gregale metrics --services             # last hour
-gregale metrics --services --range 24h
-gregale metrics --services --json      # for scripts and agents
+gregale metric --services             # last hour
+gregale metric --services --range 24h
+gregale metric --services --json      # for scripts and agents
 ```
 
 ```text
@@ -24,7 +24,7 @@ public-api → payments
   Calls:      12040 (errors 48, 0.40%)
   Latency:    p50=11.2ms p95=38.0ms
   Woke:       9030 calls (75%) found the target parked
-  Tip:        run `gregale wake-ahead public-api on` to restore payments while public-api wakes
+  Tip:        run `gregale app wake-ahead public-api on` to restore payments while public-api wakes
 
 payments → postgres
   TCP:        3120 sessions (errors 4, 210 woke the target)
@@ -56,7 +56,7 @@ curl -H "Authorization: Bearer $GREGALE_TOKEN" \
 
 A call to a parked service waits while Gregale restores it. When most calls on
 an edge do, the caller pays that restore again and again. Wake-ahead
-(`gregale wake-ahead <app> on`) lets Gregale start restoring the services an
+(`gregale app wake-ahead <app> on`) lets Gregale start restoring the services an
 app calls while the app itself wakes, along the edges it has measured.
 
 The map marks an edge with a wake-ahead tip when the caller has not turned

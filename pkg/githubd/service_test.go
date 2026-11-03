@@ -102,7 +102,7 @@ func newRig(t *testing.T, scanFn func(fs.FS) (reposcan.Result, error)) *testRig 
 	aud := audit.New(mem, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, "githubd_test")
 	rec := reconcile.NewService(mem, aud, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if scanFn != nil {
-		rec.Scan = scanFn
+		rec.Scan = func(fsys fs.FS, _ reposcan.ScanOptions) (reposcan.Result, error) { return scanFn(fsys) }
 	}
 	acct, err := mem.CreateAccount(context.Background(), "octo@example.com", "hobby")
 	if err != nil {
@@ -402,6 +402,29 @@ func TestHandlePushRequest_TagUsesConfiguredProductionBranch(t *testing.T) {
 	body := []byte(`{"ref":"refs/tags/v1.1.0","before":"0000000000000000000000000000000000000000","after":"x","created":true,"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"installation":{"id":42},"pusher":{"name":"alice"}}`)
 	if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
 		t.Fatalf("tag push on configured branch: %v", err)
+	}
+}
+
+// A project's annotated release tag builds the commit the tag points at,
+// not the tag object GitHub names in the push's `after`.
+func TestHandlePushRequest_AnnotatedTagBuildsItsCommit(t *testing.T) {
+	const tagObject, commit = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
+	rig := newRig(t, func(_ fs.FS) (reposcan.Result, error) { return happyScan(), nil })
+	rig.seedProject(t, "octo/api", "main")
+	svc := newServiceForRig(t, rig)
+	rec := &recordingEnqueuer{}
+	svc.Enqueuer = rec
+	body := []byte(`{"ref":"refs/tags/v1.3.0","before":"0000000000000000000000000000000000000000","after":"` + tagObject + `","created":true,"head_commit":{"id":"` + commit + `"},"repository":{"full_name":"octo/api","name":"api","default_branch":"main"},"installation":{"id":42},"pusher":{"name":"alice"}}`)
+	if _, err := svc.HandlePushRequest(context.Background(), body); err != nil {
+		t.Fatalf("annotated tag push: %v", err)
+	}
+	if len(rec.calls) == 0 {
+		t.Fatal("the annotated tag built nothing")
+	}
+	for _, call := range rec.calls {
+		if call.commitSHA != commit || call.tag != "v1.3.0" {
+			t.Fatalf("built %+v, want the tagged commit %s under tag v1.3.0", call, commit)
+		}
 	}
 }
 

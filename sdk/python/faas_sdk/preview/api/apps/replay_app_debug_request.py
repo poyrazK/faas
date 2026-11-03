@@ -99,7 +99,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: DebugReplayRequest | Unset = UNSET,
 ) -> Response[DebugReplayResponse | Problem]:
-    """Replay a retained request through its mirror rule (ADR-127).
+    """Replay a retained request through its mirror rule.
 
      Reissues the retained request metadata through the enabled mirror
     rule for the deployment that served it. Raw request bodies and
@@ -143,7 +143,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: DebugReplayRequest | Unset = UNSET,
 ) -> DebugReplayResponse | Problem | None:
-    """Replay a retained request through its mirror rule (ADR-127).
+    """Replay a retained request through its mirror rule.
 
      Reissues the retained request metadata through the enabled mirror
     rule for the deployment that served it. Raw request bodies and
@@ -182,7 +182,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: DebugReplayRequest | Unset = UNSET,
 ) -> Response[DebugReplayResponse | Problem]:
-    """Replay a retained request through its mirror rule (ADR-127).
+    """Replay a retained request through its mirror rule.
 
      Reissues the retained request metadata through the enabled mirror
     rule for the deployment that served it. Raw request bodies and
@@ -224,7 +224,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: DebugReplayRequest | Unset = UNSET,
 ) -> DebugReplayResponse | Problem | None:
-    """Replay a retained request through its mirror rule (ADR-127).
+    """Replay a retained request through its mirror rule.
 
      Reissues the retained request metadata through the enabled mirror
     rule for the deployment that served it. Raw request bodies and

@@ -51,6 +51,7 @@ func Run(t *testing.T, open Open) {
 	}{
 		{"operator_alert_triage_and_retention_are_durable", testOperatorAlertTriageRetention},
 		{"operator_evidence_projections_are_exact", testOperatorEvidenceProjections},
+		{"operator_actions_reach_the_audit_log_under_the_operator", testOperatorActionsReachAuditLog},
 		{"operator_queue_count_excludes_running_and_terminal_builds", testOperatorQueuedBuildsCount},
 		{"operator_queue_snapshot_preserves_wait_across_requeue", testOperatorBuildQueueSnapshot},
 		{"operator_build_recovery_snapshot_preserves_cleanup_age", testOperatorBuildRecoverySnapshot},
@@ -66,7 +67,10 @@ func Run(t *testing.T, open Open) {
 		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
 		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
 		{"release_freezes_limit_list_and_lift", testReleaseFreezes},
+		{"org_release_freezes_keep_to_their_owner", testOrgReleaseFreezes},
+		{"edge_rule_targeted_reads_return_only_what_they_name", testEdgeRuleTargetedReads},
 		{"release_gates_round_trip_and_follow_their_slo", testReleaseGates},
+		{"release_gate_probes_count_per_gate_revision_and_minute", testReleaseGateProbes},
 		{"release_approvals_policy_and_one_decision_per_person", testReleaseApprovals},
 		{"release_approval_events_once_due_and_retried", testReleaseApprovalEvents},
 		{"scheduled_releases_one_pending_and_start_in_the_traffic_change", testScheduledReleases},
@@ -119,6 +123,7 @@ func Run(t *testing.T, open Open) {
 		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
 		{"rehearsal_apps_leave_account_alerts", testRehearsalAppsLeaveAccountAlerts},
 		{"rehearsal_app_logs_stay_inside_the_run", testRehearsalAppLogsStayInsideTheRun},
+		{"log_drains_deliver_only_what_the_plan_covers", testLogDrainsDeliverOnlyWhatThePlanCovers},
 		{"rehearsal_apps_never_poll_real_brokers", testRehearsalAppsNeverPollRealBrokers},
 		{"rehearsal_crons_never_fire_from_the_clock", testRehearsalCronsNeverFireFromTheClock},
 		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
@@ -140,6 +145,9 @@ func Run(t *testing.T, open Open) {
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
+		{"overage_cap_default_follows_the_plan", testOverageCapDefaultFollowsThePlan},
+		{"organization_billing_subject_has_its_own_spend_cap", testOrgSpendCap},
+		{"pending_billing_skips_free_subjects", testPendingBillingSkipsFreeSubjects},
 		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
@@ -161,10 +169,13 @@ func Run(t *testing.T, open Open) {
 		{"mfa_disable_request_single_use", testMFADisableRequestSingleUse},
 		{"deploy_token_authentication", testDeployTokenAuthentication},
 		{"api_key_rotation_grace", testAPIKeyRotationGrace},
+		{"mcp_login_key_slides_on_use", testMCPLoginKeySlides},
 		{"consumer_key_lookup_is_app_scoped", testConsumerKeyLookupIsAppScoped},
 		{"app_secret_scope_and_class", testAppSecretScopeAndClass},
 		{"oidc_empty_subject_pattern_binds_nothing", testOIDCEmptySubjectPatternBindsNothing},
 		{"oidc_repository_binding_resolution", testOIDCRepositoryBindingResolution},
+		{"oidc_repository_ids_for_subject", testOIDCRepositoryIDsForSubject},
+		{"oidc_project_repository_bindings", testOIDCProjectRepositoryBindings},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
@@ -178,6 +189,7 @@ func Run(t *testing.T, open Open) {
 		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"deployment_outcomes_exclude_customer_caused_failures", testDeploymentOutcomesExcludeCustomerCausedFailures},
+		{"deployment_served_before_tracks_traffic", testDeploymentServedBefore},
 		{"active_job_runs_are_scoped_and_terminal_safe", testActiveJobRuns},
 		{"pending_invocation_cancel_returns_authoritative_state", testPendingInvocationCancel},
 		{"keyed_invocation_replacement_and_completion_are_fenced", testKeyedInvocationReplacementAndCompletion},
@@ -193,6 +205,7 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"trigger_record_operator_verbs_are_scoped", testTriggerRecordOperatorScope},
 		{"queue_dead_letter_message_is_one_entry", testQueueDeadLetterSingleEntry},
 		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
@@ -1106,12 +1119,12 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	create := func(slug string, prNumber int) state.App {
+	create := func(slug string, prNumber int, workload string) state.App {
 		app, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
 			AccountID:        fx.Account.ID,
 			ProjectID:        project.ID,
 			Slug:             slug,
-			WorkloadName:     "api",
+			WorkloadName:     workload,
 			Type:             state.AppTypeApp,
 			Runtime:          "node22",
 			RAMMB:            limits.RAMMB,
@@ -1126,8 +1139,8 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 		}
 		return app
 	}
-	developer := create("preview-dev-"+uuid.NewString()[:8], 0)
-	pr := create("preview-pr-"+uuid.NewString()[:8], 42)
+	developer := create("preview-dev-"+uuid.NewString()[:8], 0, "api")
+	pr := create("preview-pr-"+uuid.NewString()[:8], 42, "api")
 
 	byParent, err := fx.Store.PreviewAppsByParent(fx.Ctx, fx.Account.ID, fx.App.Slug)
 	if err != nil {
@@ -1149,6 +1162,16 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 	}
 	if _, err := fx.Store.PreviewAppByProjectWorkload(fx.Ctx, fx.Account.ID, project.ID, 0, "api"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("PreviewAppByProjectWorkload(developer) = %v, want ErrNotFound", err)
+	}
+	// A second preview of the PR that answers to the same service name makes
+	// the name ambiguous; the lookup refuses it rather than pick one. Its
+	// name differs only in DNS form: PostgreSQL refuses an exact duplicate.
+	collider := create("preview-pr-"+uuid.NewString()[:8], 42, "API")
+	if _, err := fx.Store.PreviewAppByProjectWorkload(fx.Ctx, fx.Account.ID, project.ID, 42, "api"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("PreviewAppByProjectWorkload(ambiguous) = %v, want ErrConflict", err)
+	}
+	if err := fx.Store.DeleteApp(fx.Ctx, collider.ID); err != nil {
+		t.Fatalf("DeleteApp(collider): %v", err)
 	}
 
 	if _, err := fx.Store.SetPreviewPrState(fx.Ctx, pr.ID, "invalid"); !errors.Is(err, state.ErrInvalidPreviewPrState) {

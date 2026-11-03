@@ -22,8 +22,8 @@ T = TypeVar("T", bound="RuntimePolicySchedulerStatus")
 
 @_attrs_define
 class RuntimePolicySchedulerStatus:
-    """Fresh observation of the desired scaling policy by the owning schedd. Active means the policy was loaded, not that a
-    metric-driven replica target has been reached.
+    """Fresh observation of the desired scaling policy by the owning scheduler. Active means the policy was loaded, not
+    that a metric-driven replica target has been reached.
 
     """
 

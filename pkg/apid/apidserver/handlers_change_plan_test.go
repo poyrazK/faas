@@ -942,6 +942,53 @@ func TestGetBillingPortal_UsesProviderSession(t *testing.T) {
 	}
 }
 
+type fakeCardProvider struct {
+	*fakeBillingProvider
+	card billing.PaymentMethod
+	err  error
+}
+
+func (f *fakeCardProvider) PaymentMethodSummary(context.Context, state.Account) (billing.PaymentMethod, error) {
+	return f.card, f.err
+}
+
+// TestGetBillingPortal_IncludesProviderCard pins issues #279/#280: the
+// portal response carries the provider's card on file, and leaves it out
+// (with the URL intact) when there is none or the provider fails.
+func TestGetBillingPortal_IncludesProviderCard(t *testing.T) {
+	for name, tc := range map[string]struct {
+		provider *fakeCardProvider
+		want     *api.PaymentMethodSummary
+	}{
+		"card on file": {
+			provider: &fakeCardProvider{card: billing.PaymentMethod{Brand: "visa", Last4: "4242", ExpMonth: 4, ExpYear: 2030}},
+			want:     &api.PaymentMethodSummary{Brand: "visa", Last4: "4242", ExpMonth: 4, ExpYear: 2030},
+		},
+		"no card":        {provider: &fakeCardProvider{}},
+		"provider error": {provider: &fakeCardProvider{err: errors.New("provider down")}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, srv := setupChangePlan(t, api.PlanHobby, "si_test")
+			tc.provider.fakeBillingProvider = &fakeBillingProvider{}
+			srv.WithBillingProvider(tc.provider)
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/v1/billing/portal", nil)
+			r.Header.Set("Authorization", "Bearer "+e.key)
+			e.h.ServeHTTP(rec, r)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
+			}
+			var resp api.BillingPortalResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+			}
+			if (resp.PaymentMethod == nil) != (tc.want == nil) || (tc.want != nil && *resp.PaymentMethod != *tc.want) {
+				t.Fatalf("payment_method = %+v, want %+v", resp.PaymentMethod, tc.want)
+			}
+		})
+	}
+}
+
 // TestHandleBillingEvent_SubscriptionPastDue (PR-P3) is the unit
 // pin for the new dunning branch. Paddle's subscription.past_due
 // event maps to billing.EventSubscriptionPastDue; the handler

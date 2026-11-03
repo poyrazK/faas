@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed (ADR-20261021150000, ADR-20261021180000).
+ * A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed.
  */
 export type ScenarioCapturedPlatformCall = {
   id: string;

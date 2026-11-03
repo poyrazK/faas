@@ -595,14 +595,23 @@ func buildHelloLayer(body string) []byte {
 // a real guest because the test's deploy never wakes the builder VM
 // (builderd is M6).
 func BaseLayerImage(repo, body string) (fakeImage, string) {
-	layerBytes := buildHelloLayer(body)
+	return singleLayerImage(repo, buildHelloLayer(body), map[string]any{"Entrypoint": []string{"/bin/true"}, "Env": []string{}})
+}
+
+// RootfsLayerImage serves a whole root filesystem, already packed as one
+// gzipped tar layer, as a linux/amd64 image: what a staged runtime base pulls.
+func RootfsLayerImage(repo string, layer []byte) (fakeImage, string) {
+	return singleLayerImage(repo, layer, map[string]any{"Env": []string{}})
+}
+
+func singleLayerImage(repo string, layerBytes []byte, imageConfig map[string]any) (fakeImage, string) {
 	layerSum := sha256.Sum256(layerBytes)
 	layerDigest := "sha256:" + hex.EncodeToString(layerSum[:])
 
 	cfg := map[string]any{
 		"architecture": "amd64",
 		"os":           "linux",
-		"config":       map[string]any{"Entrypoint": []string{"/bin/true"}, "Env": []string{}},
+		"config":       imageConfig,
 		"rootfs": map[string]any{
 			"type":     "layers",
 			"diff_ids": []string{fixtureLayerDiffID(layerBytes)},

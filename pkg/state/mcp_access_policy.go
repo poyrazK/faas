@@ -29,6 +29,20 @@ func WithMCPAccessPolicyExpectation(ctx context.Context, accountID, appID string
 	return context.WithValue(ctx, mcpAccessPolicyContextKey{}, mcpAccessPolicyGuard{accountID, appID, expectation})
 }
 
+// mcpAccessRuleAppliesLocked mirrors ReadMCPAccessPolicyRules: the app's own
+// rules, and its live same-scope sibling apps' rules other than "@app" ones.
+// Callers hold m.mu.
+func (m *MemStore) mcpAccessRuleAppliesLocked(r EdgeRule, appID, scope string) bool {
+	if r.AppID == appID {
+		return true
+	}
+	if api.IsEdgeRuleAppHosts(r.MatchHost) {
+		return false
+	}
+	other, ok := m.apps[r.AppID]
+	return ok && other.Status != AppDeleted && m.edgeRuleScopeLocked(other) == scope
+}
+
 func (m *MemStore) checkMCPAccessPolicyLocked(ctx context.Context, appID string) error {
 	guard, ok := ctx.Value(mcpAccessPolicyContextKey{}).(mcpAccessPolicyGuard)
 	if !ok {
@@ -42,8 +56,9 @@ func (m *MemStore) checkMCPAccessPolicyLocked(ctx context.Context, appID string)
 		return ErrMCPAccessPolicyChanged
 	}
 	rules := []api.EdgeRuleResponse{}
+	scope := m.edgeRuleScopeLocked(app)
 	for _, r := range m.edgeRules {
-		if r.AccountID != guard.AccountID || r.Kind != EdgeRuleKindJWT {
+		if r.AccountID != guard.AccountID || r.Kind != EdgeRuleKindJWT || !m.mcpAccessRuleAppliesLocked(r, appID, scope) {
 			continue
 		}
 		action, err := json.Marshal(r.Action)
@@ -89,7 +104,7 @@ func (s *PgStore) checkMCPAccessPolicy(ctx context.Context, tx pgx.Tx, appID str
 	if err := q.LockMCPAccessPolicyAccount(ctx, tx, guard.AccountID); err != nil {
 		return err
 	}
-	rows, err := q.ReadMCPAccessPolicyRules(ctx, tx, mustPgUUID(guard.AccountID))
+	rows, err := q.ReadMCPAccessPolicyRules(ctx, tx, sqlc.ReadMCPAccessPolicyRulesParams{AccountID: mustPgUUID(guard.AccountID), AppID: mustPgUUID(appID)})
 	if err != nil {
 		return err
 	}

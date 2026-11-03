@@ -45,6 +45,9 @@ type ObjectBucketUsage struct {
 	// (ADR-20261024132844).
 	StoredByteHours       int64
 	StorageMeteredThrough time.Time
+	// InventoryScan is the bucket's listing in progress, if any
+	// (ADR-20261030100835).
+	InventoryScan ObjectInventoryScan
 }
 
 type ObjectUsageSnapshot struct {
@@ -58,11 +61,24 @@ type ObjectUsageSnapshot struct {
 	PlanLimits api.ObjectStoragePlanLimits
 }
 
-// objectStoragePlanLimits returns the plan's object-storage limits, or none
-// for an unknown plan.
-func objectStoragePlanLimits(plan api.Plan) api.ObjectStoragePlanLimits {
-	limits, _ := api.LimitsFor(plan)
-	return limits.ObjectStorage
+// objectStoragePlanLimits returns the plan's object-storage limits with the
+// ceiling support granted the subject and tightened by what its spend cap
+// pays for (ADR-20261101214152), or none for an unknown plan.
+func objectStoragePlanLimits(plan api.Plan, grantBytes, capCents *int64) api.ObjectStoragePlanLimits {
+	return api.ObjectStorageLimitsFor(plan, grantBytes, capCents)
+}
+
+// storedOverPlanCeiling refuses object bodies while the account stores more
+// than its plan's ceiling (ADR-20261101214152). Writes already stop at the
+// ceiling, so this only happens when the ceiling moved below the bytes: a
+// subscription that ended, or a lowered spend cap. Listing, HEAD and DELETE
+// stay open so the customer can get back under it.
+func storedOverPlanCeiling(s ObjectUsageSnapshot, u api.ObjectStorageUsage) error {
+	ceiling := s.PlanLimits.MaxAccountBytes
+	if ceiling <= 0 || u.CapacityBytes <= ceiling {
+		return nil
+	}
+	return &ObjectStorageLimitError{Kind: "account_bytes", Observed: u.CapacityBytes, Limit: ceiling, Cause: ErrObjectBudget}
 }
 
 // planPolicy is the policy every admission and gateway check enforces: the
@@ -142,8 +158,7 @@ func SummarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 // account-wide inputs (policy, provider reports, gateway metering coverage),
 // and returns the live buckets whose inventory is missing or older than
 // ObjectStorageInventoryMaxAgeSeconds. A stale bucket still counts toward the
-// account totals with its conservative capacity: the larger of its last
-// observation and baseline plus grants, plus open multipart reservations.
+// account totals with its conservative capacity (objectBucketCapacity).
 func summarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now time.Time) (api.ObjectStorageUsage, map[string]bool) {
 	u := api.ObjectStorageUsage{Fresh: ValidObjectStoragePolicy(p), PeriodStart: ObjectStoragePeriod(now), Authorizations: s.Authorizations}
 	stale := map[string]bool{}
@@ -159,9 +174,10 @@ func summarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 			continue
 		}
 		u.ObservedBytes = boundedObjectAdd(u.ObservedBytes, b.ObservedBytes)
-		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, boundedObjectAdd(max(b.ObservedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)), b.MultipartBytes))
-		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, max(b.ObservedKeys, boundedObjectAdd(b.BaselineKeys, b.GrantedKeys)))
-		if objectInventoryStale(b.ObservedAt, time.Duration(api.ObjectStorageInventoryMaxAgeSeconds)*time.Second, now) {
+		capacityBytes, capacityKeys := objectBucketCapacity(b)
+		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, capacityBytes)
+		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, capacityKeys)
+		if objectBucketInventoryStale(b, time.Duration(api.ObjectStorageInventoryMaxAgeSeconds)*time.Second, now) {
 			stale[b.Bucket.ID] = true
 		}
 	}
@@ -184,6 +200,17 @@ func summarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 		u.Fresh = false
 	}
 	return u, stale
+}
+
+// objectBucketCapacity is a live bucket's conservative capacity: the largest
+// of its last observation, what its current listing has seen so far
+// (ADR-20261030100835) and baseline plus grants, plus open multipart
+// reservations.
+func objectBucketCapacity(b ObjectBucketUsage) (bytes, keys int64) {
+	listedBytes, listedKeys := b.listedSoFar()
+	bytes = boundedObjectAdd(max(b.ObservedBytes, listedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)), b.MultipartBytes)
+	keys = max(b.ObservedKeys, listedKeys, boundedObjectAdd(b.BaselineKeys, b.GrantedKeys))
+	return bytes, keys
 }
 
 func objectInventoryStale(observedAt time.Time, maxAge time.Duration, now time.Time) bool {
@@ -213,10 +240,11 @@ func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, no
 			continue
 		}
 		u.ObservedBytes = boundedObjectAdd(u.ObservedBytes, b.ObservedBytes)
-		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, boundedObjectAdd(max(b.ObservedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)), b.MultipartBytes))
-		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, max(b.ObservedKeys, boundedObjectAdd(b.BaselineKeys, b.GrantedKeys)))
+		capacityBytes, capacityKeys := objectBucketCapacity(b)
+		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, capacityBytes)
+		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, capacityKeys)
 		maxAge := time.Duration(min(p.MaxReportAgeSeconds, int64(api.ObjectStorageInventoryMaxAgeSeconds))) * time.Second
-		if objectInventoryStale(b.ObservedAt, maxAge, now) {
+		if objectBucketInventoryStale(b, maxAge, now) {
 			stale[b.Bucket.ID] = true
 		}
 	}
@@ -238,18 +266,38 @@ func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, no
 // A month Gregale metered itself (gateway-safety accounting, ADR-20261024132844)
 // has no provider reports; it bills from the metered rows instead.
 func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.Time) (api.ObjectStorageUsage, error) {
+	return summarizeObjectStorageBillingUsage(s, periodStart, true)
+}
+
+// SummarizeObjectStorageUsageToDate reduces a month that is still open: what
+// has been metered or reported so far, without requiring coverage to the
+// month's end. Usage only grows, so the charge it prices never exceeds the
+// month's (ADR-20261027093220).
+func SummarizeObjectStorageUsageToDate(s ObjectUsageSnapshot, periodStart time.Time) (api.ObjectStorageUsage, error) {
+	return summarizeObjectStorageBillingUsage(s, periodStart, false)
+}
+
+// summarizeObjectStorageBillingUsage requires coverage to the month's end
+// when complete.
+func summarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.Time, complete bool) (api.ObjectStorageUsage, error) {
 	periodStart = ObjectStoragePeriod(periodStart)
 	for _, b := range s.Buckets {
 		if !b.StorageMeteredThrough.IsZero() {
 			if len(s.Reports) != 0 {
 				return api.ObjectStorageUsage{}, ErrObjectBillingConflict
 			}
-			return summarizeGatewayStorageBilling(s, periodStart)
+			return summarizeGatewayStorageBilling(s, periodStart, complete)
 		}
 	}
 	u := api.ObjectStorageUsage{Fresh: true, PeriodStart: periodStart, Authorizations: s.Authorizations}
 	periodEnd := periodStart.AddDate(0, 1, 0)
 	required := map[string]string{}
+	// A backend with a bucket still live at the month's end must report to
+	// that end. Accepting any in-month report billed a month short by the
+	// exporter's coverage lag, and a stalled exporter's last report locked in
+	// an undercount (Hunt 19 H19-2). A backend whose buckets were all deleted
+	// keeps its last report.
+	liveAtEnd := map[string]bool{}
 	for _, b := range s.Buckets {
 		if !b.Bucket.CreatedAt.IsZero() && !b.Bucket.CreatedAt.Before(periodEnd) {
 			continue
@@ -259,6 +307,9 @@ func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.
 		}
 		if b.Bucket.BackendID != "" {
 			required[b.Bucket.BackendID] = b.Bucket.BackendFingerprint
+			if b.Bucket.State != "deleted" || !b.Bucket.UpdatedAt.Before(periodEnd) {
+				liveAtEnd[b.Bucket.BackendID] = true
+			}
 		}
 	}
 	latest := map[string]api.ObjectStorageUsageReport{}
@@ -273,6 +324,9 @@ func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.
 	for backendID, r := range latest {
 		if fp, ok := required[backendID]; ok {
 			if fp != r.BackendFingerprint {
+				return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
+			}
+			if complete && liveAtEnd[backendID] && r.ObservedAt.Before(periodEnd.Add(-api.ObjectStorageReportCloseTolerance)) {
 				return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
 			}
 			delete(required, backendID)
@@ -290,7 +344,7 @@ func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.
 			return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
 		}
 	}
-	if len(required) != 0 {
+	if complete && len(required) != 0 {
 		return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
 	}
 	return u, nil
@@ -340,7 +394,7 @@ func checkObjectAdmission(s ObjectUsageSnapshot, bucketID string, size, oldSize 
 	if !exists {
 		keys = 1
 	}
-	bucketCapacity := boundedObjectAdd(max(found.ObservedBytes, boundedObjectAdd(found.BaselineBytes, found.GrantedBytes)), found.MultipartBytes)
+	bucketCapacity, _ := objectBucketCapacity(*found)
 	for _, limit := range []struct {
 		name          string
 		observed, max int64
@@ -412,7 +466,7 @@ func checkObjectReport(s ObjectUsageSnapshot, r api.ObjectStorageUsageReport) er
 // row must be accrued to the end of the month, or to its bucket's deletion,
 // before the month bills; until then it is incomplete and month close retries.
 // A bucket with no row was never metered while it lived and bills nothing.
-func summarizeGatewayStorageBilling(s ObjectUsageSnapshot, periodStart time.Time) (api.ObjectStorageUsage, error) {
+func summarizeGatewayStorageBilling(s ObjectUsageSnapshot, periodStart time.Time, complete bool) (api.ObjectStorageUsage, error) {
 	u := api.ObjectStorageUsage{Fresh: true, PeriodStart: periodStart, Authorizations: s.Authorizations, UnavailableMeters: []string{"cost_millicents"}}
 	// Provider cost stays unknown; the charge prices metered storage only.
 	periodEnd := periodStart.AddDate(0, 1, 0)
@@ -432,7 +486,7 @@ func summarizeGatewayStorageBilling(s ObjectUsageSnapshot, periodStart time.Time
 		if b.Bucket.State == "deleted" && b.Bucket.UpdatedAt.Before(periodEnd) {
 			closes = b.Bucket.UpdatedAt
 		}
-		if b.StorageMeteredThrough.Before(closes) {
+		if complete && b.StorageMeteredThrough.Before(closes) {
 			return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
 		}
 		u.StoredByteHours = boundedObjectAdd(u.StoredByteHours, b.StoredByteHours)

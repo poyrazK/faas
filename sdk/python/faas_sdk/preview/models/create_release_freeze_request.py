@@ -30,7 +30,8 @@ class CreateReleaseFreezeRequest:
     kind: CreateReleaseFreezeRequestKind
     reason: str
     app: str | Unset = UNSET
-    """App slug; omit to freeze every app of the account."""
+    """App slug. On `/v1/freezes`, omit to freeze every personal app of the account; a company app is refused with
+    409 (use `/v1/apps/{slug}/freezes`). On an app route, empty or that app; on an organization route, empty."""
     starts_at: datetime.datetime | Unset = UNSET
     """Window start; default now."""
     ends_at: datetime.datetime | Unset = UNSET

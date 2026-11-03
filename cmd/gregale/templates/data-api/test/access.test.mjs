@@ -4,7 +4,7 @@ import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { createServer } from '../server.mjs'
 import { runtimeConfig, publicReadConfig, publicRpcConfig, serverKeyConfig, serverKeyPermissions, publicReadMaxAge, limits } from '../config.mjs'
-import { selectEmbeddings, clientKey, matchServerKey, serverKeyAllows, serverSubject, unsafePublicRelations, unsafePublicFunctions, publicReadTarget, publicRpcTarget, publicReadCache, rowSecured, rowSecurityDenial } from '../access.mjs'
+import { selectEmbeddings, clientKey, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, unsafePublicRelations, unsafePublicFunctions, publicReadTarget, publicRpcTarget, publicReadCache, rowSecured, rowSecurityDenial } from '../access.mjs'
 
 const keyA = 'gdsk_' + 'A'.repeat(43)
 const keyB = 'gdsk_' + 'b'.repeat(42) + '-'
@@ -58,6 +58,20 @@ test('client keys come from the stamped edge address and group IPv6 by /64', () 
   assert.equal(key('2001:db8::1'), '2001:db8:0:0::/64')
   assert.equal(key(undefined), 'unknown')
   assert.equal(key('not-an-address'), 'unknown')
+  const coarse = value => clientKey({ headers: { 'x-faas-client-ip': value } }, true)
+  assert.equal(coarse('2001:db8:1:2:aaaa::1'), '2001:db8:1::/48')
+  assert.equal(coarse('2001:db8:1:ffff::1'), '2001:db8:1::/48')
+  assert.equal(coarse('203.0.113.7'), '203.0.113.7', 'IPv4 is never grouped')
+})
+
+test('a nearly full anonymous table groups IPv6 visitors by /48', () => {
+  const req = { headers: { 'x-faas-client-ip': '2001:db8:1:2::1' } }
+  const table = tracked => ({ tracked })
+  assert.deepEqual(anonymousClient(req, table(limits.anonymousCoarseSubjects - 1), table(0)), ['anonymous', '2001:db8:1:2::/64'])
+  assert.deepEqual(anonymousClient(req, table(limits.anonymousCoarseSubjects), table(0)), ['anonymous', '2001:db8:1::/48'])
+  assert.deepEqual(anonymousClient(req, table(0), table(limits.anonymousCoarseSubjects)), ['anonymous', '2001:db8:1::/48'], 'either table decides')
+  assert.deepEqual(anonymousClient(req, null, undefined), ['anonymous', '2001:db8:1:2::/64'])
+  assert.ok(limits.anonymousCoarseSubjects < limits.rateLimitMaxSubjects, 'grouping starts before the table refuses visitors')
 })
 
 test('public reads require RLS tables or security-invoker views', () => {

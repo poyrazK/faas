@@ -113,7 +113,7 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 }
 
 func platformTenantBillingUsage(verb string, allowed []string) string {
-	usage := "usage: gregale platform-tenants " + verb
+	usage := "usage: gregale api tenant " + verb
 	for _, name := range allowed {
 		usage += " --" + name
 	}

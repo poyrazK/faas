@@ -91,13 +91,12 @@ def sync_detailed(
 
      Consumes the invitation via `Store.ConsumeOrgInvitation` —
     the load-bearing tx stamps `consumed_at`, inserts the active
-    membership, and reads the live member cap (PR 2 cap-in-tx
-    back-stop; documents at `pkg/state/memstore.go`). Two audit
-    rows fire post-mutation per ADR-035: `org.invitation.accepted`
+    membership, and reads the live member cap (cap-in-tx
+    back-stop; documents). Two audit
+    rows fire post-mutation: `org.invitation.accepted`
     (invitation-side record) and `org.member.added` (member-side
     record). The bearer must have a valid session or API key but
-    no `X-Active-Org` — the invitation IS how they get one. PR 8
-    adds step-up at accept time.
+    no `X-Active-Org` — the invitation IS how they get one. adds step-up at accept time.
 
     Args:
         token (str):
@@ -133,13 +132,12 @@ def sync(
 
      Consumes the invitation via `Store.ConsumeOrgInvitation` —
     the load-bearing tx stamps `consumed_at`, inserts the active
-    membership, and reads the live member cap (PR 2 cap-in-tx
-    back-stop; documents at `pkg/state/memstore.go`). Two audit
-    rows fire post-mutation per ADR-035: `org.invitation.accepted`
+    membership, and reads the live member cap (cap-in-tx
+    back-stop; documents). Two audit
+    rows fire post-mutation: `org.invitation.accepted`
     (invitation-side record) and `org.member.added` (member-side
     record). The bearer must have a valid session or API key but
-    no `X-Active-Org` — the invitation IS how they get one. PR 8
-    adds step-up at accept time.
+    no `X-Active-Org` — the invitation IS how they get one. adds step-up at accept time.
 
     Args:
         token (str):
@@ -170,13 +168,12 @@ async def asyncio_detailed(
 
      Consumes the invitation via `Store.ConsumeOrgInvitation` —
     the load-bearing tx stamps `consumed_at`, inserts the active
-    membership, and reads the live member cap (PR 2 cap-in-tx
-    back-stop; documents at `pkg/state/memstore.go`). Two audit
-    rows fire post-mutation per ADR-035: `org.invitation.accepted`
+    membership, and reads the live member cap (cap-in-tx
+    back-stop; documents). Two audit
+    rows fire post-mutation: `org.invitation.accepted`
     (invitation-side record) and `org.member.added` (member-side
     record). The bearer must have a valid session or API key but
-    no `X-Active-Org` — the invitation IS how they get one. PR 8
-    adds step-up at accept time.
+    no `X-Active-Org` — the invitation IS how they get one. adds step-up at accept time.
 
     Args:
         token (str):
@@ -210,13 +207,12 @@ async def asyncio(
 
      Consumes the invitation via `Store.ConsumeOrgInvitation` —
     the load-bearing tx stamps `consumed_at`, inserts the active
-    membership, and reads the live member cap (PR 2 cap-in-tx
-    back-stop; documents at `pkg/state/memstore.go`). Two audit
-    rows fire post-mutation per ADR-035: `org.invitation.accepted`
+    membership, and reads the live member cap (cap-in-tx
+    back-stop; documents). Two audit
+    rows fire post-mutation: `org.invitation.accepted`
     (invitation-side record) and `org.member.added` (member-side
     record). The bearer must have a valid session or API key but
-    no `X-Active-Org` — the invitation IS how they get one. PR 8
-    adds step-up at accept time.
+    no `X-Active-Org` — the invitation IS how they get one. adds step-up at accept time.
 
     Args:
         token (str):

@@ -32,7 +32,7 @@ export type JobResponse = {
    */
   image_resolved_digest?: string;
   /**
-   * Canonical ext4 artifact key consumed by vmmd.
+   * Canonical ext4 artifact key consumed by the VM manager.
    */
   image_storage_key?: string;
   image_materialization_status: 'pending' | 'verifying_legacy' | 'ready' | 'failed';

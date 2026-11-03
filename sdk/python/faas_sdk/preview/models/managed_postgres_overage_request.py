@@ -10,7 +10,7 @@ T = TypeVar("T", bound="ManagedPostgresOverageRequest")
 
 @_attrs_define
 class ManagedPostgresOverageRequest:
-    """Turn an account's managed PostgreSQL compute overage on or off (ADR-20261025094915)."""
+    """Turn an account's managed PostgreSQL compute overage on or off."""
 
     enabled: bool
 

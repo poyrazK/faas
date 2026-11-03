@@ -60,7 +60,9 @@ func cmdRollouts(args []string) int {
 // Where:
 //
 //   - <slug> is the app's slug (positional; required).
-//   - --action advance bumps canary_step by 1, requires the
+//   - --action advance moves the canary to the next stage of its
+//     own ladder (preset or custom stages), and completes it at
+//     100% when that is the last stage. It requires the
 //     rollout to be stuck (canary_step_started_at older than 30
 //     minutes — the canned stuck-after window in
 //     pkg/safedeploy.StuckAfterDuration). The CLI surfaces the

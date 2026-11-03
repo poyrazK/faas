@@ -90,7 +90,7 @@ class RealtimeConsumerGroup:
     invalid_delivery_deadline failures. Frozen on assignment; existing snapshots are unchanged. Deadlines prevent
     expired claims and cap leases."""
     trigger_id: UUID | Unset = UNSET
-    """Realtime trigger consuming this group (ADR-1322). Absent when workers consume it directly."""
+    """Realtime trigger consuming this group. Absent when workers consume it directly."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

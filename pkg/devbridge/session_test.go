@@ -1,6 +1,7 @@
 package devbridge
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ func TestSessionIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AuthorizeRequest(now, c.RequestToken, "a", "dev", "payments"); err != nil {
+	if err := s.AuthorizeRequest(context.Background(), now, c.RequestToken, "a", "dev", "payments"); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct{ token, account, env, app string }{
@@ -23,24 +24,24 @@ func TestSessionIsolation(t *testing.T) {
 		{c.RequestToken, "a", "dev", "orders"},
 		{"forged", "a", "dev", "payments"},
 	} {
-		if s.AuthorizeRequest(now, test.token, test.account, test.env, test.app) == nil {
+		if s.AuthorizeRequest(context.Background(), now, test.token, test.account, test.env, test.app) == nil {
 			t.Fatalf("authorized invalid scope: %#v", test)
 		}
 	}
-	if s.AuthorizeAttachment(now, c.RequestToken) == nil {
+	if s.AuthorizeAttachment(context.Background(), now, c.RequestToken) == nil {
 		t.Fatal("request token attached laptop")
 	}
-	if err := s.AuthorizeDependency(now, c.AttachmentToken, "a", "dev", "orders"); err != nil {
+	if err := s.AuthorizeDependency(context.Background(), now, c.AttachmentToken, "a", "dev", "orders"); err != nil {
 		t.Fatal(err)
 	}
-	if s.AuthorizeDependency(now, c.AttachmentToken, "a", "dev", "database") == nil {
+	if s.AuthorizeDependency(context.Background(), now, c.AttachmentToken, "a", "dev", "database") == nil {
 		t.Fatal("undeclared dependency authorized")
 	}
-	if s.AuthorizeAttachment(s.ExpiresAt, c.AttachmentToken) == nil {
+	if s.AuthorizeAttachment(context.Background(), s.ExpiresAt, c.AttachmentToken) == nil {
 		t.Fatal("expired session authorized")
 	}
 	s.RevokedAt = &now
-	if s.AuthorizeAttachment(now, c.AttachmentToken) == nil {
+	if s.AuthorizeAttachment(context.Background(), now, c.AttachmentToken) == nil {
 		t.Fatal("revoked session authorized")
 	}
 	b, err := json.Marshal(s)

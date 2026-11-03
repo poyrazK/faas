@@ -10,6 +10,7 @@
 package apidserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -27,9 +28,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
+	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/agents"
+	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -39,8 +44,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/logerasure"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/oidcrepo"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
@@ -53,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -69,6 +77,7 @@ import (
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
+var DashboardDebugStatusView = dashboardDebugStatusView
 
 // Package-level types
 type AffectedPartition = affectedPartition
@@ -241,6 +250,8 @@ const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
 const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
 const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
+const S3GatewayComputeMetricsDiscoveryPath = s3GatewayComputeMetricsDiscoveryPath
+const CloudflaredS3MetricsDiscoveryPath = cloudflaredS3MetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
 
 // sessionCookie is the legacy session cookie name test fixtures send; the
@@ -292,6 +303,9 @@ var RuntimeSecretRecipient = runtimeSecretRecipient
 var RuntimeSealDomainBlocksRekey = runtimeSealDomainBlocksRekey
 var RuntimeSecretsBound = &runtimeSecretsBound
 var LoadRuntimeSecretBinding = loadRuntimeSecretBinding
+var LoadCloneWorkerSealing = loadCloneWorkerSealing
+var RuntimeSecretBinding = runtimeSecretBinding
+var InstallRuntimeSigner = installRuntimeSigner
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -321,8 +335,19 @@ var AccountWriteMode = &accountWriteMode
 var AccountRecipients = accountRecipients
 var AccountIdentities = accountIdentities
 var WorkflowPlanRecipients = workflowPlanRecipients
+var CloneSealRecipient = cloneSealRecipient
 var HoldsIdentityFor = holdsIdentityFor
 var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
+var SealGitLabTokens = sealGitLabTokens
+var OpenGitLabTokens = openGitLabTokens
+var OpenIssueSlackToken = openIssueSlackToken
+
+// RealtimeHostKeys exposes the keys apid gives managed realtime.
+func RealtimeHostKeys() (func() ([]*age.X25519Recipient, error), func(context.Context) []*age.X25519Identity) {
+	h := realtimeHost{}
+	return h.SecretRecipients, h.HostIdentitiesForUnseal
+}
+
 var VerifyInboundWebhook = verifyInboundWebhook
 var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
 
@@ -403,6 +428,23 @@ var Contains = contains
 var CookieDo = cookieDo
 var CountAffectedRequests = countAffectedRequests
 var CreateApp = createApp
+
+// CustomHistoryEnv is setup with custom metric history (and so OTLP ingest) on.
+var CustomHistoryEnv = customHistoryEnv
+
+// PostOTLPEncoded sends one OTLP metrics export to app shop with a
+// Content-Encoding (ADR-20261029203000).
+func PostOTLPEncoded(t *testing.T, e testEnv, contentType, encoding string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/v1/apps/shop/otlp/v1/metrics", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+e.key)
+	r.Header.Set("Content-Type", contentType)
+	r.Header.Set("Content-Encoding", encoding)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, r)
+	return rec
+}
+
 var CreateAppTaskForTest = createAppTaskForTest
 var CreateExecutionAs = createExecutionAs
 var CreateProjectEnvironmentConfigFixture = createProjectEnvironmentConfigFixture
@@ -509,6 +551,7 @@ var MakeFeatureFlagOutcomesResponse = makeFeatureFlagOutcomesResponse
 var ManagedExecutionWorkflowStepLabel = managedExecutionWorkflowStepLabel
 var ManagedPostgresAccountingDiagnosticsView = managedPostgresAccountingDiagnosticsView
 var ManagedPostgresCapabilitiesView = managedPostgresCapabilitiesView
+var ProjectManagedPostgresDashboard = projectManagedPostgresDashboard
 var ManagedPostgresConnectionURL = managedPostgresConnectionURL
 var ManagedPostgresNotConfiguredProblem = managedPostgresNotConfiguredProblem
 var ManagedPostgresPlanAllows = managedPostgresPlanAllows
@@ -534,6 +577,13 @@ var NewAuditor = newAuditor
 var NewAuthedDashboardServer = newAuthedDashboardServer
 var NewAuthedDashboardServerFull = newAuthedDashboardServerFull
 var NewCloneCoordinatorFixture = newCloneCoordinatorFixture
+
+// NewCloneSourceFixture builds a clone source with no configuration write
+// fence; postgres binds a point-in-time-restorable managed database.
+func NewCloneSourceFixture(t *testing.T, postgres bool) cloneCoordinatorFixture {
+	return newCloneSourceFixture(t, cloneSourceData{postgres: postgres}, false)
+}
+
 var NewForceHarness = newForceHarness
 var NewGithubdClient = newGithubdClient
 var NewGoogleIDTokenVerifier = newGoogleIDTokenVerifier
@@ -552,6 +602,11 @@ func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
 }
 
 func (s *server) InboundWebhookURLForTest(token string) string { return s.inboundWebhookURL(token) }
+
+// ProfilePlanForTest exposes the plan profiling judges app by (ADR-1155).
+func (s *server) ProfilePlanForTest(ctx context.Context, fallback api.Plan, app state.App) api.Plan {
+	return s.profilePlan(ctx, fallback, app)
+}
 func (s *server) IsWebDashboardOriginForTest(origin *url.URL) bool {
 	return s.isWebDashboardOrigin(origin)
 }
@@ -597,6 +652,14 @@ var ParseIssueListFilter = parseIssueListFilter
 var ParseRequestAnalyticsGroupBy = parseRequestAnalyticsGroupBy
 var ParseRequestAnalyticsRouteFilter = parseRequestAnalyticsRouteFilter
 var ParseRequestAnalyticsWindow = parseRequestAnalyticsWindow
+
+// RequestAnalyticsCompleteness judges the window [from, until) read at asOf.
+func RequestAnalyticsCompleteness(ctx context.Context, reader interface {
+	RequestTelemetryCompleteness(context.Context, string, time.Time, time.Time) ([]string, error)
+}, appID string, from, until, asOf time.Time) (*bool, []string) {
+	return requestAnalyticsCompletenessFrom(ctx, reader, nil, appID, requestAnalyticsWindow{From: from, Until: until, AsOf: asOf})
+}
+
 var ParseScanMultipart = parseScanMultipart
 var ParseSuspectedDependency = parseSuspectedDependency
 var ParseSweepOlderThan = parseSweepOlderThan
@@ -660,7 +723,11 @@ var SafeReleasesAlertMetric = safeReleasesAlertMetric
 var SafeReleasesAuditKind = safeReleasesAuditKind
 var SanContains = sanContains
 var ScanExtractedTreeSecrets = scanExtractedTreeSecrets
-var ScanSourceTarballSecrets = scanSourceTarballSecrets
+
+func ScanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
+	return (&server{log: slog.New(slog.DiscardHandler)}).scanSourceTarballSecrets(sourcePath, limits)
+}
+
 var ScopeGenericRootWorkload = scopeGenericRootWorkload
 var ScrapeOpsMetrics = scrapeOpsMetrics
 var SeedActivityPersonalOrg = seedActivityPersonalOrg
@@ -734,6 +801,7 @@ var ValidateAnnotationForm = validateAnnotationForm
 var ValidateCapturedProjectEnvironmentDatabaseResources = validateCapturedProjectEnvironmentDatabaseResources
 var ValidateCapturedProjectEnvironmentObjectResources = validateCapturedProjectEnvironmentObjectResources
 var ValidateCloneCoordinatorInventory = validateCloneCoordinatorInventory
+var FullProjectEnvironmentCloneAdmissionProblem = fullProjectEnvironmentCloneAdmissionProblem
 var ValidateOverrides = validateOverrides
 var ValidateProjectEnvironmentPromotionResume = validateProjectEnvironmentPromotionResume
 var ValidateScannedSchedules = validateScannedSchedules
@@ -830,9 +898,13 @@ func (r *cloneCheckpointClosureProvider) Roles() *int { return &r.roles }
 func (r *cloneCoordinatorFailureStore) LoseCaptureAck() *bool { return &r.loseCaptureAck }
 
 // Members of cloneCoordinatorFixture
+func (r *cloneCoordinatorFixture) Account() *state.Account                    { return &r.account }
 func (r *cloneCoordinatorFixture) Apps() *[]state.App                         { return &r.apps }
 func (r *cloneCoordinatorFixture) Lease() *state.ProjectEnvironmentCloneLease { return &r.lease }
 func (r *cloneCoordinatorFixture) Pool() **pgxpool.Pool                       { return &r.pool }
+func (r *cloneCoordinatorFixture) Postgres() **managedpostgres.Service        { return &r.postgres }
+func (r *cloneCoordinatorFixture) Database() **cloneDatabaseDeadlineProvider  { return &r.database }
+func (r *cloneCoordinatorFixture) Project() *state.Project                    { return &r.project }
 func (r *cloneCoordinatorFixture) Srv() **server                              { return &r.srv }
 func (r *cloneCoordinatorFixture) Store() **cloneCoordinatorFailureStore      { return &r.store }
 func (r cloneCoordinatorFixture) Targets(p0 *testing.T) []state.ProjectEnvironmentCloneWorkload {
@@ -870,10 +942,43 @@ func (r *googleJWKSVerifier) JwksURL() *string { return &r.jwksURL }
 
 // Members of invocationCompletionWaiter
 func (r *invocationCompletionWaiter) Mu() *sync.Mutex { return &r.mu }
-func (r *invocationCompletionWaiter) Waiters() *map[string]map[chan struct{}]struct{} {
+func (r *invocationCompletionWaiter) Waiters() *map[string]map[*completionWait]struct{} {
 	return &r.waiters
 }
 func (r *invocationCompletionWaiter) CompleteFromPayload(p0 string) { r.completeFromPayload(p0) }
+func (r *invocationCompletionWaiter) WakeAll()                      { r.wakeAll() }
+func (r *invocationCompletionWaiter) RecentCount() int              { return len(r.recent) }
+func (r *invocationCompletionWaiter) AppWaiterCount(appID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.appWaiters[appID])
+}
+
+const InvocationCompletionRecentCap = invocationCompletionRecentCap
+
+var NextExecutionEventsPoll = nextExecutionEventsPoll
+
+// StatusJSONHandler serves GET /status/slo.json from a server over store
+// whose status cache reads prometheusURL.
+func StatusJSONHandler(store state.Store, prometheusURL string) http.HandlerFunc {
+	return newServer(store, slog.Default(), "gregale.dev", nil).WithStatusCache(prometheusURL, "").statusJSONHandler
+}
+
+func NewAPIRequestBudgetAt(now func() time.Time) *apiRequestBudget {
+	b := newAPIRequestBudget()
+	b.now = now
+	return b
+}
+
+func (b *apiRequestBudget) Take(accountID string, capacity int) (time.Duration, bool) {
+	return b.take(accountID, capacity)
+}
+
+type QueueReceiveSlots = queueReceiveSlots
+
+func (q *queueReceiveSlots) Acquire(accountID string) (func(), int, int, bool) {
+	return q.acquire(accountID)
+}
 
 // Members of mfaTestEnv
 func (r *mfaTestEnv) Acct() *state.Account    { return &r.acct }
@@ -957,6 +1062,8 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) PostgresUpgrades() *managedpg.Rollout               { return &r.postgresUpgrades }
+func (r *server) PostgresStorage() *managedpg.Rollout                { return &r.postgresStorage }
 func (r *server) LogArchive() *logerasure.Objects                    { return &r.logArchive }
 func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
 	return r.beforeAccountDelete(ctx, acct)
@@ -982,9 +1089,11 @@ func (r *server) PromqlClient() **promql.Client                 { return &r.prom
 func (r *server) Realtime() *managedrealtime.Service            { return &r.realtime }
 func (r *server) ResendWebhookSecret() *string                  { return &r.resendWebhookSecret }
 func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runtimeConfig }
+func (r *server) CloneDataPointSettle() *time.Duration          { return &r.cloneDataPointSettle }
 func (r *server) Sessions() **session.Manager                   { return &r.sessions }
 func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
 func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
+func (r *server) BillingSync() *billingsync.Service             { return &r.billingSync }
 func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
 func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
@@ -1044,6 +1153,9 @@ func (r *server) CaptureProjectEnvironmentValues(p0 context.Context, p1 state.Ac
 	return r.captureProjectEnvironmentValues(p0, p1, p2, p3)
 }
 func (r *server) CheckedRollbackSweep(p0 context.Context) error { return r.checkedRollbackSweep(p0) }
+func (r *server) RollbackOutcomeSweep(p0 context.Context, p1 time.Time) error {
+	return r.plainRollbacks().Sweep(p0, p1)
+}
 func (r *server) ConfigureAIGateway(p0 Config, p1 func(string) string) error {
 	return r.configureAIGateway(p0, p1)
 }
@@ -1055,12 +1167,6 @@ func (r *server) ConfigureOperations(p0 Config, p1 func(string) string) error {
 }
 func (r *server) ConfigureQueueWorkload(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.configureQueueWorkload(p0, p1, p2)
-}
-func (r *server) CountAccountConsumerKeys(p0 context.Context, p1 string) (int, error) {
-	return r.countAccountConsumerKeys(p0, p1)
-}
-func (r *server) CountConsumerKeys(p0 context.Context, p1 string, p2 string) (int, error) {
-	return r.countConsumerKeys(p0, p1, p2)
 }
 func (r *server) CreateFinancialBudget(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createFinancialBudget(p0, p1, p2)
@@ -1091,6 +1197,9 @@ func (r *server) DashboardSaveProfileInvestigation(p0 http.ResponseWriter, p1 *h
 }
 func (r *server) DeleteProjectEnvironment(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteProjectEnvironment(p0, p1, p2)
+}
+func (r *server) DeleteProjectForTest(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.deleteProject(p0, p1, p2)
 }
 func (r *server) DeleteQueueBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteQueueBinding(p0, p1, p2)
@@ -1140,6 +1249,12 @@ func (r *server) GetManagedPostgresDatabase(p0 http.ResponseWriter, p1 *http.Req
 }
 func (r *server) GetProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProject(p0, p1, p2)
+}
+
+var ProjectServiceCalls = projectServiceCalls
+
+func (r *server) RenderProjectDetail(w http.ResponseWriter, req *http.Request, acct state.Account, slug string) {
+	r.renderProjectDetail(w, req, r.log, acct, slug)
 }
 func (r *server) GetProjectEnvironmentApprovalStatus(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProjectEnvironmentApprovalStatus(p0, p1, p2)
@@ -1308,6 +1423,9 @@ func (r *server) RenderPreviewsList(p0 http.ResponseWriter, p1 *http.Request, p2
 func (r *server) RenderReleaseApprovalPage(p0 http.ResponseWriter, p1 *http.Request) {
 	r.renderReleaseApprovalPage(p0, p1)
 }
+func (r *server) RenderReleasePage(p0 http.ResponseWriter, p1 *http.Request) {
+	r.renderReleasePage(p0, p1)
+}
 func (r *server) ReplaceProjectEnvironmentQueueBindings(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.replaceProjectEnvironmentQueueBindings(p0, p1, p2)
 }
@@ -1356,6 +1474,19 @@ func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }
+
+// SourceRefManifestEventIntent is the declared subscription set a
+// production deploy records for go-live (ADR-20261101030512); nil records none.
+func SourceRefManifestEventIntent(staged sourceRefManifestStaged) []string {
+	return staged.eventSubscriptionIntent
+}
+
+// WithEventSubscriptionReconcile marks ctx as a production deploy whose
+// manifest replaces the app's event subscriptions (ADR-20261031130000).
+func WithEventSubscriptionReconcile(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sourceManifestReconcileEventsKey{}, true)
+}
+
 func (r *server) RollbackSourceRefManifest(p0 context.Context, p1 sourceRefManifestStaged) error {
 	return r.rollbackSourceRefManifest(p0, p1)
 }
@@ -1383,6 +1514,12 @@ func (r *server) GatewaydPublicEdgeMetricsDiscovery(p0 http.ResponseWriter, p1 *
 }
 func (r *server) CloudflaredMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.cloudflaredMetricsDiscovery(p0, p1)
+}
+func (r *server) S3GatewayComputeMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.s3GatewayComputeMetricsDiscovery(p0, p1)
+}
+func (r *server) CloudflaredS3MetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.cloudflaredS3MetricsDiscovery(p0, p1)
 }
 func (r *server) SendTestAlertPresetCore(p0 context.Context, p1 state.Account, p2 string, p3 string) (api.TestAlertPresetResponse, *api.Problem) {
 	return r.sendTestAlertPresetCore(p0, p1, p2, p3)
@@ -1495,11 +1632,17 @@ func (r testEnv) Do(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]s
 func (r testEnv) DoAdmin(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doAdmin(p0, p1, p2, p3, p4)
 }
+func (r testEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
+	return r.doSession(p0, p1, p2, p3, p4, p5)
+}
 func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doOperator(p0, p1, p2, p3, p4)
 }
 func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string, p5 string) *httptest.ResponseRecorder {
 	return r.doAs(p0, p1, p2, p3, p4, p5)
+}
+func (r testEnv) FreezeAfterAutomaticRollback(ctx context.Context, app state.App, rolledBackID, cause string) {
+	r.s.freezeAfterAutomaticRollback(ctx, app, rolledBackID, cause)
 }
 
 // Issues acceptance tests share the original PostgreSQL fixture and evidence setup.
@@ -1649,10 +1792,32 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 	return s.configureLiveQueries(nil, getenv)
 }
 
+// ConfigureAgentsForTest wires the agent API without Postgres: the agents
+// capability decides who sees it, and released accounts meet
+// capacity_unavailable.
+func (s *server) ConfigureAgentsForTest() { s.configureAgents(nil) }
+
 // LiveRoutesForTest lists an app's live routes; accounts outside the rollout
 // get none before the store is read.
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
+}
+
+// NewGithubdBridgeForTest builds apid's githubd bridge on store; agentSteps
+// decides the agents capability for an account.
+func NewGithubdBridgeForTest(store githubdBridgeStore, notif githubdBridgeNotifier, agentSteps func(state.Account) bool) githubdpb.GithubdServer {
+	return &githubdBridge{store: store, notif: notif, log: slog.New(slog.DiscardHandler), agentSteps: agentSteps}
+}
+
+// SetAgentStoreForTest gives the configured agent API a store; call it
+// after ConfigureAgentsForTest.
+func (s *server) SetAgentStoreForTest(store agents.Store) { s.agentAPI.Store = store }
+
+// SetAgentCallbackRevocationsForTest gives the configured agent API the
+// callback revocations it otherwise keeps in Postgres, so the callback
+// routes answer; call it after ConfigureAgentsForTest.
+func (s *server) SetAgentCallbackRevocationsForTest(r agents.CallbackRevocations) {
+	s.agentAPI.Revocations = r
 }
 
 // RealtimePreviewEveryone shows realtime preview features to every account
@@ -1732,6 +1897,12 @@ func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
 }
 
+// Members of cloneDatabaseDeadlineProvider
+func (r *cloneDatabaseDeadlineProvider) Restores() []managedpostgres.RestoreRequest {
+	return r.restores
+}
+func (r *cloneDatabaseDeadlineProvider) OnRestore() *func() error { return &r.onRestore }
+
 // SetDatabaseSwitchDrain gives a test server's database switch worker drain
 // evidence the in-memory store lacks (ADR-20261023181931).
 func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrainStore) {
@@ -1797,6 +1968,25 @@ func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.
 	return r.planDowngradeProblem(ctx, subject, target)
 }
 
+// SetManagedPostgresCapModeForTest sets FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT
+// as configureManagedPostgresCapMode would.
+func (r *server) SetManagedPostgresCapModeForTest(mode managedpostgres.CapEnforcementMode) {
+	r.managedPostgresCapMode = mode
+}
+
+// SetManagedPostgresPlanExcessForTest sets whether the views report databases
+// past their plan, as configureManagedPostgresCapMode would with
+// FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT and the compute cap both on.
+func (r *server) SetManagedPostgresPlanExcessForTest(on bool) {
+	r.managedPostgresPlanExcessOn = on
+}
+
+// EnsureDevPostgresForTest provisions a developer environment's database as
+// `gregale dev --postgres` does.
+func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Account, app state.App) (*api.DevPostgresResponse, error) {
+	return r.ensureDevPostgres(ctx, acct, app, &api.DevPostgresRequest{})
+}
+
 // RequestBillingMailOutboxesForTest selects the three webhook billing-mail
 // outboxes without configuring one, so a delivery that reaches an outbox
 // fails closed with 503 (Hunt 17 H17-3).
@@ -1806,3 +1996,95 @@ func (r *server) RequestBillingMailOutboxesForTest() {
 }
 
 var AppRestartRefusal = appRestartRefusal
+
+// SecurityMailAllow is a fresh per-account sign-in mail limiter on clock now.
+func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
+	l := newSecurityMailLimiter()
+	l.now = now
+	return l.allow
+}
+
+// AdvanceSecurityMailClockForTest moves the per-account sign-in mail
+// limiter's clock d ahead, as if the next request came that much later.
+func (r *server) AdvanceSecurityMailClockForTest(d time.Duration) {
+	r.securityMail.mu.Lock()
+	defer r.securityMail.mu.Unlock()
+	r.securityMail.now = func() time.Time { return time.Now().Add(d) }
+}
+
+// SealOAuthCodeState mints a Connect GitHub state for accountID (H64).
+var SealOAuthCodeState = sealOAuthCodeState
+
+// ProjectReadinessOverrides exposes projectReadinessOverrides to the
+// external test package.
+var ProjectReadinessOverrides = projectReadinessOverrides
+
+// SetEventPublishClock pins the event publish rate limiter's clock.
+func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }
+
+// XPrepareDeliveryCrons runs the GitHub bridge's cron staging for one push
+// against store; staged marks a release staged without traffic.
+func XPrepareDeliveryCrons(ctx context.Context, store *state.MemStore, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, m *gregalemanifest.Manifest, kind state.DeploymentKind, staged bool) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
+	g := &githubdBridge{store: store, log: slog.Default()}
+	params := apidsource.EnqueueParams{}
+	if staged {
+		params.TrafficPercentExplicit = true
+	}
+	return g.prepareDeliveryCrons(ctx, req, resource, app, m, kind, params)
+}
+
+// GitHub connector bearer handlers (ADR-20261101160300).
+func (r *server) ListGitHubRepositoriesForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.listGitHubRepositories(w, req, acct)
+}
+func (r *server) GetGitHubDeployPolicyForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.getGitHubDeployPolicy(w, req, acct)
+}
+func (r *server) PatchGitHubDeployPolicyForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.patchGitHubDeployPolicy(w, req, acct)
+}
+func (r *server) BindGitHubConnectionForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.bindGitHubConnection(w, req, acct)
+}
+func (r *server) GetGitHubConnectionForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
+	r.getGitHubConnection(w, req, acct)
+}
+
+// AppErrorsPurgeStore is the store the app_errors retention purge needs.
+type AppErrorsPurgeStore = appErrorsPurgeStore
+
+// PurgeAppErrorsOnce runs one app_errors retention pass at now over every
+// account the store lists.
+func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func() time.Time) {
+	p := newAppErrorsPurger(store, nil, nil, slog.New(slog.DiscardHandler), true)
+	p.now = now
+	p.purgeAll(ctx)
+}
+
+// LoadOrGenerateAuditHMACKey exposes the boot-time audit HMAC key loader.
+var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
+
+// OIDCAccountLookup is the OIDC exchange's account lookup with project
+// repository bindings confirmed through repos (ADR-20261101160300,
+// amendment 1).
+func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
+	return newOIDCAccountLookup(store, repos)
+}
+
+// Inline security alerts (bug hunt H99).
+func (r *server) AlertPasswordChangedInline(ctx context.Context, acct state.Account, method string) {
+	r.alertPasswordChangedInline(ctx, acct, method)
+}
+func (r *server) AlertMFAEnabledInline(ctx context.Context, acct state.Account) {
+	r.alertMFAEnabledInline(ctx, acct)
+}
+func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account, method string) {
+	r.alertMFADisabledInline(ctx, acct, method)
+}
+
+// ResolveSourceReleaseCommand exposes the release command precedence of a
+// source deployment (ADR-20261102192943).
+func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
+	return resolved.command, resolved.shell, problem
+}

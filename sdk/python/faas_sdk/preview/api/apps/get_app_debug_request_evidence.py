@@ -88,7 +88,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DebugRequestEvidenceResponse | Problem]:
-    """Get request evidence and explanation (ADR-127).
+    """Get request evidence and explanation.
 
      Returns a deterministic request/wake timeline plus bounded,
     redacted span evidence for one request and links it to a matching
@@ -128,7 +128,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> DebugRequestEvidenceResponse | Problem | None:
-    """Get request evidence and explanation (ADR-127).
+    """Get request evidence and explanation.
 
      Returns a deterministic request/wake timeline plus bounded,
     redacted span evidence for one request and links it to a matching
@@ -163,7 +163,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DebugRequestEvidenceResponse | Problem]:
-    """Get request evidence and explanation (ADR-127).
+    """Get request evidence and explanation.
 
      Returns a deterministic request/wake timeline plus bounded,
     redacted span evidence for one request and links it to a matching
@@ -201,7 +201,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> DebugRequestEvidenceResponse | Problem | None:
-    """Get request evidence and explanation (ADR-127).
+    """Get request evidence and explanation.
 
      Returns a deterministic request/wake timeline plus bounded,
     redacted span evidence for one request and links it to a matching

@@ -31,7 +31,7 @@ export type ImageRunResponse = {
    */
   command?: Array<string>;
   /**
-   * One-time attach credential of an interactive run (ADR-1330), returned only by the response that created the run.
+   * One-time attach credential of an interactive run, returned only by the response that created the run.
    */
   attach?: AppTaskAttachInfo;
 };

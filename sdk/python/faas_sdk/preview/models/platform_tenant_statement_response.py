@@ -43,10 +43,10 @@ class PlatformTenantStatementResponse:
     created_at: datetime.datetime
     currency: str | Unset = UNSET
     fees: list[APIConsumerStatementFeeResponse] | Unset = UNSET
-    """Monthly base fees and minimum top-ups this revision bills (ADR-1322); amount_millicents includes them. A
-    revision can bill fees without lines for a tenant without usage."""
+    """Monthly base fees and minimum top-ups this revision bills; amount_millicents includes them. A revision can
+    bill fees without lines for a tenant without usage."""
     credit_applied_millicents: int | Unset = UNSET
-    """Prepaid credit drawn when the revision was finalized (ADR-20261019100331)."""
+    """Prepaid credit drawn when the revision was finalized."""
     amount_due_millicents: int | Unset = UNSET
     """amount_millicents less credit_applied_millicents: what invoice exports bill."""
     finalized_at: datetime.datetime | Unset = UNSET

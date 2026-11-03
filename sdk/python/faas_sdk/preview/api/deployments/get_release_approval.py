@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseApprovalStatus]:
-    """Show a release's approvals (ADR-20261020085706).
+    """Show a release's approvals.
 
      The release's approval state, the decisions so far, and when its wait expires.
 
@@ -101,7 +101,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseApprovalStatus | None:
-    """Show a release's approvals (ADR-20261020085706).
+    """Show a release's approvals.
 
      The release's approval state, the decisions so far, and when its wait expires.
 
@@ -127,7 +127,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseApprovalStatus]:
-    """Show a release's approvals (ADR-20261020085706).
+    """Show a release's approvals.
 
      The release's approval state, the decisions so far, and when its wait expires.
 
@@ -156,7 +156,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseApprovalStatus | None:
-    """Show a release's approvals (ADR-20261020085706).
+    """Show a release's approvals.
 
      The release's approval state, the decisions so far, and when its wait expires.
 

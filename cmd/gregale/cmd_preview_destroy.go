@@ -52,7 +52,7 @@ func cmdPreview(args []string) int {
 // 1 on any error.
 func cmdPreviewDestroy(args []string) int {
 	if len(args) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale preview destroy <preview-slug>\n")
+		printCommandValidation(os.Stderr, "usage: gregale preview delete <preview-slug>\n")
 		return 1
 	}
 	slug := args[0]

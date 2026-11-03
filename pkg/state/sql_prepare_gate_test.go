@@ -147,6 +147,12 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		if strings.HasPrefix(pos, "../../pkg/datapipeline/") && strings.Contains(s.sql, "gregale_pipeline.") {
 			continue
 		}
+		// The storage cap probe (ADR-20261025094915 step 6c) creates
+		// gregale_storage_probe in the qualification database it fills and
+		// runs this SQL only there.
+		if strings.HasPrefix(pos, "../../pkg/managedpostgres/neon/storage_cap_probe.go:") && strings.Contains(s.sql, "gregale_storage_probe") {
+			continue
+		}
 		// The function SQL witness (pkg/e2etest/functionsql) creates its notes
 		// table in its own disposable database and runs this SQL only there.
 		if strings.HasPrefix(pos, "../../pkg/e2etest/functionsql/") {

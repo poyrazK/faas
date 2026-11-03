@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Compose process overrides for a prebuilt image (ADR-1337). Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR and stop settings.
+ * Compose process overrides for a prebuilt image. Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR and stop settings.
  */
 export type ComposeProcess = {
   /**

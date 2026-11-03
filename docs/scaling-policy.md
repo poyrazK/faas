@@ -58,6 +58,10 @@ per tick, so `queue_depth` counts what Gregale has **already pulled** while
 million-message Kafka backlog with a batch size of 64 shows a queue depth of
 64. Scale a broker-backed consumer on `queue_lag`.
 
+For Kafka, `queue_lag` is the topic's high watermark less the consumer
+group's committed offset, summed over partitions, so a partition whose
+commit is held by a retried record shows its whole backlog.
+
 `queue_lag` reports no signal at all when no broker answers (the trigger is
 disabled, the broker is unreachable, or the source does not report lag). It
 does not fall back to the local queue depth, so an app declaring only
@@ -136,9 +140,9 @@ you push is recorded for 15 days, so you can watch the number over time as
 well as scale on it:
 
 ```sh
-gregale metrics my-api --custom orders_pending            # last 24 hours
-gregale metrics my-api --custom orders_pending --range 7d
-gregale metrics my-api --custom orders_pending --json     # every point
+gregale metric my-api --custom orders_pending            # last 24 hours
+gregale metric my-api --custom orders_pending --range 7d
+gregale metric my-api --custom orders_pending --json     # every point
 ```
 
 `--range` is `1h`, `6h`, `24h`, `7d`, or `15d`. The dashboard's **Custom
@@ -161,7 +165,9 @@ OTEL_EXPORTER_OTLP_METRICS_HEADERS="Authorization=Bearer $GREGALE_METRICS_KEY"
 OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
 ```
 
-Both `http/protobuf` and `http/json` work; bodies are limited to 1 MiB.
+Both `http/protobuf` and `http/json` work, uncompressed or with gzip
+(`Content-Encoding: gzip`, the OpenTelemetry Collector's default); bodies
+are limited to 1 MiB, also once decompressed.
 Each data point becomes a custom metric under the same per-app name cap:
 
 - **Gauges** are stored like a pushed value and can drive scaling.

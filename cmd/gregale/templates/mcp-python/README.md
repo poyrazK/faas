@@ -15,14 +15,14 @@ app-registered handlers.
 python -m pip install -r requirements.txt
 python -m unittest discover -s . -p 'test_*.py'
 python server.py
-gregale mcp doctor --url http://127.0.0.1:8080/mcp --legacy
-gregale mcp doctor --url http://127.0.0.1:8080/mcp --stream-tool stream_demo
-gregale mcp call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
-gregale mcp complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
-gregale mcp deploy --path . --name my-mcp
+gregale mcp server doctor --url http://127.0.0.1:8080/mcp --legacy
+gregale mcp server doctor --url http://127.0.0.1:8080/mcp --stream-tool stream_demo
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
+gregale mcp client complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
+gregale mcp server deploy --path . --name my-mcp
 ```
 
-`gregale mcp init --runtime python --path ./my-mcp` creates the starter files.
+`gregale mcp server init --runtime python --path ./my-mcp` creates the starter files.
 Read `gregale-mcp.json`, `server.py`, `auth.py`, and `tasks.py` before deploying.
 Configure `auth.mode: "external-oauth"`, the issuer, JWKS URL, resource URL, endpoint
 scopes, and each catalog entry's scopes before exposing private tools, resources
@@ -69,7 +69,7 @@ read-only PostgreSQL credential with `SELECT` on the task and worker-handler
 tables and does not need the owner key; use it when
 the worker pool must scale to zero. Every non-combined role requires the same
 explicit namespace. The observer also publishes bounded tool/version queue
-counts; `gregale mcp tasks status --details` reads its latest report from the
+counts; `gregale mcp server tasks status --details` reads its latest report from the
 API without requiring local task database credentials. The Go and Python starters support `subscriptions/listen`
 for task IDs and registered resource URIs, plus tool, resource, and prompt
 list-change notifications. Call `notify_resource_updated(uri)` after changing
@@ -81,7 +81,7 @@ by default (or the configured task poll interval if longer) to recover missed
 task events. Reconnecting starts with fresh snapshots;
 `tasks/get` remains available as a fallback. The starter caps active task
 subscriptions and watched IDs per process. Clients can also use
-`gregale mcp task-wait` and submit input replies through `tasks/update`.
+`gregale mcp client wait` and submit input replies through `tasks/update`.
 
 The server bounds JSON request bodies, returns JSON responses without creating
 sessions, and exposes `/healthz` for platform readiness. PyJWT validates
@@ -159,14 +159,14 @@ Keep older executors in `previous_versions` until their queued tasks drain.
 Use the same handler versions in every process sharing the queue; workers only
 claim versions they registered.
 
-`gregale mcp deploy` reads this digest from its zero-traffic candidate and pins
+`gregale mcp server deploy` reads this digest from its zero-traffic candidate and pins
 the promoted deployment revision with `MCP_CATALOG_EXPECTED_SHA256`. For other
 deploy paths, set that variable to the `/healthz` digest on every serving
 replica. Remove any existing app-wide env or secret with this key before using
-`gregale mcp deploy`; those runtime layers take precedence over deployment
+`gregale mcp server deploy`; those runtime layers take precedence over deployment
 overrides. A mismatch makes `/healthz` return 503 and blocks MCP requests.
 The health response includes Gregale's `FAAS_INSTANCE_ID`. In addition,
-`gregale mcp status` receives the selected replica identity from Gregale's
+`gregale mcp server status` receives the selected replica identity from Gregale's
 authenticated exact-instance probes. It initializes MCP and lists the
 caller-visible catalogs on every running replica without invoking tools,
 reading resources, or relying on load-balancer sampling. Use `--token-env` or
@@ -252,10 +252,10 @@ or owner keys.
 Use a Task-capable client to call the sample tool, then read or cancel its task:
 
 ```sh
-gregale mcp call --url http://127.0.0.1:8080/mcp --tasks \
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tasks \
   --tool build_report --arguments '{"report":"weekly","steps":8}'
-gregale mcp task-wait --url http://127.0.0.1:8080/mcp --task-id TASK_ID
-gregale mcp task-cancel --url http://127.0.0.1:8080/mcp --task-id TASK_ID
+gregale mcp client wait --url http://127.0.0.1:8080/mcp --task-id TASK_ID
+gregale mcp client cancel --url http://127.0.0.1:8080/mcp --task-id TASK_ID
 ```
 
 The starter's `tasks/update` endpoint follows the protocol response contract; its
@@ -271,15 +271,15 @@ python -m venv .venv
 pip install -r requirements.txt
 python -m unittest
 python server.py
-gregale mcp doctor --url http://127.0.0.1:8080/mcp
-gregale mcp tools --url http://127.0.0.1:8080/mcp
-gregale mcp call --url http://127.0.0.1:8080/mcp --tool greet --arguments '{"name":"Ada"}'
-gregale mcp resources --url http://127.0.0.1:8080/mcp
-gregale mcp resource-read --url http://127.0.0.1:8080/mcp --uri 'customer://records/example-1'
-gregale mcp prompts --url http://127.0.0.1:8080/mcp
-gregale mcp prompt-get --url http://127.0.0.1:8080/mcp --prompt summarize --arguments '{"text":"weekly report"}'
-gregale mcp complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
-gregale mcp complete --url http://127.0.0.1:8080/mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-
+gregale mcp server doctor --url http://127.0.0.1:8080/mcp
+gregale mcp client tools --url http://127.0.0.1:8080/mcp
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tool greet --arguments '{"name":"Ada"}'
+gregale mcp client resources --url http://127.0.0.1:8080/mcp
+gregale mcp client read --url http://127.0.0.1:8080/mcp --uri 'customer://records/example-1'
+gregale mcp client prompts --url http://127.0.0.1:8080/mcp
+gregale mcp client render --url http://127.0.0.1:8080/mcp --prompt summarize --arguments '{"text":"weekly report"}'
+gregale mcp client complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
+gregale mcp client complete --url http://127.0.0.1:8080/mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-
 ```
 
 For a protected deployment, pass an MCP access token with `--token-env
@@ -289,7 +289,7 @@ checks inside resource and tool handlers before connecting real customer data.
 ## Deploy
 
 ```sh
-gregale mcp deploy --path . --name <slug>
+gregale mcp server deploy --path . --name <slug>
 ```
 
 The deploy command stages a zero-traffic candidate, verifies its MCP endpoint,

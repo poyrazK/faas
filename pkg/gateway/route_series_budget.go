@@ -143,6 +143,28 @@ func (b *routeSeriesBudget) sweep(now time.Time, drop func(appID string, routes 
 	return dropped
 }
 
+// dropRoute deletes one route's series for appID, freeing its pair, when the
+// app's route label set replaced it (ADR-20261026143210 amendment 1). drop
+// runs under the app's lock like sweep. It reports whether the route had
+// live series.
+func (b *routeSeriesBudget) dropRoute(appID, route string, drop func(appID string, routes map[string]map[routeSeriesKey]struct{})) bool {
+	v, ok := b.apps.Load(appID)
+	if !ok {
+		return false
+	}
+	e := v.(*routeSeriesApp)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	keys, known := e.routes[route]
+	if e.evicted || !known {
+		return false
+	}
+	drop(appID, map[string]map[routeSeriesKey]struct{}{route: keys})
+	delete(e.routes, route)
+	b.routes.Add(-1)
+	return true
+}
+
 // live reports the (app, route) pairs with series on this gateway.
 func (b *routeSeriesBudget) live() int64 { return b.routes.Load() }
 

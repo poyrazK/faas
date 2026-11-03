@@ -7,6 +7,8 @@ import (
 )
 
 // App configuration merges must read the same environment they will edit.
+// The first read pins the revision: a command may read several times while
+// merging, and the update must fail if anything changed after its first read.
 type environmentAppClient struct {
 	*api.Client
 	environment string
@@ -16,7 +18,7 @@ type environmentAppClient struct {
 func (c environmentAppClient) GetApp(ctx context.Context, slug string) (api.AppResponse, error) {
 	if c.environment != "" {
 		app, revision, err := c.GetAppInEnvironmentRevision(ctx, slug, c.environment)
-		if err == nil && c.revision != nil {
+		if err == nil && c.revision != nil && *c.revision < 0 {
 			*c.revision = revision
 		}
 		return app, err

@@ -204,12 +204,12 @@ func (e *Engine) runningInstanceOfDeployment(ctx context.Context, appID string, 
 	if dep.AppID != appID || dep.Status != state.DeployLive {
 		return state.Instance{}, state.ErrNotFound
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return state.Instance{}, err
 	}
 	for _, instance := range instances {
-		if instance.DeploymentID == dep.ID && instance.State == string(state.StateRunning) {
+		if instance.DeploymentID == dep.ID && instance.State == string(state.StateRunning) && e.instanceNodeServes(ctx, instance.NodeID) {
 			return instance, nil
 		}
 	}

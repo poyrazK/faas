@@ -3,10 +3,14 @@
 # for local development inventories that intentionally omit object storage.
 faas_log_archive_required: false
 
-# Keyless GCS production fleets can materialize a non-secret credential
-# envelope from inventory. Leave bucket empty for S3/HMAC installations that
-# provision archive-creds.json out of band.
+# The manifest's log_archive section sets these per host (gregalectl manifest
+# ansible). An empty bucket leaves archive-creds.json as the operator
+# provisioned it.
 faas_log_archive_bucket: ""
 faas_log_archive_endpoint: "https://storage.googleapis.com"
 faas_log_archive_region: "auto"
 faas_log_archive_auth_mode: "gcp_metadata"
+# Static S3 keys (OVH, R2, MinIO): a controller-local JSON file
+# {"key_id": "...", "secret": "..."} merged into the envelope. Empty for
+# keyless GCS (gcp_metadata).
+faas_log_archive_credentials_src: ""

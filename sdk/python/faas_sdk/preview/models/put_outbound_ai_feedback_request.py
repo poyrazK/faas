@@ -17,7 +17,7 @@ T = TypeVar("T", bound="PutOutboundAIFeedbackRequest")
 
 @_attrs_define
 class PutOutboundAIFeedbackRequest:
-    """A rating of one logged call (ADR 20261021171712). A later rating replaces the earlier one."""
+    """A rating of one logged call. A later rating replaces the earlier one."""
 
     rating: PutOutboundAIFeedbackRequestRating
     label: str | Unset = UNSET

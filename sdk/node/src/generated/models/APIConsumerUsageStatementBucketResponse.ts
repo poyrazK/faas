@@ -24,11 +24,11 @@ export type APIConsumerUsageStatementBucketResponse = {
    */
   amount_millicents: number;
   /**
-   * A minute of the consumer's free trial, billed at zero (ADR-1314).
+   * A minute of the consumer's free trial, billed at zero.
    */
   trial?: boolean;
   /**
-   * The billed minute's price stream when it is not request: compute_second, response_megabyte or app:<meter> (ADR-1317).
+   * The billed minute's price stream when it is not request: compute_second, response_megabyte or app:<meter>.
    */
   unit?: string;
 };

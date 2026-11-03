@@ -87,11 +87,11 @@ func (s *Service) sealRealtimeToken(plaintext, label string) ([]byte, *api.Probl
 	if plaintext == "" {
 		return []byte{}, nil
 	}
-	recipient := s.Host.SecretRecipient()
-	if recipient == nil {
+	recipients, err := s.Host.SecretRecipients()
+	if err != nil {
 		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal realtime credential")
 	}
-	sealed, err := secretbox.SealBytes(recipient, label, []byte(plaintext), api.RealtimeCallbackAuthTokenMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, label, []byte(plaintext), api.RealtimeCallbackAuthTokenMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			return nil, prob
@@ -290,7 +290,8 @@ func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID 
 }
 
 // SyncAppEndpoints registers an app's endpoints again, so a change to its
-// live routes reaches realtimed without waiting for reconciliation.
+// live routes reaches realtimed without waiting for reconciliation. It
+// withdraws an endpoint whose owner no longer serves, as reconciliation does.
 func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 	store, ok := realtimeEndpointStore(s)
 	if !ok || s.Registrar == nil {
@@ -301,7 +302,16 @@ func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 		return fmt.Errorf("list realtime endpoints for app %s: %w", appID, err)
 	}
 	var errs []error
+	accountServing := make(map[string]bool)
 	for _, row := range rows {
+		serving, err := s.realtimeEndpointOwnerServing(ctx, row, accountServing)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("endpoint %s owner: %w", row.ID, err))
+			continue
+		}
+		if !serving {
+			row.Enabled = false
+		}
 		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
 			errs = append(errs, err)
 		}
@@ -433,7 +443,7 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, prob)
 		return
 	}
-	callbackSealed, prob := s.sealRealtimeToken(req.CallbackAuthToken, "REALTIME_CALLBACK_AUTH")
+	callbackSealed, prob := s.sealRealtimeToken(req.CallbackAuthToken, api.RealtimeCallbackAuthNamespace)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -442,7 +452,7 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 	if authMode != api.RealtimeAuthModeStaticBearer {
 		authToken = ""
 	}
-	authSealed, prob := s.sealRealtimeToken(authToken, "REALTIME_AUTH")
+	authSealed, prob := s.sealRealtimeToken(authToken, api.RealtimeAuthTokenNamespace)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -551,6 +561,14 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, prob)
 			return
 		}
+		// The callback token tells the customer's app that Gregale is
+		// calling; it never follows the callback to another host (bug hunt
+		// 2026-10-28 H107).
+		if req.CallbackAuthToken == nil && len(existing.CallbackAuthTokenSealed) > 0 && !api.SameURLOrigin(existing.CallbackURL, *req.CallbackURL) {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Credential required",
+				"supply callback_auth_token again to send callbacks to a different host"))
+			return
+		}
 		params.CallbackURL = req.CallbackURL
 	}
 	if req.ConnectPath != nil {
@@ -582,7 +600,7 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, prob)
 			return
 		}
-		sealed, prob := s.sealRealtimeToken(*req.CallbackAuthToken, "REALTIME_CALLBACK_AUTH")
+		sealed, prob := s.sealRealtimeToken(*req.CallbackAuthToken, api.RealtimeCallbackAuthNamespace)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -594,7 +612,7 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, prob)
 			return
 		}
-		sealed, prob := s.sealRealtimeToken(*req.AuthToken, "REALTIME_AUTH")
+		sealed, prob := s.sealRealtimeToken(*req.AuthToken, api.RealtimeAuthTokenNamespace)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -753,7 +771,7 @@ func (s *Service) RotateManagedRealtimeAuth(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("grace_period_seconds must be between 0 and %d", api.RealtimeAuthRotationMaxGraceSeconds)))
 		return
 	}
-	sealed, prob := s.sealRealtimeToken(req.NewAuthToken, "REALTIME_AUTH")
+	sealed, prob := s.sealRealtimeToken(req.NewAuthToken, api.RealtimeAuthTokenNamespace)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return

@@ -8,7 +8,7 @@ func (m *MemStore) queueStandardRuntimeRefreshLocked(e ApplicationStandardEnroll
 	for i, snap := range m.snapshots {
 		dep := m.deployments[snap.DeploymentID]
 		if sameStandardUUID(dep.AppID, e.AppID) && !snap.Stale {
-			m.snapshots[i].Stale = true
+			m.markSnapshotStaleLocked(i)
 			m.deleteSnapshotReplicasLocked(snap.ID)
 		}
 	}

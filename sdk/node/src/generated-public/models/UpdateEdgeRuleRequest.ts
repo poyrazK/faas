@@ -38,7 +38,7 @@ export type UpdateEdgeRuleRequest = {
   priority?: number;
   enabled?: boolean;
   /**
-   * Top-level source of truth for kind=validate (ADR-128).
+   * Top-level source of truth for kind=validate.
    * Omit (do not send) to leave the column untouched.
    *
    */

@@ -86,21 +86,20 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: PutAPIConsumerSpendCapRequest,
 ) -> Response[PlatformTenantSpendCapResponse | Problem]:
-    """Set a tenant's monthly spend cap across all of its apps (ADR-20261019100331).
+    """Set a tenant's monthly spend cap across all of its apps.
 
      Once the month's amount due passes the cap, the gateway answers every
     request attributed to the tenant with 402 `tenant_spend_cap_reached`
     until the month ends, the cap rises or credit is added. The amount
     due is the tenant's usage for the month to date priced like a
-    statement, without monthly fees, minus usable prepaid credit. apid
+    statement, without monthly fees, minus usable prepaid credit. The API
     checks it every minute and at once when the cap or credit changes, so
     a tenant can overshoot by about two minutes of traffic. A zero cap
     allows prepaid usage only.
 
     Args:
         id (UUID):
-        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit
-            (ADR-1306).
+        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -128,21 +127,20 @@ def sync(
     client: AuthenticatedClient | Client,
     body: PutAPIConsumerSpendCapRequest,
 ) -> PlatformTenantSpendCapResponse | Problem | None:
-    """Set a tenant's monthly spend cap across all of its apps (ADR-20261019100331).
+    """Set a tenant's monthly spend cap across all of its apps.
 
      Once the month's amount due passes the cap, the gateway answers every
     request attributed to the tenant with 402 `tenant_spend_cap_reached`
     until the month ends, the cap rises or credit is added. The amount
     due is the tenant's usage for the month to date priced like a
-    statement, without monthly fees, minus usable prepaid credit. apid
+    statement, without monthly fees, minus usable prepaid credit. The API
     checks it every minute and at once when the cap or credit changes, so
     a tenant can overshoot by about two minutes of traffic. A zero cap
     allows prepaid usage only.
 
     Args:
         id (UUID):
-        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit
-            (ADR-1306).
+        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,21 +163,20 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: PutAPIConsumerSpendCapRequest,
 ) -> Response[PlatformTenantSpendCapResponse | Problem]:
-    """Set a tenant's monthly spend cap across all of its apps (ADR-20261019100331).
+    """Set a tenant's monthly spend cap across all of its apps.
 
      Once the month's amount due passes the cap, the gateway answers every
     request attributed to the tenant with 402 `tenant_spend_cap_reached`
     until the month ends, the cap rises or credit is added. The amount
     due is the tenant's usage for the month to date priced like a
-    statement, without monthly fees, minus usable prepaid credit. apid
+    statement, without monthly fees, minus usable prepaid credit. The API
     checks it every minute and at once when the cap or credit changes, so
     a tenant can overshoot by about two minutes of traffic. A zero cap
     allows prepaid usage only.
 
     Args:
         id (UUID):
-        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit
-            (ADR-1306).
+        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -205,21 +202,20 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: PutAPIConsumerSpendCapRequest,
 ) -> PlatformTenantSpendCapResponse | Problem | None:
-    """Set a tenant's monthly spend cap across all of its apps (ADR-20261019100331).
+    """Set a tenant's monthly spend cap across all of its apps.
 
      Once the month's amount due passes the cap, the gateway answers every
     request attributed to the tenant with 402 `tenant_spend_cap_reached`
     until the month ends, the cap rises or credit is added. The amount
     due is the tenant's usage for the month to date priced like a
-    statement, without monthly fees, minus usable prepaid credit. apid
+    statement, without monthly fees, minus usable prepaid credit. The API
     checks it every minute and at once when the cap or credit changes, so
     a tenant can overshoot by about two minutes of traffic. A zero cap
     allows prepaid usage only.
 
     Args:
         id (UUID):
-        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit
-            (ADR-1306).
+        body (PutAPIConsumerSpendCapRequest): A consumer's monthly spend cap after prepaid credit.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

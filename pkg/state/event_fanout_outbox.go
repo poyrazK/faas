@@ -266,7 +266,10 @@ type EventFanoutReplayBatchStore interface {
 	ReplayRetryablePublishedEventRecipientsForApp(context.Context, string, string, string, string, int) (EventFanoutReplayBatch, error)
 }
 
-const PublishedEventLease = 5 * time.Minute
+// PublishedEventLease is how long a receipt or recipient claim lasts; a
+// sweep renews the claims it still holds every PublishedEventLeaseRenewal
+// (ADR-20261028131500). The claim queries use the same interval.
+const PublishedEventLease = time.Minute
 const EventFanoutReplayBatchMax = 100
 
 // PublishedEventRetentionStore prunes settled receipts past their owner's
@@ -461,25 +464,35 @@ func (s *PgStore) PruneSettledPublishedEvents(ctx context.Context, now time.Time
 	now = now.UTC()
 	cutoff := now.Add(-api.EventReplayBackfillJobRetention)
 	plans, seconds := eventSettledRetentionPlans()
-	accounts, err := q.EventReplayBackfillPruneAccounts(ctx, s.pool, sqlc.EventReplayBackfillPruneAccountsParams{
-		Plans: plans, RetentionSeconds: seconds, MaxRetentionSeconds: int64(api.EventSettledRetentionMax() / time.Second),
-		JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit, api.EventReplayBackfillPruneBatch)),
-	})
-	if err != nil {
-		return 0, fmt.Errorf("select receipt pruning accounts: %w", err)
-	}
+	// ADR-20261029012000: rounds repeat until the limit is spent or a round
+	// removes nothing, so one account's backlog drains at up to the whole
+	// limit per call, while each round still gives every due account a page.
 	var removed int64
-	for _, account := range accounts {
-		if removed >= int64(limit) {
-			break
-		}
-		n, err := s.pruneEventReceiptsForAccount(ctx, q, sqlc.EventReplayBackfillPruneEnvelopesParams{
-			AccountID: account.AccountID, BeforeAt: account.BeforeAt, JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit-int(removed), api.EventReplayBackfillPruneBatch)),
+	for removed < int64(limit) {
+		accounts, err := q.EventReplayBackfillPruneAccounts(ctx, s.pool, sqlc.EventReplayBackfillPruneAccountsParams{
+			Plans: plans, RetentionSeconds: seconds, MaxRetentionSeconds: int64(api.EventSettledRetentionMax() / time.Second),
+			JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit-int(removed), api.EventReplayBackfillPruneBatch)),
 		})
 		if err != nil {
-			return removed, err
+			return removed, fmt.Errorf("select receipt pruning accounts: %w", err)
 		}
-		removed += n
+		var round int64
+		for _, account := range accounts {
+			if removed >= int64(limit) {
+				break
+			}
+			n, err := s.pruneEventReceiptsForAccount(ctx, q, sqlc.EventReplayBackfillPruneEnvelopesParams{
+				AccountID: account.AccountID, BeforeAt: account.BeforeAt, JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit-int(removed), api.EventReplayBackfillPruneBatch)),
+			})
+			if err != nil {
+				return removed, err
+			}
+			removed += n
+			round += n
+		}
+		if round == 0 {
+			break
+		}
 	}
 	return removed, nil
 }

@@ -29,6 +29,11 @@ type BaseImageScanInput struct {
 	ScannerName     string                  `json:"scanner_name,omitempty"`
 	Report          *api.ScanResult         `json:"report,omitempty"`
 	Failure         string                  `json:"failure,omitempty"`
+	// ReusedScanID names the complete scan whose report this record carries
+	// when imaged renewed the lease without running the scanner, because the
+	// bytes, scanner and vulnerability database were unchanged
+	// (ADR-20261028102540). Empty for a real scan, so older hashes hold.
+	ReusedScanID string `json:"reused_scan_id,omitempty"`
 }
 type BaseImageScanStore interface {
 	PublishBaseImageScan(context.Context, BaseImageScanInput) (BaseImageScan, error)
@@ -55,6 +60,12 @@ func prepareBaseImageScan(input BaseImageScanInput) (BaseImageScanInput, string,
 	report, err := prepareProducerScanReport(in.Status, in.ScannerName, in.Failure, in.Report, in.SourceReference, in.Artifact.Digest)
 	if err != nil {
 		return in, "", err
+	}
+	if in.ReusedScanID != "" {
+		if in.Status != "complete" || !validStandardResourceRead(in.ReusedScanID, in.ReusedScanID) || canonicalStandardUUID(in.ReusedScanID) == canonicalStandardUUID(in.ID) {
+			return in, "", ErrInvalidArgument
+		}
+		in.ReusedScanID = canonicalStandardUUID(in.ReusedScanID)
 	}
 	in.ID, in.BaseProducerID = canonicalStandardUUID(in.ID), canonicalStandardUUID(in.BaseProducerID)
 	in.Report = report

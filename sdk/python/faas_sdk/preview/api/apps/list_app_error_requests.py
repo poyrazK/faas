@@ -97,7 +97,7 @@ def sync_detailed(
     cursor: None | str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> Response[AppErrorRequestsResponse | Problem]:
-    r"""Per-fingerprint drill-down rows (ADR-096 / PR-B).
+    r"""Per-fingerprint drill-down rows.
 
      Cursor-paginated drill-down over the request rows that
     landed on this fingerprint. Returns 404 when the
@@ -141,7 +141,7 @@ def sync(
     cursor: None | str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> AppErrorRequestsResponse | Problem | None:
-    r"""Per-fingerprint drill-down rows (ADR-096 / PR-B).
+    r"""Per-fingerprint drill-down rows.
 
      Cursor-paginated drill-down over the request rows that
     landed on this fingerprint. Returns 404 when the
@@ -180,7 +180,7 @@ async def asyncio_detailed(
     cursor: None | str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> Response[AppErrorRequestsResponse | Problem]:
-    r"""Per-fingerprint drill-down rows (ADR-096 / PR-B).
+    r"""Per-fingerprint drill-down rows.
 
      Cursor-paginated drill-down over the request rows that
     landed on this fingerprint. Returns 404 when the
@@ -222,7 +222,7 @@ async def asyncio(
     cursor: None | str | Unset = UNSET,
     limit: int | Unset = 20,
 ) -> AppErrorRequestsResponse | Problem | None:
-    r"""Per-fingerprint drill-down rows (ADR-096 / PR-B).
+    r"""Per-fingerprint drill-down rows.
 
      Cursor-paginated drill-down over the request rows that
     landed on this fingerprint. Returns 404 when the

@@ -39,10 +39,10 @@ class RouteHealthRoute:
     """Absolute candidate p95 latency budget in milliseconds. A positive value enables this check; omitted or zero
     disables it. Does not enable the relative slowdown check."""
     probe: RouteHealthProbe | Unset = UNSET
-    """Opt-in synthetic probe for a GET or HEAD selector (ADR-847). While a canary is in flight and organic
-    evidence stays sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments
-    with customer auth gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they
-    wake the app like any request. At most 5 selectors per app."""
+    """Opt-in synthetic probe for a GET or HEAD selector. While a canary is in flight and organic evidence stays
+    sparse, Gregale sends a few bodyless requests per minute to the candidate and stable deployments with customer
+    auth gates unchanged. Probe requests never appear in request telemetry, analytics or usage; they wake the app
+    like any request. At most 5 selectors per app."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

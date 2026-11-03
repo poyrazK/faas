@@ -15,7 +15,7 @@ T = TypeVar("T", bound="OutboundAITagLimits")
 
 @_attrs_define
 class OutboundAITagLimits:
-    """An integration's per-tag daily cost limits, ordered by tag (ADR-1436)."""
+    """An integration's per-tag daily cost limits, ordered by tag."""
 
     limits: list[OutboundAITagLimit]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

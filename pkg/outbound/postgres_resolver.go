@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 )
 
 // PostgresResolver loads policies from the outbound integration tables. It is
@@ -165,11 +166,13 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	if err != nil {
 		return Integration{}, fmt.Errorf("%w: invalid origin: %w", ErrInvalidIntegration, err)
 	}
-	if len(tokenHash) != sha256.Size {
+	if len(tokenHash) != sha256.Size && !credhash.Keyed(tokenHash) {
 		return Integration{}, fmt.Errorf("%w: token hash has invalid length", ErrInvalidIntegration)
 	}
 	var hash [sha256.Size]byte
-	copy(hash[:], tokenHash)
+	if len(tokenHash) == sha256.Size {
+		copy(hash[:], tokenHash)
+	}
 	var dailyRequestLimit *int64
 	if dailyRequestLimitValue > 0 {
 		maxForPlan, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
@@ -260,7 +263,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	if aiProvider == "" {
 		prices = nil
 	}
-	i := Integration{ID: id, AccountID: accountID.String(), Name: name, Origin: u, TokenHash: hash, AppIDs: apps,
+	i := Integration{ID: id, AccountID: accountID.String(), Name: name, Origin: u, TokenHash: hash, StoredTokenHash: append([]byte(nil), tokenHash...), AppIDs: apps,
 		OperatorAppIDs: operatorApps, BindingAppIDs: bindingApps, CustomerAppRoutes: customerRoutes,
 		RatePerSecond: rate, Burst: burst, MaxInFlight: maxInFlight,
 		DailyRequestLimit:              dailyRequestLimit,

@@ -496,6 +496,7 @@
     - frozen-tier.json
     - customer-operations.json
     - live-queries.json
+    - agent-runs.json
   notify:
     - restart grafana-server
     - reload grafana provisioning

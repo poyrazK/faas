@@ -110,8 +110,8 @@ def sync_detailed(
 ) -> Response[OutboundAIUserUsageResponse | Problem]:
     """Read one UTC day of AI gateway usage by end user.
 
-     Requires MFA and read scope (ADR-994). End users are the X-Gregale-AI-User values apps send; rows
-    are kept for 31 days and listed by cost, then tokens.
+     Requires MFA and read scope. End users are the X-Gregale-AI-User values apps send; rows are kept for
+    31 days and listed by cost, then tokens.
 
     Args:
         integration (UUID):
@@ -151,8 +151,8 @@ def sync(
 ) -> OutboundAIUserUsageResponse | Problem | None:
     """Read one UTC day of AI gateway usage by end user.
 
-     Requires MFA and read scope (ADR-994). End users are the X-Gregale-AI-User values apps send; rows
-    are kept for 31 days and listed by cost, then tokens.
+     Requires MFA and read scope. End users are the X-Gregale-AI-User values apps send; rows are kept for
+    31 days and listed by cost, then tokens.
 
     Args:
         integration (UUID):
@@ -187,8 +187,8 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIUserUsageResponse | Problem]:
     """Read one UTC day of AI gateway usage by end user.
 
-     Requires MFA and read scope (ADR-994). End users are the X-Gregale-AI-User values apps send; rows
-    are kept for 31 days and listed by cost, then tokens.
+     Requires MFA and read scope. End users are the X-Gregale-AI-User values apps send; rows are kept for
+    31 days and listed by cost, then tokens.
 
     Args:
         integration (UUID):
@@ -226,8 +226,8 @@ async def asyncio(
 ) -> OutboundAIUserUsageResponse | Problem | None:
     """Read one UTC day of AI gateway usage by end user.
 
-     Requires MFA and read scope (ADR-994). End users are the X-Gregale-AI-User values apps send; rows
-    are kept for 31 days and listed by cost, then tokens.
+     Requires MFA and read scope. End users are the X-Gregale-AI-User values apps send; rows are kept for
+    31 days and listed by cost, then tokens.
 
     Args:
         integration (UUID):

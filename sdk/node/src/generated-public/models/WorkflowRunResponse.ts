@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A persisted durable workflow run (ADR-081).
+ * A persisted durable workflow run.
  */
 export type WorkflowRunResponse = {
   /**

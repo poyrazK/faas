@@ -58,7 +58,7 @@ export class CorsPresetsService {
    * app-scoped). The body validation mirrors the storage-
    * side CHECK constraints: name 1..64, max_age 0..86400,
    * at-least-one allow_origin + allow_method. The
-   * *+credentials footgun (ADR-091 D12) returns 422
+   * *+credentials footgun returns 422
    * cors_wildcard_with_credentials when the create body
    * combines AllowCredentials: true with AllowOrigins:
    * ["*"].
@@ -99,16 +99,16 @@ export class CorsPresetsService {
         401: `code: unauthorized`,
         402: `code: cors_preset_invalid | cors_wildcard_with_credentials |
         cors_preset_update_requires_field | cors_preset_name_conflict |
-        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached
-        (issue #975 #4 PR-B / ADR-129). The body validates the
+        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached.
+        The body validates the
         same shape as the storage-side CHECK constraints; the
         wire-level codes are 422 for grammar violations and 402
         for plan gates.
         `,
         403: `code: cors_preset_invalid | cors_wildcard_with_credentials |
         cors_preset_update_requires_field | cors_preset_name_conflict |
-        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached
-        (issue #975 #4 PR-B / ADR-129). The body validates the
+        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached.
+        The body validates the
         same shape as the storage-side CHECK constraints; the
         wire-level codes are 422 for grammar violations and 402
         for plan gates.
@@ -116,16 +116,16 @@ export class CorsPresetsService {
         404: `code: not_found`,
         409: `code: cors_preset_invalid | cors_wildcard_with_credentials |
         cors_preset_update_requires_field | cors_preset_name_conflict |
-        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached
-        (issue #975 #4 PR-B / ADR-129). The body validates the
+        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached.
+        The body validates the
         same shape as the storage-side CHECK constraints; the
         wire-level codes are 422 for grammar violations and 402
         for plan gates.
         `,
         422: `code: cors_preset_invalid | cors_wildcard_with_credentials |
         cors_preset_update_requires_field | cors_preset_name_conflict |
-        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached
-        (issue #975 #4 PR-B / ADR-129). The body validates the
+        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached.
+        The body validates the
         same shape as the storage-side CHECK constraints; the
         wire-level codes are 422 for grammar violations and 402
         for plan gates.
@@ -188,8 +188,8 @@ export class CorsPresetsService {
    *
    * The pgstore trigger fires pg_notify
    * ('cors_preset_changed', account_id) AFTER the UPDATE
-   * commits so the gatewayd-internal listener reloads
-   * the affected account's preset overlay (ADR-129 D4).
+   * commits so the gateway listener reloads
+   * the affected account's preset overlay.
    *
    * @returns CorsPresetResponse The updated cors preset.
    * @throws ApiError
@@ -217,16 +217,16 @@ export class CorsPresetsService {
         404: `code: not_found`,
         409: `code: cors_preset_invalid | cors_wildcard_with_credentials |
         cors_preset_update_requires_field | cors_preset_name_conflict |
-        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached
-        (issue #975 #4 PR-B / ADR-129). The body validates the
+        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached.
+        The body validates the
         same shape as the storage-side CHECK constraints; the
         wire-level codes are 422 for grammar violations and 402
         for plan gates.
         `,
         422: `code: cors_preset_invalid | cors_wildcard_with_credentials |
         cors_preset_update_requires_field | cors_preset_name_conflict |
-        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached
-        (issue #975 #4 PR-B / ADR-129). The body validates the
+        plan_cors_preset_not_allowed | plan_cors_preset_quota_reached.
+        The body validates the
         same shape as the storage-side CHECK constraints; the
         wire-level codes are 422 for grammar violations and 402
         for plan gates.
@@ -244,7 +244,7 @@ export class CorsPresetsService {
    * Removes the cors_presets row. The FK ON DELETE SET
    * NULL on edge_rules.cors_preset_id clears every
    * referencing rule's FK atomically with the preset's
-   * deletion; the gatewayd-internal compile path fails
+   * deletion; the gateway compile path fails
    * closed (MergeCorsPresetIntoRule returns ErrNotFound)
    * until the customer wires a new preset or inlines
    * fallback values. The pgstore trigger fires

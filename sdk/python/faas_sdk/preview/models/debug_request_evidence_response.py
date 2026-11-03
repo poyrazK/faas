@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.debug_dependency_deployment_comparison import DebugDependencyDeploymentComparison
     from ..models.debug_evidence_explanation import DebugEvidenceExplanation
+    from ..models.debug_evidence_log_line import DebugEvidenceLogLine
     from ..models.debug_regression_item import DebugRegressionItem
     from ..models.debug_request_correlation import DebugRequestCorrelation
     from ..models.debug_request_critical_path import DebugRequestCriticalPath
@@ -26,7 +27,10 @@ T = TypeVar("T", bound="DebugRequestEvidenceResponse")
 
 @_attrs_define
 class DebugRequestEvidenceResponse:
-    """Request metadata, deterministic wake/request timeline, bounded span evidence, matching regression, and explanation."""
+    """Request metadata, deterministic wake/request timeline, bounded span evidence, the request's own log lines, matching
+    regression, and explanation.
+
+    """
 
     request: DebugTelemetryRequestItem
     """A retained request-ID mapping, optionally enriched with a bounded telemetry row when detailed evidence is
@@ -40,6 +44,12 @@ class DebugRequestEvidenceResponse:
     """True when more than 16 dependency groups were retained."""
     spans: list[DebugTelemetrySpan]
     spans_truncated: bool
+    logs: list[DebugEvidenceLogLine]
+    """Log lines the app emitted for this request: OTel log records carrying its trace ID, forwarded by the in-
+    guest bridge when tracing is enabled (runtime source; HTTP access lines are not repeated). Chronological;
+    redacted and bounded. Empty without a trace ID or when the app exports no OTel logs."""
+    logs_truncated: bool
+    """True when the request logged more than 20 lines; logs then holds its last 20."""
     explanation: DebugEvidenceExplanation
     """Bounded root-cause synthesis generated from the safe evidence payload."""
     generated_at: datetime.datetime
@@ -47,8 +57,8 @@ class DebugRequestEvidenceResponse:
     critical_path: DebugRequestCriticalPath | Unset = UNSET
     """Bounded causal path reconstructed from retained span timing and parent links."""
     dependency_comparison: DebugDependencyDeploymentComparison | Unset = UNSET
-    """Dependency latency split by deployment (ADR-958): baseline_* fields describe the previous deployment,
-    current_* the compared one. Regressions first, then by current p95."""
+    """Dependency latency split by deployment: baseline_* fields describe the previous deployment, current_* the
+    compared one. Regressions first, then by current p95."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -76,6 +86,13 @@ class DebugRequestEvidenceResponse:
             spans.append(spans_item)
 
         spans_truncated = self.spans_truncated
+
+        logs = []
+        for logs_item_data in self.logs:
+            logs_item = logs_item_data.to_dict()
+            logs.append(logs_item)
+
+        logs_truncated = self.logs_truncated
 
         explanation = self.explanation.to_dict()
 
@@ -108,6 +125,8 @@ class DebugRequestEvidenceResponse:
                 "dependency_latency_truncated": dependency_latency_truncated,
                 "spans": spans,
                 "spans_truncated": spans_truncated,
+                "logs": logs,
+                "logs_truncated": logs_truncated,
                 "explanation": explanation,
                 "generated_at": generated_at,
             }
@@ -125,6 +144,7 @@ class DebugRequestEvidenceResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.debug_dependency_deployment_comparison import DebugDependencyDeploymentComparison
         from ..models.debug_evidence_explanation import DebugEvidenceExplanation
+        from ..models.debug_evidence_log_line import DebugEvidenceLogLine
         from ..models.debug_regression_item import DebugRegressionItem
         from ..models.debug_request_correlation import DebugRequestCorrelation
         from ..models.debug_request_critical_path import DebugRequestCriticalPath
@@ -162,6 +182,15 @@ class DebugRequestEvidenceResponse:
             spans.append(spans_item)
 
         spans_truncated = d.pop("spans_truncated")
+
+        logs = []
+        _logs = d.pop("logs")
+        for logs_item_data in _logs:
+            logs_item = DebugEvidenceLogLine.from_dict(logs_item_data)
+
+            logs.append(logs_item)
+
+        logs_truncated = d.pop("logs_truncated")
 
         explanation = DebugEvidenceExplanation.from_dict(d.pop("explanation"))
 
@@ -206,6 +235,8 @@ class DebugRequestEvidenceResponse:
             dependency_latency_truncated=dependency_latency_truncated,
             spans=spans,
             spans_truncated=spans_truncated,
+            logs=logs,
+            logs_truncated=logs_truncated,
             explanation=explanation,
             generated_at=generated_at,
             regression=regression,

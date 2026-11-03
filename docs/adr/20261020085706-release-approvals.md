@@ -1,6 +1,6 @@
 # ADR-20261020085706 · Release approvals
 
-- **Status:** accepted (shipped in PR 5126, 2026-10-22); n2 metal drill passed 2026-10-26 (hold, self-approval refusal, approve, reject, notices); amendment 1 (2026-10-26)
+- **Status:** accepted (shipped in PR 5126, 2026-10-22); n2 metal drill passed 2026-10-26 (hold, self-approval refusal, approve, reject, notices); amendments 1-2 (2026-10-26, 2026-10-27), 3 (2026-10-28)
 - **Date:** 2026-10-20
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) (the default canary), [ADR-1447](1447-explained-rollout-decisions.md) (rollout decision rules)
 - **Uses:** organization roles ([ADR-061](061-organizations-and-memberships.md)), deploy attribution (`deployments.deployed_by_user_id`), release freezes ([ADR-20261019071733](20261019071733-deploy-freezes-and-release-windows.md))
@@ -181,3 +181,74 @@ The Scope amendment above made the `production` environment's scope a production
 - **Retries.** A retry of a release with no canary is refused while the app requires approvals, as a deploy would be. A retry keeps the failed release's canary.
 - **GitOps activation.** Activating a graph in the production environment is held for a member app that requires approvals. The exception is a source with `approval_policy: manual`, where a person approved the revision in Gregale. A `protected_branch` revision was approved outside Gregale, and activation has no canary, so it waits until the policy is removed or the source switches to manual approval.
 - **Metrics.** `faas_release_guard_decisions_total{guard="approval"}` counts holds, approvals, rejections, timeouts and canary-required refusals. `{guard="approval_notice"}` counts meterd's deliveries, and dropped notices alert (`FaasReleaseApprovalNoticeDropped`).
+
+## Amendment 2 (2026-10-27): what a promotion approval and a rollback can stand in for
+
+A security audit found two ways around an app's policy.
+
+- **A protected environment's promotion approval is one decision.** Amendment 1 let it stand in for every promoted app's policy, but anyone who may promote could approve their own promotion, which an app with `allow_self_approval: false` (the default) forbids, and one approval cannot meet `approvals: 2`. The approval now records who gave it (`project_environment_approvals.approved_by_account_id`). A promotion into a protected production environment is refused for an app whose policy asks for more than one approval (`409 release_approval_canary_required`: release it with a canary), and, when the policy forbids self-approval, for an approval its own promoter gave or that predates the column (`403 release_approval_self`).
+- **A rollback to a release that never took traffic is a forward release.** A rollback may target a release that is live at 0%. That covers a release demoted by `traffic promote`, but also one deployed with `--no-traffic` or parked for its schedule. Rolling back to such a release now meets the checks a traffic increase meets (`releaseApprovalTrafficProblem`): a scheduled release waits for its start, a release that waits for approval or was rejected is refused, and a parked release that needs a canary is refused. Plain and checked rollbacks, and automated route-monitor rollbacks, share the check. A superseded target served before and needs none.
+
+## Amendment 3 (2026-10-28): decided releases, and releases without a known deployer
+
+- **An approved release is decided.** apid accepted decisions after a
+  release reached its approvals: a later reject aborted the approved release
+  mid-rollout, and each later approval sent "approved" again. Decisions on an
+  approved release are now refused (`409 release_approval_decided`); stopping
+  it is an abort of its rollout.
+- **No known deployer, one more approval.** A GitHub push records a GitHub
+  login, not a Gregale account, so the self-approval rule could not recognise
+  its author, who could approve their own push. When the policy forbids
+  self-approval and the release has no recorded deployer, it needs one more
+  approval than the policy asks, so at least one approver is someone else.
+  The status shows the higher `required_approvals`.
+
+## Amendment 4 (2026-10-31): a person approves, signed in
+
+A release review found that any API key with `deploy:write`, the scope CI holds to deploy, could approve a release, and a bearer key skips MFA. A bot account's key, or a teammate's key in a CI job, could therefore give the second sign-off this ADR exists to require.
+
+- **Approving needs the dashboard session.** `POST /v1/deployments/{id}/approvals` with `decision: approve` answers `403 release_approval_session_required` to any API key or token, including the CLI's login token, with the release's approval page as the hint. The approval page and the notification links already decide with the session, so the organization access, role, MFA and self-approval checks apply as before.
+- **Rejecting stays open to keys.** Stopping a release needs no second person, and keys can already abort a rollout.
+- **The CLI and notices point to the page.** `gregale release approve` fails with the page's link; email notices drop the terminal command; the approval-required problem and the hold text name the approval page.
+
+## Amendment 5 (2026-11-01): the policy cannot be switched off by a mode change or a deploy key
+
+A second release review found two ways around a policy.
+
+- **Leaving request mode.** Approvals wait in a canary stage, so the policy only gates request-mode apps, and setting one on a service, worker or job is refused. But a member who may configure the app (developers included) could switch it to `service`, which still serves HTTP, through `PATCH /v1/apps/{slug}` or a `gregale.yaml` lifecycle block. The policy stayed set and stopped gating. Leaving request mode now answers `409` while the app has a policy; an owner or admin removes the policy first.
+- **Deploy keys.** Changing or removing the policy, deleting a release gate and lifting a freeze accepted any key with `deploy:write`, the scope CI and agents hold. An admin's CI key could remove the policy, deploy and put it back, around amendment 4. These routes now need the `admin` scope: a signed-in session, the CLI's login or an admin key. Creating a gate or a freeze still takes `deploy:write`, since it only adds a guard.
+
+## Amendment 6 (2026-11-01): a policy names who hears a release waits
+
+A policy could name no notification channel. A release then waited at its stage, seen only by `gregale release approval pending`, until the timeout (24 hours by default) aborted it. Setting a policy now needs at least one Slack or email channel in `notify_channels` (`--notify`): `400 validation_failed` otherwise. Existing policies keep working; the next change to one must name a channel.
+
+## Amendment 7 (2026-11-02): the last channel of a policy or schedule cannot be deleted
+
+Amendment 6 makes a policy name a channel, but deleting the channel afterwards left the policy with no destination: its notices were dropped ("none of the policy's channels exist any more") and releases waited unannounced again. The same held for a pending scheduled release's channels. Deleting a notification channel is now refused (`409 notification_channel_in_use`) while it is the last Slack or email channel of a release approval policy or of a pending scheduled release, as it already was for alert rules. The problem names them.
+
+## Amendment 8 (2026-11-02): a GitOps revision approval meets the apps' policies
+
+A production environment synced from Git with `approval_policy: manual` activates a revision once someone approves it in Gregale, and its apps' release approval policies were skipped: the revision approval stood in for them. But the approve route took any key with `deploy:write`, as CI holds, recorded the account rather than who approved, and one approval passed a policy asking for several or for an admin. It undid amendment 4 and the policy's count and roles.
+
+- The revision now records who approved it: the person's account, or `api_key:<id>` for a key or token. Keys still approve revisions, as CI does for apps without a policy.
+- Activating a revision into production holds, as a freeze does, while a member app's policy:
+  - was met only by a key's approval (amendment 4). A person approving the same revision on the environment's GitOps page in the dashboard replaces the key's approval, never the reverse;
+  - asks for more than one approval, since a revision carries one;
+  - on a company app, does not let the approver's role approve.
+- A revision's author is a Git identity, not a Gregale account, so self-approval is not judged, as for a protected-branch revision.
+
+## Amendment 9 (2026-11-03): a protected promotion's approval is held to who may approve
+
+A protected production environment's promotion approval stands in for each promoted app's release approval policy (amendment 2), but it could be given with an API key, and by any owner or admin of the project's organization whatever the policy's approvers (release review 2026-11-03). An owner's CI key could so approve and ship a production promotion with no person deciding. Now, when a promoted app's policy needs an approval:
+
+- an approval sent with an API key or token is refused (`403 release_approval_session_required`); a person signed in approves, as for a release (amendment 4). Promotions no policy covers, and plan approvals, still take keys;
+- on a company app, the approval stands in only when its approver is a current member whose role the policy lets approve (`403 org_role_forbidden` at promote time otherwise).
+
+## Amendment 10 (2026-11-03): a superseded release that never served is not a rollback target by right
+
+A rollback to a superseded release skipped every guard on the grounds that it had served. But a release staged without traffic, or waiting in its canary for approval, is superseded the moment a newer release goes live; a rejected release stays behind the same way. Rolling back to one shipped never-served or rejected code with no approval, freeze or pause check (release review 2026-11-03). Now a rollback to a superseded release:
+
+- is refused when the release was rejected (`403 release_approval_rejected`), whether or not its canary served;
+- when the release never served (`deployments.serving_ended_at` unset), meets the break-glass pause, the active freezes (`409 release_frozen`, no override on a rollback) and the approvals (`release_approval_required`) a new release meets.
+
+A release that served before stays a rollback target that freezes and the pause never hold.

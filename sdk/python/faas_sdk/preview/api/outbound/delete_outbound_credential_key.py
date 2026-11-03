@@ -85,7 +85,7 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Remove an extra provider key.
 
-     Requires MFA and deploy-write scope (ADR-991). outboundd stops using it on its next call.
+     Requires MFA and deploy-write scope. The outbound gateway stops using it on its next call.
 
     Args:
         integration (UUID):
@@ -119,7 +119,7 @@ def sync(
 ) -> Any | Problem | None:
     """Remove an extra provider key.
 
-     Requires MFA and deploy-write scope (ADR-991). outboundd stops using it on its next call.
+     Requires MFA and deploy-write scope. The outbound gateway stops using it on its next call.
 
     Args:
         integration (UUID):
@@ -148,7 +148,7 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Remove an extra provider key.
 
-     Requires MFA and deploy-write scope (ADR-991). outboundd stops using it on its next call.
+     Requires MFA and deploy-write scope. The outbound gateway stops using it on its next call.
 
     Args:
         integration (UUID):
@@ -180,7 +180,7 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Remove an extra provider key.
 
-     Requires MFA and deploy-write scope (ADR-991). outboundd stops using it on its next call.
+     Requires MFA and deploy-write scope. The outbound gateway stops using it on its next call.
 
     Args:
         integration (UUID):

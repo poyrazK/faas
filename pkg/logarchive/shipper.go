@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,11 +215,16 @@ func (s *Shipper) RunOnce(ctx context.Context) (int, int64, error) {
 }
 
 // uploadFile rotates the active spool file before reading it, gzips the
-// sealed upload fragment after the retained daily gzip history, and PUTs the
+// sealed upload fragment after the day's archived members (copyDailyBase:
+// the retained daily gzip history, merged with the bucket's object when
+// another node wrote the day), and PUTs the
 // complete object to s3://bucket/faas-logs/{instance}/{YYYY}/{MM}/{DD}.jsonl.gz. New
 // evictions can continue into a fresh .partial file while the upload runs;
 // failed .upload files remain for the next retry.
 func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
+	if s.cfg.PartObjects {
+		return s.uploadPart(ctx, f)
+	}
 	path, err := s.spool.PrepareUpload(f.Instance, f.Day)
 	if err != nil {
 		return 0, fmt.Errorf("prepare %s: %w", f.Path, err)
@@ -242,36 +246,28 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 	basePath = strings.TrimSuffix(basePath, spoolPartialSuffix)
 	historyPath := basePath + archiveGzipSuffix
 	gzPath := historyPath + ".pending"
+	key := s.bucketKey(f.Instance, f.Day)
+	base := dailyBase{key: key, history: historyPath, upload: path}
 	gz, err := os.Create(gzPath)
 	if err != nil {
 		return 0, fmt.Errorf("create %s: %w", gzPath, err)
 	}
 	// Concatenated gzip members decode as one JSONL stream. Preserve earlier
-	// successful flushes without decompressing the entire daily history, and
-	// never truncate that history until the replacement is accepted by S3.
-	key := s.bucketKey(f.Instance, f.Day)
-	if err := s.copyDailyBase(ctx, gz, historyPath, key); err != nil {
+	// successful flushes, and what another node wrote to the same day
+	// (archive_base.go), and never truncate that history until the
+	// replacement is accepted by S3.
+	fragmentArchived, err := s.copyDailyBase(ctx, gz, base)
+	if err != nil {
 		_ = gz.Close()
 		_ = os.Remove(gzPath)
 		return 0, err
 	}
-	gzWriter, err := gzip.NewWriterLevel(gz, gzip.BestSpeed)
-	if err != nil {
-		_ = gz.Close()
-		_ = os.Remove(gzPath)
-		return 0, fmt.Errorf("gzip writer: %w", err)
-	}
-	_, err = io.Copy(gzWriter, src)
-	if err != nil {
-		_ = gzWriter.Close()
-		_ = gz.Close()
-		_ = os.Remove(gzPath)
-		return 0, fmt.Errorf("gzip copy: %w", err)
-	}
-	if err := gzWriter.Close(); err != nil {
-		_ = gz.Close()
-		_ = os.Remove(gzPath)
-		return 0, fmt.Errorf("gzip close: %w", err)
+	if !fragmentArchived {
+		if err := appendGzipMember(gz, src); err != nil {
+			_ = gz.Close()
+			_ = os.Remove(gzPath)
+			return 0, err
+		}
 	}
 	if err := gz.Sync(); err != nil {
 		_ = gz.Close()
@@ -299,7 +295,8 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 		s.metrics.ObserveUploadDuration(s.now().Sub(uploadStart).Seconds())
 		// Best-effort cleanup of the local gz on failure —
 		// the next tick will recreate from the still-present
-		// .partial.
+		// .upload. Should the store have accepted it anyway, the
+		// retry recognises its own fragment (archive_base.go).
 		_ = os.Remove(gzPath)
 		return 0, fmt.Errorf("put %s: %w", key, err)
 	}
@@ -313,44 +310,18 @@ func (s *Shipper) uploadFile(ctx context.Context, f FileInfo) (int64, error) {
 	return stat.Size(), nil
 }
 
-// copyDailyBase writes the day's already archived gzip members to dst, so the
-// replacement object keeps them. The local history is the usual source. When
-// it is gone (purged after RetentionDays, or a replaced disk) but lines for
-// that day still arrive — a quiet instance's ring retires days later — the
-// bucket's object is the base; without it the PUT would replace the day with
-// the new fragment alone. A missing object means the day has no base yet.
-func (s *Shipper) copyDailyBase(ctx context.Context, dst io.Writer, historyPath, key string) error {
-	//nolint:forbidigo // historyPath is the retained gzip sibling of a spool-owned upload.
-	if _, err := os.Stat(historyPath); err == nil || !errors.Is(err, os.ErrNotExist) {
-		return copyArchiveHistory(dst, historyPath)
-	}
-	body, err := s.s3.OpenObject(ctx, key)
-	var permanent *Permanent
-	if errors.As(err, &permanent) && permanent.StatusCode == http.StatusNotFound {
-		return nil
-	}
+// appendGzipMember appends src to dst as one gzip member.
+func appendGzipMember(dst io.Writer, src io.Reader) error {
+	zw, err := gzip.NewWriterLevel(dst, gzip.BestSpeed)
 	if err != nil {
-		return fmt.Errorf("read archived day %s: %w", key, err)
+		return fmt.Errorf("gzip writer: %w", err)
 	}
-	defer func() { _ = body.Close() }()
-	if _, err := io.Copy(dst, body); err != nil {
-		return fmt.Errorf("read archived day %s: %w", key, err)
+	if _, err := io.Copy(zw, src); err != nil {
+		_ = zw.Close()
+		return fmt.Errorf("gzip copy: %w", err)
 	}
-	return nil
-}
-
-func copyArchiveHistory(dst io.Writer, path string) error {
-	//nolint:forbidigo // path is the retained gzip sibling of a spool-owned upload.
-	src, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("open archived history: %w", err)
-	}
-	defer func() { _ = src.Close() }()
-	if _, err := io.Copy(dst, src); err != nil {
-		return fmt.Errorf("copy archived history: %w", err)
+	if err := zw.Close(); err != nil {
+		return fmt.Errorf("gzip close: %w", err)
 	}
 	return nil
 }
@@ -362,15 +333,7 @@ func copyArchiveHistory(dst io.Writer, path string) error {
 // sharing a bucket across multiple Gregale installs gets a
 // namespace without renaming the bucket.
 func (s *Shipper) bucketKey(instance, day string) string {
-	if len(day) < 10 {
-		// Defensive: spool's day format is YYYY-MM-DD;
-		// shorter values come from a buggy caller. The
-		// read-back path would 404 either way; surface as
-		// a clear error here.
-		return fmt.Sprintf("faas-logs/%s/%s.jsonl.gz", instance, day)
-	}
-	return fmt.Sprintf("faas-logs/%s/%s/%s/%s.jsonl.gz",
-		instance, day[:4], day[5:7], day[:10])
+	return DayKey(instance, day)
 }
 
 // classifyFailure maps an upload error to the closed-set reason

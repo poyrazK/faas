@@ -16,12 +16,18 @@ func (h *Handler) publicRoutingWakeMaximum(app App, routing PublicRoutingSnapsho
 	if routing.SelectionReason != "weighted" && routing.SelectionReason != "version" && routing.SelectionReason != "session" {
 		return maximum + api.RolloutConcurrencyGrant
 	}
-	// Only a second positive cohort coming up beside a routable cohort gets
-	// the existing overlap allowance. The scheduler still owns its ledger.
+	// A second positive cohort coming up beside a routable cohort gets the
+	// existing overlap allowance. The scheduler still owns its ledger.
 	for _, weight := range routing.Weights {
 		if weight.ID != routing.SelectedDeploymentID && pickPublicDeployment(h.backend, app.ID, weight.ID, "").OK {
 			return maximum + api.RolloutConcurrencyGrant
 		}
+	}
+	// A release staged with no traffic holds instances outside the weights;
+	// a cold cohort beside them is ADR-199's overlap too, or a parked serving
+	// release could not wake beside it (ADR-20261031105227).
+	if h.coldBesideOtherInstances(app.ID, routing.SelectedDeploymentID) {
+		return maximum + api.RolloutConcurrencyGrant
 	}
 	return maximum
 }
@@ -81,7 +87,15 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 				}
 				if atCapacity {
 					h.finishWakePageCycle(wakeCtx, app.ID, "")
-					return api.ErrAppConcurrencyReachedAt(api.MustLimitsFor(app.Plan), effectiveAppConcurrencyLimit(app, api.MustLimitsFor(app.Plan).MaxConcurrency), backendCapacityCount(h.backend, app.ID))
+					// An at-capacity answer rehydrates the app's targets. When
+					// that read finds a replica of this deployment, or one
+					// becomes routable soon after, the waiters re-pick and serve
+					// it once this generation completes.
+					limits := api.MustLimitsFor(app.Plan)
+					_, err = h.settleAtCapacity(wakeCtx, app, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
+						return pickPublicDeployment(h.backend, app.ID, deployment, "")
+					})
+					return err
 				}
 				if method == WakeMethodSnapshotRestore && h.burstPressure != nil {
 					h.burstPressure.state(app.ID).settlingUntil.Store(time.Now().Add(burstInitialRestoreSettlingWindow).UnixNano())
@@ -130,8 +144,12 @@ func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Req
 			}
 		}
 		h.markHealthFailure(app.ID, err)
+		h.logWakeFailure(app.ID, err)
 		if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 			return
+		}
+		if reason, ok := wakeNotDispatchedReason(err); ok {
+			markNotDispatched(w, r, reason)
 		}
 		writeWakeError(w, err)
 	}

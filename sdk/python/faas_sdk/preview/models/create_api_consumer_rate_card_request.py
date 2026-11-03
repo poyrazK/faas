@@ -46,20 +46,19 @@ class CreateAPIConsumerRateCardRequest:
     """Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot
     be backdated."""
     unit: str | Unset = "request"
-    """What the card prices (ADR-1308, ADR-1318): requests; compute_second or response_megabyte, rounded per
-    consumer minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units
-    price side by side (ADR-1317); non-request cards take no route weights and cannot be backdated."""
+    """What the card prices: requests; compute_second or response_megabyte, rounded per consumer minute; or
+    app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units price side by side;
+    non-request cards take no route weights and cannot be backdated."""
     base_fee_millicents_per_month: int | Unset = UNSET
-    """Fixed charge per consumer per UTC month while this card is in force when the consumer's month starts
-    (ADR-1316)."""
+    """Fixed charge per consumer per UTC month while this card is in force when the consumer's month starts."""
     minimum_millicents_per_month: int | Unset = UNSET
-    """Minimum usage charge per consumer per UTC month; statements top up the difference (ADR-1316)."""
+    """Minimum usage charge per consumer per UTC month; statements top up the difference."""
     prorate_monthly_fees: bool | Unset = False
     """Scale the base fee and minimum in a consumer's first month to the share of it left after the consumer was
-    created (ADR-1325)."""
+    created."""
     tier_mode: CreateAPIConsumerRateCardRequestTierMode | Unset = "graduated"
-    """How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in;
-    volume prices every unit of the month at the step the month's total reaches. volume needs tiers."""
+    """How tiers price a consumer's month: graduated prices each unit at the step its position falls in; volume
+    prices every unit of the month at the step the month's total reaches. volume needs tiers."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which this version starts; omitted means the next UTC minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

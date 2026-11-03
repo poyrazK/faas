@@ -21,7 +21,7 @@ T = TypeVar("T", bound="AppChangeTimelineResponse")
 
 @_attrs_define
 class AppChangeTimelineResponse:
-    """ADR-751 change timeline for one app over [since, until), newest first."""
+    """Change timeline for one app over [since, until), newest first."""
 
     app_id: str
     app_slug: str

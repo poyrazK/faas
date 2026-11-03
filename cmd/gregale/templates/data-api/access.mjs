@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { isIP } from 'node:net'
 import pg from 'pg'
-import { limits, relationPart } from './config.mjs'
+import { limits, relationPart, UnsafeConfiguration } from './config.mjs'
 
 // Access kinds are gateway-owned claims (ADR 20261018170742). Every kind uses the
 // binding login as its SQL role; PostgreSQL policies decide which rows match.
@@ -158,8 +158,10 @@ function expandIPv6(value) {
 }
 
 // The edge stamps one trusted client address (x-faas-client-ip). IPv6 clients
-// are grouped by /64 so address rotation inside one allocation shares a bucket.
-export function clientKey(req) {
+// are grouped by /64 so address rotation inside one allocation shares a
+// bucket, and by /48 when coarse: once the anonymous table is nearly full, so
+// rotating through a /48 cannot fill it and lock other visitors out.
+export function clientKey(req, coarse = false) {
   const value = req.headers['x-faas-client-ip']
   if (typeof value !== 'string') return 'unknown'
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(value)
@@ -167,7 +169,15 @@ export function clientKey(req) {
   const version = isIP(value)
   if (version === 4) return value
   if (version !== 6 || value.includes('.')) return 'unknown'
-  return expandIPv6(value.toLowerCase()).slice(0, 4).map(group => group.toString(16)).join(':') + '::/64'
+  const prefix = coarse ? 3 : 4
+  return expandIPv6(value.toLowerCase()).slice(0, prefix).map(group => group.toString(16)).join(':') + `::/${prefix * 16}`
+}
+
+// anonymousClient is a visitor's budget key in the rate and concurrency
+// tables: coarse once either table tracks anonymousCoarseSubjects subjects.
+export function anonymousClient(req, ...tables) {
+  const coarse = tables.some(table => (table?.tracked ?? 0) >= limits.anonymousCoarseSubjects)
+  return ['anonymous', clientKey(req, coarse)]
 }
 
 const publicRelationsQuery = `SELECT t.schema, t.relation, c.relkind AS kind, c.relrowsecurity AS rls,
@@ -196,7 +206,7 @@ const servingRelationsQuery = `SELECT n.nspname AS schema, c.relname AS relation
 // The exposed relations and whether each is row-secured, read at boot with the
 // rest of the serving contract (ADR 20261026140223).
 export async function loadRowSecurity(connection, schemas) {
-  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.healthProbeMs })
+  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.queryMs })
   await client.connect()
   try {
     const { rows } = await client.query(servingRelationsQuery, [schemas])
@@ -268,21 +278,21 @@ export function unsafePublicFunctions(entries, rows, approved) {
 }
 
 export async function checkPublicFunctions(connection, entries, approved) {
-  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.healthProbeMs })
+  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.queryMs })
   await client.connect()
   try {
     const { rows } = await client.query(publicFunctionsQuery, [entries.map(f => f.schema), entries.map(f => f.name)])
     const unsafe = unsafePublicFunctions(entries, rows, approved)
-    if (unsafe.length) throw new Error(`Public RPCs require approved STABLE or IMMUTABLE functions: ${unsafe.join(', ')}`)
+    if (unsafe.length) throw new UnsafeConfiguration(`Public RPCs require approved STABLE or IMMUTABLE functions: ${unsafe.join(', ')}`)
   } finally { await client.end() }
 }
 
 export async function checkPublicRelations(connection, relations) {
-  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.healthProbeMs })
+  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.queryMs })
   await client.connect()
   try {
     const { rows } = await client.query(publicRelationsQuery, [relations.map(r => r.schema), relations.map(r => r.relation)])
     const unsafe = unsafePublicRelations(rows)
-    if (unsafe.length) throw new Error(`Public reads require RLS tables or security-invoker views: ${unsafe.join(', ')}`)
+    if (unsafe.length) throw new UnsafeConfiguration(`Public reads require RLS tables or security-invoker views: ${unsafe.join(', ')}`)
   } finally { await client.end() }
 }

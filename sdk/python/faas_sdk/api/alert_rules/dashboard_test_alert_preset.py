@@ -84,7 +84,7 @@ def sync_detailed(
     slug: str,
     name: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: Any | Unset = UNSET,
 ) -> Response[Any | Problem]:
     r"""Form-POST sibling of testAlertPreset for the dashboard.
@@ -128,7 +128,7 @@ def sync(
     slug: str,
     name: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: Any | Unset = UNSET,
 ) -> Any | Problem | None:
     r"""Form-POST sibling of testAlertPreset for the dashboard.
@@ -167,7 +167,7 @@ async def asyncio_detailed(
     slug: str,
     name: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: Any | Unset = UNSET,
 ) -> Response[Any | Problem]:
     r"""Form-POST sibling of testAlertPreset for the dashboard.
@@ -209,7 +209,7 @@ async def asyncio(
     slug: str,
     name: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: Any | Unset = UNSET,
 ) -> Any | Problem | None:
     r"""Form-POST sibling of testAlertPreset for the dashboard.

@@ -99,23 +99,15 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.EdgeSto
 		}
 		maxBytes = parsed
 	}
-	maxConnections := 0
-	if raw := os.Getenv("FAAS_TCPD_MAX_CONNECTIONS"); raw != "" {
-		parsed, parseErr := strconv.Atoi(raw)
-		if parseErr != nil || parsed < 0 {
-			closeDependencies()
-			return nil, nil, fmt.Errorf("gatewayd-public: FAAS_TCPD_MAX_CONNECTIONS must be a non-negative integer, got %q", raw)
-		}
-		maxConnections = parsed
+	maxConnections, err := tcpConnectionCap("FAAS_TCPD_MAX_CONNECTIONS", api.RawTCPMaxConnectionsDefault)
+	if err != nil {
+		closeDependencies()
+		return nil, nil, err
 	}
-	maxConnectionsPerAccount := 0
-	if raw := os.Getenv("FAAS_TCPD_MAX_CONNECTIONS_PER_ACCOUNT"); raw != "" {
-		parsed, parseErr := strconv.Atoi(raw)
-		if parseErr != nil || parsed < 0 {
-			closeDependencies()
-			return nil, nil, fmt.Errorf("gatewayd-public: FAAS_TCPD_MAX_CONNECTIONS_PER_ACCOUNT must be a non-negative integer, got %q", raw)
-		}
-		maxConnectionsPerAccount = parsed
+	maxConnectionsPerAccount, err := tcpConnectionCap("FAAS_TCPD_MAX_CONNECTIONS_PER_ACCOUNT", api.RawTCPMaxConnectionsPerAccountDefault)
+	if err != nil {
+		closeDependencies()
+		return nil, nil, err
 	}
 	idleTimeout := api.StreamingIdleTimeoutDefault
 	if raw := os.Getenv("FAAS_TCPD_IDLE_TIMEOUT"); raw != "" {

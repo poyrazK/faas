@@ -18,7 +18,7 @@ class CreateAPIConsumerRequest:
     external_ref: str
     name: str
     trial_days: int | Unset = UNSET
-    """Starts the consumer's one free trial at the next UTC minute for this many days (ADR-1314)."""
+    """Starts the consumer's one free trial at the next UTC minute for this many days."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -19,7 +19,7 @@ T = TypeVar("T", bound="EdgeWAFReviewGroup")
 
 @_attrs_define
 class EdgeWAFReviewGroup:
-    """One edge rule's detections by one CRS rule on one path (ADR-831 amendment 13)."""
+    """One edge rule's detections by one CRS rule on one path."""
 
     rule_id: str
     crs_rule_id: int

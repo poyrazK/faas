@@ -37,11 +37,10 @@ class EnvironmentWorkload:
     authority."""
     runtime: AppManifest | Unset = UNSET
     """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
-    as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings)
-    resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are
-    NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`,
-    `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per
-    JSON semantics, so the widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with
+    as-source flag. The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by
+    the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the
+    contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old
+    guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with
     `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern
     the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults
     preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."""

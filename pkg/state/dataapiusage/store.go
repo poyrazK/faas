@@ -78,7 +78,11 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool, q: sqlc.New()} }
 // validate hours and deltas; Record also prunes this app's expired rows.
 func (s *Store) Record(ctx context.Context, accountID, appID, reportID string, hours []Hour, access []byte, now time.Time) (MonthToDate, error) {
 	var mtd MonthToDate
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	access, err := keyServerKeys(access)
+	if err != nil {
+		return mtd, err
+	}
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if _, err := s.q.LockUsageApp(ctx, tx, sqlc.LockUsageAppParams{AppID: appID, AccountID: accountID}); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {

@@ -94,7 +94,7 @@ def sync_detailed(
     body: ConfigRollbackRequest,
     scope: str | Unset = UNSET,
 ) -> Response[ConfigRollbackResponse | Problem]:
-    """Restore a scope's variables to a config revision (ADR-1451).
+    """Restore a scope's variables to a config revision.
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
     cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
@@ -102,8 +102,7 @@ def sync_detailed(
     Args:
         slug (str):
         scope (str | Unset):
-        body (ConfigRollbackRequest): The config revision whose variables a rollback restores
-            (ADR-1451).
+        body (ConfigRollbackRequest): The config revision whose variables a rollback restores.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -133,7 +132,7 @@ def sync(
     body: ConfigRollbackRequest,
     scope: str | Unset = UNSET,
 ) -> ConfigRollbackResponse | Problem | None:
-    """Restore a scope's variables to a config revision (ADR-1451).
+    """Restore a scope's variables to a config revision.
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
     cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
@@ -141,8 +140,7 @@ def sync(
     Args:
         slug (str):
         scope (str | Unset):
-        body (ConfigRollbackRequest): The config revision whose variables a rollback restores
-            (ADR-1451).
+        body (ConfigRollbackRequest): The config revision whose variables a rollback restores.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -167,7 +165,7 @@ async def asyncio_detailed(
     body: ConfigRollbackRequest,
     scope: str | Unset = UNSET,
 ) -> Response[ConfigRollbackResponse | Problem]:
-    """Restore a scope's variables to a config revision (ADR-1451).
+    """Restore a scope's variables to a config revision.
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
     cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
@@ -175,8 +173,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         scope (str | Unset):
-        body (ConfigRollbackRequest): The config revision whose variables a rollback restores
-            (ADR-1451).
+        body (ConfigRollbackRequest): The config revision whose variables a rollback restores.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -204,7 +201,7 @@ async def asyncio(
     body: ConfigRollbackRequest,
     scope: str | Unset = UNSET,
 ) -> ConfigRollbackResponse | Problem | None:
-    """Restore a scope's variables to a config revision (ADR-1451).
+    """Restore a scope's variables to a config revision.
 
      Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets
     cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
@@ -212,8 +209,7 @@ async def asyncio(
     Args:
         slug (str):
         scope (str | Unset):
-        body (ConfigRollbackRequest): The config revision whose variables a rollback restores
-            (ADR-1451).
+        body (ConfigRollbackRequest): The config revision whose variables a rollback restores.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

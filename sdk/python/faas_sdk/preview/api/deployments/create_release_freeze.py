@@ -85,11 +85,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateReleaseFreezeRequest,
 ) -> Response[Problem | ReleaseFreeze]:
-    """Freeze production releases (ADR-20261019071733).
+    """Freeze production releases.
 
-     Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
-    the account. While a freeze is active, new production deployments are refused with `release_frozen`
-    unless the request carries `override_freeze`.
+     Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every
+    personal app of the account. While a freeze is active, new production deployments are refused with
+    `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its
+    organization: naming one is refused with 409.
 
     Args:
         body (CreateReleaseFreezeRequest): Creates a freeze. A window takes `starts_at` (default
@@ -120,11 +121,12 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateReleaseFreezeRequest,
 ) -> Problem | ReleaseFreeze | None:
-    """Freeze production releases (ADR-20261019071733).
+    """Freeze production releases.
 
-     Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
-    the account. While a freeze is active, new production deployments are refused with `release_frozen`
-    unless the request carries `override_freeze`.
+     Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every
+    personal app of the account. While a freeze is active, new production deployments are refused with
+    `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its
+    organization: naming one is refused with 409.
 
     Args:
         body (CreateReleaseFreezeRequest): Creates a freeze. A window takes `starts_at` (default
@@ -150,11 +152,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateReleaseFreezeRequest,
 ) -> Response[Problem | ReleaseFreeze]:
-    """Freeze production releases (ADR-20261019071733).
+    """Freeze production releases.
 
-     Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
-    the account. While a freeze is active, new production deployments are refused with `release_frozen`
-    unless the request carries `override_freeze`.
+     Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every
+    personal app of the account. While a freeze is active, new production deployments are refused with
+    `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its
+    organization: naming one is refused with 409.
 
     Args:
         body (CreateReleaseFreezeRequest): Creates a freeze. A window takes `starts_at` (default
@@ -183,11 +186,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateReleaseFreezeRequest,
 ) -> Problem | ReleaseFreeze | None:
-    """Freeze production releases (ADR-20261019071733).
+    """Freeze production releases.
 
-     Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of
-    the account. While a freeze is active, new production deployments are refused with `release_frozen`
-    unless the request carries `override_freeze`.
+     Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every
+    personal app of the account. While a freeze is active, new production deployments are refused with
+    `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its
+    organization: naming one is refused with 409.
 
     Args:
         body (CreateReleaseFreezeRequest): Creates a freeze. A window takes `starts_at` (default

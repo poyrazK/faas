@@ -22,8 +22,8 @@ T = TypeVar("T", bound="DeploymentDependencyGate")
 
 @_attrs_define
 class DeploymentDependencyGate:
-    """Compose dependency readiness gate pinned at admission (ADR-685). The deadline starts when the candidate first
-    presents its own readiness proof.
+    """Compose dependency readiness gate pinned at admission. The deadline starts when the candidate first presents its own
+    readiness proof.
 
     """
 

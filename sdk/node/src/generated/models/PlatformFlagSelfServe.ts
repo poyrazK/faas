@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Lets customers join the preview themselves (ADR 20261021080640). An opted-in account or organization on an eligible plan gets the flag when no rule matched. Disabling it ignores existing opt-ins without deleting them.
+ * Lets customers join the preview themselves. An opted-in account or organization on an eligible plan gets the flag when no rule matched. Disabling it ignores existing opt-ins without deleting them.
  */
 export type PlatformFlagSelfServe = {
   enabled: boolean;

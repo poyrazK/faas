@@ -46,6 +46,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -132,8 +133,12 @@ type InternalReverseProxy struct {
 	// trafficSecurityPeers says whether every compute gateway behind this edge
 	// stamps the traffic security snapshot; nil means it does.
 	trafficSecurityPeers TrafficSecurityPeers
+	// placement routes hosts to the node that last served them
+	// (ADR-20261031105055); nil keeps every request on the dialer's default.
+	placement EdgePlacement
 
 	trafficRevocations  *trafficrevocation.Registry
+	trafficSnapshots    *trafficSnapshotMemo
 	Dialer              InternalDialer
 	Target              *url.URL
 	Transport           http.RoundTripper
@@ -148,6 +153,10 @@ type InternalReverseProxy struct {
 	// a request that's already handed off to the proxy but is
 	// still piping bytes upstream would be invisible to the drain.
 	Drain *drain.Tracker
+	// WakeFailover retries a response gatewayd-internal marked not
+	// dispatched on another compute node (ADR-20261022184531 step 5). nil
+	// forwards each request once.
+	WakeFailover *WakeFailover
 }
 
 const (
@@ -177,9 +186,14 @@ func isEdgeWorkerZone(zone string) bool {
 // original contract). 502 is encoded only when the Worker advertises it, so a
 // Worker that predates it never hands a customer a raw 409. Production-us
 // hunt #9 (H9-96): an app OOM-killed mid-request reached API clients as
-// Cloudflare HTML with no request id.
-func edgeTransportStatus(r *http.Request, status int) bool {
+// Cloudflare HTML with no request id. A platform problem (header carries
+// api.ErrorCodeHeader) is not encoded: PlatformErrorStatus sends it as 503,
+// which Cloudflare and every Worker pass through (ADR-20261030115139).
+func edgeTransportStatus(r *http.Request, status int, header http.Header) bool {
 	if r == nil || !isEdgeWorkerZone(r.Header.Get(cloudflareWorkerHeader)) {
+		return false
+	}
+	if header.Get(api.ErrorCodeHeader) != "" {
 		return false
 	}
 	switch status {
@@ -207,7 +221,7 @@ func EncodeEdgeTransportResponse(resp *http.Response) {
 		return
 	}
 	resp.Header.Del(edgeOriginalStatusHeader)
-	if !edgeTransportStatus(resp.Request, resp.StatusCode) {
+	if !edgeTransportStatus(resp.Request, resp.StatusCode, resp.Header) {
 		return
 	}
 	resp.Header.Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
@@ -223,7 +237,7 @@ type edgeTransportWriter struct {
 }
 
 func (w edgeTransportWriter) WriteHeader(status int) {
-	if edgeTransportStatus(w.r, status) {
+	if edgeTransportStatus(w.r, status, w.Header()) {
 		w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(status))
 		status = edgeOrigin504TransportStatus
 	}
@@ -254,6 +268,71 @@ func ParseTrustedIngressCIDRs(value string) ([]netip.Prefix, error) {
 		prefixes = append(prefixes, prefix.Masked())
 	}
 	return prefixes, nil
+}
+
+// EdgePlacement is a compute edge's memory of which node serves each host
+// (ADR-20261031105055).
+type EdgePlacement interface {
+	// Prefer returns the node r's host was last served from.
+	Prefer(r *http.Request) (PreferredNode, bool)
+	// Learn records the node gatewayd-internal named for r's response.
+	Learn(r *http.Request, nodeID string)
+}
+
+// EdgePlacementSet is an EdgePlacement that also takes every node of the app,
+// InstanceNodesHeader's "<node id>=<count>,..." (ADR-20261102081618 §5b).
+type EdgePlacementSet interface {
+	LearnSet(r *http.Request, nodes string)
+}
+
+// WithEdgePlacement makes the proxy ask gatewayd-internal for the node of
+// the instance behind each response, remember it in placement, and hand the
+// host's preferred node to the dialer through the request context. Every
+// proxy strips the answer from responses.
+func (p *InternalReverseProxy) WithEdgePlacement(placement EdgePlacement) *InternalReverseProxy {
+	p.placement = placement
+	return p
+}
+
+// withPreference attaches r's host's preferred node for the dialer.
+func (p *InternalReverseProxy) withPreference(r *http.Request) *http.Request {
+	if p.placement == nil {
+		return r
+	}
+	ctx := WithPlacementAsked(r.Context())
+	if pref, ok := p.placement.Prefer(r); ok {
+		ctx = WithPreferredNode(ctx, pref)
+	}
+	return r.WithContext(ctx)
+}
+
+// markPlacement replaces a client's placement request with this proxy's own.
+func (p *InternalReverseProxy) markPlacement(h http.Header) {
+	h.Del(EdgePlacementHeader)
+	if p.placement != nil {
+		h.Set(EdgePlacementHeader, "1")
+	}
+}
+
+// takeInstanceNode removes gatewayd-internal's node answer from a response
+// and records it.
+func (p *InternalReverseProxy) takeInstanceNode(r *http.Request, h http.Header) {
+	node := strings.TrimSpace(h.Get(InstanceNodeHeader))
+	h.Del(InstanceNodeHeader)
+	// ADR-20261102081618 §5a: a gatewayd-internal with local-first on also
+	// names every node of the app; no client sees it.
+	nodes := strings.TrimSpace(h.Get(InstanceNodesHeader))
+	h.Del(InstanceNodesHeader)
+	if p.placement == nil {
+		return
+	}
+	if set, ok := p.placement.(EdgePlacementSet); ok && nodes != "" {
+		set.LearnSet(r, nodes)
+		return
+	}
+	if node != "" {
+		p.placement.Learn(r, node)
+	}
 }
 
 // WithInFlightTracker installs the per-request drain tracker (see
@@ -451,7 +530,7 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, release := p.publicTrafficContext(r.Context())
 	defer release()
-	p.serveHTTP(w, r.WithContext(WithStartTime(ctx, time.Now())))
+	p.serveHTTP(w, p.withPreference(r.WithContext(WithStartTime(ctx, time.Now()))))
 }
 
 func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -527,6 +606,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	// Upgrade traffic branched above; plain HTTP must not forward hop-by-hop
 	// headers from an untrusted client.
 	stripHopByHopInPlace(outReq.Header)
+	p.markPlacement(outReq.Header)
 	stampTrafficStart(outReq)
 	// This transport is intentionally custom rather than otelhttp.Transport,
 	// so propagate the active public-edge span explicitly. The internal
@@ -599,7 +679,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	// arm). The bodyclose lint rule can't see across function
 	// boundaries, so annotate explicitly.
 	//nolint:bodyclose
-	resp, err := p.Transport.RoundTrip(outReq)
+	resp, err := p.roundTrip(outReq, bridgeDuplex || grpcDuplex)
 	if err != nil {
 		// Distinguish "upstream unreachable" (502) from "client
 		// cancelled" (the latter is a normal close, don't log
@@ -671,7 +751,8 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	// in place on the response (RFC 7230 §6.1) — the internal
 	// daemon may have set Connection: close and we don't want to
 	// leak that to the customer.
-	encodeOriginStatus := edgeTransportStatus(r, resp.StatusCode)
+	p.takeInstanceNode(r, resp.Header)
+	encodeOriginStatus := edgeTransportStatus(r, resp.StatusCode, resp.Header)
 	customerOwned := httpsec.SurfaceFrom(r.Context()).CustomerOwned()
 	// H2 can expose trailer declarations only in the header map. Retain
 	// them so this hop can announce its own trailers after stripping.
@@ -906,6 +987,15 @@ func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (in
 	return copyResponseBodyWithActivity(ctx, dst, src, nil)
 }
 
+// responseCopyBuffers recycles copyResponseBodyWithActivity's 32 KiB
+// buffer. A fresh one per response was the edge's largest allocation by
+// bytes (300 req/s made ~10 MB/s of garbage). The copier returns its
+// buffer only after its last Read and Write.
+var responseCopyBuffers = sync.Pool{New: func() any {
+	buf := make([]byte, 32*1024)
+	return &buf
+}}
+
 func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, activity func()) (int64, error) {
 	if w, ok := dst.(http.ResponseWriter); ok {
 		stop, err := armResponseWriteContext(ctx, w)
@@ -958,7 +1048,9 @@ func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.Rea
 			}
 		}()
 		defer func() { _ = src.Close() }() // ensure goroutine exit even on panic
-		buf := make([]byte, 32*1024)
+		bufp := responseCopyBuffers.Get().(*[]byte)
+		defer responseCopyBuffers.Put(bufp)
+		buf := *bufp
 		for {
 			n, rErr := src.Read(buf)
 			if n > 0 {
@@ -1116,7 +1208,7 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 	if r.TLS != nil {
 		proto = "https"
 	}
-	if !trustsIngressPeer(peer, trustedIngressCIDRs) {
+	if !trustsIngressPeer(peer, trustedIngressCIDRs) && !verifiedIngress(r) {
 		return peerText, proto
 	}
 
@@ -1141,7 +1233,25 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 // peer, the same test CanonicalForwardingContext applies before it reads any
 // forwarded header.
 func TrustedIngressPeer(r *http.Request, trustedIngressCIDRs []netip.Prefix) bool {
-	return trustsIngressPeer(remoteAddrIP(r.RemoteAddr), trustedIngressCIDRs)
+	return verifiedIngress(r) || trustsIngressPeer(remoteAddrIP(r.RemoteAddr), trustedIngressCIDRs)
+}
+
+type verifiedIngressKey struct{}
+
+// WithVerifiedIngress marks ctx as a connection whose peer proves it is the
+// ingress with a client certificate the listener verified. Cloudflare reaches
+// a compute edge from addresses we do not list, so the certificate stands in
+// for FAAS_TRUSTED_INGRESS_CIDRS there (ADR-20261102081618 §2).
+func WithVerifiedIngress(ctx context.Context) context.Context {
+	return context.WithValue(ctx, verifiedIngressKey{}, true)
+}
+
+// verifiedIngress reports whether r came over a marked connection and its
+// client certificate was verified. Both are required, so a mark on a
+// connection without a verified certificate trusts nothing.
+func verifiedIngress(r *http.Request) bool {
+	marked, _ := r.Context().Value(verifiedIngressKey{}).(bool)
+	return marked && r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 }
 
 func trustsIngressPeer(peer netip.Addr, trustedIngressCIDRs []netip.Prefix) bool {

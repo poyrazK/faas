@@ -63,7 +63,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|restart-changed|bundle-create|unit-overlay|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|record|restart-changed|bundle-create|unit-overlay|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
@@ -112,6 +112,11 @@ func main() {
 	case "rollback":
 		if err := runRollback(args); err != nil {
 			fmt.Fprintln(os.Stderr, "deployctl rollback:", err)
+			os.Exit(1)
+		}
+	case "record":
+		if err := runRecord(args); err != nil {
+			fmt.Fprintln(os.Stderr, "deployctl record:", err)
 			os.Exit(1)
 		}
 	case "restart-changed":
@@ -178,9 +183,14 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/gatewayd_public_edge_service/files", skip: only("gatewayd-public-edge")},
 	{dir: "deploy/ansible/roles/builderd_service/files", skip: only("builderd")},
 	{dir: "deploy/ansible/roles/s3_gateway_service/files", skip: only("s3-gatewayd")},
+	{dir: "deploy/ansible/roles/s3_gateway_compute_service/files", skip: only("s3-gatewayd-compute")},
 	{dir: "deploy/ansible/roles/internal_mail_service/files", skip: only("maild")},
 	{dir: "deploy/ansible/roles/profiled_service/files", skip: only("profiled")},
+	{dir: "deploy/ansible/roles/pgproxyd_service/files", skip: only("pgproxyd")},
+	{dir: "deploy/ansible/roles/dbbackupd_service/files", skip: only("dbbackupd")},
 	{dir: "deploy/ansible/roles/livequeryd_service/files", skip: only("livequeryd")},
+	{dir: "deploy/ansible/roles/agentd_service/files", skip: only("agentd")},
+	{dir: "deploy/ansible/roles/edgednsd_service/files", skip: only("edgednsd")},
 }
 
 // ansibleRoleSkips: the control_plane_service role ships apid, meterd
@@ -196,10 +206,15 @@ func ansibleRoleSkips() map[string]bool {
 		"gatewayd-public-edge": true,
 		"gatewayd-internal":    true,
 		"s3-gatewayd":          true,
+		"s3-gatewayd-compute":  true,
 		"maild":                true,
 		"realtimed":            true,
 		"profiled":             true,
 		"livequeryd":           true,
+		"pgproxyd":             true, // database nodes only (ADR-1027)
+		"dbbackupd":            true, // database nodes only (ADR-1027)
+		"agentd":               true,
+		"edgednsd":             true,
 	}
 }
 
@@ -226,8 +241,14 @@ func legacySkips() map[string]bool {
 		"githubd":              true,
 		"meterd":               true,
 		"s3-gatewayd":          true,
+		"s3-gatewayd-compute":  true,
 		"gatewayd-public-edge": true,
 		"livequeryd":           true,
+		"pgproxyd":             true,
+		"dbbackupd":            true,
+		"mcp-bridge":           true,
+		"agentd":               true,
+		"edgednsd":             true,
 	}
 }
 

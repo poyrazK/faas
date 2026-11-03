@@ -65,7 +65,7 @@ func linearBoundConnection(r state.IssueTrackerLinearRecord) *issuetrackers.Line
 }
 func (h nativeLinearCreationHost) Token(ctx context.Context, c issuetrackers.Connection) (string, error) {
 	store, ok := h.server.store.(state.IssueTrackerLinearStore)
-	if !ok || c.Linear == nil || mfaIdentities == nil {
+	if !ok || c.Linear == nil || len(accountIdentities()) == 0 {
 		return "", api.ErrCapacity("Linear credentials unavailable")
 	}
 	r, err := store.GetIssueTrackerLinearConnection(ctx, h.app.ID, h.account.ID)

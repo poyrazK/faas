@@ -174,7 +174,7 @@ func TestTypoSuggestionsCoverTranspositions(t *testing.T) {
 		want string
 	}{
 		{[]string{"deplyo"}, "did you mean 'gregale deploy'?"},
-		{[]string{"secret"}, "did you mean 'gregale secrets'?"},
+		{[]string{"relase"}, "did you mean 'gregale release'?"},
 		{[]string{"deploy", "--naem", "demo"}, "Did you mean --name?"},
 		{[]string{"logs", "--folow"}, "Did you mean --follow?"},
 	} {

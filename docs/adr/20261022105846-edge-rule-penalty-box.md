@@ -168,3 +168,16 @@ Decision:
 4. **Release order.** A batch of events that the old CHECK refuses is
    dropped whole, so the migration must apply before gateways that record
    `boxed`, which the data, control plane, edge deploy order guarantees.
+
+## Amendment 3 (2026-11-02): cross-site refusals shorten a box instead of escaping it
+
+A refusal that came with `Sec-Fetch-Site: cross-site` never counted, so a
+page on another site could not get an app's real visitors boxed by making
+their browsers request refused URLs. But only browsers set that header
+reliably; any other client can send it, so a scanner that added it was never
+boxed by any rule. A cross-site refusal now counts like any other. A box
+every counted refusal of which was cross-site lasts at most
+`api.EdgePenaltyCrossSiteMaxSeconds` (60 seconds), and one first-party
+refusal in the window gives the box the rule's full length. A client that
+claims every request is cross-site is still boxed, a minute at a time, and a
+visitor a third-party page used is refused for at most a minute.

@@ -23,13 +23,6 @@ func TestGetOperatorIntentUnknownParkEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, hash, err := api.GenerateAPIKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.CreateAPIKey(t.Context(), account.ID, hash, "restart", api.ScopesAdminOnly); err != nil {
-		t.Fatal(err)
-	}
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "park-api", RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +60,9 @@ func TestGetOperatorIntentUnknownParkEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithAdminAllowlist(account.Email)
+	cookie := operatorSessionCookie(t, store, server.Sessions(), account.ID)
 	request := httptest.NewRequest(http.MethodGet, "/v1/admin/operator-intents/"+intent.ID, nil)
-	request.Header.Set("Authorization", "Bearer "+key)
+	request.AddCookie(cookie)
 	recorder := httptest.NewRecorder()
 	server.Handler().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {

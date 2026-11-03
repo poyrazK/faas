@@ -123,6 +123,17 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 			failures = 0
 			continue
 		}
+		// A permanent rejection never succeeds on retry: retrying it held
+		// every later event from this node and, once the outbox filled,
+		// withheld every billable response (bug hunt 2026-10-28 H38).
+		if status.Code(err) == codes.InvalidArgument && ok {
+			if qerr := q.Quarantine(item, err.Error()); qerr == nil {
+				metrics.IncUsageQuarantined()
+				log.Error("consumer usage event rejected by apid; quarantined", "event_id", item.Event.EventID, "err", err)
+				failures = 0
+				continue
+			}
+		}
 		if client != nil {
 			_ = client.Close()
 			client = nil

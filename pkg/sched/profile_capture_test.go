@@ -25,7 +25,7 @@ func TestProfileCaptureOutcomeMapping(t *testing.T) {
 		want string
 	}{
 		{ErrNoRunningInstance, "no running instance"},
-		{status.Error(codes.FailedPrecondition, "guest has no profile collectors for on-demand capture"), "no profile collectors"},
+		{status.Error(codes.FailedPrecondition, "this deployment has no profile collectors; redeploy the app to enable on-demand captures"), "redeploy the app"},
 		{status.Error(codes.NotFound, "gone"), "stopped before"},
 		{status.Error(codes.DeadlineExceeded, "slow"), "timed out"},
 		{status.Error(codes.Unavailable, "internal detail"), "could not reach"},

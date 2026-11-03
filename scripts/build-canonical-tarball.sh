@@ -86,6 +86,18 @@ if [[ -n "${KERNEL_FILE:-}" ]]; then
   install -m 0644 "$KERNEL_FILE" "$work_root/$git_sha/bin/vmlinux"
 fi
 
+# imaged verifies platform base provenance offline against the Sigstore root
+# its own release shipped, and admits the frozen pre-attestation digests
+# (ADR-20261029155852). Both are support files hashed into tool_hashes.
+if [[ -n "${SIGSTORE_TRUSTED_ROOT_FILE:-}" ]]; then
+  [[ -s "$SIGSTORE_TRUSTED_ROOT_FILE" ]] || {
+    echo "SIGSTORE_TRUSTED_ROOT_FILE is missing or empty: $SIGSTORE_TRUSTED_ROOT_FILE" >&2
+    exit 2
+  }
+  install -m 0644 "$SIGSTORE_TRUSTED_ROOT_FILE" "$work_root/$git_sha/bin/sigstore-trusted-root.json"
+fi
+install -m 0644 "$repo_root/images/base-provenance-legacy.txt" "$work_root/$git_sha/bin/base-provenance-legacy.txt"
+
 go -C "$repo_root" run ./cmd/release-artifact \
   --root "$work_root" \
   --git-sha "$git_sha" \

@@ -143,7 +143,7 @@ def sync_detailed(
     `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
-    auth and rate-limit share the §12 per-app budget with
+    auth and rate-limit share the per-app budget with
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
@@ -221,7 +221,7 @@ def sync(
     `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
-    auth and rate-limit share the §12 per-app budget with
+    auth and rate-limit share the per-app budget with
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
@@ -294,7 +294,7 @@ async def asyncio_detailed(
     `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
-    auth and rate-limit share the §12 per-app budget with
+    auth and rate-limit share the per-app budget with
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).
@@ -370,7 +370,7 @@ async def asyncio(
     `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
-    auth and rate-limit share the §12 per-app budget with
+    auth and rate-limit share the per-app budget with
     logs/metrics/wake. Cross-account access 404s the
     same way unknown slugs do (forge-proof: every row's
     `data.app_id` is verified to match the resolved app).

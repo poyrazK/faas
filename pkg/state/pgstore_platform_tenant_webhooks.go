@@ -34,13 +34,7 @@ func (s *PgStore) CreatePlatformTenantWebhookIfUnderQuota(ctx context.Context, i
 		return AppWebhook{}, fmt.Errorf("state: lock platform tenant webhook owner %s: %w", in.PlatformTenantID, err)
 	}
 	var count int
-	if err := tx.QueryRow(ctx, `
-		select count(*) from app_webhooks w
-		 left join apps a on a.id = w.app_id
-		 where w.account_id = $1
-		   and (w.scope in ('account', 'platform_tenant') or
-		        (w.scope = 'app' and a.account_id = $1 and a.status <> 'deleted'))
-	`, in.AccountID).Scan(&count); err != nil {
+	if err := tx.QueryRow(ctx, appWebhookQuotaCountSQL, in.AccountID).Scan(&count); err != nil {
 		return AppWebhook{}, fmt.Errorf("state: count webhooks for account %s: %w", in.AccountID, err)
 	}
 	if count >= limits.WebhookPerAccount {

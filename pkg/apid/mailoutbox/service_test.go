@@ -76,7 +76,11 @@ func migrationParts(t *testing.T) (string, string) {
 	endedUp, endedDown := migrationFileParts(t, "20261017142138994_platform_mail_subscription_ended_outbox.sql")
 	deployUp, deployDown := migrationFileParts(t, "20261017155842001_platform_mail_deployment_failed_outbox.sql")
 	scopeShapeUp, scopeShapeDown := migrationSectionParts(t, "20261018162329975_platform_mail_deployment_scope_shape.sql")
-	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp + "\n" + disabledUp + "\n" + changedUp + "\n" + enabledUp + "\n" + paymentUp + "\n" + restoredUp + "\n" + suspendedUp + "\n" + nonpaymentUp + "\n" + quotaUp + "\n" + endedUp + "\n" + deployUp + "\n" + scopeShapeUp, scopeShapeDown + "\n" + deployDown + "\n" + endedDown + "\n" + quotaDown + "\n" + nonpaymentDown + "\n" + suspendedDown + "\n" + restoredDown + "\n" + paymentDown + "\n" + enabledDown + "\n" + changedDown + "\n" + disabledDown + "\n" + disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
+	capUp, capDown := migrationSectionParts(t, "20261027181456913_managed_postgres_cap_events.sql")
+	agentUp, agentDown := migrationFileParts(t, "20261029093552602_platform_mail_agent_run_delivered_outbox.sql")
+	slotUp, slotDown := migrationSectionParts(t, "20261101085949320_managed_postgres_restore_slot_notices.sql")
+	planUp, planDown := migrationSectionParts(t, "20261102175406542_managed_postgres_plan_excess_notices.sql")
+	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp + "\n" + disabledUp + "\n" + changedUp + "\n" + enabledUp + "\n" + paymentUp + "\n" + restoredUp + "\n" + suspendedUp + "\n" + nonpaymentUp + "\n" + quotaUp + "\n" + endedUp + "\n" + deployUp + "\n" + scopeShapeUp + "\n" + capUp + "\n" + agentUp + "\n" + slotUp + "\n" + planUp, planDown + "\n" + slotDown + "\n" + agentDown + "\n" + capDown + "\n" + scopeShapeDown + "\n" + deployDown + "\n" + endedDown + "\n" + quotaDown + "\n" + nonpaymentDown + "\n" + suspendedDown + "\n" + restoredDown + "\n" + paymentDown + "\n" + enabledDown + "\n" + changedDown + "\n" + disabledDown + "\n" + disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
 }
 
 func outboxSchema(t *testing.T) (string, string) {
@@ -120,7 +124,8 @@ ADD COLUMN abuse_hold_reason text,
 ADD COLUMN billing_email text NOT NULL DEFAULT '',
 ADD COLUMN business_name text NOT NULL DEFAULT '',
 ADD COLUMN billing_address text NOT NULL DEFAULT '',
-ADD COLUMN tax_id text NOT NULL DEFAULT ''`); err != nil {
+ADD COLUMN tax_id text NOT NULL DEFAULT '',
+ADD COLUMN deletion_requested_at timestamptz`); err != nil {
 		t.Fatal(err)
 	}
 }

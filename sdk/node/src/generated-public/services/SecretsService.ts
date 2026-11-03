@@ -71,12 +71,12 @@ export class SecretsService {
      */
     slug: string,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -277,20 +277,19 @@ export class SecretsService {
      */
     requestBody: PutAppSecretRequest,
     /**
-     * `false` opts this env or secret write out of the config guard
-     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * `false` opts this env or secret write out of the config guard: no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *
      */
     guard?: boolean,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -343,20 +342,19 @@ export class SecretsService {
      */
     key: string,
     /**
-     * `false` opts this env or secret write out of the config guard
-     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * `false` opts this env or secret write out of the config guard: no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *
      */
     guard?: boolean,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -423,20 +421,19 @@ export class SecretsService {
      */
     requestBody: RotateAppSecretRequest,
     /**
-     * `false` opts this env or secret write out of the config guard
-     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * `false` opts this env or secret write out of the config guard: no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *
      */
     guard?: boolean,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -538,7 +535,7 @@ export class SecretsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper (cmd/apid/upload_session_reaper.go) and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session (issue #1182 §P1 PR-2).`,
+        410: `code: upload_session_expired — the resumable-upload session has been swept by the reaper and cannot be appended to or committed. The CLI is expected to detect this on the first PATCH/COMMIT after expiry and mint a fresh session.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -550,14 +547,14 @@ export class SecretsService {
   /**
    * List every sealed secret across the caller's account.
    * Replaces the per-app fan-out from `/v1/apps/{slug}/secrets`
-   * with one account-scoped read (issue #393). Each row carries
+   * with one account-scoped read. Each row carries
    * the owning app's `app_id` and `app_slug` so the dashboard
    * can render "foo-app / DATABASE_URL" without a parallel
    * `/v1/apps` round-trip.
    *
    * **Plaintext never appears here** — only the age-sealed
    * envelope (base64). The plaintext value lives transiently in
-   * the PUT handler and never crosses the apid wire.
+   * the PUT handler and never crosses the API wire.
    *
    * Cursor: `?before=<slug>|<key>` — the (app_slug, key) pair,
    * pipe-separated. The SQL splits it back via `split_part`.

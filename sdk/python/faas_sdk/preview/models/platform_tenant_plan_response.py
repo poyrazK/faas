@@ -37,14 +37,14 @@ class PlatformTenantPlanResponse:
     tiers: list[APIConsumerRateCardTier] | Unset = UNSET
     route_weights: PlatformTenantPlanResponseRouteWeights | Unset = UNSET
     request_budget: PlatformTenantPlanBudget | Unset = UNSET
-    """The request budget a tenant plan sets (ADR-240); zero disables a ceiling."""
+    """The request budget a tenant plan sets; zero disables a ceiling."""
     unit: str | Unset = UNSET
-    """What the plan's card prices (ADR-1310, ADR-1319)."""
+    """What the plan's card prices."""
     base_fee_millicents_per_month: int | Unset = UNSET
     minimum_millicents_per_month: int | Unset = UNSET
     prorate_monthly_fees: bool | Unset = UNSET
     tier_mode: PlatformTenantPlanResponseTierMode | Unset = UNSET
-    """How the plan's ladder prices a month (ADR-1309)."""
+    """How the plan's ladder prices a month."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

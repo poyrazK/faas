@@ -29,7 +29,7 @@ environment's configuration, so values the services share are set once:
 cat > production.json <<'EOF'
 {"LOG_LEVEL": "info", "ORDERS_URL": "http://orders.svc.gregale", "WORKERS": 4}
 EOF
-gregale projects environments config set shop production --file production.json --yes
+gregale environment config set shop production --file production.json --yes
 ```
 
 `config set` replaces the whole document, so include every key you want to
@@ -68,7 +68,7 @@ gregale env rollback 12 --app my-api
 `gregale env rollback <revision>` sets and deletes variables until the scope
 matches that revision, as one change. Revisions never hold secret values, so a
 rollback cannot restore a secret; it lists every secret that differs, with
-both versions, so you can set it again with `gregale secrets set`.
+both versions, so you can set it again with `gregale env set`.
 
 ## Config guard
 
@@ -93,6 +93,6 @@ served with the new config, and gives up after 24 hours without traffic.
 - A release deployed while a guard is open is judged by its own rollout, not
   blamed on the config.
 
-`gregale secrets set` and `gregale env push` say when a guard is watching.
+`gregale env set` and `gregale env push` say when a guard is watching.
 Pass `--no-guard` to change config without one, for example while you fix a
 deliberately broken staging app.

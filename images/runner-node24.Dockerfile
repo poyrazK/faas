@@ -11,7 +11,7 @@
 # the box — per-app cost is just the customer's package.json-resolved
 # node_modules + handler. The 130 MB/sandbox accounting is preserved
 # (CLAUDE.md "load-bearing — DO NOT fix").
-FROM mirror.gcr.io/library/node:24-trixie-slim@sha256:e79437bb05061f860be420634f676f4394619028df216d4b9361966d7fcc7a14
+FROM mirror.gcr.io/library/node:24-trixie-slim@sha256:e053394f15519046270b637f0655c284d2fc844e013451fcb36e02dcfba29280
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
 # The official image already reserves uid 1000 for `node`; reuse that
 # identity under the platform's canonical `app` name instead of attempting

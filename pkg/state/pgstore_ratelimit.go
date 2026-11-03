@@ -99,6 +99,19 @@ func (e *rateLimitConsultError) Error() string                  { return e.err.E
 func (e *rateLimitConsultError) Unwrap() error                  { return e.err }
 func (e *rateLimitConsultError) CanBackoffCentralConsult() bool { return e.backoff }
 
+// rateLimitAcquireTimeout bounds waiting for a pooled connection, inside
+// whatever longer deadline the caller gives the statement (ADR-570 amendment
+// 2026-10-28). A saturated pool still fails fast and opens the gateway's
+// consult breaker; only a slow statement on an acquired connection gets the
+// caller's full budget.
+const rateLimitAcquireTimeout = 250 * time.Millisecond
+
+func (b *PGRateLimitBackend) acquire(ctx context.Context) (*pgxpool.Conn, error) {
+	acquireCtx, cancel := context.WithTimeout(ctx, rateLimitAcquireTimeout)
+	defer cancel()
+	return b.pool.Acquire(acquireCtx)
+}
+
 // ConsumeToken attempts to consume one token from the central
 // counter for (scope, subjectID, plan). Implements
 // gateway.CentralBackend (the interface assertion lives in
@@ -124,7 +137,7 @@ func (b *PGRateLimitBackend) ConsumeToken(ctx context.Context, scope, subjectID,
 	// This remains ordinary pooled work: one atomic SQLC statement with no
 	// session state. Acquire separately to classify pool versus statement
 	// failures, and release on every path (see pkg/db's acquisition gate).
-	conn, err := b.pool.Acquire(ctx)
+	conn, err := b.acquire(ctx)
 	if err != nil {
 		return 0, false, &rateLimitConsultError{err: fmt.Errorf("ratelimit central acquire: %w", err), backoff: true}
 	}
@@ -161,7 +174,7 @@ func (b *PGRateLimitBackend) ConsumeTokens(ctx context.Context, scope, subjectID
 	}
 	// Classify connection acquisition separately from statements just as in
 	// ConsumeToken. A statement failure must not keep a recovered key offline.
-	conn, err := b.pool.Acquire(ctx)
+	conn, err := b.acquire(ctx)
 	if err != nil {
 		return 0, 0, &rateLimitConsultError{err: fmt.Errorf("ratelimit central acquire: %w", err), backoff: true}
 	}

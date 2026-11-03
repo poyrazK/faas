@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/subtle"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -45,7 +44,7 @@ func (m *MemStore) CreateExecutionArtifactGrant(_ context.Context, params Create
 	grant := ExecutionArtifactGrant{
 		ID: params.ID, AccountID: params.AccountID, SourceExecutionID: params.SourceExecutionID,
 		ArtifactName: params.ArtifactName, CreatorPrincipalID: cloneStringPtr(params.CreatorPrincipalID),
-		TokenHash: append([]byte(nil), params.TokenHash...), ExpiresAt: params.ExpiresAt.UTC(), CreatedAt: params.CreatedAt.UTC(),
+		TokenHash: storedCredential(credTagArtifactGrant, append([]byte(nil), params.TokenHash...)), ExpiresAt: params.ExpiresAt.UTC(), CreatedAt: params.CreatedAt.UTC(),
 	}
 	m.executionArtifactGrants[grant.ID] = grant
 	return cloneExecutionArtifactGrant(grant), nil
@@ -58,7 +57,7 @@ func (m *MemStore) ExecutionArtifactGrantByToken(_ context.Context, accountID st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, grant := range m.executionArtifactGrants {
-		if grant.AccountID == accountID && grant.RevokedAt == nil && grant.RedeemedAt == nil && grant.ExpiresAt.After(at) && subtle.ConstantTimeCompare(grant.TokenHash, tokenHash) == 1 {
+		if grant.AccountID == accountID && grant.RevokedAt == nil && grant.RedeemedAt == nil && grant.ExpiresAt.After(at) && credentialIn(credTagArtifactGrant, tokenHash, grant.TokenHash) {
 			return cloneExecutionArtifactGrant(grant), nil
 		}
 	}

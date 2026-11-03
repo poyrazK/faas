@@ -67,6 +67,11 @@ func (m *MemStore) queueStateInScope(appID string, queueName *string, scope stri
 		}
 		switch inv.State {
 		case InvocationPending:
+			// A message in retry back-off or nacked with a delay is not
+			// demand until it is due (bug hunt 2026-10-28 B18).
+			if inv.DueAt.After(now) {
+				continue
+			}
 			stats.Depth++
 			if stats.OldestPendingAt.IsZero() || inv.CreatedAt.Before(stats.OldestPendingAt) {
 				stats.OldestPendingAt = inv.CreatedAt

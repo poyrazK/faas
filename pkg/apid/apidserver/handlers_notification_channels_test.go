@@ -72,6 +72,31 @@ func TestNotificationChannelLifecycle(t *testing.T) {
 	}
 }
 
+// adr: 20261028101615 — test sends are real Slack posts, PagerDuty events and
+// emails, so an account gets NotificationChannelTestsPerAccountMinute of them.
+func TestNotificationChannelTestsAreRateLimited(t *testing.T) {
+	e := apidserver.SetupAlerts(t, api.PlanPro)
+	rec := e.Do(t, http.MethodPost, "/v1/notification-channels", api.CreateNotificationChannelRequest{Name: "ops-slack", Kind: "slack", SlackWebhookURL: testSlackURL}, nil)
+	var slack api.NotificationChannelResponse
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &slack) != nil {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body)
+	}
+	sender := &recordingChannelSender{}
+	withChannelSender(t, sender)
+	for i := range api.NotificationChannelTestsPerAccountMinute {
+		if rec := e.Do(t, http.MethodPost, "/v1/notification-channels/"+slack.ID+"/test", nil, nil); rec.Code != http.StatusOK {
+			t.Fatalf("test send %d = %d %s", i+1, rec.Code, rec.Body)
+		}
+	}
+	rec = e.Do(t, http.MethodPost, "/v1/notification-channels/"+slack.ID+"/test", nil, nil)
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), api.CodeNotificationChannelTestRateLimited) || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("test send over the limit = %d %s, want 429 with Retry-After", rec.Code, rec.Body)
+	}
+	if len(sender.targets) != api.NotificationChannelTestsPerAccountMinute {
+		t.Fatalf("sent %d test messages, want %d", len(sender.targets), api.NotificationChannelTestsPerAccountMinute)
+	}
+}
+
 func TestNotificationChannelValidation(t *testing.T) {
 	e := apidserver.SetupAlerts(t, api.PlanPro)
 	key := strings.Repeat("k", 32)

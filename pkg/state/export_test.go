@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -112,6 +113,7 @@ const ScanSourceRankWorkspace = scanSourceRankWorkspace
 const StageHistoryStatusCancelled = stageHistoryStatusCancelled
 
 // Package-level vars
+var SnapshotGCPageRows = &snapshotGCPageRows
 var ErrAutomaticPollingData = &errAutomaticPollingData
 var ErrMemStoreAppErrors = &errMemStoreAppErrors
 var ErrMemStoreB3AlertMetrics = &errMemStoreB3AlertMetrics
@@ -228,6 +230,7 @@ var CronAppTaskRetryAt = cronAppTaskRetryAt
 var CrossedUsageAlertThresholds = crossedUsageAlertThresholds
 var DecidePlanAdmission = decidePlanAdmission
 var DecideProfileCanaryGate = decideProfileCanaryGate
+var DecideRouteMonitorRollback = decideRouteMonitorRollback
 var DecodeInitialReview = decodeInitialReview
 var DecodeProfileCanaryHistoryCursor = decodeProfileCanaryHistoryCursor
 var DecodeRouteMonitorDeploymentBaseline = decodeRouteMonitorDeploymentBaseline
@@ -1141,3 +1144,24 @@ func (r *workflowOperationWindow) Deadline() *time.Time { return &r.deadline }
 func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
 
 var LiveServiceProxyIdentities = liveServiceProxyIdentities
+
+// OperatorIntents exposes the MemStore's operator intents to tests.
+func (r *MemStore) OperatorIntents() map[string]OperatorIntent { return r.operatorIntents }
+
+// Keyed credential families (ADR 20261029202403 amendment 1).
+var (
+	AcknowledgmentToken      = acknowledgmentToken
+	AcknowledgmentMatches    = acknowledgmentMatches
+	AcknowledgmentDigest     = acknowledgmentDigest
+	ObjectUploadGrantLookups = objectUploadGrantLookups
+)
+
+// BeginTrafficBindingForTest opens the app binding transaction a deploy uses,
+// so a test can time its analysis bound (Hunt 31 H31-11).
+func (s *PgStore) BeginTrafficBindingForTest(ctx context.Context, account, appID string) (pgx.Tx, error) {
+	tx, err := s.beginTrafficBinding(ctx, TrafficPolicyWriterAppBinding, account, nil, appID)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}

@@ -1,6 +1,6 @@
 # Transactional order outbox
 
-Run `gregale data-api dev --port 0` here. The example generates database types
+Run `gregale data-api serve --port 0` here. The example generates database types
 and verifies atomic order/event creation, idempotent retries, worker authorization,
 claiming and acknowledgement. Install `@gregale/data` in your application and
 use `client.ts` for typed `createOrder` and `dispatchOne` workflows.

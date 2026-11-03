@@ -22,8 +22,8 @@ T = TypeVar("T", bound="DataUpstreamResponse")
 @_attrs_define
 class DataUpstreamResponse:
     """A single customer data upstream. The plaintext host is replaced by
-    `host_redacted_hash` (sha256(salt||host) 8-hex prefix); the §11
-    barrier means the wire format never carries the customer's DSN.
+    `host_redacted_hash` (sha256(salt||host) 8-hex prefix); the barrier means the wire format never carries the
+    customer's DSN.
 
     """
 
@@ -40,12 +40,11 @@ class DataUpstreamResponse:
     """Compatibility field name. First 8 hex chars of host_redacted_hash; safe for operator correlation (8 chars =
     ~4B capacity)."""
     scope: str | Unset = UNSET
-    """ADR-090 deployment-scope filter (1..40 chars, lowercase alnum + dash). Echoes the value persisted on the
-    row; absent when the default scope applies."""
+    """Deployment-scope filter (1..40 chars, lowercase alnum + dash). Echoes the value persisted on the row; absent
+    when the default scope applies."""
     deployment_scope: str | Unset = UNSET
-    """ADR-098 amendment (issue #954) widens the dedupe key to include `deployment_scope` so staging-vs-prod
-    upstreams don't collide on the same app. Echoes the value persisted on the row; absent when the default scope
-    applies."""
+    """Widens the dedupe key to include `deployment_scope` so staging-vs-prod upstreams don't collide on the same
+    app. Echoes the value persisted on the row; absent when the default scope applies."""
     declared_region: str | Unset = UNSET
     """Region hint (nullable). Empty on capture; populated by the operator or the classify-flow follow-up."""
     last_rtt_ms: int | Unset = UNSET
@@ -53,7 +52,7 @@ class DataUpstreamResponse:
     last_probed_at: datetime.datetime | Unset = UNSET
     """Timestamp of the most recent probe. Omitted when no probe yet."""
     circuit_breaker: EgressCircuitBreakerPolicy | Unset = UNSET
-    """Per-upstream egress circuit-breaker policy (ADR-201 §3).
+    """Per-upstream egress circuit-breaker policy.
 
     When enabled, your app's NEW connections to this upstream are
     rejected with a TCP reset while the circuit is open, instead of

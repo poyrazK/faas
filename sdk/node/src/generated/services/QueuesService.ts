@@ -274,7 +274,7 @@ export class QueuesService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -303,7 +303,7 @@ export class QueuesService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -345,7 +345,7 @@ export class QueuesService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -387,7 +387,7 @@ export class QueuesService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -427,7 +427,7 @@ export class QueuesService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -477,7 +477,7 @@ export class QueuesService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -506,7 +506,7 @@ export class QueuesService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -551,7 +551,7 @@ export class QueuesService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -593,7 +593,7 @@ export class QueuesService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -1359,9 +1359,9 @@ export class QueuesService {
   }
   /**
    * Reset a dead-letter queue row back to pending.
-   * ADR-134 PR-C. Resets the row's `state` to `pending` with
-   * `attempts=0`, `last_error=null`, `due_at=now()`,
-   * `last_replayed_at=now()`. Distinct from
+   * Resets the row's `state` to `pending` with
+   * `attempts=0`, `last_error=null`, `due_at=now`,
+   * `last_replayed_at=now`. Distinct from
    * `POST /v1/invocations/{id}/replay`, which enqueues a NEW row
    * tagged Source=InvocationReplay. This endpoint mutates the
    * existing row in place so the dashboard's replay history view
@@ -2498,7 +2498,7 @@ export class QueuesService {
   }
   /**
    * Organization queues: Reset a dead-letter queue row back to pending
-   * Organization queues: Reset a dead-letter queue row back to pending. Owners and admins can replay dead letters. Requires current membership and the corresponding credential scope. Mutations require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. ADR-134 PR-C. Resets the row's `state` to `pending` with
+   * Organization queues: Reset a dead-letter queue row back to pending. Owners and admins can replay dead letters. Requires current membership and the corresponding credential scope. Mutations require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Resets the row's `state` to `pending` with
    * `attempts=0`, `last_error=null`, `due_at=now()`,
    * `last_replayed_at=now()`. Distinct from
    * `POST /v1/invocations/{id}/replay`, which enqueues a NEW row

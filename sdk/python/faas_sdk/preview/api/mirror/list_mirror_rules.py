@@ -72,7 +72,7 @@ def sync_detailed(
 ) -> Response[MirrorRuleListResponse | Problem]:
     """List every mirror rule for an app.
 
-     Per-app listing (issue #72 / ADR-124 PR-A2). At most
+     Per-app listing. At most
     `Limits.MirrorTargetsPerApp` rows are returned (Free/Hobby = 0
     blocked at the plan gate before reaching this surface; Pro = 1;
     Scale = 3) — no pagination cursor in A2.
@@ -106,7 +106,7 @@ def sync(
 ) -> MirrorRuleListResponse | Problem | None:
     """List every mirror rule for an app.
 
-     Per-app listing (issue #72 / ADR-124 PR-A2). At most
+     Per-app listing. At most
     `Limits.MirrorTargetsPerApp` rows are returned (Free/Hobby = 0
     blocked at the plan gate before reaching this surface; Pro = 1;
     Scale = 3) — no pagination cursor in A2.
@@ -135,7 +135,7 @@ async def asyncio_detailed(
 ) -> Response[MirrorRuleListResponse | Problem]:
     """List every mirror rule for an app.
 
-     Per-app listing (issue #72 / ADR-124 PR-A2). At most
+     Per-app listing. At most
     `Limits.MirrorTargetsPerApp` rows are returned (Free/Hobby = 0
     blocked at the plan gate before reaching this surface; Pro = 1;
     Scale = 3) — no pagination cursor in A2.
@@ -167,7 +167,7 @@ async def asyncio(
 ) -> MirrorRuleListResponse | Problem | None:
     """List every mirror rule for an app.
 
-     Per-app listing (issue #72 / ADR-124 PR-A2). At most
+     Per-app listing. At most
     `Limits.MirrorTargetsPerApp` rows are returned (Free/Hobby = 0
     blocked at the plan gate before reaching this surface; Pro = 1;
     Scale = 3) — no pagination cursor in A2.

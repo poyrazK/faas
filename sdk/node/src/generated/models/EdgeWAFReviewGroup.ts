@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One edge rule's detections by one CRS rule on one path (ADR-831 amendment 13).
+ * One edge rule's detections by one CRS rule on one path.
  */
 export type EdgeWAFReviewGroup = {
   rule_id: string;

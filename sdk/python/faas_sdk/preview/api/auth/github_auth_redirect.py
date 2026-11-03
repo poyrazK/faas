@@ -59,13 +59,12 @@ def sync_detailed(
     `/v1/auth/github/callback` and 302s to the GitHub consent
     with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
     challenge. The callback requires
-    a primary && verified email before minting a session
-    (issue #165 PR #2, ADR-032).
+    a primary && verified email before minting a session.
 
     Returns 503 `oauth_provider_unavailable` when the operator
     did not configure GitHub sign-in on this host (both
     `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` unset at
-    boot, issue #419 / ADR-046).
+    boot).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -94,13 +93,12 @@ def sync(
     `/v1/auth/github/callback` and 302s to the GitHub consent
     with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
     challenge. The callback requires
-    a primary && verified email before minting a session
-    (issue #165 PR #2, ADR-032).
+    a primary && verified email before minting a session.
 
     Returns 503 `oauth_provider_unavailable` when the operator
     did not configure GitHub sign-in on this host (both
     `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` unset at
-    boot, issue #419 / ADR-046).
+    boot).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,13 +123,12 @@ async def asyncio_detailed(
     `/v1/auth/github/callback` and 302s to the GitHub consent
     with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
     challenge. The callback requires
-    a primary && verified email before minting a session
-    (issue #165 PR #2, ADR-032).
+    a primary && verified email before minting a session.
 
     Returns 503 `oauth_provider_unavailable` when the operator
     did not configure GitHub sign-in on this host (both
     `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` unset at
-    boot, issue #419 / ADR-046).
+    boot).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,13 +155,12 @@ async def asyncio(
     `/v1/auth/github/callback` and 302s to the GitHub consent
     with `scope=read:user user:email` and an RFC 7636 `S256` PKCE
     challenge. The callback requires
-    a primary && verified email before minting a session
-    (issue #165 PR #2, ADR-032).
+    a primary && verified email before minting a session.
 
     Returns 503 `oauth_provider_unavailable` when the operator
     did not configure GitHub sign-in on this host (both
     `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` unset at
-    boot, issue #419 / ADR-046).
+    boot).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -85,8 +85,8 @@ def sync_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (PlatformTenantPlanRequest): A reusable tenant plan (ADR-1307): rate card terms and
-            an optional request budget that assigning the plan applies.
+        body (PlatformTenantPlanRequest): A reusable tenant plan: rate card terms and an optional
+            request budget that assigning the plan applies.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,8 +120,8 @@ def sync(
 
     Args:
         idempotency_key (str | Unset):
-        body (PlatformTenantPlanRequest): A reusable tenant plan (ADR-1307): rate card terms and
-            an optional request budget that assigning the plan applies.
+        body (PlatformTenantPlanRequest): A reusable tenant plan: rate card terms and an optional
+            request budget that assigning the plan applies.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,8 +150,8 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str | Unset):
-        body (PlatformTenantPlanRequest): A reusable tenant plan (ADR-1307): rate card terms and
-            an optional request budget that assigning the plan applies.
+        body (PlatformTenantPlanRequest): A reusable tenant plan: rate card terms and an optional
+            request budget that assigning the plan applies.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -183,8 +183,8 @@ async def asyncio(
 
     Args:
         idempotency_key (str | Unset):
-        body (PlatformTenantPlanRequest): A reusable tenant plan (ADR-1307): rate card terms and
-            an optional request budget that assigning the plan applies.
+        body (PlatformTenantPlanRequest): A reusable tenant plan: rate card terms and an optional
+            request budget that assigning the plan applies.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
@@ -59,6 +61,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -85,7 +88,7 @@ func loadHostAgeIdentities(path string) ([]*age.X25519Identity, error) {
 }
 
 // scheddServerVerifier permits the registered compute-node identities and the
-// three role-specific service leaves that legitimately call schedd. The
+// role-specific service leaves that legitimately call schedd. The
 // compute_nodes registry intentionally contains host identities, while the
 // gatewayd, meterd, and vmmd schedd-client leaves carry stable role CNs.
 // Applying the registry verifier alone rejects those clients after the
@@ -98,6 +101,7 @@ func scheddServerVerifier(nodeVerifier wire.NodeVerifier) wire.NodeVerifier {
 	serviceVerifier.Set([]string{
 		"gatewayd.faas",
 		"meterd.faas",
+		"pgproxyd.faas", // ADR-1027: wakes databases, records activity
 		"vmmd.faas",
 	})
 	return wire.NewAnyNodeVerifier(nodeVerifier, serviceVerifier)
@@ -302,6 +306,11 @@ func envOr(key, fallback string) string {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the scheduler credential ring: schedd offers event acknowledgements and
+	// consumer-group leases and issues CI and job operation capabilities.
+	if err := credhash.Install(os.Getenv, credhash.FamilyScheduler); err != nil {
+		return fmt.Errorf("schedd: %w", err)
+	}
 	return runWithDeps(ctx, log, defaultDeps())
 }
 
@@ -515,11 +524,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	for _, n := range nodes {
 		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
 	}
+	// The clone ownership recorders serve only full environment clones
+	// (ADR-590). They run while full_environment_clones_enabled is on, which
+	// it is until the first runtime reconcile applies the durable value.
+	fullEnvironmentClones := runtimeconfig.NewBoolFlag(true)
 	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS).
 		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
-		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
-		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
-		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume).
+		WithCloneWakeDispatchRecorder(func(ctx context.Context, instance, app, deployment, node, method string) error {
+			if !fullEnvironmentClones.Load() {
+				return nil
+			}
+			return store.RecordCloneCheckpointWakeDispatch(ctx, instance, app, deployment, node, method)
+		}).
+		WithCloneMigrationAdoptionRecorder(func(ctx context.Context, instance, app, deployment, node, memKey, vmstateKey, lease string) error {
+			if !fullEnvironmentClones.Load() {
+				return nil
+			}
+			return store.RecordCloneCheckpointMigrationAdoption(ctx, instance, app, deployment, node, memKey, vmstateKey, lease)
+		}).
+		WithCloneMigrationResumeRecorder(func(ctx context.Context, instance, node, lease string) error {
+			if !fullEnvironmentClones.Load() {
+				return nil
+			}
+			return store.RecordCloneCheckpointMigrationResume(ctx, instance, node, lease)
+		}).
 		WithFinancialComputeAuthority(store)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
@@ -649,6 +677,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// (in-memory resident accounting). The lv-fc percentage shells out to
 	// `lvs`; on dev boxes where lvs is missing, the closure returns 0 and
 	// the gauge degrades to "no data" (no error, no spike).
+	// residencyReader is the instance stats reader once it exists; a scrape
+	// before then keeps the gauge's previous value.
+	var residencyReader atomic.Pointer[instancestats.Reader]
 	dashGauges := fcvm.NewDashboardGauges(fcvm.DashboardMetrics{
 		ListSnapshotStats: func(ctx context.Context) ([]fcvm.SnapshotStat, error) {
 			rows, err := store.ListLiveSnapshotStats(ctx)
@@ -661,8 +692,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return out, nil
 		},
+		// ADR 20261102072403: on a multi-node fleet this scheduler reports
+		// its own node, every owner's instances over that node's ceiling;
+		// its ledger alone summed its own bookings across every node.
 		ResidentBytes: func(_ context.Context) (int64, error) {
-			return int64(ledger.ResidentRAM()) * 1024 * 1024, nil
+			if ownerNodeID == "" {
+				return int64(ledger.ResidentRAM()) * 1024 * 1024, nil
+			}
+			if r := residencyReader.Load(); r != nil {
+				if mb, ok := r.ReservedMB(ownerNodeID, time.Now()); ok {
+					return int64(mb) << 20, nil
+				}
+			}
+			return 0, errNodeResidencyUnmeasured
+		},
+		CeilingMB: func(_ context.Context) (int, error) {
+			for _, n := range nodeRegistry.Snapshot() {
+				if n.ID == ownerNodeID {
+					return n.AdmissionCeilingMB, nil
+				}
+			}
+			return 0, nil
 		},
 		LvFcUsedPct: fcvm.DefaultFcVolumeUsedPct(api.FcVolumeRoot),
 	})
@@ -756,11 +806,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load capability catalog: %w", err)
 	}
 	engine.WithCapabilities(capabilities)
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement},
+	// ADR-1155: on-demand profile capture outcomes, queue waits and the
+	// automatic captures schedd skips, for the capture alerts.
+	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
 				return err
+			}
+			if key == runtimeconfig.KeyFullEnvironmentClones {
+				fullEnvironmentClones.Store(enabled)
 			}
 			if key == runtimeconfig.KeyDataPlacement {
 				upstreamAffinityEnabled.Store(enabled)
@@ -1266,7 +1322,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var privateNetworkPolicySubscriber *sched.PrivateNetworkPolicySubscriber
 	var privateNetworkPeeringSubscriber *sched.PrivateNetworkPeeringSubscriber
 	var privateNetworkFabricDeletionSubscriber *sched.PrivateNetworkFabricDeletionSubscriber
-	if api.PrivateNetworkEnabled() {
+	if api.PrivateNetworkEnabled() && !privateNetworkReconcilersRun(cfg.Role) {
+		log.Info("schedd: private network reconciler left to the central scheduler", "role", cfg.Role)
+	} else if api.PrivateNetworkEnabled() {
 		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
 		if !ok {
 			log.Warn("schedd: private network reconciler unavailable; state store lacks reconcile extension")
@@ -1710,6 +1768,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// counter is the provider-independent RPS fallback when the
 	// optional gateway metrics endpoint is unavailable.
 	reader := instancestats.NewReader()
+	residencyReader.Store(reader)
 	statsPoller := instancestats.NewPoller(
 		store,
 		instancestats.DialerFunc(deps.dialVMM),
@@ -1732,11 +1791,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("automatic CPU captures on CPU saturation enabled (ADR-1155)")
 	}
 	if cfg.MeasuredAdmission {
+		// ADR 20261101091815: this scheduler measures its own node; a peer
+		// node is admitted by the report its own scheduler publishes.
 		engine.Ledger().EnableMeasuredAdmission(func(nodeID string) (int, time.Time, bool) {
-			return reader.MeasuredMB(nodeID, time.Now())
+			now := time.Now()
+			if mb, asOf, ok := reader.MeasuredMB(nodeID, now); ok {
+				return mb, asOf, true
+			}
+			if report, ok := engine.PeerNodeMemory(nodeID, now); ok {
+				return report.MeasuredMB, report.MeasuredAt, true
+			}
+			return 0, time.Time{}, false
 		})
 		log.Info("measured admission enabled (ADR-909)",
 			"max_overcommit_percent", api.MeasuredAdmissionMaxOvercommitPercent)
+		if ownerNodeID != "" {
+			engine.EnableNodeMemoryReports(reader.MemoryReport)
+			go func() {
+				if err := engine.RunNodeMemoryReports(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					log.Warn("node memory reports exited", "err", err)
+				}
+			}()
+			log.Info("node memory reports enabled (ADR 20261101091815)",
+				"report_seconds", api.NodeMemoryReportSeconds, "peer_max_age_seconds", api.NodeMemoryPeerMaxAgeSeconds)
+		}
 	}
 	if cfg.QuietPauseLedger {
 		ledger := instancestats.NewPauseLedger(store,
@@ -1745,13 +1823,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		statsPoller.WithPauseLedger(ledger)
 		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
 			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
-	}
-	if cfg.QuietPauseAdmission {
-		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
-			return reader.QuietPaused(nodeID, time.Now())
-		})
-		log.Info("quiet pause admission enabled (ADR-1151)",
-			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent)
 	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
@@ -1763,6 +1834,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if cfg.FrozenTierEarlyFreezeAfterS > 0 {
 			engine.EnableEarlyFreeze(time.Duration(cfg.FrozenTierEarlyFreezeAfterS) * time.Second)
+		}
+		if cfg.FrozenProactiveCompress {
+			engine.EnableFrozenProactiveCompress()
+			log.Info("proactive frozen compression enabled (ADR 20261031143521)",
+				"high_water_percent", api.FrozenCompressHighWaterPercent,
+				"low_water_percent", api.FrozenCompressLowWaterPercent,
+				"min_age_seconds", api.FrozenCompressMinAgeSeconds,
+				"per_node_per_tick", api.FrozenCompressPerNodePerTick)
 		}
 		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
 			"early_freeze_after_s", cfg.FrozenTierEarlyFreezeAfterS,
@@ -1806,6 +1885,39 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"owner_node_id", ownerNodeID,
 			"interval", fleetInterval)
 	}
+	// ADR-1151 quiet pause admission discounts this schedd's bookings that
+	// vmmd reports quiet-paused: on its own node from the local reader, on
+	// peer nodes from the owner fleet reader above.
+	if cfg.QuietPauseAdmission {
+		quietPaused := instancestats.QuietPausedAcross(reader, autoscaleReader, ownerNodeID)
+		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
+			return quietPaused(nodeID, time.Now())
+		})
+		log.Info("quiet pause admission enabled (ADR-1151)",
+			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent,
+			"peer_nodes", ownerNodeID != "")
+	}
+	// ADR 20261029151111 measured CPU admission reads instances' measured
+	// CPU the same way: own node locally, peer nodes from the fleet reader.
+	if cfg.MeasuredCPUAdmission {
+		measuredCPU := instancestats.MeasuredCPUAcross(reader, autoscaleReader, ownerNodeID)
+		engine.Ledger().EnableMeasuredCPUAdmission(func(nodeID string) (map[string]int, time.Time, bool) {
+			return measuredCPU(nodeID, time.Now())
+		})
+		log.Info("measured CPU admission enabled (ADR 20261029151111)",
+			"min_charge_percent", api.MeasuredCPUMinChargePercent,
+			"max_overcommit_percent", api.MeasuredCPUMaxOvercommitPercent,
+			"peer_nodes", ownerNodeID != "")
+	}
+	// ADR 20261030100950: the CPU pressure backstop reads the local reader
+	// only. Each node's own schedd decides for it; peers honour its hold.
+	if cfg.CPUPressureBackstop {
+		engine.EnableCPUPressureBackstop(reader.NodeCPUPressure)
+		log.Info("CPU pressure backstop enabled (ADR 20261030100950)",
+			"stall_percent", api.NodeCPUPressureStallPercent,
+			"busy_percent", api.NodeCPUPressureBusyPercent,
+			"hold_seconds", api.NodeCPUPressureHoldSeconds)
+	}
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the
 	// per-instance CPU-µs snapshot to meterd. The reader is
@@ -1816,12 +1928,35 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
 		WithAppOwnership(engine.OwnsApp).
 		WithForeignReportRelay(engine)
+	// ADR-20261027090010 §1: agent runs stay off unless this schedd opts in.
+	agentRunner, err := agentRunnerFromEnv(engine, vmmRouter, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if agentRunner != nil {
+		grpcHandler.WithAgentRunner(agentRunner)
+		log.Info("agent runs enabled", "nodes", os.Getenv("FAAS_SCHEDD_AGENT_RUN_NODES"))
+	}
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a
 	// typed nil *PGNodeVerifier as the resolver still creates a non-nil
 	// interface and would require mTLS peer identity on that Unix socket.
 	if nodeVerifier != nil {
 		grpcHandler.WithPeerNodeResolver(nodeVerifier)
 	}
+	// Database nodes (ADR-1027) present node-identity vmmd leaves that are
+	// not compute_nodes rows; without a fleet registry (single box) the
+	// CA alone authenticates vmmd, as on the compute path.
+	loadDatabaseVMMTLS := func(v wire.NodeVerifier) (*tls.Config, error) {
+		if nodeVerifier == nil {
+			v = nil
+		}
+		return cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(v, nil)
+	}
+	databases, stopDatabases, err := enableDatabaseScheduler(ctx, cfg.DatabaseScheduler, pool, loadDatabaseVMMTLS, grpcHandler, ops, log)
+	if err != nil {
+		return err
+	}
+	defer stopDatabases()
 	grpcHandler.Register(gsrv)
 
 	// Serve goroutine — must run AFTER Register or grpc fatals.
@@ -1864,8 +1999,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hostAgeErr != nil {
 		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
 	}
-	// Trigger configs stay sealed to the fleet key (hostAgeIdentities):
-	// apid still opens a stored config to merge an update into it.
+	// Trigger configs join the delivery domain (ADR 20261022111812): apid
+	// seals their credentials to it and the fleet key, and merges an update
+	// without opening the stored config.
 	deliveryReaders := domainReaders(deliveryIdentities, hostAgeIdentities)
 	if err := startCommitRelay(ctx, store, deliveryReaders, log, ops.Registry()); err != nil {
 		return err
@@ -1882,7 +2018,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// systemd watchdog (started next to NotifyReadyWhen below) stops
 	// pinging when the beat is older than sched.MainLoopBudget.
 	liveness := wire.NewLiveness()
-	loop := sched.NewLoop(pool, engine, log).
+	// One app snapshot for every poller that lists apps each second: the
+	// scale-up, targets and floor triggers, the reaper and the scaling-policy
+	// observer. It rereads the rows only when their version changed.
+	appSnapshot := sched.NewAppSnapshot(store)
+	loop := sched.NewLoop(pool, engine, log)
+	if databases != nil {
+		loop.WithDatabaseMover(databaseMover{sched: databases}).WithDatabaseRestarter(databaseMover{sched: databases}).
+			WithDatabaseSwitcher(databaseMover{sched: databases})
+	}
+	loop = loop.
+		WithAppSnapshot(appSnapshot).
 		WithEventRecipientClaims(eventRecipientClaimsEnabled(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED"))).
 		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
@@ -1890,7 +2036,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPrivateNetworkPolicySubscriber(privateNetworkPolicySubscriber).
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
 		WithPrivateNetworkFabricDeletionSubscriber(privateNetworkFabricDeletionSubscriber).
-		WithTriggerSecretIdentities(hostAgeIdentities).
+		WithTriggerSecretIdentities(deliveryReaders).
+		// Broker triggers take at most their plan's
+		// TriggerRecordsPerSecondPerApp; records over it stay on the
+		// broker for a later poll (ADR-20261101093015).
+		WithTriggerRecordRateLimiter(sched.NewTriggerRecordRateLimiter()).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).
@@ -2068,7 +2218,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// same interface but the scaleup trigger itself does
 		// not read it (the concurrent_requests axis lives in
 		// pkg/sched/targets — see loop.WithTargets below).
-		store, autoscaleReader, scraper,
+		appSnapshot, autoscaleReader, scraper,
 		schedScaleUpEngine{engine: engine},
 		engine.Ledger(),
 		scaleup.Options{
@@ -2087,7 +2237,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance stats enabled, but queue-depth autoscaling must still run.
 	// Tick treats a missing reader as no-signal for that metric.
 	targetsTrigger := targets.New(
-		store, autoscaleReader,
+		appSnapshot, autoscaleReader,
 		schedTargetsEngine{engine: engine},
 		schedTargetsLedger{ledger: engine.Ledger()},
 		targets.Options{
@@ -2138,9 +2288,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		floorInterval = time.Duration(n) * time.Second
 	}
 	floorTrigger := floor.New(
-		store,
+		appSnapshot,
 		store, // deploymentStore — issue #557 closure / ADR-074 (per-deployment walk)
-		schedFloorLedger{ledger: engine.Ledger()},
+		schedFloorLedger{ledger: engine.Ledger(), headroom: engine.FloorHeadroomMB},
 		schedFloorEngine{engine: engine},
 		floor.Options{
 			Logger:       log,
@@ -2279,6 +2429,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						}
 						orchestrator.WithOutboundExecutor(sched.NewWorkflowOutboundExecutor(store, workflowOutboundMinter))
 					}
+					// ADR-20261027090010 §9: automation agent steps admit agent runs
+					// and wait for them; agentd runs them.
+					if os.Getenv("FAAS_SCHEDD_AGENT_STEPS") == "1" {
+						orchestrator.WithAgents(agentstore.New(pool))
+						log.Info("schedd workflow agent steps enabled — FAAS_SCHEDD_AGENT_STEPS=1")
+					}
 					loop.WithWorkflowsDispatched(true).
 						WithWorkflowOrchestrator(orchestrator).
 						WithWorkflowRetention(sched.NewWorkflowRetention(store, log))
@@ -2290,6 +2446,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Info("schedd workflows dispatch disabled — set FAAS_WORKFLOWS_ENABLED=1 to enable")
 			}
 		}
+	}
+	// ADR-20261027090010 §9: broker triggers that target an agent admit one agent
+	// run per record; agentd runs them. Without the switch those triggers
+	// are not polled.
+	if os.Getenv("FAAS_SCHEDD_AGENT_TRIGGERS") == "1" {
+		loop.WithTriggerAgents(agentstore.New(pool))
+		log.Info("schedd agent trigger targets enabled — FAAS_SCHEDD_AGENT_TRIGGERS=1")
 	}
 
 	// Issue #757 / ADR-100 (commits #13/#14): wire the HTTP transport
@@ -2737,6 +2900,17 @@ func triggersRetention(store state.Store, log *slog.Logger, value string) *sched
 	return sched.NewTriggersRetention(store, log)
 }
 
+// privateNetworkReconcilersRun reports whether a schedd with this role runs
+// the private-network reconcilers and their notify subscribers. They sweep
+// every attachment and push it to every live node through the vmmd router,
+// so one scheduler per fleet runs them: the control-plane or single-box one.
+// A node-local schedd (ADR-062) reads the same host-wide
+// FAAS_PRIVATE_NETWORK_ENABLED, and its unclaimed sweeps would race the
+// central one's attachment status writes.
+func privateNetworkReconcilersRun(r role.Role) bool {
+	return r != role.RoleComputeOnly
+}
+
 // subscribeWithReconnect drains a pg_notify-style feed via the
 // Shared subscriber Drain loop. Shared by the deletion
 // subscriber (ADR-026) and the egress drift subscriber (PR-B).
@@ -3038,10 +3212,25 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 	if err != nil {
 		return api.PlanFree, false
 	}
-	if !acct.Active() {
-		return api.PlanFree, true
+	return floorPlan(acct), true
+}
+
+// ResolveAppPlan implements floor.AppPlanResolver: a company app's floor
+// follows its organization's plan and status, the subject meterd bills the
+// floor to, not its creator's account (ADR-20261101113742).
+func (s schedFloorPlanResolver) ResolveAppPlan(ctx context.Context, app state.App) (api.Plan, bool) {
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
+	if err != nil {
+		return api.PlanFree, false
 	}
-	return acct.Plan, true
+	return floorPlan(acct), true
+}
+
+func floorPlan(acct state.Account) api.Plan {
+	if !acct.Active() {
+		return api.PlanFree
+	}
+	return acct.Plan
 }
 
 // schedFloorLedger (issue #557 / ADR-071) adapts *sched.NodeLedger
@@ -3050,8 +3239,14 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 // pre-check). Concurrency + ResidentRAM are already exposed by
 // schedTargetsLedger; HeadroomMB is the new method the floor
 // trigger adds.
+// errNodeResidencyUnmeasured keeps fcvm_resident_ram_pct at its previous
+// value until this node has a fresh measurement (ADR 20261102072403).
+var errNodeResidencyUnmeasured = errors.New("schedd: this node's residency is not measured yet")
+
 type schedFloorLedger struct {
 	ledger *sched.NodeLedger
+	// headroom is Engine.FloorHeadroomMB; nil falls back to the ledger.
+	headroom func() int
 }
 
 // Concurrency implements floor.Ledger.
@@ -3070,9 +3265,15 @@ func (s schedFloorLedger) ResidentRAM() int {
 	return s.ledger.ResidentRAM()
 }
 
-// HeadroomMB implements floor.Ledger.
+// HeadroomMB implements floor.Ledger with the best single admitting node's
+// admission headroom, the figure Admit places against; the fleet sum went
+// negative under measured admission and stopped every floor refill, and the
+// ledger alone missed nodes it held nothing on (ADR 20261031190030).
 func (s schedFloorLedger) HeadroomMB() int {
-	return s.ledger.HeadroomMB()
+	if s.headroom != nil {
+		return s.headroom()
+	}
+	return s.ledger.AdmissionHeadroomMB()
 }
 
 // schedTargetsLedger (PR-C, issue #462) adapts *sched.NodeLedger

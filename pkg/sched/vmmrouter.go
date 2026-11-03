@@ -522,7 +522,7 @@ func (r *VMMRouter) resolveFor(ctx context.Context, nodeID string) (VMM, error) 
 	}
 	cli, err := r.dial(ctx, target, r.tls)
 	if err != nil {
-		return nil, fmt.Errorf("vmm router: dial %s: %w", target, err)
+		return nil, routerDialError{fmt.Errorf("vmm router: dial %s: %w", target, err)}
 	}
 
 	r.mu.Lock()

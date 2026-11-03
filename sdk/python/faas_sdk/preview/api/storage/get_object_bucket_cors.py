@@ -59,7 +59,7 @@ def sync_detailed(
 
      Requires storage manage scope and the bucket write grant. Returns an empty rule list at revision 0
     when none are set. The branded S3 endpoint applies the rules to browser requests that carry the
-    bucket's presigned URLs or upload grants (ADR-20261025202805).
+    bucket's presigned URLs or upload grants.
 
     Args:
         slug (str):
@@ -95,7 +95,7 @@ def sync(
 
      Requires storage manage scope and the bucket write grant. Returns an empty rule list at revision 0
     when none are set. The branded S3 endpoint applies the rules to browser requests that carry the
-    bucket's presigned URLs or upload grants (ADR-20261025202805).
+    bucket's presigned URLs or upload grants.
 
     Args:
         slug (str):
@@ -126,7 +126,7 @@ async def asyncio_detailed(
 
      Requires storage manage scope and the bucket write grant. Returns an empty rule list at revision 0
     when none are set. The branded S3 endpoint applies the rules to browser requests that carry the
-    bucket's presigned URLs or upload grants (ADR-20261025202805).
+    bucket's presigned URLs or upload grants.
 
     Args:
         slug (str):
@@ -160,7 +160,7 @@ async def asyncio(
 
      Requires storage manage scope and the bucket write grant. Returns an empty rule list at revision 0
     when none are set. The branded S3 endpoint applies the rules to browser requests that carry the
-    bucket's presigned URLs or upload grants (ADR-20261025202805).
+    bucket's presigned URLs or upload grants.
 
     Args:
         slug (str):

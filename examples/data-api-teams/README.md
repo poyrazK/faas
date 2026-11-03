@@ -6,7 +6,7 @@ an approved matching CLI/SDK bundle:
 ```sh
 gregale data-api onboard --template data-api-teams --path team-orders --bundle /path/to/data-api-bundle.json
 cd team-orders
-gregale data-api dev --port 0 --check
+gregale data-api serve --port 0 --check
 ```
 
 In a second terminal inside the new project:

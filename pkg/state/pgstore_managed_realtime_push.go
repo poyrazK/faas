@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -162,6 +163,38 @@ func (s *PgStore) ListManagedRealtimePushDeliveries(ctx context.Context, ep, pri
 	}
 	return out, rows.Err()
 }
+
+const (
+	// managedRealtimePushSweepLimit bounds the deliveries one claim cancels
+	// or fails; it covers the claim head, so no claimed delivery skipped it.
+	managedRealtimePushSweepLimit = "2048"
+	// managedRealtimePushClaimHead is how many of the longest-due
+	// deliveries a claim shares out between endpoints.
+	managedRealtimePushClaimHead = "2048"
+)
+
+// PruneManagedRealtimePush deletes, in batches of at most batch rows each,
+// notification timeline entries and finished deliveries older than 7 days
+// and push rate reservations older than 2 hours. It reports the rows deleted.
+func (s *PgStore) PruneManagedRealtimePush(ctx context.Context, batch int) (int64, error) {
+	if batch < 1 || batch > 10_000 {
+		return 0, ErrManagedRealtimeHistoryInvalid
+	}
+	var total int64
+	for _, query := range []string{
+		`delete from managed_realtime_notification_timeline where ctid in (select ctid from managed_realtime_notification_timeline where occurred_at<clock_timestamp()-interval '7 days' limit $1)`,
+		`delete from managed_realtime_push_rate_reservations where ctid in (select ctid from managed_realtime_push_rate_reservations where reserved_at<clock_timestamp()-interval '2 hours' limit $1)`,
+		`delete from managed_realtime_push_deliveries where id in (select id from managed_realtime_push_deliveries where status in ('sent','failed','cancelled') and updated_at<clock_timestamp()-interval '7 days' limit $1 for update skip locked)`,
+	} {
+		tag, err := s.pool.Exec(ctx, query, batch)
+		if err != nil {
+			return total, fmt.Errorf("state: prune realtime push: %w", err)
+		}
+		total += tag.RowsAffected()
+	}
+	return total, nil
+}
+
 func (s *PgStore) ClaimManagedRealtimePush(ctx context.Context, batch int) ([]ManagedRealtimePushDelivery, error) {
 	if batch < 1 || batch > 128 {
 		return nil, ErrManagedRealtimeHistoryInvalid
@@ -171,27 +204,20 @@ func (s *PgStore) ClaimManagedRealtimePush(ctx context.Context, batch int) ([]Ma
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	_, err = tx.Exec(ctx, `delete from managed_realtime_notification_timeline where occurred_at<clock_timestamp()-interval '7 days'`)
+	// Retention deletes run in PruneManagedRealtimePush, not here: claims
+	// repeat while work is due (ADR-1323, amendment of 2026-11-03). Only due
+	// deliveries are cancelled or failed, a bounded number per claim.
+	_, err = tx.Exec(ctx, `update managed_realtime_push_deliveries j set status='cancelled',code=case when expires_at<=clock_timestamp() then 'expired' else 'disabled' end,lease=null,lease_until=null,updated_at=clock_timestamp() where j.id in (select id from managed_realtime_push_deliveries where (status='pending' and next_attempt<=clock_timestamp()) or (status='sending' and lease_until<=clock_timestamp()) order by next_attempt limit `+managedRealtimePushSweepLimit+` for update skip locked) and (expires_at<=clock_timestamp() or not exists(select 1 from managed_realtime_push_devices d join managed_realtime_push_providers p using(endpoint_id,provider) join managed_realtime_endpoints e on e.id=d.endpoint_id where d.endpoint_id=j.endpoint_id and d.principal=j.principal and d.device=j.device and d.version=j.version and d.provider=j.provider and d.enabled and p.enabled and e.enabled))`)
 	if err != nil {
 		return nil, err
 	}
-	_, err = tx.Exec(ctx, `delete from managed_realtime_push_rate_reservations where reserved_at<clock_timestamp()-interval '2 hours'`)
+	_, err = tx.Exec(ctx, `update managed_realtime_push_deliveries set status='failed',code='attempts_exhausted',lease=null,lease_until=null,updated_at=clock_timestamp() where id in (select id from managed_realtime_push_deliveries where attempts>=7 and (status='pending' or (status='sending' and lease_until<=clock_timestamp())) order by next_attempt limit `+managedRealtimePushSweepLimit+` for update skip locked)`)
 	if err != nil {
 		return nil, err
 	}
-	_, err = tx.Exec(ctx, `delete from managed_realtime_push_deliveries where status in ('sent','failed','cancelled') and updated_at<clock_timestamp()-interval '7 days'`)
-	if err != nil {
-		return nil, err
-	}
-	_, err = tx.Exec(ctx, `update managed_realtime_push_deliveries j set status='cancelled',code=case when expires_at<=clock_timestamp() then 'expired' else 'disabled' end,lease=null,lease_until=null,updated_at=clock_timestamp() where status in ('pending','sending') and (expires_at<=clock_timestamp() or not exists(select 1 from managed_realtime_push_devices d join managed_realtime_push_providers p using(endpoint_id,provider) join managed_realtime_endpoints e on e.id=d.endpoint_id where d.endpoint_id=j.endpoint_id and d.principal=j.principal and d.device=j.device and d.version=j.version and d.provider=j.provider and d.enabled and p.enabled and e.enabled))`)
-	if err != nil {
-		return nil, err
-	}
-	_, err = tx.Exec(ctx, `update managed_realtime_push_deliveries set status='failed',code='attempts_exhausted',lease=null,lease_until=null,updated_at=clock_timestamp() where attempts>=7 and (status='pending' or (status='sending' and lease_until<=clock_timestamp()))`)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := tx.Query(ctx, `with due as (select j.id from managed_realtime_push_deliveries j where ((j.status='pending' and j.next_attempt<=clock_timestamp()) or (j.status='sending' and j.lease_until<=clock_timestamp())) and (j.digest_id is null or not exists(select 1 from managed_realtime_push_deliveries peer where peer.digest_id=j.digest_id and peer.status in ('pending','sending') and peer.id<j.id)) order by case j.priority when 'urgent' then 0 when 'low' then 2 else 1 end,j.next_attempt,j.id limit $1 for update skip locked) update managed_realtime_push_deliveries j set status='sending',attempts=attempts+1,lease=gen_random_uuid(),lease_until=clock_timestamp()+interval '60 seconds',updated_at=clock_timestamp() from due where j.id=due.id returning `+prefixedPushColumns("j"), batch)
+	// Endpoints take turns within the due head, so one endpoint's backlog
+	// does not hold the others' deliveries behind it.
+	rows, err := tx.Query(ctx, `with head as (select j.id,row_number() over (partition by j.endpoint_id order by case j.priority when 'urgent' then 0 when 'low' then 2 else 1 end,j.next_attempt,j.id) as turn,case j.priority when 'urgent' then 0 when 'low' then 2 else 1 end as rank,j.next_attempt from managed_realtime_push_deliveries j where ((j.status='pending' and j.next_attempt<=clock_timestamp()) or (j.status='sending' and j.lease_until<=clock_timestamp())) and j.expires_at>clock_timestamp() and j.attempts<7 and (j.digest_id is null or not exists(select 1 from managed_realtime_push_deliveries peer where peer.digest_id=j.digest_id and peer.status in ('pending','sending') and peer.id<j.id)) order by j.next_attempt limit `+managedRealtimePushClaimHead+`), due as (select j.id from managed_realtime_push_deliveries j join head h on h.id=j.id order by h.turn,h.rank,h.next_attempt,j.id limit $1 for update of j skip locked) update managed_realtime_push_deliveries j set status='sending',attempts=attempts+1,lease=gen_random_uuid(),lease_until=clock_timestamp()+interval '60 seconds',updated_at=clock_timestamp() from due where j.id=due.id returning `+prefixedPushColumns("j"), batch)
 	if err != nil {
 		return nil, err
 	}

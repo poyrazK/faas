@@ -74,6 +74,11 @@ def _parse_response(
 
         return response_502
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -103,8 +108,8 @@ def sync_detailed(
 
      Exports one finalized platform tenant statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-    The connection's collection mode (ADR-1311) decides whether the
+    PUT /v1/account/billing-connections/{provider}).
+    The connection's collection mode decides whether the
     provider keeps a draft, sends it or charges it. Items are one per rate
     card and unit price plus a rounding item, so the invoice equals the
     statement total rounded to the currency's minor unit; Paddle and Lago
@@ -114,8 +119,8 @@ def sync_detailed(
     it. A statement exports to one provider only. Another attempt still
     exporting it answers 409 `statement_invoice_export_in_progress`, and an
     export the provider refused before creating an invoice can be retried
-    with another customer or provider (ADR-20261019180000). Currencies with
-    up to three decimal places (ADR-20261019100330); Paddle allows USD, EUR
+    with another customer or provider. Currencies with
+    up to three decimal places; Paddle allows USD, EUR
     and GBP.
 
     Args:
@@ -158,8 +163,8 @@ def sync(
 
      Exports one finalized platform tenant statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-    The connection's collection mode (ADR-1311) decides whether the
+    PUT /v1/account/billing-connections/{provider}).
+    The connection's collection mode decides whether the
     provider keeps a draft, sends it or charges it. Items are one per rate
     card and unit price plus a rounding item, so the invoice equals the
     statement total rounded to the currency's minor unit; Paddle and Lago
@@ -169,8 +174,8 @@ def sync(
     it. A statement exports to one provider only. Another attempt still
     exporting it answers 409 `statement_invoice_export_in_progress`, and an
     export the provider refused before creating an invoice can be retried
-    with another customer or provider (ADR-20261019180000). Currencies with
-    up to three decimal places (ADR-20261019100330); Paddle allows USD, EUR
+    with another customer or provider. Currencies with
+    up to three decimal places; Paddle allows USD, EUR
     and GBP.
 
     Args:
@@ -208,8 +213,8 @@ async def asyncio_detailed(
 
      Exports one finalized platform tenant statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-    The connection's collection mode (ADR-1311) decides whether the
+    PUT /v1/account/billing-connections/{provider}).
+    The connection's collection mode decides whether the
     provider keeps a draft, sends it or charges it. Items are one per rate
     card and unit price plus a rounding item, so the invoice equals the
     statement total rounded to the currency's minor unit; Paddle and Lago
@@ -219,8 +224,8 @@ async def asyncio_detailed(
     it. A statement exports to one provider only. Another attempt still
     exporting it answers 409 `statement_invoice_export_in_progress`, and an
     export the provider refused before creating an invoice can be retried
-    with another customer or provider (ADR-20261019180000). Currencies with
-    up to three decimal places (ADR-20261019100330); Paddle allows USD, EUR
+    with another customer or provider. Currencies with
+    up to three decimal places; Paddle allows USD, EUR
     and GBP.
 
     Args:
@@ -261,8 +266,8 @@ async def asyncio(
 
      Exports one finalized platform tenant statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
-    The connection's collection mode (ADR-1311) decides whether the
+    PUT /v1/account/billing-connections/{provider}).
+    The connection's collection mode decides whether the
     provider keeps a draft, sends it or charges it. Items are one per rate
     card and unit price plus a rounding item, so the invoice equals the
     statement total rounded to the currency's minor unit; Paddle and Lago
@@ -272,8 +277,8 @@ async def asyncio(
     it. A statement exports to one provider only. Another attempt still
     exporting it answers 409 `statement_invoice_export_in_progress`, and an
     export the provider refused before creating an invoice can be retried
-    with another customer or provider (ADR-20261019180000). Currencies with
-    up to three decimal places (ADR-20261019100330); Paddle allows USD, EUR
+    with another customer or provider. Currencies with
+    up to three decimal places; Paddle allows USD, EUR
     and GBP.
 
     Args:

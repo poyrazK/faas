@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One named event for an operation (ADR-1197).
+ * One named event for an operation.
  */
 export type OperationSignalRequest = {
   /**

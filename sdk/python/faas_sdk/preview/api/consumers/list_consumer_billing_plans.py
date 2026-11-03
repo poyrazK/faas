@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[ConsumerBillingPlansResponse | Problem]:
-    """List the plans you can switch to with your consumer key (ADR-20261021183000).
+    """List the plans you can switch to with your consumer key.
 
     Args:
         slug (str):
@@ -99,7 +99,7 @@ def sync(
     *,
     client: AuthenticatedClient,
 ) -> ConsumerBillingPlansResponse | Problem | None:
-    """List the plans you can switch to with your consumer key (ADR-20261021183000).
+    """List the plans you can switch to with your consumer key.
 
     Args:
         slug (str):
@@ -123,7 +123,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[ConsumerBillingPlansResponse | Problem]:
-    """List the plans you can switch to with your consumer key (ADR-20261021183000).
+    """List the plans you can switch to with your consumer key.
 
     Args:
         slug (str):
@@ -150,7 +150,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
 ) -> ConsumerBillingPlansResponse | Problem | None:
-    """List the plans you can switch to with your consumer key (ADR-20261021183000).
+    """List the plans you can switch to with your consumer key.
 
     Args:
         slug (str):

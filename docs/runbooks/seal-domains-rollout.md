@@ -55,8 +55,9 @@ stages the keys on every host it joins or rebuilds.
   domain, the role checks that the staged recipient is the one readers
   published the probe with, so a recipient from another pair stops the
   converge.
-- **Settings** (`faas_seal_domain_<domain>_writes` and
-  `faas_seal_domain_<domain>_readers_verified`) go in `CP_ANSIBLE_VARS_B64`.
+- **Settings** (`faas_seal_domain_<domain>_writes`,
+  `faas_seal_domain_<domain>_readers_verified` and
+  `faas_seal_domain_<domain>_contracted`) go in `CP_ANSIBLE_VARS_B64`.
   CD re-renders the drop-ins from them on every converge, so a value set
   only in a local file is reverted.
 - **Never** put `faas_seal_domains_managed` or a `*_src` variable in CD's
@@ -65,8 +66,8 @@ stages the keys on every host it joins or rebuilds.
 
 Wherever a stage says to add `*_src` lines to the local variables file, with
 CD you set the domain's secrets instead. Wherever it says to set
-`*_writes` or `*_readers_verified`, you add them to `CP_ANSIBLE_VARS_B64` and
-run the control-plane CD.
+`*_writes`, `*_readers_verified` or `*_contracted`, you add them to
+`CP_ANSIBLE_VARS_B64` and run the control-plane CD.
 
 ## 1. Seal the GitHub webhook secrets
 
@@ -235,6 +236,47 @@ in this step stay domain-only. From now on:
   `seal_domains` role for it from the local variables file before its
   outboundd serves traffic.
 
+### 2e. Contract: outboundd drops the fleet key
+
+Until this step outboundd still loads the fleet key, so code execution in
+outboundd reads every value sealed to it. Go on once a 2d migration run
+shows only `current`. Add to the local variables file, and converge the
+role again:
+
+```yaml
+faas_seal_domain_outbound_contracted: true
+```
+
+The role does these steps in order:
+
+1. Runs `seal-domain migrate --domain outbound --check`. It writes nothing,
+   and stops the converge while a credential still opens with the fleet or
+   host key, printing how many as `pending`. If it stops, run the 2d
+   migration again, then converge again.
+2. Rewrites outboundd's drop-in to start with an empty `LoadCredential=`
+   line, which drops the fleet key the base unit loads, and restarts
+   outboundd.
+3. Checks that `/run/credentials/faas-outboundd.service` holds
+   `faas_seal_domain_outbound` and no `faas_fleet_age_identity`, then
+   verifies the probe again.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-outboundd.service
+journalctl -u faas-outboundd -b | grep 'outbound customer credential identities loaded'
+```
+
+- The directory lists `faas_seal_domain_outbound`, plus
+  `faas_seal_domain_outbound_previous` during a rotation, and nothing else.
+- outboundd logs `"domain_identity":true`, `"fleet_identity":false` and
+  `"identities":1` (2 during a rotation).
+
+Repeat the call checks from 2b.
+
+Rollback: set `faas_seal_domain_outbound_contracted: false` and converge.
+outboundd loads the fleet key again. Nothing stored changes in this step.
+
 ## 3. Break-glass rehearsal
 
 These are the steps of
@@ -339,7 +381,8 @@ Check:
 - In Prometheus, `faas_seal_domain_loaded{domain="runtime"}` is 1 on every
   vmmd, and FaasSealDomainIdentityMissing does not fire.
 - vmmd logs `"runtime_domain":true` in `vmmd: unseal identities loaded`.
-- apid logs `"runtime seal domain"` with `"write_mode":""` and
+- apid and the clone worker (`journalctl -u faas-apid-clone-worker`) log
+  `"runtime seal domain"` with `"write_mode":""` and
   `"domain_recipient_staged":true`.
 
 Rollback: nothing is sealed to the domain yet. vmmd holding an extra key
@@ -368,7 +411,8 @@ faas_seal_domain_runtime_readers_verified: true
 faas_seal_domain_runtime_writes: domain
 ```
 
-apid then logs `"runtime seal domain"` with `"write_mode":"domain"`, and its
+apid and the clone worker then log `"runtime seal domain"` with
+`"write_mode":"domain"`, and apid's
 rekey runner stops re-sealing runtime secrets. Set a secret on a test app
 and confirm the app wakes and reads the value.
 
@@ -386,13 +430,37 @@ bundles, deployment snapshots, and release and promotion captures. It
 changes only each envelope's key label and ciphertext, so secret versions
 and fingerprints stay as they were.
 
+Sidecar env values are handled differently: the deployment keeps them as
+it was created. The pass writes each value's runtime-domain copy to
+`deployment_sidecar_env_reseals`, and schedd sends vmmd the copy instead.
+
 - Expect `0 failed`.
 - If `changed concurrently` is not 0, a customer changed that secret during
   the run; run the migration again.
-- A complete migration lists nothing, so a second run reports `0 scanned`.
+- A complete migration lists no secrets. A second run still scans every
+  sidecar env value, because those carry no key label and must be opened,
+  and reports them as current.
 - If `failed` is not 0, no key on the host opens those envelopes. Those
   secrets were already broken for their customers; investigate with
   [FaasFleetSealDomain](FaasFleetSealDomain.md#recover).
+
+To see what still holds vmmd to the fleet key, run:
+
+```bash
+sudo gregalectl seal-domain migrate --domain runtime --check --db-env /etc/faas/compute-db.env
+```
+
+It writes nothing. `pending` is what another migration run would re-seal.
+That includes a secret a config guard restored, or a cutover published,
+after this step. It also includes the sidecar env of a deployment created
+from an older one's sidecars, such as a clone or a promotion. `left on the fleet key` counts two kinds of value:
+
+- the short-lived copies an open config guard or an unpublished cutover
+  holds under another key;
+- crash capture keys sealed before the domain was staged.
+
+These clear on their own, within the guard window, when the cutover
+finishes, or when the capture expires (seven days).
 
 Then watch wake errors across the compute nodes for the next hour. A node
 that fails wakes for apps with secrets is missing `runtime.age`: see
@@ -426,7 +494,8 @@ faas_seal_domain_runtime_binding_readers_verified: true
 faas_seal_domain_runtime_binding: account
 ```
 
-apid logs `"runtime seal domain"` with `"account_binding":true`. Set a
+apid and the clone worker log `"runtime seal domain"` with
+`"account_binding":true`. Set a
 secret on a test app and confirm it wakes and reads the value. A wake that
 fails with `envelope is bound to another account` means a secret row was
 copied to an app of another account; do not re-seal it. Find how it got
@@ -485,6 +554,53 @@ again, and restart schedd.
 
 Rollback: set `faas_seal_domain_runtime_binding_required: false`, converge
 the compute nodes, and restart vmmd. Bound secrets stay bound.
+
+### 4g. Contract: vmmd drops the fleet and host keys
+
+This step needs:
+
+- 4d complete;
+- the build contract (6e), because a contracted vmmd also opens registry
+  passwords with the build domain alone;
+- the release that sends sidecar env copies past its rollback window.
+
+On a compute host, check what still holds vmmd to the fleet key, as in 4d:
+
+```bash
+sudo gregalectl seal-domain migrate --domain runtime --check --db-env /etc/faas/compute-db.env
+```
+
+- Go on only once it reports `0 pending` and nothing left on the fleet key.
+- If anything is pending, run the 4d migration again.
+- Short-lived copies and old crash capture keys clear on their own.
+
+Then restart schedd on every node, one at a time. A schedd whose owner cache
+predates the last migration run can still send a secret's old ciphertext.
+
+Add to the local variables file and converge the compute nodes:
+
+```yaml
+faas_seal_domain_runtime_contracted: true
+```
+
+The role runs the same check and fails while anything is pending. It then
+writes the switch into vmmd's drop-in, but does not restart vmmd. vmmd
+applies the switch at its next start (the next release, or a planned
+restart):
+
+- It then reads neither `fleet.age` nor `host.age`, and reports
+  `faas_seal_domain_legacy_identities 0`.
+- It refuses to start without `runtime.age` and `build.age`.
+
+`host.age` stays on the node, because the join check and other units still
+load it.
+
+Restart one vmmd first, wake a test app that has secrets and sidecar env,
+and run a build from a private base image. Then let the release restart the
+rest.
+
+Rollback: set `faas_seal_domain_runtime_contracted: false`, converge the
+compute nodes, and restart vmmd. It loads the fleet and host keys again.
 
 ## 5. Source seal domain
 
@@ -587,6 +703,58 @@ this step stay domain-only, so:
 - never roll githubd back past the first release that carried the source
   reader.
 
+### 5e. Contract: githubd drops the fleet and host keys
+
+As for outbound in 2e. Go on only when all of these hold:
+
+- a 5d migration run shows only `current`;
+- an hour has passed since writes became domain-only, so every unexpired
+  install token is sealed to the domain. githubd reopens an unexpired token
+  rather than mint a new one, so a token only the fleet key opens would
+  fail it until it expires. The check below reports such tokens as `left
+  on the fleet key`;
+- githubd's previous release (N-1) also starts without the fleet and host
+  keys, so rolling back one release keeps it starting. An older githubd
+  falls back to `/etc/faas/secrets/host.age`, which it cannot read. To roll
+  back past that release, set the variable below back to false first.
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_source_contracted: true
+```
+
+The role runs `seal-domain migrate --domain source --check` first, and
+stops while a webhook secret copy still opens with the fleet or host key or
+has none yet (`pending`: run the 5d migration again), or while an unexpired
+token is left on the fleet key (`skipped`: wait for it to expire). It then
+rewrites githubd's drop-in:
+
+1. an empty `LoadCredential=` drops the base unit's credentials;
+2. the GitHub App key and the public fleet recipient are loaded again;
+3. both key paths are unset.
+
+Last, it restarts githubd and checks `/run/credentials/faas-githubd.service`.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-githubd.service
+journalctl -u faas-githubd -b | grep '"source seal domain"'
+```
+
+- The directory lists `faas_seal_domain_source` (plus
+  `faas_seal_domain_source_previous` during a rotation),
+  `faas_github_app_key_unit` and `faas_fleet_age_recipient`. It lists no
+  `faas_fleet_age_identity` or `faas_host_age_identity`.
+- githubd logs `"domain_identity":true` and `"fleet_identity":false`.
+
+Push to a connected repository again to confirm.
+
+Rollback: set `faas_seal_domain_source_contracted: false` and converge.
+githubd loads the fleet and host keys again. Nothing stored changes in this
+step.
+
 ## 6. Build seal domain
 
 imaged on compute hosts is the only reader of app and job private-registry
@@ -684,6 +852,44 @@ Passwords re-sealed in this step stay domain-only, so:
 - never remove `build.age` from a compute host;
 - never roll imaged back past the first release that carried the build
   reader.
+
+### 6e. Contract: imaged drops the fleet and host keys
+
+As for outbound in 2e, on compute hosts. vmmd, the build domain's other
+reader, keeps the fleet and host keys: it still needs them for runtime
+values. Go on once a 6d migration run shows only `current`. Add to the
+local variables file, and converge the compute hosts:
+
+```yaml
+faas_seal_domain_build_contracted: true
+```
+
+The role runs `seal-domain migrate --domain build --check` first. It stops
+while a registry password still opens with the fleet or host key
+(`pending`: run the 6d migration again). It also stops while a crash capture
+is left on the fleet key (`skipped`): a capture imaged would still encrypt
+or decrypt for a fork with that key. vmmd seals every capture at the
+source, so there should be none; any left expire within seven days. It
+then drops both keys from imaged's credentials, restarts imaged, and checks
+`/run/credentials/faas-imaged.service`.
+
+Check, on each compute host:
+
+```bash
+sudo ls /run/credentials/faas-imaged.service
+journalctl -u faas-imaged -b | grep '"build seal domain"'
+```
+
+- The directory lists `faas_seal_domain_build`, plus
+  `faas_seal_domain_build_previous` during a rotation, and nothing else.
+- imaged logs `"domain_identity":true` and `"fleet_identity":false`.
+
+Deploy the test app again. An older imaged also starts without the keys, so
+this step does not hold back a rollback.
+
+Rollback: set `faas_seal_domain_build_contracted: false` and converge.
+imaged loads the fleet and host keys again. Nothing stored changes in this
+step.
 
 ## 7. Edge seal domain
 
@@ -890,6 +1096,52 @@ Values re-sealed in this step stay domain-only, so:
 - never roll meterd back past the first release that carried the alerting
   reader.
 
+### 8e. Contract: meterd drops the fleet and host keys
+
+As for outbound in 2e. Go on only when all of these hold:
+
+- a 8d migration run shows only `current`;
+- no open MCP readiness incident still carries a key copy that only the
+  fleet or host key opens. The check below reports them as `left on the
+  fleet key`; they clear as the incidents resolve;
+- meterd's previous release (N-1) also runs its alert evaluator without the
+  fleet and host keys, so rolling back one release keeps alerts flowing. To
+  roll back past that release, set the variable below back to false first.
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_alerting_contracted: true
+```
+
+The role runs `seal-domain migrate --domain alerting --check` first. It
+stops while a value still opens with the fleet or host key (`pending`: run
+the 8d migration again), or while an incident copy is left on the fleet
+key (`skipped`: wait for those incidents to resolve). It then drops the
+fleet key, the host key and the `host.age.previous` that the
+`optional_credentials` role projects, restarts meterd, and checks
+`/run/credentials/faas-meterd.service`.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-meterd.service
+journalctl -u faas-meterd -b | grep '"alerting seal domain"'
+```
+
+- The directory lists `faas_seal_domain_alerting`, plus
+  `faas_seal_domain_alerting_previous` during a rotation, and no
+  `faas_fleet_age_identity`, `faas_host_age_identity` or
+  `faas_host_age_identity_previous`.
+- meterd logs `"domain_identity":true` and `"fleet_identity":false`.
+- `meterd_alert_evaluator_enabled` stays 1.
+
+Run the test sends from 8b again.
+
+Rollback: set `faas_seal_domain_alerting_contracted: false` and converge.
+meterd loads the fleet and host keys again. Nothing stored changes in this
+step.
+
 ## 9. Storage seal domain
 
 s3-gatewayd on the control plane is the only reader of Gregale S3 secret
@@ -981,6 +1233,46 @@ Credentials re-sealed in this step stay domain-only, so:
 - never roll s3-gatewayd back past the first release that carried the
   storage reader.
 
+### 9e. Contract: s3-gatewayd drops the fleet and host keys
+
+As for outbound in 2e. Go on only when both of these hold:
+
+- a 9d migration run shows only `current`;
+- s3-gatewayd's previous release (N-1) also starts without the fleet and
+  host keys, so rolling back one release keeps it starting. An older
+  s3-gatewayd refuses to start without them; to roll back past that
+  release, set the variable below back to false first.
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_storage_contracted: true
+```
+
+The role runs `seal-domain migrate --domain storage --check` first, and
+stops while a credential still opens with the fleet or host key. If it
+stops, run the 9d migration again, then converge again. It then drops both
+keys, and the `host.age.previous` that the `optional_credentials` role
+projects, from s3-gatewayd's credentials and restarts it. Without them
+s3-gatewayd skips its startup rekey. Last, the role checks
+`/run/credentials/faas-s3-gatewayd.service`.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-s3-gatewayd.service
+journalctl -u faas-s3-gatewayd -b | grep '"storage seal domain"'
+```
+
+- The directory lists `faas_seal_domain_storage`, plus
+  `faas_seal_domain_storage_previous` during a rotation, and nothing else.
+- s3-gatewayd logs `"domain_identity":true` and `"fleet_identity":false`.
+
+Use the test credentials from 9b again.
+
+Rollback: set `faas_seal_domain_storage_contracted: false` and converge.
+s3-gatewayd loads both keys again. Nothing stored changes in this step.
+
 ## 10. Control seal domain
 
 schedd is the only reader of the cluster signing key, which it uses to mint
@@ -1062,8 +1354,10 @@ connections and execution payloads; apid seals them. schedd runs on
 control-plane and compute hosts alike, so every host stages
 `delivery.age`, and the control plane also stages the recipient for apid.
 At the end of this stage only `delivery.age` opens them, except trigger
-configs, which stay on the fleet key for now (ADR 20261022111812, ninth
-slice).
+configs. apid seals a trigger config's credentials to the domain and the
+fleet key even in domain mode, and the migration leaves them, until the
+release after the one that moved them (ADR 20261022111812, "trigger configs
+join the delivery domain").
 
 ### 11a. Create the identity (operator machine)
 
@@ -1154,11 +1448,18 @@ converge. Values re-sealed in this step stay domain-only, so:
 ## 12. Account seal domain
 
 apid both seals and opens account values, so it holds `account.age` itself;
-there is no recipient file. This release covers TOTP secrets, inbound
-webhook secrets, billing provider keys, managed workflow plans and
-PagerDuty acknowledgement secrets. The other account columns (product
-email, integrations, managed realtime, data pipelines, project clones) stay
-on the fleet key until later releases (ADR 20261022111812, tenth slice).
+there is no recipient file. It covers TOTP secrets, inbound webhook
+secrets, billing provider keys, managed workflow plans, PagerDuty
+acknowledgement secrets, GitLab, Slack and Linear credentials, product
+email values, managed realtime credentials and project environment clone
+values (ADR 20261022111812, tenth to fourteenth slices). Data pipeline
+values are not part of this stage: they have always been sealed to the
+pipeline workers' own `pipeline.age`.
+
+Project environment clones are forward-only. apid and the clone worker seal
+new clone values to the domain only once writes are `domain`; earlier clone
+rows stay on the fleet key until their clones finish, and 12d's migration
+reports them as left on the fleet key instead of re-sealing them.
 
 ### 12a. Create the identity (operator machine)
 
@@ -1167,8 +1468,10 @@ gregalectl seal-domain init --domain account --dir ~/gregale-seal/<environment>
 ```
 
 Store `account.age` with the other domain identities. If it is lost after
-12d, every customer with MFA must enroll again, inbound webhooks and
-billing connections must be set again, and queued managed workflows fail.
+12d, every customer with MFA must enroll again; inbound webhooks, billing
+connections and GitLab, Slack and Linear connections must be set again; and
+queued managed workflows fail; managed realtime endpoints need new tokens
+and push devices must register again.
 
 ### 12b. Stage apid; seal to both keys
 
@@ -1180,7 +1483,7 @@ faas_seal_domain_account_identity_src: /Users/<you>/gregale-seal/<environment>/a
 ```
 
 and converge the role on the control plane. The role installs `account.age`,
-restarts apid with it and proves the probe. With
+restarts apid and the clone worker with it and proves the probe. With
 `faas_seal_domain_account_writes` left empty, apid then seals new account
 values to the domain and the fleet key.
 
@@ -1190,17 +1493,20 @@ Check:
   `faas_seal_domain_ready{domain="account"} 1`;
 - `faas_seal_domain_loaded{domain="account"}` is 1 on every apid, and
   FaasSealDomainIdentityMissing does not fire;
-- apid logs `"account seal domain"` with `"domain_identity":true`;
+- apid and the clone worker (`journalctl -u faas-apid-clone-worker`) log
+  `"account seal domain"` with `"domain_identity":true`; the clone worker
+  exports no metrics, so this log line is its check;
 - on a test account, enroll MFA and sign in with it; send a test delivery
-  to an inbound webhook.
+  to an inbound webhook; send a test issue to a connected Slack workspace.
 
 Rollback: set `faas_seal_domain_account_writes: fleet` and converge. Values
 saved in the meantime also carry the fleet key.
 
 ### 12c. Wait out the rollback window
 
-Go on only when every apid reports `faas_seal_domain_loaded{domain="account"} 1`
-and apid's previous release (N-1) also carries the account reader.
+Go on only when every apid reports `faas_seal_domain_loaded{domain="account"} 1`,
+every clone worker logs the identity loaded, and apid's previous release
+(N-1) also carries the account reader.
 
 ### 12d. Seal to the domain only; re-seal stored values
 
@@ -1220,7 +1526,10 @@ sudo gregalectl seal-domain migrate --domain account --readers-verified --db-env
 - Expect `0 failed`.
 - `changed concurrently` counts values a customer changed during the run.
   Run the migration again later.
-- A second run reports every row `current`.
+- A second run reports every other row `current`.
+- `left on the fleet key` counts project environment clone rows sealed
+  before the switch. Wait for it to reach 0, as running clones finish,
+  before any step removes `fleet.age` from apid or the clone worker.
 - If `failed` is not 0, apid cannot open those values today either: the
   owners must set them again (MFA: enroll again).
 
@@ -1232,3 +1541,90 @@ Values re-sealed in this step stay domain-only, so:
 - never remove `account.age` from a control-plane host;
 - never roll apid back past the first release that carried the account
   reader.
+
+## 13. Rotate a domain identity
+
+Rotate a domain's key pair when its identity may have leaked or by policy.
+Readers keep the old identity as `<domain>.age.previous` until every stored
+value is re-sealed to the new one, so nothing sealed before the rotation
+dead-letters. Use the domain's own reader hosts and writer (sections 2–12).
+
+1. Make the new pair on the operator workstation:
+   `gregalectl seal-domain init --domain <domain> --dir <new-dir> --force`.
+2. On the reader hosts, before the control plane, set
+   `faas_seal_domain_<domain>_identity_src` to the new identity and
+   `faas_seal_domain_<domain>_previous_identity_src` to the current one.
+   Leave `faas_seal_domain_<domain>_recipient_src` on the current recipient.
+   Converge them (`--limit` the compute hosts for a domain read there). Each
+   reader restarts holding both identities. The first one's
+   `seal-domain verify --publish` proves it holds the old identity and moves
+   the domain probe to the new one.
+3. Set `faas_seal_domain_<domain>_recipient_src` to the new recipient and
+   converge the control plane. The recipient check passes against the moved
+   probe, and the writer seals to the new recipient from its restart.
+4. Re-seal what is stored:
+   `sudo gregalectl seal-domain migrate --domain <domain> --readers-verified --db-env /etc/faas/compute-db.env`
+   on a host that holds both identities. Rows the previous identity opens are
+   re-sealed to the new one. Run it again until it reports nothing to write.
+5. Clear `faas_seal_domain_<domain>_previous_identity_src` and converge every
+   host. The role removes `<domain>.age.previous` and the second credential,
+   and the readers restart with the new identity alone.
+
+Never clear the previous identity before step 4 finishes: a value still
+sealed to it no longer opens.
+
+## 14. Runtime secret writer signatures
+
+ADR 20261028161502 amendment 1. apid signs every runtime secret it seals and
+stores the signature in `runtime_secret_signatures`. vmmd looks each
+signature up and refuses a runtime secret whose signature does not verify.
+After the contract step it also refuses unsigned ones. Run this after
+section 4: the signature covers the envelope as stored, so sign after the
+runtime re-seal and the binding pass, or pass `--runtime-signing-key` to
+them.
+
+1. Make the key pair on the operator workstation:
+   `gregalectl runtime-secret signing-keygen --sign-key runtime-signing.key --verify-key runtime-signing.pub`.
+2. Set `faas_seal_domain_runtime_signing_pub_src` and converge the compute
+   hosts. vmmd reads the key at its next start (the next release restart).
+   Each vmmd that has it reports
+   `faas_runtime_secret_signature_enforcement 1`. It refuses only a
+   signature that does not verify, and logs each unsigned secret once.
+3. Set `faas_seal_domain_runtime_signing_key_src` and converge the control
+   plane. apid and its clone worker restart and sign every runtime secret
+   they seal from then on. Their logs say `runtime secret signing enabled`.
+4. Sign what is stored, once, on a control-plane host:
+   `sudo gregalectl runtime-secret sign-existing --db-env /etc/faas/compute-db.env`.
+   It signs every stored runtime envelope that has no signature, as it
+   stands. Check the count against the secrets you expect: the backfill
+   trusts what is stored. It fails if an envelope carries a signature this
+   key did not make, or a document cannot be read. Look at those before you
+   go on. Run it again until it reports 0 signed.
+5. Once every vmmd reports `faas_runtime_secret_signature_enforcement 1`
+   and a rerun of step 4 signs nothing, set
+   `faas_seal_domain_runtime_signatures_required: true` and converge the
+   compute hosts. vmmd refuses unsigned runtime secrets from its next start
+   and reports `faas_runtime_secret_signature_enforcement 2`.
+
+After step 5, operator re-seals must sign what they write. Pass
+`--runtime-signing-key /etc/faas/secrets/domains/runtime-signing.key` to
+`gregalectl seal-domain migrate --domain runtime` (with or without
+`--bind-accounts`) and to `gregalectl fleet-seal migrate`, or run step 4
+straight after them. A wake that meets an unsigned secret fails with
+`the value carries no writer signature`.
+
+Rollback: set `faas_seal_domain_runtime_signatures_required: false` and
+converge the compute hosts. vmmd serves unsigned secrets again from its
+next start. To stop checking altogether, clear
+`faas_seal_domain_runtime_signing_pub_src`.
+
+Key rotation: generate a new pair and list both public keys in
+the file `faas_seal_domain_runtime_signing_pub_src` names. Converge the
+compute hosts, then switch `faas_seal_domain_runtime_signing_key_src` to the
+new private key. Envelopes signed with the old key keep the old signature
+until you sign them again, keeping the old public key in a file of its own:
+`sudo gregalectl runtime-secret sign-existing --trusted-keys old-runtime-signing.pub --db-env /etc/faas/compute-db.env`.
+An envelope the old key signed is signed again with the new one; one whose
+signature neither key made is reported and left alone. Once a rerun reports
+nothing signed again, drop the old public key from the file and converge
+the compute hosts.

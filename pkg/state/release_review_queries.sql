@@ -39,9 +39,22 @@ WHERE app_id=sqlc.arg(app_id)::uuid AND environment_slug=sqlc.arg(scope)::text F
 SELECT app_id::text,scope FROM deployments WHERE id=sqlc.arg(id)::uuid;
 
 -- name: ListTrafficSiblingsInScope :many
-SELECT id::text,traffic_percent FROM deployments
+-- aborted_canary is the H5-62 candidate: aborted before its rollout completed.
+-- never_served is a live 0% release that has not served since it went live
+-- (a release staged with no traffic): serving_ended_at is stamped by trigger
+-- whenever a serving row stops serving.
+SELECT id::text,traffic_percent,
+    (canary_total_steps > 0 AND rollout_state = 'aborted' AND rollout_completed_at IS NULL)::boolean AS aborted_canary,
+    (traffic_percent = 0 AND serving_ended_at IS NULL)::boolean AS never_served
+FROM deployments
 WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='live' AND id<>sqlc.arg(id)::uuid ORDER BY id;
 
 -- name: ReadLiveTrafficSumInScope :one
 SELECT coalesce(sum(traffic_percent),0)::bigint FROM deployments
 WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='live';
+
+-- name: DeploymentServedBefore :one
+-- Whether a deployment ever took traffic: it serves now, or the
+-- deployment_serving_ended_at trigger stamped when it stopped.
+SELECT (serving_ended_at IS NOT NULL OR (status = 'live' AND traffic_percent > 0))::boolean AS served
+FROM deployments WHERE id = sqlc.arg(id)::uuid;

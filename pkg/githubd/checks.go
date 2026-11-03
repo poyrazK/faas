@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -33,6 +34,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ChecksWriter is the business seam. The real impl is ChecksAPI;
@@ -117,6 +120,58 @@ type ChecksAPI struct {
 	// AppID is the GitHub App's ID. With it, the preview status comment
 	// upsert adopts only comments GitHub attributes to this App.
 	AppID int64
+	// Ops and Log, when set, count and report Deployments API calls GitHub
+	// refuses for lack of permission (ErrGitHubDeploymentsForbidden).
+	Ops *wire.OpsMetrics
+	Log *slog.Logger
+
+	forbiddenMu       sync.Mutex
+	forbiddenLoggedAt time.Time
+}
+
+// ErrGitHubDeploymentsForbidden marks a Deployments API call GitHub refused
+// with 403 outside a rate limit: the App lacks the Deployments permission, or
+// an installation has not accepted it yet. A GitHub Deployment only adds the
+// PR's environment link, so callers skip it and still write the Check Run and
+// the preview comment, which need only Checks and Issues.
+var ErrGitHubDeploymentsForbidden = errors.New("githubd: GitHub App is not permitted to write deployments")
+
+// deploymentsForbiddenLogEvery bounds the missing-permission warning: every
+// deployment transition hits it until the App's permission is fixed.
+const deploymentsForbiddenLogEvery = 10 * time.Minute
+
+// githubDeploymentsResponseError describes a non-success Deployments API
+// response. A 403 that is not a rate limit wraps ErrGitHubDeploymentsForbidden.
+func githubDeploymentsResponseError(op string, resp *http.Response) error {
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	err := fmt.Errorf("githubd: %s: status=%d body=%s", op, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	if resp.StatusCode != http.StatusForbidden ||
+		resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "" {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrGitHubDeploymentsForbidden, err)
+}
+
+func (c *ChecksAPI) observeDeploymentsForbidden(update GitHubDeploymentUpdate, dur time.Duration) {
+	if c.Ops != nil {
+		c.Ops.ObserveCode("github_deployment", "forbidden", dur)
+	}
+	if c.Log == nil {
+		return
+	}
+	now := time.Now()
+	c.forbiddenMu.Lock()
+	quiet := !c.forbiddenLoggedAt.IsZero() && now.Sub(c.forbiddenLoggedAt) < deploymentsForbiddenLogEvery
+	if !quiet {
+		c.forbiddenLoggedAt = now
+	}
+	c.forbiddenMu.Unlock()
+	if quiet {
+		return
+	}
+	c.Log.Warn("githubd: GitHub refused a deployment write; grant the App Deployments read and write (docs/ops/github-app.md). Check Runs and PR comments are still written.",
+		"installation_id", update.InstallationID, "repo", logsanitize.Field(update.RepoFullName),
+		"deployment_id", logsanitize.Field(update.LocalDeploymentID))
 }
 
 func (c *ChecksAPI) WithCheckRunStore(store CheckRunStore) *ChecksAPI {
@@ -279,7 +334,17 @@ func (c *ChecksAPI) writeCheckRunWithToken(ctx context.Context, token, repoFullN
 // Deployment corresponding to a durable Gregale deployment. The lookup-before-
 // create path closes the retry window where GitHub accepted a create request
 // but the response was lost before the local identity could be persisted.
+// A refusal for lack of permission returns ErrGitHubDeploymentsForbidden.
 func (c *ChecksAPI) WriteGitHubDeploymentStatus(ctx context.Context, update GitHubDeploymentUpdate) error {
+	start := time.Now()
+	err := c.writeGitHubDeploymentStatus(ctx, update)
+	if errors.Is(err, ErrGitHubDeploymentsForbidden) {
+		c.observeDeploymentsForbidden(update, time.Since(start))
+	}
+	return err
+}
+
+func (c *ChecksAPI) writeGitHubDeploymentStatus(ctx context.Context, update GitHubDeploymentUpdate) error {
 	state, ok := githubDeploymentStateForRollout(update.Status, update.RolloutState, update.CanaryTotalSteps)
 	if !ok {
 		return nil
@@ -325,8 +390,7 @@ func (c *ChecksAPI) WriteGitHubDeploymentStatus(ctx context.Context, update GitH
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return fmt.Errorf("githubd: write github deployment status: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return githubDeploymentsResponseError("write github deployment status", resp)
 	}
 	return nil
 }
@@ -378,8 +442,7 @@ func (c *ChecksAPI) findGitHubDeployment(ctx context.Context, token string, upda
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return 0, fmt.Errorf("githubd: list github deployments: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return 0, githubDeploymentsResponseError("list github deployments", resp)
 	}
 	var deployments []githubDeploymentResponse
 	if err := decodeGitHubJSON(resp.Body, &deployments); err != nil {
@@ -441,8 +504,7 @@ func (c *ChecksAPI) createGitHubDeployment(ctx context.Context, token string, up
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return 0, fmt.Errorf("githubd: create github deployment: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return 0, githubDeploymentsResponseError("create github deployment", resp)
 	}
 	var deployment githubDeploymentResponse
 	if err := decodeGitHubJSON(resp.Body, &deployment); err != nil {
@@ -748,6 +810,23 @@ func (c *ChecksAPI) WritePreviewCheckForInstallation(ctx context.Context, instal
 		Status:     phaseToStatus(phase),
 		Conclusion: phaseToConclusion(phase),
 		Output:     &checkRunOutput{Title: previewPhaseTitle(phase), Summary: summary},
+		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
+	})
+}
+
+// WritePreviewCheckNeutralForInstallation completes the gregale-preview check
+// of a commit no open PR previews any more (closed, superseded or torn down
+// before its build finished), so it does not stay pending forever.
+func (c *ChecksAPI) WritePreviewCheckNeutralForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, title, summary string) error {
+	if repoFullName == "" || commitSHA == "" {
+		return fmt.Errorf("githubd: repo and sha required for preview check-run")
+	}
+	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, previewCheckName, checkRunRequest{
+		Name:       previewCheckName,
+		HeadSHA:    commitSHA,
+		Status:     statusCompleted,
+		Conclusion: previewCheckConclusionNeutral,
+		Output:     &checkRunOutput{Title: title, Summary: summary},
 		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
 	})
 }

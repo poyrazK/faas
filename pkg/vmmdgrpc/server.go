@@ -272,11 +272,16 @@ type Server struct {
 	// appTaskAttach pairs interactive app tasks with their attached client
 	// (ADR-1037). The zero value is ready to use.
 	appTaskAttach appTaskAttachRegistry
+	// hostCPU is the host CPU busy window Stats reports (ADR 20261030100950).
+	// The zero value is ready to use.
+	hostCPU hostCPUSampler
 
-	vmm   VmmdAPI
-	ops   *wire.OpsMetrics
-	fcVer string
-	log   *slog.Logger
+	vmm VmmdAPI
+	ops *wire.OpsMetrics
+	// agentRunsEnabled gates RunAgent (ADR-20261027090010 §1: off by default).
+	agentRunsEnabled bool
+	fcVer            string
+	log              *slog.Logger
 	// baseReadiness answers Ping's base generation report (ADR-20261022184531).
 	baseReadiness *CachedBaseGenerationReadiness
 	// diverged (ADR-740) lists instances that were served a developer live
@@ -327,6 +332,9 @@ type Server struct {
 	// bridgeStreamHeadroom is vmmd's bridge_stream_headroom switch
 	// (ADR-20261026120000); every stream bridge manager takes it.
 	bridgeStreamHeadroom bool
+	// streamBridgeGOMAXPROCS and streamBridgeGOGC are vmmd's
+	// stream_bridge_gomaxprocs and stream_bridge_gogc; 0 keeps Go's default.
+	streamBridgeGOMAXPROCS, streamBridgeGOGC int
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer
@@ -377,6 +385,12 @@ type Server struct {
 	// forwardSessions lets instance teardown end the instance's open
 	// WebSocket and private TCP forward streams (H9-129).
 	forwardSessions forwardSessions
+	// databases runs database VMs on database nodes (ADR-1027). nil keeps
+	// the database RPCs UNIMPLEMENTED.
+	databases DatabaseRuntime
+	// databasePeers carries standbys' replication streams between
+	// database nodes (database_replication.go).
+	databasePeers databasePeers
 }
 
 // New wires the server. ops may be nil (noop metrics), log may be nil
@@ -525,11 +539,24 @@ func (s *Server) WithBridgeStreamHeadroom(on bool) *Server {
 	return s
 }
 
+// WithStreamBridgeGoRuntime sets GOMAXPROCS and GOGC for the stream bridges
+// this server starts from now on; 0 keeps Go's default for that setting.
+func (s *Server) WithStreamBridgeGoRuntime(gomaxprocs, gogc int) *Server {
+	if s != nil {
+		s.streamBridgeGOMAXPROCS, s.streamBridgeGOGC = gomaxprocs, gogc
+		if s.streamBridges != nil {
+			s.streamBridges.setGoRuntime(gomaxprocs, gogc)
+		}
+	}
+	return s
+}
+
 // newBridgeManager builds a stream bridge manager carrying this server's
 // bridge settings.
 func (s *Server) newBridgeManager() *streamBridgeManager {
 	m := newStreamBridgeManager(s.log)
 	m.headroom.Store(s.bridgeStreamHeadroom)
+	m.setGoRuntime(s.streamBridgeGOMAXPROCS, s.streamBridgeGOGC)
 	return m
 }
 
@@ -731,7 +758,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, wakeStatus(err)
 	}
 	if inst.Method == fcvm.WakeColdBoot && inst.RestoreError != "" {
 		s.log.Warn("vmmd: restore fell back to cold boot", "instance", req.GetInstance(), "err", inst.RestoreError)
@@ -797,7 +824,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		s.log.Error("vmmd: cold boot failed", "instance", req.GetInstance(), "err", err.Error())
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, wakeStatus(err)
 	}
 	return wakeResponseFromInstance(req.GetInstance(), wr, inst, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil
 }
@@ -1556,6 +1583,7 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 		LiveCount:   int32(s.vmm.LiveCount()),
 		LeasedCount: int32(s.vmm.LeasedCount()),
 	}
+	s.setCPUPressureReadings(resp, time.Now())
 
 	resident, ok := leakcheck.ResidentBytes()
 	if !ok {
@@ -2459,6 +2487,17 @@ func ParseSeccompLines(r io.Reader) (string, int32, error) {
 		return "", 0, fmt.Errorf("no Seccomp line (kernel too old?)")
 	}
 	return mode, filterLen, nil
+}
+
+// wakeStatus is a wake RPC's error status. A failure before the VM started
+// carries wake_stage=pre_start beside the Problem (ADR-20261022184531), so
+// schedd may place the wake on another node; the Problem itself is
+// unchanged.
+func wakeStatus(err error) error {
+	if errors.Is(err, fcvm.ErrWakeNotStarted) {
+		return grpcerr.ToStatusWithMetadata(toProblem(err), map[string]string{grpcerr.MetadataWakeStage: grpcerr.WakeStagePreStart})
+	}
+	return grpcerr.ToStatus(toProblem(err))
 }
 
 // toProblem lifts a plain error to *api.Problem if it isn't one already.

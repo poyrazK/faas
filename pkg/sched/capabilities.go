@@ -77,6 +77,29 @@ func (e *Engine) appCapabilityAllowed(ctx context.Context, app state.App, capabi
 	return e.capabilities.Enabled(capability, subject)
 }
 
+// eventsCapability is the capability whose flag pauses event routing
+// (ADR-20261027125625).
+const eventsCapability = "events"
+
+// eventsReleased reports the events kill switch. While it is off schedd
+// routes nothing; accepted receipts wait and resume when it is back on.
+func (e *Engine) eventsReleased() bool {
+	return e == nil || e.capabilities == nil || e.capabilities.Released(eventsCapability)
+}
+
+// appEventsAllowed decides events for the account that owns appID. It reads
+// the cached subject first, so a recipient costs an app lookup only once per
+// capabilitySubjectTTL.
+func (e *Engine) appEventsAllowed(ctx context.Context, appID string) bool {
+	if e == nil || e.capabilities == nil || appID == "" {
+		return true
+	}
+	if subject, ok := e.capabilitySubjects.get("app:"+appID, time.Now()); ok {
+		return e.capabilities.Enabled(eventsCapability, subject)
+	}
+	return e.appIDCapabilityAllowed(ctx, appID, eventsCapability)
+}
+
 // EgressCircuitAllowed reports whether egress circuit breaking applies to the
 // account that owns appID; the egress circuit loop clears the circuits of an
 // app it refuses.

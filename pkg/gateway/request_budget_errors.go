@@ -120,6 +120,9 @@ func writeBurstCapacityError(w http.ResponseWriter, r *http.Request, err error) 
 	if r != nil && errors.Is(err, context.Canceled) && r.Context().Err() != nil {
 		return false
 	}
+	if reason, ok := wakeNotDispatchedReason(err); ok {
+		markNotDispatched(w, r, reason)
+	}
 	writeWakeError(w, err)
 	return true
 }

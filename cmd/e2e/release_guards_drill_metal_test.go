@@ -18,9 +18,12 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,6 +32,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -160,6 +164,41 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 		t.Logf("DRILL freeze_lifted deployment=%s", lifted.ID)
 	})
 
+	// ADR-20261019071733 amendment 4: a company organization owns its apps'
+	// freezes, so a developer who did not create the app freezes the whole
+	// company and the creator's release waits until the freeze is lifted.
+	t.Run("a member's company freeze refuses the creator's release until lifted", func(t *testing.T) {
+		const app = "rg-co-freeze"
+		_, _, orgSlug := g.account()
+		orgSlug += "-frz"
+		creatorKey, memberKey := g.orgWithMember(t, ctx, app, orgSlug, "developer", state.OrgRoleDeveloper)
+		od := *d
+		od.key = creatorKey
+		first := od.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
+		od.waitServing(t, app, time.Minute)
+
+		var freeze api.ReleaseFreeze
+		g.mustStatus(t, memberKey, http.MethodPost, "/v1/orgs/"+orgSlug+"/freezes",
+			api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "company drill freeze"}, http.StatusCreated, &freeze)
+		if !freeze.Active || freeze.Org != orgSlug || freeze.App != "" {
+			t.Fatalf("company freeze = %+v, want an active freeze on all of %s's apps", freeze, orgSlug)
+		}
+		g.waitAudit(t, "release.freeze_created", "company drill freeze")
+
+		before := g.deploymentCount(t, first.AppID)
+		raw, code := doReq(t, h, creatorKey, http.MethodPost, "/v1/apps/"+app+"/deployments", api.CreateDeploymentRequest{Image: v2})
+		if code != http.StatusConflict || !strings.Contains(string(raw), api.CodeReleaseFrozen) || !strings.Contains(string(raw), "company drill freeze") {
+			t.Fatalf("creator's release under a company freeze: status=%d body=%s, want 409 %s", code, raw, api.CodeReleaseFrozen)
+		}
+		if after := g.deploymentCount(t, first.AppID); after != before {
+			t.Fatalf("a refused release created a deployment: %d -> %d", before, after)
+		}
+
+		g.mustStatus(t, memberKey, http.MethodDelete, "/v1/orgs/"+orgSlug+"/freezes/"+freeze.ID, nil, http.StatusOK, nil)
+		lifted := od.deployLive(t, app, api.CreateDeploymentRequest{Image: v2, Canary: &api.CanaryPresetSpec{Preset: "none"}})
+		t.Logf("DRILL company_freeze org=%s lifted_by=developer deployment=%s", orgSlug, lifted.ID)
+	})
+
 	t.Run("release that introduces a new error group fails its gate and the canary aborts", func(t *testing.T) {
 		const app = "rg-gate"
 		d.createApp(t, app)
@@ -275,19 +314,26 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 		}
 		t.Logf("DRILL approval_waiting since=%s expires=%s holds=%v", waiting.WaitingSince, waiting.ExpiresAt, rules)
 
-		// With self-approval off, the deployer's own approval is refused and
-		// the release keeps waiting.
-		raw, code := doReq(t, h, od.key, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals",
-			api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove})
+		// An API key cannot approve (ADR-20261020085706 amendment 4). With
+		// self-approval off, the deployer's own signed-in approval is refused
+		// too, and the release keeps waiting.
+		approve := api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove}
+		raw, code := doReq(t, h, approverKey, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals", approve)
+		if code != http.StatusForbidden || !strings.Contains(string(raw), api.CodeReleaseApprovalSessionRequired) {
+			t.Fatalf("approval with a key: status=%d body=%s, want 403 %s", code, raw, api.CodeReleaseApprovalSessionRequired)
+		}
+		raw, code = g.sessionDecide(t, ctx, g.email(), candidate.ID, approve)
 		if code != http.StatusForbidden || !strings.Contains(string(raw), api.CodeReleaseApprovalSelf) {
 			t.Fatalf("self approval: status=%d body=%s, want 403 %s", code, raw, api.CodeReleaseApprovalSelf)
 		}
 		if own := og.waitApproval(t, candidate.ID, time.Minute, api.ReleaseApprovalStateWaiting); own.Approvals != 0 {
-			t.Fatalf("after the refused self approval = %+v, want no approvals counted", own)
+			t.Fatalf("after the refused approvals = %+v, want no approvals counted", own)
 		}
 		approvedAt := time.Now()
-		og.mustStatus(t, approverKey, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals",
-			api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "looks good"}, http.StatusOK, nil)
+		if raw, code := g.sessionDecide(t, ctx, g.memberEmail("approver"), candidate.ID,
+			api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "looks good"}); code != http.StatusOK {
+			t.Fatalf("approval signed in: status=%d body=%s, want 200", code, raw)
+		}
 		done := od.waitDeployment(t, candidate.ID, 4*time.Minute, func(dep state.Deployment) bool {
 			return dep.RolloutState == "complete" || dep.RolloutState == "aborted"
 		})
@@ -382,6 +428,93 @@ const guardsDeployerEmail = "e2e+hobby+guards@test.example"
 type guardsDrill struct {
 	d    *safeReleaseDrill
 	pool *state.PgStore
+	// plan, name and org name the drill account and its org; zero values are
+	// this drill's Hobby "guards" account in org rg-org.
+	plan api.Plan
+	name string
+	org  string
+}
+
+// account returns the drill account's plan, SeedAccount label and org slug.
+func (g *guardsDrill) account() (api.Plan, string, string) {
+	plan, name, org := g.plan, g.name, g.org
+	if plan == "" {
+		plan = api.PlanHobby
+	}
+	if name == "" {
+		name = "guards"
+	}
+	if org == "" {
+		org = "rg-org"
+	}
+	return plan, name, org
+}
+
+// email is the address SeedAccount gave the drill account.
+func (g *guardsDrill) email() string {
+	plan, name, _ := g.account()
+	return "e2e+" + string(plan) + "+" + name + "@test.example"
+}
+
+// memberEmail is the email of the org member orgWithMember seeded as label.
+func (g *guardsDrill) memberEmail(label string) string {
+	plan, name, _ := g.account()
+	return "e2e+" + string(plan) + "+" + name + "-" + label + "@test.example"
+}
+
+// sessionDecide decides on a release as the person with email, signed in
+// through the dashboard login: an API key cannot approve a release
+// (ADR-20261020085706 amendment 4).
+func (g *guardsDrill) sessionDecide(t *testing.T, ctx context.Context, email, deploymentID string, decision api.DecideReleaseApprovalRequest) ([]byte, int) {
+	t.Helper()
+	acct, err := g.pool.AccountByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("account %s: %v", email, err)
+	}
+	const password = "release-guards-drill-person"
+	phc, err := auth.Encode(password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := g.pool.SetAccountPassword(ctx, acct.ID, phc); err != nil {
+		t.Fatalf("set password of %s: %v", email, err)
+	}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: g.d.h.HTTPClient().Transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	form := url.Values{"email": {email}, "password": {password}}
+	login, err := http.NewRequestWithContext(ctx, http.MethodPost, g.d.h.APIDURL+"/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	login.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := client.Do(login)
+	if err != nil {
+		t.Fatalf("login %s: %v", email, err)
+	}
+	_ = resp.Body.Close()
+	cookies := resp.Cookies()
+	if len(cookies) == 0 {
+		t.Fatalf("login %s: status=%d set no session cookie", email, resp.StatusCode)
+	}
+	body, err := json.Marshal(decision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.d.h.APIDURL+"/v1/deployments/"+deploymentID+"/approvals", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("decide as %s: %v", email, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return raw, resp.StatusCode
 }
 
 // mustStatus sends a request and decodes the body into out when the status
@@ -432,31 +565,40 @@ func (g *guardsDrill) waitAudit(t *testing.T, kind, text string) {
 // account's own keys cannot reach an app it shares through an org.
 func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app string) (deployerKey, approverKey string) {
 	t.Helper()
+	_, _, orgSlug := g.account()
+	return g.orgWithMember(t, ctx, app, orgSlug, "approver", state.OrgRoleAdmin)
+}
+
+// orgWithMember is orgWithApprover for an org orgSlug whose second person,
+// seeded as label, holds role.
+func (g *guardsDrill) orgWithMember(t *testing.T, ctx context.Context, app, orgSlug, label string, role state.OrgRole) (deployerKey, memberKey string) {
+	t.Helper()
 	h, store := g.d.h, g.pool
-	h.SeedAccount(ctx, api.PlanHobby, "guards-approver")
-	deployer, err := store.AccountByEmail(ctx, guardsDeployerEmail)
+	plan, name, _ := g.account()
+	h.SeedAccount(ctx, plan, name+"-"+label)
+	deployer, err := store.AccountByEmail(ctx, g.email())
 	if err != nil {
 		t.Fatal(err)
 	}
-	approver, err := store.AccountByEmail(ctx, "e2e+hobby+guards-approver@test.example")
+	member, err := store.AccountByEmail(ctx, "e2e+"+string(plan)+"+"+name+"-"+label+"@test.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{deployer.ID, approver.ID} {
+	for _, id := range []string{deployer.ID, member.ID} {
 		if err := store.MarkAccountEmailVerified(ctx, id); err != nil {
 			t.Fatalf("verify %s: %v", id, err)
 		}
 	}
-	org := h.SeedOrg(ctx, deployer.ID, "rg-org", "Release guards drill", state.OrgRoleOwner)
-	if err := store.UpdateOrgPlan(ctx, org.ID, api.PlanHobby); err != nil {
+	org := h.SeedOrg(ctx, deployer.ID, orgSlug, "Release guards drill", state.OrgRoleOwner)
+	if err := store.UpdateOrgPlan(ctx, org.ID, plan); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AddOrgMember(ctx, org.ID, approver.ID, state.OrgRoleAdmin, &deployer.ID); err != nil {
+	if err := store.AddOrgMember(ctx, org.ID, member.ID, role, &deployer.ID); err != nil {
 		t.Fatal(err)
 	}
-	deployerKey, approverKey = g.orgKey(t, ctx, org.ID, deployer.ID), g.orgKey(t, ctx, org.ID, approver.ID)
+	deployerKey, memberKey = g.orgKey(t, ctx, org.ID, deployer.ID), g.orgKey(t, ctx, org.ID, member.ID)
 	falsy := false
-	g.mustStatus(t, deployerKey, http.MethodPost, "/v1/orgs/rg-org/apps",
+	g.mustStatus(t, deployerKey, http.MethodPost, "/v1/orgs/"+orgSlug+"/apps",
 		api.CreateAppRequest{Slug: app, Type: "app", RequireAuthn: &falsy}, http.StatusCreated, nil)
 	key := deployerKey
 	g.d.t.Cleanup(func() {
@@ -464,7 +606,7 @@ func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app str
 			g.d.t.Errorf("cleanup park %s: status=%d body=%s", app, status, raw)
 		}
 	})
-	return deployerKey, approverKey
+	return deployerKey, memberKey
 }
 
 // orgKey mints an admin key bound to org for account, as `gregale keys

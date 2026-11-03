@@ -27,7 +27,7 @@ func (r *startRunner) rememberApp() error {
 	}
 	if before.App != "" {
 		if before.App != r.session.AppSlug || before.Project != r.session.Project || before.Environment != r.session.Environment {
-			return errors.New("a different app is already saved; use gregale context to review it")
+			return errors.New("a different app is already saved; use gregale config context get to review it")
 		}
 		return nil
 	}

@@ -26,7 +26,7 @@ func cmdEventsDeadlineAlertInvestigate(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || *file == "" || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events deadline-alert-investigate <app> --alert-file PATH [--limit 50] [--cursor CURSOR] [--explain]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event deadline-alert investigate <app> --alert-file PATH [--limit 50] [--cursor CURSOR] [--explain]", "events")
 		return 1
 	}
 	query := api.EventSubscriptionDeadlineQuery{Limit: *limit, Cursor: *cursor}

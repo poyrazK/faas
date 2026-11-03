@@ -12,6 +12,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// A runtime that already holds the delivered values reports "unchanged" and
+// is never signalled, so its application cannot acknowledge the version: one
+// booted after the write, or one that applied the same value before (Hunt 14
+// H14-125). It counts as applied; one that has not reported is still pending.
+func TestSecretAckProgressCountsUnchangedRuntimeAsApplied(t *testing.T) {
+	secret := api.AppSecretResponse{
+		DeliveryVersion: 4,
+		RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{
+			{InstanceID: "booted-after-write", ReloadSupport: "enabled", Reported: true, Version: 4, Projection: "unchanged", Signal: "not_attempted"},
+			{InstanceID: "same-value-again", ReloadSupport: "enabled", Reported: true, Version: 4, Projection: "unchanged", Signal: "not_attempted", ApplicationAckVersion: 2, ApplicationAck: "applied"},
+			{InstanceID: "older-report", ReloadSupport: "enabled", Reported: true, Version: 3, Projection: "unchanged", Signal: "not_attempted"},
+		},
+	}
+	targets, pending, err := main.SecretAckProgress(secret)
+	if err != nil || targets != 3 || pending != 1 {
+		t.Fatalf("progress = targets %d pending %d err %v, want 3/1/nil", targets, pending, err)
+	}
+}
+
 func TestSecretAckProgressRequiresEveryReloadEnabledTarget(t *testing.T) {
 	secret := api.AppSecretResponse{
 		DeliveryVersion: 4,

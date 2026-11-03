@@ -214,14 +214,22 @@ const RequestTelemetryRetentionInterval = 1 * time.Hour
 //   - scale  — 14 days
 //   - other  — 1 day (safe failure mode for an unrecognised plan
 //     name; over-retention is the wrong failure mode here)
+//   - none   — 1 day: the LEFT JOIN keeps rows whose app or account is
+//     gone. The inner join never matched them, so a deleted account's
+//     telemetry stayed forever (bug hunt 2026-10-28 B11), as log_events
+//     retention already handles.
 //
 // The CASE uses acct.plan as a TEXT (the column type) so the
 // planner can short-circuit on the join key.
+//
+// request_telemetry is partitioned by month, and a ctid is unique only
+// within one partition. Matching on ctid alone deleted, for every expired
+// row, the rows at the same position in every other partition, retained or
+// not and whoever's they were. The pair (tableoid, ctid) names one row.
 const retentionRequestTelemetryPlanAwareBatchSQL = `DELETE FROM public.request_telemetry
-                                                   WHERE ctid IN (
-                                                       SELECT rt.ctid FROM public.request_telemetry rt
-                                                       JOIN public.apps a     ON a.id = rt.app_id
-                                                       JOIN public.app_resource_accounts ac ON ac.app_id = a.id
+                                                   WHERE (tableoid, ctid) IN (
+                                                       SELECT rt.tableoid, rt.ctid FROM public.request_telemetry rt
+                                                       LEFT JOIN public.app_resource_accounts ac ON ac.app_id = rt.app_id
                                                        WHERE rt.received_at < now() - (CASE ac.plan
                                                            WHEN 'free'  THEN interval '0 days'
                                                            WHEN 'hobby' THEN interval '3 days'

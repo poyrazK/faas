@@ -76,7 +76,7 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 def sync_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: SetPasswordRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
@@ -94,7 +94,7 @@ def sync_detailed(
     `SameSite=Lax` alone does not protect it from a customer app
     hosted under `*.gregale.dev`.
 
-    Proof of presence (ADR-140), decided by what the account has:
+    Proof of presence, decided by what the account has:
 
     - A step-up verified within the last 5 minutes
       (`POST /v1/account/mfa/verify`) is accepted as-is.
@@ -138,7 +138,7 @@ def sync_detailed(
 
 def sync(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: SetPasswordRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Any | Problem | None:
@@ -156,7 +156,7 @@ def sync(
     `SameSite=Lax` alone does not protect it from a customer app
     hosted under `*.gregale.dev`.
 
-    Proof of presence (ADR-140), decided by what the account has:
+    Proof of presence, decided by what the account has:
 
     - A step-up verified within the last 5 minutes
       (`POST /v1/account/mfa/verify`) is accepted as-is.
@@ -195,7 +195,7 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: SetPasswordRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
@@ -213,7 +213,7 @@ async def asyncio_detailed(
     `SameSite=Lax` alone does not protect it from a customer app
     hosted under `*.gregale.dev`.
 
-    Proof of presence (ADR-140), decided by what the account has:
+    Proof of presence, decided by what the account has:
 
     - A step-up verified within the last 5 minutes
       (`POST /v1/account/mfa/verify`) is accepted as-is.
@@ -255,7 +255,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: SetPasswordRequest,
     faas_sid: str | Unset = UNSET,
 ) -> Any | Problem | None:
@@ -273,7 +273,7 @@ async def asyncio(
     `SameSite=Lax` alone does not protect it from a customer app
     hosted under `*.gregale.dev`.
 
-    Proof of presence (ADR-140), decided by what the account has:
+    Proof of presence, decided by what the account has:
 
     - A step-up verified within the last 5 minutes
       (`POST /v1/account/mfa/verify`) is accepted as-is.

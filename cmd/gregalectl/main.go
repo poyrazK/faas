@@ -61,7 +61,7 @@ Commands:
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
   compute-nodes  Compute-node state and release readiness (add|list|show|release-status|drain|activate|retire)
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart|wait)
-  accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
+  accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions|object-storage-ceiling)
   billing      Operator billing catalog, reconciliation, and webhook diagnostics
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
   audit        Correlate operator intents and events by trace ID (audit trace)
@@ -170,6 +170,12 @@ func run(args []string) int {
 		return cmdObjectStorage(args[1:])
 	case dispatchSealDomain:
 		return cmdSealDomain(args[1:])
+	case dispatchLiveQuery:
+		return cmdLiveQuery(args[1:])
+	case dispatchRuntimeSecret:
+		return cmdRuntimeSecret(args[1:])
+	case dispatchCredentials:
+		return cmdCredentials(args[1:])
 	case dispatchPKI:
 		// Operator-side local-dev PKI bootstrap (ADR-052). Issues
 		// /etc/faas/tls/{ca,<daemon>/} material for multi-box mTLS.
@@ -209,6 +215,10 @@ func run(args []string) int {
 		// Node registration/read tools plus authenticated, durable-intent
 		// lifecycle mutations. Direct DB writes require --break-glass-db.
 		return cmdComputeNodesDispatch(args[1:])
+	case dispatchDatabaseNodes:
+		// ADR-1027: an authenticated, durable-intent move of a native
+		// database between database nodes.
+		return cmdDatabaseNodes(args[1:])
 	case "release-acceptance":
 		return cmdReleaseAcceptanceDispatch(args[1:])
 	case dispatchOperatorAuth:

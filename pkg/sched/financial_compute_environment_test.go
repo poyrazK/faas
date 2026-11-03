@@ -16,6 +16,21 @@ import (
 // adr: 1750 — amendment 2: a held environment cap retires only the instances
 // whose deployment runs in that environment; the app keeps serving others.
 func TestStrictEnvironmentHoldRetiresOnlyItsEnvironment(t *testing.T) {
+	// adr: 20261102160622 — the reaper's tick preload decides as the per-app
+	// read does.
+	for name, reconcile := range map[string]func(*sched.Engine, state.App) error{
+		"per app": func(e *sched.Engine, app state.App) error {
+			return e.ReconcileFinancialBudgetStops(t.Context(), app.ID)
+		},
+		"tick preload": func(e *sched.Engine, app state.App) error {
+			return e.ReconcileFinancialBudgetStopsForTick(t.Context(), []state.App{app})
+		},
+	} {
+		t.Run(name, func(t *testing.T) { testStrictEnvironmentHold(t, reconcile) })
+	}
+}
+
+func testStrictEnvironmentHold(t *testing.T, reconcile func(*sched.Engine, state.App) error) {
 	ctx := t.Context()
 	s := state.NewMemStore()
 	a, err := s.CreateAccount(ctx, "environment-cap@example.test", api.PlanPro)
@@ -84,7 +99,7 @@ func TestStrictEnvironmentHoldRetiresOnlyItsEnvironment(t *testing.T) {
 	if b, err := s.FinancialComputeBalance(ctx, p, time.Now()); err != nil || !b.Held {
 		t.Fatalf("environment not held: %+v %v", b, err)
 	}
-	if err := e.ReconcileFinancialBudgetStops(ctx, app.ID); err != nil {
+	if err := reconcile(e, app); err != nil {
 		t.Fatal(err)
 	}
 	for id, running := range map[string]bool{inCap.InstanceID: false, inSibling.InstanceID: true} {

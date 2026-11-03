@@ -69,7 +69,7 @@ def sync_detailed(
     """Describe the account's key for one billing provider.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -98,7 +98,7 @@ def sync(
     """Describe the account's key for one billing provider.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -122,7 +122,7 @@ async def asyncio_detailed(
     """Describe the account's key for one billing provider.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,7 +149,7 @@ async def asyncio(
     """Describe the account's key for one billing provider.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1507).
+        provider (BillingProvider): A billing provider statements export to.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

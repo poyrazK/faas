@@ -92,8 +92,8 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Replace a customer AI integration's price list.
 
-     Requires MFA and deploy-write scope (ADR-990). The new list prices calls settled from now on;
-    earlier lists stay for costs already recorded.
+     Requires MFA and deploy-write scope. The new list prices calls settled from now on; earlier lists
+    stay for costs already recorded.
 
     Args:
         integration (UUID):
@@ -128,8 +128,8 @@ def sync(
 ) -> Any | Problem | None:
     """Replace a customer AI integration's price list.
 
-     Requires MFA and deploy-write scope (ADR-990). The new list prices calls settled from now on;
-    earlier lists stay for costs already recorded.
+     Requires MFA and deploy-write scope. The new list prices calls settled from now on; earlier lists
+    stay for costs already recorded.
 
     Args:
         integration (UUID):
@@ -159,8 +159,8 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Replace a customer AI integration's price list.
 
-     Requires MFA and deploy-write scope (ADR-990). The new list prices calls settled from now on;
-    earlier lists stay for costs already recorded.
+     Requires MFA and deploy-write scope. The new list prices calls settled from now on; earlier lists
+    stay for costs already recorded.
 
     Args:
         integration (UUID):
@@ -193,8 +193,8 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Replace a customer AI integration's price list.
 
-     Requires MFA and deploy-write scope (ADR-990). The new list prices calls settled from now on;
-    earlier lists stay for costs already recorded.
+     Requires MFA and deploy-write scope. The new list prices calls settled from now on; earlier lists
+    stay for costs already recorded.
 
     Args:
         integration (UUID):

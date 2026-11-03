@@ -24,7 +24,7 @@ class PlanManaged:
     """A service the repo declared (compose image:, render.yaml, etc.)
     but the platform will NOT provision. Surfaced so the customer
     sees them in the plan and reads a learnable env hint instead of
-    a runtime 422 (two-drive FROM-base contract, ADR-046).
+    a runtime 422 (two-drive FROM-base contract).
 
     """
 
@@ -35,10 +35,10 @@ class PlanManaged:
     image: str
     provision: PlanManagedProvision | Unset = UNSET
     """The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the
-    service keys it binds (ADR-20261025111824)."""
+    service keys it binds."""
     not_provisioned_reason: PlanManagedNotProvisionedReason | Unset = UNSET
-    """Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and
-    when provision is set."""
+    """Why apply does not provide a Compose postgres service. Omitted for other datastores and when provision is
+    set."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

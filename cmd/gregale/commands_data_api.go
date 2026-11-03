@@ -19,7 +19,7 @@ import (
 
 func cmdDataAPI(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api <create|deploy|configure|server-key|usage|live|storage|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api <create|delete|deploy|configure|server-key|usage|live|storage|hooks|types|diff|check|refresh|sync|status|rotation|health|replay|diagnostics|dev|install|onboard|migration|fixture|explain|verify|transaction>", "data-api")
 		return 1
 	}
 	switch args[0] {
@@ -45,6 +45,8 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPIDev(args[1:])
 	case "create":
 		return cmdDataAPICreate(args[1:])
+	case "delete":
+		return cmdDataAPIDelete(args[1:])
 	case "types":
 		return cmdDataAPITypes(args[1:])
 	case "check":
@@ -69,12 +71,14 @@ func cmdDataAPI(args []string) int {
 		return cmdDataAPILive(args[1:])
 	case "storage":
 		return cmdDataAPIStorage(args[1:])
+	case "hooks":
+		return cmdDataAPIHooks(args[1:])
 	case "deploy":
 		return cmdDataAPIDeploy(args[1:])
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, deploy, configure, server-key, usage, live, storage, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, delete, deploy, configure, server-key, usage, live, storage, hooks, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 
@@ -252,13 +256,9 @@ func cmdDataAPICreate(args []string) int {
 		if err := attachDataAPIMigrationBinding(ctx, client, app, db.ID, *scope); err != nil {
 			return printErr("Migration binding failed; the app is retained for recovery", err)
 		}
-		return deploySingleAppDataAPI(ctx, app.Slug, *scope, *migrations, *releaseCommand, "15m")
+		return deploySingleAppDataAPI(ctx, client, app.Slug, *scope, *migrations, *releaseCommand, "15m")
 	}
-	deployArgs := []string{"--name", app.Slug, "--template", "data-api", "--dockerfile", "--healthcheck-path", "/healthz", "--no-doctor"}
-	if *scope != api.DefaultEnvScope {
-		deployArgs = append(deployArgs, "--environment", *scope)
-	}
-	return cmdDeployTarballToExisting(ctx, deployArgs, true)
+	return deployDataAPIRuntime(ctx, client, app.Slug, *scope, "")
 }
 
 func configureDataAPI(ctx context.Context, client *api.Client, app api.AppResponse, database, scope string, settings map[string]string) error {
@@ -318,15 +318,7 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 
 // The runtime stops PostgREST before a snapshot and starts it after a restore,
 // so no snapshot holds a SQL session (templates/data-api/engine.mjs).
-const (
-	dataAPIBeforeCheckpointPath = "/__gregale/lifecycle/before-checkpoint"
-	dataAPIAfterRestorePath     = "/__gregale/lifecycle/after-restore"
-)
-
-func setDataAPILifecycle(update *api.UpdateAppRequest) {
-	update.BeforeCheckpoint = &api.BeforeCheckpointHook{Path: dataAPIBeforeCheckpointPath, TimeoutMS: api.AfterRestoreHookMaxTimeoutMS}
-	update.AfterRestore = &api.AfterRestoreHook{Path: dataAPIAfterRestorePath, TimeoutMS: api.AfterRestoreHookMaxTimeoutMS}
-}
+func setDataAPILifecycle(update *api.UpdateAppRequest) { update.SetDataAPILifecycle() }
 
 func dataAPIHTTPS(value string) bool {
 	u, err := url.Parse(value)
@@ -417,11 +409,7 @@ func cmdDataAPITypes(args []string) int {
 }
 
 func generateDataAPIInputValidators(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {
-	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{Command: []string{"node", "/app/types.mjs", "--validators"}, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes})
-	if err != nil {
-		return task, fmt.Errorf("start input validator generation: %w", err)
-	}
-	task, err = waitDataAPITypeTask(ctx, client, slug, task)
+	task, err := runDataAPIContractTask(ctx, client, slug, api.DataAPIContractValidators, "start input validator generation")
 	if err == nil && (!strings.Contains(task.StdoutTail, "export const inputValidators = {") || !strings.Contains(task.StdoutTail, "export const rpcValidators = {")) {
 		err = errors.New("runtime does not support table and RPC argument validator generation; update the Data API runtime")
 	}
@@ -429,11 +417,22 @@ func generateDataAPIInputValidators(ctx context.Context, client *api.Client, slu
 }
 
 func generateDataAPITypes(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {
-	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{Command: []string{"node", "/app/types.mjs"}, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes})
-	if err != nil {
-		return task, fmt.Errorf("start schema generation: %w", err)
+	return runDataAPIContractTask(ctx, client, slug, api.DataAPIContractTypes, "start schema generation")
+}
+
+// runDataAPIContractTask runs one contract inspection on the Data API's own
+// route (ADR-20261027123814); an apid that predates it gets the same command
+// as an ordinary app task.
+func runDataAPIContractTask(ctx context.Context, client *api.Client, slug string, kind api.DataAPIContractTaskKind, operation string) (api.AppTaskResponse, error) {
+	task, err := client.CreateDataAPIContractTask(ctx, slug, kind)
+	legacy := routeNotOffered(err)
+	if legacy {
+		task, err = client.CreateAppTask(ctx, slug, kind.Request())
 	}
-	return waitDataAPITypeTask(ctx, client, slug, task)
+	if err != nil {
+		return task, fmt.Errorf("%s: %w", operation, err)
+	}
+	return waitDataAPIContractTask(ctx, client, slug, task, kind == api.DataAPIContractSchema, legacy)
 }
 
 // --check is a boolean; the positional normalizer for PostgreSQL flags would
@@ -445,11 +444,7 @@ func normalizeDataAPITypeArgs(args []string) []string {
 	return args
 }
 
-func waitDataAPITypeTask(ctx context.Context, client *api.Client, slug string, task api.AppTaskResponse) (api.AppTaskResponse, error) {
-	return waitDataAPIContractTask(ctx, client, slug, task, false)
-}
-
-func waitDataAPIContractTask(ctx context.Context, client *api.Client, slug string, task api.AppTaskResponse, snapshot bool) (api.AppTaskResponse, error) {
+func waitDataAPIContractTask(ctx context.Context, client *api.Client, slug string, task api.AppTaskResponse, snapshot, legacy bool) (api.AppTaskResponse, error) {
 	for !task.Status.Terminal() {
 		timer := time.NewTimer(time.Second)
 		select {
@@ -459,7 +454,11 @@ func waitDataAPIContractTask(ctx context.Context, client *api.Client, slug strin
 		case <-timer.C:
 		}
 		var err error
-		task, err = client.GetAppTask(ctx, slug, task.ID)
+		if legacy {
+			task, err = client.GetAppTask(ctx, slug, task.ID)
+		} else {
+			task, err = client.GetDataAPIContractTask(ctx, slug, task.ID)
+		}
 		if err != nil {
 			return task, err
 		}

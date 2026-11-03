@@ -33,7 +33,7 @@ on:
       deploy_environment:
         description: "GitHub environment holding the target fleet's secrets (production or production-us)"
         required: false
-        default: production
+        default: production-us
         type: string
       units_run_id:
         description: "release-units.yml run whose signed deployctl rolls hosts back"
@@ -49,7 +49,7 @@ on:
       deploy_environment:
         description: "GitHub environment holding the target fleet's secrets"
         required: false
-        default: production
+        default: production-us
         type: choice
         options:
           - production

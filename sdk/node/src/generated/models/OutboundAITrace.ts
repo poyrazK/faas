@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One AI trace's totals (ADR 20261020202035). app_id and end_user are its first call's; repeated_tool_calls is its current streak of calls that requested the same tools with the same arguments.
+ * One AI trace's totals. app_id and end_user are its first call's; repeated_tool_calls is its current streak of calls that requested the same tools with the same arguments.
  */
 export type OutboundAITrace = {
   trace_id: string;

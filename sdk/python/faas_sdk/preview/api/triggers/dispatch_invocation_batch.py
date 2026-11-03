@@ -59,7 +59,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: DispatchInvocationBatchBody,
 ) -> Response[DispatchInvocationBatchResponse200]:
-    r"""Internal — schedd posts a batch envelope to the gateway.
+    r"""Internal — the scheduler posts a batch envelope to the gateway.
 
      Internal-only route. Schedd invokes this once per closed
     batch. The gateway delivers records sequentially and returns one
@@ -95,7 +95,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: DispatchInvocationBatchBody,
 ) -> DispatchInvocationBatchResponse200 | None:
-    r"""Internal — schedd posts a batch envelope to the gateway.
+    r"""Internal — the scheduler posts a batch envelope to the gateway.
 
      Internal-only route. Schedd invokes this once per closed
     batch. The gateway delivers records sequentially and returns one
@@ -126,7 +126,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: DispatchInvocationBatchBody,
 ) -> Response[DispatchInvocationBatchResponse200]:
-    r"""Internal — schedd posts a batch envelope to the gateway.
+    r"""Internal — the scheduler posts a batch envelope to the gateway.
 
      Internal-only route. Schedd invokes this once per closed
     batch. The gateway delivers records sequentially and returns one
@@ -160,7 +160,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: DispatchInvocationBatchBody,
 ) -> DispatchInvocationBatchResponse200 | None:
-    r"""Internal — schedd posts a batch envelope to the gateway.
+    r"""Internal — the scheduler posts a batch envelope to the gateway.
 
      Internal-only route. Schedd invokes this once per closed
     batch. The gateway delivers records sequentially and returns one

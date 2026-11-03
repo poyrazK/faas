@@ -37,10 +37,10 @@ class EventFanoutFailureResponse:
     """When recipient routing became terminal."""
     failure_code: EventFanoutFailureResponseFailureCode | Unset = UNSET
     """Stable routing failure category; unknown covers failures recorded before classification was available.
-    Optional for responses from older apid versions during rollout."""
+    Optional for responses from older the API versions during rollout."""
     retryable: bool | Unset = UNSET
     """True when the failure was caused by a transient lookup or enqueue error and replay may succeed without
-    changing subscription configuration. Optional for responses from older apid versions during rollout."""
+    changing subscription configuration. Optional for responses from older the API versions during rollout."""
 
     def to_dict(self) -> dict[str, Any]:
         event_id = self.event_id

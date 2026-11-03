@@ -1057,7 +1057,7 @@ export class WorkflowsService {
   }
   /**
    * Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
-   * Published definitions survive future YAML deployments. A live default deployment is required. Runtime execution also requires FAAS_WORKFLOWS_ENABLED on apid and schedd. Events accepted before publication retain their captured definition.
+   * Published definitions survive future YAML deployments. A live default deployment is required. Runtime execution also requires workflows to be enabled on the platform. Events accepted before publication retain their captured definition.
    * @returns AutomationResponse publishAutomation result.
    * @throws ApiError
    */
@@ -1277,8 +1277,8 @@ export class WorkflowsService {
    * Returns schedules from the default-scope live deployment, their next
    * nominal fire time and the most recent durable admission outcome.
    * When scheduling is unavailable, unavailable_reason explains why and
-   * next_fire_at is omitted. Runtime availability reflects apid configuration;
-   * operators must enable the same workflow gate on schedd.
+   * next_fire_at is omitted. Runtime availability reflects the API configuration;
+   * operators must enable the same workflow gate on the scheduler.
    * Disabling or redeploying a schedule does not cancel existing runs.
    * No live default deployment returns an empty schedules array.
    *

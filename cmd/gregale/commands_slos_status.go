@@ -20,7 +20,7 @@ func cmdSLOsStatus(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale slos status --app <slug> <slo-id>", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo status --app <slug> <slo-id>", "slos")
 		return 1
 	}
 	client, err := authedClient()

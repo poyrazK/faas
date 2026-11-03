@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -390,21 +392,47 @@ func TestTOTPGuard_WindowAndReset(t *testing.T) {
 	g := newTOTPGuard()
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < totpMaxFailures; i++ {
-		g.fail("a", now.Add(time.Duration(i)*time.Second))
+		if wait := g.reserve("a", now.Add(time.Duration(i)*time.Second)); wait != 0 {
+			t.Fatalf("attempt %d refused: %s", i+1, wait)
+		}
 	}
-	if wait := g.retryAfter("a", now.Add(10*time.Second)); wait <= 0 || wait > totpFailureWindow {
-		t.Fatalf("retryAfter at the limit = %s", wait)
+	if wait := g.reserve("a", now.Add(10*time.Second)); wait <= 0 || wait > totpFailureWindow {
+		t.Fatalf("reserve at the limit = %s", wait)
 	}
-	if wait := g.retryAfter("b", now); wait != 0 {
+	if wait := g.reserve("b", now); wait != 0 {
 		t.Fatalf("another account is limited: %s", wait)
 	}
-	if wait := g.retryAfter("a", now.Add(totpFailureWindow+time.Second)); wait != 0 {
-		t.Fatalf("retryAfter after the window = %s, want 0", wait)
+	if wait := g.reserve("a", now.Add(totpFailureWindow+time.Second)); wait != 0 {
+		t.Fatalf("reserve after the window = %s, want 0", wait)
 	}
-	g.fail("c", now)
+	g.reserve("c", now)
 	g.reset("c")
-	if len(g.fails) != 0 && g.fails["c"] != nil {
-		t.Fatal("reset left failures behind")
+	if g.fails["c"] != nil {
+		t.Fatal("reset left attempts behind")
+	}
+}
+
+// A concurrent burst of wrong codes gets at most totpMaxFailures checks: the
+// guard counted failures after the check, so every request that arrived
+// before the first failure was recorded passed (bug hunt 2026-10-28 H74).
+func TestTOTPGuard_ConcurrentBurstGetsTenChecks(t *testing.T) {
+	t.Parallel()
+	g := newTOTPGuard()
+	now := time.Now()
+	var admitted atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if g.reserve("a", now) == 0 {
+				admitted.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := admitted.Load(); got != totpMaxFailures {
+		t.Fatalf("admitted %d of 50 concurrent attempts, want %d", got, totpMaxFailures)
 	}
 }
 

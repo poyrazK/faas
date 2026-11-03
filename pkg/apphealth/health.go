@@ -40,7 +40,16 @@ type Evidence struct {
 	Nodes            map[string]state.ComputeNode
 	Metrics          appmetrics.RequestHealth
 	MetricsAllowed   bool
-	Now              time.Time
+	// AssessWorkers releases worker assessment (the app_health_workers
+	// platform flag); Worker is a worker-mode app's queue evidence
+	// (ADR-20261102091500).
+	AssessWorkers bool
+	Worker        WorkerQueue
+	// AssessMemory releases the memory check (the app_health_memory platform
+	// flag); Memory is the app's memory-pressure rollup (ADR-20261102124306).
+	AssessMemory bool
+	Memory       MemoryEvidence
+	Now          time.Time
 }
 
 func Evaluate(e Evidence) api.AppHealthResponse {
@@ -51,6 +60,11 @@ func Evaluate(e Evidence) api.AppHealthResponse {
 		ServingDeploymentIDs: []string{}, Checks: []api.AppHealthCheck{},
 	}
 	mode := e.App.Manifest.ExecutionMode
+	if mode == api.ExecutionModeWorker && e.AssessWorkers {
+		evaluateWorker(&out, e)
+		assessMemory(&out, e)
+		return finish(out)
+	}
 	if mode != "" && mode != "request" && mode != "service" {
 		out.Phase = "unsupported"
 		add(&out, "workload", Unknown, "HTTP serving health does not assess worker or job execution.", "configuration", "")
@@ -72,6 +86,7 @@ func Evaluate(e Evidence) api.AppHealthResponse {
 		add(&out, "maintenance", Warning, "Maintenance mode intentionally returns 503 responses.", "configuration", "")
 	}
 	assessRequests(&out, e)
+	assessMemory(&out, e)
 	return finish(out)
 }
 

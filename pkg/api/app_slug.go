@@ -1,11 +1,12 @@
 package api
 
 import (
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var appSlugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+var appSlugRE = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 
 var reservedAppSlugs = map[string]struct{}{
 	"account": {}, "admin": {}, "api": {}, "assets": {}, "billing": {},
@@ -40,6 +41,20 @@ func IsPlatformReservedSlug(slug string) bool {
 func IsReservedAppSlug(slug string) bool {
 	_, ok := reservedAppSlugs[slug]
 	return ok || IsPreviewAppSlug(slug)
+}
+
+// PreviewAppSlugMaxLen is the longest PR preview slug: one DNS label. The
+// preview of a 40-character app is longer than ValidAppSlug allows.
+const PreviewAppSlugMaxLen = 63
+
+// ValidPreviewAppSlug reports a pr-<N>-<parent> slug whose parent is a valid
+// app slug and that fits one DNS label.
+func ValidPreviewAppSlug(slug string) bool {
+	if len(slug) > PreviewAppSlugMaxLen || !IsPreviewAppSlug(slug) {
+		return false
+	}
+	_, parent, _ := strings.Cut(strings.TrimPrefix(slug, "pr-"), "-")
+	return ValidAppSlug(parent)
 }
 
 // IsPreviewAppSlug reports the pr-<N>-<parent> shape PR previews are

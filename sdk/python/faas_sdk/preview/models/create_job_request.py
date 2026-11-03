@@ -27,8 +27,8 @@ class CreateJobRequest:
     command: list[str]
     kind: CreateJobRequestKind | Unset = "batch"
     schedule: str | Unset = UNSET
-    """Optional five-field cron expression. When present, the job becomes recurring and schedd creates one single-
-    task run per occurrence."""
+    """Optional five-field cron expression. When present, the job becomes recurring and the scheduler creates one
+    single-task run per occurrence."""
     timezone: str | Unset = UNSET
     """IANA timezone for schedule; defaults to UTC."""
     env_overrides: CreateJobRequestEnvOverrides | Unset = UNSET

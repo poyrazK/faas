@@ -15,8 +15,7 @@ T = TypeVar("T", bound="DataUpstreamListResponse")
 
 @_attrs_define
 class DataUpstreamListResponse:
-    """List response wrapper. `quota_max` is the per-plan cap from
-    `pkg/api/limits.go::DataPlacementHintsPerApp`; `count` is the
+    """List response wrapper. `quota_max` is the per-plan cap; `count` is the
     number of rows in `upstreams` (may be less than `quota_max`).
 
     """

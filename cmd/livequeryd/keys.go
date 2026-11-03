@@ -29,6 +29,9 @@ var (
 	keysDSNFile  = flag.String("keys-dsn-file", "", "file holding a read-only control-plane connection string; the database's live keys are read there")
 	keysIdentity = flag.String("keys-identity", "", "age identity that opens the live keys apid sealed (the pair of apid's FAAS_APID_LIVE_KEY_RECIPIENT_FILE)")
 	keysRefresh  = flag.Duration("keys-refresh", 0, "how often to read the live keys (default 5s); revocations apply within it")
+	// ADR 20261028161502: apid signs the live keys and logins it seals.
+	liveSignatureKeys     = flag.String("live-signature-keys", "", "file of Ed25519 public keys (PEM) that verify apid's signatures on live keys and logins; a value whose signature does not verify is refused")
+	requireLiveSignatures = flag.Bool("require-live-signatures", false, "also refuse live keys and logins that carry no signature (the contract step, after gregalectl live-query sign-existing); needs -live-signature-keys")
 )
 
 // keySource reads the databases' live keys from the control plane; each
@@ -36,7 +39,9 @@ var (
 type keySource struct {
 	ring       liveserver.KeySource
 	identities []*age.X25519Identity
-	pool       *pgxpool.Pool
+	// verify checks apid's writer signatures; nil checks none.
+	verify *livekeys.Verifier
+	pool   *pgxpool.Pool
 }
 
 // Close closes the control-plane pool. A nil source has none.
@@ -48,7 +53,7 @@ func (k *keySource) Close() {
 
 // watch keeps hub's key ring current until ctx ends.
 func (k *keySource) watch(ctx context.Context, hub *liveserver.Hub, log *slog.Logger) {
-	liveserver.WatchKeys(ctx, hub, k.ring, k.identities, *keysRefresh, log)
+	liveserver.WatchKeys(ctx, hub, k.ring, k.identities, k.verify, *keysRefresh, log)
 }
 
 // openKeySource connects to the control plane named by -keys-dsn-file, or
@@ -63,6 +68,10 @@ func openKeySource(ctx context.Context) (*keySource, error) {
 	identity, err := secretbox.LoadHostKey(*keysIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("livequeryd: live key identity: %w", err)
+	}
+	verify, err := liveSignatureVerifier()
+	if err != nil {
+		return nil, err
 	}
 	data, err := os.ReadFile(*keysDSNFile) //nolint:forbidigo // operator-provisioned file named by a flag
 	if err != nil {
@@ -79,7 +88,23 @@ func openKeySource(ctx context.Context) (*keySource, error) {
 	if err != nil {
 		return nil, fmt.Errorf("livequeryd: control-plane pool: %w", err)
 	}
-	return &keySource{ring: livekeys.New(pool).Ring, identities: []*age.X25519Identity{identity}, pool: pool}, nil
+	return &keySource{ring: livekeys.New(pool).Ring, identities: []*age.X25519Identity{identity}, verify: verify, pool: pool}, nil
+}
+
+// liveSignatureVerifier builds the writer-signature check from
+// -live-signature-keys and -require-live-signatures; nil without keys.
+func liveSignatureVerifier() (*livekeys.Verifier, error) {
+	if *liveSignatureKeys == "" {
+		if *requireLiveSignatures {
+			return nil, errors.New("livequeryd: -require-live-signatures needs -live-signature-keys")
+		}
+		return nil, nil
+	}
+	keys, err := livekeys.LoadVerifyKeys(*liveSignatureKeys)
+	if err != nil {
+		return nil, fmt.Errorf("livequeryd: -live-signature-keys: %w", err)
+	}
+	return livekeys.NewVerifier(keys, *requireLiveSignatures), nil
 }
 
 // serveRealtimed serves live frames to realtimed. It accepts no browser

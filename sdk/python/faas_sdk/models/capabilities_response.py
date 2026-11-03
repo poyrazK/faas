@@ -29,9 +29,8 @@ class CapabilitiesResponse:
     this field, which means unsupported. This is a preflight signal, not a cluster-wide health guarantee; always use
     the conditional parking endpoint, including in mixed-version fleets."""
     hidden_capabilities: list[str] | Unset = UNSET
-    """Catalog capabilities, internal ones included, whose platform flag is off for this account
-    (ADR-20261023115741). Clients hide their commands and links. Omitted when nothing is hidden and by servers
-    without the capability gate."""
+    """Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide
+    their commands and links. Omitted when nothing is hidden and by servers without the capability gate."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

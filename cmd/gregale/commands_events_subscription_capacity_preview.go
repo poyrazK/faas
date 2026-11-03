@@ -43,7 +43,7 @@ func cmdEventsSubscriptionCapacityPreview(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || *proposed < 0 || *timeout <= 0 || *maxAge < api.EventDeliveryHealthWatchAgeMin || *maxAge > api.EventDeliveryHealthWatchAgeMax {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-capacity-preview APP SUB --max-pending N [--timeout 5s] [--max-age 30s]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-capacity-preview APP SUB --max-pending N [--timeout 5s] [--max-age 30s]", "events")
 		return 1
 	}
 	sub, err := uuid.Parse(positional[1])

@@ -112,7 +112,12 @@ func TestOrgOffboardingCreatorLosesNamedAndIndirectAppRoutes(t *testing.T) {
 			t.Fatalf("owner %s %s = %d, want %d: %s", c.method, c.path, rec.Code, c.want, rec.Body)
 		}
 	}
-	freeze := e.DoAdmin(t, "POST", "/v1/freezes", api.CreateReleaseFreezeRequest{App: "company-api", Kind: api.ReleaseFreezeKindWindow, Reason: "launch"}, nil)
+	// The company owns the app's freezes (ADR-20261019071733 amendment 4):
+	// the account route names it only to point at the company's routes.
+	if rec := e.DoAdmin(t, "POST", "/v1/freezes", api.CreateReleaseFreezeRequest{App: "company-api", Kind: api.ReleaseFreezeKindWindow, Reason: "launch"}, nil); rec.Code != http.StatusConflict {
+		t.Fatalf("owner account freeze on a company app = %d, want 409: %s", rec.Code, rec.Body)
+	}
+	freeze := e.DoAdmin(t, "POST", "/v1/apps/company-api/freezes", api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "launch"}, nil)
 	var created api.ReleaseFreeze
 	if freeze.Code != http.StatusCreated || json.Unmarshal(freeze.Body.Bytes(), &created) != nil || created.ID == "" {
 		t.Fatalf("owner freeze = %d: %s", freeze.Code, freeze.Body)
@@ -137,6 +142,8 @@ func TestOrgOffboardingCreatorLosesNamedAndIndirectAppRoutes(t *testing.T) {
 		{"DELETE", "/v1/triggers/" + triggerID, nil},
 		{"DELETE", "/v1/freezes/" + created.ID, nil},
 		{"POST", "/v1/freezes", api.CreateReleaseFreezeRequest{App: "company-api", Kind: api.ReleaseFreezeKindWindow, Reason: "again"}},
+		{"DELETE", "/v1/apps/company-api/freezes/" + created.ID, nil},
+		{"POST", "/v1/apps/company-api/freezes", api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "again"}},
 		{"GET", "/v1/crons?slug=company-api", nil},
 		{"POST", "/v1/crons", api.CreateCronRequest{AppID: app.ID, Schedule: "*/5 * * * *", Path: "/"}},
 		{"POST", "/v1/domains", api.CreateCustomDomainRequest{AppID: "company-api", Domain: "takeover.attacker.example"}},
@@ -147,6 +154,18 @@ func TestOrgOffboardingCreatorLosesNamedAndIndirectAppRoutes(t *testing.T) {
 				t.Fatalf("removed creator = %d, want 404: %s", rec.Code, rec.Body)
 			}
 		})
+	}
+	// Account-wide lists name no app, so they leave the company's rows out
+	// themselves; the company's freeze itself stays in place.
+	list := e.DoAdmin(t, "GET", "/v1/freezes", nil, nil)
+	var listed api.ListReleaseFreezesResponse
+	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &listed) != nil {
+		t.Fatalf("removed creator GET /v1/freezes = %d: %s", list.Code, list.Body)
+	}
+	for _, f := range listed.Freezes {
+		if f.ID == created.ID {
+			t.Fatalf("removed creator still lists the company's freeze %s", created.ID)
+		}
 	}
 	if got, err := store.GetWorkflowRun(t.Context(), run.ID); err != nil || got.CancelledAt != nil {
 		t.Fatalf("run after refused cancel: %+v %v", got, err)

@@ -33,6 +33,28 @@ func MigrateStorage(ctx context.Context, store StorageStore, domain *age.X25519I
 	if store == nil || domain == nil || len(legacy) == 0 {
 		return MigrationReport{}, errors.New("sealmigrate: storage migration needs the store, the domain identity and the legacy identities")
 	}
+	return walkStorage(ctx, store, domain, legacy, store.ResealStorageCredential)
+}
+
+// StorageLister is the slice of *state.PgStore the storage check reads.
+type StorageLister interface {
+	ListObjectS3CredentialsForRekey(ctx context.Context, limit int, afterID string) ([]state.ObjectS3Credential, error)
+}
+
+// CheckStorage counts, without writing, the S3 credentials that legacy
+// identities still open (ADR 20261022111812, the contract step's
+// precondition): s3-gatewayd may drop the fleet and host identities only
+// once Pending is zero.
+func CheckStorage(ctx context.Context, store StorageLister, domain *age.X25519Identity, legacy []*age.X25519Identity) (MigrationReport, error) {
+	if store == nil || domain == nil {
+		return MigrationReport{}, errors.New("sealmigrate: storage check needs the store and the domain identity")
+	}
+	return walkStorage(ctx, store, domain, legacy, nil)
+}
+
+// walkStorage visits every listed S3 credential. With reseal nil it only
+// counts.
+func walkStorage(ctx context.Context, store StorageLister, domain *age.X25519Identity, legacy []*age.X25519Identity, reseal func(ctx context.Context, id string, old []byte, kid string, sealed []byte) (bool, error)) (MigrationReport, error) {
 	kid := domain.Recipient().String()
 	report := MigrationReport{Domain: sealdomain.Storage, Target: kid}
 	afterID := ""
@@ -48,9 +70,13 @@ func MigrateStorage(ctx context.Context, store StorageStore, domain *age.X25519I
 			if err != nil {
 				return report, fmt.Errorf("sealmigrate: reseal storage credential %s: %w", c.ID, err)
 			}
+			if reseal == nil {
+				report.checked(outcome)
+				continue
+			}
 			replaced := false
 			if outcome == resealWrite {
-				if replaced, err = store.ResealStorageCredential(ctx, c.ID, c.SecretSealed, kid, sealed); err != nil {
+				if replaced, err = reseal(ctx, c.ID, c.SecretSealed, kid, sealed); err != nil {
 					return report, err
 				}
 			}

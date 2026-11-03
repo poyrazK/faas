@@ -66,7 +66,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[PlatformTenantTrialResponse | Problem]:
-    """Read a tenant's free trial (ADR-1322).
+    """Read a tenant's free trial.
 
     Args:
         id (UUID):
@@ -95,7 +95,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> PlatformTenantTrialResponse | Problem | None:
-    """Read a tenant's free trial (ADR-1322).
+    """Read a tenant's free trial.
 
     Args:
         id (UUID):
@@ -119,7 +119,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[PlatformTenantTrialResponse | Problem]:
-    """Read a tenant's free trial (ADR-1322).
+    """Read a tenant's free trial.
 
     Args:
         id (UUID):
@@ -146,7 +146,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> PlatformTenantTrialResponse | Problem | None:
-    """Read a tenant's free trial (ADR-1322).
+    """Read a tenant's free trial.
 
     Args:
         id (UUID):

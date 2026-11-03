@@ -95,12 +95,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     window: GetAppSLOWindow | Unset = "24h",
 ) -> Response[AppSLOResponse | Problem]:
-    r"""Per-app customer-facing SLO panel (issue
+    r"""Per-app customer-facing SLO panel.
 
      Closed-set windowed SLO panel for one app — the
     customer-facing equivalent of AWS CloudWatch
     per-function / GCP Cloud Run per-service. Distinct from
-    `GET /v1/apps/{slug}/metrics` (issue #273 / ADR-042) which
+    `GET /v1/apps/{slug}/metrics` which
     is the 5m-window dashboard panel. The /slo surface is the
     \"yesterday's SLO\" / \"this week's SLO\" summary, with the
     customer-facing SLO signals co-located with the
@@ -153,12 +153,12 @@ def sync(
     client: AuthenticatedClient | Client,
     window: GetAppSLOWindow | Unset = "24h",
 ) -> AppSLOResponse | Problem | None:
-    r"""Per-app customer-facing SLO panel (issue
+    r"""Per-app customer-facing SLO panel.
 
      Closed-set windowed SLO panel for one app — the
     customer-facing equivalent of AWS CloudWatch
     per-function / GCP Cloud Run per-service. Distinct from
-    `GET /v1/apps/{slug}/metrics` (issue #273 / ADR-042) which
+    `GET /v1/apps/{slug}/metrics` which
     is the 5m-window dashboard panel. The /slo surface is the
     \"yesterday's SLO\" / \"this week's SLO\" summary, with the
     customer-facing SLO signals co-located with the
@@ -206,12 +206,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     window: GetAppSLOWindow | Unset = "24h",
 ) -> Response[AppSLOResponse | Problem]:
-    r"""Per-app customer-facing SLO panel (issue
+    r"""Per-app customer-facing SLO panel.
 
      Closed-set windowed SLO panel for one app — the
     customer-facing equivalent of AWS CloudWatch
     per-function / GCP Cloud Run per-service. Distinct from
-    `GET /v1/apps/{slug}/metrics` (issue #273 / ADR-042) which
+    `GET /v1/apps/{slug}/metrics` which
     is the 5m-window dashboard panel. The /slo surface is the
     \"yesterday's SLO\" / \"this week's SLO\" summary, with the
     customer-facing SLO signals co-located with the
@@ -262,12 +262,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     window: GetAppSLOWindow | Unset = "24h",
 ) -> AppSLOResponse | Problem | None:
-    r"""Per-app customer-facing SLO panel (issue
+    r"""Per-app customer-facing SLO panel.
 
      Closed-set windowed SLO panel for one app — the
     customer-facing equivalent of AWS CloudWatch
     per-function / GCP Cloud Run per-service. Distinct from
-    `GET /v1/apps/{slug}/metrics` (issue #273 / ADR-042) which
+    `GET /v1/apps/{slug}/metrics` which
     is the 5m-window dashboard panel. The /slo surface is the
     \"yesterday's SLO\" / \"this week's SLO\" summary, with the
     customer-facing SLO signals co-located with the

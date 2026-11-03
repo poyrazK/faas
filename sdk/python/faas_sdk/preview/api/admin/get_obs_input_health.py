@@ -89,12 +89,12 @@ def sync_detailed(
 
      Requires operator read scope, MFA and the operator allowlist. Without an
     explicit expected_role, returns unknown with choices and reads no source.
-    Both roles expect at least one apid, gatewayd (public gateway) and schedd
-    scrape target. Single-box also expects vmmd. Control-plane adds vmmd,
-    gatewayd-internal and schedd-compute counts from fresh apid discovery.
+    Both roles expect at least one API, the gateway (public gateway) and the scheduler
+    scrape target. Single-box also expects the VM manager. Control-plane adds the VM manager,
+    the gateway and the compute scheduler counts from fresh the API discovery.
     Static counts are minimums, not a complete intended inventory. Compute
     counts do not prove target identity membership. The default Prometheus
-    collision mapping job=apid plus exported_job selects discovery evidence.
+    collision mapping job=the API plus exported_job selects discovery evidence.
     Missing, stale, conflicting or invalid discovery stays unknown. A fresh
     zero registry is legitimate; omitted invalid discovery targets degrade.
     Pins strict Prometheus queries to one time under a three-second budget
@@ -141,12 +141,12 @@ def sync(
 
      Requires operator read scope, MFA and the operator allowlist. Without an
     explicit expected_role, returns unknown with choices and reads no source.
-    Both roles expect at least one apid, gatewayd (public gateway) and schedd
-    scrape target. Single-box also expects vmmd. Control-plane adds vmmd,
-    gatewayd-internal and schedd-compute counts from fresh apid discovery.
+    Both roles expect at least one API, the gateway (public gateway) and the scheduler
+    scrape target. Single-box also expects the VM manager. Control-plane adds the VM manager,
+    the gateway and the compute scheduler counts from fresh the API discovery.
     Static counts are minimums, not a complete intended inventory. Compute
     counts do not prove target identity membership. The default Prometheus
-    collision mapping job=apid plus exported_job selects discovery evidence.
+    collision mapping job=the API plus exported_job selects discovery evidence.
     Missing, stale, conflicting or invalid discovery stays unknown. A fresh
     zero registry is legitimate; omitted invalid discovery targets degrade.
     Pins strict Prometheus queries to one time under a three-second budget
@@ -188,12 +188,12 @@ async def asyncio_detailed(
 
      Requires operator read scope, MFA and the operator allowlist. Without an
     explicit expected_role, returns unknown with choices and reads no source.
-    Both roles expect at least one apid, gatewayd (public gateway) and schedd
-    scrape target. Single-box also expects vmmd. Control-plane adds vmmd,
-    gatewayd-internal and schedd-compute counts from fresh apid discovery.
+    Both roles expect at least one API, the gateway (public gateway) and the scheduler
+    scrape target. Single-box also expects the VM manager. Control-plane adds the VM manager,
+    the gateway and the compute scheduler counts from fresh the API discovery.
     Static counts are minimums, not a complete intended inventory. Compute
     counts do not prove target identity membership. The default Prometheus
-    collision mapping job=apid plus exported_job selects discovery evidence.
+    collision mapping job=the API plus exported_job selects discovery evidence.
     Missing, stale, conflicting or invalid discovery stays unknown. A fresh
     zero registry is legitimate; omitted invalid discovery targets degrade.
     Pins strict Prometheus queries to one time under a three-second budget
@@ -238,12 +238,12 @@ async def asyncio(
 
      Requires operator read scope, MFA and the operator allowlist. Without an
     explicit expected_role, returns unknown with choices and reads no source.
-    Both roles expect at least one apid, gatewayd (public gateway) and schedd
-    scrape target. Single-box also expects vmmd. Control-plane adds vmmd,
-    gatewayd-internal and schedd-compute counts from fresh apid discovery.
+    Both roles expect at least one API, the gateway (public gateway) and the scheduler
+    scrape target. Single-box also expects the VM manager. Control-plane adds the VM manager,
+    the gateway and the compute scheduler counts from fresh the API discovery.
     Static counts are minimums, not a complete intended inventory. Compute
     counts do not prove target identity membership. The default Prometheus
-    collision mapping job=apid plus exported_job selects discovery evidence.
+    collision mapping job=the API plus exported_job selects discovery evidence.
     Missing, stale, conflicting or invalid discovery stays unknown. A fresh
     zero registry is legitimate; omitted invalid discovery targets degrade.
     Pins strict Prometheus queries to one time under a three-second budget

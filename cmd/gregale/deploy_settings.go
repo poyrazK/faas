@@ -40,27 +40,10 @@ func prepareDeploySettings(ctx context.Context, c manifestScalingClient, slug, d
 	if err := m.Validate(); err != nil {
 		return nil, err
 	}
-	desired := api.UpdateAppRequest{}
-	if m.Lifecycle != nil {
-		desired = m.Lifecycle.ToAPI()
-	}
-	if m.Worker != nil {
-		mode := api.ExecutionModeWorker
-		desired.ExecutionMode, desired.WorkerReplicas = &mode, m.Worker.Scale.ToAPI()
-		if seconds := m.Worker.DrainTimeoutSeconds(); seconds > 0 {
-			desired.StopGracePeriodS = &seconds
-		}
-		if m.Worker.StopSignal != "" {
-			desired.StopSignal = &m.Worker.StopSignal
-		}
-		if m.Worker.Scale.Metric != "" {
-			desired.ScalingPolicy = &api.ScalingPolicy{MinInstances: m.Worker.Scale.Min, MaxInstances: m.Worker.Scale.Max,
-				Target: &api.ScalingTarget{Metric: m.Worker.Scale.Metric, Name: m.Worker.Scale.Name, Value: m.Worker.Scale.Target}}
-		}
-	}
-	if desired.ScalingPolicy == nil && m.Scaling != nil {
-		desired.ScalingPolicy = m.Scaling.ToAPI()
-	}
+	// The same requests apid's source deploys apply, so a worker scales the
+	// same whichever way its source arrives.
+	desired, _ := m.LifecycleRequest()
+	desired.ScalingPolicy = m.ScalingPolicyRequest()
 	if m.RetryPolicy != nil {
 		desired.RetryPolicy = &api.RetryPolicyDTO{MaxAttempts: m.RetryPolicy.MaxAttempts, BaseSeconds: m.RetryPolicy.BaseSeconds,
 			MaxSeconds: m.RetryPolicy.MaxSeconds, JitterSeconds: m.RetryPolicy.JitterSeconds}

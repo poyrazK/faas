@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,18 +27,20 @@ func TestSamplerSubtractsProvenQuietPauses(t *testing.T) {
 		wantMB       int64
 		wantUnbilled float64
 		wantUnproven float64
+		// wantPausedMB is the unbilled paused usage the customer sees.
+		wantPausedMB int64
 	}{
 		{name: "off bills residency and reads no ledger", mode: QuietPauseOff, paused: &state.QuietPausedSeconds{Seconds: 50}, wantMB: 60 * perSecond},
 		{name: "shadow counts the pause but bills residency", mode: QuietPauseShadow, paused: &state.QuietPausedSeconds{Seconds: 50}, wantMB: 60 * perSecond, wantUnbilled: 50},
-		{name: "on bills only the running seconds", mode: QuietPauseOn, paused: &state.QuietPausedSeconds{Seconds: 50}, wantMB: 10 * perSecond, wantUnbilled: 50},
-		{name: "on never bills below zero", mode: QuietPauseOn, paused: &state.QuietPausedSeconds{Seconds: 75}, wantMB: 0, wantUnbilled: 60},
-		{name: "an unproven pause bills what the ledger could not prove", mode: QuietPauseOn, paused: &state.QuietPausedSeconds{Seconds: 30, Unproven: true}, wantMB: 30 * perSecond, wantUnbilled: 30, wantUnproven: 1},
+		{name: "on bills only the running seconds", mode: QuietPauseOn, paused: &state.QuietPausedSeconds{Seconds: 50}, wantMB: 10 * perSecond, wantUnbilled: 50, wantPausedMB: 50 * perSecond},
+		{name: "on never bills below zero", mode: QuietPauseOn, paused: &state.QuietPausedSeconds{Seconds: 75}, wantMB: 0, wantUnbilled: 60, wantPausedMB: 60 * perSecond},
+		{name: "an unproven pause bills what the ledger could not prove", mode: QuietPauseOn, paused: &state.QuietPausedSeconds{Seconds: 30, Unproven: true}, wantMB: 30 * perSecond, wantUnbilled: 30, wantUnproven: 1, wantPausedMB: 30 * perSecond},
 		{name: "no pause bills residency", mode: QuietPauseOn, wantMB: 60 * perSecond},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newLedgerStore()
-			_, ins := seedRunningInstance(t, store, quietBase, quietBase.Add(time.Minute))
+			acct, ins := seedRunningInstance(t, store, quietBase, quietBase.Add(time.Minute))
 			recordComplete(t, store, quietBase.Add(-api.MeterCatchUpWindow), quietBase)
 			if tc.paused != nil {
 				store.paused[quietBase] = map[string]state.QuietPausedSeconds{ins.ID: *tc.paused}
@@ -50,6 +53,7 @@ func TestSamplerSubtractsProvenQuietPauses(t *testing.T) {
 			if got, _ := store.appended(quietBase); got != tc.wantMB {
 				t.Fatalf("billed %d MB-seconds, want %d", got, tc.wantMB)
 			}
+			assertQuietPausedMB(t, store, acct.ID, tc.wantPausedMB)
 			if tc.mode == QuietPauseOff {
 				if store.pausedReads != 0 || sampler.quietMetrics != nil {
 					t.Fatalf("off read the ledger %d times", store.pausedReads)
@@ -62,6 +66,49 @@ func TestSamplerSubtractsProvenQuietPauses(t *testing.T) {
 			}
 			if got := testutil.ToFloat64(m.unproven.WithLabelValues(string(tc.mode))); got != tc.wantUnproven {
 				t.Fatalf("unproven minutes = %v, want %v", got, tc.wantUnproven)
+			}
+		})
+	}
+}
+
+// On mode subtracts paused seconds only for the accounts the
+// quiet_pause_unbilled flag releases, so the rollout can start with internal
+// accounts. Every other account is counted as in shadow mode and billed in
+// full, which keeps the measured-versus-unbilled alert whole.
+func TestSamplerQuietPauseOnFollowsTheAccountRelease(t *testing.T) {
+	perSecond := int64(api.BillableRAMMB(256))
+	for _, released := range []bool{true, false} {
+		t.Run(map[bool]string{true: "released", false: "not released"}[released], func(t *testing.T) {
+			store := newLedgerStore()
+			acct, ins := seedRunningInstance(t, store, quietBase, quietBase.Add(time.Minute))
+			recordComplete(t, store, quietBase.Add(-api.MeterCatchUpWindow), quietBase)
+			store.paused[quietBase] = map[string]state.QuietPausedSeconds{ins.ID: {Seconds: 50}}
+			now := quietBase.Add(time.Minute)
+			var asked []platformflags.Subject
+			sampler := NewSampler(store, nil, func() time.Time { return now }).
+				WithQuietPause(QuietPauseOn, prometheus.NewRegistry()).
+				WithQuietPauseRelease(func(subject platformflags.Subject) bool {
+					asked = append(asked, subject)
+					return released && subject.AccountID == acct.ID
+				})
+			if _, err := tick(t, store, sampler, now); err != nil {
+				t.Fatal(err)
+			}
+			if len(asked) == 0 || asked[0].AccountID != acct.ID || asked[0].Plan != string(api.PlanHobby) {
+				t.Fatalf("release asked about %+v, want the app's account on hobby", asked)
+			}
+			wantMB, mode, wantPausedMB := 60*perSecond, QuietPauseShadow, int64(0)
+			if released {
+				wantMB, mode, wantPausedMB = 10*perSecond, QuietPauseOn, 50*perSecond
+			}
+			if got, _ := store.appended(quietBase); got != wantMB {
+				t.Fatalf("billed %d MB-seconds, want %d", got, wantMB)
+			}
+			// Only seconds that went unbilled reach the customer's usage.
+			assertQuietPausedMB(t, store, acct.ID, wantPausedMB)
+			m := sampler.quietMetrics
+			if got := testutil.ToFloat64(m.seconds.WithLabelValues(string(mode), string(api.PlanHobby))); got != 50 {
+				t.Fatalf("unbilled seconds under mode %s = %v, want 50", mode, got)
 			}
 		})
 	}
@@ -119,6 +166,59 @@ func TestSamplerQuietPauseKeepsTheFloor(t *testing.T) {
 	}
 	if floorRow != floor || liveRow != 0 {
 		t.Fatalf("floor row %d, live row %d MB-seconds; want %d and 0", floorRow, liveRow, floor)
+	}
+	// The floor billed the pause back, so none of it was free.
+	app, err := store.AppByID(context.Background(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertQuietPausedMB(t, store, app.AccountID, 0)
+}
+
+// A floor bills paused seconds back only up to its own gap: with a running
+// sibling holding the floor, the paused instance's time is free and recorded.
+func TestSamplerQuietPauseRecordsWhatTheFloorDoesNotBill(t *testing.T) {
+	ctx := context.Background()
+	store := newLedgerStore()
+	appID, depID := seedFloorApp(t, store, api.PlanHobby, 256)
+	setPolicy(t, store, appID, state.ScalingPolicy{MinInstances: 1})
+	paused, err := store.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := store.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.resident[quietBase] = map[string]int64{paused.ID: 60, running.ID: 60}
+	store.paused[quietBase] = map[string]state.QuietPausedSeconds{paused.ID: {Seconds: 45}}
+	recordComplete(t, store, quietBase.Add(-api.MeterCatchUpWindow), quietBase)
+	now := quietBase.Add(time.Minute)
+	sampler := NewSampler(store, nil, func() time.Time { return now }).WithQuietPause(QuietPauseOn, nil)
+	if _, err := tick(t, store, sampler, now); err != nil {
+		t.Fatal(err)
+	}
+	perSecond := int64(api.BillableRAMMB(256))
+	if got, _ := store.appended(quietBase); got != 75*perSecond {
+		t.Fatalf("billed %d MB-seconds, want the 75 running seconds' %d", got, 75*perSecond)
+	}
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertQuietPausedMB(t, store, app.AccountID, 45*perSecond)
+}
+
+// assertQuietPausedMB checks the unbilled paused usage recorded for an
+// account's month (rollout step 3).
+func assertQuietPausedMB(t *testing.T, store state.QuietPausedUsageStore, accountID string, want int64) {
+	t.Helper()
+	got, err := store.QuietPausedMBSecondsByMonth(context.Background(), accountID, quietBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("recorded %d unbilled paused MB-seconds, want %d", got, want)
 	}
 }
 

@@ -65,6 +65,12 @@ func cmdStart(args []string) (code int) {
 	if !stdinIsTTY() {
 		return printErr("Interactive session required", errors.New("run gregale start in a terminal; use gregale deploy for scripts"))
 	}
+	// start signs in when the saved login is missing or rejected, and a login
+	// saved under FAAS_TOKEN would never be used (nor would a 401 from
+	// FAAS_TOKEN be fixed by one). gregale deploy works with FAAS_TOKEN.
+	if envToken() != "" {
+		return printErr("FAAS_TOKEN is set", errors.New("gregale start uses and saves its own login, which FAAS_TOKEN overrides; run 'unset FAAS_TOKEN' and retry, or use gregale deploy, which authenticates with FAAS_TOKEN"))
+	}
 	source := "."
 	if fs.NArg() == 1 {
 		source = fs.Arg(0)
@@ -172,7 +178,7 @@ func (r *startRunner) authenticate() int {
 	if err != nil {
 		return printErr("Could not start login", err)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Approve this session in your browser:\n  %s\n", code.URL)
+	_, _ = fmt.Fprintf(osStdout, "Approve this session in your browser with code %s:\n  %s\n", code.Code, code.URL)
 	if err := openBrowser(code.URL); err != nil {
 		PrintWarn(osStdout, "Open the link above manually: %v", err)
 	}
@@ -541,7 +547,7 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 	code := r.deploy(deployCtx, args, false, execution)
 	r.progress.Close()
 	if saveErr != nil || identityErr != nil {
-		PrintProgress(osStdout, "Inspect accepted deployment directly: %s deployment wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
+		PrintProgress(osStdout, "Inspect accepted deployment directly: %s release wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
 		if saveErr != nil {
 			return printErr("Deployment accepted but recovery state could not be saved", saveErr), false
 		}
@@ -651,7 +657,7 @@ func (r *startRunner) printRecovery() {
 		return
 	}
 	PrintProgress(osStdout, "Continue this launch: %s start %s", recoveryCLI(), recoveryArgument(r.session.ScopePath))
-	PrintProgress(osStdout, "Inspect directly: %s deployment wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
+	PrintProgress(osStdout, "Inspect directly: %s release wait %s", recoveryCLI(), recoveryArgument(r.session.DeploymentID))
 	r.printPreviouslyVerified()
 }
 
@@ -722,6 +728,6 @@ func (r *startRunner) finish() {
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "  Inspect: %s deployment %s\n", cli, recoveryArgument(r.session.DeploymentID))
 	}
-	_, _ = fmt.Fprintf(osStdout, "  Delete app: %s apps rm %s\n", cli, app)
+	_, _ = fmt.Fprintf(osStdout, "  Delete app: %s app delete %s\n", cli, app)
 	r.printPreviouslyVerified()
 }

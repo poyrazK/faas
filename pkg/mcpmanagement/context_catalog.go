@@ -154,7 +154,7 @@ func (m *management) contextResourceValue(ctx context.Context, args appArgs, vie
 }
 func (m *management) contextError(err error) error {
 	data, _ := json.Marshal(m.toolError(err).StructuredContent)
-	return &contextRequestError{cause: err, message: fmt.Sprintf("gregale context request failed: %s", data)}
+	return &contextRequestError{cause: err, message: fmt.Sprintf("context request to Gregale failed: %s", data)}
 }
 
 type contextRequestError struct {

@@ -11,17 +11,20 @@ import (
 )
 
 // TestCLIRoughEdgesH14_63 covers what the rc.294 re-test found after H14-42
-// and H14-51: `env list` and `flags list` named no verb, `flags apply`
-// without --file named nothing missing, and `jobs list --app` answered only
-// "unknown flag --app".
+// and H14-51: an unknown `env` verb and `flags list` named no verb, `flags
+// apply` without --file named nothing missing, and `jobs list --app`
+// answered only "unknown flag --app". `env list` itself now lists variables
+// (ADR-20261026145832).
 func TestCLIRoughEdgesH14_63(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		want []string
 	}{
-		{[]string{"env", "list"}, []string{`unknown subcommand "list"`, "Subcommands: create, clone-status, pull, push, diff, history, rollback"}},
+		// clone-status stays hidden until full environment clones are on
+		// (ADR-20261023091049).
+		{[]string{"env", "bogus"}, []string{`unknown subcommand "bogus"`, "Subcommands: create, pull, push, diff, history, rollback"}},
 		{[]string{"flags", "list", "--project", "shop"}, []string{`gregale flags: unknown subcommand "list"`, "Subcommands: get, apply"}},
-		{[]string{"flags", "apply", "--project", "shop"}, []string{"gregale flags apply needs --file"}},
+		{[]string{"flags", "apply", "--project", "shop"}, []string{"gregale flag apply needs --file"}},
 		{[]string{"jobs", "list", "--app", "shop"}, []string{"lists every job in the account; it has no --app filter"}},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
@@ -63,7 +66,7 @@ func TestDeploymentsTakesAPositionalSlug(t *testing.T) {
 	_, stderr, restore = main.SwapIO(t)
 	code = main.Run([]string{"deployments", "shop", "--app", "other"})
 	restore()
-	if code != 1 || !strings.Contains(stderr(), "usage: gregale deployments [SLUG | --app SLUG]") {
+	if code != 1 || !strings.Contains(stderr(), "usage: gregale release list [SLUG | --app SLUG]") {
 		t.Fatalf("conflicting slug and --app: exit=%d stderr=%q", code, stderr())
 	}
 }

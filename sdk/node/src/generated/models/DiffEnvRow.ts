@@ -5,7 +5,7 @@
 /**
  * One would-write env var. Value carries plaintext so the
  * quota gate's per-value byte cap can fire (the wire's list
- * path never echoes values per ADR-053 §Decision 4).
+ * path never echoes values 4).
  *
  */
 export type DiffEnvRow = {

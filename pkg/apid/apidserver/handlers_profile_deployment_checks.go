@@ -62,16 +62,17 @@ func (s *server) saveOwnedProfileDeploymentPolicy(ctx context.Context, acct stat
 	if req.Config.CanaryGate != nil && req.Config.CanaryGate.AutoRollback && app.Manifest.ExecutionMode == api.ExecutionModeService {
 		return api.ProfileDeploymentPolicy{}, api.ErrValidation("automatic profiling rollback supports request-mode canaries; service recovery requires the checked handoff flow")
 	}
-	if req.Config.CanaryGate != nil && !acct.Plan.TrafficSplitAllowed() {
-		return api.ProfileDeploymentPolicy{}, api.ErrPlanTrafficSplitNotAllowed(acct.Plan)
+	plan := s.profilePlan(ctx, acct.Plan, app)
+	if req.Config.CanaryGate != nil && !plan.TrafficSplitAllowed() {
+		return api.ProfileDeploymentPolicy{}, api.ErrPlanTrafficSplitNotAllowed(plan)
 	}
 	if req.Config.Enabled {
-		limits := api.MustLimitsFor(acct.Plan)
+		limits := api.MustLimitsFor(plan)
 		if !limits.Profiling.Enabled {
-			return api.ProfileDeploymentPolicy{}, api.ErrPlanFeatureGated("profiling", acct.Plan)
+			return api.ProfileDeploymentPolicy{}, api.ErrPlanFeatureGated("profiling", plan)
 		}
 		if req.Config.Options.Metric == "cpu_per_request" && !limits.DebugTelemetryEnabled {
-			return api.ProfileDeploymentPolicy{}, api.ErrPlanFeatureGated("request telemetry", acct.Plan)
+			return api.ProfileDeploymentPolicy{}, api.ErrPlanFeatureGated("request telemetry", plan)
 		}
 		if s.profileBackend == nil {
 			return api.ProfileDeploymentPolicy{}, api.ErrCapacity("CPU profiling is unavailable on this installation")

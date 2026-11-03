@@ -50,7 +50,11 @@ func (s *server) assessProfilePeriodicMonitor(ctx context.Context, work state.Pr
 	}
 	if work.Monitor.Baseline != nil {
 		acct, err := s.store.AccountByID(ctx, work.AccountID)
-		if err == nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled && profiling.ValidateQuery(*check.Baseline, time.Now(), api.MustLimitsFor(acct.Plan).Profiling.RetentionDays) != nil {
+		plan := acct.Plan
+		if app, aerr := s.store.AppByID(ctx, work.Monitor.AppID); err == nil && aerr == nil && app.AccountID == work.AccountID {
+			plan = s.profilePlan(ctx, plan, app)
+		}
+		if limits := api.MustLimitsFor(plan).Profiling; err == nil && limits.Enabled && profiling.ValidateQuery(*check.Baseline, time.Now(), limits.RetentionDays) != nil {
 			out.BaselineExpired = true
 			out.Assessment.Reason = "Pinned baseline expired; a new evidence-qualified baseline is required."
 			return out

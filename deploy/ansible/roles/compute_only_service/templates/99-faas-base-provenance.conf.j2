@@ -1,0 +1,7 @@
+# ADR-20261029155852: what imaged does with a platform base whose SLSA
+# provenance does not verify: off, observe or enforce. Empty is observe, which
+# stages the base and reports it. Switch to enforce only after a release with
+# attested bases has rolled out and every node reports verified, cached or
+# legacy for 7 days.
+[Service]
+Environment=FAAS_IMAGED_BASE_PROVENANCE={{ faas_imaged_base_provenance_mode | default('') }}

@@ -11,7 +11,7 @@ T = TypeVar("T", bound="PutAPIConsumerSpendCapRequest")
 
 @_attrs_define
 class PutAPIConsumerSpendCapRequest:
-    """A consumer's monthly spend cap after prepaid credit (ADR-1306)."""
+    """A consumer's monthly spend cap after prepaid credit."""
 
     currency: str
     monthly_cap_millicents: int

@@ -27,7 +27,7 @@ class OperationWaitingState:
     until: datetime.datetime | Unset = UNSET
     approver: OperationWaitingStateApprover | Unset = UNSET
     event: str | Unset = UNSET
-    """The event an event wait expects (ADR-1197)."""
+    """The event an event wait expects."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

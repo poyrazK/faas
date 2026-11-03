@@ -32,11 +32,11 @@ class CreateOutboundAIRouteRequest:
     format_: CreateOutboundAIRouteRequestFormat | Unset = UNSET
     """native (default) needs one ai_provider across targets; openai accepts openai, azure_openai, anthropic,
     gemini, bedrock and vertex targets, every target but openai must name its model, and a vertex target's
-    integration must name one /v1/projects/{project}/locations/{location} path prefix (ADR-991, ADR-995)."""
+    integration must name one /v1/projects/{project}/locations/{location} path prefix."""
     strategy: CreateOutboundAIRouteRequestStrategy | Unset = UNSET
-    """How a call picks its first target (ADR-1434). ordered (the default) follows route order; weighted draws by
-    target weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the
-    healthy target with the lowest recent mean cost per call. The other targets follow as fallbacks."""
+    """How a call picks its first target. ordered (the default) follows route order; weighted draws by target
+    weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the healthy
+    target with the lowest recent mean cost per call. The other targets follow as fallbacks."""
     max_ttfb_ms: int | Unset = UNSET
     """A cost route's latency target; targets slower on average go after those within it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

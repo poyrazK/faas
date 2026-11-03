@@ -1,0 +1,11 @@
+[Service]
+# ADR-989 app relay; see roles/control_plane_service/tasks/outbound_relay.yml.
+# These override relay_listen, relay_tls_* and workload_identity_jwks_path in
+# outboundd.toml.
+Environment=FAAS_OUTBOUNDD_RELAY_LISTEN={{ faas_outboundd_relay_listen }}
+Environment=FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH={{ faas_workload_jwks_path }}
+{% if faas_outboundd_relay_listen is match('tcp://') %}
+Environment=FAAS_OUTBOUNDD_RELAY_TLS_CERT_PATH=/etc/faas/tls/outboundd/server.crt
+Environment=FAAS_OUTBOUNDD_RELAY_TLS_KEY_PATH=/etc/faas/tls/outboundd/server.key
+Environment=FAAS_OUTBOUNDD_RELAY_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt
+{% endif %}

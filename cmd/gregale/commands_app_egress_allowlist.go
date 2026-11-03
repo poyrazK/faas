@@ -91,7 +91,7 @@ func cmdAppEgressAllowlist(slug string, args []string) int {
 		PrintOK(osStdout, "App %s egress allowlist updated.", slug)
 	}
 	if egressAllowlistChangeNeedsRestart(before, current) {
-		_, _ = fmt.Fprintf(osStdout, "Running instances keep their current egress rules until they next start; apply it now with `gregale app %s restart`.\n", slug)
+		_, _ = fmt.Fprintf(osStdout, "Running instances keep their current egress rules until they next start; apply it now with `gregale app restart %s`.\n", slug)
 	}
 	return 0
 }

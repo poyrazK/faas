@@ -50,6 +50,14 @@ service SpansWriter {
   // the public-ingest codec, and merges spans through its own flush loop.
   // Outcomes ride on the response, not gRPC errors.
   rpc IngestGuestSpans(IngestGuestSpansRequest) returns (IngestGuestSpansResponse);
+
+  // IngestGuestLogs accepts one raw OTLP/HTTP logs export from the same
+  // in-guest bridge (ADR-213 runtime adapter). The request carries the same
+  // host-owned identity and the frame's payload codec with the logs signal
+  // bit cleared. apid checks the plan and per-account log export cap,
+  // decodes, redacts and bounds each record, and writes log_events rows with
+  // source runtime. Outcomes ride on the response, not gRPC errors.
+  rpc IngestGuestLogs(IngestGuestSpansRequest) returns (IngestGuestLogsResponse);
 }
 
 // WriteSpansSummaryRequest is one coalesced spans_summary
@@ -70,6 +78,26 @@ message WriteSpansSummaryRequest {
   // per-account rate-cap (Stage 4 takes one token per flush
   // window, not per request; PR-B's caps cache carries across).
   string account_id = 3;
+
+  // app_id — optional UUID of the app that produced the spans: the
+  // in-guest bridge's instance, a service binding's or outbound
+  // integration's caller, or an app-bound credential. When set, the
+  // summary merges only into that app's request rows, and the plan that
+  // bounds it is the app's resource owner's. Empty keeps the account-wide
+  // merge older producers rely on.
+  string app_id = 4;
+
+  // org_id — optional UUID of the company organization a customer key is
+  // bound to. When set, the summary merges into rows of that
+  // organization's apps, whoever created them, instead of rows carrying
+  // account_id.
+  string org_id = 5;
+
+  // customer_credential — the spans came from a customer credential held
+  // by account_id (the public OTLP endpoint). A company app's rows are then
+  // merged only while that account may still deploy to the company, so a
+  // creator who left it cannot write its apps' evidence.
+  bool customer_credential = 6;
 }
 
 // WriteSpansSummaryResponse is the per-flush outcome. outcome ∈
@@ -110,5 +138,15 @@ message IngestGuestSpansResponse {
   string outcome = 1;
   int64 accepted_spans = 2;
   int64 rejected_spans = 3;
+  int64 retry_after_ms = 4;
+}
+
+// IngestGuestLogsResponse reports how many log records from one export were
+// written and how many were dropped (over the per-export bound, without a
+// message, or otherwise invalid).
+message IngestGuestLogsResponse {
+  string outcome = 1;
+  int64 accepted_records = 2;
+  int64 rejected_records = 3;
   int64 retry_after_ms = 4;
 }

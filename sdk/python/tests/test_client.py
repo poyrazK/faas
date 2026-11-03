@@ -39,6 +39,7 @@ from faas_sdk._rfc7807 import parse_problem
 from faas_sdk._transport import (
     MUTATING_METHODS,
     AsyncIdempotencyTransport,
+    AsyncRetryTransport,
     AsyncRfc7807Layer,
     IdempotencyTransport,
     LoggingTransport,
@@ -331,6 +332,56 @@ def test_retry_respects_retry_after_header() -> None:
     elapsed = time.monotonic() - start
     assert response.status_code == 200
     assert elapsed >= 0.04  # tight tolerance — Retry-After: 0.05
+
+
+@pytest.mark.parametrize(
+    ("code", "retry_after", "want_attempts", "want_status"),
+    [
+        ("traffic_policy_too_complex", "0", 3, 200),
+        ("traffic_policy_too_complex", None, 1, 422),
+        ("validation_error", "0", 1, 422),
+    ],
+)
+def test_retry_resends_timed_out_policy_check(
+    code: str, retry_after: str | None, want_attempts: int, want_status: int
+) -> None:
+    """A policy check that ran out of time (422 traffic_policy_too_complex
+    with Retry-After) saved nothing and asks to be resent; other 422s are
+    returned at once with their problem intact."""
+    attempts: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(request.content)
+        if len(attempts) < 3:
+            headers = {"Retry-After": retry_after} if retry_after is not None else {}
+            return httpx.Response(422, headers=headers, json={"code": code, "status": 422})
+        return httpx.Response(200, json={"ok": True})
+
+    transport = RetryTransport(httpx.MockTransport(handler), max_attempts=3, backoff=0.0)
+    request = httpx.Request("POST", "https://api.example.com/v1/apps/a/deployments", json={"image": "x"})
+    response = transport.handle_request(request)
+    assert response.status_code == want_status
+    assert len(attempts) == want_attempts
+    assert all(body == attempts[0] for body in attempts)
+    if want_status == 422:
+        assert response.json()["code"] == code
+
+
+@pytest.mark.asyncio
+async def test_async_retry_resends_timed_out_policy_check() -> None:
+    attempts: list[int] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        if len(attempts) < 2:
+            return httpx.Response(422, headers={"Retry-After": "0"}, json={"code": "traffic_policy_too_complex"})
+        return httpx.Response(202, json={"id": "dep-1"})
+
+    transport = AsyncRetryTransport(httpx.MockTransport(handler), max_attempts=3, backoff=0.0)
+    request = httpx.Request("POST", "https://api.example.com/v1/apps/a/deployments", json={"image": "x"})
+    response = await transport.handle_async_request(request)
+    assert response.status_code == 202
+    assert len(attempts) == 2
 
 
 # ---------------------------------------------------------------------------

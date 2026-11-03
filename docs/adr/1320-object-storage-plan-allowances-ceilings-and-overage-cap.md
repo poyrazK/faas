@@ -5,6 +5,10 @@ until pricing is decided, so shipping it changes no bill and no limit).
 
 Amends ADR-156 (object-storage accounting) and ADR-1162 (the hard spend cap).
 
+Amended by [ADR-20261027093220](20261027093220-object-storage-billed-daily.md):
+object storage is billed in daily steps inside its month and takes cap
+headroom as it is billed; meterd reserves it before compute and egress.
+
 ## Context
 
 Object storage is billed once per UTC month at month close
@@ -97,4 +101,6 @@ single line item per account. A billing review found three gaps:
 ## Not covered
 
 Plan values for object storage, budget notifications, and a runtime cap gate
-for object storage.
+for object storage. ADR-20261101214152 adds the gate: each paid plan has a
+storage ceiling that support can raise and the spend cap tightens, and
+downloads stop while an account stores more.

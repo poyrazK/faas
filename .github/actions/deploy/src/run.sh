@@ -65,7 +65,8 @@ write_step_summary() {
 check_run_request() {
 	local status="$1" conclusion="$2" dep_id="$3" url="$4" title="$5"
 	local display_status="${6:-$status}"
-	local repo="${GITHUB_REPOSITORY:-}" sha="${GITHUB_SHA:-}" token="${GITHUB_TOKEN:-}"
+	local repo="${GITHUB_REPOSITORY:-}" sha token="${GITHUB_TOKEN:-}"
+	sha="$(check_run_commit)"
 	local api_base="${GITHUB_API_URL:-https://api.github.com}"
 	if [ -z "$repo" ] || [ -z "$sha" ] || [ -z "$token" ]; then
 		return
@@ -195,19 +196,17 @@ cmd_validate() {
     echo "gregale CLI version: $cli_version"
 }
 
-# Superseded push runs and reruns of an old commit must not roll production
-# back after a newer branch head. The generated workflow pins INPUT_REF to
-# github.sha and serializes per app. Explicit custom refs remain deliberate
-# operator choices and do not use this guard.
+# Superseded push runs, reruns of an old commit and CI runs that finish late
+# must not roll production back after a newer branch head. The generated
+# workflow deploys the event's commit and serializes per app. Explicit custom
+# refs remain deliberate operator choices and do not use this guard.
 verify_current_push_head() {
-	if [ "${GITHUB_EVENT_NAME:-}" != "push" ] || [[ "${GITHUB_REF:-}" != refs/heads/* ]] ||
-		[ "${INPUT_REF_EXPLICIT:-false}" = "true" ] ||
-		[ "${INPUT_REF:-}" != "${GITHUB_SHA:-}" ] || [ "${INPUT_REPO:-}" != "${GITHUB_REPOSITORY:-}" ]; then
+	local branch
+	branch="$(current_run_source_branch)"
+	if [ -z "$branch" ]; then
 		return 0
 	fi
-	local branch="${GITHUB_REF#refs/heads/}"
-	if [[ ! "${INPUT_REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
-		[ -z "$branch" ] || [ -z "${GITHUB_TOKEN:-}" ]; then
+	if [[ ! "${INPUT_REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || [ -z "${GITHUB_TOKEN:-}" ]; then
 		die "cannot verify current GitHub branch head"
 	fi
 	if ! command -v jq >/dev/null 2>&1; then
@@ -234,17 +233,49 @@ verify_current_push_head() {
 }
 
 # Return the branch name when this run is deploying the immutable commit
-# selected by GitHub for a branch event. The Action carries this branch to
-# apid so imaged can recheck freshness after the build, immediately before
-# promotion. Explicit refs and tags remain pinned deployment choices.
+# selected by GitHub for a branch event: a push, or the successful push run a
+# workflow_run event reports (`gregale github setup --wait-for`). The Action
+# carries this branch to apid so imaged can recheck freshness after the build,
+# immediately before promotion; a CI run that finishes after a newer commit's
+# is superseded rather than deployed over it. Explicit refs and tags remain
+# pinned deployment choices.
 current_run_source_branch() {
+	if [ "${INPUT_REPO:-}" != "${GITHUB_REPOSITORY:-}" ]; then
+		return 0
+	fi
+	if [ "${GITHUB_EVENT_NAME:-}" = "workflow_run" ]; then
+		workflow_run_source_branch
+		return 0
+	fi
 	if [ "${GITHUB_EVENT_NAME:-}" != "push" ] || [[ "${GITHUB_REF:-}" != refs/heads/* ]] ||
 		[ "${INPUT_REF_EXPLICIT:-false}" = "true" ] ||
-		[ "${INPUT_REF:-}" != "${GITHUB_SHA:-}" ] ||
-		[ "${INPUT_REPO:-}" != "${GITHUB_REPOSITORY:-}" ]; then
+		[ "${INPUT_REF:-}" != "${GITHUB_SHA:-}" ]; then
 		return 0
 	fi
 	printf '%s' "${GITHUB_REF#refs/heads/}"
+}
+
+# Print the head branch of the workflow_run event when it reports a
+# successful run for a push of INPUT_REF to this repository, else nothing.
+workflow_run_source_branch() {
+	if [ -z "${GITHUB_EVENT_PATH:-}" ] || [ ! -f "$GITHUB_EVENT_PATH" ] || ! command -v jq >/dev/null 2>&1; then
+		return 0
+	fi
+	jq -r --arg sha "${INPUT_REF:-}" --arg repo "${GITHUB_REPOSITORY:-}" '
+		.workflow_run // {}
+		| select(.event == "push" and .conclusion == "success"
+			and .head_sha == $sha and .head_repository.full_name == $repo)
+		| .head_branch // empty' "$GITHUB_EVENT_PATH" 2>/dev/null || true
+}
+
+# The commit a Check Run reports on: the tested commit a workflow_run deploy
+# names, otherwise the workflow's own commit.
+check_run_commit() {
+	if [ "${GITHUB_EVENT_NAME:-}" = "workflow_run" ] && [[ "${INPUT_REF:-}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+		printf '%s' "$INPUT_REF"
+		return 0
+	fi
+	printf '%s' "${GITHUB_SHA:-}"
 }
 
 # Release-tag deployments are deliberately narrower than arbitrary ref

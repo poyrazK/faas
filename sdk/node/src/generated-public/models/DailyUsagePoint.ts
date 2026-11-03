@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One day in the account's trailing 30 UTC calendar day usage trend (issue #308).
+ * One day in the account's trailing 30 UTC calendar day usage trend.
  */
 export type DailyUsagePoint = {
   /**

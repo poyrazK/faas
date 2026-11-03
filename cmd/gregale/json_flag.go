@@ -195,6 +195,9 @@ func printFlagSetHelp(w io.Writer, fs *flag.FlagSet) {
 	fs.VisitAll(func(f *flag.Flag) {
 		label := "--" + f.Name
 		value, usage := flag.UnquoteUsage(f)
+		if canonical, ok := cliTreeCanonicalFlag(strings.Fields(path), f.Name); ok {
+			label, usage = "--"+canonical, usage+" (also --"+f.Name+")"
+		}
 		switch value {
 		case "":
 		case "string":
@@ -294,8 +297,9 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 		if hint := globalFlagPlacementHint(diagnostic, path); hint != "" {
 			diagnostic += "\n  " + hint
 		}
+		path = strings.TrimPrefix(spellUsageForTree("gregale "+path), "gregale ")
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
-			diagnostic, path)
+			diagnostic, cliTreeSpellPath(path))
 		return len(p), err
 	}
 	if strings.HasPrefix(text, "Usage of ") || strings.HasPrefix(text, "  -") {

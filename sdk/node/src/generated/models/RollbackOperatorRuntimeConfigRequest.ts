@@ -10,7 +10,7 @@ export type RollbackOperatorRuntimeConfigRequest = {
   reason: string;
   expected_version?: number;
   /**
-   * Confirms restoring a revision that turns a core capability flag off for every account (ADR-20261023115741).
+   * Confirms restoring a revision that turns a core capability flag off for every account.
    */
   force?: boolean;
 };

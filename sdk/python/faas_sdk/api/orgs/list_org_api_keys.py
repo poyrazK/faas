@@ -78,7 +78,7 @@ def sync_detailed(
     """List API keys minted against the active org.
 
      Returns every key the org owns (active + grace + revoked).
-    Mirrors `GET /v1/keys`; PR 6's canonical path. The `org_id`
+    Mirrors `GET /v1/keys`; the canonical path. The `org_id`
     on every row will match `{slug}` because the store filters
     server-side on the loaded membership.
 
@@ -112,7 +112,7 @@ def sync(
     """List API keys minted against the active org.
 
      Returns every key the org owns (active + grace + revoked).
-    Mirrors `GET /v1/keys`; PR 6's canonical path. The `org_id`
+    Mirrors `GET /v1/keys`; the canonical path. The `org_id`
     on every row will match `{slug}` because the store filters
     server-side on the loaded membership.
 
@@ -141,7 +141,7 @@ async def asyncio_detailed(
     """List API keys minted against the active org.
 
      Returns every key the org owns (active + grace + revoked).
-    Mirrors `GET /v1/keys`; PR 6's canonical path. The `org_id`
+    Mirrors `GET /v1/keys`; the canonical path. The `org_id`
     on every row will match `{slug}` because the store filters
     server-side on the loaded membership.
 
@@ -173,7 +173,7 @@ async def asyncio(
     """List API keys minted against the active org.
 
      Returns every key the org owns (active + grace + revoked).
-    Mirrors `GET /v1/keys`; PR 6's canonical path. The `org_id`
+    Mirrors `GET /v1/keys`; the canonical path. The `org_id`
     on every row will match `{slug}` because the store filters
     server-side on the loaded membership.
 

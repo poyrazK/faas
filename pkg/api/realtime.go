@@ -3,9 +3,26 @@ package api
 import (
 	"fmt"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
+)
+
+// Secretbox namespaces of managed realtime credentials, account seal-domain
+// values (ADR 20261022111812), shared by apid and the operator re-seal.
+const (
+	RealtimeAuthTokenNamespace    = "REALTIME_AUTH"
+	RealtimeCallbackAuthNamespace = "REALTIME_CALLBACK_AUTH"
+	// A push device's target is sealed under the prefix followed by
+	// "<endpoint>:<principal key>:<device>", a provider's config under its
+	// prefix followed by "<endpoint>:<provider>".
+	RealtimePushDeviceNamespacePrefix   = "realtime-push-device:"
+	RealtimePushProviderNamespacePrefix = "realtime-push-provider:"
+	// RealtimePushTargetSealMaxBytes and RealtimePushConfigSealMaxBytes
+	// bound a sealed push target and provider config.
+	RealtimePushTargetSealMaxBytes = 8192
+	RealtimePushConfigSealMaxBytes = 16384
 )
 
 const (
@@ -225,15 +242,18 @@ type ManagedRealtimePrincipalReceiptResponse struct {
 // RealtimeChannelRule grants channels to verified tokens without the
 // authorize callback (ADR-20261019102657). Pattern is literal text,
 // {claim} placeholders that must equal the token's claim, and an optional
-// trailing "*" matching any suffix. "sub" is the token subject.
+// trailing "*" matching any suffix. "sub" is the token subject. Read lets a
+// connection subscribe; Presence also lets it set presence state and send
+// signals on the channel (ADR-369, amendment of 2026-10-27).
 type RealtimeChannelRule struct {
-	Pattern string `json:"pattern"`
-	Read    bool   `json:"read"`
+	Pattern  string `json:"pattern"`
+	Read     bool   `json:"read"`
+	Presence bool   `json:"presence,omitempty"`
 }
 
 // realtimeEndpointSlug matches the migration's CHECK on
 // managed_realtime_endpoints.slug.
-var realtimeEndpointSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+var realtimeEndpointSlug = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,47}$`)
 
 // ValidateRealtimeEndpointSlug checks an endpoint slug (ADR-20261019102657).
 func ValidateRealtimeEndpointSlug(slug string) error {

@@ -9,6 +9,7 @@ FROM product_control_receipts r
 JOIN product_control_heads h ON h.account_id=r.account_id AND h.app_id=r.app_id
 JOIN product_control_customers c ON c.account_id=r.account_id AND c.app_id=r.app_id AND c.tenant_id=r.tenant_id
 JOIN platform_tenants p ON p.account_id=r.account_id AND p.id=r.tenant_id
+JOIN apps ap ON ap.id=r.app_id AND account_may_see_org_resources(r.account_id, ap.org_id)
 WHERE r.account_id=sqlc.arg(account_id) AND r.period=sqlc.arg(period)
 ON CONFLICT DO NOTHING;
 
@@ -22,6 +23,7 @@ FROM product_control_plan_history a
 JOIN product_control_heads h ON h.account_id=a.account_id AND h.app_id=a.app_id
 JOIN product_control_revisions v ON v.app_id=a.app_id AND v.revision=a.revision
 JOIN platform_tenants p ON p.account_id=a.account_id AND p.id=a.tenant_id
+JOIN apps ap ON ap.id=a.app_id AND account_may_see_org_resources(a.account_id, ap.org_id)
 WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.effective_at < sqlc.arg(month_end)::timestamptz
   AND COALESCE((v.spec->'plans'->a.plan->>'monthly_fee_millicents')::bigint, 0) > 0
   AND NOT EXISTS (SELECT 1 FROM product_control_plan_history l

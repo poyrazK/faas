@@ -96,15 +96,16 @@ func (e *Engine) withEnvironmentWorkloadQualificationJob(ctx context.Context,
 	if graphNodePinned && graphNodeID != "" {
 		preferredNodeID = graphNodeID
 	}
-	placement, err := e.choosePlacementLocked(ctx, Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
-		VCPU: 1, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID})
+	req := Request{AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB,
+		VCPU: 1, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency, PreferredNodeID: preferredNodeID}
+	placement, err := e.choosePlacementLocked(ctx, req)
 	if err != nil {
 		return result, err
 	}
 	if graphNodePinned && graphNodeID != "" && placement.NodeID != graphNodeID {
 		return result, fmt.Errorf("qualification job placement escaped its private node: %w", state.ErrConflict)
 	}
-	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(e.nodePlacementContext(ctx, placement), claimed, state.EnvironmentWorkloadQualificationPlacement{
+	admission, err := admitter.CreateEnvironmentWorkloadQualificationInstance(e.nodePlacementContext(ctx, placement, req), claimed, state.EnvironmentWorkloadQualificationPlacement{
 		NodeID: placement.NodeID, WakeID: uuid.NewString(), RAMMB: app.RAMMB,
 	})
 	if err != nil {

@@ -34,7 +34,7 @@ T = TypeVar("T", bound="CreateTriggerRequest")
 @_attrs_define
 class CreateTriggerRequest:
     """Trigger create payload. Kind is immutable after create. Per-kind
-    gating mirrors pkg/gregalemanifest.validateKindConfig:
+    gating matches the app manifest's trigger rules:
       - cron: requires schedule + path (slug ignored)
       - non-cron: requires slug + config
     Omitted delivery settings use the platform default capped to the
@@ -50,7 +50,7 @@ class CreateTriggerRequest:
     config: CreateTriggerRequestConfig | Unset = UNSET
     """Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before
     persistence.
-    For `kind: realtime` (ADR-1322) the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
+    For `kind: realtime` the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
     `retry_policy`, `broker_poison_strategy` and `filter_criteria` are rejected because the bound consumer group
     owns them,
     and `batch_size_max` may only be 1.
@@ -60,15 +60,14 @@ class CreateTriggerRequest:
     max_attempts: int | None | Unset = UNSET
     delivery: CreateTriggerRequestDelivery | Unset = UNSET
     """Defaults to record. batch delivers every claimed record in one invocation; not available for cron or queue
-    triggers (ADR-1321)."""
+    triggers."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
-    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
+    """Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
     account plan and never means unlimited. Durable invocation
     producers materialize the effective plan-capped value, and the
     scheduler re-clamps it at dispatch time to account for later plan
-    downgrades. Lives in pkg/api so the SDK can type the policy
-    without importing pkg/dispatch directly.
+    downgrades.
     """
     payload_max_bytes: int | None | Unset = UNSET
     broker_poison_strategy: (
@@ -83,8 +82,7 @@ class CreateTriggerRequest:
     as the Trigger read shape.
     """
     filter_criteria: FilterCriteria | Unset = UNSET
-    """FilterCriteria on a trigger (migration 00300,
-    pkg/sched/filter.go). nil / omitted matches every record.
+    """FilterCriteria on a trigger. nil / omitted matches every record.
     Top-level arrays combine via implicit OR for `$or` and
     AND for `$and`; nested clauses honour the same shape.
     Jsonpath implementation: github.com/PaesslerAG/jsonpath —

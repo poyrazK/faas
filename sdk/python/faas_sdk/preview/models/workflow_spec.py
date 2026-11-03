@@ -19,10 +19,10 @@ T = TypeVar("T", bound="WorkflowSpec")
 
 @_attrs_define
 class WorkflowSpec:
-    """A named workflow DAG submitted with a deployment (ADR-081). max_concurrent_runs caps active run instances for this
-    workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
-    max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler queue
-    while all action slots are occupied.
+    """A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this workflow;
+    excess admitted runs remain pending until a slot opens, subject to the app plan's run quota. max_concurrent_actions
+    caps active executor steps across runs of this workflow; steps wait in the scheduler queue while all action slots
+    are occupied.
 
     """
 
@@ -37,9 +37,9 @@ class WorkflowSpec:
     additional per-workflow action cap. Event, callback, and duration waits do not consume an action slot. Runs use
     the value from their immutable definition snapshot."""
     code: WorkflowCodeSpec | Unset = UNSET
-    """A code-first workflow's entry handler (ADR-20261021204307). Exactly one of run or path. Gregale POSTs the
-    run's journal to it at every durable boundary; the SDKs (@gregale/sdk-node/workflows, faas_sdk.workflows) answer
-    with the operations the code reaches next. A code workflow has an empty steps list."""
+    """A code-first workflow's entry handler. Exactly one of run or path. Gregale POSTs the run's journal to it at
+    every durable boundary; the SDKs (@gregale/sdk-node/workflows, faas_sdk.workflows) answer with the operations
+    the code reaches next. A code workflow has an empty steps list."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

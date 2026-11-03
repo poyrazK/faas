@@ -257,6 +257,18 @@ func (j *previewJanitor) sweepOnce(ctx context.Context) error {
 			return fmt.Errorf("preview janitor: prune scenario tests: %w", err)
 		}
 	}
+	// A deleted production app takes its PR previews with it: they would
+	// otherwise keep serving PR code and holding the preview allowance until
+	// their lease ran out (ADR-20261028100000).
+	if marker, ok := j.store.(state.OrphanedPRPreviewMarker); ok {
+		marked, err := marker.MarkOrphanedPRPreviewsForTeardown(ctx, PreviewJanitorMaxPerTick)
+		if err != nil {
+			return fmt.Errorf("preview janitor: mark orphaned previews: %w", err)
+		}
+		if marked > 0 {
+			j.log.Info("preview janitor: production app gone", "previews", marked)
+		}
+	}
 	rows, err := j.store.ListPreviewsForTeardown(ctx, now, PreviewJanitorMaxPerTick)
 	if err != nil {
 		return fmt.Errorf("preview janitor: list: %w", err)

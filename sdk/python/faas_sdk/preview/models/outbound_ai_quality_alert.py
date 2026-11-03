@@ -18,8 +18,8 @@ T = TypeVar("T", bound="OutboundAIQualityAlert")
 
 @_attrs_define
 class OutboundAIQualityAlert:
-    """One drift the check found: a model's metric today against its previous 7 days (ADR 20261021171712). Rates are basis
-    points of answered calls (of rated calls for bad_feedback); evaluation_score is the mean score in hundredths.
+    """One drift the check found: a model's metric today against its previous 7 days. Rates are basis points of answered
+    calls (of rated calls for bad_feedback); evaluation_score is the mean score in hundredths.
 
     """
 

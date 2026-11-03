@@ -13,8 +13,8 @@ T = TypeVar("T", bound="SecretFile")
 
 @_attrs_define
 class SecretFile:
-    """An app secret guest-init writes to /run/secrets/<name> in the main workload (ADR-20261023090000), from a Compose
-    service's secrets. Names the secret; its value is never returned.
+    """An app secret guest-init writes to /run/secrets/<name> in the main workload, from a Compose service's secrets. Names
+    the secret; its value is never returned.
 
     """
 

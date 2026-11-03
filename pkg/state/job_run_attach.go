@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -83,7 +84,7 @@ func insertJobRunAttach(ctx context.Context, tx pgx.Tx, runID string, attach *Jo
 		return nil
 	}
 	_, err := tx.Exec(ctx, `insert into job_run_attach_sessions (run_id, tty, attach_token_sha256, attach_timeout_s)
-		values ($1::uuid, $2, $3, $4)`, runID, attach.TTY, attach.TokenSHA256, attach.AttachTimeoutSec)
+		values ($1::uuid, $2, $3, $4)`, runID, attach.TTY, familyStoredCredential(credhash.FamilyAttach, credTagInteractiveAttach, attach.TokenSHA256), attach.AttachTimeoutSec)
 	if err != nil {
 		return fmt.Errorf("state: record interactive session for run %s: %w", runID, err)
 	}

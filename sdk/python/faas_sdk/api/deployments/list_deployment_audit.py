@@ -83,8 +83,7 @@ def sync_detailed(
     r"""List deployment audit timeline.
 
      Returns the deployment_audit rows for one deployment in
-    reverse-chronological order (issue #976 / ADR-122 /
-    SAFE-RELEASES-E.2 + production-leveling Stream A).
+    reverse-chronological order (E.2 + production-leveling Stream A).
 
     The wire surface is a paginated JSON list
     (ListDeploymentAuditResponse); for the SSE-streaming
@@ -92,8 +91,7 @@ def sync_detailed(
     `/v1/deployments/{id}/logs`.
 
     IDOR posture: the handler resolves the deployment ID
-    via `pkg/state.DeploymentByID` + `pkg/state.AppByID`
-    + account match BEFORE returning rows. A
+    and its app and checks the account BEFORE returning rows. A
     cross-account probe returns 404 (no
     account-existence leak).
 
@@ -136,8 +134,7 @@ def sync(
     r"""List deployment audit timeline.
 
      Returns the deployment_audit rows for one deployment in
-    reverse-chronological order (issue #976 / ADR-122 /
-    SAFE-RELEASES-E.2 + production-leveling Stream A).
+    reverse-chronological order (E.2 + production-leveling Stream A).
 
     The wire surface is a paginated JSON list
     (ListDeploymentAuditResponse); for the SSE-streaming
@@ -145,8 +142,7 @@ def sync(
     `/v1/deployments/{id}/logs`.
 
     IDOR posture: the handler resolves the deployment ID
-    via `pkg/state.DeploymentByID` + `pkg/state.AppByID`
-    + account match BEFORE returning rows. A
+    and its app and checks the account BEFORE returning rows. A
     cross-account probe returns 404 (no
     account-existence leak).
 
@@ -184,8 +180,7 @@ async def asyncio_detailed(
     r"""List deployment audit timeline.
 
      Returns the deployment_audit rows for one deployment in
-    reverse-chronological order (issue #976 / ADR-122 /
-    SAFE-RELEASES-E.2 + production-leveling Stream A).
+    reverse-chronological order (E.2 + production-leveling Stream A).
 
     The wire surface is a paginated JSON list
     (ListDeploymentAuditResponse); for the SSE-streaming
@@ -193,8 +188,7 @@ async def asyncio_detailed(
     `/v1/deployments/{id}/logs`.
 
     IDOR posture: the handler resolves the deployment ID
-    via `pkg/state.DeploymentByID` + `pkg/state.AppByID`
-    + account match BEFORE returning rows. A
+    and its app and checks the account BEFORE returning rows. A
     cross-account probe returns 404 (no
     account-existence leak).
 
@@ -235,8 +229,7 @@ async def asyncio(
     r"""List deployment audit timeline.
 
      Returns the deployment_audit rows for one deployment in
-    reverse-chronological order (issue #976 / ADR-122 /
-    SAFE-RELEASES-E.2 + production-leveling Stream A).
+    reverse-chronological order (E.2 + production-leveling Stream A).
 
     The wire surface is a paginated JSON list
     (ListDeploymentAuditResponse); for the SSE-streaming
@@ -244,8 +237,7 @@ async def asyncio(
     `/v1/deployments/{id}/logs`.
 
     IDOR posture: the handler resolves the deployment ID
-    via `pkg/state.DeploymentByID` + `pkg/state.AppByID`
-    + account match BEFORE returning rows. A
+    and its app and checks the account BEFORE returning rows. A
     cross-account probe returns 404 (no
     account-existence leak).
 

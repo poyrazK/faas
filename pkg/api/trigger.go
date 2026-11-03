@@ -165,6 +165,9 @@ type Trigger struct {
 	// Delivery is "record" (one invocation per record) or "batch" (one
 	// invocation per dispatch batch; ADR-1321).
 	Delivery string `json:"delivery"`
+	// Agent is the agent each record starts a run of; empty when records
+	// invoke the app (ADR-20261027090010 §9).
+	Agent string `json:"agent,omitempty"`
 	// RetryPolicy controls the retry delay curve for failed records.
 	// MaxAttempts on the trigger remains the authoritative attempt cap;
 	// this policy carries the delay/jitter settings (and is persisted in
@@ -252,6 +255,10 @@ type CreateTriggerRequest struct {
 	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	// Delivery is "record" (default) or "batch" (ADR-1321).
 	Delivery *string `json:"delivery,omitempty"`
+	// Agent names an agent each record starts a run of, instead of
+	// invoking the app (ADR-20261027090010 §9). Immutable after create; a preview
+	// behind the agents capability.
+	Agent *string `json:"agent,omitempty"`
 	// PayloadMaxBytes is the broker-payload byte cap per record.
 	// nil → default 6291456 (6 MiB); the SQL CHECK rejects values
 	// outside [1024, 67108864].
@@ -418,6 +425,30 @@ type TriggerMetricsResponse struct {
 	SucceededCount  int    `json:"succeeded_count"`
 	RetryCount      int    `json:"retry_count"`
 	DeadLetterCount int    `json:"dead_letter_count"`
+	// CountLimit is where each count stops: a count equal to it means at
+	// least that many (TriggerMetricsCountLimit).
+	CountLimit int `json:"count_limit,omitempty"`
+	// Consumer is the scheduler's last observation of the trigger's broker
+	// consumer; absent until its first poll (ADR-20261101104512).
+	Consumer *TriggerConsumerStatus `json:"consumer,omitempty"`
+}
+
+// TriggerConsumerStatus is how a trigger's broker consumer is doing, as the
+// scheduler that polls it last saw. Liveness is "healthy", "degraded" (the
+// last poll failed: LastError says why), "stale" (no poll for
+// QueueConsumerMaxPollAge: the trigger is disabled, its app cannot run, or
+// no scheduler polls it), "not_observed" or "unknown". LagMessages is the
+// broker's backlog for the consumer: for Kafka, the high watermark less the
+// group's committed offset summed over partitions; for NATS JetStream, the
+// consumer's pending messages; for Redis Streams, the group's lag.
+type TriggerConsumerStatus struct {
+	Liveness      string     `json:"liveness"`
+	LastPollAt    *time.Time `json:"last_poll_at,omitempty"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	LastErrorAt   *time.Time `json:"last_error_at,omitempty"`
+	LastError     string     `json:"last_error,omitempty"`
+	LagMessages   *int64     `json:"lag_messages,omitempty"`
+	LagAgeSeconds *float64   `json:"lag_age_seconds,omitempty"`
 }
 
 // FilterCriteriaOp is the closed vocabulary of comparison

@@ -125,7 +125,7 @@ def sync_detailed(
     """Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
 
      Published definitions survive future YAML deployments. A live default deployment is required.
-    Runtime execution also requires FAAS_WORKFLOWS_ENABLED on apid and schedd. Events accepted before
+    Runtime execution also requires workflows to be enabled on the platform. Events accepted before
     publication retain their captured definition.
 
     Args:
@@ -168,7 +168,7 @@ def sync(
     """Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
 
      Published definitions survive future YAML deployments. A live default deployment is required.
-    Runtime execution also requires FAAS_WORKFLOWS_ENABLED on apid and schedd. Events accepted before
+    Runtime execution also requires workflows to be enabled on the platform. Events accepted before
     publication retain their captured definition.
 
     Args:
@@ -206,7 +206,7 @@ async def asyncio_detailed(
     """Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
 
      Published definitions survive future YAML deployments. A live default deployment is required.
-    Runtime execution also requires FAAS_WORKFLOWS_ENABLED on apid and schedd. Events accepted before
+    Runtime execution also requires workflows to be enabled on the platform. Events accepted before
     publication retain their captured definition.
 
     Args:
@@ -247,7 +247,7 @@ async def asyncio(
     """Validate and publish the saved draft; taking over a YAML name requires explicit confirmation.
 
      Published definitions survive future YAML deployments. A live default deployment is required.
-    Runtime execution also requires FAAS_WORKFLOWS_ENABLED on apid and schedd. Events accepted before
+    Runtime execution also requires workflows to be enabled on the platform. Events accepted before
     publication retain their captured definition.
 
     Args:

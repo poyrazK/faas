@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"runtime"
 	"testing"
 	"time"
 
@@ -46,5 +47,20 @@ func TestMemorySharingQueuesEachSnapshotOnce(t *testing.T) {
 	off.offerMemoryShare(job)
 	if off.memory != nil {
 		t.Fatal("disabled runner has a memory sharer")
+	}
+}
+
+// Peer sharing is on by default where blocks can be shared, and its switch
+// holds whichever of the two options is applied first.
+func TestMemoryPeerSharingSwitch(t *testing.T) {
+	if got, want := (&Runner{}).WithMemorySharing(true).memory.index.PeerSharing(), runtime.GOOS == "linux"; got != want {
+		t.Fatalf("default peer sharing = %v, want %v", got, want)
+	}
+	before := (&Runner{}).WithMemoryPeerSharing(false).WithMemorySharing(true)
+	after := (&Runner{}).WithMemorySharing(true).WithMemoryPeerSharing(false)
+	for name, r := range map[string]*Runner{"before": before, "after": after} {
+		if r.memory == nil || r.memory.index.PeerSharing() {
+			t.Fatalf("peer sharing switched off %s memory sharing is still on", name)
+		}
 	}
 }

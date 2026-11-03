@@ -117,18 +117,16 @@ def sync_detailed(
     the carrier of the wedge. Composes the two earlier
     primitives: kill the instance (force-park) AND flip the
     deployment's latest warm + init snapshots stale
-    (force-cold-boot). Per ADR-005 (\"snapshot of a wedged
+    (force-cold-boot). (\"snapshot of a wedged
     VM is a wedged VM\"), the recovery action is destroy +
     snap-stale so the next Wake is a guaranteed cold boot.
 
-    PR #1105 (P2d follow-on to PR #1099): apid writes a row
-    to `operator_intents` (kind = `force_restart`, CHECK
-    widened by migrations/00446) and emits
-    `pg_notify('operator_intent', …)`; schedd (the ONLY
-    writer to `instances` per CLAUDE.md §6.2) is the sole
-    consumer and dispatches via `engine.ForceRestart` so the
-    `pkg/state/machine.go` `CanTransition` guard fires on the
-    locked re-read. The handler returns 202 Accepted with an
+    The API writes a row
+    to `operator_intents` (kind = `force_restart`) and emits
+    `pg_notify('operator_intent', …)`; the scheduler (the ONLY
+    writer to `instances`) is the sole
+    consumer and dispatches a forced restart, so the instance state
+    machine's transition guard fires on the locked re-read. The handler returns 202 Accepted with an
     intent_id; the operator polls
     GET /v1/admin/operator-intents/{id} for terminal state
     and `snap_ids_marked_stale`.
@@ -136,7 +134,7 @@ def sync_detailed(
     Gate is intentionally TIGHTER than force-park's
     ({RUNNING, WAKING, COLD_BOOTING}): force-restart only
     acts on RUNNING instances because the engine's
-    state-machine validation at pkg/sched/engine.go:5299
+    state-machine validation
     rejects non-RUNNING states as
     `state.ErrInstanceNotRunning` (a wedged WAKING /
     COLD_BOOTING instance's nodeID may be empty or its
@@ -149,7 +147,7 @@ def sync_detailed(
     to `operator_force_restart`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -209,18 +207,16 @@ def sync(
     the carrier of the wedge. Composes the two earlier
     primitives: kill the instance (force-park) AND flip the
     deployment's latest warm + init snapshots stale
-    (force-cold-boot). Per ADR-005 (\"snapshot of a wedged
+    (force-cold-boot). (\"snapshot of a wedged
     VM is a wedged VM\"), the recovery action is destroy +
     snap-stale so the next Wake is a guaranteed cold boot.
 
-    PR #1105 (P2d follow-on to PR #1099): apid writes a row
-    to `operator_intents` (kind = `force_restart`, CHECK
-    widened by migrations/00446) and emits
-    `pg_notify('operator_intent', …)`; schedd (the ONLY
-    writer to `instances` per CLAUDE.md §6.2) is the sole
-    consumer and dispatches via `engine.ForceRestart` so the
-    `pkg/state/machine.go` `CanTransition` guard fires on the
-    locked re-read. The handler returns 202 Accepted with an
+    The API writes a row
+    to `operator_intents` (kind = `force_restart`) and emits
+    `pg_notify('operator_intent', …)`; the scheduler (the ONLY
+    writer to `instances`) is the sole
+    consumer and dispatches a forced restart, so the instance state
+    machine's transition guard fires on the locked re-read. The handler returns 202 Accepted with an
     intent_id; the operator polls
     GET /v1/admin/operator-intents/{id} for terminal state
     and `snap_ids_marked_stale`.
@@ -228,7 +224,7 @@ def sync(
     Gate is intentionally TIGHTER than force-park's
     ({RUNNING, WAKING, COLD_BOOTING}): force-restart only
     acts on RUNNING instances because the engine's
-    state-machine validation at pkg/sched/engine.go:5299
+    state-machine validation
     rejects non-RUNNING states as
     `state.ErrInstanceNotRunning` (a wedged WAKING /
     COLD_BOOTING instance's nodeID may be empty or its
@@ -241,7 +237,7 @@ def sync(
     to `operator_force_restart`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -296,18 +292,16 @@ async def asyncio_detailed(
     the carrier of the wedge. Composes the two earlier
     primitives: kill the instance (force-park) AND flip the
     deployment's latest warm + init snapshots stale
-    (force-cold-boot). Per ADR-005 (\"snapshot of a wedged
+    (force-cold-boot). (\"snapshot of a wedged
     VM is a wedged VM\"), the recovery action is destroy +
     snap-stale so the next Wake is a guaranteed cold boot.
 
-    PR #1105 (P2d follow-on to PR #1099): apid writes a row
-    to `operator_intents` (kind = `force_restart`, CHECK
-    widened by migrations/00446) and emits
-    `pg_notify('operator_intent', …)`; schedd (the ONLY
-    writer to `instances` per CLAUDE.md §6.2) is the sole
-    consumer and dispatches via `engine.ForceRestart` so the
-    `pkg/state/machine.go` `CanTransition` guard fires on the
-    locked re-read. The handler returns 202 Accepted with an
+    The API writes a row
+    to `operator_intents` (kind = `force_restart`) and emits
+    `pg_notify('operator_intent', …)`; the scheduler (the ONLY
+    writer to `instances`) is the sole
+    consumer and dispatches a forced restart, so the instance state
+    machine's transition guard fires on the locked re-read. The handler returns 202 Accepted with an
     intent_id; the operator polls
     GET /v1/admin/operator-intents/{id} for terminal state
     and `snap_ids_marked_stale`.
@@ -315,7 +309,7 @@ async def asyncio_detailed(
     Gate is intentionally TIGHTER than force-park's
     ({RUNNING, WAKING, COLD_BOOTING}): force-restart only
     acts on RUNNING instances because the engine's
-    state-machine validation at pkg/sched/engine.go:5299
+    state-machine validation
     rejects non-RUNNING states as
     `state.ErrInstanceNotRunning` (a wedged WAKING /
     COLD_BOOTING instance's nodeID may be empty or its
@@ -328,7 +322,7 @@ async def asyncio_detailed(
     to `operator_force_restart`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,
@@ -386,18 +380,16 @@ async def asyncio(
     the carrier of the wedge. Composes the two earlier
     primitives: kill the instance (force-park) AND flip the
     deployment's latest warm + init snapshots stale
-    (force-cold-boot). Per ADR-005 (\"snapshot of a wedged
+    (force-cold-boot). (\"snapshot of a wedged
     VM is a wedged VM\"), the recovery action is destroy +
     snap-stale so the next Wake is a guaranteed cold boot.
 
-    PR #1105 (P2d follow-on to PR #1099): apid writes a row
-    to `operator_intents` (kind = `force_restart`, CHECK
-    widened by migrations/00446) and emits
-    `pg_notify('operator_intent', …)`; schedd (the ONLY
-    writer to `instances` per CLAUDE.md §6.2) is the sole
-    consumer and dispatches via `engine.ForceRestart` so the
-    `pkg/state/machine.go` `CanTransition` guard fires on the
-    locked re-read. The handler returns 202 Accepted with an
+    The API writes a row
+    to `operator_intents` (kind = `force_restart`) and emits
+    `pg_notify('operator_intent', …)`; the scheduler (the ONLY
+    writer to `instances`) is the sole
+    consumer and dispatches a forced restart, so the instance state
+    machine's transition guard fires on the locked re-read. The handler returns 202 Accepted with an
     intent_id; the operator polls
     GET /v1/admin/operator-intents/{id} for terminal state
     and `snap_ids_marked_stale`.
@@ -405,7 +397,7 @@ async def asyncio(
     Gate is intentionally TIGHTER than force-park's
     ({RUNNING, WAKING, COLD_BOOTING}): force-restart only
     acts on RUNNING instances because the engine's
-    state-machine validation at pkg/sched/engine.go:5299
+    state-machine validation
     rejects non-RUNNING states as
     `state.ErrInstanceNotRunning` (a wedged WAKING /
     COLD_BOOTING instance's nodeID may be empty or its
@@ -418,7 +410,7 @@ async def asyncio(
     to `operator_force_restart`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
-    ADR-1524: requires an MFA-verified operator session with step-up in
+    Requires an MFA-verified operator session with step-up in
     the last five minutes, admin scope, the operator allowlist and same
     origin. Bearer keys do not satisfy step-up. Requires one
     Idempotency-Key (1-255 visible ASCII characters), an empty body,

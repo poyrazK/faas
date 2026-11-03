@@ -244,6 +244,22 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 	if isTrafficResponseControlHeader(name) || platformOwnsLifecycleHeader(ctx, name) {
 		return
 	}
+	// Only gatewayd-internal says a request was not dispatched
+	// (ADR-20261022184531 step 5); a guest's copy would ask the public edge
+	// to replay a request the guest already saw.
+	if strings.EqualFold(strings.TrimSpace(name), NotDispatchedHeader) {
+		return
+	}
+	// Only Gregale marks a platform problem; a guest's copy would make the
+	// public edge rewrite the app's own 502/504 (ADR-20261030115139).
+	if strings.EqualFold(strings.TrimSpace(name), api.ErrorCodeHeader) {
+		return
+	}
+	// Only gatewayd-internal names the instance's node; a guest's copy would
+	// steer the edge's routing (ADR-20261031105055).
+	if strings.EqualFold(strings.TrimSpace(name), InstanceNodeHeader) || strings.EqualFold(strings.TrimSpace(name), InstanceNodesHeader) {
+		return
+	}
 	// Response headers cross the internal bridge before they reach the
 	// customer-facing writer. Connection-management headers belong only to
 	// that hop (RFC 7230 §6.1) and must not be exposed as guest application
@@ -272,7 +288,7 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 		return
 	}
 	if !recordGuestExecutionEvidence(ctx, name, value) && !platformResponseHeader(ctx, name) {
-		dst.Add(name, value)
+		dst.Add(name, scopeTenantCookie(name, value))
 	}
 }
 
@@ -285,9 +301,6 @@ func stripGuestManagedPlatformCookiesResponseHeader(resp *http.Response) {
 		return
 	}
 	ctx := resp.Request.Context()
-	if !managedVersionCookieProtected(ctx) && !managedReleaseContextCookieProtected(ctx) {
-		return
-	}
 	values := resp.Header.Values("Set-Cookie")
 	if len(values) == 0 {
 		return
@@ -296,7 +309,7 @@ func stripGuestManagedPlatformCookiesResponseHeader(resp *http.Response) {
 	for _, value := range values {
 		if !guestSetsManagedVersionCookie(ctx, "Set-Cookie", value) &&
 			!guestSetsManagedReleaseContextCookie(ctx, "Set-Cookie", value) {
-			resp.Header.Add("Set-Cookie", value)
+			resp.Header.Add("Set-Cookie", scopeTenantCookie("Set-Cookie", value))
 		}
 	}
 }
@@ -329,6 +342,9 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 	resp.Header.Del(api.ReleaseHeader)
 	resp.Header.Del(api.DeploymentIDHeader)
 	resp.Header.Del(apihostingreceipt.ServedResponseHeader)
+	resp.Header.Del(api.ErrorCodeHeader)
+	resp.Header.Del(InstanceNodeHeader)
+	resp.Header.Del(InstanceNodesHeader)
 	for name := range resp.Header {
 		if isTrafficResponseControlHeader(name) {
 			resp.Header.Del(name)

@@ -20,6 +20,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -90,6 +91,7 @@ type gatewaydEdgeRules struct {
 	store            edgeRuleStore
 	cache            *gateway.EdgeRuleCache
 	ownerSets        *edgeRuleOwnerSets
+	compiledLists    *edgeRuleCompiledLists
 	log              *slog.Logger
 	validate         validateCompiler
 	metrics          *gateway.Metrics
@@ -156,18 +158,19 @@ type validateCompiler interface {
 // gatewayd-internal Prometheus registry via run.go).
 func newGatewaydEdgeRules(store edgeRuleStore, log *slog.Logger, validate validateCompiler, metrics *gateway.Metrics) *gatewaydEdgeRules {
 	return &gatewaydEdgeRules{
-		store:     store,
-		cache:     gateway.NewEdgeRuleCache(gateway.EdgeRuleCacheCap),
-		ownerSets: newEdgeRuleOwnerSets(),
-		log:       log,
-		validate:  validate,
-		metrics:   metrics,
-		fences:    make(map[edgeRuleFenceKey]edgeRuleFence),
+		store:         store,
+		cache:         gateway.NewEdgeRuleCache(gateway.EdgeRuleCacheCap),
+		ownerSets:     newEdgeRuleOwnerSets(),
+		compiledLists: newEdgeRuleCompiledLists(),
+		log:           log,
+		validate:      validate,
+		metrics:       metrics,
+		fences:        make(map[edgeRuleFenceKey]edgeRuleFence),
 	}
 }
 
 // BeginConvergence fences the supplied hosts before the policy write. A TTL
-// prevents a crashed apid from leaving a hostname unavailable indefinitely.
+// bounds how long a crashed apid leaves a hostname marked as changing.
 // accountID is the mutating rule's owner; "" fences every app on the hosts.
 // appID narrows an app-wide (@app) fence to that app's hosts.
 func (g *gatewaydEdgeRules) BeginConvergence(accountID, appID string, hosts []string, generation int64) {
@@ -209,12 +212,15 @@ func (g *gatewaydEdgeRules) EndConvergence(accountID, appID string, hosts []stri
 	g.fencesChangedLocked()
 }
 
-// Converging is the request-path fail-closed check. ownerAccountID and
-// ownerAppID name the app the host resolved to ("" when no app claims it).
-// A fence only holds the owner's traffic: request-time matching ignores
-// another account's rules (OwnedEdgeRules), so that account's mutation —
-// even on match_host "*" — cannot change this host's policy and must not
-// 503 it. Unclaimed hosts and unscoped fences keep the fleet-wide hold.
+// Converging reports a pending (prepared, not yet applied) change to the
+// host's rules. ownerAccountID and ownerAppID name the app the host resolved
+// to ("" when no app claims it). A fence only covers the owner's traffic:
+// request-time matching ignores another account's rules (OwnedEdgeRules), so
+// that account's mutation — even on match_host "*" — cannot change this
+// host's policy. Unclaimed hosts and unscoped fences are covered fleet-wide.
+// The host keeps serving its current rules while a fence holds
+// (ADR-20261101141123); the handler consults this only when a route rule's
+// target does not resolve.
 func (g *gatewaydEdgeRules) Converging(host, ownerAccountID, ownerAppID string) bool {
 	if g == nil || g.fenceCount.Load() == 0 {
 		return false
@@ -348,6 +354,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		return nil, err
 	}
 	entry.SetOwner(owner)
+	entry.SetInheritedApp(gateway.EdgeRuleInheritedApp(ctx))
 	g.cache.PutIfGeneration(gateway.EdgeRuleCacheKey(host, appID), entry, generation)
 	return entry, nil
 }
@@ -361,6 +368,83 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 // the host are read as before, and owner is "". The owner's rules come from
 // its cached rule set when it has one (ADR-091 amendment 2026-10-27).
 func (g *gatewaydEdgeRules) hostStoreRules(ctx context.Context, host string) ([]state.EdgeRule, string, error) {
+	rules, owner, err := g.hostOwnStoreRules(ctx, host)
+	if err != nil {
+		return nil, "", err
+	}
+	if rules, err = g.scopeEdgeRules(ctx, gateway.EdgeRuleApp(ctx), rules); err != nil {
+		return nil, "", err
+	}
+	inherited, err := g.previewInheritedRules(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	return state.MergeEdgeRulesInOrder(rules, inherited), owner, nil
+}
+
+// scopeEdgeRules keeps the rules whose app shares the serving app's
+// edge-rule scope (ADR-091 amendment 2026-10-31, round 6): a company app and
+// its creator's personal apps share an account, so the owner filter alone let
+// a "*" or host-pattern rule on either side apply to the other. The serving
+// app's own rules always stay. Without a serving app or a scope-aware store
+// the rules are kept as read.
+func (g *gatewaydEdgeRules) scopeEdgeRules(ctx context.Context, appID string, rules []state.EdgeRule) ([]state.EdgeRule, error) {
+	store, ok := g.store.(state.EdgeRuleScopeStore)
+	if !ok || appID == "" || len(rules) == 0 {
+		return rules, nil
+	}
+	ids := []string{appID}
+	seen := map[string]struct{}{appID: {}}
+	for _, r := range rules {
+		if _, dup := seen[r.AppID]; !dup {
+			seen[r.AppID] = struct{}{}
+			ids = append(ids, r.AppID)
+		}
+	}
+	if len(ids) == 1 {
+		return rules, nil
+	}
+	scopes, err := store.EdgeRuleScopes(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("edge rule scopes for app %s: %w", appID, err)
+	}
+	want, known := scopes[appID]
+	out := make([]state.EdgeRule, 0, len(rules))
+	for _, r := range rules {
+		if r.AppID == appID {
+			out = append(out, r)
+			continue
+		}
+		if scope, ok := scopes[r.AppID]; known && ok && scope == want {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// previewInheritedRules returns the production app's app-wide rules a PR
+// preview applies as well as its own (ADR-091 amendment 2026-10-30), or nil
+// for any other request.
+func (g *gatewaydEdgeRules) previewInheritedRules(ctx context.Context) ([]state.EdgeRule, error) {
+	production := gateway.EdgeRuleInheritedApp(ctx)
+	store, ok := g.store.(state.AppWideEdgeRuleStore)
+	if production == "" || !ok {
+		return nil, nil
+	}
+	appWide, err := store.AppWideEdgeRules(ctx, production)
+	if err != nil {
+		return nil, fmt.Errorf("production app-wide rules for preview: %w", err)
+	}
+	inherited := appWide[:0]
+	for _, rule := range appWide {
+		if state.EdgeRuleAppliesToPreviews(rule) {
+			inherited = append(inherited, rule)
+		}
+	}
+	return inherited, nil
+}
+
+func (g *gatewaydEdgeRules) hostOwnStoreRules(ctx context.Context, host string) ([]state.EdgeRule, string, error) {
 	owner, appID := gateway.EdgeRuleOwner(ctx), gateway.EdgeRuleApp(ctx)
 	if owner != "" {
 		rules, ok, err := g.ownerStoreRules(ctx, host, owner, appID)
@@ -441,32 +525,6 @@ func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, s
 		CircuitBreaker: circuitBreaker,
 		Penalties:      compileEdgeRulePenalties(storeRules),
 	}
-	parseErrs := append(routeErrs, rewriteErrs...)
-	parseErrs = append(parseErrs, redirectErrs...)
-	parseErrs = append(parseErrs, headersErrs...)
-	parseErrs = append(parseErrs, corsErrs...)
-	parseErrs = append(parseErrs, jwtErrs...)
-	parseErrs = append(parseErrs, ipErrs...)
-	parseErrs = append(parseErrs, validateErrs...)
-	parseErrs = append(parseErrs, limitErrs...)
-	parseErrs = append(parseErrs, maintenanceErrs...)
-	parseErrs = append(parseErrs, geoErrs...)
-	parseErrs = append(parseErrs, throttleErrs...)
-	parseErrs = append(parseErrs, budgetErrs...)
-	parseErrs = append(parseErrs, cacheErrs...)
-	parseErrs = append(parseErrs, retryErrs...)
-	parseErrs = append(parseErrs, circuitBreakerErrs...)
-	parseErrs = append(parseErrs, respondErrs...)
-	parseErrs = append(parseErrs, asyncErrs...)
-	parseErrs = append(parseErrs, wafErrs...)
-	parseErrs = append(parseErrs, challengeErrs...)
-	if len(parseErrs) > 0 {
-		entry.PathGlobErrs = parseErrs
-		entry.PolicyRuleOwners = make(map[string]string, len(parseErrs))
-		for _, rule := range storeRules {
-			entry.PolicyRuleOwners[rule.ID] = rule.AccountID
-		}
-	}
 	// PR-B: surface per-rule compile errors to Prometheus so the
 	// §12 dashboard chip "edge rule compile errors" reflects every
 	// dropped rule. Incrementing once per error here keeps the
@@ -474,57 +532,48 @@ func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, s
 	// of hosts that had any broken rules). loadHost is the natural
 	// choke point — every Match* falls through it on a cache miss,
 	// so we get one tick per dropped rule across the whole fleet.
-	if g.metrics != nil {
-		for range routeErrs {
-			g.metrics.ObserveEdgeRuleCompileError("route")
+	// One table drives both the host's error list and the counter, so a
+	// kind cannot fail its host closed without being counted (cache, retry
+	// and circuit_breaker were left out of the counter before).
+	var parseErrs []gateway.PathGlobError
+	for _, kindErrs := range []struct {
+		kind string
+		errs []gateway.PathGlobError
+	}{
+		{"route", routeErrs}, {"rewrite", rewriteErrs}, {"redirect", redirectErrs},
+		{"headers", headersErrs}, {"cors", corsErrs}, {"jwt", jwtErrs}, {"ip", ipErrs},
+		{"validate", validateErrs}, {"limit", limitErrs}, {"maintenance", maintenanceErrs},
+		{"geo", geoErrs}, {"throttle", throttleErrs}, {"budget", budgetErrs}, {"cache", cacheErrs},
+		{"retry", retryErrs}, {"circuit_breaker", circuitBreakerErrs}, {"respond", respondErrs},
+		{"async", asyncErrs}, {"waf", wafErrs}, {"challenge", challengeErrs},
+	} {
+		parseErrs = append(parseErrs, kindErrs.errs...)
+		for range kindErrs.errs {
+			g.metrics.ObserveEdgeRuleCompileError(kindErrs.kind)
 		}
-		for range rewriteErrs {
-			g.metrics.ObserveEdgeRuleCompileError("rewrite")
+	}
+	// A rule whose match condition does not compile (an account list that is
+	// missing or no longer compiles, ADR-963) is a broken rule like any other:
+	// compileEdgeRuleCondition makes it never match, so it fails its host
+	// closed here instead of silently letting traffic past a refusing rule.
+	for _, rule := range storeRules {
+		if err := edgeRuleConditionError(rule); err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "match", Err: err})
+			g.metrics.ObserveEdgeRuleCompileError(string(rule.Kind))
 		}
-		for range redirectErrs {
-			g.metrics.ObserveEdgeRuleCompileError("redirect")
+		// A kind this gateway does not know (written by a newer apid) or a
+		// rule without its action fails the host closed too (ADR-091
+		// amendment 2026-11-02, review round 8).
+		if err := edgeRuleShapeError(rule); err != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "action", Err: err})
+			g.metrics.ObserveEdgeRuleCompileError(string(rule.Kind))
 		}
-		for range headersErrs {
-			g.metrics.ObserveEdgeRuleCompileError("headers")
-		}
-		for range corsErrs {
-			g.metrics.ObserveEdgeRuleCompileError("cors")
-		}
-		for range jwtErrs {
-			g.metrics.ObserveEdgeRuleCompileError("jwt")
-		}
-		for range ipErrs {
-			g.metrics.ObserveEdgeRuleCompileError("ip")
-		}
-		for range validateErrs {
-			g.metrics.ObserveEdgeRuleCompileError("validate")
-		}
-		for range limitErrs {
-			g.metrics.ObserveEdgeRuleCompileError("limit")
-		}
-		for range maintenanceErrs {
-			g.metrics.ObserveEdgeRuleCompileError("maintenance")
-		}
-		for range geoErrs {
-			g.metrics.ObserveEdgeRuleCompileError("geo")
-		}
-		for range budgetErrs {
-			g.metrics.ObserveEdgeRuleCompileError("budget")
-		}
-		for range throttleErrs {
-			g.metrics.ObserveEdgeRuleCompileError("throttle")
-		}
-		for range respondErrs {
-			g.metrics.ObserveEdgeRuleCompileError("respond")
-		}
-		for range asyncErrs {
-			g.metrics.ObserveEdgeRuleCompileError("async")
-		}
-		for range wafErrs {
-			g.metrics.ObserveEdgeRuleCompileError("waf")
-		}
-		for range challengeErrs {
-			g.metrics.ObserveEdgeRuleCompileError("challenge")
+	}
+	if len(parseErrs) > 0 {
+		entry.PathGlobErrs = parseErrs
+		entry.PolicyRuleOwners = make(map[string]string, len(parseErrs))
+		for _, rule := range storeRules {
+			entry.PolicyRuleOwners[rule.ID] = rule.AccountID
 		}
 	}
 	entry.Host = host
@@ -747,9 +796,7 @@ func (g *gatewaydEdgeRules) MatchJWT(ctx context.Context, host, requestPath, met
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.JWT
 	}
-	enforced := gateway.PickFirstJWTMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleJWTResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	logged := gateway.PickFirstJWTMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleJWTResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+	return gateway.MatchProtectiveEdgeRule(ctx, rules, func(r *gateway.EdgeRuleJWTResolved) string { return r.AccountID }, requestPath, method, gateway.PickFirstJWTMatch)
 }
 
 // MatchIP returns the highest-priority `kind=ip` rule whose host,
@@ -773,9 +820,7 @@ func (g *gatewaydEdgeRules) MatchIP(ctx context.Context, host, requestPath, meth
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.IP
 	}
-	enforced := gateway.PickFirstIPMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleIPResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	logged := gateway.PickFirstIPMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleIPResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+	return gateway.MatchProtectiveEdgeRule(ctx, rules, func(r *gateway.EdgeRuleIPResolved) string { return r.AccountID }, requestPath, method, gateway.PickFirstIPMatch)
 }
 
 // MatchValidate returns the highest-priority `kind=validate` rule
@@ -801,9 +846,7 @@ func (g *gatewaydEdgeRules) MatchValidate(ctx context.Context, host, requestPath
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Validate
 	}
-	enforced := gateway.PickFirstValidateMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleValidateResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	logged := gateway.PickFirstValidateMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleValidateResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+	return gateway.MatchProtectiveEdgeRule(ctx, rules, func(r *gateway.EdgeRuleValidateResolved) string { return r.AccountID }, requestPath, method, gateway.PickFirstValidateMatch)
 }
 
 // MatchLimit returns the highest-priority `kind=limit` rule whose
@@ -830,9 +873,7 @@ func (g *gatewaydEdgeRules) MatchLimit(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Limit
 	}
-	enforced := gateway.PickFirstLimitMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleLimitResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	logged := gateway.PickFirstLimitMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleLimitResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+	return gateway.MatchProtectiveEdgeRule(ctx, rules, func(r *gateway.EdgeRuleLimitResolved) string { return r.AccountID }, requestPath, method, gateway.PickFirstLimitMatch)
 }
 
 // MatchMaintenance returns the highest-priority `kind=maintenance`
@@ -860,9 +901,7 @@ func (g *gatewaydEdgeRules) MatchMaintenance(ctx context.Context, host, requestP
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Maintenance
 	}
-	enforced := gateway.PickFirstMaintenanceMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleMaintenanceResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	logged := gateway.PickFirstMaintenanceMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleMaintenanceResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+	return gateway.MatchProtectiveEdgeRule(ctx, rules, func(r *gateway.EdgeRuleMaintenanceResolved) string { return r.AccountID }, requestPath, method, gateway.PickFirstMaintenanceMatch)
 }
 
 // MatchGeo returns the highest-priority `kind=geo` rule whose
@@ -889,9 +928,7 @@ func (g *gatewaydEdgeRules) MatchGeo(ctx context.Context, host, requestPath, met
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Geo
 	}
-	enforced := gateway.PickFirstGeoMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleGeoResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	logged := gateway.PickFirstGeoMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleGeoResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+	return gateway.MatchProtectiveEdgeRule(ctx, rules, func(r *gateway.EdgeRuleGeoResolved) string { return r.AccountID }, requestPath, method, gateway.PickFirstGeoMatch)
 }
 
 // MatchThrottle returns the highest-priority `kind=throttle` rule
@@ -920,9 +957,7 @@ func (g *gatewaydEdgeRules) MatchThrottle(ctx context.Context, host, requestPath
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Throttle
 	}
-	enforced := gateway.PickFirstThrottleMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleThrottleResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	logged := gateway.PickFirstThrottleMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleThrottleResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+	return gateway.MatchProtectiveEdgeRule(ctx, rules, func(r *gateway.EdgeRuleThrottleResolved) string { return r.AccountID }, requestPath, method, gateway.PickFirstThrottleMatch)
 }
 
 // MatchBudget is the ADR-093 matcher for the kind=budget subset.
@@ -1062,9 +1097,7 @@ func (g *gatewaydEdgeRules) MatchWAF(ctx context.Context, host, requestPath, met
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.WAF
 	}
-	enforced := gateway.PickFirstWAFMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	logged := gateway.PickFirstWAFMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
-	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+	return gateway.MatchProtectiveEdgeRule(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }, requestPath, method, gateway.PickFirstWAFMatch)
 }
 
 // compileEdgeRulePenalties maps each enforced rule with a penalty box to it
@@ -1133,10 +1166,7 @@ func (g *gatewaydEdgeRules) MatchChallenge(ctx context.Context, host, requestPat
 		return nil
 	}
 	account := func(r *gateway.EdgeRuleChallengeResolved) string { return r.AccountID }
-	headers := gateway.EdgeRuleRequestHeaders(ctx)
-	enforced := gateway.PickFirstChallengeMatch(gateway.ApplicableEdgeRules(ctx, rules, account, requestPath, method), requestPath, method, headers)
-	logged := gateway.PickFirstChallengeMatch(gateway.LoggedEdgeRules(ctx, rules, account, requestPath, method), requestPath, method, headers)
-	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+	return gateway.MatchProtectiveEdgeRule(ctx, rules, account, requestPath, method, gateway.PickFirstChallengeMatch)
 }
 
 // HostChallengeRule returns any enforced challenge rule the host's app
@@ -1180,11 +1210,13 @@ func (g *gatewaydEdgeRules) InvalidateAccountHosts(accountID, appID string, patt
 }
 
 // dropOwnerSets runs after the cache invalidation it belongs to: that moved
-// the cache generation, so a load still in flight cannot cache its set.
+// the cache generation, so a load still in flight cannot cache its set. The
+// account's compiled lists go with it: a list edit invalidates through here.
 func (g *gatewaydEdgeRules) dropOwnerSets(accountID string) {
 	if g.ownerSets != nil {
 		g.ownerSets.drop(accountID)
 	}
+	g.compiledLists.drop(accountID)
 }
 
 // warnPathGlobErrs logs every path-glob parse error the loader
@@ -2020,7 +2052,8 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 			ExcludeRuleIDs:   slices.Clone(rule.Action.WAF.ExcludeRuleIDs),
 			InspectBodyBytes: rule.Action.WAF.InspectBodyBytes,
 		}
-		if action.Validate() != nil {
+		if prob := action.Validate(); prob != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "action", Err: errors.New(prob.Detail)})
 			continue
 		}
 		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {
@@ -2045,8 +2078,10 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 }
 
 // compileChallengeRules compiles kind=challenge rows (ADR-831 amendment 7).
-// A row whose action is missing or fails the apid bounds (a direct-database
-// write) is dropped rather than enforced with values apid would reject.
+// A row whose action fails the apid bounds (a direct-database write, or a
+// newer apid's range) is a broken rule: it fails its host closed rather than
+// letting traffic past unchallenged (ADR-091 amendment 2026-11-02). A missing
+// action is reported by edgeRuleShapeError.
 func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChallengeResolved, []gateway.PathGlobError) {
 	var out []gateway.EdgeRuleChallengeResolved
 	var parseErrs []gateway.PathGlobError
@@ -2060,7 +2095,8 @@ func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChall
 			PassTTLSeconds: rule.Action.Challenge.PassTTLSeconds,
 			MaxDifficulty:  rule.Action.Challenge.MaxDifficulty,
 		}
-		if action.Validate() != nil {
+		if prob := action.Validate(); prob != nil {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: rule.ID, Glob: "action", Err: errors.New(prob.Detail)})
 			continue
 		}
 		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {
@@ -2442,6 +2478,12 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 		// it here lets the load path surface a parse error
 		// before the rule reaches the cache.
 		schemaBytes := []byte(action.Schema)
+		// A parameter-only rule stored with "schema": null reads back as the
+		// literal null: it has no body schema. Compiling null failed the rule,
+		// and an owner's failed rule fails the whole host closed.
+		if string(bytes.TrimSpace(schemaBytes)) == "null" {
+			schemaBytes = nil
+		}
 		var digest [32]byte
 		if g.validate == nil {
 			// Adapter not wired — drop the rule. The

@@ -12,12 +12,12 @@ T = TypeVar("T", bound="SLOStatus")
 
 @_attrs_define
 class SLOStatus:
-    """Error-budget position of one SLO, returned by GET /v1/apps/{slug}/slos/{id} (ADR-747)."""
+    """Error-budget position of one SLO, returned by GET /v1/apps/{slug}/slos/{id}."""
 
     window_start: datetime.datetime
     """Start of the rolling window: the later of window_days ago and the hour the SLO was created."""
     hours_recorded: int
-    """Completed hours meterd has recorded in the window."""
+    """Completed hours the metering service has recorded in the window."""
     hours_expected: int
     """Completed hours in the window; fewer recorded hours means history is still being backfilled or was lost."""
     good: int

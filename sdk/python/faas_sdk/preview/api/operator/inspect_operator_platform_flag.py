@@ -104,7 +104,7 @@ def sync_detailed(
 ) -> Response[OperatorPlatformFlagDecision | Problem]:
     """Explain a platform flag for an account
 
-     Evaluates the flag for one account against apid's live definition
+     Evaluates the flag for one account against the API's live definition
     and reports the matching rule, the reason, and whether the account's
     plan is entitled to the capability the flag releases. Records
     nothing. Operator-only.
@@ -147,7 +147,7 @@ def sync(
 ) -> OperatorPlatformFlagDecision | Problem | None:
     """Explain a platform flag for an account
 
-     Evaluates the flag for one account against apid's live definition
+     Evaluates the flag for one account against the API's live definition
     and reports the matching rule, the reason, and whether the account's
     plan is entitled to the capability the flag releases. Records
     nothing. Operator-only.
@@ -185,7 +185,7 @@ async def asyncio_detailed(
 ) -> Response[OperatorPlatformFlagDecision | Problem]:
     """Explain a platform flag for an account
 
-     Evaluates the flag for one account against apid's live definition
+     Evaluates the flag for one account against the API's live definition
     and reports the matching rule, the reason, and whether the account's
     plan is entitled to the capability the flag releases. Records
     nothing. Operator-only.
@@ -226,7 +226,7 @@ async def asyncio(
 ) -> OperatorPlatformFlagDecision | Problem | None:
     """Explain a platform flag for an account
 
-     Evaluates the flag for one account against apid's live definition
+     Evaluates the flag for one account against the API's live definition
     and reports the matching rule, the reason, and whether the account's
     plan is entitled to the capability the flag releases. Records
     nothing. Operator-only.

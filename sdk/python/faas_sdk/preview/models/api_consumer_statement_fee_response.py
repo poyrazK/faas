@@ -17,7 +17,7 @@ T = TypeVar("T", bound="APIConsumerStatementFeeResponse")
 
 @_attrs_define
 class APIConsumerStatementFeeResponse:
-    """A statement's monthly base fee or minimum-spend top-up (ADR-1316)."""
+    """A statement's monthly base fee or minimum-spend top-up."""
 
     kind: APIConsumerStatementFeeResponseKind
     rate_card_id: UUID

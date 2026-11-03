@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseApprovalPolicy]:
-    """Show an app's release approval policy (ADR-20261020085706).
+    """Show an app's release approval policy.
 
      404 `release_approval_policy_not_found` when the app does not require approvals.
 
@@ -101,7 +101,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseApprovalPolicy | None:
-    """Show an app's release approval policy (ADR-20261020085706).
+    """Show an app's release approval policy.
 
      404 `release_approval_policy_not_found` when the app does not require approvals.
 
@@ -127,7 +127,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseApprovalPolicy]:
-    """Show an app's release approval policy (ADR-20261020085706).
+    """Show an app's release approval policy.
 
      404 `release_approval_policy_not_found` when the app does not require approvals.
 
@@ -156,7 +156,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseApprovalPolicy | None:
-    """Show an app's release approval policy (ADR-20261020085706).
+    """Show an app's release approval policy.
 
      404 `release_approval_policy_not_found` when the app does not require approvals.
 

@@ -57,11 +57,18 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 	out := ObjectUsageSnapshot{}
 	// ADR-1320: checks tighten the operator policy by the plan's ceilings. A
 	// missing account keeps the operator policy, as before.
-	plan, err := q.ObjectUsageAccountPlan(ctx, db, mustPgUUID(account))
+	owner, err := q.ObjectUsageAccountPlanCap(ctx, db, mustPgUUID(account))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
 	}
-	out.PlanLimits = objectStoragePlanLimits(api.Plan(plan))
+	var capCents, grantBytes *int64
+	if owner.OverageCapCents.Valid {
+		capCents = &owner.OverageCapCents.Int64
+	}
+	if owner.CeilingGrantBytes.Valid {
+		grantBytes = &owner.CeilingGrantBytes.Int64
+	}
+	out.PlanLimits = objectStoragePlanLimits(api.Plan(owner.Plan), grantBytes, capCents)
 	rows, err := q.ObjectUsageBuckets(ctx, db, sqlc.ObjectUsageBucketsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(periodStart))})
 	if err != nil {
 		return out, err
@@ -73,6 +80,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 			ObservedBytes: r.ObservedBytes.Int64, ObservedKeys: r.ObservedKeys.Int64, ObservedAt: r.ObservedAt.Time, AttemptAt: r.AttemptAt.Time, LeaseUntil: r.InventoryLeaseUntil.Time, Token: r.Token.String,
 			RequestCount: r.GatewayRequestCount, EgressBytes: r.GatewayEgressBytes, GatewayMetricsKnown: true,
 			StoredByteHours: r.GatewayStoredByteHours, StorageMeteredThrough: r.GatewayStorageThrough.Time,
+			InventoryScan: ObjectInventoryScan{StartedAt: r.ScanStartedAt.Time, ProgressAt: r.ScanProgressAt.Time, Bytes: r.ScanBytes.Int64, Keys: r.ScanKeys.Int64, Pages: int(r.ScanPages.Int32), Complete: r.ScanComplete.Bool},
 		})
 	}
 	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})
@@ -253,7 +261,7 @@ func (s *pgCore) DueObjectInventories(ctx context.Context, limit int32) ([]Objec
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
-	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, limit)
+	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), RowLimit: limit})
 	if err != nil {
 		return nil, err
 	}

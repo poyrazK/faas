@@ -557,7 +557,7 @@ func TestAdoptGuestBindsDropsReferencesOnFailure(t *testing.T) {
 	// consecutive files often get consecutive inodes.)
 	stale := id
 	stale.Inode = 1 << 40
-	err = v.adoptGuestBinds(idLive, []resourceAsset{bind(good, id), bind(other, stale)})
+	err = v.adoptGuestBinds(idLive, 0, []resourceAsset{bind(good, id), bind(other, stale)})
 	if err == nil {
 		t.Fatal("bind with a replaced source adopted")
 	}
@@ -565,7 +565,7 @@ func TestAdoptGuestBindsDropsReferencesOnFailure(t *testing.T) {
 	if len(v.bindSourceModes) != 0 || len(v.bindMounts[idLive]) != 0 {
 		t.Fatalf("failed adoption left references: %v %v", v.bindSourceModes, v.bindMounts)
 	}
-	if err := v.adoptGuestBinds(idLive, []resourceAsset{bind(good, id)}); err != nil {
+	if err := v.adoptGuestBinds(idLive, 0, []resourceAsset{bind(good, id)}); err != nil {
 		t.Fatal(err)
 	}
 	if st := v.bindSourceModes[bindSourceKey{path: good, file: id}]; st.refs != 1 || st.handle == nil {

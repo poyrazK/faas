@@ -20,6 +20,10 @@ const (
 	RollbackSkipOutsideWindow    = "outside_rollback_window"
 	RollbackSkipNoBaseline       = "no_healthy_baseline"
 	RollbackSkipTargetIneligible = "rollback_target_ineligible"
+	// RollbackSkipProjectRelease: a project release serves the app; the
+	// project rolls back as a set, never one member (ADR-20261028110044
+	// amendment 1).
+	RollbackSkipProjectRelease = "project_release"
 )
 
 // RollbackDecision is what a store needs to claim or skip one incident.
@@ -60,9 +64,9 @@ func DecideRollback(c api.RouteMonitorConfig, i api.RouteMonitorIncident, releas
 
 // ReleasedAt is the latest traffic transition of a serving deployment, the
 // same deployment-owned anchors the monitor report uses.
-func ReleasedAt(created time.Time, stageStarted, rolloutCompleted *time.Time) time.Time {
+func ReleasedAt(created time.Time, transitions ...*time.Time) time.Time {
 	at := created
-	for _, t := range []*time.Time{stageStarted, rolloutCompleted} {
+	for _, t := range transitions {
 		if t != nil && t.After(at) {
 			at = *t
 		}

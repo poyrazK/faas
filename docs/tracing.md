@@ -18,7 +18,8 @@ tracing:
 enabled = true
 ```
 
-The setting applies from the next deployment. Then open a request with
+The setting applies from the next deployment. Start an investigation with
+[`gregale debug status <app>`](debug-status.md), then open a request with
 `gregale debug requests get <app> <request-id>` or in the dashboard debugger;
 spans from your app appear under the request, and the evidence summary uses
 them to point at the slow dependency.
@@ -62,9 +63,30 @@ error rate at least 5 percentage points and twice above baseline:
 
 > http "api.stripe.com" fails 12.5% of calls since the previous deployment (v80), up from 0.0%.
 
+## Request logs
+
+With tracing enabled, the app's own log lines are linked to the request that
+wrote them. Python's standard `logging` records and Node's pino and bunyan
+logs are exported automatically with the active trace context, and the
+request's evidence shows its last 20 lines in the dashboard and the API:
+
+```
+12:04:31.118  error  runtime  charge failed for [REDACTED:email]: card declined
+```
+
+Python sends the records your logging configuration emits (warnings and
+above unless you set a lower level), and your console output is unchanged.
+Lines are redacted (emails, card numbers, tokens and keys) and cut to 512
+characters; structured log fields are not stored. Plain `console.log` output
+and winston logs are not linked. Log lines without a request (for example at
+startup) still appear in your runtime logs as before.
+
+To keep your logs out of Gregale, set `OTEL_LOGS_EXPORTER=none`, or point
+`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` at your own collector.
+
 ## Following a request across services
 
-`gregale trace <trace-id>` shows every retained request of one trace across
+`gregale debug trace <trace-id>` shows every retained request of one trace across
 your apps, with the logs, queued invocations and spans linked to it. The trace
 id is on each request in `gregale debug requests get`.
 
@@ -173,8 +195,11 @@ tracing:
   sample_ratio: 0.25
 ```
 
-Exports also count toward your plan's request telemetry rate limit; spans that
-exceed it are dropped and the app keeps serving.
+Exports have their own rate limit, the same per-minute rate as your plan's
+request telemetry, so tracing never uses up the budget your request records
+need. Spans that exceed it are dropped and the app keeps serving. An app in an
+organization that owns its resources is limited by the organization's plan,
+not the plan of whoever created the app.
 
 ## Using your own collector
 
@@ -184,6 +209,18 @@ your OpenTelemetry configuration alone, and a Python app that ships its own
 `opentelemetry-sdk` is never instrumented a second time. Your existing exporter
 keeps working; to send spans to the debugger as well, export to the public
 `/v1/otel/v1/traces` endpoint with an API key.
+
+The key needs the `admin`, `deploy:write` or `metrics:write` scope; a
+read-only key gets `403`. Spans attach to requests of the trace in apps the
+key can write to:
+
+- A key bound to an organization attaches spans to that organization's apps,
+  whoever created them, while you can deploy there (owner, admin or
+  developer).
+- Any other key attaches spans to your own apps. Apps of an organization you
+  have left, or can no longer deploy to, are skipped.
+
+The endpoint answers `404` while tracing is not enabled for your account.
 
 ## Limits and behavior
 

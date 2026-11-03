@@ -40,7 +40,11 @@ CONFIG = {
     "host_config": {
         "converged_groups": ["control_plane"],
         "release_units": ["deploy/ansible/roles/control_plane_service/files/faas-apid.service"],
-        "outside_releases": ["deploy/systemd/", "deploy/grafana/"],
+    },
+    "deploy_classes": {
+        "inert": ["deploy/**/*.md", "deploy/**/*.example", "deploy/**/*.example.*", "deploy/systemd/", "deploy/grafana/"],
+        "compute_only": ["deploy/ansible/node_join.yml"],
+        "blocking": ["deploy/ansible/site.yml", "deploy/manifest/production/"],
     },
 }
 
@@ -147,6 +151,13 @@ class AnalyzeTest(unittest.TestCase):
         ("deploy path no host role reads blocks",
          [("c1", ["pkg/apid/server.go", "deploy/manifest/production/gcp-live.template.yaml"])],
          {"apid": "c1"}, [], ["deploy"], False),
+        ("deploy path no rule names blocks",
+         [("c1", ["pkg/apid/server.go", "deploy/new-tree/run.sh"])], {"apid": "c1"}, [], ["deploy"], False),
+        ("sample no role reads maps to nothing",
+         [("c1", ["pkg/apid/server.go", "deploy/managed-postgres.example.json", "deploy/etc/apid.toml.example"])],
+         {"apid": "c1"}, ["apid"], [], True),
+        ("compute playbook is pending for the control-plane lane",
+         [("c1", ["pkg/apid/server.go", "deploy/ansible/node_join.yml"])], {"apid": "c1"}, ["apid"], [], True),
         ("unit version is the newest commit that touched the unit",
          [("c3", ["pkg/sched/sched.go"]), ("c2", ["pkg/apid/server.go"]), ("c1", ["pkg/state/store.go"])],
          {"apid": "c2", "meterd": "c1", "schedd": "c3", "gatewayd-internal": "c1", "gregalectl": "c1"},
@@ -368,6 +379,16 @@ class HostConfigTest(unittest.TestCase):
         rep = au.analyze([("c1", ["docs/DPA.md"])], CLOSURES, CONFIG, EXISTS, host=HOST)
         self.assertEqual(rep["blocked_by"], ["control_plane_bundle"])
 
+    def test_compute_role_sample_is_still_role_content(self):
+        # A role installs its sample beside the real config; the role's
+        # class decides, as for any file the role reads.
+        host = dict(HOST, compute_nodes={"owners": dict(
+            HOST["compute_nodes"]["owners"], **{"deploy/ansible/roles/vmmd_service/files/vmmd.toml.example": ["vmmd_service"]})})
+        rep = au.analyze([("c1", ["deploy/ansible/roles/vmmd_service/files/vmmd.toml.example"])],
+                         CLOSURES, CONFIG, EXISTS, host=host)
+        self.assertEqual(rep["flags"]["compute_deploy"]["paths"], ["deploy/ansible/roles/vmmd_service/files/vmmd.toml.example"])
+        self.assertEqual(rep["deploy_classes"]["host_roles"]["count"], 1)
+
     def test_release_unit_blocks_although_a_role_reads_it(self):
         # deployctl reinstalls the base release's unit files at every unit
         # activation, so converging the role would not stick.
@@ -376,6 +397,69 @@ class HostConfigTest(unittest.TestCase):
         self.assertEqual(rep["blocked_by"], ["release_units"])
         self.assertNotIn("host_config", rep["flags"])
         self.assertFalse(rep["eligible"])
+
+
+class DeployClassTest(unittest.TestCase):
+    """Every deploy/ path has one class (deploy_class; docs/adr/
+    20261027151755-unit-lane-deploy-path-classes.md)."""
+
+    def test_classes_in_match_order(self):
+        cases = [
+            ("deploy/ansible/roles/control_plane_service/files/faas-apid.service", "release_units", ["release_units"]),
+            ("deploy/ansible/roles/grafana/files/fleet.json", "host_roles", ["host_config"]),
+            ("deploy/ansible/roles/host_hardening/tasks/main.yml", "host_roles", ["compute_deploy", "host_config"]),
+            ("deploy/ansible/roles/vmmd_service/tasks/main.yml", "host_roles", ["compute_deploy"]),
+            # A role reads it, so the inert unit tree does not decide.
+            ("deploy/systemd/faas-pg-basebackup.service", "host_roles", ["host_config"]),
+            ("deploy/systemd/faas-apid.service", "inert", []),
+            ("deploy/grafana/frozen-tier.json", "inert", []),
+            ("deploy/ansible/roles/seal_domains/README.md", "inert", []),
+            ("deploy/manifest/README.md", "inert", []),
+            ("deploy/claims/compute-node.example.yaml", "inert", []),
+            ("deploy/ansible/node_join.yml", "compute_only", ["compute_deploy"]),
+            ("deploy/manifest/production/gcp-live.template.yaml", "blocking", ["deploy"]),
+            ("deploy/unknown/thing.yml", "unclassified", ["deploy"]),
+        ]
+        for path, cls, flags in cases:
+            with self.subTest(path):
+                self.assertEqual(au.deploy_class(path, CONFIG, HOST), (cls, flags))
+
+    def test_comment_only_change_maps_to_nothing_unless_a_role_or_activation_reads_it(self):
+        template = "deploy/manifest/production/gcp-live.template.yaml"
+        unit = "deploy/ansible/roles/control_plane_service/files/faas-apid.service"
+        role = "deploy/ansible/roles/vmmd_service/tasks/main.yml"
+        comments = {template, unit, role, "deploy/ansible/node_join.yml"}
+        self.assertEqual(au.deploy_class(template, CONFIG, HOST, comments), ("comments", []))
+        self.assertEqual(au.deploy_class("deploy/ansible/node_join.yml", CONFIG, HOST, comments), ("comments", []))
+        # A rendered role file and a unit file carry their comments onto the host.
+        self.assertEqual(au.deploy_class(unit, CONFIG, HOST, comments), ("release_units", ["release_units"]))
+        self.assertEqual(au.deploy_class(role, CONFIG, HOST, comments), ("host_roles", ["compute_deploy"]))
+        rep = au.analyze([("c1", ["pkg/apid/server.go", template])], CLOSURES, CONFIG, EXISTS, host=HOST,
+                         comment_only={template})
+        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
+        self.assertEqual(rep["deploy_classes"], {"comments": {"count": 1, "paths": [template]}})
+
+    def test_compute_path_holds_the_edge_lane_only_while_it_restarts_a_compute_gateway(self):
+        commits = [("c1", ["pkg/gateway/proxy.go", "deploy/ansible/node_join.yml"])]
+        rep = au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertEqual(rep["lanes"]["edge"]["blocked_by"], ["compute_deploy"])
+        self.assertEqual(rep["pending"]["edge"], ["gatewayd-internal"])
+        # The same gateway running only on the control plane lands there
+        # alone; no compute host restarts, so nothing waits.
+        binaries = dict(CONFIG["binaries"], **{"gatewayd-internal": {
+            "lane": "edge", "services": [{"name": "gatewayd-internal", "host": "control-plane"}]}})
+        rep = au.analyze(commits, CLOSURES, dict(CONFIG, binaries=binaries), EXISTS, host=HOST)
+        self.assertEqual(rep["lanes"]["edge"]["blocked_by"], [])
+        self.assertTrue(rep["lanes"]["edge"]["eligible"])
+        self.assertIn("compute_deploy", rep["flags"])
+
+    def test_unknown_class_is_rejected(self):
+        path = os.path.join(tempfile.mkdtemp(), "lanes.json")
+        self.addCleanup(shutil.rmtree, os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(dict(CONFIG, deploy_classes={"ignored": ["deploy/x"]}), fh)
+        with self.assertRaisesRegex(ValueError, "unknown class 'ignored'"):
+            au.load_config(path)
 
 
 class StatefulRestartHistoryTest(unittest.TestCase):
@@ -521,6 +605,54 @@ class HelperTest(unittest.TestCase):
         self.assertIn("grpcnotrace", au.daemon_tags(makefile))
         self.assertNotIn("-tags metal", au.build_recipe(makefile))
 
+    def test_glob_match(self):
+        cases = [
+            ("deploy/systemd/", "deploy/systemd/faas-apid.service", True),
+            ("deploy/systemd/", "deploy/systemd-old/x", False),
+            ("deploy/ansible/site.yml", "deploy/ansible/site.yml", True),
+            ("deploy/ansible/site.yml", "deploy/ansible/site.yml.bak", False),
+            ("deploy/**/*.md", "deploy/README.md", True),
+            ("deploy/**/*.md", "deploy/ansible/roles/x/README.md", True),
+            ("deploy/**/*.example", "deploy/etc/apid.toml.example", True),
+            ("deploy/**/*.example.*", "deploy/managed-postgres.example.json", True),
+            ("deploy/**/*.example", "deploy/managed-postgres.example.json", False),
+            ("deploy/**/tests/**", "deploy/ansible/tests/obs_stack_smoke.yml", True),
+            ("deploy/*.json", "deploy/a/b.json", False),
+            ("deploy/**/*_test.sh", "deploy/scripts/leakcheck_test.sh", True),
+        ]
+        for pattern, path, want in cases:
+            with self.subTest(pattern=pattern, path=path):
+                self.assertEqual(au.glob_match(path, pattern), want)
+
+    def test_comment_free_keeps_content_and_shebangs(self):
+        self.assertEqual(au.comment_free("#!/bin/bash\n# note\n\n  # indented\nset -e  # trailing\n"),
+                         ["#!/bin/bash", "set -e  # trailing"])
+
+    def test_comment_only_paths(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        run = lambda *a: subprocess.run([*GIT, *a], cwd=root, check=True, capture_output=True, text=True).stdout
+        run("init", "-q", "-b", "main")
+        run("config", "user.email", "t@example.com")
+        run("config", "user.name", "t")
+        files = {"deploy/a.yaml": "a: 1\n", "deploy/b.yml": "b: 1\n", "deploy/c.json": "{}\n",
+                 "deploy/d.sh": "#!/bin/sh\ntrue\n"}
+        for path, body in files.items():
+            os.makedirs(os.path.join(root, os.path.dirname(path)), exist_ok=True)
+            pathlib.Path(root, path).write_text(body)
+        run("add", "-A")
+        run("commit", "-q", "-m", "base")
+        base = run("rev-parse", "HEAD").strip()
+        pathlib.Path(root, "deploy/a.yaml").write_text("# workload identity, off for now\n#  key: x\n\na: 1\n")
+        pathlib.Path(root, "deploy/b.yml").write_text("b: 2  # was 1\n")
+        pathlib.Path(root, "deploy/c.json").write_text('{"x": 1}\n')
+        pathlib.Path(root, "deploy/d.sh").write_text("#!/bin/bash\ntrue\n")
+        pathlib.Path(root, "deploy/new.yml").write_text("# only comments\n")
+        run("add", "-A")
+        run("commit", "-q", "-m", "head")
+        paths = set(files) | {"deploy/new.yml"}
+        self.assertEqual(au.comment_only_paths(base, "HEAD", paths, root), {"deploy/a.yaml"})
+
     def test_matches_prefix_and_exact_paths(self):
         self.assertTrue(au.matches("deploy/x.yml", ["deploy/"]))
         self.assertTrue(au.matches("docs/DPA.md", ["docs/DPA.md"]))
@@ -595,19 +727,89 @@ class RepositoryContractTest(unittest.TestCase):
             want.update(re.findall(rf"((?:deploy)/[\w./-]+)\s*\\?\s*\n?\s*\"\$\{{BUNDLE_ROOT\}}/{dest}/", step))
         self.assertEqual(sorted(want), sorted(self.config["host_config"]["release_units"]))
 
-    def test_trees_outside_releases_are_not_released(self):
-        # No release workflow installs these trees; a role that names one of
-        # their files makes that file host config instead.
-        outside = self.config["host_config"]["outside_releases"]
+    def host(self):
+        tree = host_roles.fs_tree(str(REPO))
+        roles = host_roles.Roles(tree)
+        return {group: {"owners": host_roles.group_owners(tree, group, roles)} for group in host_roles.GROUPS}
+
+    def deploy_paths(self):
+        out = subprocess.run(["git", "ls-files", "-z", "deploy"], cwd=REPO, check=True, capture_output=True, text=True)
+        return sorted(p for p in out.stdout.split("\0") if p)
+
+    def test_every_deploy_path_has_exactly_one_class(self):
+        # The table names every deploy/ path the repository has, so a new
+        # tree is classified on purpose rather than blocking both lanes by
+        # default; and every pattern still decides some path.
+        host, classes = self.host(), self.config["deploy_classes"]
+        deciding = set()
+        paths = self.deploy_paths()
+        self.assertGreater(len(paths), 500)
+        for path in paths:
+            cls, _ = au.deploy_class(path, self.config, host)
+            with self.subTest(path):
+                self.assertNotEqual(cls, "unclassified", f"{path}: add it to release_units.json deploy_classes")
+            if cls in au.DEPLOY_CLASSES:
+                deciding.add((cls, next(p for p in classes[cls] if au.glob_match(path, p))))
+        for cls in au.DEPLOY_CLASSES:
+            for pattern in classes[cls]:
+                with self.subTest(cls=cls, pattern=pattern):
+                    self.assertIn((cls, pattern), deciding, "no deploy/ path is decided by this pattern")
+
+    def test_decided_classes(self):
+        # docs/adr/20261027151755-unit-lane-deploy-path-classes.md, from the
+        # paths that closed the lanes after rc.297.
+        host = self.host()
+        want = {
+            "deploy/ansible/roles/control_plane_service/files/faas-apid.service": ("release_units", ["release_units"]),
+            "deploy/ansible/roles/prometheus/files/faas.rules.yml": ("host_roles", ["host_config"]),
+            "deploy/ansible/roles/grafana/files/frozen-tier.json": ("host_roles", ["host_config"]),
+            "deploy/ansible/roles/seal_domains/tasks/main.yml": ("host_roles", ["compute_deploy", "host_config"]),
+            "deploy/ansible/roles/vmmd_service/files/vmmd.toml.example": ("host_roles", ["compute_deploy"]),
+            "deploy/ansible/group_vars/compute_nodes/vmmd_adoption.yml": ("host_roles", ["compute_deploy"]),
+            "deploy/ansible/roles/gatewayd_internal_service/files/faas-realtimed.service": ("host_roles", ["compute_deploy"]),
+            "deploy/ansible/node_join.yml": ("compute_only", ["compute_deploy"]),
+            "deploy/ansible/roles/seal_domains/README.md": ("inert", []),
+            "deploy/grafana/frozen-tier.json": ("inert", []),
+            "deploy/manifest/README.md": ("inert", []),
+            "deploy/systemd/faas-realtimed.service": ("inert", []),
+            "deploy/managed-postgres.example.json": ("inert", []),
+            "deploy/manifest/production/gcp-live.template.yaml": ("blocking", ["deploy"]),
+        }
+        for path, cls in want.items():
+            with self.subTest(path):
+                self.assertTrue((REPO / path).is_file())
+                self.assertEqual(au.deploy_class(path, self.config, host), cls)
+
+    def test_prometheus_and_grafana_converge_without_restarting_daemons(self):
+        # Their rule and dashboard files ride the control-plane lane's
+        # convergence; the roles reload their own service and notify no
+        # other role's handlers, so no FaaS daemon or database restarts.
+        tree = host_roles.fs_tree(str(REPO))
+        order = host_roles.group_hashes(tree, "control_plane")["order"]
+        restart = host_roles.restart_roles(tree, "control_plane", ("faas-", "postgresql", "pgbouncer"))
+        deps = host_roles.notify_targets(tree, order)
+        for role in ("prometheus", "grafana"):
+            with self.subTest(role):
+                self.assertIn(role, order)
+                self.assertNotIn(role, restart)
+                self.assertNotIn(role, deps)
+        self.assertEqual(self.config["host_config"]["converged_groups"], ["control_plane"])
+
+    def test_inert_paths_are_not_released(self):
+        # No release workflow reads an inert path or tree; a role that names
+        # one of their files makes that file host config instead.
+        host = self.host()
+        inert = [p for p in self.deploy_paths() if au.deploy_class(p, self.config, host)[0] == "inert"]
+        trees = [p for p in self.config["deploy_classes"]["inert"] if p.endswith("/")]
         for workflow in ("release.yml", "release-units.yml", "cd-controlplane.yml", "cd-compute.yml",
-                         "cd-platform.yml", "cd-edge-units.yml", "cd-edge-node.yml"):
+                         "cd-platform.yml", "cd-edge-units.yml", "cd-edge-node.yml", "cd-unit-watch.yml"):
             path = REPO / ".github/workflows" / workflow
             if not path.exists():
                 continue
             text = path.read_text(encoding="utf-8")
-            for prefix in outside:
-                with self.subTest(workflow=workflow, prefix=prefix):
-                    self.assertNotIn(prefix, text)
+            for name in trees + inert:
+                with self.subTest(workflow=workflow, path=name):
+                    self.assertNotIn(name, text)
         # deploy/grafana/ is a byte-identical mirror of the role's copies.
         for dashboard in sorted((REPO / "deploy/grafana").glob("*.json")):
             with self.subTest(dashboard=dashboard.name):

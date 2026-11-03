@@ -15,7 +15,12 @@ import (
 var ErrRouteHealthRevision = errors.New("route health configuration revision changed")
 var ErrRouteHealthPlan = errors.New("route health enforcement requires traffic splits and request telemetry")
 
-type RouteHealthBlockedError struct{ Decision api.RouteHealthDecision }
+type RouteHealthBlockedError struct {
+	Decision api.RouteHealthDecision
+	// EvidenceLost reports a hold on telemetry a gateway may have lost
+	// (ADR-20261028110044 amendment 1).
+	EvidenceLost bool
+}
 
 func (e *RouteHealthBlockedError) Error() string {
 	return "route health gate blocked: " + e.Decision.Reason
@@ -59,7 +64,7 @@ func requireRouteHealth(report api.RouteHealthReport, output *api.RouteHealthDec
 		*output = decision
 	}
 	if decision.Mode == "enforce" && decision.Status != "allowed" {
-		return &RouteHealthBlockedError{Decision: decision}
+		return &RouteHealthBlockedError{Decision: decision, EvidenceLost: routehealth.EvidenceLost(report)}
 	}
 	return nil
 }

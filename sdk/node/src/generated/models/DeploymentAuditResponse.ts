@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One row of the deployment_audit timeline (issue #976 /
- * ADR-122 / SAFE-RELEASES-E.2 + production-leveling Stream
+ * One row of the deployment_audit timeline (E.2 + production-leveling Stream
  * A). Data is the verbatim jsonb payload at emit time;
  * kind-specific shape — DeployTrafficChanged carries
  * {from_percent, to_percent, actor_kind}, DeployRolledBack
@@ -33,7 +32,7 @@ export type DeploymentAuditResponse = {
    */
   account_id?: string;
   /**
-   * SAFE-RELEASES-OBS PR-D (issue #976 / ADR-122): when the audit row was stamped by an alert-rule-fired action (e.g. auto-rollback via meterd ActionDispatcher), this carries the alert_rules.id UUID. nil for non-rule-triggered rows. Wire-additive per ADR-016 — null for all pre-PR-D rows.
+   * When the audit row was stamped by an alert-rule-fired action (e.g. auto-rollback via the metering service ActionDispatcher), this carries the alert_rules.id UUID. nil for non-rule-triggered rows. Wire-additive — null for all older rows.
    */
   alert_rule_id?: string;
 };

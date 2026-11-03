@@ -61,8 +61,8 @@ class RouteMonitorIncident:
     escalations_truncated: bool | Unset = UNSET
     """True when older escalation records were dropped to preserve the newest transition details and incident size."""
     rollback: RouteMonitorIncidentRollback | Unset = UNSET
-    """The single automatic rollback decision for an incident when on_violation is rollback (ADR-845). claimed is
-    transient while the checked rollback is requested."""
+    """The single automatic rollback decision for an incident when on_violation is rollback. claimed is transient
+    while the checked rollback is requested."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

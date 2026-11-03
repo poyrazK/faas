@@ -11,7 +11,7 @@ T = TypeVar("T", bound="ManagedPostgresOverage")
 
 @_attrs_define
 class ManagedPostgresOverage:
-    """An account's managed PostgreSQL compute overage setting (ADR-20261025094915)."""
+    """An account's managed PostgreSQL compute overage setting."""
 
     enabled: bool
     compute_allowance_unit_seconds: int

@@ -203,15 +203,17 @@ func walkDependencyCache(src string, maxBytes int64, visit func(string, string, 
 // race a drive being prepared from it. Production keeps the vmmd export and
 // dependency-cache roots below /srv/fc/builder, so a validated rename avoids
 // copying the complete cache tree twice. Cross-filesystem development layouts
-// retain the existing bounded copy path.
-func publishDependencyCache(src, dst string, maxBytes int64) error {
+// retain the existing bounded copy path. With layers non-nil, the staged cache
+// shares the listed platform layers before it is published
+// (ADR-20261031103801); the returned bytes are the ones it links.
+func publishDependencyCache(src, dst string, maxBytes int64, layers map[string]struct{}) (int64, error) {
 	parent := filepath.Dir(dst)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return fmt.Errorf("dependency cache mkdir: %w", err)
+		return 0, fmt.Errorf("dependency cache mkdir: %w", err)
 	}
 	tmp, err := os.MkdirTemp(parent, ".publish-*")
 	if err != nil {
-		return fmt.Errorf("dependency cache temp: %w", err)
+		return 0, fmt.Errorf("dependency cache temp: %w", err)
 	}
 	cleanupTmp := true
 	defer func() {
@@ -221,23 +223,27 @@ func publishDependencyCache(src, dst string, maxBytes int64) error {
 	}()
 	staged := filepath.Join(tmp, "cache")
 	if err := stageDependencyCache(src, staged, maxBytes, os.Rename); err != nil {
-		return err
+		return 0, err
+	}
+	var shared int64
+	if layers != nil {
+		_, shared = sharePlatformBlobs(parent, staged, layers)
 	}
 	backup := dst + ".previous"
 	_ = os.RemoveAll(backup)
 	if err := os.Rename(dst, backup); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("dependency cache rotate: %w", err)
+		return 0, fmt.Errorf("dependency cache rotate: %w", err)
 	}
 	if err := os.Rename(staged, dst); err != nil {
 		_ = os.Rename(backup, dst)
-		return fmt.Errorf("dependency cache publish: %w", err)
+		return 0, fmt.Errorf("dependency cache publish: %w", err)
 	}
 	now := time.Now()
 	_ = os.Chtimes(dst, now, now)
 	cleanupTmp = false
 	_ = os.RemoveAll(tmp)
 	_ = os.RemoveAll(backup)
-	return nil
+	return shared, nil
 }
 
 func stageDependencyCache(src, staged string, maxBytes int64, rename func(string, string) error) error {
@@ -271,10 +277,8 @@ func sweepDependencyCachesWithLimit(driveDir string, now time.Time, maxBytes int
 	type candidate struct {
 		path    string
 		modTime time.Time
-		size    int64
 	}
 	var fresh []candidate
-	var total int64
 	for _, entry := range entries {
 		info, infoErr := entry.Info()
 		if infoErr != nil {
@@ -293,15 +297,24 @@ func sweepDependencyCachesWithLimit(driveDir string, now time.Time, maxBytes int
 			_ = os.RemoveAll(path)
 			continue
 		}
-		size, sizeErr := dependencyCacheSize(path)
-		if sizeErr != nil {
-			continue
-		}
-		fresh = append(fresh, candidate{path: path, modTime: info.ModTime(), size: size})
-		total += size
+		fresh = append(fresh, candidate{path: path, modTime: info.ModTime()})
 	}
-	if maxBytes <= 0 || total <= maxBytes {
+	removeOrphanPlatformBlobs(root)
+	if maxBytes <= 0 {
 		return nil
+	}
+	// Caches share platform layers (ADR-20261031103801), so evicting one frees
+	// only what it alone holds: measure again after each eviction.
+	onDisk := func(caches []candidate) (int64, error) {
+		paths := []string{filepath.Join(root, platformBlobsDir)}
+		for _, entry := range caches {
+			paths = append(paths, entry.path)
+		}
+		return diskBytes(paths...)
+	}
+	total, err := onDisk(fresh)
+	if err != nil {
+		return err
 	}
 	sort.SliceStable(fresh, func(i, j int) bool {
 		if fresh[i].modTime.Equal(fresh[j].modTime) {
@@ -309,34 +322,24 @@ func sweepDependencyCachesWithLimit(driveDir string, now time.Time, maxBytes int
 		}
 		return fresh[i].modTime.Before(fresh[j].modTime)
 	})
-	for _, entry := range fresh {
-		if total <= maxBytes {
-			break
+	var stuck []candidate
+	for total > maxBytes && len(fresh) > 0 {
+		oldest := fresh[0]
+		fresh = fresh[1:]
+		if err := os.RemoveAll(oldest.path); err != nil {
+			stuck = append(stuck, oldest)
+			continue
 		}
-		if err := os.RemoveAll(entry.path); err == nil {
-			total -= entry.size
+		removeOrphanPlatformBlobs(root)
+		if total, err = onDisk(append(stuck, fresh...)); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
+// dependencyCacheSize is the bytes root occupies on disk, counting a shared
+// platform layer once.
 func dependencyCacheSize(root string) (int64, error) {
-	var total int64
-	err := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if info.Mode().IsRegular() {
-			total += info.Size()
-		}
-		return nil
-	})
-	return total, err
+	return diskBytes(root)
 }

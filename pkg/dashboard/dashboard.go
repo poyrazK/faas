@@ -128,6 +128,17 @@ type ProjectsData struct {
 	Environments  []string
 	CSRFToken     string
 	Flash         string
+	// CalledBy lists, by service name, the Project services that declare
+	// they call that service.
+	CalledBy map[string][]string
+	// ServiceCalls are the measured calls between Project's services over
+	// ServiceCallsRange, from the service map (ADR-1131). ServiceCallsRange
+	// is empty while the map is not released to the account or its plan has
+	// no per-app metrics; ServiceCallsNote explains degraded telemetry.
+	ServiceCalls      []api.ServiceMapEdge
+	ServiceCallsRange string
+	ServiceCallsNote  string
+	HighErrorRatePct  float64
 }
 
 type EnvironmentGitOpsData struct {
@@ -197,6 +208,23 @@ type AppListItem struct {
 	// IsPreview is false. Pre-formatted at the handler edge so
 	// the template stays a pure renderer.
 	Scope string
+	// Labels are the app's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
+}
+
+// AppsListData backs /dashboard/apps.
+type AppsListData struct {
+	Items []AppListItem
+	// LabelsOn is true while the account has resource labels
+	// (ADR-20261031100025): the list shows each app's labels and takes a
+	// selector.
+	LabelsOn bool
+	// Selector is the label selector the list is filtered by, as typed.
+	Selector string
+	// SelectorError explains a selector the list could not apply; Items
+	// is empty then.
+	SelectorError string
 }
 
 // PreviewListItem is one row on /dashboard/previews (issue #961
@@ -752,10 +780,13 @@ type AppLogDrainsData struct {
 }
 
 type LogDrainPageItem struct {
-	ID                      string
-	Kind                    string
-	TargetURL               string
-	Enabled                 bool
+	ID        string
+	Kind      string
+	TargetURL string
+	Enabled   bool
+	// PlanPaused marks an enabled drain the app owner's plan does not cover,
+	// which delivery leaves out until the plan covers it again.
+	PlanPaused              bool
 	Status                  string
 	Active                  bool
 	QueueDepth              int
@@ -991,6 +1022,14 @@ type AppEdgeRulesData struct {
 	// account (ADR-20261021220456 amendment 1); the card then offers no
 	// switch to turn it on.
 	AttackModeAvailable bool
+	// ChallengeAvailable is false while the browser challenge is not released
+	// to the account; the create form then offers no challenge kind.
+	ChallengeAvailable bool
+	// Lists are the account's edge rule lists, which every app's rules may
+	// use; Versions are this app's recorded rule sets, newest first
+	// (ADR-091 amendment 2026-10-30).
+	Lists    []EdgeRuleListPageItem
+	Versions []EdgeRuleVersionPageItem
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
 	// WAFReview is the WAF false-positive review (ADR-831 amendment 13).
@@ -1132,6 +1171,25 @@ type EdgeRuleTraceFormData struct {
 	Result       *edgeruletrace.Result
 }
 
+// EdgeRuleListPageItem is one account edge rule list on the edge-rules page.
+// Items is newline-separated for the edit textarea.
+type EdgeRuleListPageItem struct {
+	Name        string
+	Kind        string
+	Description string
+	ItemCount   int
+	Items       string
+	UsedBy      int
+}
+
+// EdgeRuleVersionPageItem is one recorded rule-set version of the app.
+type EdgeRuleVersionPageItem struct {
+	Version    int
+	RuleCount  int
+	RecordedAt string
+	Current    bool
+}
+
 // EdgeRulePageItem is a template-safe edge rule projection. ActionJSON is
 // intentionally a display string rather than a parsed map so the dashboard
 // never executes customer-provided JSON.
@@ -1153,6 +1211,9 @@ type EdgeRulePageItem struct {
 	// AttackMode is set for the app's attack-mode rule
 	// (ADR-20261021220456), which changes only through its switch.
 	AttackMode bool
+	// EditActionJSON is the action in the shape the edit form sends back
+	// (ADR-091 amendment 2026-10-30).
+	EditActionJSON string
 	// ADR-960/964: name, mode and 24 h hit counts.
 	Name       string
 	Mode       string
@@ -1414,6 +1475,9 @@ type CronItem struct {
 	Occurrences           []ScheduleOccurrencePageItem
 	OccurrencesCount      int
 	HistoryAvailable      bool
+	// Labels are the cron's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
 }
 
 // CronRunRow is one projected row inside CronItem.Runs. Pre-formatted
@@ -1604,6 +1668,7 @@ type AppDetailData struct {
 	// dashboard cron fire-now POST. Values:
 	//   "ok"    — handler redirected with ?fired=1
 	//   "error" — handler redirected with ?fired=error
+	//   "disabled", "busy", "suspended", "plan" — a refusal with its reason
 	// Empty string → no banner. The template's empty-state branch
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
@@ -2391,6 +2456,9 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+	// TelemetryGaps lists why the window may be missing requests; empty
+	// when every gateway delivered it or when it could not be judged.
+	TelemetryGaps []string
 }
 
 type RequestAnalyticsComputeCostView struct {
@@ -2588,6 +2656,39 @@ type DebugPageData struct {
 	CriticalPathHistory *DebugCriticalPathHistoryView
 	Running             *DebugRunningView
 	RunningError        string
+	DebugStatus         *DebugStatusView
+}
+
+// DebugStatusView is the dashboard projection of GET
+// /v1/apps/{slug}/debug/status (ADR-1447 amendment): one verdict for the
+// window, the release explanation, and links to the requests behind them.
+type DebugStatusView struct {
+	Verdict        string
+	VerdictLabel   string
+	Headline       string
+	Since          string
+	Requests       int64
+	ServerErrors   int64
+	P95MS          int
+	Regressions    int
+	TracingEnabled bool
+	Release        string
+	Examples       []DebugStatusRequestView
+	Failures       []DebugStatusRequestView
+	// OOMKills lists the window's out-of-memory kills (ADR-121), newest
+	// first; OOMKillsTotal counts all of them and OOMFix is the remedy.
+	OOMKills      []string
+	OOMKillsTotal int
+	OOMFix        []string
+	CLICommand    string
+}
+
+// DebugStatusRequestView links one request from the status card to its
+// evidence on the same page.
+type DebugStatusRequestView struct {
+	ReceivedAt string
+	Label      string
+	URL        string
 }
 
 // DebugRunningView is the dashboard projection of the bounded scheduler
@@ -2832,6 +2933,18 @@ type DebugRequestDetailView struct {
 	// ProfileCaptureURL links the stack snapshot taken while the request was
 	// in flight (ADR-1155 slow_request capture), when one exists.
 	ProfileCaptureURL string
+	// Logs are the request's own log lines, matched by trace ID.
+	Logs          []DebugLogLineView
+	LogsTruncated bool
+}
+
+// DebugLogLineView is one bounded log line attached to request evidence.
+type DebugLogLineView struct {
+	OccurredAt string
+	Source     string
+	Level      string
+	Stream     string
+	Message    string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected
@@ -3528,6 +3641,21 @@ type ManagedPostgresDatabaseItem struct {
 	UpdatedAt            string
 	Bindings             []ManagedPostgresBindingItem
 	BindingsError        string
+	// RestorableUntil is when a scheduled delete becomes final
+	// (ADR-20261029174950); empty when no delete is scheduled.
+	RestorableUntil string
+	// RestoreFrom is the earliest point a restore can target now; empty
+	// while the database cannot be restored from.
+	RestoreFrom string
+	// RestoreSlotUntil is set while a restored copy is past the plan's
+	// database limit (ADR-20261031123259).
+	RestoreSlotUntil string
+	// PlanExcess is database_limit or service_class while the plan no
+	// longer includes the database and it is suspended (ADR-20261102125208).
+	PlanExcess string
+	// Labels are the database's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
 }
 
 // ManagedPostgresBindingItem is the safe metadata shown for an app binding.

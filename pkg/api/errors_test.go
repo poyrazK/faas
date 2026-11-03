@@ -105,6 +105,22 @@ func TestWriteProblem(t *testing.T) {
 	if got.Limit == nil || *got.Limit != 10 {
 		t.Errorf("decoded Limit = %v", got.Limit)
 	}
+	// ADR-20261030115139: the public edge tells a platform problem from an
+	// app's response by this header.
+	if got := rr.Header().Get(ErrorCodeHeader); got != "x" {
+		t.Errorf("%s = %q, want x", ErrorCodeHeader, got)
+	}
+}
+
+// A writer that already chose an error code keeps it (the request budget
+// writer sets its own before rendering).
+func TestWriteProblemKeepsAnExplicitErrorCode(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rr.Header().Set(ErrorCodeHeader, CodeRequestBudgetExceeded)
+	WriteProblem(rr, NewProblem(http.StatusGatewayTimeout, "other", "Other", "d"))
+	if got := rr.Header().Get(ErrorCodeHeader); got != CodeRequestBudgetExceeded {
+		t.Fatalf("%s = %q, want %q", ErrorCodeHeader, got, CodeRequestBudgetExceeded)
+	}
 }
 
 func TestWriteProblemUsesRFC9457Defaults(t *testing.T) {
@@ -374,7 +390,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 	codes := []string{
 		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair,
 		CodeSourceTooLarge, CodeAppLayerTooBig,
-		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout,
+		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout, CodeBuildFailed, CodeBuildInfrastructure,
 		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity, CodeDebugRegressionUnavailable,
 		CodeUnauthorized, CodeNotFound, CodeValidation,
 		CodeImageNotFound, CodeImageEgressDenied, CodeImageManifestInvalid,
@@ -387,6 +403,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeOrgRoleForbidden, CodeOrgAlreadyMember,
 		CodeOrgInvitationInvalid, CodeOrgInvitationExpired,
 		CodeOrgLastOwner, CodeOrgPersonalImmutable, CodeOrgAPIKeyRequiresOrg,
+		CodeOrgFreeLimitExceeded,
 	}
 	seen := make(map[string]bool)
 	for _, c := range codes {
@@ -435,6 +452,10 @@ func TestTrafficChangeDuringCanaryProblem(t *testing.T) {
 	}
 	if got := StatusForCode(CodeTrafficChangeDuringCanary); got != http.StatusConflict {
 		t.Fatalf("StatusForCode(%q) = %d, want %d", CodeTrafficChangeDuringCanary, got, http.StatusConflict)
+	}
+	// The refusal must name a way out that the canary does not also refuse.
+	if !strings.Contains(problem.Detail, "gregale rollouts recover <app> --action abort") {
+		t.Fatalf("problem detail = %q, want the rollout abort command", problem.Detail)
 	}
 }
 
@@ -940,6 +961,7 @@ func TestStatusForCode_OrgCodes(t *testing.T) {
 		{CodeOrgSlugTaken, http.StatusConflict},
 		{CodeOrgMemberCapExceeded, http.StatusForbidden},
 		{CodeOrgInvitationCapExceeded, http.StatusForbidden},
+		{CodeOrgFreeLimitExceeded, http.StatusForbidden},
 		{CodeOrgRoleForbidden, http.StatusForbidden},
 		{CodeOrgAlreadyMember, http.StatusConflict},
 		{CodeOrgInvitationInvalid, http.StatusGone},
@@ -1166,6 +1188,15 @@ func TestErrTrafficPolicyTooComplexHintByUnit(t *testing.T) {
 			}
 			if !strings.Contains(p.Hint, "simplify") && !strings.Contains(p.Hint, "Simplify") {
 				t.Fatalf("hint = %q, want it to keep the simplify fallback", p.Hint)
+			}
+			// Only a time ceiling asks to be resent: Retry-After keeps apid
+			// from replaying the refusal and tells clients to retry.
+			header := p.HasHeader("Retry-After")
+			if tc.wantRetryFirst != (len(header) == 1 && header[0] == "2" && p.RetryAfterSeconds != nil && *p.RetryAfterSeconds == 2) {
+				t.Fatalf("Retry-After = %v body=%v, want it only on a time ceiling", header, p.RetryAfterSeconds)
+			}
+			if TrafficPolicyCheckTimedOut(*p) != tc.wantRetryFirst {
+				t.Fatalf("TrafficPolicyCheckTimedOut = %v, want %v", !tc.wantRetryFirst, tc.wantRetryFirst)
 			}
 		})
 	}

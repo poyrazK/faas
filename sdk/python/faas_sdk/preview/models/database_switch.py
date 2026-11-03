@@ -20,8 +20,8 @@ T = TypeVar("T", bound="DatabaseSwitch")
 
 @_attrs_define
 class DatabaseSwitch:
-    """A rollback that restores the app's managed PostgreSQL database with the code (ADR-20261023181931). The database is
-    restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced.
+    """A rollback that restores the app's managed PostgreSQL database with the code. The database is restored to
+    restore_point as a new database, and the app moves to it and to the target release while it is fenced.
 
     """
 

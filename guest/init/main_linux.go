@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/overlaymetadata"
@@ -66,11 +67,22 @@ const (
 	modeExecution
 	modeAppTask
 	modeDataRepair
+	modeAgent
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
 // reboots it), which schedd observes as a failed wake.
 func main() {
+	// PostgreSQL's archive_command and restore_command run guest-init as an
+	// ordinary process (ADR-1027); only PID 1 boots.
+	if os.Getpid() != 1 && len(os.Args) > 1 && os.Args[1] == "archive-wal" {
+		os.Exit(runArchiveWAL(os.Args[2:]))
+	}
+	// A primary's replication bridge runs guest-init as the replication OS
+	// user, one process per standby stream.
+	if os.Getpid() != 1 && len(os.Args) == 2 && os.Args[1] == replicationBridgeCommand {
+		os.Exit(runReplicationBridge())
+	}
 	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
 		os.Exit(runPublicBuildURLs(os.Args[1:]))
 	}
@@ -94,6 +106,47 @@ func boot() error {
 		return fmt.Errorf("mount basics: %w", err)
 	}
 	guestStage("mount-basics")
+	// ADR-1027: a database VM's drive1 is its persistent volume, never an
+	// overlay upper, so database mode is decided before overlay assembly.
+	if cmdline, readErr := os.ReadFile("/proc/cmdline"); readErr == nil {
+		database, major, parseErr := dbguest.ParseCmdline(string(cmdline))
+		if parseErr != nil {
+			_ = poweroffDatabase()
+			return fmt.Errorf("database mode: %w", parseErr)
+		}
+		if database {
+			guestStage("mode-database")
+			target, restoring, targetErr := dbguest.RestoreTarget(string(cmdline))
+			if targetErr == nil && restoring && !dbguest.ArchiveEnabled(string(cmdline)) {
+				targetErr = errors.New("restore needs the archive relay")
+			}
+			if targetErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database restore mode: %w", targetErr)
+			}
+			upgradeFrom, upgradeErr := dbguest.UpgradeFrom(string(cmdline), major)
+			if upgradeErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database upgrade mode: %w", upgradeErr)
+			}
+			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target,
+				restoreUntilEnd: dbguest.RestoreUntilEnd(string(cmdline)), spare: dbguest.Spare(string(cmdline)), standby: dbguest.Standby(string(cmdline)),
+				promote: dbguest.Promote(string(cmdline)), upgradeFrom: upgradeFrom}
+			if upgradeFrom != 0 && (boot.spare || boot.standby || restoring) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: an upgrade boot is neither a spare, a standby nor a restore")
+			}
+			if boot.spare && (restoring || boot.standby) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: a spare boots neither a restore nor a standby")
+			}
+			if (boot.standby && restoring) || (boot.promote && !boot.standby) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: a standby cannot boot a restore, and only a standby promotes at boot")
+			}
+			return runDatabaseGuest(slog.Default(), boot)
+		}
+	}
 	root, err := assembleOverlay()
 	if err != nil {
 		return fmt.Errorf("assemble overlay: %w", err)
@@ -120,6 +173,12 @@ func boot() error {
 	guestStage(fmt.Sprintf("mode-%d", mode))
 	if mode == modeDataRepair {
 		return runDataRepairGuest(slog.Default())
+	}
+	// Agent runs (ADR-20261027090010 §6) are one-shot like executions: one protocol
+	// stream, one result, poweroff on every path.
+	if mode == modeAgent {
+		guestStage("before-agent-run")
+		return runAgentGuest(slog.Default())
 	}
 	var extensionHooks *extensionLifecycle
 	var afterRestore atomic.Pointer[afterRestoreRuntime]
@@ -313,7 +372,11 @@ func boot() error {
 	if err != nil {
 		return err
 	}
-	if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
+	if manifest.EffectivePort() == api.ProfileBridgePort() {
+		// The bridge would take the app's own port; an older imaged may
+		// still have stamped collectors for it (ADR-1155).
+		slog.Default().Warn("profile bridge skipped: the app listens on its port", "port", manifest.EffectivePort())
+	} else if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
 		slog.Default().Warn("profile bridge unavailable", "err", err)
 	}
 	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
@@ -483,7 +546,8 @@ func boot() error {
 	// the engine's existing :8080 TCP-accept probe continues to
 	// gate readiness, so the customer doesn't lose the boot.
 	if err := runHealthcheckPoll(bootCtx, manifest, slog.Default(), healthcheckPollOptions{
-		Started: mainStarted,
+		Started:      mainStarted,
+		WorkloadLeaf: supRef.WorkloadLeaf,
 		Environment: func() []string {
 			currentSecrets := secrets
 			if rotatingSecrets != nil {
@@ -559,7 +623,10 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
-	env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	if m.EffectivePort() != api.ProfileBridgePort() {
+		// Collectors would poll the app's own port where the bridge belongs.
+		env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
@@ -646,17 +713,21 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// in-guest cgroup v2 partition for the main workload.
 	// mkdir + write memory.max BEFORE Start. The main
 	// workload gets a "main-app" leaf so its OOM is
-	// scoped separately from any sidecar's. Legacy
-	// single-workload wakes have no per-workload RAM value
-	// and therefore skip this child leaf; the host-side
-	// writePlanCgroup remains their authoritative cap.
-	mainLeaf, cgroupErr := prepareWorkloadCgroup("main", "app", ramMB, slog.Default(), cpuMillicoresOpt...)
+	// scoped separately from any sidecar's. Single-workload
+	// wakes have no per-workload RAM value: their leaf has no
+	// limit (the host-side writePlanCgroup remains the
+	// authoritative cap) and exists so their OOM kills are
+	// reported (ADR-121 amendment).
+	mainLeaf, cgroupErr := prepareMainWorkloadCgroup(ramMB, slog.Default(), cpuMillicoresOpt...)
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare main workload cgroup: %w", cgroupErr)
 	}
 	cgroupFile, err := attachWorkloadCgroup(cmd, mainLeaf)
 	if err != nil {
 		return fmt.Errorf("attach main workload cgroup: %w", err)
+	}
+	if sup != nil {
+		sup.setWorkloadLeaf(mainLeaf)
 	}
 	if cgroupFile != nil {
 		defer func() { _ = cgroupFile.Close() }()
@@ -667,6 +738,23 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	}
 	defer retireGeneration()
 	oomKillsBefore, oomKillsKnown := readVMStatOOMKills(procVMStat)
+	// Cluster C / ADR-121: the per-workload oom_kill listener
+	// (guest/init/cgroup_partition_linux.go::WatchOOM) runs
+	// for the workload's lifetime. It starts before the
+	// workload so a kill during startup is reported, and
+	// stopping it after Wait reports a kill that the exit
+	// raced past. The build VM classifies OOM separately
+	// (classify(exitCode=137) → FailureOOM).
+	oomWatch := startWorkloadOOMWatch(mainLeaf, ramMB, func(peakMB, planMB int) {
+		fmt.Fprintf(os.Stderr, "guest-init: app out of memory: the kernel killed a workload process (peak %d MB)\n", peakMB)
+		// ADR-1155: the host destroys the instance on this report, so a
+		// running capture first returns its heap checkpoints.
+		flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout, peakMB)
+		if err := EmitWorkloadOOM(context.Background(), peakMB, planMB); err != nil {
+			slog.Default().Warn("EmitWorkloadOOM failed", "peak_mb", peakMB, "plan_mb", planMB, "err", err)
+		}
+	}, slog.Default())
+	defer oomWatch.stop()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
@@ -698,49 +786,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 		sup.markHealthy()
 	}
-	// Cluster C / ADR-121: spawn the per-workload cgroup.events
-	// oom_kill listener (guest/init/cgroup_partition_linux.go::
-	// WatchOOM) for the duration of the main workload's lifetime.
-	// The listener exits on first fire (the workload is dead
-	// when an oom_kill lands) and on the context cancel that
-	// runAppWithEnv inherits from the boot path. This is the
-	// runtime-VM path — the build VM uses a different
-	// classification surface (classify(exitCode=137) →
-	// FailureOOM) and does not need this listener.
-	//
-	if mainLeaf != "" {
-		oomCtx, oomCancel := context.WithCancel(context.Background())
-		go func() {
-			defer oomCancel()
-			werr := WatchOOM(oomCtx, mainLeaf, ramMB,
-				func(peakMB, pMB int) {
-					// ADR-1155: the host destroys the instance on this report,
-					// so a running capture first returns its heap checkpoints.
-					flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout, peakMB)
-					if eerr := EmitWorkloadOOM(oomCtx, peakMB, pMB); eerr != nil {
-						slog.Default().Warn("EmitWorkloadOOM failed",
-							"peak_mb", peakMB, "plan_mb", pMB, "err", eerr)
-					}
-				}, slog.Default())
-			if werr != nil && !errors.Is(werr, context.Canceled) {
-				slog.Default().Debug("WatchOOM listener returned",
-					"err", werr, "leaf", mainLeaf)
-			}
-		}()
-		// Cancel the OOM listener when the workload exits
-		// (graceful or crash). The cmd.Wait() return is the
-		// lifecycle signal; the listener exits within one
-		// 1s poll tick on next wake.
-		defer func() { oomCancel() }()
-	}
-	// ADR-1155: report memory pressure so the control plane can capture the
-	// heap before an OOM kill. Only deployments with on-demand profiling
-	// have collectors to capture from.
-	if m.ProfilingOnDemand {
-		pressureCtx, pressureCancel := context.WithCancel(context.Background())
-		go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
-		defer pressureCancel()
-	}
+	// Report memory pressure on every app so app health can warn before an
+	// OOM kill (ADR-20261102124306); a report made while a profile collector
+	// is active also lets the control plane capture the heap (ADR-1155).
+	pressureCtx, pressureCancel := context.WithCancel(context.Background())
+	go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
+	defer pressureCancel()
 	// ADR-1155: a Go application serving net/http/pprof is profiled through
 	// that endpoint, labelled with this run's process, when the deployment
 	// names its port and the profile bridge is running.
@@ -750,7 +801,8 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		defer scrapeCancel()
 	}
 	if err := cmd.Wait(); err != nil {
-		if oomKilled(err, oomKillsBefore, oomKillsKnown, func() (uint64, bool) { return readVMStatOOMKills(procVMStat) }) {
+		// With a leaf, the OOM watch's report already flushed the capture.
+		if mainLeaf == "" && oomKilled(err, oomKillsBefore, oomKillsKnown, func() (uint64, bool) { return readVMStatOOMKills(procVMStat) }) {
 			// ADR-1155: a capture running when the app was OOM-killed returns
 			// its heap checkpoints marked with the kill. The supervisor still
 			// restarts the app; nothing waits on the reply here.
@@ -787,6 +839,7 @@ func errorKind(err error) string {
 // decideMode picks the boot branch by looking at which manifest file exists.
 //
 // Mode priority (ADR-171):
+//  0. agent.json with kind=="agent"            → modeAgent (ADR-20261027090010), alone
 //  1. app-task.json with kind=="app_task"     → modeAppTask
 //  2. execution.json with kind=="execution"   → modeExecution
 //  3. job.json with kind=="job"               → modeJob
@@ -808,7 +861,7 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		if err = validateDataRepairManifest(data); err != nil {
 			return modeDataRepair, api.BuildManifest{}, err
 		}
-		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, agentManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
 			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
 				return modeDataRepair, api.BuildManifest{}, errors.New("conflicting repair guest mode")
 			}
@@ -816,6 +869,19 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		return modeDataRepair, api.BuildManifest{}, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return modeDataRepair, api.BuildManifest{}, err
+	}
+	if data, err := fs.ReadFile(fsys, agentManifestRelativePath); err == nil {
+		if markerErr := validateAgentManifest(data); markerErr != nil {
+			return modeAgent, api.BuildManifest{}, fmt.Errorf("invalid agent manifest: %w", markerErr)
+		}
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
+				return modeAgent, api.BuildManifest{}, errors.New("conflicting agent guest mode")
+			}
+		}
+		return modeAgent, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeAgent, api.BuildManifest{}, fmt.Errorf("read agent manifest: %w", err)
 	}
 	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
 		if markerErr := validateAppTaskManifest(data); markerErr != nil {
@@ -1000,6 +1066,7 @@ func runBuild(m api.BuildManifest) error {
 // runBuildOnce executes one build attempt. It leaves the VM alive only when
 // the attempt succeeded and the manifest opted into the warm handoff.
 func runBuildOnce(m api.BuildManifest) error {
+	clock := newBuildClock()
 	if !api.ValidBuildDependencyDigest(m.BuildDependencyDigest) {
 		return writeAndPoweroff(m, errors.New("invalid build dependency digest"), "")
 	}
@@ -1029,6 +1096,16 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.MkdirAll(m.OutDir, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir outdir: %w", err), "")
 	}
+	if m.CacheExportOnly {
+		// The deferred run's image was already handed off, and vmmd exports
+		// whatever the output still holds (ADR-20261029171525).
+		if !m.DependencyCache || filepath.Clean(m.OutDir) == "/build" || !strings.HasPrefix(filepath.Clean(m.OutDir), "/build/") {
+			return writeAndPoweroff(m, fmt.Errorf("cache export run with output %q and dependency cache %v", m.OutDir, m.DependencyCache), "")
+		}
+		if err := clearOutputExcept(m.OutDir, dependencyInputsFile); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("clear deferred build output: %w", err), "")
+		}
+	}
 	if err := prepareBuildIssueSourceMaps(m); err != nil {
 		return writeAndPoweroff(m, err, "")
 	}
@@ -1052,8 +1129,10 @@ func runBuildOnce(m api.BuildManifest) error {
 		}
 	}
 
-	// 1. Extract source tarball. guest-init has no login-shell PATH.
-	if m.SourceTarPath != "" {
+	// 1. Extract source tarball. guest-init has no login-shell PATH. A cache
+	// export run builds the tree the deferred run already unpacked; unpacking
+	// again would undo flattenSingleSourceDir and change the build context.
+	if m.SourceTarPath != "" && !m.CacheExportOnly {
 		if out, err := exec.Command("/bin/tar", "-xaf", m.SourceTarPath, "-C", m.BuildContext).CombinedOutput(); err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("tar extract: %w (%s)", err, out), "")
 		}
@@ -1080,6 +1159,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	// guest's network namespace because the minimal image has no CNI setup.
 	if err := os.MkdirAll("/run/buildkit", 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir buildkit run dir: %w", err), "")
+	}
+	if err := removeStaleSocket(buildkitSocketPath); err != nil {
+		return writeAndPoweroff(m, err, "")
 	}
 	// The merged root is an overlayfs view whose writable upper is the same
 	// builder drive. BuildKit keeps a BoltDB, lock, and runc state tree under
@@ -1110,26 +1192,26 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.Chmod(buildkitRoot, 0o777); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("chmod buildkit root: %w", err), "")
 	}
-	guestStage("builder-workspace")
+	clock.stage("builder-workspace")
 	if diagnostic, err := probeBuilderWorkspace(buildkitRoot); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("builder workspace preflight: %w", err), diagnostic)
 	}
-	guestStage("workspace-probe")
+	clock.stage("workspace-probe")
 	if err := ensureFuseDevice(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("fuse device: %w", err), "")
 	}
-	guestStage("fuse")
+	clock.stage("fuse")
 	if err := ensureBuilderResolver(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("builder resolver: %w", err), "")
 	}
-	guestStage("resolver")
+	clock.stage("resolver")
 	if err := ensureRailpackMise(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("railpack mise: %w", err), "")
 	}
 	if err := ensureBuilderShell(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("builder shell: %w", err), "")
 	}
-	guestStage("mise")
+	clock.stage("mise")
 	// Railpack resolves language toolchains and package registries from inside
 	// the builder VM. Fail fast when the guest's DNS path is broken instead of
 	// spending the whole build budget in a registry client retry loop.
@@ -1156,7 +1238,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		func(status int) bool { return status < http.StatusInternalServerError }); err != nil {
 		return writeAndPoweroff(m, err, "")
 	}
-	guestStage("network-preflight")
+	clock.stage("network-preflight")
 	runcCheck := exec.Command("/usr/local/bin/runc", "--version")
 	runcCheck.Env = builderEnv()
 	if runcOut, runcErr := runcCheck.CombinedOutput(); runcErr != nil {
@@ -1170,7 +1252,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	if runcOut, runcErr := runcList.CombinedOutput(); runcErr != nil {
 		return writeAndPoweroff(m, fmt.Errorf("runc list preflight: %w (%s)", runcErr, runcOut), string(runcOut))
 	}
-	guestStage("runc-preflight")
+	clock.stage("runc-preflight")
 
 	buildkitArgs := []string{
 		"--debug",
@@ -1182,7 +1264,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		// fuse-overlayfs and the guest kernel has FUSE built in; use the
 		// rootless COW snapshotter so committing a layer does not scan/copy the
 		// complete native snapshot tree after every RUN instruction.
-		"--oci-worker-snapshotter", "fuse-overlayfs",
+		"--oci-worker-snapshotter", buildkitSnapshotter(m),
 		"--oci-worker-net", "host",
 	}
 	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
@@ -1223,29 +1305,29 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := bk.Start(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("start buildkitd: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
-	guestStage("buildkit-started")
+	clock.stage("buildkit-started")
 	bkDone := make(chan error, 1)
 	go func() { bkDone <- bk.Wait(); close(bkDone) }()
 	stopBuildkit := sync.OnceFunc(func() { stopBuildDaemon(bk, bkDone) })
 	defer stopBuildkit()
 	finish := func(err error, tail string) error {
 		stopBuildkit()
-		return writeAndPoweroff(m, err, tail)
+		return writeAndPoweroffTimed(m, err, tail, clock.timings())
 	}
 	// A cold BuildKit on nested KVM can need more than five seconds to
 	// initialize its rootless worker. Use the same bounded minute as the
 	// subsequent worker readiness RPC; keep polling so fast boots pay no delay.
 	startupDeadline := time.Now().Add(time.Minute)
 	for time.Now().Before(startupDeadline) {
-		if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err == nil {
+		if _, err := os.Stat(buildkitSocketPath); err == nil {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err != nil {
+	if _, err := os.Stat(buildkitSocketPath); err != nil {
 		return finish(fmt.Errorf("buildkitd socket never appeared: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
-	guestStage("buildkit-socket")
+	clock.stage("buildkit-socket")
 	checkCtx, checkCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	check := exec.CommandContext(checkCtx, "/usr/local/bin/buildctl", "debug", "workers")
 	check.Env = builderEnv("BUILDKIT_HOST=unix:///run/buildkit/buildkitd.sock")
@@ -1275,7 +1357,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		}
 		return finish(fmt.Errorf("buildkitd readiness: %w (%s)", workerErr, workerOut), tailOf(diagnostic, m.LogTailBytes))
 	}
-	guestStage("buildkit-ready")
+	clock.stage("buildkit-ready")
 
 	if m.DevWatchCommand != "" && m.Framework == api.FrameworkDockerfile {
 		return finish(errDevWatchUnsupported("watch mode needs an app Gregale builds without a Dockerfile; write a development stage in your Dockerfile instead"), "")
@@ -1342,6 +1424,8 @@ func runBuildOnce(m api.BuildManifest) error {
 	var buf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	clock.stage("build-command")
+	buildStarted := time.Now()
 	if err := cmd.Start(); err != nil {
 		if restoreRailpackConfig != nil {
 			_ = restoreRailpackConfig()
@@ -1363,11 +1447,12 @@ func runBuildOnce(m api.BuildManifest) error {
 		// descendant prevents exec.Cmd.Wait from returning.
 		err = context.DeadlineExceeded
 	}
+	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
 	// A deferred stop runs after writeAndPoweroff, which never returns on a
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
 	stopBuildkit()
-	if m.DependencyCache {
+	if m.DependencyCache && !deferCacheExport(m) {
 		cachePath := filepath.Join(m.OutDir, "cache")
 		removed, cacheErr := removeOversizedDependencyCache(cachePath, api.MaxExportedLayerBytes)
 		switch {
@@ -1401,7 +1486,7 @@ func runBuildOnce(m api.BuildManifest) error {
 			}
 		}
 	}
-	if err == nil {
+	if err == nil && !m.CacheExportOnly {
 		err = exportBuildIssueSourceMaps(m)
 	}
 	if err == nil && m.KeepWarm {
@@ -1411,7 +1496,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		if unmountErr := syscall.Unmount(builderDriveMount, 0); unmountErr != nil {
 			return finish(fmt.Errorf("unmount builder scratch: %w", unmountErr), combined.String())
 		}
-		writeBuildDone(m, nil, combined.String())
+		writeBuildDone(m, nil, combined.String(), clock.timings())
 		guestStage("build-ready")
 		return nil
 	}
@@ -1472,6 +1557,21 @@ func removeOversizedDependencyCache(root string, maxBytes int64) (bool, error) {
 		return true, os.RemoveAll(root)
 	}
 	return false, nil
+}
+
+// buildkitSocketPath is where the builder's buildkitd listens.
+const buildkitSocketPath = "/run/buildkit/buildkitd.sock"
+
+// removeStaleSocket removes a socket file a previous boot left behind. A cache
+// export run boots on the drive its build left (ADR-20261029171525), and that
+// build's buildkitd was killed without unlinking its socket. The readiness
+// wait takes the socket's existence as the daemon's first sign of life, so a
+// stale one let buildctl dial before the new daemon listened.
+func removeStaleSocket(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale socket %s: %w", path, err)
+	}
+	return nil
 }
 
 // stopBuildDaemon stops writers before syncing the export drive. Bound the wait
@@ -1698,7 +1798,9 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 	// platform default empty for musl runtimes and minimal scratch bases.
 	// A shared runner base ships the libraries Railpack's default apt step
 	// installs (libatomic1), and system packages outside /app keep an app
-	// off the /app-only layer (H10-140).
+	// off the /app-only layer (H10-140). A Python app's platform default stays
+	// what it was on its own minimal base, and Wolfi's runner-python313 has no
+	// apt (ADR-1500 amendment 2).
 	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || m.SharedRuntime || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
 		if _, ok := deploy["aptPackages"]; !ok {
 			deploy["aptPackages"] = []any{}
@@ -1869,10 +1971,13 @@ func buildArgv(m api.BuildManifest) []string {
 		if m.DependencyCacheImport {
 			argv = append(argv, "--import-cache", "type=local,src=/build/cache")
 		}
-		if m.DependencyCache {
-			argv = append(argv, "--export-cache", "type=local,dest=/build/out/cache,mode=max")
+		if m.DependencyCache && !deferCacheExport(m) {
+			argv = append(argv, "--export-cache", dependencyCacheExport(m))
 		}
-		return append(argv, "--output", "type=oci,dest="+m.OutDir+"/image.tar")
+		if m.CacheExportOnly {
+			return argv
+		}
+		return append(argv, "--output", "type=oci,dest="+m.OutDir+"/image.tar"+layerCompressionAttrs(m))
 	}
 	// Railpack plans local COPY paths relative to the directory passed to
 	// prepare. A repository-wide context would copy a different package.json
@@ -1892,6 +1997,11 @@ func buildArgv(m api.BuildManifest) []string {
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
 	}
+	if m.CacheExportOnly {
+		// Solve the plan the deferred run built, not a fresh one, so every
+		// step hits the BuildKit state it left on this drive.
+		prepare = "test -f " + shellQuote(planPath)
+	}
 	build := strings.Join([]string{
 		"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
 		"--frontend", "gateway.v0",
@@ -1909,14 +2019,22 @@ func buildArgv(m api.BuildManifest) []string {
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
-	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
+	// The compression attributes are shell-safe literals; appended unquoted
+	// they join the quoted destination into one buildctl argument.
+	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + layerCompressionAttrs(m) + " --progress plain"
 	if m.IssueSourceMaps != nil {
 		// Both exporters consume the same final LLB result; source directories
 		// and intermediate stages cannot describe the deployed bundle bytes.
 		output += " --output " + shellQuote("type=local,dest="+buildIssueSourceMapRootfs)
 	}
+	if m.CacheExportOnly {
+		output = " --progress plain"
+	}
 	if !m.DependencyCache {
 		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
+	}
+	if m.CacheExportOnly {
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + " --export-cache " + shellQuote(dependencyCacheExport(m)) + output}
 	}
 	// "$@" carries --export-cache. Once the plan exists, a re-executed
 	// guest-init (runDependencyCacheInputs) answers "keep" when the imported
@@ -1924,8 +2042,57 @@ func buildArgv(m api.BuildManifest) []string {
 	check := dependencyInputsHelperEnv + "=" + dependencyInputsHelperValue + " /proc/1/exe " + strings.Join([]string{
 		shellQuote(planPath), shellQuote(m.Workdir), shellQuote("/build/cache"), shellQuote(m.OutDir),
 	}, " ")
-	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote("type=local,dest=/build/out/cache,mode=max") + " ;; esac"
+	if deferCacheExport(m) {
+		// The check still runs: it leaves either the keep marker or the
+		// digest of the inputs the owed export covers.
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && { " + check + " >/dev/null || true; } && exec " + build + output}
+	}
+	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote(dependencyCacheExport(m)) + " ;; esac"
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
+}
+
+// buildkitSnapshotter returns BuildKit's worker snapshotter: fuse-overlayfs
+// when the manifest names none. With BuildKitSnapshotterAuto, which builderd
+// sends by default (ADR-20261029105325), rootless
+// BuildKit prefers kernel overlayfs, whose layer diffs read only the overlay
+// upper directory, and falls back to fuse-overlayfs, then native, when the
+// kernel refuses an unprivileged overlay mount. A FUSE snapshotter sends every
+// file operation of a dependency install through a userspace daemon and diffs
+// each layer by walking both trees. The builder VM is the sandbox (ADR-003),
+// so a kernel overlay mount inside it adds no reach beyond the VM.
+func buildkitSnapshotter(m api.BuildManifest) string {
+	if m.BuildKitSnapshotter == api.BuildKitSnapshotterAuto {
+		return "auto"
+	}
+	return "fuse-overlayfs"
+}
+
+// layerCompressionAttrs returns the BuildKit exporter attributes that switch
+// a build's layers from gzip to zstd (builderd's FAAS_BUILD_LAYER_ZSTD), or ""
+// to keep gzip.
+// force-compression stays off, so layers inherited from a gzip base image are
+// reused as they are rather than recompressed.
+func layerCompressionAttrs(m api.BuildManifest) string {
+	if m.LayerCompression != api.BuildLayerCompressionZstd {
+		return ""
+	}
+	return ",compression=zstd"
+}
+
+// deferCacheExport reports whether this build leaves its dependency-cache
+// export to a CacheExportOnly run (ADR-20261029171525). A warm builder keeps
+// its drive for its own snapshot. A Dockerfile build with selected
+// dependencies runs with --no-cache, so a second solve would rebuild every
+// step; both export inline.
+func deferCacheExport(m api.BuildManifest) bool {
+	return m.DependencyCache && m.DeferCacheExport && !m.CacheExportOnly && !m.KeepWarm &&
+		(m.Framework != api.FrameworkDockerfile || m.BuildDependencyDigest == "")
+}
+
+// dependencyCacheExport is the app-scoped BuildKit cache exporter. mode=max
+// writes every layer, so its compression decides most of the export time.
+func dependencyCacheExport(m api.BuildManifest) string {
+	return "type=local,dest=/build/out/cache,mode=max" + layerCompressionAttrs(m)
 }
 
 func manifestBuildContext(m api.BuildManifest) string {
@@ -2217,7 +2384,8 @@ func goCommandAcknowledgement(m api.BuildManifest) string {
 // writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
-func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
+// timings, when set, are reported whether the build succeeded or not.
+func writeBuildDone(m api.BuildManifest, runErr error, logTail string, timings *api.BuildTimings) {
 	exitCode, fc := buildExitStatus(runErr)
 	if logTail == "" && runErr != nil {
 		logTail = runErr.Error()
@@ -2232,13 +2400,15 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		FailureClass:    fc,
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
+		Timings:         timings,
 	}
-	if runErr == nil {
+	if runErr == nil && !m.CacheExportOnly {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
 		done.DockerfileBuildSHA256 = dockerfileBuildAcknowledgement(m)
 		done.GoCommand = goCommandAcknowledgement(m)
 		done.BuildDependencyDigest = m.BuildDependencyDigest
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
+		done.DependencyCacheDeferred = deferCacheExport(m) && !done.DependencyCacheUnchanged
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
 		done.SharedRuntime = buildSharedRuntimeVerdict(m, readBuildPlan)
@@ -2274,7 +2444,12 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 // Any write failure is logged but doesn't prevent the poweroff — vmmd will
 // surface a fallback exit-code classification via the watchdog capture.
 func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
-	writeBuildDone(m, runErr, logTail)
+	return writeAndPoweroffTimed(m, runErr, logTail, nil)
+}
+
+// writeAndPoweroffTimed is writeAndPoweroff with the build's timings.
+func writeAndPoweroffTimed(m api.BuildManifest, runErr error, logTail string, timings *api.BuildTimings) error {
+	writeBuildDone(m, runErr, logTail, timings)
 	// Flush all overlay upper metadata/data before the forced poweroff. The
 	// host exports the ext4 immediately after Firecracker exits; without an
 	// explicit sync, the manifest and image can still be only in guest page

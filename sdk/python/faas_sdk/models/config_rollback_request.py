@@ -11,7 +11,7 @@ T = TypeVar("T", bound="ConfigRollbackRequest")
 
 @_attrs_define
 class ConfigRollbackRequest:
-    """The config revision whose variables a rollback restores (ADR-1451)."""
+    """The config revision whose variables a rollback restores."""
 
     revision: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

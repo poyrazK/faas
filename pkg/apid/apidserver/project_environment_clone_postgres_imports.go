@@ -137,7 +137,7 @@ func (s *server) projectEnvironmentClonePostgresImportWork(ctx context.Context, 
 		return zero, managedpostgres.ErrUnavailable
 	}
 	var identities []*age.X25519Identity
-	for _, id := range mfaIdentities() {
+	for _, id := range accountIdentities() {
 		if id != nil && id.Recipient().String() == a.KeyID {
 			identities = append(identities, id)
 		}

@@ -19,7 +19,7 @@ class RollbackOperatorRuntimeConfigRequest:
     reason: str
     expected_version: int | Unset = UNSET
     force: bool | Unset = UNSET
-    """Confirms restoring a revision that turns a core capability flag off for every account (ADR-20261023115741)."""
+    """Confirms restoring a revision that turns a core capability flag off for every account."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

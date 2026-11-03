@@ -19,7 +19,8 @@ package vmmdgrpc
 // and the successor keeps the ones it can prove (bridge_unit_adopt.go); any
 // other stop, and any unit it cannot prove, stops them. Only namespace
 // bridges with a bridge uid (FAAS_BRIDGE_UNPRIVILEGED=1) run as units;
-// public-target bridges keep the process path.
+// public-target bridges keep the process path, and so does a bridge whose
+// unit did not start (fallBackFromUnit).
 
 import (
 	"context"
@@ -175,6 +176,57 @@ func bridgeService(entry *streamBridgeEntry, bridgePath, netnsPath, guestIP stri
 	}
 }
 
+// systemdNetnsPath names the namespace binding at path so that PID 1 can
+// open it. faas-vmmd.service's sandbox (ProtectSystem=strict and the rest)
+// gives vmmd its own mount namespace, a slave of the host's: the namespace
+// `ip netns add` mounts at /run/netns/<name>, or adoption re-anchors there,
+// never reaches PID 1, which opens the empty placeholder file and fails the
+// unit (EINVAL, 225/NETWORK; the rc.305 canary). /proc/<vmmd>/root resolves
+// the path in vmmd's mount namespace, where the binding is.
+func systemdNetnsPath(path string) string {
+	return filepath.Join("/proc", strconv.Itoa(os.Getpid()), "root", path)
+}
+
+// startUnitBridge starts entry's bridge as a unit and connects to it.
+func (m *streamBridgeManager) startUnitBridge(ctx context.Context, entry *streamBridgeEntry, bridgePath, netnsName, guestIP string, port uint32, deadline string, env []string, appProtocol string) error {
+	if err := m.startEntryUnit(ctx, entry, bridgePath, netnsName, guestIP, port, deadline, env, appProtocol); err != nil {
+		return err
+	}
+	if err := m.waitSocket(entry.socket, streamBridgeSocketReadyTimeout); err != nil {
+		return fmt.Errorf("stream bridge socket not ready: %w", err)
+	}
+	if !entry.alive() {
+		return fmt.Errorf("instance bridge unit %s exited before becoming ready", entry.unit.name)
+	}
+	if err := m.connectEntry(entry); err != nil {
+		return err
+	}
+	m.recordUnit(entry)
+	return nil
+}
+
+// fallBackFromUnit stops the unit of a bridge that failed to start and
+// reports whether entry should start as a process instead. A failed unit
+// start fails neither the wake nor the request (ADR §2 slice 1c,
+// bridge_start_failed): the bridge runs as vmmd's child, as before units,
+// and the instance's next bridge start tries a unit again. An entry closed
+// meanwhile (park, shutdown) starts nothing.
+func (m *streamBridgeManager) fallBackFromUnit(ctx context.Context, entry *streamBridgeEntry, err error) bool {
+	if entry.unit != nil {
+		m.stopEntryUnit(ctx, entry)
+		entry.unit = nil
+	}
+	m.mu.Lock()
+	closed := entry.closed || m.closed
+	m.mu.Unlock()
+	if closed || ctx.Err() != nil {
+		return false
+	}
+	m.log.Warn("vmmd: instance bridge unit failed; starting the bridge as a process",
+		"instance", entry.instance, "reason", "bridge_start_failed", "err", err)
+	return true
+}
+
 // startEntryUnit starts entry's bridge as a unit in the namespace bound at
 // netnsRunDir/netnsName.
 func (m *streamBridgeManager) startEntryUnit(ctx context.Context, entry *streamBridgeEntry, bridgePath, netnsName, guestIP string, port uint32, deadline string, env []string, appProtocol string) error {
@@ -199,7 +251,7 @@ func (m *streamBridgeManager) startEntryUnit(ctx context.Context, entry *streamB
 	}
 	startCtx, cancel := context.WithTimeout(ctx, instanceBridgeStartTimeout)
 	defer cancel()
-	u, err := units.StartService(startCtx, name, bridgeService(entry, bridgePath, netnsPath, guestIP, port, deadline, env))
+	u, err := units.StartService(startCtx, name, bridgeService(entry, bridgePath, systemdNetnsPath(netnsPath), guestIP, port, deadline, env))
 	if err == nil {
 		var proc unitProcess
 		if proc, err = m.openUnitProcess(u, netnsPath); err == nil {

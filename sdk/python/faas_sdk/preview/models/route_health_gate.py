@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -31,6 +31,10 @@ class RouteHealthGate:
     """Defaults to hold, including when omitted in a replacement update. Abort opts into automatic recovery for
     confirmed route 5xx regressions during an enforced canary; report mode is observational."""
     updated_at: datetime.datetime | Unset = UNSET
+    warnings: list[str] | Unset = UNSET
+    """Returned by a save: an on_regression abort no Safe Deploy worker can run now, and selectors no request
+    matched within the plan's telemetry lookback (at most 7 days). An enforced guard holds a canary on such a route
+    until the 24-hour route health hold deadline aborts it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -53,6 +57,10 @@ class RouteHealthGate:
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
 
+        warnings: list[str] | Unset = UNSET
+        if not isinstance(self.warnings, Unset):
+            warnings = self.warnings
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -67,6 +75,8 @@ class RouteHealthGate:
             field_dict["on_regression"] = on_regression
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
+        if warnings is not UNSET:
+            field_dict["warnings"] = warnings
 
         return field_dict
 
@@ -102,6 +112,8 @@ class RouteHealthGate:
         else:
             updated_at = datetime.datetime.fromisoformat(_updated_at)
 
+        warnings = cast(list[str], d.pop("warnings", UNSET))
+
         route_health_gate = cls(
             app_id=app_id,
             mode=mode,
@@ -109,6 +121,7 @@ class RouteHealthGate:
             routes=routes,
             on_regression=on_regression,
             updated_at=updated_at,
+            warnings=warnings,
         )
 
         route_health_gate.additional_properties = d

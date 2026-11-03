@@ -67,16 +67,16 @@ def sync_detailed(
     """Read the paddle_overage_dedupe schema probe (admin-only).
 
      Operator-side guard for the Paddle overage pusher's
-    per-window claim state machine (migration 00041). Returns
+    per-window claim state machine. Returns
     which of the four new columns are present + the per-state
-    row counts so an operator can verify the meterd loop will
+    row counts so an operator can verify the metering service loop will
     not crash on a 42703 (column missing) error before any
     customer-facing push is attempted.
 
-    Returned by the B4 pre-flight CLI subcommand. A response
+    Returned by the pre-flight CLI subcommand. A response
     with table_exists=true and any of has_window_start /
     has_state / has_claimed_at / has_claimed_by=false means
-    migration 00041 was not (fully) applied. A response with
+    was not (fully) applied. A response with
     table_exists=false means migrations 00034 + 00041 are
     both unapplied (the table has never been created).
 
@@ -104,16 +104,16 @@ def sync(
     """Read the paddle_overage_dedupe schema probe (admin-only).
 
      Operator-side guard for the Paddle overage pusher's
-    per-window claim state machine (migration 00041). Returns
+    per-window claim state machine. Returns
     which of the four new columns are present + the per-state
-    row counts so an operator can verify the meterd loop will
+    row counts so an operator can verify the metering service loop will
     not crash on a 42703 (column missing) error before any
     customer-facing push is attempted.
 
-    Returned by the B4 pre-flight CLI subcommand. A response
+    Returned by the pre-flight CLI subcommand. A response
     with table_exists=true and any of has_window_start /
     has_state / has_claimed_at / has_claimed_by=false means
-    migration 00041 was not (fully) applied. A response with
+    was not (fully) applied. A response with
     table_exists=false means migrations 00034 + 00041 are
     both unapplied (the table has never been created).
 
@@ -137,16 +137,16 @@ async def asyncio_detailed(
     """Read the paddle_overage_dedupe schema probe (admin-only).
 
      Operator-side guard for the Paddle overage pusher's
-    per-window claim state machine (migration 00041). Returns
+    per-window claim state machine. Returns
     which of the four new columns are present + the per-state
-    row counts so an operator can verify the meterd loop will
+    row counts so an operator can verify the metering service loop will
     not crash on a 42703 (column missing) error before any
     customer-facing push is attempted.
 
-    Returned by the B4 pre-flight CLI subcommand. A response
+    Returned by the pre-flight CLI subcommand. A response
     with table_exists=true and any of has_window_start /
     has_state / has_claimed_at / has_claimed_by=false means
-    migration 00041 was not (fully) applied. A response with
+    was not (fully) applied. A response with
     table_exists=false means migrations 00034 + 00041 are
     both unapplied (the table has never been created).
 
@@ -172,16 +172,16 @@ async def asyncio(
     """Read the paddle_overage_dedupe schema probe (admin-only).
 
      Operator-side guard for the Paddle overage pusher's
-    per-window claim state machine (migration 00041). Returns
+    per-window claim state machine. Returns
     which of the four new columns are present + the per-state
-    row counts so an operator can verify the meterd loop will
+    row counts so an operator can verify the metering service loop will
     not crash on a 42703 (column missing) error before any
     customer-facing push is attempted.
 
-    Returned by the B4 pre-flight CLI subcommand. A response
+    Returned by the pre-flight CLI subcommand. A response
     with table_exists=true and any of has_window_start /
     has_state / has_claimed_at / has_claimed_by=false means
-    migration 00041 was not (fully) applied. A response with
+    was not (fully) applied. A response with
     table_exists=false means migrations 00034 + 00041 are
     both unapplied (the table has never been created).
 

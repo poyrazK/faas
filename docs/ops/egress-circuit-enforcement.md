@@ -60,3 +60,12 @@ Turning the node flag off requires restarting vmmd. Existing namespace
 adoption/cleanup and rollout behavior must be verified on native hosts before
 using this as a production rollback procedure. An operator setting change
 alone is not proof that an existing kernel ruleset has changed.
+
+## Customer opt-in
+
+apid reads the same `FAAS_EGRESS_CIRCUIT_BREAKER` switch. While it is off,
+`PATCH /v1/apps/{slug}/upstreams/{id}/circuit-breaker` refuses `enabled: true`
+with 503 `egress_circuit_disabled`, because the breaker would be stored and
+shown but no connection rejected. Turning a breaker off and tuning its
+thresholds stay allowed. Enable the switch on schedd, every vmmd and apid
+together.

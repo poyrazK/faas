@@ -18,8 +18,8 @@ T = TypeVar("T", bound="DebugSuspectedDependency")
 
 @_attrs_define
 class DebugSuspectedDependency:
-    """The classified dependency most likely behind this route regression (ADR-958): for a latency regression the one whose
-    p95 regressed most between the previous and the regressed deployment, else one that started failing more often; an
+    """The classified dependency most likely behind this route regression: for a latency regression the one whose p95
+    regressed most between the previous and the regressed deployment, else one that started failing more often; an
     errors-only regression checks failing dependencies first. Bounded and redacted; also sent in debug.regression.*
     webhooks.
 

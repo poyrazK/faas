@@ -18,8 +18,8 @@ T = TypeVar("T", bound="EdgeRuleEventResponse")
 
 @_attrs_define
 class EdgeRuleEventResponse:
-    """One sampled request an edge rule matched (ADR-964), or a request a
-    kind=waf rule detected as a likely attack (ADR-831 amendment 5).
+    """One sampled request an edge rule matched, or a request a
+    kind=waf rule detected as a likely attack.
     Detections carry the CRS rule IDs that scored, their attack
     categories and the anomaly score, never the matched payload.
 

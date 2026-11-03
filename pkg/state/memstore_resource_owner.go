@@ -15,6 +15,7 @@ func (m *MemStore) orgResourceAccountLocked(org Org) Account {
 	out.AbuseHoldAt = org.AbuseHoldAt
 	out.AbuseHoldReason = org.AbuseHoldReason
 	out.ProviderCustomerID, out.StripeSubscriptionItem, out.CreatedAt = base.ProviderCustomerID, base.StripeSubscriptionItem, base.CreatedAt
+	out.DeletionRequestedAt = base.DeletionRequestedAt
 	return out
 }
 
@@ -30,11 +31,7 @@ func (m *MemStore) appResourceAccountLocked(app App) (Account, bool) {
 	}
 	owner, ok := m.accounts[app.AccountID]
 	if ok && exists && !org.Personal {
-		if org.DeletedPending {
-			owner.Status = AccountDeletedPending
-		} else if org.Status != OrgStatusActive && org.Status != OrgStatusPastDue {
-			owner.Status = AccountStatus(org.Status)
-		}
+		owner.Status = orgLegacyOwnerStatus(org, owner.Status)
 		if org.AbuseHoldAt != nil {
 			owner.AbuseHoldAt, owner.AbuseHoldReason = org.AbuseHoldAt, org.AbuseHoldReason
 		}
@@ -89,11 +86,41 @@ func (m *MemStore) appBillingSubjectLocked(accountID, appID string) string {
 	if !ok {
 		return accountID
 	}
-	org, ok := m.orgs[app.OrgID]
+	return m.billingSubjectLocked(accountID, app.OrgID)
+}
+
+// billingSubjectLocked is the billing subject of a namespace's apps in orgID
+// (see quotaSubjectSQL): the organization once it adopted billing, else the
+// namespace.
+func (m *MemStore) billingSubjectLocked(accountID, orgID string) string {
+	org, ok := m.orgs[orgID]
 	if ok && !org.Personal && org.ResourceOwnershipEnabled {
 		return org.ID
 	}
 	return accountID
+}
+
+// quotaSubjectCronsLocked counts the crons of subject's live apps, the
+// per-account cron allowance's usage (see countQuotaSubjectCronsTx).
+func (m *MemStore) quotaSubjectCronsLocked(subject string) int {
+	n := 0
+	for _, c := range m.crons {
+		if a, ok := m.apps[c.AppID]; ok && m.countsTowardQuotaSubjectLocked(a.AccountID, a.ID, subject) {
+			n++
+		}
+	}
+	return n
+}
+
+// countsTowardQuotaSubjectLocked reports whether a row of accountID, on appID
+// or on the account itself when appID is empty, spends subject's per-account
+// allowance (see quotaSubjectSQL); a row of a deleted app spends none.
+func (m *MemStore) countsTowardQuotaSubjectLocked(accountID, appID, subject string) bool {
+	if appID == "" {
+		return accountID == subject
+	}
+	app, ok := m.apps[appID]
+	return ok && app.Status != AppDeleted && m.appBillingSubjectLocked(app.AccountID, app.ID) == subject
 }
 
 func (m *MemStore) personalAppLocked(app App) bool {
@@ -194,12 +221,23 @@ func (m *MemStore) updateOrgResourcePlanLocked(org Org, plan api.Plan) error {
 			}
 		}
 	}
+	from := org.Plan
 	org.Plan = plan
 	if err := m.validateObjectBillingAdoptionLocked(org); err != nil {
 		return err
 	}
 	org = m.activateOrgResourceOwnershipLocked(org)
 	m.orgs[org.ID] = org
+	// The default spend cap moves with the plan (ADR-20261030093512).
+	var current *int64
+	if cents, ok := m.overageCapCents[org.ID]; ok {
+		current = &cents
+	}
+	if next := planChangeOverageCap(from, plan, current); next == nil {
+		delete(m.overageCapCents, org.ID)
+	} else {
+		m.overageCapCents[org.ID] = *next
+	}
 	return nil
 }
 
@@ -233,6 +271,7 @@ func (m *MemStore) activateOrgResourceOwnershipLocked(org Org) Org {
 	}
 	m.objectOrgOwnedFrom[org.ID] = m.clock().UTC()
 	m.invalidateObjectUsageForAdoptionLocked(org)
+	m.creditObjectStorageAdoptionLocked(org)
 	return org
 }
 

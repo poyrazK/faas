@@ -93,10 +93,10 @@ def sync_detailed(
 
     - `manual_import` (default): returns the customer's uploaded
       doc verbatim. Mirrors item #1's /deployments/{dep}/openapi
-      but on the app-keyed `app_openapi_docs` table (ADR-126 D1).
+      but on the app-keyed `app_openapi_docs` table.
 
-    - `auto`: runs pkg/openapidiff.GenerateFromApp with the
-      imported doc + observed routes (ADR-093 bridge) +
+    - `auto`: generates a document from the
+      imported doc + observed routes (bridge) +
       existing edge rules; the merged spec is cached for 5 min
       per (app_id, sha(doc), sha(routes), sha(rules)). Cache
       headers: X-Faas-Cache: hit|miss, X-OpenAPI-Doc-Source:
@@ -107,7 +107,7 @@ def sync_detailed(
     including Free can import. Per-account row cap is
     Plan.OpenAPIImportsPerAccount (Free 100, Hobby 1000,
     Pro 10000, Scale 10000). Plan-tier gate is intentionally
-    absent on this surface (ADR-126 D6).
+    absent on this surface.
 
     Args:
         slug (str):
@@ -145,10 +145,10 @@ def sync(
 
     - `manual_import` (default): returns the customer's uploaded
       doc verbatim. Mirrors item #1's /deployments/{dep}/openapi
-      but on the app-keyed `app_openapi_docs` table (ADR-126 D1).
+      but on the app-keyed `app_openapi_docs` table.
 
-    - `auto`: runs pkg/openapidiff.GenerateFromApp with the
-      imported doc + observed routes (ADR-093 bridge) +
+    - `auto`: generates a document from the
+      imported doc + observed routes (bridge) +
       existing edge rules; the merged spec is cached for 5 min
       per (app_id, sha(doc), sha(routes), sha(rules)). Cache
       headers: X-Faas-Cache: hit|miss, X-OpenAPI-Doc-Source:
@@ -159,7 +159,7 @@ def sync(
     including Free can import. Per-account row cap is
     Plan.OpenAPIImportsPerAccount (Free 100, Hobby 1000,
     Pro 10000, Scale 10000). Plan-tier gate is intentionally
-    absent on this surface (ADR-126 D6).
+    absent on this surface.
 
     Args:
         slug (str):
@@ -192,10 +192,10 @@ async def asyncio_detailed(
 
     - `manual_import` (default): returns the customer's uploaded
       doc verbatim. Mirrors item #1's /deployments/{dep}/openapi
-      but on the app-keyed `app_openapi_docs` table (ADR-126 D1).
+      but on the app-keyed `app_openapi_docs` table.
 
-    - `auto`: runs pkg/openapidiff.GenerateFromApp with the
-      imported doc + observed routes (ADR-093 bridge) +
+    - `auto`: generates a document from the
+      imported doc + observed routes (bridge) +
       existing edge rules; the merged spec is cached for 5 min
       per (app_id, sha(doc), sha(routes), sha(rules)). Cache
       headers: X-Faas-Cache: hit|miss, X-OpenAPI-Doc-Source:
@@ -206,7 +206,7 @@ async def asyncio_detailed(
     including Free can import. Per-account row cap is
     Plan.OpenAPIImportsPerAccount (Free 100, Hobby 1000,
     Pro 10000, Scale 10000). Plan-tier gate is intentionally
-    absent on this surface (ADR-126 D6).
+    absent on this surface.
 
     Args:
         slug (str):
@@ -242,10 +242,10 @@ async def asyncio(
 
     - `manual_import` (default): returns the customer's uploaded
       doc verbatim. Mirrors item #1's /deployments/{dep}/openapi
-      but on the app-keyed `app_openapi_docs` table (ADR-126 D1).
+      but on the app-keyed `app_openapi_docs` table.
 
-    - `auto`: runs pkg/openapidiff.GenerateFromApp with the
-      imported doc + observed routes (ADR-093 bridge) +
+    - `auto`: generates a document from the
+      imported doc + observed routes (bridge) +
       existing edge rules; the merged spec is cached for 5 min
       per (app_id, sha(doc), sha(routes), sha(rules)). Cache
       headers: X-Faas-Cache: hit|miss, X-OpenAPI-Doc-Source:
@@ -256,7 +256,7 @@ async def asyncio(
     including Free can import. Per-account row cap is
     Plan.OpenAPIImportsPerAccount (Free 100, Hobby 1000,
     Pro 10000, Scale 10000). Plan-tier gate is intentionally
-    absent on this surface (ADR-126 D6).
+    absent on this surface.
 
     Args:
         slug (str):

@@ -80,7 +80,7 @@ func cmdAutomationsRecoveryRetryPlan(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%d\t%s\t%d\t%s\t%t\t%s\t%s\n", row.Position, oneLine(row.RunID), row.ExpectedResumeCount, oneLine(row.SavedOutcome), row.Selectable, oneLine(row.Status), oneLine(row.Reason))
 	}
 	if out.PlanPath != "" {
-		_, _ = fmt.Fprintf(osStdout, "Saved reviewed retry plan: %s\nSubmit: gregale automations recovery-start --plan %s\n", oneLine(out.PlanPath), oneLine(out.PlanPath))
+		_, _ = fmt.Fprintf(osStdout, "Saved reviewed retry plan: %s\nSubmit: gregale automation recovery create --plan %s\n", oneLine(out.PlanPath), oneLine(out.PlanPath))
 	}
 	return 0
 }

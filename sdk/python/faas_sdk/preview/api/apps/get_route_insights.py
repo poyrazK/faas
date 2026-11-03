@@ -88,11 +88,11 @@ def sync_detailed(
     """List the app's proactive route insights.
 
      Findings the route insights evaluator records every six hours for
-    apps that ran in the last day (ADR-1198): `kept_awake` when a client
+    apps that ran in the last day: `kept_awake` when a client
     calling a route at a steady interval keeps a mostly-awake app from
     parking, `cacheable` when the gateways measured a route safe to
     cache for a given lifetime, and, for routes that already have a cache
-    rule (ADR-1199), `cache_stale` when refills found the body changed
+    rule, `cache_stale` when refills found the body changed
     before the rule's max-age ran out and `cache_too_short` when the body
     stayed the same far longer. Active insights come first, then those
     resolved in the last seven days. An insight resolves after a day
@@ -132,11 +132,11 @@ def sync(
     """List the app's proactive route insights.
 
      Findings the route insights evaluator records every six hours for
-    apps that ran in the last day (ADR-1198): `kept_awake` when a client
+    apps that ran in the last day: `kept_awake` when a client
     calling a route at a steady interval keeps a mostly-awake app from
     parking, `cacheable` when the gateways measured a route safe to
     cache for a given lifetime, and, for routes that already have a cache
-    rule (ADR-1199), `cache_stale` when refills found the body changed
+    rule, `cache_stale` when refills found the body changed
     before the rule's max-age ran out and `cache_too_short` when the body
     stayed the same far longer. Active insights come first, then those
     resolved in the last seven days. An insight resolves after a day
@@ -171,11 +171,11 @@ async def asyncio_detailed(
     """List the app's proactive route insights.
 
      Findings the route insights evaluator records every six hours for
-    apps that ran in the last day (ADR-1198): `kept_awake` when a client
+    apps that ran in the last day: `kept_awake` when a client
     calling a route at a steady interval keeps a mostly-awake app from
     parking, `cacheable` when the gateways measured a route safe to
     cache for a given lifetime, and, for routes that already have a cache
-    rule (ADR-1199), `cache_stale` when refills found the body changed
+    rule, `cache_stale` when refills found the body changed
     before the rule's max-age ran out and `cache_too_short` when the body
     stayed the same far longer. Active insights come first, then those
     resolved in the last seven days. An insight resolves after a day
@@ -213,11 +213,11 @@ async def asyncio(
     """List the app's proactive route insights.
 
      Findings the route insights evaluator records every six hours for
-    apps that ran in the last day (ADR-1198): `kept_awake` when a client
+    apps that ran in the last day: `kept_awake` when a client
     calling a route at a steady interval keeps a mostly-awake app from
     parking, `cacheable` when the gateways measured a route safe to
     cache for a given lifetime, and, for routes that already have a cache
-    rule (ADR-1199), `cache_stale` when refills found the body changed
+    rule, `cache_stale` when refills found the body changed
     before the rule's max-age ran out and `cache_too_short` when the body
     stayed the same far longer. Active insights come first, then those
     resolved in the last seven days. An insight resolves after a day

@@ -94,13 +94,13 @@ def sync_detailed(
     environment: str | Unset = UNSET,
     scope: GetAppRoutesScope | Unset = UNSET,
 ) -> Response[AppRoutesResponse | Problem]:
-    r"""Per-route breakdown for opt-in apps (ADR-093).
+    r"""Per-route breakdown for opt-in apps.
 
      Returns the `routes` array of the per-app metrics surface.
     Production reads the fleet Prometheus aggregate; single-box
-    development may use the gatewayd-internal loopback listener.
+    development may use the gateway loopback listener.
     The array is empty when `route_metrics_enabled` is false
-    on the app (the gatewayd handler returns 200 + empty
+    on the app (the gateway handler returns 200 + empty
     rows rather than 404 — the customer-facing \"feature off\"
     state is not a 404). Labels use declared templates when available,
     otherwise common numeric/UUID/long-hex segments become `{id}`.
@@ -140,13 +140,13 @@ def sync(
     environment: str | Unset = UNSET,
     scope: GetAppRoutesScope | Unset = UNSET,
 ) -> AppRoutesResponse | Problem | None:
-    r"""Per-route breakdown for opt-in apps (ADR-093).
+    r"""Per-route breakdown for opt-in apps.
 
      Returns the `routes` array of the per-app metrics surface.
     Production reads the fleet Prometheus aggregate; single-box
-    development may use the gatewayd-internal loopback listener.
+    development may use the gateway loopback listener.
     The array is empty when `route_metrics_enabled` is false
-    on the app (the gatewayd handler returns 200 + empty
+    on the app (the gateway handler returns 200 + empty
     rows rather than 404 — the customer-facing \"feature off\"
     state is not a 404). Labels use declared templates when available,
     otherwise common numeric/UUID/long-hex segments become `{id}`.
@@ -181,13 +181,13 @@ async def asyncio_detailed(
     environment: str | Unset = UNSET,
     scope: GetAppRoutesScope | Unset = UNSET,
 ) -> Response[AppRoutesResponse | Problem]:
-    r"""Per-route breakdown for opt-in apps (ADR-093).
+    r"""Per-route breakdown for opt-in apps.
 
      Returns the `routes` array of the per-app metrics surface.
     Production reads the fleet Prometheus aggregate; single-box
-    development may use the gatewayd-internal loopback listener.
+    development may use the gateway loopback listener.
     The array is empty when `route_metrics_enabled` is false
-    on the app (the gatewayd handler returns 200 + empty
+    on the app (the gateway handler returns 200 + empty
     rows rather than 404 — the customer-facing \"feature off\"
     state is not a 404). Labels use declared templates when available,
     otherwise common numeric/UUID/long-hex segments become `{id}`.
@@ -225,13 +225,13 @@ async def asyncio(
     environment: str | Unset = UNSET,
     scope: GetAppRoutesScope | Unset = UNSET,
 ) -> AppRoutesResponse | Problem | None:
-    r"""Per-route breakdown for opt-in apps (ADR-093).
+    r"""Per-route breakdown for opt-in apps.
 
      Returns the `routes` array of the per-app metrics surface.
     Production reads the fleet Prometheus aggregate; single-box
-    development may use the gatewayd-internal loopback listener.
+    development may use the gateway loopback listener.
     The array is empty when `route_metrics_enabled` is false
-    on the app (the gatewayd handler returns 200 + empty
+    on the app (the gateway handler returns 200 + empty
     rows rather than 404 — the customer-facing \"feature off\"
     state is not a 404). Labels use declared templates when available,
     otherwise common numeric/UUID/long-hex segments become `{id}`.

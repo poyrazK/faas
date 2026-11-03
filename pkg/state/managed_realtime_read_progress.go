@@ -3,9 +3,18 @@ package state
 import (
 	"context"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const ManagedRealtimeMaxReadMarkers = 1024
+// ManagedRealtimeMaxReadMarkers caps an endpoint's live read markers.
+const ManagedRealtimeMaxReadMarkers = api.RealtimeReadMarkersPerEndpoint
+
+// ManagedRealtimeReadMarkerRetention is how long a read marker lives after its
+// last update, like a named cursor. Messages are retained for at most 24
+// hours, so an older marker sits below every retained message and deleting it
+// leaves the unread count unchanged (ADR-1323, amendment of 2026-10-31).
+const ManagedRealtimeReadMarkerRetention = 30 * 24 * time.Hour
 
 type ManagedRealtimeReadProgress struct {
 	Sequence           int64     `json:"sequence"`
@@ -120,10 +129,11 @@ func (m *MemStore) AdvanceManagedRealtimeReadProgress(ctx context.Context, ep, p
 	if sequence <= current.Sequence {
 		return current, nil
 	}
-	if _, exists := m.managedRealtimeReadProgress[key]; !exists {
+	live := time.Now().UTC().Add(-ManagedRealtimeReadMarkerRetention)
+	if marker, exists := m.managedRealtimeReadProgress[key]; !exists || marker.updated.Before(live) {
 		count := 0
-		for existing := range m.managedRealtimeReadProgress {
-			if existing.endpointID == ep {
+		for existing, other := range m.managedRealtimeReadProgress {
+			if existing.endpointID == ep && !other.updated.Before(live) {
 				count++
 			}
 		}
@@ -143,3 +153,26 @@ func (m *MemStore) AdvanceManagedRealtimeReadProgress(ctx context.Context, ep, p
 
 var _ ManagedRealtimeReadProgressStore = (*MemStore)(nil)
 var _ ManagedRealtimeReadProgressStore = (*PgStore)(nil)
+
+func (m *MemStore) PruneExpiredManagedRealtimeReadMarkers(ctx context.Context, batch int) (int64, error) {
+	if batch < 1 || batch > 1000 {
+		return 0, ErrManagedRealtimeDurableCursorInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cutoff := time.Now().UTC().Add(-ManagedRealtimeReadMarkerRetention)
+	var removed int64
+	for key, marker := range m.managedRealtimeReadProgress {
+		if marker.updated.Before(cutoff) {
+			delete(m.managedRealtimeReadProgress, key)
+			removed++
+			if removed == int64(batch) {
+				break
+			}
+		}
+	}
+	return removed, nil
+}

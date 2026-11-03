@@ -251,6 +251,41 @@ func TestRenderUsageSummary_PinsColumnLayout(t *testing.T) {
 	}
 }
 
+// TestRenderUsageSummary_QuietPaused pins the unbilled quiet pause line
+// (ADR-20261023171905): beside Used, marked not billed, and absent while
+// zero so accounts without unbilled pause see the block unchanged.
+func TestRenderUsageSummary_QuietPaused(t *testing.T) {
+	tests := []struct {
+		name   string
+		paused float64
+		want   string
+	}{
+		{name: "released", paused: 0.512, want: "Quiet paused: 0.512 GB-hours (not billed)"},
+		{name: "none", paused: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			main.RenderUsageSummary(&buf, api.UsageSummaryResponse{
+				Month: "2026-10", UsedGBHours: 1.5, IncludedGBHours: 20, QuietPausedGBHours: tt.paused,
+			})
+			got := buf.String()
+			if tt.want == "" {
+				if strings.Contains(got, "Quiet paused") {
+					t.Fatalf("rendered a quiet paused line for zero paused time:\n%s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("rendered output missing %q\nfull: %s", tt.want, got)
+			}
+			if strings.Index(got, "Quiet paused") < strings.Index(got, "Overage cost") {
+				t.Fatalf("quiet paused line precedes the billing lines:\n%s", got)
+			}
+		})
+	}
+}
+
 // --- dispatcher (back-compat) ----------------------------------------------
 
 // TestCmdUsage_NoPositional_DispatchesToList pins the default branch:
@@ -268,7 +303,7 @@ func TestCmdUsage_NoPositional_DispatchesToList(t *testing.T) {
 				AppID: "a1", Requests: 1, MBSeconds: 1, IncludedGBHours: 5,
 			}})
 		case "/v1/usage/summary":
-			t.Errorf("dispatcher reached /v1/usage/summary for bare `gregale usage`; want /v1/usage")
+			t.Errorf("dispatcher reached /v1/usage/summary for bare `gregale billing usage`; want /v1/usage")
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -365,7 +400,7 @@ func TestCmdUsage_SummarySubcommand_DispatchesToSummary(t *testing.T) {
 				OverageGBHours: 0, OverageCents: 0,
 			})
 		case "/v1/usage":
-			t.Errorf("dispatcher reached /v1/usage for `gregale usage summary`; want /v1/usage/summary")
+			t.Errorf("dispatcher reached /v1/usage for `gregale billing usage summary`; want /v1/usage/summary")
 		default:
 			http.Error(w, "no", 404)
 		}

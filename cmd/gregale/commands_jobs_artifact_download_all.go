@@ -36,7 +36,7 @@ type bulkJobArtifactSummary struct {
 
 func downloadAllJobArtifacts(pos []string, directory string, resume, dryRun bool, includes, excludes []string) int {
 	if len(pos) != 3 || directory == "" || !jobSlugPattern.MatchString(pos[0]) || (pos[1] != "latest" && !jobRunIDPattern.MatchString(pos[1])) {
-		return printErr("Invalid bulk download", fmt.Errorf("usage: gregale jobs artifact-download JOB RUN_ID|latest TASK_INDEX --all --out-dir DIR"))
+		return printErr("Invalid bulk download", fmt.Errorf("usage: gregale job artifact download JOB RUN_ID|latest TASK_INDEX --all --out-dir DIR"))
 	}
 	if resume && pos[1] == "latest" {
 		return printErr("Invalid resume target", fmt.Errorf("--resume requires the explicit run UUID from the previous receipt so recovery stays on the same run"))

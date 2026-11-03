@@ -97,12 +97,12 @@ func cmdPS(args []string) int {
 	app := fs.String("app", "", appSlugFlagUsage)
 	flags, positional := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil || len(positional) > 1 {
-		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]", "ps")
+		PrintUsage(os.Stderr, "usage: gregale app instances [--all] [<app>]", "ps")
 		return 1
 	}
 	positional, err := mergeAppFlag(positional, *app, 1)
 	if err != nil {
-		PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>]\nerror: "+err.Error(), "ps")
+		PrintUsage(os.Stderr, "usage: gregale app instances [--all] [<app>]\nerror: "+err.Error(), "ps")
 		return 1
 	}
 	slug := ""
@@ -113,7 +113,7 @@ func cmdPS(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale ps [--all] [<app>] (or run `gregale link <project-slug>`)", "ps")
+				PrintUsage(os.Stderr, "usage: gregale app instances [--all] [<app>] (or run `gregale link <project-slug>`)", "ps")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -224,12 +224,26 @@ func humanizeInstanceState(state string) string {
 func cmdStatus(args []string) int {
 	fs := newFlagSet(statusLiteral, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit the raw status page as JSON")
+	platform := fs.Bool("platform", false, "show Gregale's platform status")
+	app := fs.String("app", "", "show this app instead of the linked one")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale status [--json]", "status")
+	if fs.NArg() != 0 || *platform && *app != "" {
+		PrintUsage(os.Stderr, "usage: gregale status [--app SLUG] | --platform [--json]", "status")
 		return 1
+	}
+	if !*platform {
+		target, ok, err := statusTarget(*app)
+		if err != nil {
+			return printErr("Could not read the linked project", err)
+		}
+		if ok {
+			if *asJSON {
+				jsonOutput = true
+			}
+			return cmdStatusCheckout(target)
+		}
 	}
 	// Use the raw Client (not authedClient) so the public endpoint
 	// works without a stored token. The Client still sends the bearer
@@ -274,8 +288,12 @@ func cmdStatus(args []string) int {
 // flow as `gregale secrets set`; `--restart` opts into an immediate
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>", "env")
+	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() {
+		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
+		if fullEnvironmentCloneCLI() {
+			usage = "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>"
+		}
+		PrintUsage(os.Stderr, usage, "env")
 		return 1
 	}
 	switch args[0] {
@@ -300,7 +318,7 @@ func cmdEnv(args []string) int {
 		// in commands_env_diff.go.
 		return envDiff(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
 	// `env list` named no verb (Hunt 14 H14-63).
 	parent, _ := lookupCliCommand("env")
 	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
@@ -324,7 +342,7 @@ func envPull(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--scope <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--env <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
@@ -481,7 +499,7 @@ func envPush(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--scope <name>] [-f .env | --from-stdin] [--restart] [--dry-run] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--env <name>] [-f .env | --from-stdin] [--restart] [--dry-run] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
@@ -604,7 +622,7 @@ func envPush(args []string) int {
 			}
 			return printErr("Secret scan rejected the push",
 				&StrictSecretScanError{Findings: wireFindings,
-					Hint: "move detected secrets to `gregale secrets set` (see " + cliDocsURL + ")"})
+					Hint: "move detected secrets to `gregale env set` (see " + cliDocsURL + ")"})
 		}
 		if len(findings) > 0 {
 			renderEnvPushScanWarnings(findings, osStderr)
@@ -941,6 +959,10 @@ func cmdAppScale(slug string, args []string) int {
 		if explicit["per-instance-concurrency"] {
 			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
+		if explicit["min"] {
+			// The policy was copied from the app, so it holds the old floor.
+			policy.MinInstances = *min
+		}
 		req.ScalingPolicy = policy
 	}
 	if explicit["idle"] {
@@ -1066,7 +1088,11 @@ func cmdAppScale(slug string, args []string) int {
 			revision := workloadRevision
 			expectedWorkloadRevision = &revision
 		}
-		return cmdAppScalePlan(client, appClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
+		// The preview's read pins its own revision, so a change since the
+		// merge reads above shows up as a different one.
+		observed := int64(-1)
+		previewClient := environmentAppClient{Client: client, environment: *environment, revision: &observed}
+		return cmdAppScalePlan(client, previewClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
 	}
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := appClient.UpdateApp(context.Background(), slug, req)
@@ -1097,7 +1123,7 @@ func cmdAppScale(slug string, args []string) int {
 // parkedMinInstancesNote tells the owner that a floor set on a parked app
 // waits for the next wake.
 func parkedMinInstancesNote(slug string, floor int) string {
-	return fmt.Sprintf("App is parked; the floor of %d starts holding after its next wake. Run gregale wake %s to start it now.", floor, slug)
+	return fmt.Sprintf("App is parked; the floor of %d starts holding after its next wake. Run gregale app wake %s to start it now.", floor, slug)
 }
 
 // cmdAppRename swaps an app's slug atomically. The server validates the
@@ -1149,7 +1175,16 @@ func cmdAppDispatch(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale app <slug> [scale|costs [--month YYYY-MM] [--json]|rename <new>|restart|exec -- <command> [args...]|security [--posture|--require-signed=true|false|--security-policy=off|warn|enforce]|egress-allowlist {show|add <cidr>|remove <cidr>|clear}|egress-ports {show|add <port>|remove <port>|clear}|network {show|doctor|attach <network-id> --region REGION --cidrs CIDR[,CIDR...]|detach}|traffic-status|routes|tcp|streaming-cap|--ram N|--max-concurrency N|--idle SEC|--min N|--maintenance|--no-maintenance|--streaming-enabled|--no-streaming-enabled|--websocket-enabled|--no-websocket|--route-metrics|--no-route-metrics|--consumer-auth-mode optional|required|--platform-tenant-required|--no-platform-tenant-required]", "apps")
 		return 1
 	}
+	if args[0] == subWait && hasSelectorFlag(args[1:]) {
+		return cmdAppWaitSelected(args[1:])
+	}
 	slug := args[0]
+	if code, ok := cmdAppConditions(slug, args[1:]); ok {
+		return code
+	}
+	if code, ok := cmdAppLabels(slug, args[1:]); ok {
+		return code
+	}
 	if len(args) >= 2 {
 		switch args[1] {
 		case subHealth:
@@ -1224,7 +1259,7 @@ func cmdPlan(args []string) int {
 	}
 	args = fs.Args()
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale plan <free|hobby|pro|scale>", "plan")
+		PrintUsage(os.Stderr, "usage: gregale billing plan <free|hobby|pro|scale>", "plan")
 		return 1
 	}
 	target := api.Plan(args[0])
@@ -1241,17 +1276,9 @@ func cmdPlan(args []string) int {
 		return printErr("Could not fetch account", err)
 	}
 	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] && !*yes {
-		if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
+		question := fmt.Sprintf("Downgrade from %s to %s: existing apps may exceed the new plan's limits. Continue?", acct.Plan, target)
+		if code := confirmYesNo(question, "--yes", "the plan downgrade"); code != 0 {
 			return code
-		}
-		fmt.Fprintf(os.Stderr,
-			"Downgrade from %s to %s: existing apps may exceed the new plan's limits. "+
-				"Continue? [y/N] ", acct.Plan, target)
-		var ans string
-		_, _ = fmt.Scanln(&ans)
-		if strings.ToLower(strings.TrimSpace(ans)) != "y" {
-			_, _ = fmt.Fprintln(osStdout, "aborted")
-			return 1
 		}
 	}
 	updated, err := client.ChangePlan(context.Background(), string(target))
@@ -1311,7 +1338,7 @@ func cmdDashboard(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale dashboard [--stateless]", "dashboard")
+		PrintUsage(os.Stderr, "usage: gregale open dashboard [--stateless]", "dashboard")
 		return 1
 	}
 	if _, err := authedClient(); err != nil {
@@ -1763,11 +1790,11 @@ func cmdQueueDeadLetter(args []string) int {
 		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--cursor C] [--all]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> [--limit N] [--cursor C] [--all]", "queue")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> --limit N (1 <= N <= 100)", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> --limit N (1 <= N <= 100)", "queue")
 		return 1
 	}
 	slug := pos[0]
@@ -1973,7 +2000,7 @@ func cmdTailContext(ctx context.Context, args []string) int {
 	}
 	slugArg, rest := peelLeadingSlug(fs.Args())
 	if len(rest) != 0 {
-		PrintUsage(os.Stderr, "usage: gregale tail [<slug> | --app <slug>] [--include-stateless]", "tail")
+		PrintUsage(os.Stderr, "usage: gregale invocation watch [<slug> | --app <slug>] [--include-stateless]", "tail")
 		return 1
 	}
 	if err := mergeLeadingSlug(onlySlug, slugArg); err != nil {
@@ -2247,7 +2274,7 @@ func cmdQueueTail(args []string) int {
 		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue tail <slug>", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue watch <slug>", "queue")
 		return 1
 	}
 	slug := pos[0]

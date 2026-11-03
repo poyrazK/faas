@@ -99,8 +99,8 @@ flags in the table below release their capability; every other capability in
 - **Enforcement.** `enforcement=routes` means apid hides the capability's
   routes; `settings` means apid refuses the app fields, edge rule kinds,
   runtimes, gregale.yaml blocks or wildcard domains that turn it on (with
-  `403 capability_not_released`); `daemons` means schedd, githubd or
-  gatewayd-internal also stop its work outside apid (below); `handler` means
+  `403 capability_not_released`); `daemons` means schedd, githubd,
+  gatewayd-internal or vmmd also stop its work outside apid (below); `handler` means
   the flag's consumers decide it in code; `none` means the flag is not
   enforced yet (VM behavior, or a CLI-side tool).
 - **Work outside apid.** Daemons follow the same decision, tier defaults
@@ -110,11 +110,27 @@ flags in the table below release their capability; every other capability in
     managed exclusive operations a minute at a time, without spending a
     delivery attempt. The backlog runs when the flag is back on, so cancel
     the work as well if the capability is off for good.
+  - `events` is the event bus's kill switch
+    ([ADR-20261027125625](../adr/20261027125625-events-kill-switch.md)).
+    Off platform-wide, schedd routes no receipts and runs no event recoveries
+    or backfills, and every customer publish path (the publish routes, the
+    platform-tenant route and in-guest publishing through vmmd) answers
+    `503 events_paused` with `Retry-After` instead of hiding. Off for an
+    account, that account's publishing is refused the same way and its
+    customer events wait a minute at a time. Server-side events (object
+    storage, inbound webhooks, commit relay) are still accepted and wait;
+    deliveries already admitted finish. Nothing accepted is lost: turning it
+    back on resumes routing. Runbook:
+    [FaasEventDriven](../runbooks/FaasEventDriven.md).
   - githubd ignores pushes (`github_deploys`) and pull-request previews
     (`pr_previews`) and does not replay them later; closing a pull request
     still tears its preview down.
   - gatewayd-internal drops cache, async, retry and circuit-breaker edge rules
-    and stops traffic mirroring, session affinity and the wake page.
+    and stops traffic mirroring, session affinity and the wake page. It also
+    serves the customer logs route and delivers log drains: off `logs` hides
+    `GET /v1/apps/{slug}/logs` (live and archive) for the caller's account,
+    and off `log_drains` stops delivering that account's drains within a
+    30-second reconcile. Runbook: [FaasLogs](../runbooks/FaasLogs.md).
     Restrictive edge rules (WAF, challenge, IP, JWT, geo, limits,
     maintenance, headers, routing) keep enforcing while `edge_rules` or
     `edge_protection` is off, so switching those off never opens an app.
@@ -196,6 +212,9 @@ flags in the table below release their capability; every other capability in
 | `realtime_occupancy` | Realtime channel occupancy (ADR-1324) | apid → realtimed | `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` |
 | `realtime_preview` | Realtime preview: retained history and what builds on it, tickets, access controls, occupancy, usage, endpoint slugs and channel rules, the v2 protocol and SSE (ADR-20261019102657). The v2 protocol, tickets, access controls and occupancy also need their own flag above | apid → realtimed | `FAAS_REALTIME_PREVIEW_ACCOUNTS` |
 | `strict_budgets` | Strict compute and egress budgets (ADR-1750) | apid | none (off until an operator writes it) |
+| `app_health_workers` | App health assesses worker pools: replicas against the pool minimum, backlog age, recent dead letters (ADR-20261102091500) | apid | none (off until an operator writes it) |
+| `app_health_memory` | App health warns when an app's guests ran short of memory in the last day, before an OOM kill (ADR-20261102124306) | apid | none (off until an operator writes it) |
+| `quiet_pause_unbilled` | Unbilled quiet pause: bill running seconds, not quiet-paused ones (ADR-20261023171905). Takes effect only where meterd's `quiet_pause_unbilled` mode is `on`; accounts it does not release are counted as in shadow mode and billed in full | meterd | none (off until an operator writes it) |
 | `edge_waf_blocking` | Warn and block modes of WAF edge rules (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_challenge` | Challenge edge rules, with difficulty escalation (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_penalty_box` | Edge rule penalties (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
@@ -272,6 +291,20 @@ interval if a notification is missed), without an edge-rule cache reset.
 Turning one on for an account that has inert rules makes them enforce at
 once. Release them the same way: `flags enable`, then `flags allow` per
 account, or `default` for everyone at launch.
+
+Before releasing `edge_challenge` or `edge_attack_mode` to any account on a
+fleet with more than one gateway, give every gateway the fleet's challenge
+key: on a fleet CD deploys, set the environment secret
+`GATEWAYD_EDGE_CHALLENGE_KEY` (`openssl rand -hex 32`) and roll the compute
+nodes, which stages it with `gatewayd_edge_challenge_key_required=true`;
+elsewhere set `gatewayd_edge_challenge_key` in the fleet vault and run the
+`gatewayd_internal_service` role with
+`gatewayd_edge_challenge_key_required=true`. Then check that
+`gateway_edge_challenge_key_info{job="gatewayd-internal"}` shows one `key_id`
+with `source="fleet"` and that `FaasEdgeChallengeKeyMismatch` is quiet.
+Without the key each gateway signs with its own host's session key, and a
+visitor whose requests reach another gateway is challenged again and again
+(ADR-831 amendment 17).
 
 ## Day-to-day commands
 

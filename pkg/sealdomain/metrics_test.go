@@ -31,7 +31,7 @@ func TestRegisterLoaded(t *testing.T) {
 	}
 }
 
-// vmmd reads the runtime and build domains (ADR-20261026090000); a second
+// vmmd reads the runtime and build domains (ADR-20261026091500); a second
 // RegisterLoaded call would register the gauge twice and panic.
 func TestRegisterLoadedDomains(t *testing.T) {
 	reg := prometheus.NewRegistry()
@@ -44,5 +44,19 @@ faas_seal_domain_loaded{domain="runtime"} 1
 `
 	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "faas_seal_domain_loaded"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRegisterLegacyIdentities(t *testing.T) {
+	for _, n := range []int{0, 3} {
+		reg := prometheus.NewRegistry()
+		sealdomain.RegisterLegacyIdentities(reg, n)
+		want := `
+# HELP faas_seal_domain_legacy_identities Fleet and host identities this vmmd opens runtime secrets and registry passwords with (ADR 20261022111812); 0 once contracted.
+# TYPE faas_seal_domain_legacy_identities gauge
+faas_seal_domain_legacy_identities ` + map[int]string{0: "0", 3: "3"}[n] + "\n"
+		if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "faas_seal_domain_legacy_identities"); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

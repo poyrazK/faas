@@ -16,7 +16,7 @@ T = TypeVar("T", bound="WorkflowRunResponse")
 
 @_attrs_define
 class WorkflowRunResponse:
-    """A persisted durable workflow run (ADR-081)."""
+    """A persisted durable workflow run."""
 
     id: UUID
     app_id: UUID

@@ -4,11 +4,11 @@
 /* eslint-disable */
 import type { DebugCompareRouteStats } from './DebugCompareRouteStats.js';
 /**
- * POST response from /v1/apps/{slug}/debug/compare (ADR-127 / PR-B).
+ * POST response from /v1/apps/{slug}/debug/compare.
  */
 export type DebugCompareResponse = {
   /**
-   * App identity; present on servers supporting comparison-window metadata (ADR-1623).
+   * App identity; present on servers supporting comparison-window metadata.
    */
   app_id?: string;
   /**

@@ -16,8 +16,7 @@ T = TypeVar("T", bound="BillingCatalogResponse")
 @_attrs_define
 class BillingCatalogResponse:
     """Wire shape for GET / POST / DELETE
-    /v1/admin/billing-paddle-catalog compatibility endpoints
-    (PR-P3). Provider is the active billing provider's name
+    /v1/admin/billing-paddle-catalog compatibility endpoints. Provider is the active billing provider's name
     (polar / paddle); providers without a catalog surface
     return 501. SyncedAt is the timestamp of the most recent
     successful catalog preflight; empty when no hydration has

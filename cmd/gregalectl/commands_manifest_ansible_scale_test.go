@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -206,11 +205,10 @@ func runManifestScaleAnsibleCheck(t *testing.T, files []manifestAnsibleFile) {
 	if err != nil {
 		t.Skipf("ansible-playbook is not installed; generated inventory checks still passed: %v", err)
 	}
-	_, sourcePath, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller could not locate the scale test")
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
 	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(sourcePath), "..", ".."))
 	var inventoryPath string
 	for _, file := range files {
 		if err := writeGeneratedAnsibleFile(file.Path, file.Body, false); err != nil {

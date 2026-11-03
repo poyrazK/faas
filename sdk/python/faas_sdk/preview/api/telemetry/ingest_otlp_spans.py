@@ -56,7 +56,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any]:
-    """OTel spans writer (ADR-127 PR-D).
+    """OTel spans writer.
 
      Standard OTLP/HTTP endpoint for the OTel spans sidecar
     protocol (POST ExportTraceServiceRequest). Auth via
@@ -97,7 +97,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any]:
-    """OTel spans writer (ADR-127 PR-D).
+    """OTel spans writer.
 
      Standard OTLP/HTTP endpoint for the OTel spans sidecar
     protocol (POST ExportTraceServiceRequest). Auth via

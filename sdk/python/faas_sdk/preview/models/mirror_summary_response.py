@@ -36,8 +36,8 @@ class MirrorSummaryResponse:
     incomplete_comparison_count: int
     """Comparisons without a complete source and mirror response, including scheduler admission failures."""
     scheduler_admission_timeout_count: int
-    """Mirror admissions that timed out before the gateway received an admitted target. A late schedd admission is
-    cleaned up by schedd."""
+    """Mirror admissions that timed out before the gateway received an admitted target. A late scheduler admission
+    is cleaned up by the scheduler."""
     scheduler_admission_rejected_count: int
     """Mirror admissions refused by a capacity or concurrency limit. These are incomplete comparisons, not guest
     crashes."""

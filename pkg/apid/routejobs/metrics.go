@@ -21,6 +21,9 @@ const (
 	MonitorEvaluated = "evaluated"
 	MonitorSkipped   = "skipped"
 	MonitorFailed    = "failed"
+	// MonitorUnreleased is a monitor whose capability is off for its account
+	// (ADR-20261028110044); it is deferred without evaluating.
+	MonitorUnreleased = "unreleased"
 )
 
 // Automatic route check outcomes.
@@ -46,7 +49,7 @@ func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
 	m := &Metrics{registry: registry}
 	m.monitorEvaluations = register(registry, prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_route_monitor_evaluations_total",
-		Help: "Production route monitor evaluations by outcome: evaluated, skipped (another replica holds the monitor or it is no longer due) or failed (deferred for retry).",
+		Help: "Production route monitor evaluations by outcome: evaluated, skipped (another replica holds the monitor or it is no longer due), unreleased (the monitoring capability is off for the account; deferred) or failed (deferred for retry).",
 	}, []string{"outcome"}))
 	m.monitorLag = register(registry, prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "_route_monitor_lag_seconds",
@@ -64,7 +67,7 @@ func NewMetrics(registry *prometheus.Registry, prefix string) *Metrics {
 		Name: prefix + "_route_worker_queue_unavailable_total",
 		Help: "Route worker drains that could not read their queue, by worker: monitor or check.",
 	}, []string{"worker"}))
-	for _, outcome := range []string{MonitorEvaluated, MonitorSkipped, MonitorFailed} {
+	for _, outcome := range []string{MonitorEvaluated, MonitorSkipped, MonitorUnreleased, MonitorFailed} {
 		m.monitorEvaluations.WithLabelValues(outcome)
 	}
 	for _, outcome := range []string{CheckCompleted, CheckSkipped, CheckRetried} {

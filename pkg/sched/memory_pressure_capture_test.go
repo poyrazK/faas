@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -114,6 +115,54 @@ func TestQueueSlowRequestCapture(t *testing.T) {
 	if queued, reason, _ := e.QueueSlowRequestCapture(ctx, free.ID, "req-3", "trace-3", "GET /", 10*time.Second); queued || !strings.Contains(reason, "plan") {
 		t.Fatalf("free plan: queued=%v reason=%q", queued, reason)
 	}
+	off := false
+	optedOut, err := mem.CreateApp(ctx, state.App{AccountID: app.AccountID, Slug: "slow-opted-out", RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+		Manifest: state.AppManifest{Profiling: &api.ProfilingConfig{AutomaticCaptures: &off}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	optedOutIns, err := mem.CreateInstance(ctx, optedOut.ID, "", string(state.StateRunning), 256, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued, reason, _ := e.QueueSlowRequestCapture(ctx, optedOutIns.ID, "req-4", "trace-4", "GET /", 10*time.Second); queued || !strings.Contains(reason, "turned automatic captures off") {
+		t.Fatalf("app that turned automatic captures off: queued=%v reason=%q", queued, reason)
+	}
+	// An organization's app is judged by the organization's plan, not by the
+	// plan of the member who created it.
+	member, err := mem.CreateAccount(ctx, "free-member-slow@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Free organization owns its resources at once; upgrading keeps them.
+	org, err := mem.CreateOrg(ctx, state.Org{Slug: "slow-team", Name: "Team", Plan: api.PlanFree, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.UpdateOrgPlan(ctx, org.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	orgApp, err := mem.CreateApp(ctx, state.App{AccountID: member.ID, OrgID: org.ID, Slug: "slow-team-app", RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orgIns, err := mem.CreateInstance(ctx, orgApp.ID, "", string(state.StateRunning), 256, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued, reason, err := e.QueueSlowRequestCapture(ctx, orgIns.ID, "req-6", "trace-6", "GET /", 10*time.Second); err != nil || !queued {
+		t.Fatalf("Pro organization's app made by a Free member: queued=%v reason=%q err=%v", queued, reason, err)
+	}
+	// profile-captures is a preview capability: with no operator value its
+	// flag is off, and no account gets automatic captures.
+	capabilities, err := capflags.Load(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.WithCapabilities(capabilities)
+	if queued, reason, _ := e.QueueSlowRequestCapture(ctx, ins.ID, "req-5", "trace-5", "GET /", 10*time.Second); queued || !strings.Contains(reason, "not released") {
+		t.Fatalf("account captures are not released to: queued=%v reason=%q", queued, reason)
+	}
 }
 
 func TestLinkOOMProfileCapture(t *testing.T) {
@@ -131,7 +180,8 @@ func TestLinkOOMProfileCapture(t *testing.T) {
 	now := time.Now().UTC()
 	capture := api.ProfileCapture{ID: "11111111-1111-4111-8111-111111111111", Kinds: []string{api.ProfileKindHeap}, DurationSeconds: 10,
 		Trigger: api.ProfileCaptureTriggerMemoryPressure, CreatedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(api.ProfileCaptureRetention)}
-	if err := mem.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, capture, api.ProfileCaptureAutomaticMinInterval); err != nil {
+	if err := mem.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, capture, api.ProfileCaptureAutomaticMinInterval,
+		state.ProfileCaptureLimits{StorageBytes: api.MustLimitsFor(api.PlanPro).Profiling.CaptureStorageBytes}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := mem.ClaimProfileCapture(ctx, now); err != nil {

@@ -12,7 +12,7 @@ T = TypeVar("T", bound="OutboundAIUserUsageExportRow")
 
 @_attrs_define
 class OutboundAIUserUsageExportRow:
-    """One NDJSON line of a per-end-user usage export (ADR-995); CSV rows carry the same fields in this order."""
+    """One NDJSON line of a per-end-user usage export; CSV rows carry the same fields in this order."""
 
     end_user: str
     """X-Gregale-AI-User value; "~other" collects end users beyond the daily cap."""

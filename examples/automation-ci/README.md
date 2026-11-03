@@ -94,7 +94,7 @@ restricted. Missing timestamps (including an older server) return inconclusive
 with `candidate_evidence_age_unavailable`. These checks remain read-only.
 
 For a stable reviewed comparison point, explicitly promote a passing suite with
-`gregale automations live baseline promote` and a version 2 policy. Use
+`gregale automation live baseline promote` and a version 2 policy. Use
 `--expected-revision 0` for a new name and the current observed revision for later
 promotions. Keep a distinct `--promotion-id UUID` per deliberate promotion and
 preserve it for uncertain retries; replay returns its historical receipt without

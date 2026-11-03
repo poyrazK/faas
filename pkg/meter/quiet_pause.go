@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -108,20 +109,82 @@ func (s *Sampler) quietPausedSeconds(ctx context.Context, minute time.Time) (map
 	return paused, nil
 }
 
+// WithQuietPauseRelease decides, in on mode, which accounts the paused
+// seconds are subtracted for: the quiet_pause_unbilled platform flag, so the
+// rollout can release unbilled pause to internal accounts first. Without it
+// on mode subtracts for every account.
+func (s *Sampler) WithQuietPauseRelease(released func(platformflags.Subject) bool) *Sampler {
+	s.quietRelease = released
+	return s
+}
+
+// quietPauseModeFor is the mode that applies to an app's minutes: on only
+// for an account the release decides is in, shadow for the others.
+func (s *Sampler) quietPauseModeFor(app state.App, plan api.Plan) QuietPauseMode {
+	if s.quietPause != QuietPauseOn || s.quietRelease == nil {
+		return s.quietPause
+	}
+	if s.quietRelease(platformflags.Subject{AccountID: app.AccountID, Plan: string(plan), OrgID: app.OrgID}) {
+		return QuietPauseOn
+	}
+	return QuietPauseShadow
+}
+
 // unbilledQuietSeconds applies one instance-minute's proven pause to its
-// resident seconds: it records the pause and, when the mode is on, returns
-// the seconds left to bill.
-func (s *Sampler) unbilledQuietSeconds(paused map[string]state.QuietPausedSeconds, instanceID, plan string, seconds int64) int64 {
+// resident seconds: it records the pause under mode and, when mode is on,
+// returns the seconds left to bill.
+func (s *Sampler) unbilledQuietSeconds(paused map[string]state.QuietPausedSeconds, mode QuietPauseMode, instanceID, plan string, seconds int64) int64 {
 	p, ok := paused[instanceID]
 	if !ok {
 		return seconds
 	}
 	sub := min(max(p.Seconds, 0), seconds)
-	s.quietMetrics.observe(s.quietPause, plan, sub, p.Unproven)
-	if s.quietPause == QuietPauseOn {
+	s.quietMetrics.observe(mode, plan, sub, p.Unproven)
+	if mode == QuietPauseOn {
 		return seconds - sub
 	}
 	return seconds
+}
+
+// quietPausedApp holds one app's unbilled paused usage for a rolled minute
+// until its capacity floor is settled: a floor bills paused seconds back, and
+// those were not free (ADR-20261023171905 rollout step 3).
+type quietPausedApp struct {
+	records []quietPausedRecord
+	// refilled is the seconds the app's floor billed back this minute.
+	refilled int64
+}
+
+type quietPausedRecord struct {
+	accountID, appID, instanceID string
+	seconds                      int64
+	mb                           int
+}
+
+// recordQuietPaused writes the held records for minute, net of the seconds
+// the app's floor billed back, and resets p. The record is the customer's
+// view of their usage, never billing: a failed write is logged and dropped,
+// so it never makes meterd roll again a minute whose rows are written.
+func (s *Sampler) recordQuietPaused(ctx context.Context, p *quietPausedApp, minute time.Time) {
+	records, refilled := p.records, p.refilled
+	*p = quietPausedApp{}
+	if len(records) == 0 {
+		return
+	}
+	store, ok := s.store.(state.QuietPausedUsageStore)
+	if !ok {
+		return
+	}
+	for _, r := range records {
+		back := min(refilled, r.seconds)
+		refilled -= back
+		if r.seconds -= back; r.seconds <= 0 {
+			continue
+		}
+		if err := store.RecordQuietPausedUsage(ctx, r.accountID, r.appID, r.instanceID, minute, r.seconds*int64(r.mb)); err != nil {
+			slog.Default().Warn("meter: record quiet paused usage", "instance_id", r.instanceID, "minute", minute, "err", err)
+		}
+	}
 }
 
 // QuietPauseRetentionOnce deletes pauses older than

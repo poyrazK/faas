@@ -40,6 +40,9 @@ type penaltyHits struct {
 	count  int
 	since  time.Time
 	within time.Duration
+	// firstParty is set once a counted rejection did not say it came from
+	// a page on another site.
+	firstParty bool
 }
 
 type penaltyEntry struct {
@@ -155,11 +158,22 @@ func penaltyClient(ip net.IP) (netip.Prefix, bool) {
 // whether it boxed the client. Counting fails open: with the tables full,
 // the rejection still happens but is not counted.
 func (b *PenaltyBox) Hit(app, rule string, ip net.IP, p api.EdgeRulePenalty) bool {
+	return b.hitFrom(app, rule, ip, p, false)
+}
+
+// HitCrossSite is Hit for a rejection that said it came from a page on
+// another site. It counts the same, but a box every counted rejection of
+// which was cross-site lasts at most api.EdgePenaltyCrossSiteMaxSeconds.
+func (b *PenaltyBox) HitCrossSite(app, rule string, ip net.IP, p api.EdgeRulePenalty) bool {
+	return b.hitFrom(app, rule, ip, p, true)
+}
+
+func (b *PenaltyBox) hitFrom(app, rule string, ip net.IP, p api.EdgeRulePenalty, crossSite bool) bool {
 	client, ok := penaltyClient(ip)
 	if b == nil || !ok || p.Seconds <= 0 {
 		return false
 	}
-	boxed, until := b.hit(app, rule, client, p)
+	boxed, until := b.hit(app, rule, client, p, crossSite)
 	if boxed && b.onBox != nil {
 		b.onBox(PenaltyBoxRecord{AppID: app, RuleID: rule, Client: client, Until: until})
 	}
@@ -168,7 +182,7 @@ func (b *PenaltyBox) Hit(app, rule string, ip net.IP, p api.EdgeRulePenalty) boo
 
 // hit counts one rejection under the lock and reports whether it boxed the
 // client, and until when.
-func (b *PenaltyBox) hit(app, rule string, client netip.Prefix, p api.EdgeRulePenalty) (bool, time.Time) {
+func (b *PenaltyBox) hit(app, rule string, client netip.Prefix, p api.EdgeRulePenalty, crossSite bool) (bool, time.Time) {
 	now := b.now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -178,6 +192,7 @@ func (b *PenaltyBox) hit(app, rule string, client netip.Prefix, p api.EdgeRulePe
 		h = penaltyHits{since: now, within: within}
 	}
 	h.count++
+	h.firstParty = h.firstParty || !crossSite
 	if h.count < max(p.After, 1) {
 		if !seen {
 			if !b.roomForHitLocked(app, now) {
@@ -191,7 +206,11 @@ func (b *PenaltyBox) hit(app, rule string, client netip.Prefix, p api.EdgeRulePe
 	if seen {
 		b.dropHitLocked(key)
 	}
-	until := now.Add(time.Duration(p.Seconds) * time.Second)
+	seconds := p.Seconds
+	if !h.firstParty {
+		seconds = min(seconds, api.EdgePenaltyCrossSiteMaxSeconds)
+	}
+	until := now.Add(time.Duration(seconds) * time.Second)
 	return b.boxLocked(app, client, penaltyEntry{ruleID: rule, until: until}, now), until
 }
 
@@ -405,17 +424,20 @@ func (h *Handler) applyEdgePenaltyBox(w http.ResponseWriter, r *http.Request, ap
 // such as a forged forwarding header or a missing GeoIP database.
 //
 // A browser's cross-site request is one a page elsewhere chose to make, such
-// as an <img> another site embeds: it is still refused but never counts, so
-// a third party cannot get an app's real visitors boxed.
+// as an <img> another site embeds, so a third party could get an app's real
+// visitors boxed with it. It still counts, because any other client can claim
+// to be one with the same header, but a box only such requests made ends
+// within api.EdgePenaltyCrossSiteMaxSeconds (ADR-20261022105846 amendment 3).
 func (h *Handler) penalizeEdgeRuleRejection(r *http.Request, app App, ruleID string) {
-	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		return
-	}
 	p, ok := h.edgeRulePenalty(r, ruleID)
 	if !ok || !h.edgeFeatureReleased(platformflags.EdgePenaltyBox, app) {
 		return
 	}
-	if h.penaltyBox.Hit(app.ID, ruleID, challengeClientIP(r), p) {
+	hit := h.penaltyBox.Hit
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		hit = h.penaltyBox.HitCrossSite
+	}
+	if hit(app.ID, ruleID, challengeClientIP(r), p) {
 		h.metrics.ObserveEdgePenalty(app.ID, "boxed")
 		h.recordPenaltyBoxEvent(r, ruleID, app.ID)
 	}

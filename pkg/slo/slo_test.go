@@ -150,3 +150,20 @@ func TestRollupCapsBackfillAndRetriesFailures(t *testing.T) {
 		t.Fatalf("first recorded hour %v, want the backfill horizon %v", hours[0], horizon)
 	}
 }
+
+// adr: 20261029203000 — an SLO whose account's plan or custom-slos release no
+// longer covers it gets no rollups, and costs no Prometheus queries.
+func TestRollupSkipsUnreleasedSLOs(t *testing.T) {
+	store := state.NewMemStore()
+	def, err := store.CreateSLO(context.Background(), state.SLO{AppID: "app-1", Name: "up", SLI: state.SLIAvailability, ObjectiveBP: 9990, WindowDays: 30}, api.MaxSLOsPerApp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queried := 0
+	prom := &fakeProm{fn: func(string) (float64, error) { queried++; return 1, nil }}
+	r := &Rollup{Store: store, Prom: prom, Released: func(context.Context, state.SLO) bool { return false }}
+	stats, err := r.RunOnce(context.Background(), def.CreatedAt.Add(25*time.Hour))
+	if err != nil || stats.NotReleased != 1 || stats.Recorded != 0 || queried != 0 {
+		t.Fatalf("stats = %+v, err = %v, queries = %d; want the SLO skipped without a query", stats, err, queried)
+	}
+}

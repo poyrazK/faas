@@ -176,3 +176,21 @@ and the scope of the instance's deployment are both the production lane:
 Anything else is `401`. The deployment check also covers tokens minted before
 the claim existed. The workload path now also applies the per-account
 capability decision the API-key path applies (ADR-20261023115741).
+
+## Amendment 2026-10-27 — qualification candidates take no external action
+
+A held GitOps qualification candidate (ADR-568) cold-boots with its app's
+real identity, because the wake must name the app, deployment and account.
+Its code is not approved to act as the app (ADR-20261019152416: "no identity
+is minted for a held deployment"), but only qualification restores carried an
+empty identity: a cold-booted candidate could mint workload-identity tokens,
+call managed integrations through the outbound relay, and publish events to
+the account's bus, and the 2026-10-24 amendment extended that to its boot
+window. A security audit found it.
+
+- The booting record carries `qualification`, and a live instance its
+  `QualificationOnly`. `InstanceExternalActionIdentity` (tokens, relay,
+  events) and the rehearsal relay refuse both with
+  `ErrQualificationExternalActionDenied`; vmmd answers a token request with
+  `qualification_identity_unavailable`.
+- Read-only metadata keeps the ordinary `InstanceIdentity` path.

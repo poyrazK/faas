@@ -40,3 +40,30 @@ func TestNodeRuntimeForSpec(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261029103512 — runner-node22 is Alpine; glibc builds never land on it.
+func TestMuslRunner(t *testing.T) {
+	if !MuslRunner(RuntimeNode22) || MuslRunner(RuntimeNode24) || MuslRunner("") {
+		t.Fatalf("MuslRunner: node22=%v node24=%v empty=%v; want true false false", MuslRunner(RuntimeNode22), MuslRunner(RuntimeNode24), MuslRunner(""))
+	}
+}
+
+// railpack.json's packages.node would be overwritten by the builder's pin, so
+// it must agree with .nvmrc or engines.node.
+func TestNodeRuntimeForSpecs(t *testing.T) {
+	for _, tc := range []struct {
+		specs []string
+		want  string
+	}{
+		{nil, RuntimeNode24},
+		{[]string{"24"}, RuntimeNode24},
+		{[]string{"24", ">=20"}, RuntimeNode24},
+		{[]string{"24", "20"}, ""},
+		{[]string{"22", "24"}, ""},
+		{[]string{"20"}, ""},
+	} {
+		if got := NodeRuntimeForSpecs(tc.specs); got != tc.want {
+			t.Errorf("NodeRuntimeForSpecs(%q) = %q, want %q", tc.specs, got, tc.want)
+		}
+	}
+}

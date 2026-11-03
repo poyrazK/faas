@@ -262,6 +262,11 @@
       {% for cidr in (faas_postgres_allowed_cidrs | default([])) %}
       host    faas            +faas_runtime                           {{ cidr }}                scram-sha-256
       {% endfor %}
+      # ADR-1027: database nodes' pgproxyd reads role verifiers as the
+      # read-only faas_pgproxyd role (database_node.yml creates it).
+      {% for cidr in (faas_postgres_pgproxyd_cidrs | default([])) %}
+      host    faas            faas_pgproxyd                           {{ cidr }}                scram-sha-256
+      {% endfor %}
       {% if faas_postgres_standby_address | default('') %}
       # ADR-1344 §8: the warm standby streams WAL from this address only, over
       # TLS (the standby verifies the certificate issued below).
@@ -294,6 +299,7 @@
       faas_map faas-githubd faas
       faas_map faas-outboundd faas
       faas_map faas-bridged faas
+      faas_map faas-mcp-bridge faas
       # ADR-20261023104734: each daemon user may also log in as its own
       # faas_runtime member (FAAS_DB_ROLE). The lines mapping it to the owner
       # above are removed once every unit has moved.
@@ -304,6 +310,7 @@
       faas_map faas-githubd faas_githubd
       faas_map faas-outboundd faas_outboundd
       faas_map faas-bridged faas_bridged
+      faas_map faas-mcp-bridge faas_mcp_bridge
   register: pg_ident
   failed_when: false
   notify: reload postgresql

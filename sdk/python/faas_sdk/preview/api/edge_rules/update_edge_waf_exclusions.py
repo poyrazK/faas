@@ -106,7 +106,7 @@ def sync_detailed(
 ) -> Response[EdgeRuleResponse | Problem]:
     """Add or remove CRS rule IDs on a kind=waf rule's exclusions.
 
-     ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+     Changes exclude_rule_ids and keeps the rest of
     the rule's action and its penalty, so silencing a false positive does
     not mean restating the whole action. Recorded as a new rule-set
     version like any PATCH.
@@ -115,7 +115,7 @@ def sync_detailed(
         id (str):
         if_match (str | Unset):
         body (EdgeWAFExclusionsRequest): CRS rule IDs to add to and remove from a kind=waf rule's
-            exclude_rule_ids (ADR-831 amendment 13).
+            exclude_rule_ids.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -147,7 +147,7 @@ def sync(
 ) -> EdgeRuleResponse | Problem | None:
     """Add or remove CRS rule IDs on a kind=waf rule's exclusions.
 
-     ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+     Changes exclude_rule_ids and keeps the rest of
     the rule's action and its penalty, so silencing a false positive does
     not mean restating the whole action. Recorded as a new rule-set
     version like any PATCH.
@@ -156,7 +156,7 @@ def sync(
         id (str):
         if_match (str | Unset):
         body (EdgeWAFExclusionsRequest): CRS rule IDs to add to and remove from a kind=waf rule's
-            exclude_rule_ids (ADR-831 amendment 13).
+            exclude_rule_ids.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -183,7 +183,7 @@ async def asyncio_detailed(
 ) -> Response[EdgeRuleResponse | Problem]:
     """Add or remove CRS rule IDs on a kind=waf rule's exclusions.
 
-     ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+     Changes exclude_rule_ids and keeps the rest of
     the rule's action and its penalty, so silencing a false positive does
     not mean restating the whole action. Recorded as a new rule-set
     version like any PATCH.
@@ -192,7 +192,7 @@ async def asyncio_detailed(
         id (str):
         if_match (str | Unset):
         body (EdgeWAFExclusionsRequest): CRS rule IDs to add to and remove from a kind=waf rule's
-            exclude_rule_ids (ADR-831 amendment 13).
+            exclude_rule_ids.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -222,7 +222,7 @@ async def asyncio(
 ) -> EdgeRuleResponse | Problem | None:
     """Add or remove CRS rule IDs on a kind=waf rule's exclusions.
 
-     ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+     Changes exclude_rule_ids and keeps the rest of
     the rule's action and its penalty, so silencing a false positive does
     not mean restating the whole action. Recorded as a new rule-set
     version like any PATCH.
@@ -231,7 +231,7 @@ async def asyncio(
         id (str):
         if_match (str | Unset):
         body (EdgeWAFExclusionsRequest): CRS rule IDs to add to and remove from a kind=waf rule's
-            exclude_rule_ids (ADR-831 amendment 13).
+            exclude_rule_ids.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

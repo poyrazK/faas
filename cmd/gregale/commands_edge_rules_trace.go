@@ -76,7 +76,7 @@ func cmdEdgeRulesTrace(args []string) int {
 		}
 	} else {
 		if *slug == "" || *rawURL == "" {
-			PrintUsage(os.Stderr, "usage: gregale edge-rules trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--asn AS] [--verified-bot] [--body-file <path|->]) [--proposal <file|->] [--add-rule JSON|@file]... [--remove-rule ID]...", "edge-rules")
+			PrintUsage(os.Stderr, "usage: gregale edge rule trace (--config <file|-> | --app <slug> --url <http(s)://host/path> [--project <slug> --environment <slug>] [--method GET] [--header Name:Value]... [--client-ip IP] [--country CC] [--asn AS] [--verified-bot] [--body-file <path|->]) [--proposal <file|->] [--add-rule JSON|@file]... [--remove-rule ID]...", "edge-rules")
 			return 1
 		}
 		u, parseErr := url.Parse(*rawURL)
@@ -189,9 +189,19 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("Invalid trace input", err)
 	}
-	rules, err := client.ListEdgeRulesForApp(context.Background(), input.App)
+	// The account's other apps' rules whose host pattern covers this host
+	// apply too (ADR-091 amendment 2026-10-31).
+	rules, err := client.ListCoveringEdgeRulesForApp(context.Background(), input.App)
 	if err != nil {
 		return printErr("List failed", err)
+	}
+	if app.PreviewOfSlug != "" {
+		// A preview also applies its production app's app-wide rules.
+		production, prodErr := client.ListEdgeRulesForApp(context.Background(), app.PreviewOfSlug)
+		if prodErr != nil {
+			return printErr("List failed", prodErr)
+		}
+		rules = append(rules, edgeruletrace.PreviewInheritedRules(production)...)
 	}
 	// Context loading below must cover kinds the proposal introduces too.
 	contextRules := rules

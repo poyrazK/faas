@@ -283,7 +283,7 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 	}
 }
 
-// ApplyLayerGz applies a gzip-compressed layer.
+// ApplyLayerGz applies a gzip- or zstd-compressed layer.
 func ApplyLayerGz(dst string, r io.Reader) error {
 	return ApplyLayerGzWithResolver(dst, r, nil)
 }
@@ -340,10 +340,13 @@ func applyLayerGzForBuild(dst string, r io.Reader, independentRoot bool, opaqueR
 	})
 }
 
+// applyLayerGz applies one compressed OCI layer. Despite the historical name
+// it accepts gzip or zstd (OpenCompressedLayer); every Gz entry point above
+// shares it.
 func applyLayerGz(dst string, r io.Reader, opts layerApplyOptions) error {
-	zr, err := gzip.NewReader(r)
+	zr, err := OpenCompressedLayer(r)
 	if err != nil {
-		return fmt.Errorf("rootfs: gzip: %w", err)
+		return err
 	}
 	defer func() { _ = zr.Close() }()
 	var uncompressed io.Reader = zr
@@ -359,10 +362,11 @@ func applyLayerGz(dst string, r io.Reader, opts layerApplyOptions) error {
 // drainLayer reads the rest of a layer after its tar end-of-archive marker.
 // A registry blob reader checks the blob digest only when it reaches EOF, so
 // stopping at the tar trailer would apply a layer whose bytes were never
-// verified. Reading the gzip stream to its end also checks the gzip CRC and
-// finishes any uncompressed-digest verification before mkfs or verified
-// consumption. Bytes after the final gzip member are tolerated, as before, but
-// still read so they count toward the digest.
+// verified. Reading the compressed stream to its end also checks the gzip CRC
+// or zstd frame checksum and finishes any uncompressed-digest verification
+// before mkfs or verified consumption. Bytes after the final gzip member are
+// tolerated, as before, but still read so they count toward the digest; zstd
+// has no such legacy and must end cleanly.
 func drainLayer(uncompressed, r io.Reader) error {
 	if _, err := io.Copy(io.Discard, uncompressed); err != nil && !errors.Is(err, gzip.ErrHeader) {
 		return fmt.Errorf("rootfs: read layer: %w", err)

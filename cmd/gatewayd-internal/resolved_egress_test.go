@@ -98,7 +98,8 @@ func TestResolvedEgressHookUsesTheLocalNodeID(t *testing.T) {
 	nodes := &namedNodes{ids: map[string]string{name: id}}
 	rec := &recordingResolvedEgressClient{}
 	clients := &vmmdByID{clients: map[string]*recordingResolvedEgressClient{id: rec}}
-	hook := newResolvedEgressHook(clients, newLocalNodeID(nodes, name), nil, nil)
+	local := newLocalNodeID(nodes, name)
+	hook := newResolvedEgressHook(clients, local, nil, nil)
 	addrs := []netip.Addr{netip.MustParseAddr("104.20.22.46")}
 
 	for i := 0; i < 3; i++ {
@@ -118,7 +119,9 @@ func TestResolvedEgressHookUsesTheLocalNodeID(t *testing.T) {
 		t.Fatalf("request = %+v", rec.req)
 	}
 
-	// A missing client forgets the id, so a re-registered node is re-resolved.
+	// A missing client marks the id for a re-resolve, so a re-registered
+	// node is picked up; it runs in the background while the cached id
+	// keeps answering, so DNS answers never wait on the control plane.
 	delete(clients.clients, id)
 	if err := hook(context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err == nil {
 		t.Fatal("an unavailable local vmmd must surface")
@@ -127,6 +130,13 @@ func TestResolvedEgressHookUsesTheLocalNodeID(t *testing.T) {
 	if err := hook(context.Background(), "10.100.0.2:1", "api.example.com", addrs, time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	local.mu.Lock()
+	done := local.recheckDone
+	local.mu.Unlock()
+	if done == nil {
+		t.Fatal("no re-resolve started after the miss")
+	}
+	<-done
 	if nodes.calls != 2 {
 		t.Fatalf("name resolved %d times after a miss, want 2", nodes.calls)
 	}

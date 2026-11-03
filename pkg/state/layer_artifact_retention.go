@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 var ErrLayerArtifactRetired = fmt.Errorf("state: immutable layer artifact is retired: %w", ErrConflict)
@@ -109,7 +111,8 @@ func (m *MemStore) deploymentLayerKeysLocked(d Deployment) []string {
 
 func (m *MemStore) deploymentLayerArtifactReferencedLocked(d Deployment) bool {
 	now := time.Now().UTC()
-	active := d.DeletedAt == nil && (d.Status == DeployLive || !d.Status.IsTerminal()) || m.workflowRetainsDeploymentLocked(d.ID) || m.workloadRetirementRetainsDeploymentLocked(d.ID) || m.recoveryProtectedDeploymentLocked(d.ID)
+	active := d.DeletedAt == nil && (d.Status == DeployLive || !d.Status.IsTerminal()) || m.workflowRetainsDeploymentLocked(d.ID) || m.workloadRetirementRetainsDeploymentLocked(d.ID) || m.recoveryProtectedDeploymentLocked(d.ID) ||
+		m.rollbackWindowRetainsDeploymentLocked(d)
 	for _, instance := range m.instances {
 		active = active || instance.DeploymentID == d.ID && layerArtifactInstanceActive(instance.State)
 	}
@@ -128,6 +131,28 @@ func (m *MemStore) deploymentLayerArtifactReferencedLocked(d Deployment) bool {
 		}
 	}
 	return active
+}
+
+// rollbackWindowRetainsDeploymentLocked mirrors LayerArtifactHasReferences: a
+// superseded deployment among the newest SnapshotRollbackRetentionDeployments
+// live or superseded deployments of its app and scope is a rollback target,
+// whose cold boot needs its layers whatever state its snapshots are in (Hunt
+// 21 H21-1).
+func (m *MemStore) rollbackWindowRetainsDeploymentLocked(d Deployment) bool {
+	if d.DeletedAt != nil || d.Status != DeploySuperseded {
+		return false
+	}
+	newer := 0
+	for _, n := range m.deployments {
+		if n.AppID != d.AppID || normalizedDeploymentScope(n.Scope) != normalizedDeploymentScope(d.Scope) || n.DeletedAt != nil ||
+			n.Status != DeployLive && n.Status != DeploySuperseded {
+			continue
+		}
+		if n.CreatedAt.After(d.CreatedAt) || n.CreatedAt.Equal(d.CreatedAt) && n.ID > d.ID {
+			newer++
+		}
+	}
+	return newer < api.SnapshotRollbackRetentionDeployments
 }
 
 func (m *MemStore) layerArtifactReferencedLocked(key string) bool {

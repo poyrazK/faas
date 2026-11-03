@@ -174,6 +174,9 @@ func (s *server) prepareProjectEnvironmentCloneDatabases(ctx context.Context, le
 	if len(plans) > 0 && s.managedPostgres == nil {
 		return lease, false, managedpostgres.ErrUnavailable
 	}
+	if len(plans) > 0 && time.Now().Before(point.Add(s.cloneDataPointSettle)) {
+		return lease, false, nil
+	}
 	ready := true
 	for _, plan := range plans {
 		renewed, err := leases.RenewProjectEnvironmentCloneLease(ctx, lease, projectEnvironmentCloneWorkerLeaseDuration)
@@ -221,12 +224,16 @@ func (s *server) restoreCapturedProjectEnvironmentDatabase(ctx context.Context, 
 		limit, admissionErr := s.managedPostgres.AdmitRestoreReservation(ctx, plan.source.AccountID, managedpostgres.RestoreSourceDefinition{
 			Spec: plan.source.Spec, BackendID: plan.source.BackendID, BackendFingerprint: plan.source.BackendFingerprint, ProviderResourceID: plan.source.ProviderResourceID, DataResourceID: plan.source.DataResourceID})
 		if admissionErr != nil {
-			return managedpostgres.Database{}, admissionErr
+			return managedpostgres.Database{}, cloneDatabaseRefusal(admissionErr)
 		}
 		reservation, _, err = databases.ReserveProjectEnvironmentCloneDatabase(ctx, lease, plan.source.ID, limit)
+		err = cloneDatabaseRefusal(err)
 	}
 	if err != nil {
 		return managedpostgres.Database{}, err
+	}
+	if reservation.State == string(managedpostgres.StateFailed) {
+		return managedpostgres.Database{}, errCloneTargetDatabaseFailed
 	}
 	// Reconcile is an internal lifecycle read; customer Get/Restore deliberately
 	// cannot read this owned target until complete publication. Provider restore
@@ -242,6 +249,18 @@ func (s *server) restoreCapturedProjectEnvironmentDatabase(ctx context.Context, 
 		return managedpostgres.Database{}, state.ErrConflict
 	}
 	return target, nil
+}
+
+// cloneDatabaseRefusal ends the clone at once when the account or provider
+// refuses the restore outright (database quota, closed provisioning, an
+// unsupported spec). Retrying until the deadline would only keep the copies
+// already restored running and billed, then report the wrong cause.
+func cloneDatabaseRefusal(err error) error {
+	if errors.Is(err, managedpostgres.ErrQuotaExceeded) || errors.Is(err, state.ErrQuotaExceeded) ||
+		errors.Is(err, managedpostgres.ErrProvisioningClosed) || errors.Is(err, managedpostgres.ErrUnsupported) {
+		return fmt.Errorf("%w: %w", errCloneTargetDatabaseFailed, err)
+	}
+	return err
 }
 
 func verifyCapturedProjectEnvironmentDatabaseTarget(plan capturedProjectEnvironmentDatabasePlan, point time.Time, resource state.ProjectEnvironmentCloneResource, target managedpostgres.Database) error {

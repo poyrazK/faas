@@ -3,6 +3,7 @@ package managedrealtime
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -42,7 +43,9 @@ func (s *Service) ManagedRealtimePushPreferences(w http.ResponseWriter, r *http.
 
 		if err := store.PutManagedRealtimeNotificationPreferences(r.Context(), ep.ID, principal, p); err != nil {
 			if errors.Is(err, state.ErrManagedRealtimeDurableCursorLimit) {
-				api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Notification preference limit reached", "the endpoint has reached its 256 user preference document limit"))
+				limits, _ := api.RealtimeLimitsFor(acct.Plan)
+				api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Notification preference limit reached",
+					fmt.Sprintf("the account keeps preferences for at most %d users on its plan; setting a user's preferences back to the defaults frees a slot; see https://gregale.dev/docs/realtime", limits.NotificationPreferencesPerAccount)))
 			} else {
 				s.writeRealtimeInboxError(w, r, err)
 			}

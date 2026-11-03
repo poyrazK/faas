@@ -321,10 +321,16 @@ type StatsReader interface {
 type Server struct {
 	scheddpb.UnimplementedScheddServer
 
+	// databases is the database scheduler (ADR-1027); nil keeps the
+	// database RPCs UNIMPLEMENTED.
+	databases DatabaseScheduler
+
 	engine SchedAPI
 	stats  StatsReader
-	ops    *wire.OpsMetrics
-	log    *slog.Logger
+	// agentRuns serves RunAgent (ADR-20261027090010 §6); nil answers Unimplemented.
+	agentRuns AgentRunRunner
+	ops       *wire.OpsMetrics
+	log       *slog.Logger
 	// owner is the durable Phase 2 / Gate A shard key this schedd
 	// serves. Empty for the legacy single-box posture. Set via
 	// (*Server).WithOwner at wiring time (cmd/schedd resolves it
@@ -1438,6 +1444,17 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 			}); ok {
 				if sink := provider.InstanceBridgeSink(); sink != nil {
 					sink(report.NodeID, time.Now(), v.GetValue())
+				}
+			}
+		}
+		// ADR 20261030100950: the node's CPU pressure readings, kept only
+		// when vmmd sent both.
+		if p, b := msg.GetTenantCpuPressureSomeAvg10(), msg.GetHostCpuBusyPercent(); p != nil && b != nil {
+			if provider, ok := s.engine.(interface {
+				CPUPressureSink() sched.CPUPressureSink
+			}); ok {
+				if sink := provider.CPUPressureSink(); sink != nil {
+					sink(report.NodeID, time.Now(), sched.NodeCPUPressure{SomeAvg10: p.GetValue(), BusyPercent: b.GetValue()})
 				}
 			}
 		}

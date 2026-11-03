@@ -174,7 +174,7 @@ func cmdAutomationsHealth(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" {
-		PrintUsage(os.Stderr, "usage: gregale automations health --app <slug> [--stall-after-seconds N] | --app <slug> --name <name> [--created-after RFC3339] [--created-before RFC3339]", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation health --app <slug> [--stall-after-seconds N] | --app <slug> --name <name> [--created-after RFC3339] [--created-before RFC3339]", "automations")
 		return 1
 	}
 	if strings.TrimSpace(*name) == "" {
@@ -235,7 +235,7 @@ func parseAutomationHealthOptions(createdAfter, createdBefore string, now time.T
 
 func cmdAutomationsRevisions(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale automations revisions <list|show>", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation revisions <list|show>", "automations")
 		return 1
 	}
 	switch args[0] {
@@ -259,7 +259,7 @@ func cmdAutomationsRevisionsList(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*name) == "" || *limit < 1 || *limit > 100 || *offset < 0 {
-		PrintUsage(os.Stderr, "usage: gregale automations revisions list --app <slug> --name <name> [--limit 1..100] [--offset <n>]", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation revisions list --app <slug> --name <name> [--limit 1..100] [--offset <n>]", "automations")
 		return 1
 	}
 	client, err := authedClient()
@@ -283,7 +283,7 @@ func cmdAutomationsRevisionsShow(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*name) == "" || *revision <= 0 {
-		PrintUsage(os.Stderr, "usage: gregale automations revisions show --app <slug> --name <name> --revision <n> [--definition-out <path>]", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation revisions show --app <slug> --name <name> --revision <n> [--definition-out <path>]", "automations")
 		return 1
 	}
 	if *definitionOut != "" && strings.TrimSpace(*definitionOut) == "" {
@@ -310,7 +310,7 @@ func cmdAutomationsRestore(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*name) == "" || *revision <= 0 || *expectedVersion < 0 {
-		PrintUsage(os.Stderr, "usage: gregale automations restore --app <slug> --name <name> --revision <n> --expected-version <n>", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation restore --app <slug> --name <name> --revision <n> --expected-version <n>", "automations")
 		return 1
 	}
 	client, err := authedClient()
@@ -335,7 +335,7 @@ func cmdAutomationsDelete(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*name) == "" || *expectedVersion <= 0 {
-		PrintUsage(os.Stderr, "usage: gregale automations delete --app <slug> --name <name> --expected-version <n> --yes [--restore-manifest]", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation delete --app <slug> --name <name> --expected-version <n> --yes [--restore-manifest]", "automations")
 		return 1
 	}
 	if !*yes {
@@ -365,7 +365,7 @@ func cmdAutomationsSimulate(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*file) == "" {
-		PrintUsage(os.Stderr, "usage: gregale automations simulate --app <slug> --file <path> [--input-file <path>] [--mock-outputs-file <path>] [--mock-item-outputs-file <path>] [--mock-attempts-file <path>] [--mock-item-attempts-file <path>] [--require-complete]", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation simulate --app <slug> --file <path> [--input-file <path>] [--mock-outputs-file <path>] [--mock-item-outputs-file <path>] [--mock-attempts-file <path>] [--mock-item-attempts-file <path>] [--require-complete]", "automations")
 		return 1
 	}
 	definition, ok := readAutomationDefinition(*file)
@@ -394,7 +394,7 @@ func cmdAutomationsList(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" {
-		PrintUsage(os.Stderr, "usage: gregale automations list --app <slug>", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation list --app <slug>", "automations")
 		return 1
 	}
 	client, err := authedClient()
@@ -418,7 +418,7 @@ func cmdAutomationsGet(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*name) == "" || (*published && *definitionOut == "") {
-		PrintUsage(os.Stderr, "usage: gregale automations get --app <slug> --name <name> [--definition-out <path> [--published]]", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation get --app <slug> --name <name> [--definition-out <path> [--published]]", "automations")
 		return 1
 	}
 	if *definitionOut != "" && strings.TrimSpace(*definitionOut) == "" {
@@ -443,7 +443,7 @@ func cmdAutomationsValidate(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*file) == "" {
-		PrintUsage(os.Stderr, "usage: gregale automations validate --app <slug> --file <path>", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation validate --app <slug> --file <path>", "automations")
 		return 1
 	}
 	definition, ok := readAutomationDefinition(*file)
@@ -470,7 +470,7 @@ func cmdAutomationsApply(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*file) == "" || *expectedVersion < 0 {
-		PrintUsage(os.Stderr, "usage: gregale automations apply --app <slug> --file <path> --expected-version <n>", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation apply --app <slug> --file <path> --expected-version <n>", "automations")
 		return 1
 	}
 	definition, ok := readAutomationDefinition(*file)
@@ -515,7 +515,7 @@ func cmdAutomationsPublish(args []string) int {
 		return printErr("Invalid automation scenarios", errors.New("--scenarios requires a nonempty suite path"))
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*name) == "" || *expectedVersion < 0 {
-		PrintUsage(os.Stderr, "usage: gregale automations publish --app <slug> --name <name> --expected-version <n> [--take-over-manifest] [--scenarios <path>] [--require-coverage]", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automation publish --app <slug> --name <name> --expected-version <n> [--take-over-manifest] [--scenarios <path>] [--require-coverage]", "automations")
 		return 1
 	}
 	var scenarios []loadedAutomationScenario
@@ -1013,7 +1013,7 @@ func writeAutomationHealthRunHints(w io.Writer, health api.AutomationHealthRespo
 		return nil
 	}
 	app, name := automationCommandArgument(health.AppSlug), automationCommandArgument(health.AutomationName)
-	base := fmt.Sprintf("gregale automations runs --app %s --name %s --created-after %s --created-before %s", app, name, health.WindowStart.UTC().Format(time.RFC3339Nano), health.WindowEnd.UTC().Format(time.RFC3339Nano))
+	base := fmt.Sprintf("gregale automation runs --app %s --name %s --created-after %s --created-before %s", app, name, health.WindowStart.UTC().Format(time.RFC3339Nano), health.WindowEnd.UTC().Format(time.RFC3339Nano))
 	if _, err := fmt.Fprintf(w, "\nRun history for this window: %s\n", base); err != nil {
 		return err
 	}
@@ -1025,7 +1025,7 @@ func writeAutomationHealthRunHints(w io.Writer, health api.AutomationHealthRespo
 		}
 	}
 	if health.LastFailure != nil && workflowUUIDPattern.MatchString(health.LastFailure.ID) {
-		_, err := fmt.Fprintf(w, "Diagnose last failure: gregale automations diagnose --app %s --name %s --run %s\n", app, name, health.LastFailure.ID)
+		_, err := fmt.Fprintf(w, "Diagnose last failure: gregale automation diagnose --app %s --name %s --run %s\n", app, name, health.LastFailure.ID)
 		return err
 	}
 	return nil

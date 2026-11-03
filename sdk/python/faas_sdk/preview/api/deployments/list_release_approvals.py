@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ListReleaseApprovalsResponse | Problem]:
-    """List an app's releases waiting for approval (ADR-20261020085706).
+    """List an app's releases waiting for approval.
 
      Releases in state waiting, and those past their timeout that the canary worker is about to abort.
 
@@ -101,7 +101,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ListReleaseApprovalsResponse | Problem | None:
-    """List an app's releases waiting for approval (ADR-20261020085706).
+    """List an app's releases waiting for approval.
 
      Releases in state waiting, and those past their timeout that the canary worker is about to abort.
 
@@ -127,7 +127,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ListReleaseApprovalsResponse | Problem]:
-    """List an app's releases waiting for approval (ADR-20261020085706).
+    """List an app's releases waiting for approval.
 
      Releases in state waiting, and those past their timeout that the canary worker is about to abort.
 
@@ -156,7 +156,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ListReleaseApprovalsResponse | Problem | None:
-    """List an app's releases waiting for approval (ADR-20261020085706).
+    """List an app's releases waiting for approval.
 
      Releases in state waiting, and those past their timeout that the canary worker is about to abort.
 

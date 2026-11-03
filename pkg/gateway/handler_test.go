@@ -1844,15 +1844,16 @@ func TestHandlerObserveWakeLocality(t *testing.T) {
 			wantLocalCB:   0,
 		},
 		{
-			name: "pick-fail failure increments neither counter",
+			name: "transient pick miss after a cold admit is served and counted once",
 			setup: func(b *fakeBackend) {
-				// Drive an admit so cold==true is in play, then force
-				// Pick to fail mid-request. The handler returns 503
-				// before the after-proxy chokepoint.
+				// Drive an admit so cold==true is in play, then force one
+				// Pick to miss. The handler waits for a routable target
+				// (settleAtCapacity, #5709), finds the admitted one and
+				// serves it through the after-proxy chokepoint.
 				b.failNextPick = true
 			},
 			wantLocalSnap: 0,
-			wantLocalCB:   0,
+			wantLocalCB:   1,
 		},
 	}
 	for _, tc := range cases {
@@ -4480,7 +4481,7 @@ func TestStampRequestBudget_LogsEndpointSanitized(t *testing.T) {
 		t.Fatalf("budget_stamped log line not emitted; buffer empty")
 	}
 	// Sanity: one log record, terminated by a single newline.
-	if got := strings.Count(out, "\n"); got < 1 || strings.Count(out, "\n") != strings.Count(out, "\n") {
+	if got := strings.Count(out, "\n"); got != 1 {
 		t.Fatalf("log output not newline-terminated: %q", out)
 	}
 	// The injected raw LF must not appear inside the structured

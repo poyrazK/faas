@@ -34,6 +34,18 @@ type Principal struct {
 	Runtime      string    `json:"runtime"`
 	Plan         api.Plan  `json:"plan"`
 	StartedAt    time.Time `json:"started_at"`
+	// Pool is the app's resource owner (an organization, or the account),
+	// whose plan Plan is and whose upload quota the upload counts in. An
+	// older vmmd leaves it empty: the account's.
+	Pool string `json:"pool,omitempty"`
+}
+
+// quotaKey is the pool an upload counts in.
+func (p Principal) quotaKey() string {
+	if p.Pool != "" {
+		return p.Pool
+	}
+	return p.AccountID
 }
 
 // Upload is the guest's contribution. It contains no tenant or deployment
@@ -58,6 +70,13 @@ type accountWindow struct {
 	count   int
 	touched time.Time
 }
+
+// retryEntry is one upload in the replay cache, in arrival order.
+type retryEntry struct {
+	id string
+	at time.Time
+}
+
 type Service struct {
 	Backend    Backend
 	clock      func() time.Time
@@ -66,6 +85,9 @@ type Service struct {
 	accounts   map[string]accountWindow
 	accepted   *prometheus.CounterVec
 	duplicates map[string]time.Time
+	// retryOrder holds duplicates' entries oldest first, so expiry and
+	// eviction never scan the whole cache.
+	retryOrder []retryEntry
 	inflight   map[string]bool
 	failures   map[string]time.Time
 }
@@ -96,6 +118,9 @@ func validPrincipal(p Principal) bool {
 			return false
 		}
 	}
+	if _, err := uuid.Parse(p.Pool); p.Pool != "" && err != nil {
+		return false
+	}
 	if p.StartedAt.IsZero() || p.Generation == "" || len(p.Generation) > api.ProfileMaxGenerationBytes || api.ValidateScope(p.Scope) != nil {
 		return false
 	}
@@ -110,10 +135,8 @@ func (s *Service) admit(account string, limit int, now time.Time) bool {
 			delete(s.accounts, key)
 		}
 	}
-	for key, at := range s.duplicates {
-		if now.Sub(at) > api.ProfileRetryCacheTTL {
-			delete(s.duplicates, key)
-		}
+	for len(s.retryOrder) > 0 && now.Sub(s.retryOrder[0].at) > api.ProfileRetryCacheTTL {
+		s.forgetOldestUploadLocked()
 	}
 	w, exists := s.accounts[account]
 	if !exists && len(s.accounts) >= api.ProfileMaxTrackedAccounts {
@@ -155,7 +178,7 @@ func (s *Service) Push(ctx context.Context, e Envelope) (result error) {
 			s.recordFailure(ctx, e.Principal)
 		}
 	}()
-	if !s.admit(e.Principal.AccountID, limits.Profiling.UploadsPerMinute, s.clock()) {
+	if !s.admit(e.Principal.quotaKey(), limits.Profiling.UploadsPerMinute, s.clock()) {
 		s.accepted.WithLabelValues("limited").Inc()
 		return status.Error(codes.ResourceExhausted, "profile upload quota exceeded")
 	}
@@ -217,12 +240,9 @@ func (s *Service) push(ctx context.Context, e Envelope) error {
 		return status.Error(codes.Unavailable, "profile upload in progress")
 	}
 	_, seen := s.duplicates[id]
-	if !seen && len(s.duplicates) < api.ProfileMaxTrackedAccounts {
-		s.duplicates[id] = s.clock()
+	if !seen {
+		s.rememberUploadLocked(id, s.clock())
 		s.inflight[id] = true
-	} else if !seen {
-		s.mu.Unlock()
-		return status.Error(codes.ResourceExhausted, "profile retry cache is full")
 	}
 	s.mu.Unlock()
 	if seen {
@@ -264,6 +284,29 @@ func (s *Service) push(ctx context.Context, e Envelope) error {
 	exported = true
 	s.accepted.WithLabelValues("accepted").Inc()
 	return nil
+}
+
+// rememberUploadLocked records an upload in the replay cache. At the bound it
+// evicts the oldest entries instead of refusing: the cache is shared by every
+// tenant on the node, and one tenant's volume must not block another's
+// uploads. The caller holds s.mu.
+func (s *Service) rememberUploadLocked(id string, now time.Time) {
+	for len(s.duplicates) >= api.ProfileRetryCacheMaxEntries && len(s.retryOrder) > 0 {
+		s.forgetOldestUploadLocked()
+	}
+	s.duplicates[id] = now
+	s.retryOrder = append(s.retryOrder, retryEntry{id: id, at: now})
+}
+
+// forgetOldestUploadLocked drops the oldest cache entry. An entry already
+// removed after a failed export, or re-added since, is left alone.
+func (s *Service) forgetOldestUploadLocked() {
+	oldest := s.retryOrder[0]
+	s.retryOrder[0] = retryEntry{}
+	s.retryOrder = s.retryOrder[1:]
+	if at, ok := s.duplicates[oldest.id]; ok && at.Equal(oldest.at) {
+		delete(s.duplicates, oldest.id)
+	}
 }
 
 // The internal unary RPC uses well-known protobuf messages. BytesValue holds

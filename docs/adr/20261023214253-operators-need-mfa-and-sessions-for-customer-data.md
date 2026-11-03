@@ -76,7 +76,7 @@ tenant's data with no second factor.
    `/v1/admin/accounts/{id}/flags` and `/v1/audit-log/all` (which had no MFA
    gate). Other `/v1/admin/*` reads (config, flags, billing catalog, data
    repairs, GitHub recovery queues, operator intents, rekey progress) keep
-   their chains. A follow-up moves them onto `requireOperatorRead`.
+   their chains. A follow-up moves them onto the two policies (Amendment 1).
 5. **A route's tier is pinned by a test.** A table test in
    `operator_read_policy_test.go` lists every route above and asserts which
    tier it is in. A new provider read picks a helper at the route table.
@@ -130,3 +130,37 @@ beside apid N-1 during a deploy.
 - In-repo bearer clients of the session-only routes are the ADR-093 script
   and `gregalectl obs` run with `--admin-token` or without a session. The
   Operations console uses a session.
+
+## Amendment 1 (2026-10-25): the remaining provider reads
+
+Every `GET /v1/admin/*` route now uses one of the two policies, except
+`GET /v1/admin/status/incidents` (below). The criterion is Decision 4's:
+a response that carries account or app identifiers is session only.
+
+| Route | Tier | Why |
+|---|---|---|
+| `ops/data-repairs` | Session only | each item carries `account_id` |
+| `operator-intents/{id}` | Session only | instance intents carry `account_id` and target ids |
+| `ops/github/recovery` | Session only | check updates carry deployment ids and GitHub errors |
+| `config`, `config/{key}/revisions`, `config-operations/{id}` | Session only | runtime config holds the `platform_flag.*` entries, whose rules list account ids |
+| `flags`, `flags/{key}`, `flags/{key}/decision` | Session only | rules list account ids; a decision answers for one account |
+| `billing-paddle-catalog` | Bearer-readable | the provider price catalog |
+| `billing-paddle-overage/preflight` | Bearer-readable | schema checks and row counts |
+| `secrets/rekey-progress` | Bearer-readable | counts and an opaque cursor |
+
+- **What changes.** The routes that had no MFA gate (Paddle catalog and
+  preflight, operator intents, config revisions and operations, rekey
+  progress) now refuse an `mfa_pending` session. All twelve refuse a session
+  of an operator with no authenticator. The nine session-only routes refuse
+  operator keys unless `FAAS_OPERATOR_BEARER_READS=deprecated`.
+- **Clients.** Every in-repo client of the session-only routes already uses
+  the operator session: `gregalectl flags`, `config`, `github`, the
+  compute-node and instance commands that poll operator intents, and the
+  Operations console. The customer CLI's Paddle catalog commands use a key
+  and stay on the bearer-readable tier.
+- **`status/incidents`** stays session only with no grace, as the Migration
+  section says. It now also checks the allowlist at the route table and
+  refuses an operator with no authenticator.
+- **Pinned.** `operator_read_policy_test.go` lists every route's tier and
+  scans the route table: a `GET /v1/admin/*` registration without one of the
+  two policies fails the test.

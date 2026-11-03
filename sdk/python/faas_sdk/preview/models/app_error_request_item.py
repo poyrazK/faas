@@ -14,7 +14,7 @@ T = TypeVar("T", bound="AppErrorRequestItem")
 
 @_attrs_define
 class AppErrorRequestItem:
-    """One row of the drill-down page (ADR-096 / PR-B)."""
+    """One row of the drill-down page."""
 
     request_id: str
     """Public x-faas-request-id of the failed request; GET /v1/apps/{slug}/debug/requests/{request_id}/evidence

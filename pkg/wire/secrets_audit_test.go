@@ -27,7 +27,6 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -50,11 +49,7 @@ import (
 // package-level constant "FAAS_LOG_LEVEL" — that's just emitting the name,
 // not the value, and is the canonical pattern in the warn fallback.
 func TestSecretLeakGuard_FAAS_LOG_LEVEL(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed; cannot locate pkg/wire")
-	}
-	dir := filepath.Dir(thisFile)
+	dir := "." // go test runs in pkg/wire
 
 	fset := token.NewFileSet()
 	var files []*ast.File
@@ -114,11 +109,7 @@ func TestSecretLeakGuard_FAAS_LOG_LEVEL(t *testing.T) {
 // with a "FAAS_XXX" string-literal argument, that is itself an argument
 // of a log statement.
 func TestSecretLeakGuard_FAAS_EnvToLog(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	dir := filepath.Dir(thisFile)
+	dir := "." // go test runs in pkg/wire
 
 	// Walk from the module root so cmd/ and pkg/ are both covered. Two
 	// levels up from pkg/wire is the repo root.
@@ -195,6 +186,9 @@ func TestSecretLeakGuard_FAAS_EnvToLog(t *testing.T) {
 		"FAAS_BUILDER_BASE_PATH": "path",
 		"FAAS_DEPLOY_BASE_REF":   "identifier",
 		"FAAS_MAIL_TRANSPORT":    "enum-shaped transport identifier; see pkg/mail/factory.go (logs the value when unknown — operator-supplied, not a credential)",
+		// ADR-20261027090010 §1: schedd logs which nodes may run agent runs when
+		// it opts in (cmd/schedd/main.go). The value is a list of node names.
+		"FAAS_SCHEDD_AGENT_RUN_NODES": "identifier list (node names)",
 		// ADR-127 §D3 Layer 7 — the bridge's framing-selection slog
 		// line at cmd/vmmd-stream-bridge/main.go::newHandler logs the
 		// env value verbatim so an operator can correlate the env

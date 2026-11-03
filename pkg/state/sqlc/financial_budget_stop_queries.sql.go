@@ -161,8 +161,10 @@ SELECT s.id, a.id, $1::text, $2::text, $3::timestamptz,
   $4::integer, $5::text
 FROM financial_budget_stops s
 JOIN financial_budget_policies p ON p.id = s.policy_id AND p.account_id = s.account_id AND p.revision = s.revision
-JOIN apps a ON a.id = $6::uuid AND a.account_id = s.account_id
+JOIN apps a ON a.id = $6::uuid
+LEFT JOIN orgs o ON o.id = a.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
 WHERE s.id = $7::uuid AND s.account_id = $8::uuid
+  AND CASE WHEN o.id IS NULL THEN a.account_id = s.account_id ELSE o.id = s.account_id END
   AND p.deleted_at IS NULL AND p.spec->>'enabled' = 'true'
   AND a.preview_of_slug IS NOT NULL AND a.preview_of_slug != ''
   AND s.requested_at <= $3::timestamptz
@@ -172,7 +174,7 @@ WHERE s.id = $7::uuid AND s.account_id = $8::uuid
     WHEN 'app' THEN (p.spec->'scope'->>'id')::uuid = a.id
     WHEN 'project' THEN (p.spec->'scope'->>'id')::uuid = a.project_id
     WHEN 'environment' THEN (p.spec->'scope'->>'id')::uuid = nullif($1::text, '')::uuid
-      AND EXISTS(SELECT 1 FROM project_environments e WHERE e.id=(p.spec->'scope'->>'id')::uuid AND e.account_id=a.account_id AND e.project_id=a.project_id)
+      AND EXISTS(SELECT 1 FROM project_environments e WHERE e.id=(p.spec->'scope'->>'id')::uuid AND e.project_id=a.project_id)
     ELSE false END
 ON CONFLICT (stop_id, app_id, environment_id) DO UPDATE SET state = EXCLUDED.state,
   observed_at = EXCLUDED.observed_at, resident_count = EXCLUDED.resident_count, last_error = EXCLUDED.last_error
@@ -190,6 +192,8 @@ type FinancialBudgetStopTargetPutParams struct {
 	AccountID     pgtype.UUID
 }
 
+// The stop's subject pays for the app: its organization when that owns its
+// resources, else its account (ADR-20261031211500).
 func (q *Queries) FinancialBudgetStopTargetPut(ctx context.Context, db DBTX, arg FinancialBudgetStopTargetPutParams) (int64, error) {
 	result, err := db.Exec(ctx, financialBudgetStopTargetPut,
 		arg.EnvironmentID,

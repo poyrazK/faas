@@ -22,15 +22,14 @@ T = TypeVar("T", bound="CreateDeploymentOverrides")
 
 @_attrs_define
 class CreateDeploymentOverrides:
-    """Deploy-time override object on `POST /v1/apps/{slug}/deployments`
-    (issue #460 / ADR-053). Unknown fields 400 the request; each supported
+    """Deploy-time override object on `POST /v1/apps/{slug}/deployments`. Unknown fields 400 the request; each supported
     field has an explicit persistence and runtime contract.
 
     - `entrypoint` replaces the OCI image's ENTRYPOINT/CMD argv at exec time.
     - `cmd` is appended to `entrypoint` (mirrors the OCI runtime contract).
     - `env` is plaintext; env-var keys must match `^[A-Z][A-Z0-9_]*$`; per-value
       byte cap = plan `EnvValueMaxBytes`.
-    - `env_secrets` carries `secret:NAME` REFS — the runtime resolver (PR-B)
+    - `env_secrets` carries `secret:NAME` REFS — the runtime resolver
       strips the prefix and looks up `NAME` against the existing `app_secrets`
       table. The ref name must match `^[A-Z][A-Z0-9_]*$`.
     - `env` + `env_secrets` share the plan `EnvVarsMax` quota — no bypass by
@@ -64,23 +63,23 @@ class CreateDeploymentOverrides:
     """Companions that must reach the specified lifecycle condition before the primary workload starts. Targets
     must be declared long-running companions; init companions already gate startup."""
     liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
-    """Liveness-probe override (issue #554 / ADR-078). The host (cmd/vmmd)
+    """Liveness-probe override. The host
     polls the guest's vsock 1028 STREAM on every `interval_s`; after
     `consecutive_failures` consecutive non-2xx (or timeout / conn-refused)
-    responses, the VM is destroyed and schedd cold-boots it from rootfs
-    (per ADR-005 — never snapshot-restore). 3 restarts in 300 s
+    responses, the VM is destroyed and the scheduler cold-boots it from rootfs
+    (never snapshot-restore). 3 restarts in 300 s
     park the deployment.
 
-    Per-plan gates (issue #554): Free is locked out (Plan.LivenessAllowed()
-    returns false; the apid handler rejects with
+    Per-plan gates: Free is locked out (Plan.LivenessAllowed
+    returns false; the API handler rejects with
     `plan_liveness_probe_not_allowed` BEFORE the DB is touched); Hobby,
     Pro, Scale inherit the 5 s / 3 consecutive / 60 s cooldown / 3 in 300 s
     defaults. Pro and Scale may select standard gRPC health.v1 Check
     on the runtime port; Free and Hobby remain HTTP-only for liveness.
     """
     scope: None | str | Unset = UNSET
-    """Override-object per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no
-    leading/trailing dash. nil/omitted = inherit top-level scope or `default`."""
+    """Override-object per-deployment env scope. Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
+    nil/omitted = inherit top-level scope or `default`."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

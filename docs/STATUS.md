@@ -7,6 +7,136 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Managed PostgreSQL GA — 2026-10-31 (not released)
+
+[ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md) moves
+`managed-postgres`, `postgres-bindings` and `postgres-restore` to `ga` and
+resize and organization databases to `beta`. Rollbacks that restore the
+database become their own preview, `database-rollbacks`. The code-side GA
+blockers from the 2026-10-23 review are closed (caps, storage pool, delete
+undo window, SQL probe, the Neon review fixes); all of it is unreleased.
+
+Managed PostgreSQL launches GA with the public release. Customers get it when
+the flag opens, after the public-release gate in the ADR: the P0 workstreams
+of [#6146](https://github.com/poyrazK/faas/issues/6146) (lifecycle evidence,
+sustained production use with priced continuation, customer recovery).
+
+Open evidence:
+- `tests/journeys/postgres_test.go::TestManagedPostgres` has not run against
+  production yet. It needs the release, an approved production backend and
+  the owner's account released by the `managed_postgres` flag (the
+  [GA rollout](managed-postgres.md#ga-rollout)).
+- The compute and storage cap qualifications, the deletion hold check and the
+  enforcement switches are operator steps in the same rollout.
+- Free and Hobby cannot restore: a restore is a second database and those
+  plans allow one.
+
+## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
+
+The 2026-10-26 crons GA review found four blockers; #5649 fixes them
+([ADR-20261026201726](adr/20261026201726-cron-delivery-through-the-drain.md)):
+
+- HTTP cron fires and manual runs no longer wake the app or wait for it on
+  schedd's main loop. They queue a cron invocation that the invocation drain
+  delivers, so slow handlers cannot stall heartbeats, the reaper or other
+  tenants' crons. Plain HTTP crons keep one delivery attempt; manual runs
+  report their invocation's outcome and are capped at five active per cron.
+- `crons.schedule_anchor_at` restarts a schedule when it is edited, enabled
+  or unsuspended, so none of those fires the cron at once or replays passed
+  occurrences.
+- Command crons are scoped into the app-tasks preview (off in production).
+  Crons have a customer page, [docs/crons.md](crons.md).
+- Acceptance: `cmd/e2e/cron_e2e_test.go` (KVM-free, real apid, schedd and
+  gatewayd processes) proves a scheduled fire and a manual run reach the app
+  with the cron source header, and a visitor cannot forge that header.
+  PASS on the n2 test node on 2026-10-27 (76.6 s, revision a9e9c64e83; log
+  at `n2:/mnt/e2e-scratch/crons-ga/cron_e2e.log`). Unit and Postgres suites
+  for the cron, fire-now, drain and app-task paths pass; the five
+  `TestDrainSecurity*` failures are on main already.
+
+Follow-ups from the same review (#5711, #5906, and branch `fix/crons-prod-findings`):
+
+- Schedule decisions and manual-run requests older than 90 days
+  (`api.CronHistoryRetention`, the longest plan's run history) are pruned on
+  schedd's hourly retention tick; unsettled decisions are kept.
+- `schedd_cron_delivery_total{outcome}` and
+  `schedd_cron_schedule_lag_seconds` back two operator alerts,
+  `FaasCronDeliveryLag` and `FaasCronDeliveryFailing`
+  ([runbook](runbooks/FaasCronDelivery.md)).
+- Cron paths are validated (single leading `/`, no host, at most 2,048 bytes)
+  by the API, the triggers API, source-ref manifests and `gregale.yaml`.
+- The OpenAPI spec documents `GET /v1/crons?slug=`; the Go SDK gains
+  `GetCron`, `FireCron`, `GetFireCronRequest` and `ListCronRuns`.
+- Crons are not triggers (#2757): `GET /v1/triggers?kind=cron` answers 400;
+  `gregale cron run --wait` exits non-zero when the run fails.
+- A plain HTTP cron run Gregale refused before delivery is retried up to three
+  attempts (ADR-20261026201726 amendment 2026-10-29); `gregale cron runs`
+  explains runs the app answered with 404.
+
+Audit findings 2026-10-30 (branch `fix/crons-audit-findings`):
+
+- Deleting a cron cancels its runs that have not started, including runs
+  waiting to retry.
+- `schedd_cron_delivery_total` counts runs the app answered with an error as
+  `app_error`, so `FaasCronDeliveryFailing` pages on platform failures only.
+- A schedule-policy cron's catch-up after a long gap records only the newest
+  `api.CronCatchUpRecordedMax` (20) due times.
+- The cron tick skips suspended accounts and apps without the crons
+  capability before claiming a fire.
+- A manual run of a cron that a plan downgrade stopped gets
+  `403 plan_cron_quota` (`pkg/apid/cronrun`), matching the scheduler's gate.
+
+Audit round 2, 2026-11-01 (branch `fix/crons-audit-round2`,
+ADR-20261026201726 amendment 2026-11-02, ADR-20261026151103 amendment 5):
+
+- A cron with a schedule policy but no failure rules is delivered once per
+  scheduled time; it took the plan's queue retry budget (up to 25 attempts).
+- A plain cron run that could not be queued is retried on the next sweep
+  instead of being lost; a schedule-policy cron on an app with no live
+  deployment is suspended.
+- The cron sweep yields schedd's main loop after 10 s and continues within the
+  minute, so many due crons cannot hold the heartbeat.
+- GitHub push deploys stage the crons `gregale.yaml` declares; source-declared
+  crons keep their timezone and `skip_if_running` (they were staged in UTC).
+- Company members can read a cron's status and poll a manual run's request.
+- `gregale cron status` reports `plan_limit` or `account_suspended` for a cron
+  that will not fire; a duplicate schedule and path is `409`; a suspended
+  cron's manual run is `409`; manual-run failures name their reason; timezone
+  `Local` is refused.
+
+Audit round 3, 2026-11-02 (branch `fix/crons-audit-round3`,
+ADR-20261026201726 amendment 2026-11-02 (2)):
+
+- A strict compute budget hold no longer piles up a run per scheduled time:
+  the sweep leaves the cron due and it runs once after the hold.
+- The drain cancels runs of crons removed by `gregale.yaml`, a project apply
+  or an app's deletion, not only by `DeleteCron`.
+- Manual-run requests a scheduler restart interrupted are failed with a reason
+  instead of staying running forever.
+- Rollbacks warn (HTTP `Warning`, printed by the CLI) about crons added after
+  the deployment they return to; crons are not rolled back.
+- `gregale cron runs` explains `405` (crons always send `POST`) as it does
+  `404`; the webhook delivery example no longer names the unemitted
+  `cron.fired` event.
+
+Audit round 4, 2026-11-03 (branch `fix/crons-audit-round4`,
+ADR-20261026201726 amendment 2026-11-03, ADR-20261031162858 amendment 2):
+
+- Company members other than an app's creator list its crons by slug; the
+  404 also failed their `gregale.yaml` deploys, which list crons first.
+- A `gregale.yaml` deploy no longer checks its crons against the deployer's
+  own plan; the company's plan applies, checked by apid.
+- A `deploy:write` key can follow the manual run it starts
+  (`gregale cron run --wait`).
+- Deployment cron staging applies the cron API's path and timezone rules.
+- The dashboard refuses a disabled cron's manual run and names each refusal.
+
+Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
+passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
+cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of
+1,781 cron runs in 24 h, 213 failed: 192 were apps answering 404 for the
+cron's path and about 21 were platform refusals or timeouts.
+
 ## Release guards — 2026-10-26
 
 Production releases can be held back by:
@@ -65,13 +195,90 @@ freeze and approval ADRs):
 - **Dashboard.** `/dashboard/apps/{slug}/release-safety` shows freezes, gates,
   approvals and schedules.
 
+The n2 metal drill `TestReleaseGuardsGADrillMetal`
+(`cmd/e2e/release_guards_ga_drill_metal_test.go`) adds the GA evidence, on a
+Pro account against a real Prometheus. On 2026-10-27 it covered:
+
+- an approval wait that survived apid and meterd restarts, then timed out
+  (`abort_approval_timeout`) 2 s after its deadline, with the email notice;
+- a scheduled release that fell due while apid was down and started 0 s after
+  apid returned (48 s late);
+- a `new_errors` gate that kept judging a canary across a meterd restart and
+  aborted it 65 s later;
+- an `slo` latency gate that aborted a slow canary (burn rate 100, max 10, over
+  123 requests);
+- a `custom_metric` gate that aborted on the metric's history (8 pushed values
+  averaging 1, below 5). The gate used to read only the latest value and never
+  reached its sample floor; amendment 1 of ADR-20261019071734 fixed that;
+- an `error_rate_pct` alert that rolled a completed release back (ADR-604): the
+  release's own evidence was 17.6% 5xx over 1,344 requests, and the receipt
+  completed. apid used to accept a post-deploy window on rules that could never
+  roll back, such as `latency_p95_ms`; ADR-605 amendment 1 refuses them;
+- a critical-route guard in abort mode (ADR-458) that aborted a canary failing
+  `/api` 351 s after the deploy (share 50% to 0%,
+  `consecutive_server_error_regression`), while `/api` stayed under the circuit
+  breaker's 5% floor.
+
+Six cases passed in one run (`592b2953be`). Reruns passed the alert case with a
+stricter receipt check (`b7e1874099`) and the route case once the drill sent
+enough `/api` traffic and read the saved abort (`a13a35f012`).
+Leakcheck was clean after every run. Under the n2 host's I/O pressure, every
+run had at least one deploy refused with `traffic_policy_too_complex` (the 2 s
+policy-check limit, H14-78); the route case needed four attempts while it
+served about 30 requests a second. The drill retries, as the problem asks.
+
+GA follow-ups closed on 2026-10-28:
+
+- **Timed-out policy checks.** A 422 `traffic_policy_too_complex` from the 2 s
+  time ceiling carries `Retry-After`. apid no longer replays it for the deploy's
+  Idempotency-Key; before, a retried `gregale deploy` got the stored refusal for
+  24 hours. The CLI and the SDK retry layers resend it (ADR-570 amendment).
+- **Runtime upgrade cutover.** It waits while a freeze is active, instead of
+  switching traffic (ADR-20261019071733 amendment 2).
+- **Route-health report.** After a guard abort, the report shows the saved abort
+  evidence instead of `unknown` (ADR-458 amendment).
+
+A release review on 2026-10-28 found and fixed:
+
+- **Teams on company apps.** Rollback, rollout recovery, canary advance,
+  traffic, promote, release gates, the route-health guard, freeze status and
+  alert rollbacks were missing from the organization route map, so only an
+  app's creator could reach them; an admin got 403 rolling back. Members who
+  deploy now operate releases; gates and the guard stay with owners and admins
+  (ADR-20261026151103 amendment 3).
+- **Automatic rollback targets.** The post-release watch and the first-wake
+  5xx guard could pick an aborted canary, or a build that never served, as the
+  release to return to. They now use the plain rollback's target (ADR-1445
+  amendment 1, ADR-625 amendment).
+- **Freezes.** A release parked dark before a freeze can no longer ship during
+  it by `traffic`, promote or a rollback to it; the override audit is written
+  once the release exists (ADR-20261019071733 amendment 3).
+- **Approvals.** An approved release is decided (no late reject that aborts
+  it, no repeated "approved" notices), and a release without a known deployer
+  (a GitHub push) needs one more approval when self-approval is off
+  (ADR-20261020085706 amendment 3).
+- **Gates.** Rollout decisions list gates that were not judged
+  (`not_judged`), and an SLO that gates judge cannot be deleted
+  (ADR-20261019071734 amendment 2).
+
+Company-owned freezes (ADR-20261019071733 amendment 4, 2026-10-29). A
+company organization now owns its apps' freezes, through
+`/v1/apps/{slug}/freezes` and `/v1/orgs/{slug}/freezes` and `gregale release
+freeze --org`. Before, only an app's creator could freeze a company app, no
+freeze covered all of a company's apps, and a creator's freeze on all of their
+apps also froze the company apps they had created. Members who deploy create
+and lift their own windows; owners and admins create weekly and after-rollback
+policies and lift any freeze. Every freeze check reads the app's owner. Both
+drills passed on main `2b4a480d38` on 2026-10-29 before this change; it is
+covered by store conformance on both stores and by apidserver tests.
+
 Still open:
 
-- slo/custom-metric gates, real Slack/Resend delivery and the approval timeout
-  have not been drilled on metal;
+- real Slack/Resend delivery has not been drilled;
 - no database switch has been drilled with a real provider restore;
-- runtime-upgrade cutover must also hold for freezes before customer admission
-  ships.
+- the dashboard has no page for a company's freezes yet: faas-web needs a
+  "Release freezes" section in the organization's settings. The app's
+  release-safety page already lists the company freezes that cover the app.
 
 ## Routes at public scale — 2026-10-24
 
@@ -112,8 +319,8 @@ its own end-to-end test (2026-10-26, n2, `cmd/e2e/routes_canary_e2e_test.go`):
 two apps at a 50% canary, an enforce-mode gate on two routes; the canary whose
 `/checkout` answers 500 is held with `route_health_blocked` and a blocked
 history entry, the healthy one advances to 100% and the gateway follows. The
-three routes tests and the general-path tests now run on pull requests that
-change Go code (`e2e-general` workflow, docs/ci-general-path.md). Open: route
+three routes tests and the general-path tests run nightly, and on pull
+requests labelled `e2e-general` (docs/ci-general-path.md, ADR-20261029121500). Open: route
 requirements and OpenAPI contract preview have no end-to-end test; six routes
 capabilities are `internal` and three `preview` (ADR-20261023115741).
 
@@ -201,6 +408,48 @@ Open:
 
 Alerts and runbooks for the five features' failure modes (criterion C3) are
 in the `faas_edge_security` group (ADR-20261024082000 amendment 1).
+
+2026-10-27: an end-to-end review found three ways a visitor could never pass
+a challenge, now fixed (ADR-831 amendment 17, criterion H6). The production
+compute gateways signed with different keys, the declared-route and rewrite
+gates took the solution post, and passes bound to one app failed on hosts
+whose paths route to several apps. Open before releasing `edge_challenge` or
+`edge_attack_mode`: deliver the fleet's `gatewayd_edge_challenge_key` to
+every gateway and see `FaasEdgeChallengeKeyMismatch` quiet
+(`docs/ops/platform-flags.md`).
+
+2026-10-31: a security review fixed three more. A per-app deploy token could
+write rules covering every app of its account; it is now limited to its own
+app's hosts (ADR-091 amendment 2026-10-31, later). A cookie planted by
+another app on the shared apps domain could hide a challenge pass (now a
+`__Host-` cookie) or get a visitor boxed through a WAF `block` rule
+(cookie-only detections no longer count toward penalties), and challenged CORS
+preflights broke cross-origin calls (now answered at the edge; ADR-831
+amendment 18). Open: such a planted cookie still trips `block` rules on
+`gregale.dev` hosts until apps move to a domain on the Public Suffix List
+(ADR-20261026100000 amendment 1, proposed).
+
+2026-11-02: a third review fixed four more. Cloudflare cached gated
+responses and served them past `ip`, `geo` and `jwt` rules; such responses
+are now CDN-private (ADR-091 amendment 2026-11-02). Any client could escape
+the penalty box by sending `Sec-Fetch-Site: cross-site`; such refusals now
+count, and only a box made of them alone is capped at a minute
+(ADR-20261022105846 amendment 3). Large request headers made WAF checks slow
+enough to hold every check slot; a check now scores at most 16 KiB of
+headers (ADR-831 amendment 19). Docs and a CLI warning now steer gates to
+`@app`, since a rule naming one host leaves the app's platform hostname open.
+
+2026-11-02, later: a fourth review fixed five more (ADR-091 amendment
+2026-11-02, later). Gates scoped to `DELETE`, `PUT` or `PATCH` now also cover
+a POST that asks the app to run it as that method (`X-HTTP-Method-Override`
+and similar headers, `?_method=`), and path gates also match the path without
+`;` parameters, which Java servers drop. A deny-only `geo` rule no longer
+answers 503 to an address the database places in no country (an allow list
+refuses it); a failed lookup still answers 503. The country database moves
+to the 2026-11 release, and `FaasGeoIPDatabaseStale` warns when it is more
+than 75 days old. The challenge-pass docs now say a pass is shared by its
+/24 or /48 and User-Agent, and the CLI warns when a gate is scoped by
+headers, cookies or query values the client chooses.
 
 ## Event substrate benchmark (V12) — 2026-10-23
 
@@ -621,6 +870,24 @@ listener behind a socket unit each restarted five times under load with 0 of
 138,179 and 0 of 127,987 requests failing; without the socket unit the gateway
 returned 103,323 502s. Open: the first socket conversion through `node_join`
 and deployctl, and the listeners the ADR leaves without socket activation.
+
+## Worker end-to-end fixes — 2026-10-27
+
+`worker.scale` in gregale.yaml now becomes the app's queue scaling policy on
+CLI, repository and GitHub deploys, and a first deploy of a worker is no longer
+refused for its queue target. `gregale worker scale` keeps the app's queue
+metric (default `queue_depth`), and a scaling policy's `min_instances: 0` lets
+the pool stop when worker replica bounds are unset
+([ADR-20261018101500](adr/20261018101500-worker-pool-scale-out-off-loop.md)
+amendment 2026-10-27). Queue gauges refresh every 30 seconds for every worker
+app from bounded reads, and `queue_backlog` / `queue_oldest_age_seconds` alert
+on the durable queue. Single-process apps report OOM kills, and only a release
+that is not yet fully live fails on one
+([ADR-121](adr/121-runtime-oom-detection-on-workload-cgroup.md) amendment).
+On the nested-KVM test node at 81723d5f4a, `TestSingleProcessOOMMetal` (live
+release keeps serving; startup OOM fails the deployment with `app_runtime_oom`,
+peak 456 MB) and `TestDirectOCIMainHealthcheckMetal` passed with a clean leak
+check. This change is not deployed.
 
 ## Worker admission explanations — 2026-10-18
 

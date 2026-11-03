@@ -72,7 +72,7 @@ func (m *MemStore) PrepareReservedRuntimeUpgradeOperation(ctx context.Context, a
 		return op, nil
 	}
 	now := time.Now().UTC()
-	phase, blocker, _, err := m.advanceRuntimeUpgradeOperationLocked(ctx, op, now)
+	phase, blocker, _, err := m.advanceRuntimeUpgradeOperationLocked(ctx, op, now, false)
 	if err != nil {
 		return RuntimeUpgradeOperation{}, err
 	}

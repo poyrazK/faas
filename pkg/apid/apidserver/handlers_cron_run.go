@@ -1,12 +1,15 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -38,6 +41,7 @@ import (
 //	cron not found            → 404 not_found
 //	cron on another account   → 404 not_found (byte-identical body)
 //	rate limited              → 429 (authLimited)
+//	cron has 5 active runs    → 429 cron_fire_now_busy (ADR-20261026201726)
 //	no dispatch capacity      → N/A at API (schedd stamps the row)
 //	server error              → 500 (existing ErrInternal)
 
@@ -84,11 +88,24 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, api.ErrPlanCronsNotAllowed(acct.Plan))
 		return
 	}
+	if c.SuspendedReason != "" {
+		api.WriteProblem(w, api.ErrCronSuspendedRun(c.SuspendedReason))
+		return
+	}
+	if prob := s.cronRunOverPlan(ctx, app, c); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 
 	// Insert the durable record. Status starts at 'pending'. The
 	// id is returned to the customer so they can correlate the
 	// audit-event stream with their request.
-	requestID, err := s.store.InsertFireNowRequest(ctx, c.ID, acct.ID)
+	requestID, err := s.insertCronFireNowRequest(ctx, c.ID, acct.ID)
+	var capErr *state.FireNowCapError
+	if errors.As(err, &capErr) {
+		api.WriteProblem(w, api.ErrCronFireNowBusy(capErr.Limit, capErr.Observed))
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not enqueue fire-now"))
 		return
@@ -115,4 +132,26 @@ func (s *server) fireCronNow(w http.ResponseWriter, r *http.Request, acct state.
 		CronID:    c.ID,
 		Status:    "pending",
 	})
+}
+
+// cronRunOverPlan refuses a manual run of a cron that the owner's current plan
+// does not let fire (cronrun.OverPlan). A store that cannot rank crons admits.
+func (s *server) cronRunOverPlan(ctx context.Context, app state.App, c state.Cron) *api.Problem {
+	store, ok := s.store.(cronrun.Store)
+	if !ok {
+		return nil
+	}
+	return cronrun.OverPlan(ctx, store, app, c)
+}
+
+// insertCronFireNowRequest records one manual run. A cron holds at most
+// api.CronFireNowActivePerCron manual runs waiting or running, so a burst of
+// requests cannot queue unbounded work for the owning scheduler
+// (ADR-20261026201726). At the cap it returns *state.FireNowCapError.
+func (s *server) insertCronFireNowRequest(ctx context.Context, cronID, accountID string) (string, error) {
+	if capped, ok := s.store.(state.CronFireNowInvocationStore); ok {
+		return capped.InsertFireNowRequestUnderCap(ctx, cronID, accountID,
+			api.CronFireNowActivePerCron, time.Now().Add(-api.CronFireNowActiveWindow))
+	}
+	return s.store.InsertFireNowRequest(ctx, cronID, accountID)
 }

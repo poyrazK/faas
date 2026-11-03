@@ -83,8 +83,8 @@ func TestHumanFlagErrorsUsePublicSpelling(t *testing.T) {
 		want []string
 	}{
 		{args: []string{"metrics", "--bogus"}, want: []string{"unknown flag --bogus", "run 'gregale metrics --help' for usage"}},
-		{args: []string{"usage", "--bogus"}, want: []string{"unknown flag --bogus", "run 'gregale usage --help' for usage"}},
-		{args: []string{"invocations", "list", "--bogus"}, want: []string{"run 'gregale invocations list --help' for usage"}},
+		{args: []string{"usage", "--bogus"}, want: []string{"unknown flag --bogus", "run 'gregale billing usage --help' for usage"}},
+		{args: []string{"invocations", "list", "--bogus"}, want: []string{"run 'gregale invocation list --help' for usage"}},
 		{args: []string{"metrics", "x", "--range"}, want: []string{"flag --range needs a value"}},
 		// A leaf's own usage line survives; only the defaults dump is dropped.
 		{args: []string{"dlq", "list", "x", "--limit", "abc"}, want: []string{`invalid value "abc" for flag --limit`, "usage: gregale dlq list <app>"}},
@@ -335,7 +335,7 @@ func TestCronsFireNowWithCronIDPointsAtRun(t *testing.T) {
 	stderr, restore := main.CaptureStderr(t)
 	code := main.CmdCronsFireNowGet([]string{id})
 	restore()
-	if code == 0 || !strings.Contains(stderr.String(), "gregale crons run "+id) {
+	if code == 0 || !strings.Contains(stderr.String(), "gregale cron run "+id) {
 		t.Fatalf("exit=%d stderr=%q, want a pointer to `crons run`", code, stderr.String())
 	}
 }

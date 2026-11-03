@@ -111,6 +111,62 @@ func TestMigrateOutbound_RequiresIdentities(t *testing.T) {
 	}
 }
 
+// TestCheckOutbound counts the rows a legacy identity still opens without
+// writing any: the precondition for outboundd dropping the fleet identity.
+func TestCheckOutbound(t *testing.T) {
+	domain, fleet, stranger := mustIdentity(t), mustIdentity(t), mustIdentity(t)
+	seal := func(to ...*age.X25519Identity) []byte {
+		var rs []*age.X25519Recipient
+		for _, id := range to {
+			rs = append(rs, id.Recipient())
+		}
+		blob, err := secretbox.SealBytesTo(rs, "outbound_authorization", []byte("Bearer sk-check"), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return blob
+	}
+	store := &outboundRows{rows: []state.OutboundSealedCredential{
+		{Kind: "pool", ID: "a-dual", Sealed: seal(domain, fleet)},
+		{Kind: "pool", ID: "b-done", Sealed: seal(domain)},
+		{Kind: "pool", ID: "c-fleet", Sealed: seal(fleet)},
+		{Kind: "pool", ID: "d-stranger", Sealed: seal(stranger)},
+	}}
+	before := make([][]byte, len(store.rows))
+	for i, r := range store.rows {
+		before[i] = r.Sealed
+	}
+	ctx := context.Background()
+	report, err := sealmigrate.CheckOutbound(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sealmigrate.MigrationReport{Domain: sealdomain.Outbound, Target: domain.Recipient().String(), Scanned: 4, Current: 1, Failed: 1, Pending: 2}
+	if report != want {
+		t.Fatalf("report = %+v\nwant     %+v", report, want)
+	}
+	for i, r := range store.rows {
+		if !bytes.Equal(r.Sealed, before[i]) {
+			t.Fatalf("the check rewrote %s", r.ID)
+		}
+	}
+
+	// With no legacy identity on the host nothing can be pending.
+	if report, err := sealmigrate.CheckOutbound(ctx, store, domain, nil); err != nil || report.Pending != 0 || report.Current != 2 || report.Failed != 2 {
+		t.Fatalf("check without legacy identities = %+v, %v", report, err)
+	}
+
+	if _, err := sealmigrate.MigrateOutbound(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := sealmigrate.CheckOutbound(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil || report.Pending != 0 || report.Current != 3 {
+		t.Fatalf("check after the re-seal = %+v, %v; want nothing pending", report, err)
+	}
+	if _, err := sealmigrate.CheckOutbound(ctx, store, nil, []*age.X25519Identity{fleet}); err == nil {
+		t.Fatal("checked without the domain identity")
+	}
+}
+
 type webhookRows struct {
 	rows map[int64]state.GithubWebhookSecret
 }

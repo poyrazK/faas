@@ -4,11 +4,11 @@
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 /**
- * When and how a release waiting without traffic starts its rollout (ADR-20261021152201).
+ * When and how a release waiting without traffic starts its rollout.
  */
 export type ScheduleReleaseRequest = {
   /**
-   * When the rollout starts; at most 7 days ahead. A time that has passed starts it on apid's next pass.
+   * When the rollout starts; at most 7 days ahead. A time that has passed starts it on the API's next pass.
    */
   release_at: string;
   canary?: CanaryPresetSpec;

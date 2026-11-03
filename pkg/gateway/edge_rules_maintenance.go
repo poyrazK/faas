@@ -82,7 +82,7 @@ func PickFirstMaintenanceMatch(rules []EdgeRuleMaintenanceResolved, requestPath,
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if r.Methods != nil && !r.Methods[method] {
+		if !protectiveMethodMatch(r.Methods, method) {
 			continue
 		}
 		if r.PathGlob != "" {

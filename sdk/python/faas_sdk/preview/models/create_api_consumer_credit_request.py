@@ -14,7 +14,7 @@ T = TypeVar("T", bound="CreateAPIConsumerCreditRequest")
 
 @_attrs_define
 class CreateAPIConsumerCreditRequest:
-    """Prepaid credit for one consumer (ADR-1306)."""
+    """Prepaid credit for one consumer."""
 
     currency: str
     amount_millicents: int

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Error-budget position of one SLO, returned by GET /v1/apps/{slug}/slos/{id} (ADR-747).
+ * Error-budget position of one SLO, returned by GET /v1/apps/{slug}/slos/{id}.
  */
 export type SLOStatus = {
   /**
@@ -11,7 +11,7 @@ export type SLOStatus = {
    */
   window_start: string;
   /**
-   * Completed hours meterd has recorded in the window.
+   * Completed hours the metering service has recorded in the window.
    */
   hours_recorded: number;
   /**

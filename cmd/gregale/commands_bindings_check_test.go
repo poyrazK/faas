@@ -143,7 +143,7 @@ func TestCmdBindingsCheckPassingProbeStillBlocksOldServingInstance(t *testing.T)
 			inventory.Bindings[0].Refresh = &api.BindingRefresh{Status: "completed"}
 			d := &inventory.RuntimeFreshness.Deployments[0]
 			d.Serving, d.Resident, d.Status = api.BindingRuntimeInstanceCounts{Stale: 1}, api.BindingRuntimeInstanceCounts{Stale: 1}, "stale"
-			args := []string{"bindings", "check", "api"}
+			args := []string{"app", "binding", "check", "api"} // the tree name; an earlier name hints on stderr in a terminal
 			if asJSON {
 				args = append(args, "--json")
 			}

@@ -17,7 +17,7 @@ import (
 const dashboardMCPRecoveryAction = "dashboard_mcp_recovery"
 const dashboardMCPRecoveryCookie = "dashboard_mcp_recovery_csrf"
 
-func (s *server) dashboardMCPRetirements(w http.ResponseWriter, r *http.Request, ctx context.Context, account state.Account, query url.Values, hidden map[string]bool, appsKnown bool, data *dashboard.MCPOperationsData) {
+func (s *server) dashboardMCPRetirements(w http.ResponseWriter, r *http.Request, ctx context.Context, account state.Account, query url.Values, appsKnown bool, data *dashboard.MCPOperationsData) {
 	offset, err := dashboardMCPOffset(query, "retirement_offset")
 	if err != nil || offset > api.MCPOAuthRetirementMaxOffset {
 		data.RetirementError = "Invalid retirement offset. Clear the filters and try again."
@@ -34,8 +34,13 @@ func (s *server) dashboardMCPRetirements(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	// This ledger is account-wide, including deleted apps; do not silently
-	// filter it. Only a company app the session may no longer see leaves it.
-	snapshot = mcpcatalog.VisibleRetirements(snapshot, hidden)
+	// filter it. Only a company app the session may no longer see leaves it,
+	// deleted or not.
+	snapshot, err = mcpcatalog.NewRetirementVisibility(r, s.store, account).Filter(snapshot)
+	if err != nil {
+		data.RetirementError = "Grant retirement inventory is unavailable."
+		return
+	}
 	for _, record := range snapshot.Items {
 		recoverable := record.RetainUntil.After(time.Now().UTC()) && record.State != "installed" && record.State != "provider_acknowledged" && record.State != "manually_acknowledged" && record.State != "expired"
 		canRetry := recoverable && record.State != "awaiting_issuance" && record.Reason != "issuance_unknown"

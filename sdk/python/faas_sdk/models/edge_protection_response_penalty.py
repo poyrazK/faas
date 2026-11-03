@@ -11,7 +11,7 @@ T = TypeVar("T", bound="EdgeProtectionResponsePenalty")
 
 @_attrs_define
 class EdgeProtectionResponsePenalty:
-    """Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty."""
+    """Penalty boxes; refusals also appear in rejections under gate penalty."""
 
     boxed: int
     """Clients a rule's penalty boxed."""

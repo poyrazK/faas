@@ -85,13 +85,18 @@ application `sitecustomize` startup hook are preserved.
 The collectors use a local bridge and receive no backend credentials. Their
 failure does not prevent the application from starting.
 
-Go applications opt in during startup:
+Go applications opt in during startup with the Go SDK's collector, which
+uses only the standard library:
+
+```sh
+go get github.com/poyrazK/faas/sdk/go@latest
+```
 
 ```go
-import "github.com/onebox-faas/faas/pkg/guestprofiling"
+import "github.com/poyrazK/faas/sdk/go/preview/profiling"
 
 // appContext lasts until application shutdown.
-guestprofiling.Start(appContext)
+profiling.Start(appContext)
 ```
 
 Call it once, and cancel the context at shutdown. Do not run another Go CPU
@@ -113,11 +118,13 @@ guest-init then reads `/debug/pprof/profile`, `/debug/pprof/heap` and
 `/debug/pprof/goroutine` from `127.0.0.1:6060` inside the VM, for on-demand
 captures and, with `enabled: true`, for continuous collection. The port may be
 the application's own port when the handlers share its mux; 9191 and 4318
-belong to the platform. The endpoint is never exposed outside the VM by this
+belong to the platform. An application that itself listens on 9191, the
+collectors' bridge port, keeps its port and runs without collectors: captures
+of it report that it has none. The endpoint is never exposed outside the VM by this
 setting.
 
 Collection starts once `/debug/pprof/` answers. If the application also calls
-`guestprofiling.Start`, that collector is used and the endpoint is left alone,
+`profiling.Start`, that collector is used and the endpoint is left alone,
 because Go has one CPU profiler per process. Continuous profiles collected this
 way carry no route labels. A profile the endpoint cannot produce (an error
 status, no answer in time, or more than 1 MiB) is named in the capture's
@@ -254,9 +261,12 @@ the CPU backend; reopening uses the existing bounded profile query pipeline.
 
 ## Capture a running instance on demand
 
-On-demand captures profile one running instance now, without a redeploy or
+On-demand captures profile one running instance now, without
 `profiling.enabled` (ADR-1155). They are the tool for "why is this instance hot"
-and "where is this memory going":
+and "where is this memory going". Their collectors are added to a deployment
+when it is created, so a deployment made before on-demand profiling reached
+your plan or installation needs one redeploy; a capture of it fails with a
+reason that says so.
 
 ```sh
 # 30 seconds of CPU and heap from the app's earliest running instance
@@ -268,17 +278,68 @@ gregale debug capture my-app --instance INSTANCE_UUID --output ./profiles
 # list captures, or show one again
 gregale debug captures my-app
 gregale debug captures my-app CAPTURE_UUID --output ./profiles
+
+# delete a capture and its profiles now
+gregale debug captures my-app CAPTURE_UUID --delete
 ```
 
 The command prints the hottest functions per kind. `--output` writes
 `profile-<id>-<kind>.pb.gz`, which opens in `go tool pprof -http=:`,
-speedscope or Grafana Pyroscope. Windows are 1–60 seconds (default 10 s).
+speedscope or Grafana Pyroscope. Windows are 1–60 seconds (default 10 s). The
+command waits up to 10 minutes for a busy queue to start the capture; with
+`--no-wait` it returns at once.
+
+In the dashboard, open the app and choose **Capture a profile from a running
+instance** (`/dashboard/apps/<slug>/profiles/captures`): it starts captures,
+lists recent ones, and each capture's page shows its profiles, compares it
+with an earlier capture and deletes it.
 
 Captures only run on a RUNNING instance; a parked app is not woken, because a
 fresh process would not show the state you are investigating. Send a request
 first. While a capture runs the instance counts as busy and is not parked for
-idleness. One capture per app runs at a time, and an account can start 60 per
-hour. Captures are kept for 7 days.
+idleness. One capture per app runs at a time, and at most two of an account's
+(or an organization's) captures run at once; the rest wait in the queue, so
+one customer cannot hold every capture worker. An account can start 60 per
+hour. Automatic captures (below) have their own limit of 30 per hour across the
+account's apps, so they never use up the 60, and captures you start run before
+automatic ones waiting in the queue. Captures are kept for 7 days; delete one
+sooner with `--delete`, the dashboard or
+`DELETE /v1/apps/{slug}/profiles/captures/{id}`. Deleting an app deletes its
+captures within a minute, which frees the storage they used.
+
+An organization's apps count as the organization's: the organization's plan
+decides whether its apps can be captured, the hourly limits and the storage
+limit below are shared by all its apps, and every member who can open an app
+sees and can delete its captures.
+
+An account also has a capture storage limit, set by its plan (table below). A
+new capture is queued only if the stored profiles of unexpired captures, plus
+3 MiB (the largest capture) for each capture still queued or running and for
+the new one, fit within it. Otherwise the request fails with 429
+`quota_exhausted`, and the problem's `limit_bytes` and `observed_bytes` show
+the limit and the bytes in use. Space frees up as captures expire or are
+deleted.
+
+Automatic captures may use at most half of the limit, so they never fill the
+room your own captures need. When their half is full, a new automatic capture
+deletes the oldest automatic captures it needs room for, except those linked
+to an OOM kill. If that is not enough, it is skipped with the reason
+"automatic captures fill their share of the account's capture storage".
+
+### Turn automatic captures off
+
+Automatic captures (memory pressure, slow requests, CPU saturation) are on for
+every app on a plan with profiling. To turn them off for one app, set
+`automatic_captures` in the profiling settings, in `gregale.yaml` or with
+`PATCH /v1/apps/{slug}` (send the whole `profiling` object):
+
+```yaml
+profiling:
+  automatic_captures: false
+```
+
+The setting takes effect as soon as the app's settings change; the guest is
+not involved, so no redeploy is needed. Captures you start are unaffected.
 
 What a heap capture shows depends on the runtime:
 
@@ -287,7 +348,12 @@ What a heap capture shows depends on the runtime:
   end (V8 sampling heap profiler). `Buffer` contents live outside the V8 heap
   and appear as `(external)`.
 - **Python** — allocations made during the window that are still live at its
-  end (`tracemalloc`). Tracing slows allocation-heavy code while it runs.
+  end (`tracemalloc`). Tracing slows allocation-heavy code while it runs, and
+  costs memory for every block it records. So that a capture never causes the
+  OOM kill it is meant to explain, tracing stops (keeping the rest of the
+  capture) once the process has less than 16 MiB or 5% of its memory left,
+  and a heap profile is skipped when copying the traces would not fit.
+  Captures taken because memory runs low record 8 frames per allocation.
 
 Memory that is allocated during a capture and still held at its end is the
 shape of a leak. Repeat a capture later and compare the two.
@@ -305,8 +371,9 @@ memory. These captures show `trigger: memory_pressure` with a detail such as
 "guest memory available fell to 31 MiB of 246 MiB", in the dashboard and in
 `gregale debug captures`. Gregale takes at most one automatic capture per app
 per hour and none while another capture of the app is running; they count
-toward the account's hourly capture limit. Reclaimable file cache does not
-count as used memory, so file-heavy workloads are not mistaken for leaks.
+toward the account's hourly limit for automatic captures. Reclaimable file
+cache does not count as used memory, so file-heavy workloads are not mistaken
+for leaks.
 
 ### When the workload is OOM-killed
 
@@ -358,7 +425,9 @@ gregale debug capture my-app --type stacks
 Values are counts: the flamegraph is as wide as the number of goroutines or
 threads parked on each path.
 
-When a request stays in flight for 10 seconds, the gateway reports it and
+When a request waits on the app for 10 seconds (its body has arrived and no
+response has started: a slow upload or download is not stuck), the gateway
+reports it and
 Gregale captures stacks and 5 seconds of CPU from the serving instance
 automatically (`trigger: slow_request`, at most once per app every 15
 minutes). The capture records the request id; its page links to the request,
@@ -388,7 +457,7 @@ Values are nanoseconds of delay; only the capture window counts, not the
 process's history. They are Go-only: Node and Python processes contribute
 nothing to these kinds.
 
-With `guestprofiling.Start`, sampling is on only for the window: one blocking
+With `profiling.Start`, sampling is on only for the window: one blocking
 event per 10 µs spent blocked, one in 10 mutex contentions. A mutex fraction
 the application set itself is left as it is. Go cannot report the block
 profile rate, so the first capture decides: if the process already has block
@@ -434,7 +503,7 @@ Each event is sent once per capture. A webhook with no event filter receives
 both; to receive only these, subscribe to them explicitly:
 
 ```sh
-gregale webhooks add --app my-app --target-url https://hooks.example.com/gregale \
+gregale webhook create --app my-app --target-url https://hooks.example.com/gregale \
   --event profile.capture_ready --event profile.capture_oom_linked
 ```
 
@@ -467,7 +536,7 @@ A single heap capture shows where memory is held; two captures show what grew.
 Compare a capture with an earlier one of the same app:
 
 ```sh
-gregale debug capture-diff my-app CAPTURE_UUID --base EARLIER_CAPTURE_UUID
+gregale debug capture diff my-app CAPTURE_UUID --base EARLIER_CAPTURE_UUID
 ```
 
 The output lists functions by growth with their value in both captures. On the
@@ -486,7 +555,7 @@ The REST API is `POST /v1/apps/{slug}/profiles/captures` with optional
 `GET …/captures/{id}/pprof?kind={kind}`. Compare two ready captures with
 `GET …/captures/{id}/diff?base={earlier-id}&kind={kind}`. A ready capture with zero
 `processes` means the instance has no collector: a custom image without an
-instrumented runtime, or a Go app that neither calls `guestprofiling.Start` nor
+instrumented runtime, or a Go app that neither calls `profiling.Start` nor
 sets `profiling.pprof_port`. With `pprof_port` set, the `reason` says when
 nothing answered on that port.
 
@@ -501,7 +570,7 @@ profiling:
 ```
 
 Each instrumented process reports its live heap once per window.
-`gregale debug profiles my-app --type heap --deployment-id UUID --runtime node22
+`gregale debug profiles my-app --type heap --release UUID --runtime node22
 --start … --end …` shows the live heap near `--end`: the query is narrowed to
 the last collection window so snapshots are not added together. Heap profiles
 have no route attribution or deployment comparison.
@@ -549,17 +618,22 @@ On-demand captures need no Pyroscope backend. Set `FAAS_PROFILING_ON_DEMAND=1`
 for apid (captures API), imaged (stamps dormant collectors into new
 deployments), gatewayd-internal (slow-request captures) and schedd
 (CPU-saturation captures), apply the `profile_captures` migrations, and release
-guest-init, vmmd, schedd and the managed runtime bases together. Existing deployments gain
-collectors on their next deploy. Continuous heap profiles additionally need
+guest-init, vmmd, schedd and the managed runtime bases together. Captures are a
+preview: release them to accounts with the `profile_captures` platform flag
+(`gregalectl flags allow --capability profile-captures …`). apid hides the API,
+schedd skips automatic captures and imaged stamps no collectors for accounts
+it is not released to. Existing deployments gain collectors on their next
+deploy. Capture health has its own alerts and runbook
+(docs/runbooks/FaasProfileCaptures.md). Continuous heap profiles additionally need
 the Pyroscope backend above; they are stored as
 `memory:inuse_space:bytes:space:bytes` under the same tenant selectors.
 
-| Plan | API query history | Uploads / account / minute |
-|---|---:|---:|
-| Free | Disabled | 0 |
-| Hobby | 3 days | 60 |
-| Pro | 7 days | 180 |
-| Scale | 14 days | 600 |
+| Plan | API query history | Uploads / account / minute | Capture storage |
+|---|---:|---:|---:|
+| Free | Disabled | 0 | None |
+| Hobby | 3 days | 60 | 256 MiB |
+| Pro | 7 days | 180 | 1 GiB |
+| Scale | 14 days | 600 | 4 GiB |
 
 These are internal defaults in `pkg/api/limits.go`. Queries enforce the current
 plan's history window. Physical deletion belongs to Pyroscope: configure a
@@ -606,6 +680,7 @@ Portable checks:
 
 ```sh
 go test -race ./pkg/profiling ./pkg/profileproto ./pkg/guestprofiling ./guest/init
+(cd sdk/go && go test -race ./preview/profiling)
 npm ci --prefix guest/profiling/node
 python -m pip install --require-hashes --only-binary=:all: \
   -r guest/profiling/python/requirements.txt
@@ -751,7 +826,7 @@ These checks record CPU regression signals. They do not send notifications,
 block rollouts or roll back deployments. Traffic mix, replica counts, CPU
 allocation and instrumentation coverage can affect the result.
 
-When this policy is enabled, `gregale routes health report`, the canary's
+When this policy is enabled, `gregale api route health report`, the canary's
 route-health API report and deployment detail page also show a **default advisory
 canary profile signal**. A background worker pins the active canary stage and
 policy revision, then compares it with the unique live stable deployment over
@@ -783,7 +858,7 @@ GET /v1/apps/{slug}/profiles/canary-checks/{deployment_id}?limit=5
 ```
 
 Use `next_cursor` as the `before` query parameter to page through older stages.
-The deployment detail page and `gregale routes health profile-history APP`
+The deployment detail page and `gregale api route health profiles APP`
 show the same history. Each entry includes its exact stable/canary windows,
 threshold evidence and policy revision.
 
@@ -910,9 +985,9 @@ snapshots do not extend retention for raw requests or CPU profile samples.
 Go applications can attach a static declared route label to handler execution:
 
 ```go
-import "github.com/onebox-faas/faas/pkg/guestprofiling"
+import "github.com/poyrazK/faas/sdk/go/preview/profiling"
 
-mux.Handle("GET /orders/{id}", guestprofiling.RouteHandler("GET /orders/{id}", handler))
+mux.Handle("GET /orders/{id}", profiling.RouteHandler("GET /orders/{id}", handler))
 ```
 
 Enable and start the existing Go profiling collector as described above. Configure
@@ -932,7 +1007,7 @@ For Go 1.22+ ServeMux routing, install one wrapper around the completed mux:
 ```go
 mux := http.NewServeMux()
 mux.HandleFunc("GET /orders/{id}", orderHandler)
-server := &http.Server{Addr: ":8080", Handler: guestprofiling.ServeMux(mux)}
+server := &http.Server{Addr: ":8080", Handler: profiling.ServeMux(mux)}
 ```
 
 The wrapper looks up the registered pattern and dispatches through the mux,
@@ -953,9 +1028,9 @@ still needs to be enabled and the collector started; the middleware only adds
 labels. Host validation, unmatched-label handling and background-goroutine
 cautions remain the same.
 
-`guestprofiling.WithRoute(ctx, label, work)` provides equivalent scoped execution.
+`profiling.WithRoute(ctx, label, work)` provides equivalent scoped execution.
 Go child goroutines inherit pprof labels. Wrap asynchronous background work in
-`guestprofiling.WithoutRoute(ctx, work)` to clear inherited attribution. Route CPU
+`profiling.WithoutRoute(ctx, work)` to clear inherited attribution. Route CPU
 is sampled CPU associated with labeled execution; it does not measure the exact
 CPU of an individual request. Node and Python route attribution are not yet
 supported; their existing collectors continue to provide aggregate CPU.
@@ -1073,11 +1148,11 @@ in production. See ADR-822.
 
 ## Per-route request labeling consistency (Go)
 
-`guestprofiling.ServeMux` and `RouteHandler` now count labeled request entries
+`profiling.ServeMux` and `RouteHandler` now count labeled request entries
 while the Go CPU collector is active. For other routers, use:
 
 ```go
-guestprofiling.WithRouteRequest(r.Context(), "GET /orders/{id}", func(ctx context.Context) {
+profiling.WithRouteRequest(r.Context(), "GET /orders/{id}", func(ctx context.Context) {
     handler.ServeHTTP(w, r.WithContext(ctx))
 })
 ```
@@ -1271,7 +1346,7 @@ Other route, health and binding gates still apply.
 
 Inspect the baseline, route streaks, functions and call paths on the deployment
 dashboard, through `GET /v1/deployments/DEPLOYMENT_ID/canary/profile-gate`, or with
-`gregale canary gate DEPLOYMENT_ID --json`. The readout uses retained evidence and
+`gregale release canary evidence DEPLOYMENT_ID --json`. The readout uses retained evidence and
 commit-pinned source links; it does not query profile storage. Changing the policy
 revision starts fresh evidence collection for the current stage. A passed gate
 certifies those recorded windows for that stage, rather than continuously
@@ -1280,7 +1355,7 @@ monitoring the stage after it passes.
 A customer may explicitly override only the profiling gate:
 
 ```sh
-gregale canary advance DEPLOYMENT_ID --expected-step 1 \
+gregale release canary advance DEPLOYMENT_ID --expected-step 1 \
   --profile-policy-revision 7 \
   --profile-override-reason "Reviewed checkout profiles and accepted the CPU cost."
 ```

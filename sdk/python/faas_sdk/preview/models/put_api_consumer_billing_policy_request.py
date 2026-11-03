@@ -11,7 +11,7 @@ T = TypeVar("T", bound="PutAPIConsumerBillingPolicyRequest")
 
 @_attrs_define
 class PutAPIConsumerBillingPolicyRequest:
-    """An app's overdue-invoice rule (ADR-1315)."""
+    """An app's overdue-invoice rule."""
 
     block_overdue_after_days: int
     """Days past an invoice's due date before its consumer is refused; 0 refuses at once."""

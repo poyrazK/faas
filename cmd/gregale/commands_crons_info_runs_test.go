@@ -18,7 +18,7 @@ func TestRenderCronRecentRunsReportsFailures(t *testing.T) {
 	var out bytes.Buffer
 	main.RenderCronRecentRuns(&out, "c1", []api.CronRun{failed, failed, {Outcome: api.CronRunSuccess, StartedAt: at.Add(-10 * time.Minute)}})
 	got := out.String()
-	for _, want := range []string{"last run: failed at 2026-10-14T18:50:01Z — invoke: application returned HTTP 404", "2 of the last 3 runs did not succeed", "gregale crons runs c1"} {
+	for _, want := range []string{"last run: failed at 2026-10-14T18:50:01Z — invoke: application returned HTTP 404", "2 of the last 3 runs did not succeed", "gregale cron runs c1"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output %q lacks %q", got, want)
 		}

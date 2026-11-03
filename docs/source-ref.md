@@ -185,7 +185,8 @@ For teams that want explicit-CI deploys (workflow run, not push
 listener), the first-party `poyrazK/faas/.github/actions/deploy`
 action wraps this same endpoint. The action is a composite that
 vendors the `gregale` CLI per release. The public-beta `@v0` moving tag
-resolves to that release bundle, and the `cli-version` output surfaces the
+resolves to the newest stable release bundle (prereleases do not move it),
+and the `cli-version` output surfaces the
 exact version for drift detection. CLI-generated workflows use an immutable
 40-character Action SHA by default; direct Action users can pin the resolved
 SHA when their workflow must be immutable.
@@ -278,6 +279,12 @@ the job JWT is exchanged through `/v1/auth/oidc/exchange` for a five-minute
 deploy bearer. The optional `api-key` input remains available for installations
 that have not configured an OIDC subject binding yet.
 
+Under the trust policy Gregale creates for a connected repository, the bearer
+can deploy only the `app` the Action names, which must be bound to that
+repository, and only from runs on its deploy branches or `v*` release tags.
+Pull request runs cannot deploy (ADR-20261101100000; see
+[OIDC token exchange](auth.md#oidc-token-exchange)).
+
 ### Repository discovery for automation
 
 Customers with a `github:manage` API key can list the repositories visible to
@@ -290,7 +297,7 @@ Authorization: Bearer <key-with-github:manage>
 
 The response contains repository id, full name, default branch, and visibility.
 If no GitHub App installation exists, the API returns
-`github_install_not_found`; complete `gregale connect github` once, then retry.
+`github_install_not_found`; complete `gregale github connect` once, then retry.
 
 ### What's not automated by the Action
 - **PR-preview environments.** Each deploy is a fresh

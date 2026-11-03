@@ -357,28 +357,31 @@ func sourceBuildRootfsSharedRuntimeFixture(t *testing.T, s sourceRootfsTestStore
 // spec: §4.6
 // H10-140: a container app's source layer may run on the shared runner base
 // its signed export claims, and only then.
+// Python: ADR-1500 amendment 2.
 func sourceBuildRootfsSharedRuntime(t *testing.T, s sourceRootfsTestStore) {
 	t.Helper()
-	f := sourceBuildRootfsSharedRuntimeFixture(t, s, "node24")
-	if f.Input.Kind != "source-app-layer" || f.Input.Runtime != "node24" {
-		t.Fatalf("kind=%q runtime=%q; want source-app-layer on node24", f.Input.Kind, f.Input.Runtime)
-	}
-	value, err := s.PublishSourceBuildRootfs(t.Context(), f.Input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current, err := s.GetCurrentSourceBuildRootfs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); err != nil || current.ID != value.ID {
-		t.Fatal("shared-runtime producer not selected", err)
-	}
-	if dep, err := s.DeploymentByID(t.Context(), f.Dep.ID); err != nil || dep.RuntimeBase != "node24" {
-		t.Fatalf("deployment runtime base = %q (%v), want node24 stamped with the layer", dep.RuntimeBase, err)
-	}
-	inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID)
-	if err != nil || len(inputs.Artifacts) != 2 || inputs.Artifacts[1].Kind != "source-app-layer" {
-		t.Fatal("shared-runtime layer cannot feed runtime inputs", err)
-	}
-	if inputs.Artifacts[0].StorageKey != RuntimeBaseKeyForArch("node24", "amd64") {
-		t.Fatalf("base = %q, want the node24 runner base", inputs.Artifacts[0].StorageKey)
+	for _, runtime := range []string{"node24", "python313"} {
+		f := sourceBuildRootfsSharedRuntimeFixture(t, s, runtime)
+		if f.Input.Kind != "source-app-layer" || f.Input.Runtime != runtime {
+			t.Fatalf("kind=%q runtime=%q; want source-app-layer on %s", f.Input.Kind, f.Input.Runtime, runtime)
+		}
+		value, err := s.PublishSourceBuildRootfs(t.Context(), f.Input)
+		if err != nil {
+			t.Fatal(runtime, err)
+		}
+		if current, err := s.GetCurrentSourceBuildRootfs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); err != nil || current.ID != value.ID {
+			t.Fatal("shared-runtime producer not selected", runtime, err)
+		}
+		if dep, err := s.DeploymentByID(t.Context(), f.Dep.ID); err != nil || dep.RuntimeBase != runtime {
+			t.Fatalf("deployment runtime base = %q (%v), want %s stamped with the layer", dep.RuntimeBase, err, runtime)
+		}
+		inputs, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID)
+		if err != nil || len(inputs.Artifacts) != 2 || inputs.Artifacts[1].Kind != "source-app-layer" {
+			t.Fatal("shared-runtime layer cannot feed runtime inputs", runtime, err)
+		}
+		if inputs.Artifacts[0].StorageKey != RuntimeBaseKeyForArch(runtime, "amd64") {
+			t.Fatalf("base = %q, want the %s runner base", inputs.Artifacts[0].StorageKey, runtime)
+		}
 	}
 
 	mismatch := sourceBuildRootfsSharedRuntimeFixture(t, s, "node24")
@@ -390,7 +393,7 @@ func sourceBuildRootfsSharedRuntime(t *testing.T, s sourceRootfsTestStore) {
 	for _, claim := range []struct {
 		name, typ, appRuntime, claimed string
 	}{
-		{name: "runtime outside the shared set", typ: string(AppTypeApp), claimed: "python312"},
+		{name: "runtime outside the shared set", typ: string(AppTypeApp), claimed: "go124"},
 		{name: "function claiming another runtime", typ: string(AppTypeFunction), appRuntime: "node22", claimed: "node24"},
 	} {
 		approval, _, _, _, _ := buildExportFixtureClaim(t, s, AppType(claim.typ), claim.appRuntime, claim.claimed)
@@ -413,8 +416,9 @@ func TestSourceRuntimeClaimAllowed(t *testing.T) {
 	}{
 		{"own runtime", App{Type: AppTypeFunction, Runtime: "node22"}, "node22", true},
 		{"container claims runner", App{Type: AppTypeApp}, "node24", true},
+		{"container claims python runner", App{Type: AppTypeApp}, "python312", true},
 		{"container claims nothing", App{Type: AppTypeApp}, "", true},
-		{"container claims unknown", App{Type: AppTypeApp}, "python312", false},
+		{"container claims unknown", App{Type: AppTypeApp}, "go124", false},
 		{"function claims another", App{Type: AppTypeFunction, Runtime: "node22"}, "node24", false},
 		{"legacy container runtime claims runner", App{Type: AppTypeApp, Runtime: "go124"}, "node24", false},
 	} {
@@ -429,8 +433,11 @@ func TestSourceRuntimeClaimAllowed(t *testing.T) {
 func TestMemSetDeploymentRuntimeBase(t *testing.T) {
 	s := NewMemStore()
 	_, app, dep, _, _ := buildExportFixtureClaim(t, s, AppTypeApp, "", "")
-	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); !errors.Is(err, ErrInvalidArgument) {
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "go124"); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("non-shared runtime accepted: %v", err)
+	}
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "node24"); err != nil {
 		t.Fatal(err)

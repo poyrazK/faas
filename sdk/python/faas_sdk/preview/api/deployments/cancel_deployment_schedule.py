@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ScheduledRelease]:
-    """Cancel a release's pending schedule (ADR-20261021152201).
+    """Cancel a release's pending schedule.
 
      The release stays live without traffic. 404 `scheduled_release_not_found` when it has no pending
     schedule.
@@ -102,7 +102,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ScheduledRelease | None:
-    """Cancel a release's pending schedule (ADR-20261021152201).
+    """Cancel a release's pending schedule.
 
      The release stays live without traffic. 404 `scheduled_release_not_found` when it has no pending
     schedule.
@@ -129,7 +129,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ScheduledRelease]:
-    """Cancel a release's pending schedule (ADR-20261021152201).
+    """Cancel a release's pending schedule.
 
      The release stays live without traffic. 404 `scheduled_release_not_found` when it has no pending
     schedule.
@@ -159,7 +159,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ScheduledRelease | None:
-    """Cancel a release's pending schedule (ADR-20261021152201).
+    """Cancel a release's pending schedule.
 
      The release stays live without traffic. 404 `scheduled_release_not_found` when it has no pending
     schedule.

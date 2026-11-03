@@ -37,7 +37,7 @@ export type MirrorSummaryResponse = {
    */
   incomplete_comparison_count: number;
   /**
-   * Mirror admissions that timed out before the gateway received an admitted target. A late schedd admission is cleaned up by schedd.
+   * Mirror admissions that timed out before the gateway received an admitted target. A late scheduler admission is cleaned up by the scheduler.
    */
   scheduler_admission_timeout_count: number;
   /**

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,25 +44,20 @@ func TestClaudePluginManifestAndMCPServer(t *testing.T) {
 		t.Fatalf("plugin.json needs name gregale, a version and a description: %+v", manifest)
 	}
 
+	// The plugin connects to the hosted server: the person chooses at sign-in
+	// what the agent may do, so nothing runs locally with their login.
 	var config struct {
-		MCPServers map[string]struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
-		} `json:"mcpServers"`
+		MCPServers map[string]map[string]any `json:"mcpServers"`
 	}
 	readPluginJSON(t, ".mcp.json", &config)
 	server, ok := config.MCPServers["gregale"]
-	if !ok || server.Command != "gregale" || len(server.Args) < 2 || server.Args[0] != "mcp" || server.Args[1] != "serve" {
-		t.Fatalf(".mcp.json must run `gregale mcp serve`: %+v", config.MCPServers)
-	}
-	opts, err := parseMCPServeOptions(server.Args[2:])
-	if err != nil {
-		t.Fatalf(".mcp.json arguments do not parse: %v", err)
-	}
-	if opts.transport != "stdio" || opts.allowWrites {
-		t.Fatalf("the plugin's server must be read-only stdio; got transport %q, allowWrites %v", opts.transport, opts.allowWrites)
+	if !ok || len(config.MCPServers) != 1 || server["type"] != "http" || server["url"] != hostedMCPURL || len(server) != 2 {
+		t.Fatalf(".mcp.json must name only the hosted server %s over http: %+v", hostedMCPURL, config.MCPServers)
 	}
 }
+
+// hostedMCPURL is Gregale's hosted management MCP server.
+const hostedMCPURL = "https://api.gregale.dev/mcp"
 
 func TestClaudePluginSkillsHaveFrontmatter(t *testing.T) {
 	skills, err := filepath.Glob(filepath.Join(claudePluginDir, "skills", "*", "SKILL.md"))
@@ -100,6 +96,7 @@ func TestAgentFacingCommandsExist(t *testing.T) {
 				if name == "" {
 					continue
 				}
+				name, next = todaysCommand(fields[i+1:], name, next)
 				command, ok := lookupCliCommand(name)
 				if !ok || command.Audience != cliAudienceCustomer {
 					t.Errorf("%s: `gregale %s` is not a customer command (in %q)", path, name, line)
@@ -156,6 +153,24 @@ func markdownCodeLines(t *testing.T, path string) []string {
 		lines = append(lines, strings.Split(match[1]+match[2], "\n")...)
 	}
 	return lines
+}
+
+// todaysCommand maps a command spelled in the command tree's names to the
+// command that runs it today (ADR-20261026145832), so the checks above
+// cover either spelling.
+func todaysCommand(fields []string, name, next string) (string, string) {
+	at := slices.Index(fields, name)
+	if at < 0 {
+		return name, next
+	}
+	path, err := rewriteCliTree(fields[at:])
+	if err != nil || len(path) == 0 || slices.Equal(path, fields[at:]) {
+		return name, next
+	}
+	if len(path) == 1 {
+		return path[0], ""
+	}
+	return path[0], path[1]
 }
 
 // commandAfterGlobals skips the global options agents are told to use and

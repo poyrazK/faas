@@ -38,8 +38,8 @@ class DebugTelemetrySpan:
     dependency_kind: str | Unset = UNSET
     """Allowlisted platform-owned dependency kind; raw span attributes are never returned."""
     dependency_name: str | Unset = UNSET
-    """Grouping identity of an app_dependency span (ADR-958): database operation and table, HTTP host, RPC method
-    or messaging destination. Never contains literals, paths, query strings or credentials."""
+    """Grouping identity of an app_dependency span: database operation and table, HTTP host, RPC method or
+    messaging destination. Never contains literals, paths, query strings or credentials."""
     error_type: str | Unset = UNSET
     """Failure class of an error span, from the error.type attribute or the first recorded exception.type (for
     example QueryTimeout or 503). Exception messages and stack traces are never retained."""

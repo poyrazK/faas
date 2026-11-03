@@ -9,7 +9,7 @@ import type { OutboundAIRouteTarget } from './OutboundAIRouteTarget.js';
 export type PutOutboundAIRouteTargetsRequest = {
   targets: Array<OutboundAIRouteTarget>;
   /**
-   * The route's strategy from now on, as on creation (ADR-1434); omitted means ordered.
+   * The route's strategy from now on, as on creation; omitted means ordered.
    */
   strategy?: 'ordered' | 'weighted' | 'latency' | 'cost';
   /**

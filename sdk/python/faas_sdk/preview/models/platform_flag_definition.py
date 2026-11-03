@@ -24,9 +24,8 @@ class PlatformFlagDefinition:
     default: bool
     rules: list[PlatformFlagRule] | Unset = UNSET
     self_serve: PlatformFlagSelfServe | Unset = UNSET
-    """Lets customers join the preview themselves (ADR 20261021080640). An opted-in account or organization on an
-    eligible plan gets the flag when no rule matched. Disabling it ignores existing opt-ins without deleting them.
-   """
+    """Lets customers join the preview themselves. An opted-in account or organization on an eligible plan gets the
+    flag when no rule matched. Disabling it ignores existing opt-ins without deleting them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

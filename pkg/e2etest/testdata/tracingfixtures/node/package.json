@@ -1,0 +1,8 @@
+{
+  "name": "gregale-e2e-tracing-node",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "pino": "9.6.0"
+  }
+}

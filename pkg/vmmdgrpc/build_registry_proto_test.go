@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
-// adr: 20261026090000 — a builder's sealed registry credentials cross the
+// adr: 20261026091500 — a builder's sealed registry credentials cross the
 // vmmd adapter unopened.
 func TestToColdBootRequestBuildRegistryCredentials(t *testing.T) {
 	request, err := toColdBootRequest(context.Background(), &vmmdpb.CreateColdBootRequest{

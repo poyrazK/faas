@@ -22,9 +22,9 @@ func TestNodeAdmissionRefusalDoesNotReplayApplicationOrEvictPlacement(t *testing
 			err := grpcerr.ToStatus(api.NewProblem(api.StatusForCode(code), code, "Refused", "Before guest execution"))
 			runWithRetry(w, r, Target{InstanceID: "live"}, policy,
 				func(Target) { t.Fatal("capacity refusal evicted placement") },
-				func(dst http.ResponseWriter, _ *http.Request, _ Target) {
+				func(dst http.ResponseWriter, req *http.Request, _ Target) {
 					attempts++
-					if !writeNodeAdmissionRefusal(dst, err) {
+					if !writeNodeAdmissionRefusal(dst, req, err) {
 						t.Fatal("unrecognized node refusal")
 					}
 				},
@@ -38,8 +38,9 @@ func TestNodeAdmissionRefusalDoesNotReplayApplicationOrEvictPlacement(t *testing
 
 func TestNodeAdmissionResponseRetainsStructuredCap(t *testing.T) {
 	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "http://example.test/work", nil)
 	err := grpcerr.ToStatus(api.NewProblem(http.StatusTooManyRequests, api.CodeConcurrencyThrottled, "Busy", "full").WithLimit(4, 5))
-	if !writeNodeAdmissionRefusal(w, err) {
+	if !writeNodeAdmissionRefusal(w, r, err) {
 		t.Fatal("unrecognized refusal")
 	}
 	resp := w.Result()

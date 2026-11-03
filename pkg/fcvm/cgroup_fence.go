@@ -77,7 +77,7 @@ func newCgroupFence(l Lease) (*cgroupFence, error) {
 		f.cpuMax = builderCPUMax
 		return f, nil
 	}
-	cpuMax, err := appCPUMax(l.Plan, l.CPUMillicores)
+	cpuMax, err := leaseCPUMax(l)
 	if err != nil {
 		return nil, err
 	}

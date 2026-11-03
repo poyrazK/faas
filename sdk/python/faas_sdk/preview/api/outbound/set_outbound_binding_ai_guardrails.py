@@ -95,15 +95,14 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Replace an app's AI guardrails on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-991). Sets per-minute request and token limits, a model
-    allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that
-    name none.
+     Requires MFA and deploy-write scope. Sets per-minute request and token limits, a model allow-list
+    and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
 
     Args:
         slug (str):
         integration (UUID):
         body (PutOutboundBindingAIGuardrailsRequest): Replace an app's AI guardrails on one
-            integration (ADR-991). Null fields remove that guardrail.
+            integration. Null fields remove that guardrail.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,15 +134,14 @@ def sync(
 ) -> Any | Problem | None:
     """Replace an app's AI guardrails on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-991). Sets per-minute request and token limits, a model
-    allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that
-    name none.
+     Requires MFA and deploy-write scope. Sets per-minute request and token limits, a model allow-list
+    and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
 
     Args:
         slug (str):
         integration (UUID):
         body (PutOutboundBindingAIGuardrailsRequest): Replace an app's AI guardrails on one
-            integration (ADR-991). Null fields remove that guardrail.
+            integration. Null fields remove that guardrail.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,15 +168,14 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Replace an app's AI guardrails on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-991). Sets per-minute request and token limits, a model
-    allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that
-    name none.
+     Requires MFA and deploy-write scope. Sets per-minute request and token limits, a model allow-list
+    and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
 
     Args:
         slug (str):
         integration (UUID):
         body (PutOutboundBindingAIGuardrailsRequest): Replace an app's AI guardrails on one
-            integration (ADR-991). Null fields remove that guardrail.
+            integration. Null fields remove that guardrail.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -208,15 +205,14 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Replace an app's AI guardrails on an AI integration.
 
-     Requires MFA and deploy-write scope (ADR-991). Sets per-minute request and token limits, a model
-    allow-list and a per-request output-token ceiling; the gateway adds the ceiling to requests that
-    name none.
+     Requires MFA and deploy-write scope. Sets per-minute request and token limits, a model allow-list
+    and a per-request output-token ceiling; the gateway adds the ceiling to requests that name none.
 
     Args:
         slug (str):
         integration (UUID):
         body (PutOutboundBindingAIGuardrailsRequest): Replace an app's AI guardrails on one
-            integration (ADR-991). Null fields remove that guardrail.
+            integration. Null fields remove that guardrail.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

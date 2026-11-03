@@ -10,6 +10,7 @@ package edgerules
 import (
 	"context"
 	"log/slog"
+	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -46,10 +47,18 @@ type Service struct {
 	// to the account (ADR-20261023115741); nil allows every kind.
 	SettingCheck func(acct state.Account, kind string) *api.Problem
 
+	// AuthorizeApp applies the organization access check to an app a request
+	// changes without naming it, such as an app whose rules use an edited
+	// list (ADR-091 amendment 2026-10-30); nil allows every app.
+	AuthorizeApp func(r *http.Request, acct state.Account, app state.App) *api.Problem
+
 	// FleetRequired is true on named multi-box control planes. Those
 	// deployments must see at least one active serving gateway before a
 	// policy mutation can commit; legacy single-box/dev installs have no
 	// compute registry and apply the same generation locally without fleet
 	// ACKs.
 	FleetRequired bool
+
+	// Metrics counts convergence skips and failures; nil records nothing.
+	Metrics *Metrics
 }

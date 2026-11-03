@@ -4,6 +4,10 @@
 // are matched by their longest registered prefix, while explicitly marked
 // operator/security assets are recorded as external routes.
 //
+// A route may be marked unpublished, with the reason, when the docs site
+// deliberately does not serve it: the page documents only preview or internal
+// capabilities (#5709). The page of a GA or beta capability may not be.
+//
 // Go links built from the docsBase constant and a path are static, so they must name a
 // registered route exactly: the live site serves only registered routes, and
 // production-us answered 404 for /docs/errors/app-startup-timeout and 40 more
@@ -19,6 +23,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/productcap"
 )
 
 const catalogPath = "docs/customer-pages.json"
@@ -42,6 +48,8 @@ type route struct {
 	Path     string `json:"path"`
 	Source   string `json:"source,omitempty"`
 	External bool   `json:"external,omitempty"`
+	// Unpublished is why the docs site does not serve this page.
+	Unpublished string `json:"unpublished,omitempty"`
 }
 
 type link struct {
@@ -66,6 +74,13 @@ func run() error {
 		return err
 	}
 	if err := validateCatalog(cat); err != nil {
+		return err
+	}
+	capabilities, err := productcap.Load()
+	if err != nil {
+		return err
+	}
+	if err := checkUnpublished(cat, capabilities.Capabilities); err != nil {
 		return err
 	}
 	links, err := collectLinks()
@@ -143,6 +158,29 @@ func validateCatalog(cat catalog) error {
 		seen[r.Path] = true
 		if r.External == (r.Source != "") {
 			return fmt.Errorf("%s route %q must have either source or external=true", catalogPath, r.Path)
+		}
+		if r.External && r.Unpublished != "" {
+			return fmt.Errorf("%s route %q is external and cannot be unpublished", catalogPath, r.Path)
+		}
+	}
+	return nil
+}
+
+// checkUnpublished refuses an unpublished route that is the docs page of a GA
+// or beta capability: customers can use those, so their page must be served.
+func checkUnpublished(cat catalog, capabilities []productcap.Capability) error {
+	for _, capability := range capabilities {
+		if capability.Maturity != productcap.MaturityGA && capability.Maturity != productcap.MaturityBeta {
+			continue
+		}
+		path, ok := strings.CutPrefix(capability.DocsURL, "/docs/")
+		if !ok {
+			continue
+		}
+		path, _, _ = strings.Cut(path, "#")
+		if r, ok := matchRoute(cat.Routes, strings.TrimSuffix(path, "/")); ok && r.Unpublished != "" {
+			return fmt.Errorf("%s route %q is unpublished (%s) but documents %s capability %s; publish the page",
+				catalogPath, r.Path, r.Unpublished, capability.Maturity, capability.ID)
 		}
 	}
 	return nil

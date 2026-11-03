@@ -345,6 +345,10 @@ func (l *liveClient) StreamSourceRef(ctx context.Context, accountID string, inst
 	}, nil
 }
 
+func (l *liveClient) GetInstallationRepository(ctx context.Context, accountID string, installationID int64, repoFullName string) (githubdgrpc.InstallationRepository, bool, error) {
+	return l.c.GetInstallationRepository(ctx, accountID, installationID, repoFullName)
+}
+
 func (l *liveClient) GetBranchHead(ctx context.Context, accountID string, installationID int64, repoFullName, branch string) (string, bool, error) {
 	return l.c.GetBranchHead(ctx, accountID, installationID, repoFullName, branch)
 }

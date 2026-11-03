@@ -4,7 +4,6 @@ package state
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/operations"
 )
 
@@ -39,9 +39,26 @@ type JobOperationStore interface {
 	ReportOperationJob(context.Context, string, JobOperationAuthority, string, api.OperationJobReportRequest) (Operation, error)
 }
 
-func operationJobCapability(runID, instanceID, lease string) string {
-	digest := sha256.Sum256([]byte("gregale:customer-operation:job:v1\x00" + runID + "\x00" + instanceID + "\x00" + lease))
+// credTagJobOperationCapability binds the job operation capability, a
+// scheduler-family credential (ADR 20261029202403 amendment 1): schedd
+// issues it and apid checks it.
+const credTagJobOperationCapability credhash.Tag = "customer_operations.job_capability"
+
+// legacyOperationJobCapability is the capability before amendment 1, a hash
+// of the task's lease token, which the database stores in plaintext.
+func legacyOperationJobCapability(runID, instanceID, lease string) string {
+	digest := sha256.Sum256(operationJobCapabilityMaterial(runID, instanceID, lease))
 	return hex.EncodeToString(digest[:])
+}
+
+func operationJobCapabilityMaterial(runID, instanceID, lease string) []byte {
+	return []byte("gregale:customer-operation:job:v1\x00" + runID + "\x00" + instanceID + "\x00" + lease)
+}
+
+// operationJobCapability is the capability issued for a task's lease: an
+// HMAC under the scheduler key once its keyed writes are on.
+func operationJobCapability(runID, instanceID, lease string) string {
+	return credhash.For(credhash.FamilyScheduler).Derive(credTagJobOperationCapability, operationJobCapabilityMaterial(runID, instanceID, lease), legacyOperationJobCapability(runID, instanceID, lease))
 }
 func validateOperationJobAuthority(op Operation, task JobTask, a JobOperationAuthority, now time.Time) error {
 	if op.Generation < 1 || op.Generation > math.MaxInt32 || a.Attempt < 1 || a.Attempt > math.MaxInt32 {
@@ -50,8 +67,9 @@ func validateOperationJobAuthority(op Operation, task JobTask, a JobOperationAut
 	if op.JobRunID != a.RunID || op.Generation != a.Generation || a.Attempt != task.Attempt || task.TaskIndex != 0 || task.Status != "claimed" || !operationIsActive(op) || task.InstanceID == nil || *task.InstanceID != a.InstanceID || task.LeaseToken == nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(now) || !operationJobDeadline(op, task).After(now) {
 		return ErrOperationStaleAttempt
 	}
-	expected := operationJobCapability(task.RunID, *task.InstanceID, *task.LeaseToken)
-	if len(a.Capability) != len(expected) || subtle.ConstantTimeCompare([]byte(a.Capability), []byte(expected)) != 1 {
+	material := operationJobCapabilityMaterial(task.RunID, *task.InstanceID, *task.LeaseToken)
+	legacy := legacyOperationJobCapability(task.RunID, *task.InstanceID, *task.LeaseToken)
+	if !credhash.For(credhash.FamilyScheduler).DerivedMatches(credTagJobOperationCapability, material, legacy, a.Capability) {
 		return ErrOperationStaleAttempt
 	}
 	return nil

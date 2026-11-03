@@ -13,15 +13,15 @@ export type InvokeRequest = {
   method?: string;
   path?: string;
   /**
-   * ADR-134 PR-B. Hard-stop timestamp. Must be within now+Limits.MaxAsyncInvocationDeadlineSeconds.
+   * Hard-stop timestamp. Must be within now+Limits.MaxAsyncInvocationDeadlineSeconds.
    */
   deadline_at?: string | null;
   /**
-   * ADR-134 PR-B. Per-row retry curve override. max_attempts counts the original, is capped by the account plan, and 0 inherits that finite cap.
+   * Per-row retry curve override. max_attempts counts the original, is capped by the account plan, and 0 inherits that finite cap.
    */
   retry_policy?: any | null;
   /**
-   * ADR-134 PR-B. Retention horizon in seconds. NULL/0 means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds).
+   * Retention horizon in seconds. NULL/0 means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds).
    */
   retention_seconds?: number | null;
   /**

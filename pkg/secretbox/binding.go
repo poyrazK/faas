@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sync"
 
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -77,10 +78,45 @@ type boundEnvelope struct {
 	Values  Envelope `json:"values"`
 }
 
+// runtimeSealHook runs on every envelope SealBound returns (ADR
+// 20261028161502, amendment 1).
+var (
+	runtimeSealMu   sync.RWMutex
+	runtimeSealHook func(blob []byte) error
+)
+
+// SetRuntimeSealHook installs, for this process, a hook that runs on every
+// runtime envelope SealBound seals before it is returned; nil removes it.
+// A writer that holds the runtime signing key installs one that stores the
+// envelope's signature (sealsig.RuntimeSealHook). A hook error fails the
+// seal, so no envelope leaves without its signature.
+func SetRuntimeSealHook(hook func(blob []byte) error) {
+	runtimeSealMu.Lock()
+	runtimeSealHook = hook
+	runtimeSealMu.Unlock()
+}
+
 // SealBound is SealTo for an envelope bound to binding's account. A zero
 // binding writes the unbound format, byte-compatible with SealTo, so writers
-// can thread a binding that is switched off.
+// can thread a binding that is switched off. Either way the envelope is a
+// runtime secret, so the runtime seal hook sees it.
 func SealBound(recipients []*age.X25519Recipient, binding Binding, env Envelope) ([]byte, error) {
+	blob, err := sealBound(recipients, binding, env)
+	if err != nil {
+		return nil, err
+	}
+	runtimeSealMu.RLock()
+	hook := runtimeSealHook
+	runtimeSealMu.RUnlock()
+	if hook != nil {
+		if err := hook(blob); err != nil {
+			return nil, fmt.Errorf("secretbox: sign runtime envelope: %w", err)
+		}
+	}
+	return blob, nil
+}
+
+func sealBound(recipients []*age.X25519Recipient, binding Binding, env Envelope) ([]byte, error) {
 	if binding.IsZero() {
 		return SealTo(recipients, env)
 	}

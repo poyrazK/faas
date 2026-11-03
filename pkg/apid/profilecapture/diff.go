@@ -25,7 +25,7 @@ func (s *Service) Diff(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	}
 	diff, problem := s.Compare(r.Context(), acct, app, store, cand, r.URL.Query().Get("base"), r.URL.Query().Get("kind"))
 	if problem != nil {
-		api.WriteProblem(w, problem)
+		api.WriteProblemForRequest(w, r, problem)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, diff)
@@ -37,7 +37,7 @@ func (s *Service) Compare(ctx context.Context, acct state.Account, app state.App
 	if baseID == "" || baseID == cand.ID {
 		return api.ProfileCaptureDiff{}, api.ErrValidation("base must name another capture of this app")
 	}
-	base, problem := load(ctx, acct, app, store, baseID)
+	base, problem := load(ctx, app, store, baseID)
 	if problem != nil {
 		if problem.Status == http.StatusNotFound {
 			return api.ProfileCaptureDiff{}, api.ErrValidation("base must name another capture of this app")
@@ -60,7 +60,8 @@ func (s *Service) Compare(ctx context.Context, acct state.Account, app state.App
 	}
 	diff, err := profiling.DiffCaptureViews(baseView, candView)
 	if err != nil {
-		return api.ProfileCaptureDiff{}, api.ErrCapacity(err.Error())
+		s.Host.Logger().Error("apid: compare profile captures", "base", base.ID, "candidate", cand.ID, "err", err)
+		return api.ProfileCaptureDiff{}, api.ErrCapacity("The captures could not be compared.")
 	}
 	return diff, nil
 }

@@ -102,7 +102,7 @@ func (s *server) projectEnvironmentClonePostgresRolePlan(ctx context.Context, l 
 	}
 	ctx, cancel := context.WithDeadline(ctx, l.ExpiresAt)
 	defer cancel()
-	identities := mfaIdentities()
+	identities := accountIdentities()
 	input, err := s.clonePostgresRoleInput(ctx, l, source, identities)
 	if err != nil {
 		return zero, receipt, target, err
@@ -118,7 +118,7 @@ func (s *server) projectEnvironmentClonePostgresRolePlan(ctx context.Context, l 
 	if l.Operation.Status != state.CloneOperationCapturing || s.managedPostgres == nil || setSecretRecipient == nil {
 		return zero, receipt, target, managedpostgres.ErrUnavailable
 	}
-	recipient := hostSecretRecipient()
+	recipient := cloneSealRecipient()
 	if !cloneInventoryCanOpen(recipient, identities) {
 		return zero, receipt, target, managedpostgres.ErrUnavailable
 	}

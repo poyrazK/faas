@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { PlatformFlagRamp } from './PlatformFlagRamp.js';
 /**
- * One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching rule decides. Orgs match the organization a request acts under (ADR 20261021080640).
+ * One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching rule decides. Orgs match the organization a request acts under.
  */
 export type PlatformFlagRule = {
   id: string;

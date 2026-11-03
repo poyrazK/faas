@@ -627,6 +627,11 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 		if replicas.Max > 0 && replicas.Max < max {
 			max = replicas.Max
 		}
+	} else if floor, ok := workerPolicyFloor(app.ScalingPolicy); ok {
+		// A worker declared with lifecycle and a scaling block: the policy's
+		// min_instances is the floor, so min 0 scales to zero
+		// (ADR-20261018101500 amendment 2026-10-27).
+		minAllowed = floor
 	}
 	desired := minAllowed
 	signal := ""
@@ -859,9 +864,29 @@ func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, s
 	return desired, nil
 }
 
+// workerPolicyFloor is a worker pool's minimum when the app has no worker
+// replica bounds: the scaling policy's min_instances, but only when the policy
+// has a signal the worker pool scales on. Without one, a floor of zero would
+// never start a worker.
+func workerPolicyFloor(policy *state.ScalingPolicy) (int, bool) {
+	if policy == nil {
+		return 0, false
+	}
+	for _, target := range policy.EffectiveTargets() {
+		switch target.Metric {
+		case api.ScalingMetricQueueDepth, api.ScalingMetricQueueLag, api.ScalingMetricCustom:
+			return max(policy.MinInstances, 0), true
+		}
+	}
+	return 0, false
+}
+
 // workerQueueDepthLimit is the depth at which ceil(depth/target) reaches
-// maxReplicas; no deeper read can change the pool's size.
+// maxReplicas; no deeper read can change the pool's size. A target stored
+// before api.ScalingQueueTargetMax existed reads as that maximum, so it
+// cannot make each reconcile count a whole queue.
 func workerQueueDepthLimit(target float64, maxReplicas int) int {
+	target = min(target, api.ScalingQueueTargetMax)
 	limit := math.Ceil(target * float64(max(maxReplicas, 1)))
 	if limit < 1 || math.IsNaN(limit) {
 		return 1

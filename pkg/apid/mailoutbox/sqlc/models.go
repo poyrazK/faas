@@ -40,6 +40,30 @@ type AccountPassword struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type Agent struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Name      string
+}
+
+type AgentDelivery struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	RunID         pgtype.UUID
+	Destination   string
+	State         string
+	Body          string
+	BodyTruncated bool
+	CreatedAt     pgtype.Timestamptz
+	DeadlineAt    pgtype.Timestamptz
+}
+
+type AgentRun struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AgentID   pgtype.UUID
+}
+
 type ApiKey struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
@@ -213,6 +237,41 @@ type MailSuppression struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+// Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).
+type ManagedPostgresCapEvent struct {
+	SubjectID            pgtype.UUID
+	PeriodStart          pgtype.Timestamptz
+	Threshold            string
+	ReachedAt            pgtype.Timestamptz
+	UsedUnitSeconds      int64
+	AllowanceUnitSeconds int64
+	CeilingUnitSeconds   int64
+	OverageEnabled       bool
+	MailIntentID         pgtype.UUID
+}
+
+type ManagedPostgresDatabase struct {
+	ID pgtype.UUID
+}
+
+// Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
+type ManagedPostgresPlanExcessNotice struct {
+	DatabaseID   pgtype.UUID
+	Reason       string
+	RecordedAt   pgtype.Timestamptz
+	MailIntentID pgtype.UUID
+}
+
+// Restore slot notices for a managed PostgreSQL copy (ending soon, delete scheduled); written only by apid (ADR-20261031123259).
+type ManagedPostgresRestoreSlotNotice struct {
+	DatabaseID      pgtype.UUID
+	Kind            string
+	SlotUntil       pgtype.Timestamptz
+	RestorableUntil pgtype.Timestamptz
+	RecordedAt      pgtype.Timestamptz
+	MailIntentID    pgtype.UUID
+}
+
 type MfaDisableRequest struct {
 	TokenHash   []byte
 	AccountID   pgtype.UUID
@@ -263,6 +322,21 @@ type PasswordResetToken struct {
 	ExpiresAt        pgtype.Timestamptz
 	ConsumedAt       pgtype.Timestamptz
 	CreatedAt        pgtype.Timestamptz
+}
+
+type PlatformMailAgentRunCapture struct {
+	Namespace  string
+	ProducerID string
+	StartedAt  pgtype.Timestamptz
+	RecoveryID pgtype.UUID
+}
+
+type PlatformMailAgentRunObservation struct {
+	DeliveryID  pgtype.UUID
+	AccountID   pgtype.UUID
+	Disposition string
+	IntentID    pgtype.UUID
+	ObservedAt  pgtype.Timestamptz
 }
 
 type PlatformMailDeploymentCapture struct {
@@ -352,6 +426,11 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureAppRevision     pgtype.Int8
 	DeploymentFailureSuccessRevision pgtype.Int8
 	DeploymentFailureAt              pgtype.Timestamptz
+	AgentDeliveryID                  pgtype.UUID
+}
+
+type ResourceNamespace struct {
+	ID pgtype.UUID
 }
 
 type ScenarioTestActionPolicy struct {

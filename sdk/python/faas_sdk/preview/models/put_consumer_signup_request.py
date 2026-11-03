@@ -22,7 +22,7 @@ T = TypeVar("T", bound="PutConsumerSignupRequest")
 
 @_attrs_define
 class PutConsumerSignupRequest:
-    """Self-service sign-up settings (ADR-20261021143000). Omitted fields take their defaults."""
+    """Self-service sign-up settings. Omitted fields take their defaults."""
 
     display_name: str
     enabled: bool | Unset = UNSET
@@ -41,9 +41,9 @@ class PutConsumerSignupRequest:
     daily_limit: int | Unset = UNSET
     """Sign-ups per UTC day (default 100)."""
     customer_plan_changes: bool | Unset = UNSET
-    """Let customers switch between plan_ids with their own key (ADR-20261021183000)."""
+    """Let customers switch between plan_ids with their own key."""
     customer_closing: bool | Unset = UNSET
-    """Let customers close their account with their own key (ADR-20261021183000)."""
+    """Let customers close their account with their own key."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

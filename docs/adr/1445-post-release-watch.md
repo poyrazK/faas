@@ -58,3 +58,31 @@ On by default for every release that keeps automatic rollback. Tests cover:
 - the release guard skip.
 
 The safe-release drill on n2 adds a case: a release that answers slowly at full traffic is rolled back by the watch.
+
+## Amendment 1 (2026-10-28): the predecessor is the plain rollback's target
+
+The watch, like the first-wake 5xx guard (ADR-625), took the newest superseded
+deployment created before the release as its predecessor. That row can be a
+canary candidate aborted before it completed (a completed release retires it
+as superseded) or a build superseded before it went live. The watch then
+compared the release with a deployment that never served and rolled back to
+it. Both now use the target a plain `gregale rollback` returns to
+(`LatestRetainedRollbackDeployment`, the H5-62 rule): the deployment that
+served most recently (`serving_ended_at`), never a canary aborted before it
+completed, created before the release.
+
+## Amendment 2 (2026-10-31): a regression the watch cannot roll back is recorded
+
+When the rollback to the predecessor would cross a release command ([ADR-1448](1448-releases-that-change-the-database.md)), the watch keeps the release serving, as automation never acknowledges crossed releases. It used to only log that, on every sweep, and the release timeline then reported "Post-release watch passed". Now the watch records its abort decision on the release with `rollback_skipped: "rollback_crosses_release"` and emits `app.post_release_rollback_skipped`; a release with such a decision is not judged again. The timeline shows a `watch_regressed` event and the release's summary names the regression; the decision on `GET /v1/deployments/{id}` says how to roll back (`--acknowledge-releases`) or ship a fix.
+
+## Amendment 3 (2026-11-01): the first-wake 5xx guard records its skipped rollbacks too
+
+The first-wake 5xx guard ([ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md)) had the same gap amendment 2 closed for the watch: a breach it could not roll back without crossing a release command was only logged, every sweep. It now records an `abort_post_release_5xx` decision with `rollback_skipped` on the release and emits `app.auto_rollback_on_5xx_skipped`; neither the guard nor the watch judges the release again, and the timeline shows the regression.
+
+## Amendment 4 (2026-11-01): an automatic rollback that fails is not reported as one
+
+The post-release watch and the first-wake 5xx guard mark a release rolled back when they request the rollback, and the after-rollback freeze starts then too. When the rollback's outcome then failed (ADR-1446: the previous release went back to superseded, failed or did not serve within `RollbackOutcomeTimeout`), the bad release kept serving while its timeline said "Rolled back", neither worker judged it again, and the freeze held the fix that now had to ship. The rollback outcome worker now calls back into apid when an automatic rollback fails: apid records the regression on the release that still serves (its post-release decision, or a first-wake 5xx one, with `rollback_skipped: "rollback_failed"`), so the timeline shows that it still serves, and lifts the after-rollback freezes that name it (`release.freeze_lifted` by `gregale`). Operators are still paged by `FaasRollbackNotRestored`.
+
+## Amendment 5 (2026-11-02): a newer release that never served does not end the watch
+
+The watch judged a release only while it was the newest deployment in its scope, so that a rollback target, which is older than the release it replaced, is not judged as a fresh release. But any newer deployment that had not failed counted: a release staged with `--no-traffic`, one parked for a scheduled start, or a build still running. A second CI push within the window, a staged preview, or scheduling tomorrow's release stopped the watch for the release that served, and its timeline still said "Post-release watch passed". The watch now ends only when a newer release served (it serves now, or `serving_ended_at` records that it did). The timeline ends the watch when a newer release replaced the release before the window closed, and says so, and it no longer names a release that never served as the replacement.

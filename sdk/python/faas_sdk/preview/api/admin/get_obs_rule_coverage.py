@@ -94,7 +94,7 @@ def sync_detailed(
     gregale-full-v1 also expects bridge.rules.yml, pg_backup.rules.yml and
     data_placement.yaml alerts. Both are minimum sets; additional rules are
     allowed and counted. The embedded catalog revision identifies the exact
-    expected definitions shipped in this apid binary.
+    expected definitions shipped in this API binary.
     A complete bounded Prometheus alert-rule read and comparison share a
     three-second deadline. Compares canonical PromQL syntax, for,
     keep_firing_for and rule labels. Identity uses file basename, group and
@@ -146,7 +146,7 @@ def sync(
     gregale-full-v1 also expects bridge.rules.yml, pg_backup.rules.yml and
     data_placement.yaml alerts. Both are minimum sets; additional rules are
     allowed and counted. The embedded catalog revision identifies the exact
-    expected definitions shipped in this apid binary.
+    expected definitions shipped in this API binary.
     A complete bounded Prometheus alert-rule read and comparison share a
     three-second deadline. Compares canonical PromQL syntax, for,
     keep_firing_for and rule labels. Identity uses file basename, group and
@@ -193,7 +193,7 @@ async def asyncio_detailed(
     gregale-full-v1 also expects bridge.rules.yml, pg_backup.rules.yml and
     data_placement.yaml alerts. Both are minimum sets; additional rules are
     allowed and counted. The embedded catalog revision identifies the exact
-    expected definitions shipped in this apid binary.
+    expected definitions shipped in this API binary.
     A complete bounded Prometheus alert-rule read and comparison share a
     three-second deadline. Compares canonical PromQL syntax, for,
     keep_firing_for and rule labels. Identity uses file basename, group and
@@ -243,7 +243,7 @@ async def asyncio(
     gregale-full-v1 also expects bridge.rules.yml, pg_backup.rules.yml and
     data_placement.yaml alerts. Both are minimum sets; additional rules are
     allowed and counted. The embedded catalog revision identifies the exact
-    expected definitions shipped in this apid binary.
+    expected definitions shipped in this API binary.
     A complete bounded Prometheus alert-rule read and comparison share a
     three-second deadline. Compares canonical PromQL syntax, for,
     keep_firing_for and rule labels. Identity uses file basename, group and

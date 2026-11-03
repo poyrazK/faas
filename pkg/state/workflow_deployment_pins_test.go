@@ -110,6 +110,11 @@ func TestWorkflowDeploymentPinRoutingRetentionAndIdempotency(t *testing.T) {
 		if retained.Status != DeploySuperseded {
 			t.Fatalf("unreferenced code leaked: %+v", retained)
 		}
+		// The release leaves the rollback window, which keeps a recent
+		// superseded release's layers (Hunt 21 H21-1).
+		for range api.SnapshotRollbackRetentionDeployments - 1 {
+			replaceWorkflowDeployment(t, store, app)
+		}
 		if _, claimed, err := store.(LayerArtifactRetentionStore).ClaimLayerArtifactDeletion(ctx, key); err != nil || !claimed {
 			t.Fatalf("artifact not released: claimed=%v err=%v", claimed, err)
 		}

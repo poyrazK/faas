@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 
 	"filippo.io/age"
 
@@ -160,11 +161,23 @@ func decodeString(raw json.RawMessage, field string) (string, error) {
 }
 
 // Seal replaces plaintext credentials (Kafka SASL password and TLS client key,
-// Redis password, NATS URL userinfo) with age ciphertext. A recipient is only
-// required when a plaintext credential is present.
-func Seal(kind api.TriggerKind, raw json.RawMessage, recipient *age.X25519Recipient) (json.RawMessage, error) {
+// Redis password, NATS URL userinfo) with age ciphertext sealed to every
+// recipient. A recipient is only required when a plaintext credential is
+// present. Ciphertext a client supplied without its plaintext is dropped.
+func Seal(kind api.TriggerKind, raw json.RawMessage, recipients []*age.X25519Recipient) (json.RawMessage, error) {
+	return seal(kind, raw, recipients, false)
+}
+
+// SealMerged is Seal for the output of MergeForUpdate: it keeps the stored
+// ciphertext the merge carried over for a credential the update omitted.
+// MergeForUpdate already dropped any ciphertext the client supplied.
+func SealMerged(kind api.TriggerKind, merged json.RawMessage, recipients []*age.X25519Recipient) (json.RawMessage, error) {
+	return seal(kind, merged, recipients, true)
+}
+
+func seal(kind api.TriggerKind, raw json.RawMessage, recipients []*age.X25519Recipient, keepSealed bool) (json.RawMessage, error) {
 	if kind == api.TriggerKindNATS {
-		return sealNATSURL(raw, recipient)
+		return sealNATSURL(raw, recipients, keepSealed)
 	}
 	leaves := secretLeaves(kind)
 	if leaves == nil {
@@ -189,7 +202,7 @@ func Seal(kind api.TriggerKind, raw json.RawMessage, recipient *age.X25519Recipi
 		}
 		plainRaw, hasPlain := block[leaf.plain]
 		if !hasPlain {
-			if _, suppliedCiphertext := block[leaf.sealed]; suppliedCiphertext {
+			if _, suppliedCiphertext := block[leaf.sealed]; suppliedCiphertext && !keepSealed {
 				delete(block, leaf.sealed)
 				changed = true
 			}
@@ -198,14 +211,14 @@ func Seal(kind api.TriggerKind, raw json.RawMessage, recipient *age.X25519Recipi
 			}
 			continue
 		}
-		if recipient == nil {
+		if len(recipients) == 0 {
 			return nil, ErrRecipientUnavailable
 		}
 		plaintext, err := decodeString(plainRaw, leafName(leaf))
 		if err != nil {
 			return nil, err
 		}
-		sealedRaw, err := sealString(recipient, leaf.namespace, plaintext, leaf.maxBytes, leafName(leaf))
+		sealedRaw, err := sealString(recipients, leaf.namespace, plaintext, leaf.maxBytes, leafName(leaf))
 		if err != nil {
 			return nil, err
 		}
@@ -322,19 +335,21 @@ func Redact(kind api.TriggerKind, raw json.RawMessage) json.RawMessage {
 // preserving a stored credential when its containing block is supplied but
 // its plaintext leaf is omitted. Omitting the whole block removes it; a
 // top-level leaf (the Redis password) is kept whenever it is omitted.
-func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage, identities []*age.X25519Identity) (json.RawMessage, error) {
+//
+// A preserved credential keeps its stored ciphertext: the merge never opens
+// the stored config (ADR 20261022111812), so apid needs no identity to
+// update a trigger. A credential stored in plaintext before sealing is
+// carried over as plaintext for SealMerged to seal. Ciphertext the client
+// supplied is dropped.
+func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage) (json.RawMessage, error) {
 	if kind == api.TriggerKindNATS {
-		return mergeNATSURL(stored, incoming, identities)
+		return mergeNATSURL(stored, incoming)
 	}
 	leaves := secretLeaves(kind)
 	if leaves == nil {
 		return cloneRaw(incoming), nil
 	}
-	openedStored, err := Open(kind, stored, identities)
-	if err != nil {
-		return nil, fmt.Errorf("open stored %s config: %w", kind, err)
-	}
-	storedTop, err := decodeObject(openedStored)
+	storedTop, err := decodeObject(stored)
 	if err != nil {
 		return nil, fmt.Errorf("decode stored %s config: %w", kind, err)
 	}
@@ -342,6 +357,7 @@ func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage, iden
 	if err != nil {
 		return nil, fmt.Errorf("decode incoming %s config: %w", kind, err)
 	}
+	moved := movesDestination(kind, storedTop, incomingTop)
 	for _, leaf := range leaves {
 		incomingBlock, supplied, err := leafBlock(incomingTop, leaf)
 		if err != nil {
@@ -357,8 +373,15 @@ func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage, iden
 			if err != nil {
 				return nil, err
 			}
+			_, storedSealed := storedBlock[leaf.sealed]
+			_, storedPlain := storedBlock[leaf.plain]
+			if exists && moved && (storedSealed || storedPlain) {
+				return nil, fmt.Errorf("%s: %w", leafPath(leaf), ErrCredentialMove)
+			}
 			if exists {
-				if storedSecret, ok := storedBlock[leaf.plain]; ok {
+				if storedSealed, ok := storedBlock[leaf.sealed]; ok {
+					incomingBlock[leaf.sealed] = cloneRaw(storedSealed)
+				} else if storedSecret, ok := storedBlock[leaf.plain]; ok {
 					incomingBlock[leaf.plain] = cloneRaw(storedSecret)
 				}
 			}
@@ -370,8 +393,92 @@ func MergeForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage, iden
 	return encodeObject(incomingTop)
 }
 
-func sealString(recipient *age.X25519Recipient, namespace, plaintext string, maxBytes int, name string) (json.RawMessage, error) {
-	ciphertext, err := secretbox.SealBytes(recipient, namespace, []byte(plaintext), maxBytes)
+// ErrCredentialMove refuses an update that points a Kafka or Redis Streams
+// trigger at a different server without supplying its credential again.
+// The stored credential used to follow the update, so anyone who could edit
+// a trigger but was never given its credential could point it at their own
+// broker and read the password off the connection (bug hunt 2026-10-28
+// H107). NATS keeps its own rule in mergeNATSURL.
+var ErrCredentialMove = errors.New("supply the credential again to point the trigger at a different server")
+
+// destinationKeys are the config keys that name the server a kind connects
+// to.
+func destinationKeys(kind api.TriggerKind) []string {
+	switch kind {
+	case api.TriggerKindKafka:
+		return []string{"brokers"}
+	case api.TriggerKindRedisStreams:
+		return []string{"addr"}
+	}
+	return nil
+}
+
+func movesDestination(kind api.TriggerKind, stored, incoming rawObject) bool {
+	for _, key := range destinationKeys(kind) {
+		if !sameJSON(stored[key], incoming[key]) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameJSON(a, b json.RawMessage) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return len(a) == len(b)
+	}
+	var left, right any
+	if json.Unmarshal(a, &left) != nil || json.Unmarshal(b, &right) != nil {
+		return false
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func leafPath(leaf secretLeaf) string {
+	if leaf.block == "" {
+		return leaf.plain
+	}
+	return leaf.block + "." + leaf.plain
+}
+
+// validationPlaceholder stands in for a credential kept as ciphertext.
+const validationPlaceholder = "sealed"
+
+// ValidationView returns merged as the trigger validator sees it: a
+// credential kept as ciphertext counts as set, through a placeholder in its
+// plaintext leaf. It is for validation only and is never stored.
+func ValidationView(kind api.TriggerKind, merged json.RawMessage) json.RawMessage {
+	leaves := secretLeaves(kind)
+	if leaves == nil {
+		return cloneRaw(merged)
+	}
+	top, err := decodeObject(merged)
+	if err != nil {
+		return cloneRaw(merged)
+	}
+	placeholder, _ := json.Marshal(validationPlaceholder)
+	for _, leaf := range leaves {
+		block, exists, err := leafBlock(top, leaf)
+		if err != nil || !exists {
+			continue
+		}
+		_, hasPlain := block[leaf.plain]
+		if _, hasSealed := block[leaf.sealed]; hasSealed && !hasPlain {
+			delete(block, leaf.sealed)
+			block[leaf.plain] = placeholder
+			if putLeafBlock(top, leaf, block) != nil {
+				return cloneRaw(merged)
+			}
+		}
+	}
+	view, err := encodeObject(top)
+	if err != nil {
+		return cloneRaw(merged)
+	}
+	return view
+}
+
+func sealString(recipients []*age.X25519Recipient, namespace, plaintext string, maxBytes int, name string) (json.RawMessage, error) {
+	ciphertext, err := secretbox.SealBytesTo(recipients, namespace, []byte(plaintext), maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("seal %s: %w", name, err)
 	}
@@ -441,25 +548,27 @@ func withUserinfo(u *url.URL, userinfo string) (*url.URL, error) {
 	return &out, nil
 }
 
-func sealNATSURL(raw json.RawMessage, recipient *age.X25519Recipient) (json.RawMessage, error) {
+func sealNATSURL(raw json.RawMessage, recipients []*age.X25519Recipient, keepSealed bool) (json.RawMessage, error) {
 	top, err := decodeObject(raw)
 	if err != nil {
 		return nil, fmt.Errorf("decode nats config: %w", err)
 	}
 	_, hasMarker := top[natsURLCredentialsMarker]
-	_, suppliedCiphertext := top[natsURLCredentialsSealed]
 	delete(top, natsURLCredentialsMarker)
-	delete(top, natsURLCredentialsSealed)
-	changed := hasMarker || suppliedCiphertext
+	changed := hasMarker
+	if _, suppliedCiphertext := top[natsURLCredentialsSealed]; suppliedCiphertext && !keepSealed {
+		delete(top, natsURLCredentialsSealed)
+		changed = true
+	}
 	u, ok, err := natsURL(top)
 	if err != nil {
 		return nil, err
 	}
 	if ok && u.User != nil {
-		if recipient == nil {
+		if len(recipients) == 0 {
 			return nil, ErrRecipientUnavailable
 		}
-		sealedRaw, err := sealString(recipient, natsURLCredentialsNamespace, u.User.String(), api.NATSURLCredentialsMaxBytes, "url credentials")
+		sealedRaw, err := sealString(recipients, natsURLCredentialsNamespace, u.User.String(), api.NATSURLCredentialsMaxBytes, "url credentials")
 		if err != nil {
 			return nil, err
 		}
@@ -545,13 +654,11 @@ func redactNATSURL(raw json.RawMessage) json.RawMessage {
 
 // mergeNATSURL keeps the stored URL credentials when the incoming URL omits
 // them and still names the same server, so a client can round-trip the
-// redacted config. Credentials never move to a different server.
-func mergeNATSURL(stored, incoming json.RawMessage, identities []*age.X25519Identity) (json.RawMessage, error) {
-	openedStored, err := openNATSURL(stored, identities)
-	if err != nil {
-		return nil, fmt.Errorf("open stored nats config: %w", err)
-	}
-	storedTop, err := decodeObject(openedStored)
+// redacted config. Credentials never move to a different server. Sealed
+// credentials stay sealed; plaintext userinfo stored before sealing is
+// carried over for SealMerged to seal.
+func mergeNATSURL(stored, incoming json.RawMessage) (json.RawMessage, error) {
+	storedTop, err := decodeObject(stored)
 	if err != nil {
 		return nil, fmt.Errorf("decode stored nats config: %w", err)
 	}
@@ -569,7 +676,12 @@ func mergeNATSURL(stored, incoming json.RawMessage, identities []*age.X25519Iden
 	if err != nil {
 		return nil, err
 	}
-	if inOK && wasOK && in.User == nil && was.User != nil && in.Scheme == was.Scheme && in.Host == was.Host {
+	if !inOK || !wasOK || in.User != nil || in.Scheme != was.Scheme || in.Host != was.Host {
+		return encodeObject(incomingTop)
+	}
+	if storedSealed, ok := storedTop[natsURLCredentialsSealed]; ok {
+		incomingTop[natsURLCredentialsSealed] = cloneRaw(storedSealed)
+	} else if was.User != nil {
 		in.User = was.User
 		if err := setNATSURL(incomingTop, in); err != nil {
 			return nil, err

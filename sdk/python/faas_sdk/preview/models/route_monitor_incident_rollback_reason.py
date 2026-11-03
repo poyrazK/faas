@@ -1,13 +1,18 @@
 from typing import Literal
 
 RouteMonitorIncidentRollbackReason = Literal[
-    "latency_only_violation", "no_healthy_baseline", "outside_rollback_window", "rollback_target_ineligible"
+    "latency_only_violation",
+    "no_healthy_baseline",
+    "outside_rollback_window",
+    "project_release",
+    "rollback_target_ineligible",
 ]
 
 ROUTE_MONITOR_INCIDENT_ROLLBACK_REASON_VALUES: set[RouteMonitorIncidentRollbackReason] = {
     "latency_only_violation",
     "no_healthy_baseline",
     "outside_rollback_window",
+    "project_release",
     "rollback_target_ineligible",
 }
 

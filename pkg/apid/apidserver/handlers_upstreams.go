@@ -450,6 +450,12 @@ func (s *server) updateUpstreamCircuitBreaker(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrPlanDataUpstreamsNotAllowed(acct.Plan))
 		return
 	}
+	// ADR-570: a breaker the platform does not enforce rejects nothing, so
+	// opting in is refused. Turning one off or tuning it stays allowed.
+	if body.Enabled != nil && *body.Enabled && !s.egressCircuitEnforced {
+		api.WriteProblem(w, api.ErrEgressCircuitNotEnforced())
+		return
+	}
 	row, err := s.store.GetDataUpstreamByID(r.Context(), id)
 	if err != nil || row.AppID.String() != app.ID {
 		// Same not-found shape for "missing" and "belongs to another app":

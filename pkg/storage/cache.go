@@ -249,6 +249,36 @@ type LocalCacheBackend struct {
 	routes   map[string]string
 }
 
+// ReclaimFreeBytes evicts the oldest unpinned entries, beyond the byte budget,
+// until the cache filesystem has at least n bytes free or nothing evictable is
+// left. The standing floor (SetMinFreeBytes) stays as it was. builderd calls
+// it before refusing a build drive for space: the floor alone keeps less free
+// than one build drive needs (#5709).
+func (c *LocalCacheBackend) ReclaimFreeBytes(n int64) error {
+	if c == nil || n <= 0 {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	standing := c.minFreeBytes
+	defer func() { c.minFreeBytes = standing }()
+	if n > standing {
+		c.minFreeBytes = n
+	}
+	return c.enforceBudgetLocked("")
+}
+
+// ReclaimFreeBytes runs (*LocalCacheBackend).ReclaimFreeBytes on the cache
+// that holds snapshots under root, the node's largest artifacts. A root
+// without a read-through cache reclaims nothing.
+func ReclaimFreeBytes(root StorageBackend, n int64) error {
+	cache, _, err := CacheBackendForKey(root, "snap/reclaim")
+	if err != nil || cache == nil {
+		return err
+	}
+	return cache.ReclaimFreeBytes(n)
+}
+
 // SetMinFreeBytes makes the cache evict its oldest entries, beyond its byte
 // budget, while its filesystem has less than n bytes free. Daemons set it to
 // api.ArtifactCacheMinFreeBytes; zero disables the check.

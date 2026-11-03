@@ -105,7 +105,22 @@ func JudgeBaseAdoption(ctx context.Context, be storage.StorageBackend, baseKey, 
 			adoption.Cached = cached
 		}
 		if ok && cached == generation {
+			// A fail-closed scan of the cached generation is a scanner
+			// failure, not a commit: vmmd refuses every boot of it, so the
+			// pre-stage must restage and rescan it (production-us rc.305,
+			// 2026-10-29: fsn-2 refused every boot of base-minimal for hours).
+			scanKey := baseKey
+			if !cache.RoutesLocally(rel) {
+				scanKey = storagekey.BaseGeneration(baseKey, generation)
+			}
+			failed, err := baseScanFailClosed(ctx, be, scanKey)
+			if err != nil {
+				return adoption, err
+			}
 			adoption.Verdict = BaseAdoptionCached
+			if failed {
+				adoption.Verdict = BaseAdoptionStale
+			}
 			return adoption, nil
 		}
 	}
@@ -164,12 +179,14 @@ func publishedBaseGeneration(ctx context.Context, be storage.StorageBackend, bas
 	rc, err := storage.GetParent(ctx, be, scanKey)
 	if err == nil {
 		var scan struct {
-			Image string `json:"image"`
+			Image    string         `json:"image"`
+			Findings map[string]int `json:"findings"`
 		}
 		// A torn sidecar is a publication vmmd cannot adopt, not a read
-		// failure: it names no generation.
+		// failure: it names no generation. Neither does a fail-closed one:
+		// the scan failed, and vmmd refuses the base until it is rescanned.
 		image := ""
-		if json.NewDecoder(io.LimitReader(rc, 1<<20)).Decode(&scan) == nil {
+		if json.NewDecoder(io.LimitReader(rc, 1<<20)).Decode(&scan) == nil && scan.Findings[SeverityCritical] < wire.BaseScanFailedCount {
 			image = scan.Image
 		}
 		_ = rc.Close()
@@ -188,6 +205,28 @@ func publishedBaseGeneration(ctx context.Context, be storage.StorageBackend, bas
 		return "", false, fmt.Errorf("imaged: read shared digest sidecar %q: %w", digestKey, err)
 	}
 	return "", false, nil
+}
+
+// baseScanFailClosed reports whether baseKey's shared scan sidecar is the
+// fail-closed CRITICAL=9999 placeholder imaged writes when a scan fails. A
+// missing or torn sidecar is not one.
+func baseScanFailClosed(ctx context.Context, be storage.StorageBackend, baseKey string) (bool, error) {
+	scanKey := wire.ScanKeyForBaseKey(baseKey)
+	rc, err := storage.GetParent(ctx, be, scanKey)
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("imaged: read shared scan sidecar %q: %w", scanKey, err)
+	}
+	defer func() { _ = rc.Close() }()
+	var scan struct {
+		Findings map[string]int `json:"findings"`
+	}
+	if json.NewDecoder(io.LimitReader(rc, 1<<20)).Decode(&scan) != nil {
+		return false, nil
+	}
+	return scan.Findings[SeverityCritical] >= wire.BaseScanFailedCount, nil
 }
 
 // anotherPublishedGeneration reports whether shared storage holds any

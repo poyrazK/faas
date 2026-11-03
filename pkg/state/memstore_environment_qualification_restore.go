@@ -70,7 +70,7 @@ func (m *MemStore) CreateEnvironmentQualificationRestore(ctx context.Context, cl
 		}
 		return EnvironmentQualificationRestoreAdmission{Instance: ins, Execution: status.Execution, Capture: cloneQualificationSnapshotReceipt(capture)}, nil
 	}
-	if err := m.checkNodeReservationLocked(placement.NodeID, string(StateColdBooting), placement.RAMMB); err != nil {
+	if err := m.checkNodeAdmissionReservationLocked(ctx, placement.NodeID, string(StateColdBooting), placement.RAMMB); err != nil {
 		return zero, err
 	}
 	if current.ExecutionMode == api.ExecutionModeWorker {

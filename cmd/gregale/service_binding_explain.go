@@ -97,9 +97,15 @@ func explainServiceAuthorization(r *serviceAuthorizationExplanation, caller, tar
 				break
 			}
 		}
-		if declared {
+		switch {
+		case declared && caller.ProjectID != "" && caller.ProjectID != target.ProjectID:
+			// A project service's bindings name its own project's services
+			// (ADR-20261030131528).
+			denied("outbound", "binding_outside_project", "service_binding_targets",
+				"A project service's bindings reach only its own project; use the account policy to call a service outside it.")
+		case declared:
 			r.add("outbound", "allowed", "target_declared", "service_binding_targets", "")
-		} else {
+		default:
 			denied("outbound", "target_not_declared", "service_binding_targets", "Review adding the target to the caller's declared dependencies.")
 		}
 	}
@@ -138,7 +144,7 @@ func explainServiceAuthorization(r *serviceAuthorizationExplanation, caller, tar
 
 func cmdBindingsServiceExplain(args []string) int {
 	usageError := func() int {
-		return servicePolicyCommandError("Invalid service explanation", errors.New("usage: gregale bindings service explain CALLER TARGET [--deployment ID] [--scope ENV] [--method GET] [--path /path]"))
+		return servicePolicyCommandError("Invalid service explanation", errors.New("usage: gregale app binding service explain CALLER TARGET [--release ID] [--env ENV] [--method GET] [--path /path]"))
 	}
 	flags, pos := splitArgsForFlags(args)
 	if len(pos) != 2 || !api.ValidAppSlug(pos[0]) || !api.ValidAppSlug(pos[1]) {

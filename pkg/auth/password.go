@@ -33,14 +33,18 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/crypto/argon2"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Argon2id parameter defaults per spec §11 (issue #165 / ADR-032).
@@ -107,6 +111,13 @@ var ErrMalformedPHC = errors.New("auth: malformed PHC string")
 // than reading package constants, so a future parameter bump does
 // not break old hashes.
 func Encode(plaintext string) (string, error) {
+	return EncodeContext(context.Background(), plaintext)
+}
+
+// EncodeContext is Encode for a request path: it gives up while waiting for
+// a hash slot when ctx ends, and returns ErrPasswordHashBusy at once when the
+// slot queue is full (see deriveKey).
+func EncodeContext(ctx context.Context, plaintext string) (string, error) {
 	if err := Validate(plaintext); err != nil {
 		return "", err
 	}
@@ -114,7 +125,10 @@ func Encode(plaintext string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("auth: read salt: %w", err)
 	}
-	hash := argon2.IDKey([]byte(plaintext), salt, argonTime, argonMemoryKiB, argonThreads, keyLen)
+	hash, err := deriveKey(ctx, []byte(plaintext), salt, argonTime, argonMemoryKiB, argonThreads, keyLen)
+	if err != nil {
+		return "", err
+	}
 	return formatPHC(argonMemoryKiB, argonTime, argonThreads, salt, hash), nil
 }
 
@@ -149,11 +163,21 @@ func Validate(plaintext string) error {
 // ~50 ms whether or not the real account exists, closing the timing
 // oracle that the old `if AccountByEmail != nil` check opened.
 func Verify(phc, plaintext string) (bool, error) {
+	return VerifyContext(context.Background(), phc, plaintext)
+}
+
+// VerifyContext is Verify for a request path. Besides ErrMalformedPHC it
+// returns ErrPasswordHashBusy when the slot queue is full and ctx's error when
+// ctx ends while waiting; both mean "not checked", never a mismatch.
+func VerifyContext(ctx context.Context, phc, plaintext string) (bool, error) {
 	mem, time, threads, salt, want, err := parsePHC(phc)
 	if err != nil {
 		return false, err
 	}
-	got := argon2.IDKey([]byte(plaintext), salt, time, mem, threads, uint32(len(want)))
+	got, err := deriveKey(ctx, []byte(plaintext), salt, time, mem, threads, uint32(len(want)))
+	if err != nil {
+		return false, err
+	}
 	// subtle.ConstantTimeCompare returns 1 iff lengths match AND
 	// every byte is equal. Length mismatch is the natural result of
 	// a truncated hash and the comparison correctly reports 0.
@@ -161,6 +185,47 @@ func Verify(phc, plaintext string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// hashSlots bounds concurrent Argon2id derivations in this process. Each
+// allocates argonMemoryKiB (64 MiB) and apid runs under a 512 MB memory cap,
+// so about eight at once (a launch-day sign-up spike, or a few hundred
+// attacking addresses each under its own rate limit) OOM-killed apid and took
+// the whole API and dashboard down. Callers queue for a slot. Process-wide
+// by nature: it bounds this process's memory.
+var hashSlots = make(chan struct{}, api.PasswordHashConcurrency)
+
+// hashWaiters counts callers queued for a slot. The queue is capped at
+// api.PasswordHashQueueMax and a waiter leaves when its context ends, so a
+// flood of password attempts past the hashing rate is refused instead of
+// queueing without bound behind requests whose clients already gave up (H96).
+var hashWaiters atomic.Int64
+
+// ErrPasswordHashBusy reports a full hash-slot queue: the password was not
+// checked or hashed. Request handlers answer 429 with Retry-After.
+var ErrPasswordHashBusy = errors.New("auth: password hashing is busy")
+
+func deriveKey(ctx context.Context, password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) ([]byte, error) {
+	select {
+	case hashSlots <- struct{}{}:
+	default:
+		if hashWaiters.Add(1) > api.PasswordHashQueueMax {
+			hashWaiters.Add(-1)
+			return nil, ErrPasswordHashBusy
+		}
+		select {
+		case hashSlots <- struct{}{}:
+			hashWaiters.Add(-1)
+		case <-ctx.Done():
+			hashWaiters.Add(-1)
+			return nil, ctx.Err()
+		}
+	}
+	defer func() { <-hashSlots }()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen), nil
 }
 
 // DummyPHC is a fixed, never-rotated Argon2id hash used by the

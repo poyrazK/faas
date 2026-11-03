@@ -27,6 +27,12 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"DefaultCustomDomain":                    true,
+	"DefaultCustomDomains":                   true,
+	"DeploymentWorkerDrainStatus":            true,
+	"DeploymentWorkerDrainStatuses":          true,
+	"MCPTaskPromotionHold":                   true,
+	"MCPTaskPromotionHolds":                  true,
 	"DeleteAppPermanently":                   true,
 	"ListApplicationStandardRebinds":         true,
 	"RecordApplicationStandardRebind":        true,
@@ -61,10 +67,12 @@ var memDispatched = map[string]bool{
 	"DeploymentSidecarRAMs":                                   true,
 	"ListBillingWindowInstances":                              true,
 	"ListInstancesForApp":                                     true,
+	"ListLiveInstancesForApps":                                true,
 	"AccountByID":                                             true,
 	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
+	"ActivePrewarmFloors":                                     true,
 	"ActiveProjectReleaseSet":                                 true,
 	"AdmitPublishedEventRecipient":                            true,
 	"AdmitScheduledWorkflow":                                  true,
@@ -101,12 +109,16 @@ var memDispatched = map[string]bool{
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
+	"ListAllAccounts":                                         true,
+	"MarkDunningStep":                                         true,
+	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"FinishPublishedEventRecipient":                           true,
 	"GetAppErrorSample":                                       true,
 	"GetFeatureFlags":                                         true,
 	"GetObjectBucketObjectLock":                               true,
 	"GetRouteHealthReport":                                    true,
+	"ListRouteHealthHistory":                                  true,
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
 	"IssueObjectMultipartURLCredential":                       true,
@@ -174,6 +186,8 @@ var memDispatched = map[string]bool{
 	"RouteAwakeMinutes":                                       true,
 	"RouteInsightCandidateApps":                               true,
 	"RouteInsightsDetectedSince":                              true,
+	"RouteMonitorIncidentsSince":                              true,
+	"RouteHealthHoldsSince":                                   true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
 	"RouteAwakeSourceMinutes":                                 true,
@@ -272,6 +286,9 @@ var memDispatched = map[string]bool{
 	"RecordProjectMigrationBaseline":                true,
 	"PinnedProjectReleaseWorkers":                   true,
 	"HeldProjectReleaseWorkers":                     true,
+	"ListConsumerKeysForApp":                        true,
+	"GetSLO":                                        true,
+	"CountOpenAPIDocsByAccount":                     true,
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -290,6 +307,60 @@ func (s *Mem) RuntimeConfigReceiptRequired(ctx context.Context, appID, scope str
 		return o.RuntimeConfigReceiptRequired(ctx, appID, scope)
 	}
 	return s.MemStore.RuntimeConfigReceiptRequired(ctx, appID, scope)
+}
+
+func (s *Mem) DefaultCustomDomain(ctx context.Context, appID string) (string, error) {
+	if o, ok := s.over.(interface {
+		DefaultCustomDomain(context.Context, string) (string, error)
+	}); ok {
+		return o.DefaultCustomDomain(ctx, appID)
+	}
+	return s.MemStore.DefaultCustomDomain(ctx, appID)
+}
+
+func (s *Mem) DefaultCustomDomains(ctx context.Context, appIDs []string) (map[string]string, error) {
+	if o, ok := s.over.(interface {
+		DefaultCustomDomains(context.Context, []string) (map[string]string, error)
+	}); ok {
+		return o.DefaultCustomDomains(ctx, appIDs)
+	}
+	return s.MemStore.DefaultCustomDomains(ctx, appIDs)
+}
+
+func (s *Mem) DeploymentWorkerDrainStatus(ctx context.Context, id string) (*state.DeploymentWorkerDrainStatus, error) {
+	if o, ok := s.over.(interface {
+		DeploymentWorkerDrainStatus(context.Context, string) (*state.DeploymentWorkerDrainStatus, error)
+	}); ok {
+		return o.DeploymentWorkerDrainStatus(ctx, id)
+	}
+	return s.MemStore.DeploymentWorkerDrainStatus(ctx, id)
+}
+
+func (s *Mem) DeploymentWorkerDrainStatuses(ctx context.Context, ids []string) (map[string]*state.DeploymentWorkerDrainStatus, error) {
+	if o, ok := s.over.(interface {
+		DeploymentWorkerDrainStatuses(context.Context, []string) (map[string]*state.DeploymentWorkerDrainStatus, error)
+	}); ok {
+		return o.DeploymentWorkerDrainStatuses(ctx, ids)
+	}
+	return s.MemStore.DeploymentWorkerDrainStatuses(ctx, ids)
+}
+
+func (s *Mem) MCPTaskPromotionHold(ctx context.Context, id string) (*state.MCPTaskPromotionHold, error) {
+	if o, ok := s.over.(interface {
+		MCPTaskPromotionHold(context.Context, string) (*state.MCPTaskPromotionHold, error)
+	}); ok {
+		return o.MCPTaskPromotionHold(ctx, id)
+	}
+	return s.MemStore.MCPTaskPromotionHold(ctx, id)
+}
+
+func (s *Mem) MCPTaskPromotionHolds(ctx context.Context, ids []string) (map[string]*state.MCPTaskPromotionHold, error) {
+	if o, ok := s.over.(interface {
+		MCPTaskPromotionHolds(context.Context, []string) (map[string]*state.MCPTaskPromotionHold, error)
+	}); ok {
+		return o.MCPTaskPromotionHolds(ctx, ids)
+	}
+	return s.MemStore.MCPTaskPromotionHolds(ctx, ids)
 }
 
 func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
@@ -371,6 +442,15 @@ func (s *Mem) ActivePrewarmFloor(p0 context.Context, p1 string, p2 time.Time) (i
 	return s.MemStore.ActivePrewarmFloor(p0, p1, p2)
 }
 
+func (s *Mem) ActivePrewarmFloors(p0 context.Context, p1 []string, p2 time.Time) (map[string]int, error) {
+	if o, ok := s.over.(interface {
+		ActivePrewarmFloors(context.Context, []string, time.Time) (map[string]int, error)
+	}); ok {
+		return o.ActivePrewarmFloors(p0, p1, p2)
+	}
+	return s.MemStore.ActivePrewarmFloors(p0, p1, p2)
+}
+
 func (s *Mem) ActiveProjectReleaseSet(p0 context.Context, p1 string, p2 string, p3 string) (state.ProjectReleaseSet, error) {
 	if o, ok := s.over.(interface {
 		ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error)
@@ -443,6 +523,24 @@ func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) erro
 	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
 }
 
+func (s *Mem) ListAllAccounts(p0 context.Context) ([]state.Account, error) {
+	if o, ok := s.over.(interface {
+		ListAllAccounts(context.Context) ([]state.Account, error)
+	}); ok {
+		return o.ListAllAccounts(p0)
+	}
+	return s.MemStore.ListAllAccounts(p0)
+}
+
+func (s *Mem) MarkDunningStep(p0 context.Context, p1 string, p2, p3 state.AccountStatus, p4 ...state.AccountDeletionOption) error {
+	if o, ok := s.over.(interface {
+		MarkDunningStep(context.Context, string, state.AccountStatus, state.AccountStatus, ...state.AccountDeletionOption) error
+	}); ok {
+		return o.MarkDunningStep(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.MarkDunningStep(p0, p1, p2, p3, p4...)
+}
+
 func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
 	if o, ok := s.over.(interface {
 		FinancialEvidenceCoverage(context.Context) (time.Time, error)
@@ -450,6 +548,15 @@ func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
 		return o.FinancialEvidenceCoverage(p0)
 	}
 	return s.MemStore.FinancialEvidenceCoverage(p0)
+}
+
+func (s *Mem) ListFinancialPriceSnapshots(p0 context.Context, p1 string, p2 time.Time) ([]state.FinancialPriceSnapshot, error) {
+	if o, ok := s.over.(interface {
+		ListFinancialPriceSnapshots(context.Context, string, time.Time) ([]state.FinancialPriceSnapshot, error)
+	}); ok {
+		return o.ListFinancialPriceSnapshots(p0, p1, p2)
+	}
+	return s.MemStore.ListFinancialPriceSnapshots(p0, p1, p2)
 }
 
 func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
@@ -641,6 +748,24 @@ func (s *Mem) RouteInsightsDetectedSince(p0 context.Context, p1 string, p2 time.
 	return s.MemStore.RouteInsightsDetectedSince(p0, p1, p2, p3)
 }
 
+func (s *Mem) RouteMonitorIncidentsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteMonitorIncidentAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteMonitorIncidentsSince(context.Context, string, time.Time, int) ([]state.RouteMonitorIncidentAlert, int64, error)
+	}); ok {
+		return o.RouteMonitorIncidentsSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteMonitorIncidentsSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) RouteHealthHoldsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteHealthHoldAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteHealthHoldsSince(context.Context, string, time.Time, int) ([]state.RouteHealthHoldAlert, int64, error)
+	}); ok {
+		return o.RouteHealthHoldsSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteHealthHoldsSince(p0, p1, p2, p3)
+}
+
 func (s *Mem) EnvironmentWorkloadAdmissionRetired(p0 context.Context, p1 string, p2 string) (bool, error) {
 	if o, ok := s.over.(interface {
 		EnvironmentWorkloadAdmissionRetired(context.Context, string, string) (bool, error)
@@ -686,6 +811,24 @@ func (s *Mem) FinalizeObjectS3CredentialRotationsForApp(p0 context.Context, p1 s
 	return s.MemStore.FinalizeObjectS3CredentialRotationsForApp(p0, p1, p2)
 }
 
+func (s *Mem) ListConsumerKeysForApp(p0 context.Context, p1 string, p2 string) ([]state.ConsumerKey, error) {
+	if o, ok := s.over.(interface {
+		ListConsumerKeysForApp(context.Context, string, string) ([]state.ConsumerKey, error)
+	}); ok {
+		return o.ListConsumerKeysForApp(p0, p1, p2)
+	}
+	return s.MemStore.ListConsumerKeysForApp(p0, p1, p2)
+}
+
+func (s *Mem) CountOpenAPIDocsByAccount(p0 context.Context, p1 string) (int, error) {
+	if o, ok := s.over.(interface {
+		CountOpenAPIDocsByAccount(context.Context, string) (int, error)
+	}); ok {
+		return o.CountOpenAPIDocsByAccount(p0, p1)
+	}
+	return s.MemStore.CountOpenAPIDocsByAccount(p0, p1)
+}
+
 func (s *Mem) GetAppErrorSample(p0 context.Context, p1 sqlc.GetAppErrorSampleParams) (state.AppErrorSampleRow, error) {
 	if o, ok := s.over.(interface {
 		GetAppErrorSample(context.Context, sqlc.GetAppErrorSampleParams) (state.AppErrorSampleRow, error)
@@ -720,6 +863,15 @@ func (s *Mem) GetRouteHealthReport(p0 context.Context, p1 string, p2 string, p3 
 		return o.GetRouteHealthReport(p0, p1, p2, p3)
 	}
 	return s.MemStore.GetRouteHealthReport(p0, p1, p2, p3)
+}
+
+func (s *Mem) ListRouteHealthHistory(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string) (api.RouteHealthHistoryPage, error) {
+	if o, ok := s.over.(interface {
+		ListRouteHealthHistory(context.Context, string, string, string, int, string) (api.RouteHealthHistoryPage, error)
+	}); ok {
+		return o.ListRouteHealthHistory(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.ListRouteHealthHistory(p0, p1, p2, p3, p4, p5)
 }
 
 func (s *Mem) HasSnapshotHistory(p0 context.Context, p1 string) (bool, error) {
@@ -1474,6 +1626,15 @@ func (s *Mem) ListInstancesForApp(p0 context.Context, p1 string) ([]state.Instan
 		return o.ListInstancesForApp(p0, p1)
 	}
 	return s.MemStore.ListInstancesForApp(p0, p1)
+}
+
+func (s *Mem) ListLiveInstancesForApps(p0 context.Context, p1 []string) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListLiveInstancesForApps(context.Context, []string) ([]state.Instance, error)
+	}); ok {
+		return o.ListLiveInstancesForApps(p0, p1)
+	}
+	return s.MemStore.ListLiveInstancesForApps(p0, p1)
 }
 
 func (s *Mem) SetDeploymentAlias(p0 context.Context, p1 string, p2 string, p3 string) (state.DeploymentAlias, error) {
@@ -4689,4 +4850,13 @@ func (s *Mem) HeldProjectReleaseWorkers(p0 context.Context, p1 string) ([]string
 		return o.HeldProjectReleaseWorkers(p0, p1)
 	}
 	return s.MemStore.HeldProjectReleaseWorkers(p0, p1)
+}
+
+func (s *Mem) GetSLO(p0 context.Context, p1 string, p2 string) (state.SLO, error) {
+	if o, ok := s.over.(interface {
+		GetSLO(context.Context, string, string) (state.SLO, error)
+	}); ok {
+		return o.GetSLO(p0, p1, p2)
+	}
+	return s.MemStore.GetSLO(p0, p1, p2)
 }

@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const rolloutsStatusUsage = "usage: gregale rollouts status <slug> --deployment ID|vN [--wait] [--timeout 10m] [--poll-interval 2s]"
+const rolloutsStatusUsage = "usage: gregale rollouts status <slug> --release ID|vN [--wait] [--timeout 10m] [--poll-interval 2s]"
 
 type rolloutStatusClient interface {
 	GetDeployment(context.Context, string) (api.DeploymentResponse, error)

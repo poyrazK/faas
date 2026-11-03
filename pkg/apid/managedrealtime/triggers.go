@@ -27,7 +27,7 @@ func (s *Service) PrepareRealtimeTrigger(ctx context.Context, acct state.Account
 	if !s.PreviewVisible(acct.ID) {
 		// Outside the preview rollout the kind does not exist.
 		return cfg, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request",
-			"unknown kind: must be one of cron|kafka|nats|redis_streams|sqs_compat|queue")
+			"unknown kind: must be one of cron|kafka|nats|redis_streams|queue")
 	}
 	if !s.HistoryPreviewEnabled {
 		return cfg, realtimeTriggerProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Realtime triggers unavailable",

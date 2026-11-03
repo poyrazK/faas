@@ -3,12 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * API key metadata: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, request count. **Plaintext is returned only on POST**. `org_id` (PR 6 / issue #190 / IAM-6 / ADR-061) is the org the key was minted against; legacy account-scoped responses stamp `org_id = caller's personal org`. See `org.create_api_key` / `org.revoke_api_key` for the new org-scoped verbs.
+ * API key metadata: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, request count. **Plaintext is returned only on POST**. `org_id` is the org the key was minted against; legacy account-scoped responses stamp `org_id = caller's personal org`. See `org.create_api_key` / `org.revoke_api_key` for the new org-scoped verbs.
  */
 export type APIKeyResponse = {
   id: string;
   /**
-   * Org the key was minted against (PR 6). Always set — every `api_keys` row carries an org_id post-migration 00127. Personal-org scoped keys stamp the caller's personal org id here.
+   * Org the key was minted against. Always set — every `api_keys` row carries an org_id post-migration 00127. Personal-org scoped keys stamp the caller's personal org id here.
    */
   org_id: string;
   /**

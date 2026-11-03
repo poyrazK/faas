@@ -382,7 +382,7 @@ func cmdOperationPolicy(args []string) int {
 			return 1
 		}
 		if fs.NArg() != 1 || *policyFile == "" {
-			PrintUsage(os.Stderr, "usage: gregale operations policy upsert --file POLICY.json <name>", "operations")
+			PrintUsage(os.Stderr, "usage: gregale job lock-policy set --file POLICY.json <name>", "operations")
 			return 1
 		}
 		data, err := os.ReadFile(*policyFile)
@@ -420,7 +420,7 @@ func cmdOperationPolicy(args []string) int {
 func cmdOperationPolicyRetire(args []string) int {
 	fs := newFlagSet("operations policy retire", flag.ContinueOnError)
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale operations policy retire <name>", "operations")
+		PrintUsage(os.Stderr, "usage: gregale job lock-policy delete <name>", "operations")
 		return 1
 	}
 	client, err := authedClient()

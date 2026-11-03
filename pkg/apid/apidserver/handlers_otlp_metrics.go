@@ -1,11 +1,15 @@
 package apidserver
 
 import (
+	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
@@ -46,21 +50,58 @@ func (s *server) postOTLPMetrics(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	res := otlpmetrics.Translate(req, time.Now().UTC())
-	for _, p := range res.Points {
-		err := store.PutCustomMetricOfKind(r.Context(), app.ID, p.Name, p.Kind, p.Value, p.ObservedAt, api.MaxCustomMetricsPerApp)
-		switch {
-		case errors.Is(err, state.ErrCustomMetricLimit):
-			res.Rejected++
-			if res.Reason == "" {
-				res.Reason = fmt.Sprintf("metric %q: app is at its limit of %d custom metrics", p.Name, api.MaxCustomMetricsPerApp)
-			}
-		case err != nil:
-			writeCustomerInternalProblem(w, r, s.log, "store OTLP metrics",
-				"Gregale could not store these metrics.", "Retry the export; OTLP exporters retry automatically.", err)
-			return
-		}
+	if err := s.storeOTLPPoints(r.Context(), store, app.ID, &res); err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "store OTLP metrics",
+			"Gregale could not store these metrics.", "Retry the export; OTLP exporters retry automatically.", err)
+		return
 	}
 	writeOTLPMetricsResponse(w, res, jsonBody)
+}
+
+// storeOTLPPoints writes an export's points (ADR-20261028101615). The app's
+// metric names are read once: points for names it has are written, new names
+// are admitted, in name order, only while the app is under its limit, and the
+// rest are rejected without a database write, so one export naming thousands
+// of metrics costs at most MaxCustomMetricsPerApp writes. The store still
+// enforces the limit against concurrent exports.
+func (s *server) storeOTLPPoints(ctx context.Context, store state.CustomMetricKindStore, appID string, res *otlpmetrics.Result) error {
+	rows, err := s.store.ListCustomMetrics(ctx, appID)
+	if err != nil {
+		return fmt.Errorf("list custom metrics: %w", err)
+	}
+	known := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		known[row.Name] = true
+	}
+	room := api.MaxCustomMetricsPerApp - len(known)
+	reject := func(name string) {
+		res.Rejected++
+		if res.Reason == "" {
+			res.Reason = fmt.Sprintf("metric %q: app is at its limit of %d custom metrics", name, api.MaxCustomMetricsPerApp)
+		}
+	}
+	slices.SortFunc(res.Points, func(a, b otlpmetrics.Point) int { return strings.Compare(a.Name, b.Name) })
+	stored := res.Points[:0]
+	for _, p := range res.Points {
+		if !known[p.Name] {
+			if room <= 0 {
+				reject(p.Name)
+				continue
+			}
+			room--
+		}
+		err := store.PutCustomMetricOfKind(ctx, appID, p.Name, p.Kind, p.Value, p.ObservedAt, api.MaxCustomMetricsPerApp)
+		switch {
+		case errors.Is(err, state.ErrCustomMetricLimit):
+			reject(p.Name)
+		case err != nil:
+			return fmt.Errorf("store %q: %w", p.Name, err)
+		default:
+			stored = append(stored, p)
+		}
+	}
+	res.Points = stored
+	return nil
 }
 
 // decodeOTLPMetrics reads a bounded body as protobuf (the OTLP/HTTP default)
@@ -72,22 +113,67 @@ func decodeOTLPMetrics(w http.ResponseWriter, r *http.Request) (*colmetricspb.Ex
 		return nil, false, api.NewProblem(http.StatusUnsupportedMediaType, api.CodeValidation, "Unsupported content type",
 			"send OTLP metrics as application/x-protobuf or application/json")
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, api.OTLPMetricsMaxBodyBytes))
-	if err != nil {
-		return nil, false, api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeValidation, "Export too large",
-			fmt.Sprintf("an OTLP metrics export may be at most %d bytes", api.OTLPMetricsMaxBodyBytes))
+	body, problem := readOTLPMetricsBody(w, r)
+	if problem != nil {
+		return nil, false, problem
 	}
 	req := &colmetricspb.ExportMetricsServiceRequest{}
+	unmarshal := proto.Unmarshal
 	if jsonBody {
-		err = protojson.Unmarshal(body, req)
-	} else {
-		err = proto.Unmarshal(body, req)
+		unmarshal = protojson.Unmarshal
 	}
-	if err != nil {
+	if err := unmarshal(body, req); err != nil {
 		return nil, false, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid OTLP metrics export",
 			"the body is not a valid ExportMetricsServiceRequest")
 	}
 	return req, jsonBody, nil
+}
+
+// readOTLPMetricsBody reads an export, gunzipping it when the exporter sent
+// Content-Encoding: gzip, as the OpenTelemetry Collector does by default
+// (ADR-20261029203000). OTLPMetricsMaxBodyBytes bounds the body both as sent
+// and once decompressed, so a small gzip bomb costs no more than a plain
+// export.
+func readOTLPMetricsBody(w http.ResponseWriter, r *http.Request) ([]byte, *api.Problem) {
+	tooLarge := api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeValidation, "Export too large",
+		fmt.Sprintf("an OTLP metrics export may be at most %d bytes, compressed or not", api.OTLPMetricsMaxBodyBytes))
+	sent := http.MaxBytesReader(w, r.Body, api.OTLPMetricsMaxBodyBytes)
+	switch encoding := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding"))); encoding {
+	case "", "identity":
+		body, err := io.ReadAll(sent)
+		if err != nil {
+			return nil, tooLarge
+		}
+		return body, nil
+	case "gzip":
+		zr, err := gzip.NewReader(sent)
+		if err != nil {
+			return nil, otlpGzipProblem(err, tooLarge)
+		}
+		defer func() { _ = zr.Close() }()
+		body, err := io.ReadAll(io.LimitReader(zr, api.OTLPMetricsMaxBodyBytes+1))
+		if err != nil {
+			return nil, otlpGzipProblem(err, tooLarge)
+		}
+		if len(body) > api.OTLPMetricsMaxBodyBytes {
+			return nil, tooLarge
+		}
+		return body, nil
+	default:
+		return nil, api.NewProblem(http.StatusUnsupportedMediaType, api.CodeValidation, "Unsupported content encoding",
+			"send OTLP metrics uncompressed or with Content-Encoding: gzip")
+	}
+}
+
+// otlpGzipProblem is the answer to a gzip body that failed to read: too large
+// as sent, or not gzip at all.
+func otlpGzipProblem(err error, tooLarge *api.Problem) *api.Problem {
+	var maxBytes *http.MaxBytesError
+	if errors.As(err, &maxBytes) {
+		return tooLarge
+	}
+	return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid OTLP metrics export",
+		"the body is not valid gzip")
 }
 
 func writeOTLPMetricsResponse(w http.ResponseWriter, res otlpmetrics.Result, jsonBody bool) {

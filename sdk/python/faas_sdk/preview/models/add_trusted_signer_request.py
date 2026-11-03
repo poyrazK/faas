@@ -12,7 +12,7 @@ T = TypeVar("T", bound="AddTrustedSignerRequest")
 @_attrs_define
 class AddTrustedSignerRequest:
     """PUT body for `/v1/apps/{slug}/trusted_signers/{name}`. `public_key_pem` is
-    the base64-encoded DER blob (apid side strips PEM armour). The DER must
+    the base64-encoded DER blob (the API side strips PEM armour). The DER must
     parse as an ECDSA P-256 SPKI; any other curve or non-ECDSA key returns
     400 `trusted_signer_invalid`. Bytes length must land in [64, 1024].
 

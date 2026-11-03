@@ -46,15 +46,15 @@ type nativeRuntimeCaptureRequest struct {
 // capture, or nil when the VMM keeps the legacy path or its native refusal.
 // Admitted (protocol-2), migration and sealed (ADR-733) captures never carry
 // one: the producer publishes only to the VMM's own backend.
-func (m *Manager) nativeRuntimeCapture(inst *Instance, spec SnapshotSpec) *nativeRuntimeCaptureRequest {
+func (m *Manager) nativeRuntimeCapture(ctx context.Context, inst *Instance, spec SnapshotSpec) *nativeRuntimeCaptureRequest {
 	v, ok := m.vmm.(interface{ nativeRuntimeCaptureEnabled() bool })
 	if !ok || !v.nativeRuntimeCaptureEnabled() || spec.admittedParent.Binding.ProtocolVersion != 0 || spec.admittedGrant != nil ||
 		spec.functionMigration != nil || spec.functionMigrationGrant != nil || spec.Storage != nil {
 		return nil
 	}
-	m.backingMu.Lock()
-	backing := m.instanceBacking[inst.Lease.Instance]
-	m.backingMu.Unlock()
+	// The identity may still be hashing off the wake path; the capture
+	// records it, so wait for it as writeSnapshotBacking does.
+	backing, _ := m.awaitInstanceBacking(ctx, inst.Lease.Instance)
 	return &nativeRuntimeCaptureRequest{DeploymentID: inst.DeploymentID, NativeGeneration: inst.nativeGeneration,
 		FCVersion: m.fcVersion, Backing: backing}
 }

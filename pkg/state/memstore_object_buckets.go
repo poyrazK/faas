@@ -6,7 +6,10 @@ import (
 	"time"
 )
 
-var _ ObjectBucketStore = (*MemStore)(nil)
+var (
+	_ ObjectBucketStore          = (*MemStore)(nil)
+	_ ObjectBucketPlacementStore = (*MemStore)(nil)
+)
 
 func (m *MemStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, error) {
 	reserved, _, err := m.ReserveObjectBucketWithResult(ctx, b, limit)
@@ -25,7 +28,52 @@ func (m *MemStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBu
 	return m.reserveObjectBucketLocked(b, limit)
 }
 
+func (m *MemStore) ReserveObjectBucketPlaced(ctx context.Context, b ObjectBucket, appLimit int, candidates []ObjectBucketPlacement) (ObjectBucket, bool, error) {
+	if b.EnvironmentCloneOperationID != "" || len(candidates) == 0 {
+		return ObjectBucket{}, false, ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ObjectBucket{}, false, err
+	}
+	return m.reserveObjectBucketPlacedLocked(b, appLimit, candidates)
+}
+
+func (m *MemStore) ObjectBucketPlacementCounts(ctx context.Context, accountID string, backendIDs []string) (map[string]ObjectBucketPlacementCount, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return nil, err
+	}
+	return m.objectBucketPlacementCountsLocked(accountID, backendIDs), nil
+}
+
+func (m *MemStore) objectBucketPlacementCountsLocked(accountID string, backendIDs []string) map[string]ObjectBucketPlacementCount {
+	wanted := map[string]bool{}
+	for _, id := range backendIDs {
+		wanted[id] = true
+	}
+	out := map[string]ObjectBucketPlacementCount{}
+	for _, row := range m.objectBuckets {
+		if row.State == "deleted" || !wanted[row.BackendID] {
+			continue
+		}
+		n := out[row.BackendID]
+		n.Buckets++
+		if accountID != "" && row.AccountID == accountID {
+			n.AccountBuckets++
+		}
+		out[row.BackendID] = n
+	}
+	return out
+}
+
 func (m *MemStore) reserveObjectBucketLocked(b ObjectBucket, limit int) (ObjectBucket, bool, error) {
+	return m.reserveObjectBucketPlacedLocked(b, limit, nil)
+}
+
+func (m *MemStore) reserveObjectBucketPlacedLocked(b ObjectBucket, limit int, candidates []ObjectBucketPlacement) (ObjectBucket, bool, error) {
 	app, ok := m.apps[b.AppID]
 	if !ok || app.AccountID != b.AccountID || app.Status == AppDeleted {
 		return ObjectBucket{}, false, ErrNotFound
@@ -53,6 +101,17 @@ func (m *MemStore) reserveObjectBucketLocked(b ObjectBucket, limit int) (ObjectB
 	}
 	if count >= limit {
 		return ObjectBucket{}, false, ErrConflict
+	}
+	if len(candidates) != 0 {
+		ids := make([]string, len(candidates))
+		for i, c := range candidates {
+			ids[i] = c.BackendID
+		}
+		choice, ok := ChooseObjectBucketPlacement(candidates, m.objectBucketPlacementCountsLocked(b.AccountID, ids))
+		if !ok {
+			return ObjectBucket{}, false, ErrObjectStorageRegionFull
+		}
+		b.BackendID, b.BackendFingerprint = choice.BackendID, choice.BackendFingerprint
 	}
 	if m.objectBuckets == nil {
 		m.objectBuckets = map[string]ObjectBucket{}

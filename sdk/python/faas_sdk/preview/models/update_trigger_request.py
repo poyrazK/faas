@@ -47,15 +47,14 @@ class UpdateTriggerRequest:
     batch_window_ms: int | None | Unset = UNSET
     max_attempts: int | None | Unset = UNSET
     delivery: UpdateTriggerRequestDelivery | Unset = UNSET
-    """Switch between record and batch delivery; not available for cron or queue triggers (ADR-1321)."""
+    """Switch between record and batch delivery; not available for cron or queue triggers."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
-    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
+    """Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
     account plan and never means unlimited. Durable invocation
     producers materialize the effective plan-capped value, and the
     scheduler re-clamps it at dispatch time to account for later plan
-    downgrades. Lives in pkg/api so the SDK can type the policy
-    without importing pkg/dispatch directly.
+    downgrades.
     """
     payload_max_bytes: int | None | Unset = UNSET
     broker_poison_strategy: (
@@ -66,13 +65,11 @@ class UpdateTriggerRequest:
         | UpdateTriggerRequestBrokerPoisonStrategyType3Type1
     ) = UNSET
     """Kafka-only poison-record handling strategy. null/omitted
-    means "leave unchanged" (the SQL coalesce() in
-    pkg/state/pgstore.go::UpdateTrigger keeps the existing
+    means "leave unchanged" (the SQL coalesce keeps the existing
     value). Same semantics as the Trigger read shape.
     """
     filter_criteria: FilterCriteria | Unset = UNSET
-    """FilterCriteria on a trigger (migration 00300,
-    pkg/sched/filter.go). nil / omitted matches every record.
+    """FilterCriteria on a trigger. nil / omitted matches every record.
     Top-level arrays combine via implicit OR for `$or` and
     AND for `$and`; nested clauses honour the same shape.
     Jsonpath implementation: github.com/PaesslerAG/jsonpath —

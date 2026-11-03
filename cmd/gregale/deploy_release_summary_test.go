@@ -135,7 +135,7 @@ func TestRenderSuccessfulDarkDeploymentShowsPreviewAndPromotion(t *testing.T) {
 		"Staged v44 with 0% production traffic.",
 		"Preview: https://deploy-44-my-app.gregale.dev",
 		"Production remains on v43. https://my-app.gregale.dev",
-		"Promote: gregale traffic promote --app my-app --deployment v44 --if-serving v43",
+		"Promote: gregale release traffic promote --app my-app --release v44 --if-serving v43",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("dark deploy output missing %q\nfull output:\n%s", want, out.String())
@@ -256,7 +256,7 @@ func TestWriteWaitedDarkDeploymentReceiptIncludesPreviewAndPromotion(t *testing.
 	if receipt.PreviewURL != "https://deploy-44-my-app.gregale.dev" {
 		t.Fatalf("preview_url = %q", receipt.PreviewURL)
 	}
-	if receipt.PromotionCommand != "gregale traffic promote --app my-app --deployment v44 --if-serving v43" {
+	if receipt.PromotionCommand != "gregale release traffic promote --app my-app --release v44 --if-serving v43" {
 		t.Fatalf("promotion_command = %q", receipt.PromotionCommand)
 	}
 	if receipt.ReleaseSummary != nil {
@@ -320,8 +320,9 @@ func TestRenderDeploymentReleaseSummary_FallsBackToIDWithoutRevision(t *testing.
 
 // adr: 199
 // production-us hunt #8: mid-canary the previous release still served 90%,
-// and the summary suggested `rollback --to v5`, two releases back. The hint
-// is now the safe exit: promote the still-serving release.
+// and the summary suggested `rollback --to v5`, two releases back. Promoting
+// the still-serving release is refused while the canary owns the weights, so
+// the hint is the exit that works: abort the rollout.
 func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
 	var out bytes.Buffer
 	main.RenderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
@@ -331,8 +332,11 @@ func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
 		RollbackTargetRevision: 5,
 	}, "h6-lab")
 	got := out.String()
-	if !strings.Contains(got, "Abort canary: gregale traffic promote --app h6-lab --deployment v6") {
+	if !strings.Contains(got, "Abort canary: gregale rollouts recover h6-lab --action abort") {
 		t.Fatalf("mid-canary summary lacks the abort hint:\n%s", got)
+	}
+	if strings.Contains(got, "traffic promote") {
+		t.Fatalf("mid-canary summary offers a traffic promote the canary refuses:\n%s", got)
 	}
 	if strings.Contains(got, "--to v5") {
 		t.Fatalf("mid-canary summary still offers a rollback past the serving release:\n%s", got)
@@ -348,7 +352,7 @@ func TestRenderDeploymentReleaseSummary_TrafficSplitOffersPromote(t *testing.T) 
 		Previous:   &api.DeploymentResponse{ID: "d2", Revision: 2, Status: "superseded"},
 	}, "h10-hello-node")
 	got := out.String()
-	if !strings.Contains(got, "Undo split: gregale traffic status h10-hello-node, then gregale traffic promote --app h10-hello-node") {
+	if !strings.Contains(got, "Undo split: gregale release traffic status h10-hello-node, then gregale release traffic promote --app h10-hello-node") {
 		t.Fatalf("split summary lacks the promote hint:\n%s", got)
 	}
 	if strings.Contains(got, "rollback h10-hello-node --to") || strings.Contains(got, "Rollback: unavailable") {
@@ -359,7 +363,7 @@ func TestRenderDeploymentReleaseSummary_TrafficSplitOffersPromote(t *testing.T) 
 		Deployment: api.DeploymentResponse{ID: "d3", Revision: 3, Status: main.StatusLive, TrafficPercent: 50},
 		Previous:   &api.DeploymentResponse{ID: "d1", Revision: 1, Status: main.StatusLive, TrafficPercent: 50},
 	}, "h10-hello-node")
-	if got := out.String(); !strings.Contains(got, "Undo split: gregale traffic promote --app h10-hello-node --deployment v1") {
+	if got := out.String(); !strings.Contains(got, "Undo split: gregale release traffic promote --app h10-hello-node --release v1") {
 		t.Fatalf("split summary with a live previous release lacks its exact promote command:\n%s", got)
 	}
 }

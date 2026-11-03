@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -81,6 +82,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/publicrouting"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -88,7 +90,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
-	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/trafficdeadline"
@@ -1147,6 +1148,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// credentialMatcher checks consumer keys and fork tokens against their
+	// stored hashes through apid (ADR 20261029202403). Nil compares plain
+	// hashes locally (unit tests).
+	credentialMatcher gateway.CredentialMatcher
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
@@ -1301,13 +1306,22 @@ type runDeps struct {
 	// internet-facing traffic; apid's bucket is the loopback-only
 	// counter for management plane traffic). nil in tests.
 	apiAuthLimiter *middleware.Limiter
-	// sessions is the *session.Manager that issues + verifies the
-	// session cookie. cmd/apid shares the same construct; the two
-	// daemons are independent processes so the AEAD keys are loaded
-	// separately per daemon. nil in tests.
-	sessions           *session.Manager
-	trafficDeadlines   *trafficdeadline.Signer
-	trafficRevocations *trafficrevocation.Registry
+	// edgeChallengeSecret signs kind=challenge tokens and passes: the
+	// gateway fleet key (ADR-20261102191500), and edgeChallengeKeySource
+	// says where it came from. nil in tests leaves challenges unsigned.
+	edgeChallengeSecret    []byte
+	edgeChallengeKeySource string
+	trafficDeadlines       *trafficdeadline.Signer
+	trafficRevocations     *trafficrevocation.Registry
+	// publicRoutingView admits ordinary public requests (ADR-20261027085556);
+	// runWithDeps builds it when nil.
+	publicRoutingView *publicrouting.Registry
+	// financialBudgetAdmission defaults to the pgStore-backed check; outage
+	// tests replace it to isolate the routing view.
+	financialBudgetAdmission func(context.Context, gateway.App) error
+	// rateLimitOutageGrace replaces api.TrafficRateLimitOutageGrace when
+	// non-zero (negative: none); outage tests use it to cross the grace.
+	rateLimitOutageGrace time.Duration
 	// hostKeyDir (issue #477 / ADR-079) is the directory
 	// secretbox.LoadHostKeys reads from to build the
 	// multi-identity rotation-overlap slice for the basic-auth
@@ -1331,6 +1345,9 @@ type runDeps struct {
 	// constructed; the AppLogsHandler-style carve-out (only
 	// when deps.authMw is non-nil) makes the wiring safe.
 	requireAuthnAdapter *requireAuthnAdapter
+	// keyAuthCache wraps requireAuthnAdapter so key-protected apps do not
+	// read Postgres on every request; key_changed invalidates it.
+	keyAuthCache *gateway.KeyAuthCache
 	// requireAuthnAudit is the cmd/gatewayd-scope audit emitter
 	// the per-deployment authz branch uses for the
 	// instances.authn_* rows. nil = audit-disabled (tests).
@@ -1352,6 +1369,9 @@ type runDeps struct {
 	// declaredRoutesMatcher enforces the opt-in OpenAPI/explicit route
 	// contract before the handler reaches authentication or wake admission.
 	declaredRoutesMatcher *declaredRoutesMatcher
+	// routeLabelPins keeps route labels the route health guard or production
+	// monitor selects in a full route set (ADR-20261028110044 amendment 4).
+	routeLabelPins *routeLabelPins
 	// edgeJWKSAdapter (ADR-091 PR 5) is the JWT verifier handle
 	// consulted by applyEdgeRuleJWT. nil = JWT kind disabled
 	// (pre-PR-5 + dev posture; matches edgeRulesAudit nil
@@ -1607,6 +1627,19 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return fmt.Errorf("gatewayd: load schedd TLS: %w", err)
 	}
 	deps := defaultDeps()
+	// Credentials are resolved and matched by apid, which alone holds the key
+	// their stored hashes are computed with (ADR 20261029202403).
+	credentialAuth, err := dialCredentialAuth(ctx, cfg, osGetenv)
+	if err != nil {
+		return fmt.Errorf("gatewayd: dial apid credential auth: %w", err)
+	}
+	defer func() { _ = credentialAuth.Close() }()
+	credentialMatcher := apidgrpc.NewCredentialMatcher(credentialAuth)
+	deps.credentialMatcher = credentialMatcher
+	// Operation capabilities and dev-bridge tokens are keyed under rings this
+	// node never holds; apid matches them (amendment 1, decision 2).
+	credhash.SetRemote(credhash.FamilyScheduler, credentialMatcher.Remote())
+	credhash.SetRemote(credhash.FamilyDevBridge, credentialMatcher.Remote())
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
 	// over (ADR-1736). Requests and their sinks keep ctx.
@@ -1674,6 +1707,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	deps.capabilityAllowed = capabilityAllowed
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
+	// On until the first reconcile applies the durable value, so a failed
+	// reconcile keeps the clone readiness read rather than skipping it.
+	fullEnvironmentClonesFlag := runtimeconfig.NewBoolFlag(true)
 	authoritativeHostPolicy, err := api.TrafficAuthoritativeHostPolicyEnabled(osGetenv("FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY"))
 	if err != nil {
 		return fmt.Errorf("gatewayd: %w", err)
@@ -1684,6 +1720,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		appsSuffix:            appsSuffix(appsDomain),
 		deploySuffix:          hostidentity.DeploySuffix(),
 		tenantSurfacesEnabled: tenantSurfacesFlag.Load,
+		fullEnvironmentClones: fullEnvironmentClonesFlag.Load,
 		cachedHostPolicy:      deps.cachedHostPolicy,
 	}
 	// ADR-025 axis 4: sticky-warm affinity cache. Built first so the
@@ -1739,6 +1776,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return err
 	}
 	backend := gateway.NewPGBackend(router, sched, log).
+		WithAccountAppLister(accountAppIDLister(pgStore)).
 		WithTargetReadinessLoader(newTargetReadinessLoader(pgStore)).
 		WithTargetPlacementLoader(newTargetPlacementLoader(pgStore)).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
@@ -1780,7 +1818,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// ADR-732: route a fork request only when the fork, its token and
 		// its instance all check out (gateway.ForkTargetFromState), and the
 		// fork's creator still holds the app (forkTargetLoader).
-		WithForkTargetLoader(forkTargetLoader(pgStore, pgStore, time.Now)).
+		WithForkTargetLoader(forkTargetLoader(pgStore, pgStore, time.Now, credentialMatcher)).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
 			if err != nil {
@@ -2148,7 +2186,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
 		keys, apply := runtimeconfig.WithPlatformFlags(
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization},
+			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
@@ -2157,6 +2195,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				switch key {
 				case runtimeconfig.KeyTenantSurfaces:
 					tenantSurfacesFlag.Store(enabled)
+				case runtimeconfig.KeyFullEnvironmentClones:
+					fullEnvironmentClonesFlag.Store(enabled)
 				case runtimeconfig.KeyAPIMonetization:
 					apiMonetizationFlag.Store(enabled)
 				case runtimeconfig.KeyHSTS:
@@ -2219,7 +2259,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(gatewayOps, pool)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
-	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).
+	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics, newLocalVmmd(osGetenv(localVmmdEnv) == "1", cfg.NodeName)).
 		WithEvents(eventsPlatform).WithActivityTracker(runtimeActivity)
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as
 	// public requests. This assignment happens after nodeCache creation so
@@ -2283,36 +2323,36 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// Issue #254 / Move 4 PR-2: pkg/auth.Middleware construction.
 	// AppLogsHandler (cmd/gatewayd-internal/app_logs.go) shares the auth chain
 	// with cmd/apid via ADR-046 — same bearer / session / MFA / scope
-	// / IDOR-safe LoadApp, same per-IP AuthLimit bucket family. The
-	// session manager is loaded from FAAS_SESSION_KEY (see
-	// session_key.go); the auditor is the same pkg/audit.Auditor
+	// / IDOR-safe LoadApp, same per-IP AuthLimit bucket family. Session
+	// cookies are opened by apid (ADR-20261102191500): opening one takes
+	// the key that seals one, and a gateway must not be able to mint
+	// dashboard sessions. The auditor is the same pkg/audit.Auditor
 	// gatewayd already uses for githubd replay-dedupe audit rows
-	// (cmd/gatewayd-internal/audit.go). nil-safe when the env is unset so
-	// the e2e harness + these dev-mode paths still boot.
-	sessions := loadSessionManager(osGetenv, log)
-	if sessions == nil {
-		return fmt.Errorf("gatewayd: session manager init failed")
+	// (cmd/gatewayd-internal/audit.go). The gateway fleet key keys edge
+	// challenges and traffic deadlines; without it the gateway refuses to
+	// start.
+	fleetKey, err := loadGatewayFleetKey(osGetenv)
+	if err != nil {
+		return fmt.Errorf("gatewayd: %w", err)
 	}
-	deps.sessions = sessions
-	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(osGetenv)
+	deps.edgeChallengeSecret, deps.edgeChallengeKeySource = fleetKey, gatewayFleetKeyFleet
+	deps.trafficDeadlines, err = newTrafficDeadlineSigner(fleetKey)
 	if err != nil {
 		return fmt.Errorf("gatewayd: traffic deadline signer init: %w", err)
 	}
 	deps.apiAuthLimiter = middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
 	deps.audit = audit.New(pgStore, log, nil, "gatewayd")
 	deps.authMw = authmw.New(
-		storeAsAuthenticator(pgStore),
-		sessions,
+		storeAsAuthenticator(pgStore, apidgrpc.CredentialLookup{Apid: credentialAuth, Fallback: pgStore, Log: log}),
+		apidgrpc.SessionVerifier{Auth: credentialAuth},
 		storeAsSessionLookup(pgStore),
 		auditorAsAuthAuditor(deps.audit),
 		log,
 		deps.apiAuthLimiter,
-		// gatewayd-internal has no need for the binding-hash
-		// cross-check (it's a Unix-socket-only daemon in the
-		// ADR-070 split; the cookie branch it serves — public
-		// requests that come back through gatewayd-public — has
-		// already been validated upstream at the public edge).
-		// nil ⇒ the cross-check is a no-op.
+		// No binding-hash cross-check (ADR-076): the hash is keyed
+		// by the session key, which gatewayd-internal does not hold
+		// for cookies, and gatewayd-public in front of it holds none
+		// either. nil ⇒ the cross-check is a no-op.
 		nil,
 	)
 	// Issue #560: per-deployment require_authn (pro/Scale opt-in).
@@ -2325,6 +2365,10 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// them when deps.authMw is non-nil (which it always is
 	// outside unit tests).
 	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
+	if deps.requireAuthnAdapter != nil {
+		deps.keyAuthCache = gateway.NewKeyAuthCache(deps.requireAuthnAdapter)
+		go watchKeyChanges(ctx, pool, deps.keyAuthCache, log)
+	}
 	// Request-path audit rows (authn gates, edge-rule denials and matches)
 	// go through one bounded async writer so attack traffic cannot turn into
 	// synchronous Postgres inserts on the request path.
@@ -2361,6 +2405,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// single-consumer queue.
 	go watchDurableControlPlaneChanges(ctx, repairStore, backend, log, cfg.NodeName)
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
+	deps.routeLabelPins = newRouteLabelPins(pgStore, log)
 	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(requestPathAudit, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
 	// DB-IP Lite .mmdb file at FAAS_GEOIP_DB_PATH. The Reader
@@ -2377,10 +2422,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				"err", gerr)
 		} else {
 			deps.geoReader = reader
+			deps.metrics.TrackGeoIPDatabase(reader.BuildTime)
 			log.Info("geoip: loaded",
 				"path", geoipDBPath,
 				"source", string(geoip.SourceDBIP),
 				"attribution", geoip.DBIPAttribution,
+				"built", reader.BuildTime().UTC().Format(time.DateOnly),
 			)
 			if geoipAutoRefresh == "1" {
 				// 168h = 7 days. DB-IP publishes a monthly
@@ -2707,8 +2754,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			defer close(flushDone)
 			err := retainedSpansAcc.RunFlushLoop(flushCtx, gateway.FlushLoopConfig{
 				Interval: flushInterval,
-				WriteFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, accountID string) (string, int64, error) {
-					return retainedSpansWriter.WriteSpansSummary(writeCtx, traceID, summaryJSON, accountID)
+				// The target names the calling app, so a service binding's
+				// span lands in its caller's rows only (tracing tenancy T4).
+				WriteTargetFn: func(writeCtx context.Context, traceID string, summaryJSON []byte, target gateway.SpanTarget) (string, int64, error) {
+					return retainedSpansWriter.WriteSummary(writeCtx, target.Request(traceID, summaryJSON))
 				},
 				Log: log,
 				MaxSpansPerTrace: func(string) int {
@@ -2775,8 +2824,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
 		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations).
 		WithSelectorSuffixes(appsSuffix(deps.domains.Apps), hostidentity.DeploySuffix())
-	if deps.pgStore != nil {
-		handler.WithFinancialBudgetAdmission(newFinancialBudgetAdmission(deps.pgStore))
+	if deps.financialBudgetAdmission == nil && deps.pgStore != nil {
+		deps.financialBudgetAdmission = newFinancialBudgetAdmission(deps.pgStore)
+	}
+	if deps.financialBudgetAdmission != nil {
+		handler.WithFinancialBudgetAdmission(deps.financialBudgetAdmission)
 	}
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
@@ -2815,6 +2867,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.pool != nil {
 		handler.WithConcurrencyQueueAdmission(state.NewPGConcurrencyQueueAdmission(deps.pool))
 	}
+	// ADR-20261102081618 §5: requests a compute edge forwarded use this node's
+	// instances first, responses name every node of the app, and scale-out
+	// reads demand from this gateway's share. Turn it on after the edges
+	// spread by node set (FAAS_EDGE_PLACEMENT_NODE_SET).
+	if osGetenv("FAAS_GATEWAY_EDGE_LOCAL_FIRST") == "1" && deps.pgStore != nil && cfg.NodeName != "" {
+		handler.WithEdgeLocalFirst(newLocalNodeID(deps.pgStore, cfg.NodeName).Get)
+		log.Info("gatewayd-internal: edge local first on", "node_name", cfg.NodeName)
+	}
 	var realtimeControlProxy http.Handler
 	// Managed realtime is an opt-in data plane. When the local realtimed
 	// daemon socket is configured, reserve its namespace before ordinary
@@ -2836,12 +2896,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// A nil pointer in the interface would defeat the handler's nil checks.
 		handler.WithDeclaredRouteMatcher(deps.declaredRoutesMatcher)
 	}
+	if deps.routeLabelPins != nil {
+		handler.WithRouteLabelPins(deps.routeLabelPins)
+	}
 	if deps.pool != nil {
 		routingStore := deps.pgStore
 		if routingStore == nil {
 			routingStore = state.NewPgStore(deps.pool)
 		}
-		handler.WithPublicRoutingPolicy(publicRoutingPinnerFor(routingStore, deps.cachedHostPolicy))
+		// The authoritative host policy reads every request exactly, so it
+		// has no use for the view.
+		var view gateway.PublicRoutingViewSource
+		if deps.cachedHostPolicy {
+			if deps.publicRoutingView == nil {
+				deps.publicRoutingView = publicrouting.New(routingStore)
+			}
+			deps.publicRoutingView.WithLogger(log)
+			go deps.publicRoutingView.Run(counterCtx)
+			if backend, ok := deps.backend.(*gateway.PGBackend); ok {
+				backend.WithPublicRoutingView(deps.publicRoutingView)
+			}
+			view = deps.publicRoutingView
+		}
+		handler.WithPublicRoutingPolicy(publicRoutingViewPinnerFor(routingStore, view, deps.cachedHostPolicy))
 	}
 	if deps.declaredRoutesMatcher != nil && deps.pool != nil {
 		go watchDeclaredRouteInvalidations(ctx, deps.pool, deps.declaredRoutesMatcher, log)
@@ -2866,6 +2943,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return errors.New("gatewayd-internal: ratelimit.mode central requires a Postgres pool")
 		}
 		handler.WithCentralBackend(backend)
+		if deps.rateLimitOutageGrace != 0 {
+			handler.WithRateLimitOutageGrace(deps.rateLimitOutageGrace)
+		}
 		// ADR-1520: spend central tokens from local leases.
 		if leaseEnabled {
 			handler.WithRateLimitLeasing(leaseCfg)
@@ -2922,11 +3002,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// leave deps.requireAuthnAdapter / deps.requireAuthnAudit
 	// nil. Production wires both unconditionally after
 	// deps.authMw is built in run().
-	handler.WithRequireAuthn(deps.requireAuthnAdapter, deps.requireAuthnAudit)
+	if deps.keyAuthCache != nil {
+		handler.WithRequireAuthn(deps.keyAuthCache, deps.requireAuthnAudit)
+	} else {
+		handler.WithRequireAuthn(deps.requireAuthnAdapter, deps.requireAuthnAudit)
+	}
 	// ADR-120: arm end-customer consumer-key authentication against the same
 	// PgStore used by apid. The gateway keeps the hot-path policy and the
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
+	if deps.credentialMatcher != nil {
+		handler.WithCredentialMatcher(deps.credentialMatcher)
+	}
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	handler.WithAPIMonetization(deps.apiMonetization)
 	handler.WithAPIMonetizationFlags(deps.platformFlags)
@@ -3021,10 +3108,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
 	}
 	// ADR-831 amendment 7 — kind=challenge. Tokens and passes are signed
-	// with a key derived from the session key every gateway shares, so a
-	// pass issued by one gateway is honoured by all.
-	if deps.sessions != nil {
-		handler.WithEdgeChallengeKey(gateway.DeriveEdgeChallengeKey(deps.sessions.BindingKey()))
+	// with a key every gateway must share, so a pass issued by one gateway
+	// is honoured by all: the gateway fleet key (ADR-20261102191500).
+	// gateway_edge_challenge_key_info lets the fleet check that they agree.
+	if secret, source := deps.edgeChallengeSecret, deps.edgeChallengeKeySource; secret != nil {
+		key := gateway.DeriveEdgeChallengeKey(secret)
+		handler.WithEdgeChallengeKey(key)
+		deps.metrics.SetEdgeChallengeKey(gateway.EdgeChallengeKeyID(key), source)
+		log.Info("edge challenge signing key", "source", source, "key_id", gateway.EdgeChallengeKeyID(key))
 	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
@@ -3281,7 +3372,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if journalClient != nil {
 		journalRPC = journalClient
 	}
-	journalQueue := gateway.NewRequestIDJournalQueue(newRequestIDJournalWriter(journalRPC, log).Write, deps.metrics, log)
+	journalWrite := newRequestIDJournalWriter(journalRPC, log).Write
+	// ADR-20261101085552: with the switch on, the journal stays on this node
+	// and apid asks for a request ID over a lookup stream on the same apid
+	// connection, instead of the control plane storing a row per request.
+	if osGetenv("FAAS_REQUEST_ID_JOURNAL_LOCAL") == "1" {
+		local, stop, err := startLocalRequestIDJournal(ctx, journalClient, cfg.NodeName, deps.metrics, log)
+		if err != nil {
+			return err
+		}
+		defer stop()
+		journalWrite = gateway.LocalRequestIDJournalWriter(local)
+	}
+	journalQueue := gateway.NewRequestIDJournalQueue(journalWrite, deps.metrics, log)
 	go journalQueue.Run(ctx)
 	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {
@@ -3323,6 +3426,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			FlushInterval:  5 * time.Second,
 			FlushBatchSize: 256,
 			MaxRetries:     3,
+			MinuteCollapse: osGetenv("FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE") == "1",
 			OnDropped:      deps.metrics.AddRequestTelemetryDropped,
 			OnShipped:      deps.metrics.AddRequestTelemetryShipped,
 			OnCoverage: func(heartbeatCtx context.Context, report gateway.RequestTelemetryCoverage) error {
@@ -3397,6 +3501,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					Country:                              row.Country,
 					WakeId:                               row.WakeID,
 					TraceInferred:                        row.TraceInferred,
+					PlatformRefusal:                      row.PlatformRefusal,
 					InstanceId:                           row.InstanceID,
 					GuestDurationMs:                      int32(row.GuestDurationMS),
 					GuestRuntime:                         row.GuestRuntime,
@@ -3435,8 +3540,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return fmt.Errorf("close request_telemetry stream: %w", err)
 			}
 			if err := acknowledgeTelemetryRows(stream, rows); err != nil {
-				_ = rtCli.Close()
-				rtCli = nil
+				if errors.Is(err, errTelemetryStream) {
+					_ = rtCli.Close()
+					rtCli = nil
+				}
 				return err
 			}
 
@@ -3568,6 +3675,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// params don't appear in r.URL.Path, so the mux still
 		// routes to the dispatcher regardless of whether
 		// ?archive=1 is present.
+		logStreams := newLogStreamSlots()
 		logsMux.Handle("GET /v1/apps/{slug}/logs", &appLogsDispatcher{
 			live: &AppLogsHandler{
 				Auth: deps.authMw,
@@ -3576,21 +3684,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// retained for the warm-hint stream (single-stream
 				// fallback); the log stream is the second fan-in
 				// consumer and resolves per-app.
-				ScheddFor: appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
-				Store:     deps.pgStore,
-				Log:       log,
-				Ops:       nil,
-				Traffic:   deps.trafficRevocations,
+				ScheddFor:         appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
+				Store:             deps.pgStore,
+				Log:               log,
+				Ops:               nil,
+				Traffic:           deps.trafficRevocations,
+				CapabilityAllowed: deps.capabilityAllowed,
+				Streams:           logStreams,
 			},
 			archive: &ArchiveLogsHandler{
-				Auth:    deps.authMw,
-				S3:      deps.archiveS3,
-				Bucket:  deps.archiveBucket,
-				Store:   deps.pgStore,
-				Scope:   deps.pgStore,
-				Log:     log,
-				Ops:     nil,
-				Traffic: deps.trafficRevocations,
+				Auth:              deps.authMw,
+				S3:                deps.archiveS3,
+				Bucket:            deps.archiveBucket,
+				Store:             deps.pgStore,
+				Scope:             deps.pgStore,
+				Log:               log,
+				Ops:               nil,
+				Traffic:           deps.trafficRevocations,
+				CapabilityAllowed: deps.capabilityAllowed,
+				Streams:           logStreams,
 			},
 		})
 		logsHandler = logsMux
@@ -3611,6 +3723,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log,
 		)
 		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
+		manager.capabilityAllowed = deps.capabilityAllowed
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}
@@ -4155,8 +4268,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				localNode := newLocalNodeID(pgStore, cfg.NodeName)
 				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, localNode)
 				// ADR-1138: guest calls without trace context join the trace of
-				// the one request their instance is serving.
-				serviceProxyConfig.InferCallerTrace = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
+				// the one request their instance is serving. ADR-20261102082606:
+				// with the switch on, the call also inherits that request's
+				// deadline.
+				serviceProxyConfig.InferCallerRequest = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
+				serviceProxyConfig.CallerDeadlines = osGetenv("FAAS_SERVICE_CALL_DEADLINES") == "1"
 			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
@@ -4388,6 +4504,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		sessionDrains = append(sessionDrains, drainServiceTCP)
 	}
+	if err := validateDatabaseRoute(cfg); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.DatabaseRouteListen) != "" {
+		if err := startDatabaseRoute(ctx, deps, cfg, errc, log); err != nil {
+			return err
+		}
+	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
 			return err
@@ -4477,6 +4601,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					}
 					dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
 					log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
+				}
+				// ADR-1027: app guests reach managed databases through the
+				// private route; rehearsal guests see private services only.
+				if dnsPort == gateway.ServiceDiscoveryDNSPort {
+					if err := withDatabaseRouteDNS(dnsHandler, cfg, log); err != nil {
+						return err
+					}
 				}
 				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
 				listenPacket := deps.listenPacket

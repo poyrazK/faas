@@ -15,7 +15,7 @@ T = TypeVar("T", bound="SyntheticCheckResults")
 
 @_attrs_define
 class SyntheticCheckResults:
-    """Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id} (ADR-748)."""
+    """Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id}."""
 
     uptime_24h_pct: float | None
     """Share of runs in the last 24 hours that succeeded; null when none ran."""

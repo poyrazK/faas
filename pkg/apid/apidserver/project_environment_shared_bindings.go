@@ -171,7 +171,10 @@ func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct s
 				if resolveErr != nil {
 					return nil, fmt.Errorf("resolve object storage provider for isolated binding %q: %w", credentialID, resolveErr)
 				}
-				if _, ok := backend.Provider.(objectstorage.CrossBucketObjectCopier); !ok {
+				// An isolated clone creates a bucket on its source's backend,
+				// which bypasses pool placement, so a backend with a bucket
+				// ceiling cannot take one (ADR-20261029174627).
+				if _, ok := backend.Provider.(objectstorage.CrossBucketObjectCopier); !ok || backend.MaxBuckets > 0 {
 					return nil, errIsolatedObjectStorageCloneUnsupported
 				}
 			}

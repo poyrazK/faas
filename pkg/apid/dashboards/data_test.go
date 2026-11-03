@@ -16,11 +16,19 @@ import (
 )
 
 type fakeSources struct {
-	ledger  *state.MemStore
-	metrics api.AppMetricsResponse
-	series  api.CustomMetricSeriesResponse
-	slo     *api.SLOStatus
-	sloErr  error
+	ledger   *state.MemStore
+	metrics  api.AppMetricsResponse
+	series   api.CustomMetricSeriesResponse
+	slo      *api.SLOStatus
+	sloErr   error
+	withheld map[string]bool // widget kinds whose source is not released
+}
+
+func (f *fakeSources) Released(_ state.Account, _ state.App, kind string) error {
+	if f.withheld[kind] {
+		return errors.New(kind + " is not available to this account")
+	}
+	return nil
 }
 
 func (f *fakeSources) AppMetrics(context.Context, state.Account, state.App, string) (api.AppMetricsResponse, error) {
@@ -85,5 +93,33 @@ func TestDashboardDataResolvesEveryWidget(t *testing.T) {
 	}
 	if !data.AsOf.Equal(now) || data.Name != "checkout" {
 		t.Errorf("data header = %+v", data)
+	}
+}
+
+// adr: 20261028101615 — a widget whose source is not released to the account
+// reads as an error, and the other widgets still read.
+func TestDashboardDataWithholdsUnreleasedSources(t *testing.T) {
+	svc, acct := newService(true)
+	acct.Plan = api.PlanPro
+	host := svc.Host.(fakeHost)
+	host.sources.metrics = api.AppMetricsResponse{Source: "prometheus", RequestCount: 900}
+	host.sources.withheld = map[string]bool{api.DashboardWidgetLogCount: true}
+	w := call(t, svc.Create, acct, http.MethodPost, "", `{"name":"mixed","widgets":[
+		{"title":"requests","kind":"app_metric","app":"shop","metric":"request_count"},
+		{"title":"5xx","kind":"log_count","app":"shop","query":"status=5xx"}]}`)
+	var created api.Dashboard
+	if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &created) != nil {
+		t.Fatalf("create = %d %s", w.Code, w.Body.String())
+	}
+	w = call(t, svc.Data, acct, http.MethodGet, created.ID, "")
+	var data api.DashboardData
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &data) != nil || len(data.Widgets) != 2 {
+		t.Fatalf("data = %d %s", w.Code, w.Body.String())
+	}
+	if requests := data.Widgets[0]; requests.Value == nil || *requests.Value != 900 {
+		t.Errorf("app metric = %+v, want its value", requests)
+	}
+	if logs := data.Widgets[1]; logs.Value != nil || logs.Error != "log_count is not available to this account" {
+		t.Errorf("log count = %+v, want the source's refusal and no value", logs)
 	}
 }

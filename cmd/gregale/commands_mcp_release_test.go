@@ -145,7 +145,7 @@ func TestMCPCandidatePromotion(t *testing.T) {
 						return
 					}
 					writeJSONTest(w, api.RuntimePolicyStatusResponse{AppID: "app", EdgeRules: api.RuntimePolicyComponentStatus{Scope: "account", DesiredRevision: 1, State: "active", ServingGateways: 1, AppliedGateways: 1}})
-				case "/v1/edge-rules":
+				case "/v1/apps/my-mcp/edge-rules":
 					if tc.accessAudit == "denied" {
 						w.WriteHeader(403)
 						_, _ = w.Write([]byte("PRIVATE_RULE_RESPONSE_SENTINEL"))

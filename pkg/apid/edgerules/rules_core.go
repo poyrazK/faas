@@ -156,6 +156,9 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := ValidateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		return m, prob
 	}
+	if prob := s.AppBoundHostProblem(ctx, app, req.MatchHost); prob != nil {
+		return m, prob
+	}
 	if prob := s.createReleaseProblem(acct, req); prob != nil {
 		return m, prob
 	}
@@ -165,7 +168,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, app.ID, acct.ID, req.Kind, req.Action); prob != nil {
 		return m, prob
 	}
-	if prob := s.RouteTargetProblem(ctx, acct.ID, req.Kind, req.Action); prob != nil {
+	if prob := s.RouteTargetProblem(ctx, acct.ID, app.ID, req.Kind, req.Action); prob != nil {
 		return m, prob
 	}
 	// Default priority=100, enabled=true when unset.
@@ -226,9 +229,11 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		convergence.Abort(ctx)
 		var qe *state.EdgeRuleQuotaError
 		switch {
+		case listMissingProblem(err) != nil:
+			return m, listMissingProblem(err)
 		case errors.As(err, &qe):
 			if qe.PerKind {
-				return m, api.ErrPlanEdgeRuleKindQuotaReached(acct.Plan, qe.Kind, qe.Limit, qe.Observed)
+				return m, api.ErrPlanEdgeRuleKindQuotaReached(acct.Plan, qe.Kind, qe.Observed, qe.Limit)
 			}
 			return m, api.ErrPlanLimitEdgeRules(acct.Plan, qe.Limit, qe.Observed)
 		case errors.Is(err, state.ErrNotFound):
@@ -236,6 +241,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		case errors.Is(err, state.ErrConflict):
 			return m, api.ErrEdgeRuleConflict(err.Error())
 		default:
+			s.Host.Logger().Warn("edge rule create failed", "app", app.Slug, "kind", logsanitize.Field(req.Kind), "err", err)
 			return m, trafficproblem.Policy(err, api.ErrCapacity("could not create edge rule"))
 		}
 	}
@@ -272,6 +278,9 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if prob := api.ValidateEdgeRuleMatchHost(*req.MatchHost); prob != nil {
 			return m, prob
 		}
+		if prob := s.appBoundUpdateHostProblem(ctx, row.AppID, *req.MatchHost); prob != nil {
+			return m, prob
+		}
 	}
 	if req.MatchPath != nil {
 		if !strings.HasPrefix(*req.MatchPath, "/") || len(*req.MatchPath) > 2048 {
@@ -287,6 +296,13 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, api.ErrValidation(headerErr.Error())
 		}
 		req.MatchHeaders = &matchHeaders
+	}
+	if req.MatchMethods != nil {
+		matchMethods, methodsProb := api.NormalizeEdgeRuleMatchMethods(*req.MatchMethods)
+		if methodsProb != nil {
+			return m, methodsProb
+		}
+		req.MatchMethods = &matchMethods
 	}
 	if req.Priority != nil {
 		if *req.Priority < 0 || *req.Priority > 10000 {
@@ -331,34 +347,12 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
 			return m, prob
 		}
-		if prob := s.RouteTargetProblem(ctx, acct.ID, string(row.Kind), *req.Action); prob != nil {
+		if prob := s.RouteTargetProblem(ctx, acct.ID, row.AppID, string(row.Kind), *req.Action); prob != nil {
 			return m, prob
 		}
 	} else if req.MatchPath != nil && row.Action.Validate != nil && row.Action.Validate.Parameters != nil {
 		// A path-only update must keep the stored path parameters aligned.
 		if prob := row.Action.Validate.Parameters.Validate(matchPath); prob != nil {
-			return m, prob
-		}
-	}
-	if row.Kind == state.EdgeRuleKindJWT {
-		host, path, methods, headers := row.MatchHost, row.MatchPath, row.MatchMethods, row.MatchHeaders
-		if req.MatchHost != nil {
-			host = *req.MatchHost
-		}
-		if req.MatchPath != nil {
-			path = *req.MatchPath
-		}
-		if req.MatchMethods != nil {
-			methods = *req.MatchMethods
-		}
-		if req.MatchHeaders != nil {
-			headers = *req.MatchHeaders
-		}
-		raw, _ := json.Marshal(row.Action.JWT)
-		if req.Action != nil {
-			raw = *req.Action
-		}
-		if prob := ValidateMCPRuleSelectors(string(row.Kind), host, path, methods, headers, raw); prob != nil {
 			return m, prob
 		}
 	}
@@ -427,6 +421,10 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if errors.Is(err, state.ErrNotFound) {
 			return m, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such edge rule")
 		}
+		if prob := listMissingProblem(err); prob != nil {
+			return m, prob
+		}
+		s.Host.Logger().Warn("edge rule update failed", "rule", logsanitize.Field(row.ID), "err", err)
 		return m, trafficproblem.Policy(err, api.ErrCapacity("could not update edge rule"))
 	}
 	s.Host.Logger().Info("edge rule updated",
@@ -449,6 +447,17 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		return m, api.ErrCapacity("edge rule was saved but the serving fleet has not acknowledged it; read the current rule state before retrying this mutation")
 	}
 	return m, nil
+}
+
+// listMissingProblem answers a rule write the store refused because its
+// condition references a list that was deleted after apid checked it
+// (ADR-091 amendment 2026-10-28), or nil for any other error.
+func listMissingProblem(err error) *api.Problem {
+	var missing *state.EdgeRuleListMissingError
+	if !errors.As(err, &missing) {
+		return nil
+	}
+	return api.ErrValidation(fmt.Sprintf("match references edge rule list %q, which does not exist", missing.Name))
 }
 
 // withPenalty sets a stored action's penalty box (ADR-20261022105846).

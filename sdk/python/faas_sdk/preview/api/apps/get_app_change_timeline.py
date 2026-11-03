@@ -76,7 +76,7 @@ def sync_detailed(
 ) -> Response[AppChangeTimelineResponse | Problem]:
     """Read an app's change timeline.
 
-     ADR-751 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
     otherwise 503 `change_timeline_unavailable`. Requires apps:read or
     admin; no MFA required.
 
@@ -124,7 +124,7 @@ def sync(
 ) -> AppChangeTimelineResponse | Problem | None:
     """Read an app's change timeline.
 
-     ADR-751 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
     otherwise 503 `change_timeline_unavailable`. Requires apps:read or
     admin; no MFA required.
 
@@ -167,7 +167,7 @@ async def asyncio_detailed(
 ) -> Response[AppChangeTimelineResponse | Problem]:
     """Read an app's change timeline.
 
-     ADR-751 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
     otherwise 503 `change_timeline_unavailable`. Requires apps:read or
     admin; no MFA required.
 
@@ -213,7 +213,7 @@ async def asyncio(
 ) -> AppChangeTimelineResponse | Problem | None:
     """Read an app's change timeline.
 
-     ADR-751 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+     Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
     otherwise 503 `change_timeline_unavailable`. Requires apps:read or
     admin; no MFA required.
 

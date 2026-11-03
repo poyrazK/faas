@@ -25,8 +25,7 @@ class DevSessionResponse:
 
     app: AppResponse
     """An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy
-    pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169
-    / #172)."""
+    pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets."""
     expires_at: datetime.datetime
     postgres: DevPostgresResponse | Unset = UNSET
     """Safe receipt for the isolated developer database and its app binding. Credentials are injected into
@@ -35,12 +34,12 @@ class DevSessionResponse:
     """Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for
     principals with storage:manage or admin. Revoked bindings are excluded."""
     watch: DevWatch | Unset = UNSET
-    """Watch mode (ADR-1170). The environment runs this development server instead of the production build, and
-    live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the
-    next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM
-    or does not require authentication."""
+    """Watch mode. The environment runs this development server instead of the production build, and live source
+    patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the next developer
+    build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM or does not
+    require authentication."""
     go_command: str | Unset = UNSET
-    """The stored Go command (ADR-20261026120412); omitted when none."""
+    """The stored Go command; omitted when none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -85,6 +85,15 @@ for want in \
   grep -Fq -- "$want" "$test_root/activate.sh" || fail "activation script lacks: $want"
 done
 
+# 1. (cont.) In a workflow run the script names the run as the actor in the
+#    release history deployctl writes (issue #574); outside one it names none.
+GITHUB_RUN_ID=4242 GITHUB_WORKFLOW="cd control plane" bash "$helper" script "$plan" "$stage" "$test_root/actor.sh"
+bash -n "$test_root/actor.sh" || fail "activation script with an actor does not parse"
+grep -Fxq 'export FAAS_DEPLOY_ACTOR=cd\ control\ plane\ run\ 4242' "$test_root/actor.sh" || fail "activation script does not name its run: $(cat "$test_root/actor.sh")"
+if env -u GITHUB_RUN_ID bash "$helper" script "$plan" "$stage" "$test_root/no-actor.sh" && grep -q FAAS_DEPLOY_ACTOR "$test_root/no-actor.sh"; then
+  fail "activation script names an actor outside a workflow run"
+fi
+
 # 1a. A plan with a data step overlays bin/migrate, which deployctl deploy
 #     runs before it activates anything.
 jq '.replace["bin/migrate"] = "bin/migrate" | .gate += [["--unit", "migrations"]]' "$plan" > "$test_root/data.json"
@@ -197,6 +206,28 @@ remote_stage="$(bash "$helper" stage "$plan" "$units" "$units/tools/deployctl")"
 bash "$helper" cleanup "$remote_stage"
 [[ ! -e "$remote_stage" ]] || fail "cleanup left the stage dir"
 
+# 6a. record copies the node's activation spool to the control plane's
+#     deployctl under the node's compute_nodes name (issue #574); an empty
+#     spool imports nothing.
+spool="$test_root/activations.jsonl"
+fake_deployctl="$test_root/fake-deployctl"
+cat > "$fake_deployctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$STUB_LOG.record-args"
+cat > "$STUB_LOG.record-stdin"
+EOF
+chmod +x "$fake_deployctl"
+ACTIVATION_SPOOL="$spool" CP_DEPLOYCTL="$fake_deployctl" bash "$helper" record fsn-3 | grep -Fq "fsn-3 spooled no activations" \
+  || fail "record did not report an empty spool"
+[[ ! -e "$STUB_LOG.record-args" ]] || fail "record imported an empty spool"
+printf '%s\n' '{"id":"a"}' '{"id":"b"}' > "$spool"
+ACTIVATION_SPOOL="$spool" CP_DEPLOYCTL="$fake_deployctl" bash "$helper" record fsn-3
+[[ "$(cat "$STUB_LOG.record-args")" == "record --host fsn-3.faas" ]] || fail "record ran: $(cat "$STUB_LOG.record-args")"
+cmp -s "$spool" "$STUB_LOG.record-stdin" || fail "record did not pass the spool through whole"
+ACTIVATION_SPOOL="$spool" CP_DEPLOYCTL="$fake_deployctl" bash "$helper" record fsn-4.faas
+[[ "$(cat "$STUB_LOG.record-args")" == "record --host fsn-4.faas" ]] || fail "record renamed a canonical node: $(cat "$STUB_LOG.record-args")"
+if bash "$helper" record 'fsn-3;rm' 2>/dev/null; then fail "record accepted a bad node name"; fi
+
 # 7. Host configuration (docs/adr/20261018133100-host-configuration-lane.md):
 #    the record is written only whole and valid, with the contract.
 record="$test_root/record.json"
@@ -207,13 +238,15 @@ jq -n '{format_version: 1, kind: "gregale-host-config", group: "control_plane",
         environment: ("sha256:" + ("e" * 64))}' > "$record"
 contract="sha256:$(printf 'c%.0s' {1..64})"
 bash "$helper" host-record "$record" "$contract" || fail "host-record refused a valid record"
-cmp -s <(jq -S . "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") || fail "host-record changed the record"
+cmp -s <(jq -S --arg c "$contract" '.contract = $c' "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") \
+  || fail "host-record changed the record, or did not name the contract in it"
 [[ "$(cat "$HOST_CONFIG_DIR/control-plane-bootstrap-contract.sha256")" == "$contract" ]] || fail "host-record did not write the contract"
 [[ "$(stat -c %a "$HOST_CONFIG_DIR" 2>/dev/null || stat -f %Lp "$HOST_CONFIG_DIR")" == 700 ]] || fail "host-record left the record directory readable"
 jq 'del(.environment)' "$record" > "$test_root/no-env.json"
 if bash "$helper" host-record "$test_root/no-env.json" "$contract" 2>/dev/null; then fail "a record without its environment hash was accepted"; fi
 if bash "$helper" host-record "$record" "sha256:'; rm -rf /'" 2>/dev/null; then fail "an unsafe contract was accepted"; fi
-cmp -s <(jq -S . "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") || fail "a refused record replaced the old one"
+cmp -s <(jq -S --arg c "$contract" '.contract = $c' "$record") <(jq -S . "$HOST_CONFIG_DIR/control-plane-roles.json") \
+  || fail "a refused record replaced the old one"
 
 # 7a. host-stage ships deployctl alone; the restart script runs
 #     restart-changed as root, keeps its report, and marks the activation.

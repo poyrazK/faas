@@ -2,7 +2,7 @@
   "name": "@gregale/sdk-node",
   "version": "0.1.0",
   "description": "Node SDK for the Gregale FaaS platform. The default entry covers generally available and beta capabilities (sdk/openapi.yaml); '@gregale/sdk-node/preview' adds preview ones.",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "Apache-2.0",
   "homepage": "https://gregale.dev/docs/cli",
   "repository": {
     "type": "git",
@@ -108,9 +108,8 @@
   "packageManager": "npm@10.9.0",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
-    "access": "restricted"
+    "access": "public"
   },
-  "//publishConfig": "access stays 'restricted' while LICENSE is LicenseRef-onebox-internal (proprietary, non-redistributable). Flip to 'public' only alongside a customer-redistributable license \u2014 see sdk/README-publishing.md.",
   "scripts": {
     "gen": "node scripts/gen.mjs",
     "gen:check": "node scripts/gen.mjs && git diff --exit-code -- src/generated src/generated-public && test -z \"$(git status --porcelain -- src/generated src/generated-public)\"",

@@ -64,6 +64,12 @@ func TestDirectOCIAutoscaleScaleToZeroMetal(t *testing.T) {
 	}); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
 	}
+	// Pro also defaults to public_auth_mode=bearer (ADR-080), which
+	// require_authn=false leaves on; the gateway requests below are anonymous.
+	if body, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/oci-autoscale",
+		api.UpdateAppRequest{PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		t.Fatalf("open public auth: status=%d body=%s", status, body)
+	}
 	appID := mustGetAppID(t, h, key, "oci-autoscale")
 	setAppIdleTimeout(t, h, key, "oci-autoscale", api.IdleTimeoutFloorSeconds)
 

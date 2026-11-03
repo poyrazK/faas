@@ -5,6 +5,7 @@ package vmmdgrpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,13 +24,16 @@ import (
 )
 
 type fakeUnits struct {
-	mu      sync.Mutex
-	started []string
-	svcs    map[string]sdunit.Service
-	running map[string]sdunit.Unit
-	stopped []string
-	listed  []string
-	closed  bool
+	mu sync.Mutex
+	// startErr fails every start as systemd fails a unit whose process
+	// never ran (the unit is collected at once).
+	startErr error
+	started  []string
+	svcs     map[string]sdunit.Service
+	running  map[string]sdunit.Unit
+	stopped  []string
+	listed   []string
+	closed   bool
 }
 
 func runningUnit(name string, pid int) sdunit.Unit {
@@ -42,6 +46,9 @@ func (f *fakeUnits) StartService(_ context.Context, name string, svc sdunit.Serv
 	defer f.mu.Unlock()
 	f.started = append(f.started, name)
 	f.svcs[name] = svc
+	if f.startErr != nil {
+		return sdunit.Unit{Name: name, LoadState: "not-found"}, f.startErr
+	}
 	f.running[name] = runningUnit(name, 4242)
 	return f.running[name], nil
 }
@@ -99,7 +106,15 @@ type unitFixture struct {
 	mu      sync.Mutex
 	procs   []*fakeUnitProcess
 	openErr error
-	now     time.Time
+	// deadOnOpen makes each run's main process exit as soon as vmmd holds it.
+	deadOnOpen bool
+	now        time.Time
+}
+
+func (f *unitFixture) procCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.procs)
 }
 
 func (f *unitFixture) proc(i int) *fakeUnitProcess {
@@ -137,6 +152,7 @@ func newUnitFixture(t *testing.T) *unitFixture {
 			return nil, f.openErr
 		}
 		p := &fakeUnitProcess{}
+		p.dead.Store(f.deadOnOpen)
 		f.procs = append(f.procs, p)
 		return p, nil
 	}
@@ -177,7 +193,7 @@ func TestInstanceBridgeUnitLivesAsLongAsItsInstance(t *testing.T) {
 	if filepath.Dir(filepath.Dir(socket)) != bridgeRunRoot || !strings.HasPrefix(filepath.Base(filepath.Dir(socket)), "a-") {
 		t.Fatalf("bridge socket %s is not one of instance a's under %s", socket, bridgeRunRoot)
 	}
-	if svc.UID != 0 || svc.Capabilities != sdunit.CapSetUID|sdunit.CapSetGID || svc.NetworkNamespacePath != filepath.Join(netnsRunDir, "fc-a") ||
+	if svc.UID != 0 || svc.Capabilities != sdunit.CapSetUID|sdunit.CapSetGID || svc.NetworkNamespacePath != filepath.Join("/proc", strconv.Itoa(os.Getpid()), "root", netnsRunDir, "fc-a") ||
 		svc.Slice != instanceBridgeSlice || svc.ExecStart[2] != "10.0.0.2" || svc.ExecStart[3] != "8080" ||
 		!slices.Equal(svc.ReadWritePaths, []string{filepath.Dir(socket)}) || svc.MemoryMaxBytes != api.InstanceBridgeMemoryMaxMB<<20 ||
 		len(svc.IPAddressAllow) != 1 || svc.IPAddressAllow[0].String() != "10.0.0.2/32" {
@@ -229,13 +245,82 @@ func TestInstanceBridgeUnitReplacedWhenItsProcessDies(t *testing.T) {
 func TestInstanceBridgeUnitUnprovenRunIsStopped(t *testing.T) {
 	f := newUnitFixture(t)
 	f.openErr = errors.New("pid 4242 is in another cgroup")
-	_, err := f.manager.acquire(context.Background(), &vmmdpb.ForwardHTTPRequestInit{Instance: "a", Port: 8080}, "fc-a", bridgeUID(1))
-	if err == nil {
-		t.Fatal("acquire succeeded on an unproven unit")
-	}
+	f.acquire(t, "a", bridgeUID(1))
 	started, stopped := f.units.snapshot()
 	if len(started) != 1 || !slices.Equal(stopped, started) {
 		t.Fatalf("started %v stopped %v", started, stopped)
+	}
+	if f.manager.entries["a"].unit != nil {
+		t.Fatal("entry kept the unproven run")
+	}
+}
+
+// A bridge unit that does not start fails neither the wake nor the request:
+// vmmd stops it and runs the bridge as its own child, as before units (ADR
+// §2 slice 1c, bridge_start_failed), and the instance's next bridge tries a
+// unit again. On the rc.305 canary systemd could not open the units'
+// network namespace and every woken guest answered 503 instead.
+func TestInstanceBridgeUnitStartFailureFallsBackToProcess(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		fail, heal func(*unitFixture)
+	}{
+		{
+			name: "systemd fails the unit",
+			fail: func(f *unitFixture) {
+				f.units.startErr = fmt.Errorf("%w: unit is not-found/inactive", sdunit.ErrStartFailed)
+			},
+			heal: func(f *unitFixture) { f.units.startErr = nil },
+		},
+		{
+			name: "run not proven",
+			fail: func(f *unitFixture) { f.openErr = errors.New("pid 4242 is not in the network namespace") },
+			heal: func(f *unitFixture) { f.openErr = nil },
+		},
+		{
+			name: "socket never ready",
+			fail: func(f *unitFixture) {
+				var calls atomic.Int32
+				f.manager.waitSocket = func(string, time.Duration) error {
+					if calls.Add(1) == 1 {
+						return errors.New("timed out")
+					}
+					return nil
+				}
+			},
+			heal: func(f *unitFixture) { f.manager.waitSocket = func(string, time.Duration) error { return nil } },
+		},
+		{
+			name: "unit exits before ready",
+			fail: func(f *unitFixture) { f.deadOnOpen = true },
+			heal: func(f *unitFixture) { f.deadOnOpen = false },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newUnitFixture(t)
+			tc.fail(f)
+			f.acquire(t, "a", bridgeUID(1))
+			started, stopped := f.units.snapshot()
+			if len(started) != 1 || !slices.Equal(stopped, started) || f.spawns.Load() != 1 {
+				t.Fatalf("units started %v stopped %v, processes spawned %d; want the unit stopped and one process",
+					started, stopped, f.spawns.Load())
+			}
+			if entry := f.manager.entries["a"]; entry.unit != nil || entry.cmd == nil {
+				t.Fatalf("entry unit %v cmd %v; want the process bridge", entry.unit, entry.cmd)
+			}
+			for i := range f.procCount() {
+				if !f.proc(i).closed.Load() {
+					t.Fatal("pidfd of the failed run left open")
+				}
+			}
+
+			tc.heal(f)
+			f.manager.forget(context.Background(), "a")
+			f.acquire(t, "a", bridgeUID(1))
+			if started, _ := f.units.snapshot(); len(started) != 2 || f.spawns.Load() != 1 {
+				t.Fatalf("units started %v, processes spawned %d; want the next bridge to be a unit", started, f.spawns.Load())
+			}
+		})
 	}
 }
 

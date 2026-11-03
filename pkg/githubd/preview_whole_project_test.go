@@ -55,7 +55,7 @@ func TestHandlePullRequest_ProjectPolicyPreviewsEveryCallableSibling(t *testing.
 			svc.WorkDir = t.TempDir()
 			enqueuer := &previewDependencyEnqueuer{}
 			svc.Enqueuer = enqueuer
-			svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+			svc.Reconcile.Scan = func(fs.FS, reposcan.ScanOptions) (reposcan.Result, error) {
 				return reposcan.Result{
 					Workloads: []reposcan.Workload{
 						{Name: "api", ServiceBindingPolicy: tc.rootPolicy, Dockerfile: "Dockerfile.preview"},

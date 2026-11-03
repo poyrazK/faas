@@ -121,3 +121,46 @@ scheduler and replay/receipt HTTP tests. The final full state run disabled test
 vet, inlining and debug information to fit the shared machine; source vet is
 covered by scoped lint. sqlc parity and whitespace checks passed. Linux CI and
 deployment qualification remain rollout gates.
+
+## Amendment (2026-10-27): routing reads that do not grow with the backlog
+
+Two reads that every fanout sweep makes on every node grew with the backlog:
+
+- **Routing health.** The gauges `*_event_delivery_capacity_waiting` and
+  `*_event_routing_oldest_pending_seconds` come from an aggregate over every
+  unsettled receipt and its captured recipients, platform-wide. Sweeps run
+  every 5 s and on every publish, so a large backlog was re-read many times a
+  second. A node now refreshes them at most every 15 s; the gauges can be up
+  to that much older.
+- **Recipient claims.** The due test also accepted a recipient whose event
+  version its subscription does not take
+  (`event_recipient_schema_version_mismatch`), a per-row function. That
+  branch kept the due and deadline indexes from narrowing the scan, so every
+  pending recipient was read, including the ones backing off or waiting for
+  capacity, up to five times a sweep. A recipient is now due by its
+  `available_at`, its delivery deadline or a lapsed lease only. A version
+  mismatch is fixed when the event is captured, and the recipient is filtered
+  on its first claim (ADR-803), before any gate could defer it, so filtering
+  still precedes backoff.
+
+## Amendment (2026-10-29): delivery counts read the live slots alone
+
+The provisional GA V12 run (`docs/ops/evidence/20261029-event-ga-v12`) found
+`EventDeliveryCounts` at 4.8 ms per routed delivery once a backlog had built
+up. The count joined each live slot to its invocation to re-check the state,
+and the planner served that join with a hash join over every pending
+invocation on the platform. Each admission therefore paid for every
+account's backlog.
+
+A slot's `live` flag is exact. A slot is written in the transaction that
+creates its invocation, or after the invocation's insert in the replay
+guard, so the stamp sees the invocation's state. Every later state change
+re-syncs the flag through `event_delivery_slot_live_sync`, and deleting the
+invocation deletes the slot. `TestPgEventDeliveryCountsReadLiveSlots` checks
+that no slot's flag disagrees with its invocation.
+
+The count now reads only the account's live slots, through
+`event_delivery_slots_live`. A keyed replace (`keep_latest`) subtracts the
+pending deliveries it would replace, found through the work-lane index.
+Admission costs the account's own live slots, not the platform's backlog.
+The replay guard keeps its join, since it runs only on replays.

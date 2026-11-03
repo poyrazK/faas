@@ -1,6 +1,9 @@
 package daemonunitspec
 
-import "github.com/onebox-faas/faas/pkg/daemonunit"
+import (
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
+)
 
 // UnitGatewaydInternal is the canonical unit for faas-gatewayd-internal
 // — routing + wake + proxy (Tier A7 split, ADR-070). It serves the local
@@ -34,19 +37,11 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // Issue #585 / ADR-127 — sealed.env is apid-only; gatewayd-internal
 // keeps compute-db.env (DATABASE_URL) + loads per-daemon content via
 // EnvironmentFile=/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env
-// (0400 root:root). The .env file holds content-shaped env vars:
-//   - FAAS_SESSION_KEY=<64 hex chars>
-//   - FAAS_TLS_DNS_TOKEN=<provider API token>
-//
-// These are content-shaped env vars the loader reads via os.Getenv;
-// the LoadCredential+%d/<id> pattern only fits PATH-shaped vars
-// (env var = tmpfs path; loader does os.ReadFile(env)) — using it
-// for content would set the env var to a path string and break the
-// loader. The session key content is shared with apid (apid writes/
-// validates session cookies that gatewayd-internal forwards); the
-// canonical source file /etc/faas/secrets/session.key is read by both
-// daemons' loader helpers in their respective config.go, while the
-// per-daemon .env file is the systemd-level delivery vehicle.
+// (0400 root:root). The .env file holds content-shaped env vars such
+// as FAAS_TLS_DNS_TOKEN=<provider API token>, which the loader reads
+// via os.Getenv; the LoadCredential+%d/<id> pattern only fits
+// PATH-shaped vars. gatewayd-internal holds no session key
+// (ADR-20261102191500).
 func UnitGatewaydInternal() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:   "onebox-faas gatewayd-internal — routing + wake + proxy (Tier A7 split, ADR-070)",
@@ -70,7 +65,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
 		OOMPolicy:    "continue",
-		User:         "faas",
+		User:         api.GatewaydInternalUser,
 		Group:        "faas",
 		ExecStart:    `/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml`,
 		Restart:      "on-failure",
@@ -87,7 +82,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// compute env is loaded by systemd; TOML must stay credential-free.
 		// Issue #585 / ADR-127: sealed.env dropped; per-daemon
 		// gatewayd-internal.env (0400 root:root) holds
-		// FAAS_SESSION_KEY + FAAS_TLS_DNS_TOKEN content-shaped vars.
+		// content-shaped vars such as FAAS_TLS_DNS_TOKEN.
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env -/etc/faas/otel.env",
 
 		Environment: []daemonunit.KV{
@@ -101,16 +96,19 @@ func UnitGatewaydInternal() daemonunit.Unit {
 			// never push the daemon into its MemoryMax.
 			{Key: "GOGC", Value: "200"},
 			{Key: "GOMEMLIMIT", Value: "384MiB"},
+			// Request bodies over 1 MiB spool to TMPDIR. PrivateTmp puts /tmp
+			// on the host /tmp, tmpfs on some hosts, where spooled bytes
+			// count against MemoryMax; the state directory is on disk (bug
+			// hunt 2026-10-27 B5).
+			{Key: "TMPDIR", Value: "/var/lib/faas-gatewayd-internal"},
 			{Key: "FAAS_GATEWAY_LISTEN", Value: "off"},
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 			{Key: "FAAS_HOST_KEY_PATH", Value: "%d/host.age"},
-			// Security review A4 (mirrors faas-apid.service): the session
-			// key reaches the daemon as a LoadCredential= path, never as
-			// inherited env content. cmd/gatewayd-internal/session_key.go
-			// accepts both the PATH-shaped (%d/<id>) and CONTENT-shaped
-			// forms; the unit pins the path form so the raw key is only
-			// ever readable inside the service's credential tmpfs.
-			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},
+			// No FAAS_SESSION_KEY (ADR-20261102191500): apid opens session
+			// cookies for the gateway, and the gateway fleet key, which the
+			// gatewayd_internal_service role installs as a drop-in
+			// (FAAS_GATEWAY_FLEET_KEY_FILE), signs edge challenges and
+			// traffic deadlines.
 			{Key: "FAAS_LOG_ARCHIVE_CREDS_PATH", Value: "%d/faas_archive_creds"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
@@ -118,7 +116,6 @@ func UnitGatewaydInternal() daemonunit.Unit {
 			{Name: "fleet.age.previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
 			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
-			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},
 			{Name: "faas_archive_creds", Path: "/etc/faas/secrets/storage-box/archive-creds.json", Optional: true},
 		},
 
@@ -144,6 +141,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
 		ReadWritePaths: []string{"/run/faas", "/var/lib/faas/log-drains", "/var/lib/faas/egress-meter", "/var/lib/faas/consumer-usage", "/var/lib/faas/wake-ahead"},
+		StateDirectory: "faas-gatewayd-internal",
 
 		WantedBy: "multi-user.target",
 	}

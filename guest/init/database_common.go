@@ -1,0 +1,454 @@
+package main
+
+import (
+	"archive/tar"
+	"bufio"
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/dbguest"
+)
+
+// Database-mode layout (ADR-1027). drive0 is the read-only base carrying
+// the PostgreSQL binaries; drive1 is the database's persistent volume,
+// formatted ext4 by the host when the volume is created.
+const (
+	databaseVolumeDevice = "/dev/vdb"
+	databaseMountPoint   = "/var/lib/postgresql"
+	databasePGData       = databaseMountPoint + "/data"
+	// databaseRestoreMarker records that a restore's base backup is fully
+	// extracted; until it exists a restore boot starts the extraction over.
+	databaseRestoreMarker = databaseMountPoint + "/restore-extracted"
+	databaseSocketDir     = "/run/postgresql"
+	databaseOSUser        = "postgres"
+	// databaseMaxConnections stays small: clients reach the database
+	// through the platform proxy, which pools connections.
+	databaseMaxConnections = 25
+	// databaseMaxWALSize bounds crash recovery after an unclean stop.
+	databaseMaxWALSize = "256MB"
+)
+
+func databaseBinDir(major int) string {
+	return fmt.Sprintf("/usr/lib/postgresql/%d/bin", major)
+}
+
+// parseMemTotalKiB reads MemTotal from /proc/meminfo content.
+func parseMemTotalKiB(meminfo []byte) (int64, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(meminfo))
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 2 && fields[0] == "MemTotal:" {
+			kib, err := strconv.ParseInt(fields[1], 10, 64)
+			if err != nil || kib <= 0 {
+				return 0, fmt.Errorf("meminfo: bad MemTotal %q", fields[1])
+			}
+			return kib, nil
+		}
+	}
+	return 0, errors.New("meminfo: MemTotal not found")
+}
+
+// databaseSharedBuffersMB sizes shared_buffers at a quarter of guest RAM,
+// between 16 MB and 8 GB. The host page cache serves the rest (ADR-1027).
+func databaseSharedBuffersMB(memTotalKiB int64) int64 {
+	mb := memTotalKiB / 1024 / 4
+	if mb < 16 {
+		return 16
+	}
+	if mb > 8192 {
+		return 8192
+	}
+	return mb
+}
+
+// databaseServerArgs builds the postgres command line. Settings that must
+// hold for every database VM are passed as -c flags so a tenant's
+// postgresql.conf cannot weaken them: no TCP listener, the socket in
+// /run, no JIT.
+// databaseArchiveCommand ships each completed WAL file to the host through
+// guest-init itself (pkg/dbarchive); PostgreSQL retries until it succeeds.
+const databaseArchiveCommand = "/sbin/init archive-wal put %p %f"
+
+// databaseArchiveTimeout bounds how long committed work can sit in an
+// unarchived segment: a quiet database still ships every minute.
+const databaseArchiveTimeout = "60s"
+
+func databaseServerArgs(major int, memTotalKiB int64, archive bool) []string {
+	settings := []string{
+		"listen_addresses=",
+		"unix_socket_directories=" + databaseSocketDir,
+		fmt.Sprintf("shared_buffers=%dMB", databaseSharedBuffersMB(memTotalKiB)),
+		"max_connections=" + strconv.Itoa(databaseMaxConnections),
+		"max_wal_size=" + databaseMaxWALSize,
+		"huge_pages=off",
+		"jit=off",
+		"dynamic_shared_memory_type=posix",
+		"password_encryption=scram-sha-256",
+	}
+	if archive {
+		settings = append(settings,
+			"archive_mode=on",
+			"archive_command="+databaseArchiveCommand,
+			"archive_timeout="+databaseArchiveTimeout,
+		)
+	}
+	args := []string{databaseBinDir(major) + "/postgres", "-D", databasePGData}
+	for _, s := range settings {
+		args = append(args, "-c", s)
+	}
+	return args
+}
+
+// databaseInitdbArgs initializes the cluster without any password: the
+// superuser authenticates only by peer, as the guest's postgres OS user,
+// and databaseHBA then requires SCRAM for every other role.
+func databaseInitdbArgs(major int) []string {
+	return []string{
+		databaseBinDir(major) + "/initdb",
+		"-D", databasePGData,
+		"-U", databaseOSUser,
+		"--auth-local=peer",
+		"--auth-host=reject",
+		"--encoding=UTF8",
+		"--locale=C.UTF-8",
+		"--no-instructions",
+	}
+}
+
+// databaseHBA replaces initdb's pg_hba.conf. Clients reach PostgreSQL only
+// through guest-init's vsock bridge, which runs as root, so peer
+// authentication can never admit them as the superuser; the superuser is
+// reachable only by the admin control op running as the postgres OS user.
+//
+// The replication line admits physical replication connections as the
+// replication role only from the replication bridge's OS user
+// (databaseIdent). Tenant sessions arrive through the root-owned data
+// bridge, which the map does not name, and logical replication
+// connections never match a replication line.
+//
+// The import line admits the import role (databaseImportRole) only from
+// the postgres OS user, which import restores run as; that user is already
+// the superuser, so the line gives it nothing new.
+const databaseHBA = `# Managed by guest-init (ADR-1027). Do not edit.
+local all postgres peer
+local replication postgres peer
+local replication ` + databaseReplicationRole + ` peer map=replication
+local all ` + databaseImportRole + ` peer map=import
+local all all scram-sha-256
+`
+
+// databaseIdent maps the replication bridge's OS user to the replication
+// role, and the postgres OS user to the import role, and nothing else.
+const databaseIdent = `# Managed by guest-init (ADR-1027). Do not edit.
+replication ` + databaseReplicationOSUser + ` ` + databaseReplicationRole + `
+import ` + databaseOSUser + ` ` + databaseImportRole + `
+`
+
+// Streaming replication (ADR-1027 production class).
+const (
+	// databaseReplicationRole is the role a standby streams as: LOGIN and
+	// REPLICATION, reachable only through the replication bridge.
+	databaseReplicationRole = "gregale_replication"
+	// databaseReplicationOSUser is the OS user a primary's bridge connects
+	// to PostgreSQL as. Nothing else in the guest runs as it.
+	databaseReplicationOSUser = "nobody"
+	// databaseStandbyName is the standby's application_name and slot.
+	databaseStandbyName = "gregale_standby"
+	// databaseReplicationSocketDir holds the socket a standby's guest-init
+	// serves: each connection is relayed to the primary.
+	databaseReplicationSocketDir = "/run/gregale-replication"
+	// databaseSeedMarker records that a standby's copy of its primary is
+	// complete; a standby boot without it seeds the volume again.
+	databaseSeedMarker = databaseMountPoint + "/standby-seeded"
+)
+
+// standbySettings make a server a hot standby streaming from its primary
+// through the bridge socket, falling back to the archive when it has one:
+// a standby that fell behind its slot's retained WAL catches up from there.
+func standbySettings(archive bool) []string {
+	settings := []string{
+		"-c", "primary_conninfo=host=" + databaseReplicationSocketDir + " user=" + databaseReplicationRole + " application_name=" + databaseStandbyName,
+		"-c", "primary_slot_name=" + databaseStandbyName,
+		"-c", "hot_standby=on",
+	}
+	if archive {
+		settings = append(settings, "-c", "restore_command="+databaseRestoreCommand)
+	}
+	return settings
+}
+
+// slotWALKeepMB bounds the WAL a primary keeps for an absent standby at a
+// quarter of its volume: a standby gone longer is copied again rather than
+// let the primary fill its volume.
+func slotWALKeepMB(volumeBytes int64) int64 {
+	return max(volumeBytes/4>>20, 64)
+}
+
+// databaseStandbySeedArgs copies the primary through the bridge socket
+// into an empty data directory, WAL included, holding the standby's slot
+// so the primary keeps the WAL from the copy's start.
+func databaseStandbySeedArgs(major int) []string {
+	return []string{
+		databaseBinDir(major) + "/pg_basebackup",
+		"-h", databaseReplicationSocketDir,
+		"-U", databaseReplicationRole,
+		"-D", databasePGData,
+		"-X", "stream",
+		"-S", databaseStandbyName,
+		"-c", "fast",
+		"-w",
+		"--no-manifest",
+	}
+}
+
+// resetSynchronousStatements stop commits waiting for a standby. Every
+// boot and every promotion starts asynchronous: only the host turns
+// synchronous replication on, once the standby streams.
+var resetSynchronousStatements = []string{
+	"ALTER SYSTEM RESET synchronous_standby_names",
+	"SELECT pg_catalog.pg_reload_conf()",
+}
+
+// replicationStatements set a primary's replication mode. Each runs as its
+// own statement: ALTER SYSTEM cannot run in a transaction.
+func replicationStatements(mode dbguest.ReplicationMode) []string {
+	if mode == dbguest.ReplicationOff {
+		return append(slices.Clone(resetSynchronousStatements),
+			"SELECT pg_catalog.pg_drop_replication_slot(slot_name) FROM pg_catalog.pg_replication_slots WHERE slot_name = '"+databaseStandbyName+"' AND NOT active")
+	}
+	names := "ALTER SYSTEM RESET synchronous_standby_names"
+	if mode == dbguest.ReplicationSync {
+		names = "ALTER SYSTEM SET synchronous_standby_names = '" + databaseStandbyName + "'"
+	}
+	return []string{
+		"DO $$BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '" + databaseReplicationRole + "') THEN CREATE ROLE " + databaseReplicationRole + " WITH LOGIN REPLICATION; END IF; END$$",
+		"SELECT pg_catalog.pg_create_physical_replication_slot('" + databaseStandbyName + "', true) WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_replication_slots WHERE slot_name = '" + databaseStandbyName + "')",
+		names,
+		"SELECT pg_catalog.pg_reload_conf()",
+	}
+}
+
+// replicationStatusQuery reports the standby as the primary sees it: one
+// row of state|sync_state|lag bytes (-1 unknown)|synchronous_standby_names|slot.
+const replicationStatusQuery = `SELECT coalesce(r.state, ''), coalesce(r.sync_state, ''),
+ coalesce(pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_lsn(), r.flush_lsn)::bigint, -1),
+ pg_catalog.current_setting('synchronous_standby_names'),
+ EXISTS (SELECT FROM pg_catalog.pg_replication_slots WHERE slot_name = '` + databaseStandbyName + `')
+FROM (SELECT 1) AS one
+LEFT JOIN LATERAL (SELECT state, sync_state, flush_lsn FROM pg_catalog.pg_stat_replication
+ WHERE application_name = '` + databaseStandbyName + `' ORDER BY state = 'streaming' DESC LIMIT 1) AS r ON true`
+
+// parseReplicationStatus reads replicationStatusQuery's row, as psql -tA
+// prints it with | between fields.
+func parseReplicationStatus(row string) (dbguest.ReplicationStatus, error) {
+	fields := strings.Split(strings.TrimSpace(row), "|")
+	if len(fields) != 5 {
+		return dbguest.ReplicationStatus{}, fmt.Errorf("replication status: %d fields", len(fields))
+	}
+	lag, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return dbguest.ReplicationStatus{}, fmt.Errorf("replication status: lag %q", fields[2])
+	}
+	status := dbguest.ReplicationStatus{Mode: dbguest.ReplicationOff, Streaming: fields[0] == "streaming"}
+	switch {
+	case fields[3] == databaseStandbyName:
+		status.Mode = dbguest.ReplicationSync
+	case fields[4] == "t":
+		status.Mode = dbguest.ReplicationAsync
+	}
+	status.Synchronous = status.Streaming && fields[1] == "sync"
+	if status.Streaming && lag > 0 {
+		status.LagBytes = lag
+	}
+	return status, nil
+}
+
+// databaseBaseBackupArgs streams a tar base backup of the whole cluster to
+// stdout. WAL is not included (-X none): the archive holds it, and the
+// server waits for the backup's end WAL to be archived before finishing,
+// so the backup history file is archived when the stream ends.
+func databaseBaseBackupArgs(major int) []string {
+	return []string{
+		databaseBinDir(major) + "/pg_basebackup",
+		"-h", databaseSocketDir,
+		"-U", databaseOSUser,
+		"-D", "-",
+		"-F", "tar",
+		"-X", "none",
+		"-c", "fast",
+		"--no-manifest",
+		"-l", "gregale",
+	}
+}
+
+// databasePsqlArgs runs an admin batch from stdin as the superuser,
+// stopping at the first error and reporting it as a SQLSTATE. Batches that
+// must be atomic wrap themselves in BEGIN/COMMIT; CREATE DATABASE cannot
+// run inside a transaction, so psql does not add one.
+func databasePsqlArgs(major int) []string {
+	return []string{
+		databaseBinDir(major) + "/psql",
+		"-X", "-q",
+		"-v", "ON_ERROR_STOP=1",
+		"-v", "VERBOSITY=sqlstate",
+		"-h", databaseSocketDir,
+		"-U", databaseOSUser,
+		"-d", "postgres",
+		"-f", "-",
+	}
+}
+
+var sqlStatePattern = regexp.MustCompile(`ERROR:\s+([0-9A-Z]{5})\b`)
+
+// parseSQLState extracts the SQLSTATE psql printed for a failed batch.
+func parseSQLState(stderr []byte) string {
+	if m := sqlStatePattern.FindSubmatch(stderr); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
+// clusterMajor parses PG_VERSION. A cluster from another major must not be
+// started by these binaries.
+func clusterMajor(pgVersion []byte) (int, error) {
+	major, err := strconv.Atoi(strings.TrimSpace(string(pgVersion)))
+	if err != nil || major <= 0 {
+		return 0, fmt.Errorf("PG_VERSION: bad value %q", strings.TrimSpace(string(pgVersion)))
+	}
+	return major, nil
+}
+
+// postmasterReady reports whether postmaster.pid records the "ready"
+// status (line 8), which PostgreSQL writes once it accepts connections.
+func postmasterReady(pidFile []byte) bool {
+	return postmasterStatus(pidFile) == "ready"
+}
+
+// postmasterStatus is postmaster.pid's status line: "starting", "ready"
+// (also a hot standby taking read-only connections), "standby" (a
+// standby without hot_standby) or "stopping".
+func postmasterStatus(pidFile []byte) string {
+	lines := strings.Split(string(pidFile), "\n")
+	if len(lines) < 8 {
+		return ""
+	}
+	return strings.TrimSpace(lines[7])
+}
+
+// lookupPasswdUser finds a user's uid and gid in /etc/passwd content.
+func lookupPasswdUser(passwd []byte, name string) (uid, gid int, ok bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(passwd))
+	for scanner.Scan() {
+		fields := strings.Split(scanner.Text(), ":")
+		if len(fields) < 4 || fields[0] != name {
+			continue
+		}
+		u, uErr := strconv.Atoi(fields[2])
+		g, gErr := strconv.Atoi(fields[3])
+		if uErr != nil || gErr != nil || u <= 0 || g <= 0 {
+			return 0, 0, false
+		}
+		return u, g, true
+	}
+	return 0, 0, false
+}
+
+// databaseRestoreCommand fetches each WAL file recovery asks for from the
+// restore source's archive, through the host relay.
+const databaseRestoreCommand = "/sbin/init archive-wal get %f %p"
+
+// recoverySettings are the targeted-recovery parameters of a restore boot.
+func recoverySettings(target time.Time) []string {
+	settings := []string{"-c", "restore_command=" + databaseRestoreCommand}
+	if target.IsZero() {
+		// No target: recover to the end of the archive, then promote.
+		return settings
+	}
+	return append(settings,
+		"-c", "recovery_target_time="+target.UTC().Format("2006-01-02 15:04:05.999999+00"),
+		"-c", "recovery_target_action=promote",
+	)
+}
+
+// parseReplayTimestamp reads psql's text for pg_last_xact_replay_timestamp;
+// empty means no transaction was replayed.
+func parseReplayTimestamp(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse("2006-01-02 15:04:05.999999-07", s)
+}
+
+// extractBaseTar writes a pg_basebackup tar into dir. It accepts only
+// regular files and directories inside dir: a backup can never write
+// outside the data directory or plant a link.
+func extractBaseTar(r io.Reader, dir string, uid, gid int) error {
+	tr := tar.NewReader(r)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := filepath.Clean(hdr.Name)
+		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
+			return fmt.Errorf("unsafe path %q in base backup", hdr.Name)
+		}
+		target := filepath.Join(dir, name)
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // validated path inside the data directory
+			if err != nil {
+				return err
+			}
+			// The backup is this cluster's own data from the host's archive;
+			// the volume's size bounds what it can write.
+			if _, err := io.Copy(f, tr); err != nil { //nolint:gosec // bounded by the volume, see above
+				_ = f.Close()
+				return err
+			}
+			if err := f.Close(); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported entry %q (type %c) in base backup", hdr.Name, hdr.Typeflag)
+		}
+		if err := os.Lchown(target, uid, gid); err != nil {
+			return err
+		}
+	}
+}
+
+// archivePending counts the WAL files PostgreSQL has marked ready to
+// archive (<name>.ready in pg_wal/archive_status) and not yet shipped.
+func archivePending(statusDir string) (int, error) {
+	entries, err := os.ReadDir(statusDir)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".ready") {
+			n++
+		}
+	}
+	return n, nil
+}

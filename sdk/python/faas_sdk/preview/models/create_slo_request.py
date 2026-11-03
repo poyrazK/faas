@@ -19,7 +19,7 @@ T = TypeVar("T", bound="CreateSLORequest")
 
 @_attrs_define
 class CreateSLORequest:
-    """Defines a customer SLO on an app (ADR-747)."""
+    """Defines a customer SLO on an app."""
 
     name: str
     """Unique per app; lowercase letters, digits, dashes and underscores."""

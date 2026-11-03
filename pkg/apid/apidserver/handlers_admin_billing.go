@@ -180,9 +180,10 @@ func (s *server) syncPaddleCatalog(w http.ResponseWriter, r *http.Request, acct 
 	if err != nil {
 		// Wrap with the operation so an operator hitting the CLI sees
 		// "paddle: sync catalog: <sdk-error>" rather than a bare string.
+		logCustomerFailure(s.log, "Paddle catalog sync failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_sync_failed",
 			"Paddle catalog sync failed",
-			err.Error()))
+			api.DetailServerFailure))
 		return
 	}
 	if entries == nil {
@@ -220,9 +221,10 @@ func (s *server) resetPaddleCatalog(w http.ResponseWriter, r *http.Request, acct
 			writeProviderNotImplemented(w, "reset", s.billingProvider)
 			return
 		}
+		logCustomerFailure(s.log, "Billing catalog reset failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_reset_failed",
 			"Billing catalog reset failed",
-			err.Error()))
+			api.DetailServerFailure))
 		return
 	}
 	writeJSON(w, http.StatusOK, paddleCatalogResponse{
@@ -266,8 +268,9 @@ func (s *server) paddleOveragePreflight(w http.ResponseWriter, r *http.Request, 
 	}
 	res, err := s.store.PaddleOverageDedupeSchema(r.Context())
 	if err != nil {
+		logCustomerFailure(s.log, "Schema probe failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_preflight_failed",
-			"Schema probe failed", err.Error()))
+			"Schema probe failed", api.DetailServerFailure))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.BillingPaddleOveragePreflightResponse{
@@ -355,8 +358,9 @@ func (s *server) reconcileAccount(w http.ResponseWriter, r *http.Request, acct s
 				providerName(s.billingProvider)+" does not implement ReconcileUsage; see ADR-049 §B.1"))
 			return
 		}
+		logCustomerFailure(s.log, "Reconcile failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_reconcile_failed",
-			"Reconcile failed", err.Error()))
+			"Reconcile failed", api.DetailServerFailure))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.BillingReconcileResponse{

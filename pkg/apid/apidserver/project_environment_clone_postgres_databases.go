@@ -63,7 +63,7 @@ func (s *server) projectEnvironmentClonePostgresDatabasePlan(ctx context.Context
 	if err != nil {
 		return zero, owner, target, err
 	}
-	ids := mfaIdentities()
+	ids := accountIdentities()
 	input, err := s.clonePostgresDatabaseInput(ctx, l, source, ids, exports)
 	if err != nil || input.target != target {
 		if err == nil {
@@ -82,7 +82,7 @@ func (s *server) projectEnvironmentClonePostgresDatabasePlan(ctx context.Context
 	if l.Operation.Status != state.CloneOperationCapturing || s.managedPostgres == nil || setSecretRecipient == nil {
 		return zero, owner, target, managedpostgres.ErrUnavailable
 	}
-	recipient := hostSecretRecipient()
+	recipient := cloneSealRecipient()
 	if !cloneInventoryCanOpen(recipient, ids) {
 		return zero, owner, target, managedpostgres.ErrUnavailable
 	}

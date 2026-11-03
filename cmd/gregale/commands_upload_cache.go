@@ -12,7 +12,7 @@ const dispatchUploadCache = "upload-cache"
 
 func cmdUploadCache(args []string) int {
 	if len(args) == 0 || hasHelpFlag(args) {
-		PrintUsage(osStdout, "usage: gregale upload-cache <list|cleanup> [--older-than D] [--max-entries N] [--dry-run]", "upload-cache")
+		PrintUsage(osStdout, "usage: gregale config upload-cache <list|cleanup> [--older-than D] [--max-entries N] [--dry-run]", "upload-cache")
 		if len(args) == 0 {
 			return 1
 		}
@@ -35,7 +35,7 @@ func uploadCacheFlags(name string, args []string) (uploadCachePolicy, bool, bool
 	maxEntries := fs.Int("max-entries", uploadCacheMaxEntries, "maximum resumable recovery records to retain")
 	dryRun := fs.Bool("dry-run", false, "show cleanup actions without deleting files")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *olderThan < 0 || *maxEntries < 0 {
-		PrintUsage(os.Stderr, "usage: gregale upload-cache "+name+" [--older-than D] [--max-entries N] [--dry-run]", "upload-cache")
+		PrintUsage(os.Stderr, "usage: gregale config upload-cache "+name+" [--older-than D] [--max-entries N] [--dry-run]", "upload-cache")
 		return uploadCachePolicy{}, false, false
 	}
 	return uploadCachePolicy{MaxAge: *olderThan, MaxEntries: *maxEntries}, *dryRun, true

@@ -38,6 +38,12 @@ func (c *PreviewClient) GetProfileCapture(ctx context.Context, slug, id string) 
 	return out, err
 }
 
+// DeleteProfileCapture deletes one capture and its profiles, freeing its
+// share of the account's capture storage.
+func (c *PreviewClient) DeleteProfileCapture(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", profileCapturePath(slug)+"/"+url.PathEscape(id), nil, nil)
+}
+
 // GetProfileCaptureView returns one kind merged across the capture's processes.
 func (c *PreviewClient) GetProfileCaptureView(ctx context.Context, slug, id, kind string) (ProfileCaptureView, error) {
 	var out ProfileCaptureView

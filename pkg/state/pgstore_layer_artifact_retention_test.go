@@ -9,6 +9,28 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 )
 
+// Hunt 21 H21-1: rollback-window layers survive their snapshots.
+func TestPgRollbackWindowRetainsLayers(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	rollbackWindowRetainsLayers(t, s)
+}
+
+// Hunt 21 H21-2: the stale_at trigger drives stale retention.
+func TestPgStaleRetentionCountsFromTheStaleMark(t *testing.T) {
+	s, ctx, pool := pgWithPool(t)
+	exec := func(sql string) func(*testing.T, string) {
+		return func(t *testing.T, id string) {
+			t.Helper()
+			if _, err := pool.Exec(ctx, sql, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	staleRetentionCountsFromTheStaleMark(t, s,
+		exec(`update snapshots set created_at = now() - interval '30 days' where id = $1`),
+		exec(`update snapshots set stale_at = now() - interval '8 days' where id = $1`))
+}
+
 // ADR-590: exercise real transaction/trigger fencing alongside MemStore.
 func TestPgCloneLayerRetentionSurvivesSourceRetirement(t *testing.T) {
 	s, _, _ := pgWithPool(t)

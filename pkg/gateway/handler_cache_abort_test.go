@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -131,5 +133,63 @@ func TestCacheRefresh_IncompleteOriginPreservesStaleEntry(t *testing.T) {
 				t.Fatal("a subsequent successful refresh did not populate the cache")
 			}
 		})
+	}
+}
+
+// TestCacheRefresh_InFlightKeySkipsClone: a stale hit whose key already has a
+// refresh running returns without cloning the request or parking a goroutine
+// in cacheRefresh.Do (bug hunt 2026-10-28 O15).
+func TestCacheRefresh_InFlightKeySkipsClone(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.setLegacyHot()
+	h.WithResponseCache(NewResponseCache())
+	rule := EdgeRuleCacheResolved{ID: "rule-1", MaxAgeSeconds: 60, StaleWhileRevalidateSeconds: 60}
+	request := httptest.NewRequest(http.MethodGet, "http://"+b.host+"/catalog", nil)
+	key := CacheKey{AppID: b.app.ID, RuleID: rule.ID, Method: request.Method,
+		NormalizedPath: request.URL.Path, VaryHash: computeVaryHash(request, rule.VaryOn)}
+	var origin atomic.Int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	h.proxyByNode = func(Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			origin.Add(1)
+			entered <- struct{}{}
+			<-release
+			_, _ = w.Write([]byte("refreshed"))
+		})
+	}
+	h.startCacheRefresh(request, b.app, &rule, key)
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first refresh never reached the origin")
+	}
+	before := runtime.NumGoroutine()
+	for range 200 {
+		h.startCacheRefresh(request, b.app, &rule, key)
+	}
+	if grown := runtime.NumGoroutine() - before; grown > 20 {
+		t.Fatalf("200 stale hits during one refresh started %d goroutines", grown)
+	}
+	close(release)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, inFlight := h.cacheRefreshing.Load(key.String()); !inFlight {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("finished refresh left its key marked in flight")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := origin.Load(); got != 1 {
+		t.Fatalf("origin fetches = %d, want 1", got)
+	}
+	// The key is free again, so the next stale hit refreshes.
+	h.startCacheRefresh(request, b.app, &rule, key)
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("refresh after the first finished never reached the origin")
 	}
 }

@@ -294,3 +294,71 @@ func TestRoutePolicyPostgresApplyLocksConcurrentQuotaWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Applied rules pass the ADR-570 guard like any rule write: while the account
+// holds a rule the analysis cannot verify, the apply is refused and changes
+// nothing; repairing that rule lets the same request through.
+func TestRoutePolicyPostgresApplyPassesTrafficGuard(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := t.Context()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	acct, app, request, planner := routePolicyFixture(t, store)
+	legacyApp, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "route-policy-legacy", Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := store.CreateEdgeRule(ctx, state.CreateEdgeRuleParams{AccountID: acct.ID, AppID: legacyApp.ID, MatchHost: "legacy.example.test",
+		MatchPath: "/", Enabled: true, Kind: state.EdgeRuleKindRoute,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindRoute, Route: &state.EdgeRuleRouteAction{TargetAppSlug: legacyApp.Slug}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE edge_rules SET action='{"CORS":{}}'::jsonb WHERE id=$1`, legacy.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = store.ApplyRoutePolicy(ctx, acct.ID, app.ID, "guarded", request, planner)
+	var analysis *state.TrafficPolicyAnalysisError
+	if !errors.As(err, &analysis) || analysis.Scope != "stored_action_shape" {
+		t.Fatalf("apply bypassed the traffic policy guard: %v", err)
+	}
+	if rules, err := store.ListEdgeRulesForApp(ctx, app.ID); err != nil || len(rules) != 0 {
+		t.Fatalf("refused apply wrote rules: %d err=%v", len(rules), err)
+	}
+	if _, err := store.FindRoutePolicyReceipt(ctx, acct.ID, app.ID, "guarded", request); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("refused apply left a receipt: %v", err)
+	}
+	if _, err := store.UpdateEdgeRule(ctx, legacy.ID, state.UpdateEdgeRuleParams{Action: &legacy.Action}); err != nil {
+		t.Fatal(err)
+	}
+	if receipt, replayed, err := store.ApplyRoutePolicy(ctx, acct.ID, app.ID, "guarded", request, planner); err != nil || replayed || len(receipt.Changes) != 2 {
+		t.Fatalf("apply after repair: %+v replayed=%v err=%v", receipt, replayed, err)
+	}
+}
+
+// Route policy apply writes only rules and its receipt, so it commits beside
+// an in-flight capacity statement (ADR-20261029150627).
+func TestRoutePolicyPostgresApplySkipsCapacityGuard(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := t.Context()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	acct, app, request, planner := routePolicyFixture(t, store)
+	capacity, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = capacity.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := capacity.Exec(ctx, `SELECT 1 FROM service_capacity_policy WHERE singleton FOR SHARE`); err != nil {
+		t.Fatal(err)
+	}
+	applying, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if receipt, _, err := store.ApplyRoutePolicy(applying, acct.ID, app.ID, "beside-capacity", request, planner); err != nil || len(receipt.Changes) != 2 {
+		t.Fatalf("apply beside a capacity statement: %+v err=%v", receipt, err)
+	}
+}

@@ -14,7 +14,7 @@ import (
 )
 
 // SealedRegistryCredential is one of the app's private-registry credentials
-// (ADR-20261026090000). builderd never opens it: vmmd opens the password
+// (ADR-20261026091500). builderd never opens it: vmmd opens the password
 // with the build seal domain into the builder VM's Docker config, so a
 // Dockerfile can build FROM a private base image.
 type SealedRegistryCredential struct {

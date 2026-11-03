@@ -53,10 +53,52 @@ func TestNodeJoinRendersTheAdoptionSwitches(t *testing.T) {
 	if skip, _ := decide["faas_join_skip_drain"].(string); !strings.Contains(skip, "faas_join_serving_vmmd_adopts.stdout") {
 		t.Errorf("faas_join_skip_drain = %q ignores whether the serving vmmd hands off", skip)
 	}
+	// After a no-drain restart, only guests the check already found gone
+	// are excused from the adoption report.
+	report, _ := nodeJoinTask(t, "Wait for the restarted vmmd to report a clean adoption")["ansible.builtin.command"].(map[string]any)
+	argv, _ := report["argv"].([]any)
+	gone := false
+	for i, a := range argv {
+		if a == "--already-gone" && i+1 < len(argv) {
+			next, _ := argv[i+1].(string)
+			gone = strings.Contains(next, "faas_join_adoption_check.stdout") && strings.Contains(next, ".gone")
+		}
+	}
+	if !gone {
+		t.Errorf("adoption-report argv %v does not pass the check's gone guests", argv)
+	}
 	// The switches are written before the drain decision asks the candidate.
 	playbook := nodeJoinPlaybook(t)
 	if strings.Index(playbook, "zz-faas-adoption.conf") > strings.Index(playbook, "- adoption-check") {
 		t.Fatal("the adoption drop-in is rendered after the adoption check")
+	}
+}
+
+// A no-drain restart must not take its row out of service: the scheduler
+// evacuates an unavailable node, and on production-us (rc.312, rc.313) the
+// release install parked every guest on fsn-2 just before vmmd restarted.
+func TestNodeJoinNoDrainInstallKeepsTheRowActive(t *testing.T) {
+	const want = "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"
+	for _, name := range []string{
+		"Install the verified release, keeping a drained row drained",
+		"Retry staged release installation after SBoM baseline initialization",
+	} {
+		install, _ := nodeJoinTask(t, name)["ansible.builtin.command"].(map[string]any)
+		argv, _ := install["argv"].([]any)
+		var flags []string
+		for _, a := range argv {
+			if s, _ := a.(string); strings.HasPrefix(s, "--defer-activation") {
+				flags = append(flags, s)
+			}
+		}
+		if len(flags) != 1 || flags[0] != want {
+			t.Errorf("%s: activation flags %q, want only %q", name, flags, want)
+		}
+	}
+	// The install comes after the no-drain decision it reads.
+	playbook := nodeJoinPlaybook(t)
+	if strings.Index(playbook, "faas_join_skip_drain: >-") > strings.Index(playbook, "release\n          - install") {
+		t.Fatal("the release install runs before the no-drain decision")
 	}
 }
 
@@ -72,7 +114,7 @@ func TestVMMDServiceAdoptionSwitchesDefaultOff(t *testing.T) {
 		}
 	}
 	// Production: the fleet writes adoption blocks (step 1), and adoption is
-	// a per-node canary (step 2), never a fleet-wide switch.
+	// on for the named canary nodes (step 2), never a fleet-wide switch.
 	fleet, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "group_vars", "compute_nodes", "vmmd_adoption.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -87,8 +129,17 @@ func TestVMMDServiceAdoptionSwitchesDefaultOff(t *testing.T) {
 	if adopt, _ := vars["vmmd_adopt_running_vms"].(string); !strings.Contains(adopt, "in vmmd_adoption_canary_nodes") {
 		t.Errorf("vmmd_adopt_running_vms = %v, want it limited to vmmd_adoption_canary_nodes", vars["vmmd_adopt_running_vms"])
 	}
-	if canary, _ := vars["vmmd_adoption_canary_nodes"].([]any); len(canary) != 1 {
-		t.Errorf("vmmd_adoption_canary_nodes = %v, want one canary node", vars["vmmd_adoption_canary_nodes"])
+	canary, _ := vars["vmmd_adoption_canary_nodes"].([]any)
+	if len(canary) == 0 {
+		t.Errorf("vmmd_adoption_canary_nodes = %v, want named canary nodes", vars["vmmd_adoption_canary_nodes"])
+	}
+	seen := map[string]bool{}
+	for _, n := range canary {
+		name, _ := n.(string)
+		if !strings.HasSuffix(name, ".faas") || seen[name] {
+			t.Errorf("vmmd_adoption_canary_nodes = %v, want distinct canonical node names", canary)
+		}
+		seen[name] = true
 	}
 	if _, set := vars["vmmd_adopt_admitted_runtimes"]; set {
 		t.Error("compute_nodes group vars set vmmd_adopt_admitted_runtimes")
