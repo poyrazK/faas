@@ -620,10 +620,23 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		}
 	}
 	var result reconcile.Result
+	// held names the project apps this push does not deploy, with the reason
+	// its GitHub check gives (ADR-20261103112845).
+	held := map[string]string{}
 	if deployProject {
-		// githubd is push-driven (no --exclude analog on the webhook
-		// path); pass nil so workloadDiff's exclude filter is a no-op.
-		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, nil)
+		// A push never removes a service: an app whose service left the
+		// Compose file (or is hidden by an inactive profile) is excluded
+		// from the reconcile, keeps serving, and waits for a reviewed deploy.
+		kept, keptErr := s.pushKeptServices(ctx, project, scan)
+		if keptErr != nil {
+			return reconcile.Result{}, keptErr
+		}
+		exclude := make([]string, 0, len(kept))
+		for _, app := range kept {
+			exclude = append(exclude, app.WorkloadName)
+			held[app.ID] = fmt.Sprintf("Kept: %s is not in the Compose file at this commit, and a GitHub push does not remove services. It keeps serving its last release. Deploy with `gregale deploy` or from the dashboard to review and remove it.", app.WorkloadName)
+		}
+		result, err = s.Reconcile.Reconcile(ctx, project, scan, ev.After, reconcileBranch, exclude)
 		if err != nil {
 			if errors.Is(err, reconcile.ErrIgnored) {
 				// Defensive: ErrIgnored is the Plan-side sentinel;
@@ -642,6 +655,15 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		// handler can branch on the typed sentinel.
 		if result.WasIgnored {
 			return result, pushSkip(SkipReasonBranchNotDeployed)
+		}
+		// A service whose Compose postgres a push cannot create waits for a
+		// reviewed deploy instead of starting without its database.
+		waiting, waitErr := s.pushServicesWaitingForDatabase(ctx, project, scan, tree.FS(), deploymentScope)
+		if waitErr != nil {
+			return result, waitErr
+		}
+		for id, reason := range waiting {
+			held[id] = reason
 		}
 	}
 
@@ -762,6 +784,18 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	toEnqueue = append(toEnqueue, boundToEnqueue...)
 	for _, app := range toEnqueue {
 		appScope := deploymentScope
+		if reason, ok := held[app.ID]; ok && !appBound[app.ID] {
+			// No deployment exists for a held app, so no outbox writes its
+			// check; write it here on every delivery path.
+			s.Log.Info("githubd: push holds app", "app_id", app.ID, "detail", reason)
+			if s.WriteAppCheck != nil || s.WriteScopedAppCheck != nil {
+				if werr := s.writeAppCheck(ctx, install.InstallationID, ev.Repository.FullName, ev.After,
+					app.Slug, appScope, githubdgrpc.CheckPhaseFailed, reason); werr != nil {
+					s.Log.Warn("githubd: write held app check", "app_id", app.ID, "err", werr)
+				}
+			}
+			continue
+		}
 		if appBound[app.ID] {
 			appScope = state.DefaultEnvScope
 		} else if blocker := reconcile.ProjectDependencyAdmissionBlocker(app, selected, accepted); blocker != "" {
@@ -1714,6 +1748,22 @@ func (s *Service) plainPreviewApps(ctx context.Context, binding state.GitHubBind
 // retired too: GitHub's later events for the PR are skipped as well, so it
 // would serve that head to the end of its lease while the PR's check said
 // the preview was skipped.
+// pullRequestTargetStillCurrent re-resolves the PR's binding and preview
+// policy and reports whether they still allow the preview target resolved at
+// the start of the event. A lookup error counts as not current: the event is
+// ignored and the next one retries.
+func (s *Service) pullRequestTargetStillCurrent(ctx context.Context, ev PullRequestEvent, target pullRequestTarget) bool {
+	fresh, err := s.resolvePullRequestTarget(ctx, ev)
+	if err != nil {
+		if !errors.Is(err, ErrNoBinding) && s.Log != nil {
+			s.Log.Warn("githubd: recheck PR preview target failed; ignoring the event", "repo", ev.Repository.FullName, "pr", ev.Number, "err", err)
+		}
+		return false
+	}
+	return fresh.previewsOff == "" && fresh.parent.ID == target.parent.ID &&
+		fresh.binding.InstallID == target.binding.InstallID && strings.EqualFold(fresh.binding.RepoFullName, target.binding.RepoFullName)
+}
+
 func (s *Service) skipPullRequestPreview(ctx context.Context, ev PullRequestEvent, target pullRequestTarget, reason string) (reconcile.Result, error) {
 	retired, err := s.retirePullRequestPreviews(ctx, ev, target)
 	if err != nil {
@@ -1900,8 +1950,11 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	}
 	previewApp = withParentAccessGates(applyGitHubRootPolicy(previewApp, policy), parentApp)
 	// Resolve the account server-side so the separate, bounded PR-preview
-	// allowance comes from the plan table, including dependency previews.
-	account, err := s.Reconcile.Store.AccountByID(ctx, binding.AccountID)
+	// allowance comes from the plan table, including dependency previews. It
+	// is the account that owns the project's resources, as for a project
+	// deploy: an organization's plan for its apps, not the binding creator's
+	// personal plan (bug hunt 33).
+	account, err := state.AppResourceAccount(ctx, s.Reconcile.Store, parentApp)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve preview account limits: %w", err)
 	}
@@ -1978,6 +2031,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 		if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, &ev); currentErr != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: recheck current PR state: %w", currentErr)
 		} else if !current {
+			return reconcile.Result{WasIgnored: true}, ErrIgnored
+		}
+		// Previews turned off, or the app unbound or rebound, while the
+		// source was fetched and scanned: that retire marked this PR's
+		// preview stale, and reserving now would reopen it with a fresh
+		// lease (bug hunt 33). The next event for the PR acts on the
+		// current target.
+		if !s.pullRequestTargetStillCurrent(ctx, ev, target) {
 			return reconcile.Result{WasIgnored: true}, ErrIgnored
 		}
 	}

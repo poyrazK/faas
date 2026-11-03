@@ -15,6 +15,24 @@ type LiveInstancesForAppsReader interface {
 	ListLiveInstancesForApps(ctx context.Context, appIDs []string) ([]Instance, error)
 }
 
+// AppInstanceLister reads one app's retained instance history.
+type AppInstanceLister interface {
+	ListInstancesForApp(ctx context.Context, appID string) ([]Instance, error)
+}
+
+// ListLiveInstancesForApp reads one app's live instances: in SQL when store
+// implements LiveInstancesForAppsReader, else its whole retained history, so
+// callers still filter by state. Hot paths that keep only live rows (raw
+// TCP/UDP routing per new peer, log follow, wake) use it instead of
+// ListInstancesForApp, which returns every wake of the 30-day retention
+// window (O20).
+func ListLiveInstancesForApp(ctx context.Context, store AppInstanceLister, appID string) ([]Instance, error) {
+	if reader, ok := store.(LiveInstancesForAppsReader); ok {
+		return reader.ListLiveInstancesForApps(ctx, []string{appID})
+	}
+	return store.ListInstancesForApp(ctx, appID)
+}
+
 // ListLiveInstancesForApps returns the instances of appIDs in a live state
 // (IsLive), grouped by app with the newest start first, as ListInstancesForApp
 // orders one app's rows. It reads instances_app_idx (app_id, state).

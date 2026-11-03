@@ -54,6 +54,12 @@ func (s *server) PromotionApprovalKeyProblemForTest(acct state.Account, key *sta
 	return s.promotionApprovalKeyProblem(r, plan, toEnvironment)
 }
 
+// RollbackTargetProblemForTest holds a rollback to target to the guards a
+// rollback target meets (ADR-20261020085706 amendment 10).
+func (s *server) RollbackTargetProblemForTest(ctx context.Context, app state.App, target state.Deployment) *api.Problem {
+	return s.rollbackTargetApprovalProblem(ctx, app, target)
+}
+
 // RenderReleaseSafetyForTest renders the release safety dashboard page for
 // acct's app slug.
 func (s *server) RenderReleaseSafetyForTest(acct state.Account, slug string) *httptest.ResponseRecorder {

@@ -340,6 +340,75 @@ func TestProtectedPromotionApprovalMeetsTheAppsPolicy(t *testing.T) {
 	}
 }
 
+// A superseded release that never served is a forward release: rolling back
+// to it meets the freezes and approvals, and a rejected release never ships
+// by rollback. One that served before is a rollback target (amendment 10).
+func TestRollbackToASupersededReleaseThatNeverServed(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	store := *e.Store()
+	acct := *e.Acct()
+	srv := *e.S()
+	ctx := t.Context()
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "rollback-shop", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := guardLiveDeployment(t, store, app.ID, "")
+	if err := store.UpdateDeploymentStatus(ctx, served.ID, state.DeploySuperseded, ""); err != nil {
+		t.Fatal(err)
+	}
+	served, _ = store.DeploymentByID(ctx, served.ID)
+	supersededUnserved := func() state.Deployment {
+		t.Helper()
+		d, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateDeploymentStatus(ctx, d.ID, state.DeploySuperseded, ""); err != nil {
+			t.Fatal(err)
+		}
+		d, _ = store.DeploymentByID(ctx, d.ID)
+		return d
+	}
+	never := supersededUnserved()
+	if p := srv.RollbackTargetProblemForTest(ctx, app, never); p != nil {
+		t.Fatalf("an unguarded rollback to a release that never served = %+v", p)
+	}
+
+	now := time.Now().UTC()
+	frozen, err := store.CreateReleaseFreeze(ctx, state.ReleaseFreeze{AccountID: acct.ID, AppID: app.ID,
+		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := srv.RollbackTargetProblemForTest(ctx, app, never); p == nil || p.Code != api.CodeReleaseFrozen {
+		t.Fatalf("a rollback to a never-served release during a freeze = %+v, want release_frozen", p)
+	}
+	if p := srv.RollbackTargetProblemForTest(ctx, app, served); p != nil {
+		t.Fatalf("a rollback to a release that served during a freeze = %+v, want it allowed", p)
+	}
+	if _, err := store.LiftReleaseFreeze(ctx, state.ReleaseFreezeOwner{AccountID: acct.ID}, frozen.ID, "ops", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.SetReleaseApprovalPolicy(ctx, state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+		RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	pending := supersededUnserved()
+	if p := srv.RollbackTargetProblemForTest(ctx, app, pending); p == nil || p.Code != api.CodeReleaseApprovalRequired {
+		t.Fatalf("a rollback to an unapproved release that never served = %+v, want release_approval_required", p)
+	}
+	rejected := supersededUnserved()
+	if _, err := store.RecordReleaseApproval(ctx, state.ReleaseApproval{AccountID: acct.ID, AppID: app.ID, DeploymentID: rejected.ID,
+		ApproverAccountID: "reviewer", Approver: "reviewer@example.com", Decision: state.ReleaseApprovalReject}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if p := srv.RollbackTargetProblemForTest(ctx, app, rejected); p == nil || p.Code != api.CodeReleaseApprovalRejected {
+		t.Fatalf("a rollback to a rejected release = %+v, want release_approval_rejected", p)
+	}
+}
+
 // A key or token, as CI holds, does not approve a protected production
 // promotion that stands in for an app's release approval policy; a person
 // does, and a key still approves promotions no policy covers (amendment 9).

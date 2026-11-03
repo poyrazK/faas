@@ -224,6 +224,11 @@ func TestMFADisabledAlertPublicPathsAndFailureBoundaries(t *testing.T) {
 				if method == "legacy_email" {
 					expectedInline = 1
 				}
+				if mode == "off" && want == http.StatusOK {
+					// With the alert outbox off, the removal mails the owner
+					// inline (bug hunt H99).
+					expectedInline++
+				}
 				if len(recorder.messages) != expectedInline {
 					t.Fatal("disabled alert sent inline or duplicated")
 				}
