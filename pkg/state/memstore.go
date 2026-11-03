@@ -4720,6 +4720,7 @@ func (m *MemStore) ApplyProjectReconcile(
 	}
 	stagedApps := maps.Clone(m.apps)
 	stagedCrons := maps.Clone(m.crons)
+	var stagedSpecs []ProjectEnvironmentWorkloadSpec
 
 	// Validate the action vocabulary and ownership before mutating anything.
 	liveProjectApps := make(map[string]App)
@@ -4728,6 +4729,7 @@ func (m *MemStore) ApplyProjectReconcile(
 			liveProjectApps[id] = app
 		}
 	}
+	environmentOnly := m.environmentOnlyProjectAppIDsLocked(project.AccountID, project.ID)
 	creates := 0
 	removes := 0
 	seenRemoves := make(map[string]bool)
@@ -4769,6 +4771,9 @@ func (m *MemStore) ApplyProjectReconcile(
 				return ProjectReconcileResult{}, ErrNotFound
 			}
 			if mutation.Op == "remove" {
+				if slices.Contains(environmentOnly, mutation.App.ID) {
+					return ProjectReconcileResult{}, ErrConflict
+				}
 				if seenRemoves[mutation.App.ID] {
 					return ProjectReconcileResult{}, ErrConflict
 				}
@@ -4856,6 +4861,15 @@ func (m *MemStore) ApplyProjectReconcile(
 				tombstone.Status = AppActive
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
+				var spec ProjectEnvironmentWorkloadSpec
+				var specErr error
+				tombstone, spec, specErr = m.prepareProductionWorkloadSpecLocked(tombstone, projectReconcileSettingsParams(tombstone, mutation))
+				if specErr != nil {
+					return ProjectReconcileResult{}, specErr
+				}
+				if spec.ID != "" {
+					stagedSpecs = append(stagedSpecs, spec)
+				}
 				stagedApps[tombstone.ID] = tombstone
 				out.Added = append(out.Added, tombstone)
 				continue
@@ -4896,6 +4910,15 @@ func (m *MemStore) ApplyProjectReconcile(
 			}
 			if mutation.SetResources {
 				applyProjectReconcileResources(&app, mutation.App)
+			}
+			var spec ProjectEnvironmentWorkloadSpec
+			var specErr error
+			app, spec, specErr = m.prepareProductionWorkloadSpecLocked(app, projectReconcileSettingsParams(app, mutation))
+			if specErr != nil {
+				return ProjectReconcileResult{}, specErr
+			}
+			if spec.ID != "" {
+				stagedSpecs = append(stagedSpecs, spec)
 			}
 			stagedApps[app.ID] = app
 			out.Changed = append(out.Changed, app)
@@ -5004,6 +5027,10 @@ func (m *MemStore) ApplyProjectReconcile(
 		return ProjectReconcileResult{}, err
 	}
 	m.apps, m.crons = stagedApps, stagedCrons
+	for _, spec := range stagedSpecs {
+		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
+		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(spec.EnvironmentID, spec.AppID)] = spec.ID
+	}
 	// Allocate addresses only once both traffic and capacity validation have
 	// accepted the proposed topology. Refused creates must not consume indices.
 	for _, app := range out.Added {
@@ -10053,7 +10080,7 @@ func (m *MemStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) er
 	return m.markDeploymentLive(ctx, id, true, false)
 }
 
-func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLatest, recovery bool) (err error) {
+func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLatest, recovery bool, expectedServingID ...string) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.migrationDeploymentRetiredLocked(id) {
@@ -10070,6 +10097,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if len(expectedServingID) > 0 && (expectedServingID[0] == "" || !m.deploymentActivationServingMatchesLocked(d, expectedServingID[0])) {
+		return ErrConflict
 	}
 	if recovery {
 		if d.Status == DeploySuperseded {

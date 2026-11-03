@@ -1031,6 +1031,7 @@ type Querier interface {
 	DeleteOperationConcurrencyPolicy(ctx context.Context, db DBTX, arg DeleteOperationConcurrencyPolicyParams) (int64, error)
 	DeleteOperationWebhookBinding(ctx context.Context, db DBTX, arg DeleteOperationWebhookBindingParams) (int64, error)
 	DeleteOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg DeleteOutboundBindingProbePolicyParams) (int64, error)
+	DeleteOwnedProject(ctx context.Context, db DBTX, arg DeleteOwnedProjectParams) (int64, error)
 	DeleteProductionDeadLetterEvent(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventParams) (int64, error)
 	DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventsParams) (int64, error)
 	// A customer deletes one capture of a live app; its profiles cascade.
@@ -1061,6 +1062,7 @@ type Querier interface {
 	DeleteWebhookAutomationBinding(ctx context.Context, db DBTX, arg DeleteWebhookAutomationBindingParams) (int64, error)
 	// ADR-566: immutable retained evidence, bounded snapshot paging, and prices.
 	DeletedAppIDsInBillingWindow(ctx context.Context, db DBTX, arg DeletedAppIDsInBillingWindowParams) ([]pgtype.UUID, error)
+	DeploymentActivationServingMatches(ctx context.Context, db DBTX, arg DeploymentActivationServingMatchesParams) (bool, error)
 	// The hostname label uses the app's immutable UUID so aliases remain stable
 	// across app slug renames. Keep the deployment join app-scoped and hide
 	// soft-deleted owners/targets.
@@ -1154,6 +1156,9 @@ type Querier interface {
 	EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, arg EnvironmentGitOpsQueueForUpdateParams) (QueueBinding, error)
 	EnvironmentGitOpsUnqualifiedWorkloads(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitOpsUnqualifiedWorkloadsRow, error)
 	EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg EnvironmentGitSourceHealthParams) (EnvironmentGitSourceHealthRow, error)
+	// A stage-owned head without any production admission is not a production
+	// removal candidate. Keep legacy project members under the existing policy.
+	EnvironmentOnlyProjectAppIDs(ctx context.Context, db DBTX, arg EnvironmentOnlyProjectAppIDsParams) ([]string, error)
 	EnvironmentQualificationAdmissionInputs(ctx context.Context, db DBTX, arg EnvironmentQualificationAdmissionInputsParams) (EnvironmentQualificationAdmissionInputsRow, error)
 	EnvironmentQualificationAppProtocol(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
 	EnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationConfigReceipt, error)
@@ -5276,10 +5281,12 @@ type Querier interface {
 	ProfileRequestMix(ctx context.Context, db DBTX, arg ProfileRequestMixParams) ([]ProfileRequestMixRow, error)
 	ProjectBuildDependencyGate(ctx context.Context, db DBTX, arg ProjectBuildDependencyGateParams) error
 	ProjectDeploymentDependencyGateProgress(ctx context.Context, db DBTX, arg ProjectDeploymentDependencyGateProgressParams) error
+	ProjectEnvironmentAppIDs(ctx context.Context, db DBTX, arg ProjectEnvironmentAppIDsParams) ([]string, error)
 	// Counts include reference intent in the shared environment-key quota.
 	ProjectEnvironmentCloneQuota(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneQuotaParams) ([]ProjectEnvironmentCloneQuotaRow, error)
 	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
 	ProjectEnvironmentIDForSecrets(ctx context.Context, db DBTX, arg ProjectEnvironmentIDForSecretsParams) (pgtype.UUID, error)
+	ProjectHasNamedStages(ctx context.Context, db DBTX, projectID pgtype.UUID) (bool, error)
 	ProjectMigrationAdmissionAllowed(ctx context.Context, db DBTX, arg ProjectMigrationAdmissionAllowedParams) (pgtype.Bool, error)
 	ProjectProductionScalingState(ctx context.Context, db DBTX, arg ProjectProductionScalingStateParams) error
 	ProjectReleaseStageByID(ctx context.Context, db DBTX, arg ProjectReleaseStageByIDParams) (ProjectReleaseStage, error)

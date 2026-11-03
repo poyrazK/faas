@@ -122,6 +122,9 @@ type PendingHostnameRow = pendingHostnameRow
 type PgHandlerEnv = pgHandlerEnv
 type PlanCron = planCron
 type PlanTokenWire = planTokenWire
+
+var CachedProjectApplyFields = cachedProjectApplyFields
+
 type ProjectEnvironmentBindingClone = projectEnvironmentBindingClone
 type PrometheusTargetGroup = prometheusTargetGroup
 type PromoteFeatureFlagRolloutRequest = promoteFeatureFlagRolloutRequest
