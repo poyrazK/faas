@@ -4,6 +4,7 @@
 package state_test
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -53,9 +54,12 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 	if _, err := s.CreateCron(ctx, liveApp("neighbour").ID, "*/5 * * * *", "/tick", true); err != nil {
 		t.Fatal(err)
 	}
+	var qualified []string
+	var checkCapacity func(context.Context, []string) error
 	admit := func(target string) (state.ProjectEnvironmentCloneOperation, error) {
 		return s.CreateCapturedProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneCaptureRequest{AccountID: account.ID, ProjectID: app.ProjectID,
-			SourceEnvironment: "production", TargetEnvironment: target, IdempotencyKey: target, RequireCompleteInventory: true})
+			SourceEnvironment: "production", TargetEnvironment: target, IdempotencyKey: target, RequireCompleteInventory: true,
+			QualifiedObjectBackends: qualified, CheckObjectCapacity: checkCapacity})
 	}
 	if op, err := admit("stage"); err != nil || op.Status != state.CloneOperationPending {
 		t.Fatalf("a source using only cloneable tables is admitted: %+v, %v", op, err)
@@ -95,11 +99,45 @@ func TestPgCloneAdmissionInventoryNamesOnlyTablesTheSourceUses(t *testing.T) {
 	if err := s.FinishObjectBucket(ctx, bucket.ID, "source", "ready"); err != nil {
 		t.Fatal(err)
 	}
+	// A bucket is named when its backend is not qualified for clones or it
+	// has no versioning (ADR-20261103160000).
 	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable},
-		{Table: "object_buckets", Code: state.CloneBlockerDataCheckpointUnavailable}}
+		{Table: "object_buckets", Resource: "assets", Code: state.CloneBlockerObjectStorageProviderUnqualified},
+		{Table: "object_buckets", Resource: "assets", Code: state.CloneBlockerObjectVersioningRequired}}
 	if got := blockers("data-stage"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("blockers = %+v, want %+v", got, want)
 	}
+	qualified = []string{"fixture"}
+	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable},
+		{Table: "object_buckets", Resource: "assets", Code: state.CloneBlockerObjectVersioningRequired}}
+	if got := blockers("qualified-stage"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("qualified backend blockers = %+v, want %+v", got, want)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO object_bucket_versioning (bucket_id, desired_status, observed_status, state, versions_required, propagation_until)
+		VALUES ($1, 'Enabled', 'Enabled', 'ready', true, now() - interval '1 minute')`, bucket.ID); err != nil {
+		t.Fatal(err)
+	}
+	want = []state.ProjectEnvironmentCloneCoverageBlocker{{Table: "crons", Code: state.CloneBlockerStrategyUnavailable}}
+	if got := blockers("versioned-stage"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("a versioned bucket on a qualified backend blocks: %+v, want %+v", got, want)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM crons WHERE app_id = $1`, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	var sized []string
+	capacityErr := &state.ObjectStorageLimitError{Kind: "account_bytes", Limit: 1, Observed: 2, Cause: state.ErrObjectCapacity}
+	checkCapacity = func(_ context.Context, ids []string) error {
+		sized = ids
+		return capacityErr
+	}
+	if _, err := admit("capacity-stage"); !errors.Is(err, state.ErrObjectCapacity) || !reflect.DeepEqual(sized, []string{bucket.ID}) {
+		t.Fatalf("storage limits must refuse the copy: %v, sized %v", err, sized)
+	}
+	checkCapacity = nil
+	if _, err := s.CreateCron(ctx, app.ID, "*/5 * * * *", "/tick", true); err != nil {
+		t.Fatal(err)
+	}
+	qualified = nil
 	if n := operations(); n != 1 {
 		t.Fatalf("a refused admission must not create an operation; have %d", n)
 	}

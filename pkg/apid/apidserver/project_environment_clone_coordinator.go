@@ -141,8 +141,14 @@ func cloneCoordinatorErrorCode(err error) string {
 		return "target_database_failed"
 	case errors.Is(err, state.ErrProjectEnvironmentCloneTargetDatabasesRemaining):
 		return "clone_target_databases_deleting"
+	case errors.Is(err, errCloneTargetBucketsDeleting):
+		return "clone_target_buckets_deleting"
 	case errors.Is(err, state.ErrProjectEnvironmentCloneSourceChanged):
 		return "source_changed_during_capture"
+	case errors.Is(err, state.ErrObjectCapacity):
+		return state.CloneFailureObjectCapacity
+	case errors.Is(err, state.ErrObjectUsageStale):
+		return "object_storage_usage_stale"
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):
 		return "clone_fence_rejected"
 	default:
@@ -162,15 +168,18 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 			return failDirectProjectEnvironmentClone(ctx, store, lease, code)
 		}
 		lease, err = captureProjectEnvironmentClone(ctx, store, lease)
+		if err == nil {
+			lease, err = s.captureProjectEnvironmentCloneObjectManifests(ctx, store, lease)
+		}
 		if code := directCloneFailure(lease.Operation, err, time.Now()); err != nil && code != "" {
 			return failDirectProjectEnvironmentClone(ctx, store, lease, code)
 		}
 		if err != nil {
 			return lease, err
 		}
-		// Databases are restored at their data point only once the provider
-		// has passed it; a later pass copies them.
-		if state.ProjectEnvironmentCloneHasManagedDatabases(lease.Operation) {
+		// Databases and buckets are copied at their data point only once the
+		// providers have passed it; a later pass copies them.
+		if state.ProjectEnvironmentCloneHasManagedDatabases(lease.Operation) || cloneOperationHasObjectResources(lease.Operation) {
 			return lease, nil
 		}
 	case state.CloneOperationCompensating:

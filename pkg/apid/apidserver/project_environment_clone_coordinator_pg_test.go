@@ -257,6 +257,8 @@ func newCloneSourceFixture(t *testing.T, data cloneSourceData, fences bool) clon
 			t.Fatal(err)
 		}
 		capturedCloneObjectWorkerSourceCredentials(t, srv, store, account, f.apps[0], []state.ObjectBucket{bucket})
+		// The bucket versioning job is not under test here.
+		srv.cloneTargetVersioning = func(context.Context, state.ObjectBucket) (bool, error) { return true, nil }
 	}
 	f.account, f.project, f.point = account, project, point
 	return f
@@ -502,7 +504,10 @@ func TestPGCloneMaterializationPreservesFlagEditsWhenReplayConflicts(t *testing.
 	}
 }
 
-func TestPGCloneCoordinatorWaitsForCoordinatedCaptureWithoutCreatingTarget(t *testing.T) {
+// A source with a database and a bucket is captured at one data point: the
+// pass records the point, pins the bucket's versions as of it and moves to
+// copying, without materializing the target (ADR-20261103160000).
+func TestPGCloneCoordinatorCapturesBucketsAtTheDatabasePoint(t *testing.T) {
 	f := newCloneCoordinatorFixture(t, true)
 	ctx := t.Context()
 	op := f.lease.Operation
@@ -514,19 +519,44 @@ func TestPGCloneCoordinatorWaitsForCoordinatedCaptureWithoutCreatingTarget(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.srv.processNextProjectEnvironmentClone(ctx, f.store); !errors.Is(err, errCloneCheckpointUnavailable) {
-		t.Fatalf("pending clone advanced without checkpoint: %v", err)
+	if err := f.srv.processNextProjectEnvironmentClone(ctx, f.store); err != nil {
+		t.Fatalf("capture with a bucket: %v", err)
 	}
 	current, err := f.store.ProjectEnvironmentCloneOperationByID(ctx, op.AccountID, op.ProjectID, pending.ID)
-	if err != nil || current.Status != state.CloneOperationPending || len(current.Resources) != 0 {
-		t.Fatalf("worker invented capture identity: %+v, %v", current, err)
+	if err != nil || current.Status != state.CloneOperationCopying {
+		t.Fatalf("capture did not reach copying: %+v, %v", current, err)
+	}
+	var point string
+	objects := 0
+	for _, resource := range current.Resources {
+		switch resource.Kind {
+		case "managed_postgres", "object_storage":
+			if point == "" {
+				point = resource.CapturePoint
+			}
+			if resource.CapturePoint != point {
+				t.Fatalf("data points differ: %+v", current.Resources)
+			}
+		}
+		if resource.Kind == "object_storage" {
+			objects++
+			if resource.Status != "captured" || resource.TargetID == "" || resource.SourceVersion == "" {
+				t.Fatalf("bucket not pinned: %+v", resource)
+			}
+			manifest, err := f.store.ProjectEnvironmentCloneObjectManifest(ctx, op.AccountID, op.ProjectID, pending.ID, resource.SourceID)
+			if err != nil || len(manifest.Objects) != 1 || manifest.Objects[0].Source.VersionID != "v2" || manifest.CapturedAt.Format(time.RFC3339Nano) != point {
+				t.Fatalf("manifest not as of the point: %+v, %v", manifest, err)
+			}
+		}
+	}
+	if objects != 1 || point == "" {
+		t.Fatalf("capture lost the bucket or database: %+v", current.Resources)
 	}
 	if _, err := f.store.ProjectEnvironmentBySlug(ctx, op.AccountID, op.ProjectID, pending.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("uncoordinated target materialized: %v", err)
+		t.Fatalf("target materialized during capture: %v", err)
 	}
-	var released, delayed bool
-	if err := f.pool.QueryRow(ctx, "select lease_token is null, next_attempt_at>clock_timestamp() from project_environment_clone_operations where id=$1", pending.ID).Scan(&released, &delayed); err != nil || !released || !delayed {
-		t.Fatalf("deferred work retained lease or hot retry: %v", err)
+	if f.objects.copyCalls != 0 || len(f.database.restores) != 0 {
+		t.Fatal("capture copied data")
 	}
 }
 
@@ -555,5 +585,44 @@ func TestPGCloneCoordinatorRejectsMixedDataPointsBeforeProviderCopy(t *testing.T
 	}
 	if len(f.database.restores) != 0 || f.objects.copyCalls != 0 {
 		t.Fatal("mixed checkpoint reached provider copying")
+	}
+}
+
+// A clone that fails after pinning its buckets deletes the buckets it copied
+// into, leaves the source bucket alone, and ends compensated only once the
+// targets are gone (ADR-20261103160000).
+func TestPGCloneDirectCompensationDeletesTargetBuckets(t *testing.T) {
+	f := newCloneCoordinatorFixture(t, true)
+	ctx := t.Context()
+	op := f.lease.Operation
+	var target state.ProjectEnvironmentCloneResource
+	for _, resource := range op.Resources {
+		if resource.Kind == "object_storage" {
+			target = resource
+		}
+	}
+	if target.TargetID == "" {
+		t.Fatalf("fixture pinned no bucket: %+v", op.Resources)
+	}
+	lease, err := failDirectProjectEnvironmentClone(ctx, f.store, f.lease, state.CloneFailureSourceChanged)
+	if err != nil || lease.Operation.Status != state.CloneOperationCompensating {
+		t.Fatalf("fail clone: %+v, %v", lease.Operation, err)
+	}
+	lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, f.store, lease)
+	if err != nil || lease.Operation.Status != state.CloneOperationCompensated {
+		t.Fatalf("compensation: %+v, %v", lease.Operation, err)
+	}
+	var targetState, physical, sourceState string
+	if err := f.pool.QueryRow(ctx, `SELECT state, physical_name FROM object_buckets WHERE id = $1`, target.TargetID).Scan(&targetState, &physical); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pool.QueryRow(ctx, `SELECT state FROM object_buckets WHERE id = $1`, target.SourceID).Scan(&sourceState); err != nil {
+		t.Fatal(err)
+	}
+	if targetState != "deleted" || sourceState != "ready" || len(f.objects.deleted) != 1 || f.objects.deleted[0] != physical {
+		t.Fatalf("target %s, source %s, provider deletions %v", targetState, sourceState, f.objects.deleted)
+	}
+	if code := cloneCoordinatorErrorCode(errCloneTargetBucketsDeleting); code != "clone_target_buckets_deleting" {
+		t.Fatalf("pending deletion diagnostic: %q", code)
 	}
 }
