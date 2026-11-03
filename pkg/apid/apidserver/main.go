@@ -816,6 +816,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
 		go srv.runCronActivationWorker(ctx)
+		go srv.runEventSubscriptionActivationWorker(ctx)
 		go srv.runSafeProjectReleaseWorker(ctx)
 		go srv.runPromotionHealthWorker(ctx)
 		go srv.runMailOutbox(ctx)
@@ -1695,6 +1696,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if err := object.ValidateObjectStoragePricing(objectRegistry); err != nil {
 		return err
+	}
+	if shortfalls := objectRegistry.PlanShortfalls(); len(shortfalls) > 0 {
+		srv.log.Warn("object storage safety policy sells plans less than they promise; production refuses new buckets until it is raised",
+			"shortfalls", shortfalls, "docs", "docs/ops/object-storage-operator-notes.md")
 	}
 	srv.WithObjectStorage(objectRegistry)
 	if err := srv.configureHosting(deps.getenv); err != nil {

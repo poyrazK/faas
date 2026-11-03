@@ -167,6 +167,8 @@ type Querier interface {
 	//                      by pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds)
 	AppendUsage(ctx context.Context, db DBTX, arg AppendUsageParams) error
 	ApplyDeploymentRuntimeUpgradeCutover(ctx context.Context, db DBTX, arg ApplyDeploymentRuntimeUpgradeCutoverParams) (int64, error)
+	// Enable exactly the declared subscriptions of the app.
+	ApplyEventSubscriptionIntent(ctx context.Context, db DBTX, arg ApplyEventSubscriptionIntentParams) ([]ApplyEventSubscriptionIntentRow, error)
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	ApplyMCPNotificationAction(ctx context.Context, db DBTX, arg ApplyMCPNotificationActionParams) error
 	// Change only the debugger workflow state for one app-scoped observation.
@@ -454,8 +456,11 @@ type Querier interface {
 	ClaimProjectEnvironmentClonePostgresVerificationAttempt(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentClonePostgresVerificationAttemptParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
 	ClaimProjectWorkerDrain(ctx context.Context, db DBTX, arg ClaimProjectWorkerDrainParams) (bool, error)
 	ClaimPromotionHealth(ctx context.Context, db DBTX, arg ClaimPromotionHealthParams) (int64, error)
-	// Manual captures are claimed before automatic ones: someone is waiting.
-	ClaimQueuedProfileCapture(ctx context.Context, db DBTX, now pgtype.Timestamptz) (ClaimQueuedProfileCaptureRow, error)
+	// Manual captures are claimed before automatic ones: someone is waiting. A
+	// pool already running max_running captures waits its turn, so one account
+	// cannot hold every capture worker (ADR-1155). Concurrent schedds may each
+	// pass the check: the cap is soft, by at most one per scheduler.
+	ClaimQueuedProfileCapture(ctx context.Context, db DBTX, arg ClaimQueuedProfileCaptureParams) (ClaimQueuedProfileCaptureRow, error)
 	ClaimReadinessSubscriptions(ctx context.Context, db DBTX, arg ClaimReadinessSubscriptionsParams) ([]CustomerWorkflowReadinessSubscription, error)
 	ClaimRegressionActionReceipt(ctx context.Context, db DBTX, arg ClaimRegressionActionReceiptParams) error
 	// Take an app for this evaluation unless another evaluation took it since
@@ -726,6 +731,12 @@ type Querier interface {
 	CountRecentAutomaticProfileCaptures(ctx context.Context, db DBTX, arg CountRecentAutomaticProfileCapturesParams) (int64, error)
 	// Manual and automatic captures have separate hourly quotas (ADR-1155).
 	CountRecentProfileCaptures(ctx context.Context, db DBTX, arg CountRecentProfileCapturesParams) (int64, error)
+	// GET /v1/triggers/{id}/metrics (ADR-20261101104512): a trigger's records
+	// per state, each count stopping at sqlc.arg(count_limit) so a trigger with
+	// millions of settled rows stays an index range read on
+	// (trigger_id, state). The handler used to count the newest 1,000 rows of
+	// every state together.
+	CountTriggerRecordsByState(ctx context.Context, db DBTX, arg CountTriggerRecordsByStateParams) (CountTriggerRecordsByStateRow, error)
 	CountTriggersByAccount(ctx context.Context, db DBTX, subject pgtype.UUID) (int64, error)
 	CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountUDPListenersForApp(ctx context.Context, db DBTX, appID string) (int64, error)
@@ -994,6 +1005,9 @@ type Querier interface {
 	DeleteExpiredBindingVerificationRunReceipts(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
 	DeleteExpiredOperationWebhookReceipts(ctx context.Context, db DBTX, arg DeleteExpiredOperationWebhookReceiptsParams) (int64, error)
+	// Expired captures, and every capture of a deleted app: nobody can read or
+	// delete those any more, and they would hold their pool's storage until they
+	// expired (ADR-1155).
 	DeleteExpiredProfileCaptures(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
 	// One bounded retention batch: rows past an explicit result_retention_until,
 	// and unpinned terminal rows older than the default ages. Dead letters keep
@@ -1601,6 +1615,7 @@ type Querier interface {
 	ExecutionUsageRecord(ctx context.Context, db DBTX, executionID pgtype.UUID) error
 	ExecutionWorkflowSummary(ctx context.Context, db DBTX, arg ExecutionWorkflowSummaryParams) (ExecutionWorkflowSummaryRow, error)
 	ExhaustEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg ExhaustEnvironmentQueueDeliveryInvocationParams) (int64, error)
+	ExhaustExpiredQueueLease(ctx context.Context, db DBTX, arg ExhaustExpiredQueueLeaseParams) (int64, error)
 	ExistsManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg ExistsManagedPostgresLifecycleDatabaseParams) (bool, error)
 	// The hostnames of captured identities whose claims or reservations follow
 	// other rows: an app's primary URL, domains, redirects, tenant hostnames and
@@ -1612,6 +1627,10 @@ type Querier interface {
 	// ADR-20261022105723: a pending queue message past its plan's retention
 	// moves to the dead letter. A message a worker holds (dispatching) is not
 	// touched. The plan resolves as StampDefaultInvocationRetention's does.
+	// ADR-20261101093812: retention counts from the message's last replay, so a
+	// message replayed from the dead letter gets the whole retention again. A
+	// replay is never earlier than the send, so the created_at bound still
+	// narrows invocations_queue_pending_created_idx.
 	ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error)
 	ExpireProfileCanaryChecks(ctx context.Context, db DBTX, arg ExpireProfileCanaryChecksParams) error
 	ExpireProfileDeploymentChecks(ctx context.Context, db DBTX, arg ExpireProfileDeploymentChecksParams) error
@@ -1633,6 +1652,10 @@ type Querier interface {
 	// for now; future multi-replica deployment needs SELECT ... FOR
 	// UPDATE SKIP LOCKED).
 	ExpireUploadSession(ctx context.Context, db DBTX, id string) error
+	// ADR-20261101093812: pull leases that lapsed, with what their attempt budget
+	// comes from. A lease on the message's last attempt dead-letters when it
+	// lapses instead of waiting, pending, for a lease call that may never come.
+	ExpiredQueueLeases(ctx context.Context, db DBTX, arg ExpiredQueueLeasesParams) ([]ExpiredQueueLeasesRow, error)
 	ExtendEnvironmentGitOpsEffectTargets(ctx context.Context, db DBTX, arg ExtendEnvironmentGitOpsEffectTargetsParams) (EnvironmentGitopsEffect, error)
 	ExtendQueueLeaseInvocation(ctx context.Context, db DBTX, arg ExtendQueueLeaseInvocationParams) (pgtype.Timestamptz, error)
 	ExtendQueueLeaseReceipt(ctx context.Context, db DBTX, arg ExtendQueueLeaseReceiptParams) error
@@ -2549,6 +2572,9 @@ type Querier interface {
 	InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatabaseVMParams) (int64, error)
 	InsertDeploymentArtifactScan(ctx context.Context, db DBTX, arg InsertDeploymentArtifactScanParams) (DeploymentArtifactScan, error)
 	InsertDeploymentDependencyGate(ctx context.Context, db DBTX, arg InsertDeploymentDependencyGateParams) error
+	// ADR-20261101030512: the event subscriptions a production manifest deploy
+	// declares, applied once the deployment serves all production traffic.
+	InsertDeploymentEventSubscriptionIntent(ctx context.Context, db DBTX, arg InsertDeploymentEventSubscriptionIntentParams) error
 	InsertDeploymentRegistryRootfs(ctx context.Context, db DBTX, arg InsertDeploymentRegistryRootfsParams) (DeploymentRegistryRootf, error)
 	InsertDeploymentRegistryVerification(ctx context.Context, db DBTX, arg InsertDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error)
 	InsertDeploymentRuntimeScan(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeScanParams) (DeploymentRuntimeScan, error)
@@ -3689,6 +3715,7 @@ type Querier interface {
 	// v3 with a release that never served and rolled back to it (release review
 	// 2026-10-28).
 	ListPostReleaseWatchCandidates(ctx context.Context, db DBTX, arg ListPostReleaseWatchCandidatesParams) ([]ListPostReleaseWatchCandidatesRow, error)
+	ListPreparedEventSubscriptionIntents(ctx context.Context, db DBTX) ([]string, error)
 	ListProductionDeadLetterEvents(ctx context.Context, db DBTX, arg ListProductionDeadLetterEventsParams) ([]DeadLetterEvent, error)
 	ListProductionLifecycleHistory(ctx context.Context, db DBTX, arg ListProductionLifecycleHistoryParams) ([][]byte, error)
 	// ADR-531: production queue pollers cannot own stage work.
@@ -4082,6 +4109,9 @@ type Querier interface {
 	LockEventExecutionLineageCase(ctx context.Context, db DBTX, arg LockEventExecutionLineageCaseParams) (EventExecutionLineageCase, error)
 	LockEventExecutionLineageCoverage(ctx context.Context, db DBTX, arg LockEventExecutionLineageCoverageParams) (LockEventExecutionLineageCoverageRow, error)
 	LockEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg LockEventExecutionLineageRetryJobParams) (EventExecutionLineageRetryJob, error)
+	// The same disposition inputs as ReadCronActivationDeployment, so event
+	// subscriptions and staged crons go live under one rule.
+	LockEventSubscriptionIntentDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockEventSubscriptionIntentDeploymentRow, error)
 	LockEventWorkflowRecipient(ctx context.Context, db DBTX, arg LockEventWorkflowRecipientParams) (LockEventWorkflowRecipientRow, error)
 	LockEventWorkflowTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (LockEventWorkflowTargetRow, error)
 	LockExclusiveSnapshotInstance(ctx context.Context, db DBTX, instanceID string) (LockExclusiveSnapshotInstanceRow, error)
@@ -5931,6 +5961,11 @@ type Querier interface {
 	ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingWeightsParams) ([]ReadPublicRoutingWeightsRow, error)
 	ReadQueueCanary(ctx context.Context, db DBTX, arg ReadQueueCanaryParams) (ReadQueueCanaryRow, error)
 	ReadQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationQueueLeaseReceipt, error)
+	// ADR-20261101093812: a production queue message replayed from the dead
+	// letter re-enters its app's queue under the caps a send meets. The plan
+	// resolves as ExpirePendingQueueMessages' does. Environment-owned messages
+	// are not production work and keep their own caps.
+	ReadQueueReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadQueueReplayAdmissionRow, error)
 	ReadReleaseAdditionApp(ctx context.Context, db DBTX, appID string) (ReadReleaseAdditionAppRow, error)
 	ReadReleaseReview(ctx context.Context, db DBTX, arg ReadReleaseReviewParams) (ReadReleaseReviewRow, error)
 	ReadReleaseWorkerRunningProof(ctx context.Context, db DBTX, deploymentID string) ([]ReadReleaseWorkerRunningProofRow, error)
@@ -7039,6 +7074,7 @@ type Querier interface {
 	SetWorkflowRunWakeFenced(ctx context.Context, db DBTX, arg SetWorkflowRunWakeFencedParams) (int64, error)
 	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)
 	SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error)
+	SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error
 	ShareProjectBindingVerificationRun(ctx context.Context, db DBTX, arg ShareProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
 	ShareRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceAuthority, error)
 	ShareRuntimeUpgradeGatewayRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error)

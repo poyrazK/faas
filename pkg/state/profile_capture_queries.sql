@@ -94,9 +94,14 @@ WHERE d.capture_id = sqlc.arg(id)::text::uuid AND p.app_id = sqlc.arg(app_id)::t
 ORDER BY d.seq;
 
 -- name: ClaimQueuedProfileCapture :one
--- Manual captures are claimed before automatic ones: someone is waiting.
+-- Manual captures are claimed before automatic ones: someone is waiting. A
+-- pool already running max_running captures waits its turn, so one account
+-- cannot hold every capture worker (ADR-1155). Concurrent schedds may each
+-- pass the check: the cap is soft, by at most one per scheduler.
 UPDATE profile_captures SET status = 'capturing', claimed_at = sqlc.arg(now)::timestamptz
 WHERE id = (SELECT q.id FROM profile_captures q WHERE q.status = 'queued'
+  AND (SELECT count(*) FROM profile_captures r WHERE r.status = 'capturing'
+       AND coalesce(r.capture->>'pool', r.account_id::text) = coalesce(q.capture->>'pool', q.account_id::text)) < sqlc.arg(max_running)::int
   ORDER BY (coalesce(q.capture->>'trigger', 'manual') <> 'manual'), q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1)
 RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id, capture, created_at;
 
@@ -157,4 +162,8 @@ WHERE (status = 'capturing' AND claimed_at < sqlc.arg(claimed_before)::timestamp
    OR (status = 'queued' AND created_at < sqlc.arg(queued_before)::timestamptz);
 
 -- name: DeleteExpiredProfileCaptures :execrows
-DELETE FROM profile_captures WHERE expires_at < sqlc.arg(now)::timestamptz;
+-- Expired captures, and every capture of a deleted app: nobody can read or
+-- delete those any more, and they would hold their pool's storage until they
+-- expired (ADR-1155).
+DELETE FROM profile_captures p WHERE p.expires_at < sqlc.arg(now)::timestamptz
+  OR EXISTS (SELECT 1 FROM apps a WHERE a.id = p.app_id AND a.status = 'deleted');

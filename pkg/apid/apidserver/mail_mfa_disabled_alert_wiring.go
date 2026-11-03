@@ -46,6 +46,10 @@ func (s *server) tryMFADisabledAlert(w http.ResponseWriter, r *http.Request, acc
 			}
 		}
 	}
+	if passwordNotChecked(err) {
+		writePasswordCheckUnavailable(w)
+		return true
+	}
 	if err != nil {
 		s.writeMFADisabledAlertError(w, r, acct, time.Time{}, err, false)
 		return true

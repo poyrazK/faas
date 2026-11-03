@@ -425,6 +425,30 @@ type TriggerMetricsResponse struct {
 	SucceededCount  int    `json:"succeeded_count"`
 	RetryCount      int    `json:"retry_count"`
 	DeadLetterCount int    `json:"dead_letter_count"`
+	// CountLimit is where each count stops: a count equal to it means at
+	// least that many (TriggerMetricsCountLimit).
+	CountLimit int `json:"count_limit,omitempty"`
+	// Consumer is the scheduler's last observation of the trigger's broker
+	// consumer; absent until its first poll (ADR-20261101104512).
+	Consumer *TriggerConsumerStatus `json:"consumer,omitempty"`
+}
+
+// TriggerConsumerStatus is how a trigger's broker consumer is doing, as the
+// scheduler that polls it last saw. Liveness is "healthy", "degraded" (the
+// last poll failed: LastError says why), "stale" (no poll for
+// QueueConsumerMaxPollAge: the trigger is disabled, its app cannot run, or
+// no scheduler polls it), "not_observed" or "unknown". LagMessages is the
+// broker's backlog for the consumer: for Kafka, the high watermark less the
+// group's committed offset summed over partitions; for NATS JetStream, the
+// consumer's pending messages; for Redis Streams, the group's lag.
+type TriggerConsumerStatus struct {
+	Liveness      string     `json:"liveness"`
+	LastPollAt    *time.Time `json:"last_poll_at,omitempty"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	LastErrorAt   *time.Time `json:"last_error_at,omitempty"`
+	LastError     string     `json:"last_error,omitempty"`
+	LagMessages   *int64     `json:"lag_messages,omitempty"`
+	LagAgeSeconds *float64   `json:"lag_age_seconds,omitempty"`
 }
 
 // FilterCriteriaOp is the closed vocabulary of comparison

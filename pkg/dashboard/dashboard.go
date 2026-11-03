@@ -1668,6 +1668,7 @@ type AppDetailData struct {
 	// dashboard cron fire-now POST. Values:
 	//   "ok"    — handler redirected with ?fired=1
 	//   "error" — handler redirected with ?fired=error
+	//   "disabled", "busy", "suspended", "plan" — a refusal with its reason
 	// Empty string → no banner. The template's empty-state branch
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
