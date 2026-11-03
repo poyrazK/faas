@@ -200,6 +200,30 @@ booting. Rules:
     Follow-ups: removing a capture's objects on a remote storage backend when its row
     goes, and objects left by failed attempts (the local sweep removes them only with
     the deployment).
+  - **How the identity is reloaded (5b).** schedd marks the restore with
+    `AppSpec.identity_reload`. vmmd attaches a one-shot expectation to the restore and
+    sends `identityReload` in the resume hook. guest-init then asks vmmd's
+    runtime-config channel for the `identity` kind: the env and main-workload secrets a
+    cold boot of the instance's own (branch) deployment receives, with the digest of
+    their canonical document (`api.RestoreIdentityDocument`). vmmd answers only an
+    instance in such a restore, checked before any secret is unsealed, and records the
+    digest it served. guest-init writes the document 0400 to
+    `/tmp/gregale-identity/identity.json` and calls the hook with
+    `X-Faas-Identity-File` and `X-Faas-Identity-Digest`; the hook answers with
+    `X-Faas-Identity-Ack: <digest>`. guest-init echoes the digest in the resume timing
+    frame, and vmmd accepts the restore only on an exact match. Anything else, including
+    a guest-init that predates the field and echoes nothing, is `after_restore_failed`
+    and takes the existing cold-boot fallback under the branch's spec.
+  - **What schedd's wake path must handle (5b, not yet built).** Restoring a branch
+    from its parent's ready capture goes through the serving wake, which today treats
+    a restore as a `snapshots` row in several places. Each needs an explicit capture
+    case: the recovery lineage the instance insert binds (none for a capture); placement
+    hints and CPU-platform alternates looked up by snapshot ID (use the capture's own
+    CPU identity, with no alternates); the snapshot runtime-config receipt (replaced by
+    the identity acknowledgement); marking a snapshot stale after a restore fails (fail
+    or retry the capture instead); and the vmmd router's and vmmd's deployment ownership
+    checks, which must accept the lineage parent's capture key for a branch deployment
+    and nothing else.
   - What this does not cover: a customer secret that itself holds a production
     credential reaches the branch by value, on either path. That is section 6's rule for
     every branch and stage.
