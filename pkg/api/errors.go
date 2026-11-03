@@ -452,6 +452,14 @@ const (
 	// stores more than the target plan's storage ceiling (ADR-20261101214152).
 	CodePlanLimitObjectStorage = "plan_limit_object_storage"
 	CodePlanLimitConcur        = "plan_limit_concurrency"
+	// CodeBillingEmailInUse refuses a billing email another billing subject
+	// already pays with: the billing provider keeps one customer per email
+	// (ADR-20261103131742).
+	CodeBillingEmailInUse = "billing_email_in_use"
+	// CodeBillingContactMember refuses removing the member whose email an
+	// organization bills to until the organization moves its billing email
+	// (ADR-20261103131742).
+	CodeBillingContactMember   = "billing_contact_member"
 	CodeInvalidAppCPU          = "invalid_cpu_millicores"
 	CodeInvalidAppRAM          = "invalid_ram_mb"
 	CodeInvalidCPURAMPair      = "invalid_cpu_ram_pair"
@@ -2154,7 +2162,8 @@ const MaxOrgSlugLen = 32
 func StatusForCode(code string) int {
 	switch code {
 	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict,
-		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired:
+		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired,
+		CodeBillingEmailInUse, CodeBillingContactMember:
 		return http.StatusConflict
 	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
 		return http.StatusForbidden
@@ -2750,6 +2759,29 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		fmt.Sprintf("%s plan caps %d MB/app; requested %d MB.", l.Plan, l.RAMMB, requestedMB)).
 		WithLimit(int64(l.RAMMB), int64(requestedMB)).
 		WithDocs(docsBase + "/plans#ram")
+}
+
+// ErrBillingEmailInUse refuses a billing email that another Gregale account or
+// organization already pays with. organization is true when the refused
+// subject is an organization, which can move to its own billing email.
+func ErrBillingEmailInUse(organization bool) *Problem {
+	detail := "this email already pays for another Gregale account or organization, and the billing provider keeps one customer per email; " +
+		"if it pays for an organization, give that organization its own billing email with PUT /v1/orgs/{slug}/billing/email"
+	if organization {
+		detail = "this organization bills to an email that already pays for another Gregale account or organization; " +
+			"set the organization's own billing email with PUT /v1/orgs/{slug}/billing/email, then upgrade"
+	}
+	return NewProblem(http.StatusConflict, CodeBillingEmailInUse, "Billing email in use", detail).
+		WithDocs(docsBase + "/billing#billing-email")
+}
+
+// ErrBillingContactMember refuses removing the organization member whose
+// email the organization bills to: the billing provider sends that address
+// the organization's invoices and lets it manage the subscription.
+func ErrBillingContactMember() *Problem {
+	return NewProblem(http.StatusConflict, CodeBillingContactMember, "Member is the billing contact",
+		"this member's email is the organization's billing email; set another billing email with PUT /v1/orgs/{slug}/billing/email first").
+		WithDocs(docsBase + "/billing#billing-email")
 }
 
 // ErrInvalidAppRAM rejects an explicit update that cannot satisfy the

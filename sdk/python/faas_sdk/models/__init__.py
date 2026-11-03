@@ -1646,6 +1646,8 @@ from .org_agent_policy_response import OrgAgentPolicyResponse
 from .org_app_list_response import OrgAppListResponse
 from .org_app_summary import OrgAppSummary
 from .org_app_summary_type import OrgAppSummaryType
+from .org_billing_email_request import OrgBillingEmailRequest
+from .org_billing_email_response import OrgBillingEmailResponse
 from .org_invitation_response import OrgInvitationResponse
 from .org_invitation_response_role import OrgInvitationResponseRole
 from .org_invitation_response_status import OrgInvitationResponseStatus
@@ -4075,6 +4077,8 @@ __all__ = (
     "OrgAppListResponse",
     "OrgAppSummary",
     "OrgAppSummaryType",
+    "OrgBillingEmailRequest",
+    "OrgBillingEmailResponse",
     "OrgInvitationResponse",
     "OrgInvitationResponseRole",
     "OrgInvitationResponseStatus",

@@ -93,6 +93,10 @@ type Loop struct {
 	// through the GatewaySynth interface.
 	gatewayHTTPClient *http.Client
 	gatewayBaseURL    string
+	// triggerClaimRenewInterval is how often a running trigger batch renews
+	// its record claims; zero means api.TriggerRecordClaimRenewInterval.
+	// Tests shorten it.
+	triggerClaimRenewInterval time.Duration
 	// triggerPollers caches one triggerSource per trigger id.
 	// triggerPollerConfigs holds the fingerprint of the config each
 	// poller was built from: a changed trigger (credentials, topic, URL)

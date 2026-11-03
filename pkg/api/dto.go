@@ -4300,6 +4300,18 @@ type AccountOverageCapResponse struct {
 	OverageCapCents *int64 `json:"overage_cap_cents"`
 }
 
+// OrgBillingEmailRequest sets the email an organization bills to. The billing
+// provider sends this address the organization's invoices and lets it sign in
+// to the organization's billing portal (ADR-20261103131742).
+type OrgBillingEmailRequest struct {
+	BillingEmail string `json:"billing_email"`
+}
+
+// OrgBillingEmailResponse reports the email an organization bills to.
+type OrgBillingEmailResponse struct {
+	BillingEmail string `json:"billing_email"`
+}
+
 // AccountRateLimitsResponse reports account-wide rate windows that affect
 // customer operations.
 type AccountRateLimitsResponse struct {

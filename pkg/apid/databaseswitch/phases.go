@@ -292,6 +292,14 @@ func (w *Worker) switchRelease(ctx context.Context, sw state.DatabaseSwitch) sta
 		if err != nil {
 			return w.retry(sw, errorCode(err))
 		}
+		// The restore can take long enough for a pause, a freeze or an
+		// approval change to begin after the request was checked
+		// (ADR-20261023181931 amendment 2).
+		if w.ReleaseGuard != nil {
+			if refused := w.ReleaseGuard(ctx, sw); refused != "" {
+				return w.beginAbort(sw, codeReleaseSwitchFailed, refused)
+			}
+		}
 		if target.Status == state.DeploySuperseded || (target.Status == state.DeployLive && target.TrafficPercent == 0) {
 			if _, err := w.Releases.PrepareDeploymentRollback(ctx, sw.AppID, sw.TargetDeploymentID); err != nil {
 				return w.beginAbort(sw, codeReleaseSwitchFailed, "The rollback target could not be prepared: "+errorCode(err)+".")

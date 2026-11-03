@@ -12711,8 +12711,14 @@ paths:
         Switch the account between `free`, `hobby`, `pro`, and `scale`. The
         local account moves to a paid tier only after the configured billing
         provider confirms payment. If a new subscription is required, the
-        `payment_required` response includes `checkout_url`; if an existing
-        subscription must be changed, it includes `billing_portal_url`.
+        `payment_required` response includes `checkout_url`. An existing
+        subscription changes in place: an upgrade is charged the prorated
+        difference now and answers 202 until the provider confirms it; a
+        declined charge answers 402 with `billing_portal_url` to update the
+        payment method, and the plan stays. A downgrade answers 202 and takes
+        effect at the end of the billing period. A billing email that already
+        pays for another account or organization answers 409
+        `billing_email_in_use`.
       requestBody:
         required: true
         description: "Plan change payload."
@@ -57758,7 +57764,10 @@ paths:
         Owner-only (`org.remove_members`). Stamps `removed_at` on
         the row (the row stays for audit; live-cap count drops).
         Self-removal is rejected at the boundary; the last-owner
-        invariant surfaces as 409 `org_last_owner`.
+        invariant surfaces as 409 `org_last_owner`. The member whose email
+        the organization bills to cannot be removed while the organization
+        has a billing customer (409 `billing_contact_member`); set another
+        billing email with `PUT /v1/orgs/{slug}/billing/email` first.
       responses:
         '204': { description: Member removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -64381,7 +64390,10 @@ paths:
         Requires the organization owner, admin credential scope, verified email,
         MFA and recent step-up. Paid entitlements activate only after provider
         confirmation. Existing personal subscriptions are never reassigned.
-        A payment-required response carries checkout_url or billing_portal_url.
+        A payment-required response carries checkout_url, or billing_portal_url
+        when the upgrade charge of an existing subscription is declined. The
+        first checkout bills the acting owner's email until
+        `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -64688,6 +64700,52 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/orgs/{slug}/billing/email:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    put:
+      tags: [orgs]
+      operationId: setOrgBillingEmail
+      summary: Set the email the organization bills to.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. The billing provider sends this address the
+        organization's invoices and signs it in to the organization's billing
+        portal, so use an address the organization controls rather than a
+        member's. The first organization checkout bills the member who starts
+        it until this is set. When the organization already has a billing
+        customer, the customer moves to the new email first and nothing changes
+        if the provider refuses. The provider keeps one customer per email: an
+        email another Gregale account or organization already pays with is
+        refused with 409 `billing_email_in_use`. While a member's email is the
+        billing email, that member cannot be removed (409
+        `billing_contact_member`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrgBillingEmailRequest' }
+            example: {"billing_email": "billing@example.com"}
+      responses:
+        '200':
+          description: The organization's billing email after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgBillingEmailResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: The billing provider could not move the customer (`billing_email_change_failed`); the billing email is unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/orgs/{organization}/projects:
     parameters:
@@ -86277,6 +86335,25 @@ components:
           type: [integer, 'null']
           format: int64
           minimum: 0
+
+    OrgBillingEmailRequest:
+      description: The email an organization bills to; invoices and the billing portal sign-in go to it.
+      type: object
+      required: [billing_email]
+      properties:
+        billing_email:
+          type: string
+          format: email
+          maxLength: 254
+
+    OrgBillingEmailResponse:
+      description: The email an organization bills to.
+      type: object
+      required: [billing_email]
+      properties:
+        billing_email:
+          type: string
+          format: email
 
     AccountRateLimitsResponse:
       description: Account-wide operation rate limits.
