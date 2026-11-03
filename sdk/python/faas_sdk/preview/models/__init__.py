@@ -771,6 +771,7 @@ from .configure_managed_realtime_push_provider_response_200 import ConfigureMana
 from .configure_managed_realtime_push_provider_response_200_provider import (
     ConfigureManagedRealtimePushProviderResponse200Provider,
 )
+from .confirm_email_verification_body import ConfirmEmailVerificationBody
 from .connection_budget_capacity import ConnectionBudgetCapacity
 from .connection_budget_capacity_source import ConnectionBudgetCapacitySource
 from .connection_budget_capacity_state import ConnectionBudgetCapacityState
@@ -5814,6 +5815,8 @@ from .transfer_ownership_request import TransferOwnershipRequest
 from .trigger import Trigger
 from .trigger_broker_poison_strategy import TriggerBrokerPoisonStrategy
 from .trigger_config import TriggerConfig
+from .trigger_consumer_status import TriggerConsumerStatus
+from .trigger_consumer_status_liveness import TriggerConsumerStatusLiveness
 from .trigger_dead_letter import TriggerDeadLetter
 from .trigger_dead_letter_detail import TriggerDeadLetterDetail
 from .trigger_dead_letter_reason import TriggerDeadLetterReason
@@ -7004,6 +7007,7 @@ __all__ = (
     "ConfigureManagedRealtimePushProviderProvider",
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
+    "ConfirmEmailVerificationBody",
     "ConnectionBudgetCapacity",
     "ConnectionBudgetCapacitySource",
     "ConnectionBudgetCapacityState",
@@ -11729,6 +11733,8 @@ __all__ = (
     "Trigger",
     "TriggerBrokerPoisonStrategy",
     "TriggerConfig",
+    "TriggerConsumerStatus",
+    "TriggerConsumerStatusLiveness",
     "TriggerDeadLetter",
     "TriggerDeadLetterDetail",
     "TriggerDeadLetterReason",

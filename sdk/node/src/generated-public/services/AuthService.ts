@@ -246,11 +246,13 @@ export class AuthService {
   }
   /**
    * Verify a password-signup email address.
-   * Consumes a 24-hour, single-use verification token and marks the
-   * account email verified. This endpoint does not create a session;
-   * the returned HTML page prompts the customer to sign in again.
+   * A browser (Accept text/html) gets an HTML page whose button posts the
+   * token back, and nothing is consumed, so a mail scanner that prefetches
+   * the link cannot use up the token. Any other client consumes the
+   * 24-hour, single-use token here and the account email is marked
+   * verified. No session is created.
    *
-   * @returns string Email verified; HTML sign-in prompt.
+   * @returns string The confirmation page, or for a non-browser client the verified-email page.
    * @throws ApiError
    */
   public static verifyEmail({
@@ -268,6 +270,41 @@ export class AuthService {
         'token': token,
       },
       errors: {
+        410: `Verification link expired, invalid, or already used.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Confirm an email verification from its confirmation page.
+   * The confirmation page's form posts the token here. It is consumed and
+   * the account email marked verified; the HTML answer asks the customer
+   * to sign in again rather than creating a session.
+   *
+   * @returns string Email verified; HTML sign-in prompt.
+   * @throws ApiError
+   */
+  public static confirmEmailVerification({
+    formData,
+  }: {
+    formData: {
+      /**
+       * The verification token from the confirmation page's form.
+       */
+      token: string;
+    },
+  }): CancelablePromise<string> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/auth/verify-email',
+      formData: formData,
+      mediaType: 'application/x-www-form-urlencoded',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         410: `Verification link expired, invalid, or already used.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

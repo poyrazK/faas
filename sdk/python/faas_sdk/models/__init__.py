@@ -334,6 +334,7 @@ from .config_revision_source import ConfigRevisionSource
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
+from .confirm_email_verification_body import ConfirmEmailVerificationBody
 from .connection_budget_capacity import ConnectionBudgetCapacity
 from .connection_budget_capacity_source import ConnectionBudgetCapacitySource
 from .connection_budget_capacity_state import ConnectionBudgetCapacityState
@@ -2887,6 +2888,7 @@ __all__ = (
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
+    "ConfirmEmailVerificationBody",
     "ConnectionBudgetCapacity",
     "ConnectionBudgetCapacitySource",
     "ConnectionBudgetCapacityState",
