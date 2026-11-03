@@ -33,8 +33,10 @@ func (s *server) stageSourceDeploymentManifest(r *http.Request, acct state.Accou
 	// prepared intent between preparation and manifest ingestion.
 	ctx = context.WithValue(ctx, sourceManifestSkipCronsKey{}, true)
 	// A production deploy's manifest is the app's whole set of event
-	// subscriptions (ADR-20261031130000); a stage deploy only adds.
-	if applyTriggers && m != nil && (rollout.Scope == "" || rollout.Scope == state.DefaultEnvScope) {
+	// subscriptions (ADR-20261031130000); a stage deploy only adds. The named
+	// "production" scope is production too, as for staged crons: its deploys
+	// only added before, so a trigger dropped from gregale.yaml never stopped.
+	if applyTriggers && m != nil && state.IsProductionScope(rollout.Scope) {
 		ctx = context.WithValue(ctx, sourceManifestReconcileEventsKey{}, true)
 	}
 	staged, problem := s.applySourceRefManifest(ctx, acct, app, m, rollout.Scope, applyTriggers)

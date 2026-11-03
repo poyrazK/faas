@@ -939,7 +939,10 @@ storage from capabilities until `max_account_bytes` and `max_bucket_bytes`
 reach the largest plan ceiling (1,000 GiB), `max_monthly_egress_bytes` the
 largest plan egress (2,000 GiB) and `max_account_keys` one million; every
 environment logs the shortfall at startup (`object storage safety policy
-sells plans less than they promise`). A support grant above
+sells plans less than they promise`). CD sets `FAAS_ENVIRONMENT=production`
+for apid in every `production*` environment (the control-plane role's
+`faas_environment`, staged by `scripts/ci/faas_environment_vars.sh`); before
+2026-11-03 no deploy set it, so the refusal never ran. A support grant above
 `max_account_bytes` is refused, because it would not take effect.
 
 A provider that refuses the installation's credentials withdraws object

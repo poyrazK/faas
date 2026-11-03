@@ -65,6 +65,9 @@ func (b *PGBackend) hydrateCurrentTargetsOnce(ctx context.Context, app string) e
 		return err // A caller's cancellation does not withdraw another request's cache.
 	}
 	snapshot := snapshots[app]
+	// A failed read leaves leased targets routable; an invalid answer does
+	// not (ADR-570 amendment 2026-11-03).
+	readFailed := placementErr != nil
 	if placementErr == nil && !validPlacementSnapshot(app, snapshot) {
 		placementErr = fmt.Errorf("gateway: incomplete current placement for app %s", app)
 	}
@@ -78,7 +81,7 @@ func (b *PGBackend) hydrateCurrentTargetsOnce(ctx context.Context, app string) e
 		return ErrTargetPlacementChanged
 	}
 	if placementErr != nil {
-		if picker != nil {
+		if picker != nil && !readFailed {
 			markPlacementUnavailable(picker)
 		}
 		return fmt.Errorf("gateway: hydrate current targets for app %s: %w", app, placementErr)
