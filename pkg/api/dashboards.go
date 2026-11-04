@@ -137,6 +137,16 @@ func ErrDashboardQuota(limit, observed int) *Problem {
 	return p.WithDocs(docsBase + "/dashboards").WithHint("delete one with `gregale dashboards delete`")
 }
 
+// ErrDashboardDataBusy is a 429 while the account already has limit
+// dashboard reads in flight (ADR-20261104142830).
+func ErrDashboardDataBusy(limit int) *Problem {
+	p := NewProblem(http.StatusTooManyRequests, "dashboard_data_busy", "Too many dashboard reads",
+		fmt.Sprintf("this account already has %d dashboard reads in progress; refresh in a few seconds", limit))
+	l := int64(limit)
+	p.Limit, p.Observed = &l, &l
+	return p.WithDocs(docsBase+"/dashboards").WithHeader("Retry-After", "2")
+}
+
 // ErrDashboardInvalid rejects a dashboard definition.
 func ErrDashboardInvalid(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid dashboard", detail).WithDocs(docsBase + "/dashboards")

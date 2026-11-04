@@ -28,6 +28,7 @@ type channelRetryFixture struct {
 	mu       sync.Mutex
 	now      time.Time
 	value    float64
+	readErr  error // a failed read makes the rule degraded
 }
 
 func newChannelRetryFixture(t *testing.T) *channelRetryFixture {
@@ -41,7 +42,7 @@ func newChannelRetryFixture(t *testing.T) *channelRetryFixture {
 		PromQL: &selectivePromQL{fn: func(string) (float64, error) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			return f.value, nil
+			return f.value, f.readErr
 		}},
 		Audit:      audit.New(f.store, discardLog(), nil, "meterd"),
 		Identity:   func() *age.X25519Identity { return ident },

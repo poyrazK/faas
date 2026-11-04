@@ -15143,6 +15143,10 @@ const (
 	DashboardsPerAccount   = 20
 	DashboardWidgetsMax    = 24
 	DashboardDefaultWindow = "1h"
+	// DashboardDataReadsPerAccount bounds one account's dashboard data
+	// reads in flight on an apid: each fans out to every widget's
+	// Prometheus queries (ADR-20261104142830).
+	DashboardDataReadsPerAccount = 2
 )
 
 // DashboardWindows are the windows a dashboard widget may read.
@@ -15261,6 +15265,11 @@ const (
 	// stopped), its consecutive-failures alert has no current value and goes
 	// unknown instead of re-paging on old failures (ADR-20261031144636).
 	SyntheticCheckStaleIntervals = 2
+	// SyntheticCheckProbesPerAccount bounds one account's probes in flight
+	// from meterd, so one account's slow or hanging app holds at most this
+	// many of the runner's slots and never delays other accounts' checks
+	// (ADR-20261104142830).
+	SyntheticCheckProbesPerAccount = 2
 )
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.

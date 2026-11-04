@@ -7,7 +7,10 @@ account's slow rules never delay yours. A webhook gets 30 seconds per
 delivery, retries included. Rules are kept but stop being evaluated while
 your plan no longer includes them (alerts need Hobby or above; custom metric,
 SLO and synthetic check alerts need the plans those features need); they
-resume when you upgrade.
+resume when you upgrade. The same holds for rules past your plan's rule
+limits after a downgrade: per app and per account, your oldest enabled rules
+keep running and the rest wait, so disable the ones you can do without to
+choose which run.
 
 ## Configure an alert
 
@@ -99,7 +102,7 @@ deployment action such as rollback; the API and the database both reject one.
 
 Each webhook delivery is a JSON body with `event` (`alert.fired`), the rule, metric, threshold and observed value. `X-Faas-Alert-Signature` is `sha256=` followed by the hex HMAC-SHA256 of `<X-Faas-Alert-Timestamp>.<X-Faas-Alert-Id>.<body>`, keyed with the rule's webhook secret. Verify it before processing, deduplicate by `X-Faas-Alert-Id`, and return a 2xx quickly. A 5xx, 408, 429 or network error is retried with backoff for up to 30 seconds; any other status is final. Every fire and its outcome is listed by `gregale alert deliveries`. A failing endpoint is not paused: each new fire is attempted again.
 
-Add `--notify-resolved` (`notify_resolved` in the API) to also receive a signed `alert.resolved` event, with the same headers, when the rule recovers. It is off by default because receivers written before it count every delivery as a fire; turn it on once yours checks `event`. Notification channels always receive resolves.
+Add `--notify-resolved` (`notify_resolved` in the API) to also receive a signed `alert.resolved` event, with the same headers, when the rule recovers. It is off by default because receivers written before it count every delivery as a fire; turn it on once yours checks `event`. Notification channels always receive resolves. A firing rule that stops being evaluated (you disable it, the plan or account no longer covers it, or its app is deleted) gets an `alert.resolved` with `reason` (`disabled`, `not_released` or `app_deleted`) and a null `observed`; a deleted rule sends none, since its webhook secret goes with it.
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
@@ -150,6 +153,26 @@ incident is not left open by a short outage; a new fire of the rule replaces
 the pending resolve. Every failed channel notice is recorded in the audit log
 as `notification_channel.delivery_failed`, and a resolve given up after a
 day as `notification_channel.resolve_abandoned`.
+
+A resolve goes out whenever an incident ends, not only when the metric
+recovers on the next read: a recovery after a read Gregale could not make
+(the rule showed `degraded` or `unknown` in between), a firing rule you
+disable or delete (directly, or by deleting its SLO, synthetic check or app),
+and a firing rule your plan or account no longer covers. Those last ones say
+why in the message instead of an observed value, and are retried the same
+way.
+
+Rename a channel, or replace a leaked Slack URL or PagerDuty key, in place:
+its ID and the rules bound to it stay. The kind never changes, and an email
+channel can only be renamed.
+
+```bash
+printf '%s\n' "$NEW_SLACK_WEBHOOK_URL" | gregale alert channel update CHANNEL_ID --secret-stdin
+gregale alert channel update CHANNEL_ID --name ops-alerts
+```
+
+A new destination clears the channel's last error; the change is recorded in
+the audit log as `notification_channel.updated`.
 Presets take channels too: `gregale alert preset enable availability --app
 shop --channel OPS_SLACK_ID`.
 
@@ -279,6 +302,12 @@ search later does not change it. Counts include every occurrence of a
 deduplicated event. These rules are webhook-only and support windows up to
 `24h`. If the search cannot finish in time, the rule is `unknown` for that
 evaluation rather than firing or clearing.
+
+Runtime lines are counted as [log search](log-search.md#runtime-lines)
+indexes them: at most 120 warning and error lines per app per minute on each
+node, and 600 per account per minute. A burst past those budgets counts as
+the budget, not the burst, so set thresholds well below them; a minute that
+hit a budget has a `system` line saying so.
 
 ### Route monitor and canary hold alerts
 

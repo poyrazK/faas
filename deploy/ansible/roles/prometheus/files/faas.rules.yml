@@ -9080,6 +9080,21 @@ groups:
           summary: "A customer observability loop in meterd is not running"
           description: "meterd started without the loop, usually slo_rollup with FAAS_PROMETHEUS_URL unset. Customers' SLO budgets then read as no data and slo_budget alerts never fire."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      # ADR-20261104142830: synthetic probes start as slots free up, at most
+      # two per account; checks waiting longer than one 5-minute interval
+      # mean the fleet's checks outgrew the runner's slots.
+      - alert: FaasSyntheticChecksBacklogged
+        expr: meterd_observability_loop_backlog_seconds{loop="synthetic_checks"} > 300
+        for: 15m
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "Synthetic checks are waiting more than 5 minutes for a probe slot"
+          description: "meterd's synthetic runner has had due checks waiting over 5 minutes for 15 minutes. One account holds at most two probes, so this is the fleet's checks outgrowing the runner's slots, or probes generally slow through the edge. Customers' checks run late and their alerts can go unknown."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
       - alert: FaasObservabilityLoopItemsFailing
         expr: |
           sum by (job, instance, loop) (increase(meterd_observability_loop_items_total{loop="synthetic_checks",outcome="record_error"}[15m])) > 0

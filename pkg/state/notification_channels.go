@@ -71,6 +71,80 @@ type NotificationChannelStore interface {
 	RecordNotificationChannelDelivery(ctx context.Context, id string, at time.Time, errMsg string) error
 }
 
+// UpdateNotificationChannelParams is a channel update: nil keeps a field.
+// TargetSealed and TargetHint change together.
+type UpdateNotificationChannelParams struct {
+	Name            *string
+	TargetSealed    []byte
+	TargetHint      *string
+	PagerDutyRegion *string
+}
+
+// NotificationChannelUpdateStore renames a channel or replaces its sealed
+// destination (ADR-20261104142830). Optional on Store; callers type-assert.
+// ErrNotFound when the account has no such channel, ErrConflict when the
+// name is taken.
+type NotificationChannelUpdateStore interface {
+	UpdateNotificationChannel(ctx context.Context, accountID, id string, p UpdateNotificationChannelParams) (NotificationChannel, error)
+}
+
+func (s *PgStore) UpdateNotificationChannel(ctx context.Context, accountID, id string, p UpdateNotificationChannelParams) (NotificationChannel, error) {
+	acct, key, err := channelKeys(accountID, id)
+	if err != nil {
+		return NotificationChannel{}, err
+	}
+	text := func(v *string) pgtype.Text {
+		if v == nil {
+			return pgtype.Text{}
+		}
+		return pgtype.Text{String: *v, Valid: true}
+	}
+	row, err := sqlc.New().UpdateNotificationChannel(ctx, s.pool, sqlc.UpdateNotificationChannelParams{
+		Name: text(p.Name), TargetSealed: p.TargetSealed, TargetHint: text(p.TargetHint),
+		PagerdutyRegion: text(p.PagerDutyRegion), AccountID: acct, ID: key,
+	})
+	if err != nil {
+		return NotificationChannel{}, mapErr(err)
+	}
+	return channelFromRow(row), nil
+}
+
+func (m *MemStore) UpdateNotificationChannel(_ context.Context, accountID, id string, p UpdateNotificationChannelParams) (NotificationChannel, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	chans := m.notificationChannels[accountID]
+	for i, c := range chans {
+		if c.ID != id {
+			continue
+		}
+		if p.Name != nil {
+			for _, other := range chans {
+				if other.ID != id && other.Name == *p.Name {
+					return NotificationChannel{}, ErrConflict
+				}
+			}
+			c.Name = *p.Name
+		}
+		if p.TargetSealed != nil {
+			c.TargetSealed, c.LastError, c.LastErrorAt = p.TargetSealed, "", time.Time{}
+		}
+		if p.TargetHint != nil {
+			c.TargetHint = *p.TargetHint
+		}
+		if p.PagerDutyRegion != nil {
+			c.PagerDutyRegion = *p.PagerDutyRegion
+		}
+		chans[i] = c
+		return c, nil
+	}
+	return NotificationChannel{}, ErrNotFound
+}
+
+var (
+	_ NotificationChannelUpdateStore = (*PgStore)(nil)
+	_ NotificationChannelUpdateStore = (*MemStore)(nil)
+)
+
 func channelFromRow(row sqlc.NotificationChannel) NotificationChannel {
 	return NotificationChannel{
 		ID: uuid.UUID(row.ID.Bytes).String(), AccountID: uuid.UUID(row.AccountID.Bytes).String(),
@@ -251,6 +325,7 @@ func (m *MemStore) DeleteNotificationChannel(_ context.Context, accountID, id st
 		}
 		m.notificationChannels[accountID] = append(chans[:i:i], chans[i+1:]...)
 		m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.channel == id })
+		m.clearAlertChannelStandDownsLocked(func(k alertChannelRetryKey) bool { return k.channel == id })
 		return nil
 	}
 	return ErrNotFound

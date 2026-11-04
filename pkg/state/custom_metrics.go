@@ -167,8 +167,11 @@ type CustomMetricSample struct {
 }
 
 // CustomMetricExportStore is the bounded, cross-app read the custom-metric
-// exporter scrapes. Only values observed at or after since are returned —
-// a stopped pusher must show as a gap, not a flat line (ADR-202 freshness).
+// exporter scrapes. Gauges observed before since are left out — a stopped
+// pusher must show as a gap, not a flat line (ADR-202 freshness). Counters
+// are always returned: their total is Gregale's own and stays true while
+// nothing is added, and a series that vanished between sparse increments
+// would lose the next one to rate() (ADR-20261104142830).
 type CustomMetricExportStore interface {
 	ListFreshCustomMetrics(ctx context.Context, since time.Time, limit int) ([]CustomMetricSample, error)
 }
@@ -178,13 +181,13 @@ var (
 	_ CustomMetricExportStore = (*MemStore)(nil)
 )
 
-// ListFreshCustomMetrics returns at most limit fresh gauges across all apps,
+// ListFreshCustomMetrics returns at most limit fresh gauges, and every counter, across all apps,
 // ordered by app and name so a capped scrape is deterministic.
 func (s *PgStore) ListFreshCustomMetrics(ctx context.Context, since time.Time, limit int) ([]CustomMetricSample, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT app_id::text, name, value
 		  FROM app_custom_metrics
-		 WHERE observed_at >= $1::timestamptz
+		 WHERE observed_at >= $1::timestamptz OR kind = 'counter'
 		 ORDER BY app_id, name
 		 LIMIT $2::int
 	`, since, limit)
@@ -215,7 +218,7 @@ func (m *MemStore) ListFreshCustomMetrics(_ context.Context, since time.Time, li
 	var out []CustomMetricSample
 	for appID, byName := range m.customMetrics {
 		for _, metric := range byName {
-			if !metric.ObservedAt.Before(since) {
+			if !metric.ObservedAt.Before(since) || metric.Kind == CustomMetricKindCounter {
 				out = append(out, CustomMetricSample{AppID: appID, Name: metric.Name, Value: metric.Value})
 			}
 		}

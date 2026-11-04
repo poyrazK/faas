@@ -439,6 +439,23 @@
     "kind": "operational"
   },
   {
+    "table": "alert_channel_stand_downs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "channel_id",
+      "last_error",
+      "next_attempt_at",
+      "queued_at",
+      "reason",
+      "rule_id",
+      "rule_metric",
+      "rule_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_deliveries",
     "columns": [
       "account_id",

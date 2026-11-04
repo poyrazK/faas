@@ -63,6 +63,7 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 		// A new incident supersedes a recovery notice a channel never took;
 		// sent now, it would resolve the incident this fire opens.
 		e.clearChannelResolves(ctx, rule.ID)
+		e.clearChannelStandDowns(ctx, rule.ID)
 	}
 	msg := e.channelMessage(ctx, rule, event, observed, now)
 	ids := e.unsealIdentities()

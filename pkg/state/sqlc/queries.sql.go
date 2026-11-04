@@ -1221,6 +1221,17 @@ func (q *Queries) AdvanceRuntimeUpgradeOperation(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const alertRuleEpisodeOpen = `-- name: AlertRuleEpisodeOpen :one
+SELECT EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $1::uuid AND e.resolved_at IS NULL)::boolean AS open
+`
+
+func (q *Queries) AlertRuleEpisodeOpen(ctx context.Context, db DBTX, ruleID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, alertRuleEpisodeOpen, ruleID)
+	var open bool
+	err := row.Scan(&open)
+	return open, err
+}
+
 const appBindingRefreshInventory = `-- name: AppBindingRefreshInventory :many
 SELECT DISTINCT ON (o.payload::jsonb->>'wake_id')
  (o.payload::jsonb->>'wake_id')::text AS wake_id,
@@ -7676,6 +7687,16 @@ func (q *Queries) ClearAlertChannelResolveRetries(ctx context.Context, db DBTX, 
 	return err
 }
 
+const clearAlertChannelStandDowns = `-- name: ClearAlertChannelStandDowns :exec
+DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid
+`
+
+// A new fire of the rule supersedes the recovery notices it still owed.
+func (q *Queries) ClearAlertChannelStandDowns(ctx context.Context, db DBTX, ruleID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearAlertChannelStandDowns, ruleID)
+	return err
+}
+
 const clearAppSecretRuntimeProcessAck = `-- name: ClearAppSecretRuntimeProcessAck :execrows
 UPDATE app_secret_runtime_reload_observations
 SET application_ack_version = NULL, application_ack_status = NULL,
@@ -13763,6 +13784,20 @@ func (q *Queries) DeleteAlertChannelResolveRetry(ctx context.Context, db DBTX, a
 	return err
 }
 
+const deleteAlertChannelStandDown = `-- name: DeleteAlertChannelStandDown :exec
+DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid AND channel_id = $2::uuid
+`
+
+type DeleteAlertChannelStandDownParams struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
+func (q *Queries) DeleteAlertChannelStandDown(ctx context.Context, db DBTX, arg DeleteAlertChannelStandDownParams) error {
+	_, err := db.Exec(ctx, deleteAlertChannelStandDown, arg.RuleID, arg.ChannelID)
+	return err
+}
+
 const deleteAlertRuleChannels = `-- name: DeleteAlertRuleChannels :exec
 
 DELETE FROM alert_rule_channels WHERE rule_id = $1::uuid
@@ -15331,6 +15366,62 @@ func (q *Queries) DueAlertChannelResolveRetries(ctx context.Context, db DBTX, ar
 			&i.ChannelID,
 			&i.Observed,
 			&i.ResolvedAt,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueAlertChannelStandDowns = `-- name: DueAlertChannelStandDowns :many
+SELECT s.rule_id::text AS rule_id, s.channel_id::text AS channel_id, s.account_id::text AS account_id,
+       coalesce(s.app_id::text, '')::text AS app_id, s.rule_name, s.rule_metric, s.reason, s.queued_at, s.attempts
+  FROM alert_channel_stand_downs s
+ WHERE s.next_attempt_at <= $1::timestamptz
+ ORDER BY s.next_attempt_at, s.rule_id, s.channel_id
+ LIMIT $2::integer
+`
+
+type DueAlertChannelStandDownsParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueAlertChannelStandDownsRow struct {
+	RuleID     string
+	ChannelID  string
+	AccountID  string
+	AppID      string
+	RuleName   string
+	RuleMetric string
+	Reason     string
+	QueuedAt   pgtype.Timestamptz
+	Attempts   int32
+}
+
+func (q *Queries) DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg DueAlertChannelStandDownsParams) ([]DueAlertChannelStandDownsRow, error) {
+	rows, err := db.Query(ctx, dueAlertChannelStandDowns, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueAlertChannelStandDownsRow{}
+	for rows.Next() {
+		var i DueAlertChannelStandDownsRow
+		if err := rows.Scan(
+			&i.RuleID,
+			&i.ChannelID,
+			&i.AccountID,
+			&i.AppID,
+			&i.RuleName,
+			&i.RuleMetric,
+			&i.Reason,
+			&i.QueuedAt,
 			&i.Attempts,
 		); err != nil {
 			return nil, err
@@ -52260,6 +52351,69 @@ func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]str
 	return items, nil
 }
 
+const listStrandedAlertRules = `-- name: ListStrandedAlertRules :many
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query, created_by_account_id, notify_resolved FROM alert_rules r
+ WHERE r.state <> 'ok'
+   AND (NOT r.enabled OR EXISTS (SELECT 1 FROM apps a WHERE a.id = r.app_id AND a.status = 'deleted'))
+ ORDER BY r.updated_at, r.id
+ LIMIT $1::integer
+`
+
+// Rules left out of evaluation (disabled, or their app deleted) while not
+// ok: their state and open episode would otherwise stay as they were.
+func (q *Queries) ListStrandedAlertRules(ctx context.Context, db DBTX, maxRows int32) ([]AlertRule, error) {
+	rows, err := db.Query(ctx, listStrandedAlertRules, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AlertRule{}
+	for rows.Next() {
+		var i AlertRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Enabled,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.FailureSource,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
+			&i.CooldownMinutes,
+			&i.State,
+			&i.LastFiredAt,
+			&i.LastEvaluatedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Action,
+			&i.PostDeployRollbackWindowSeconds,
+			&i.EventSubscriptionID,
+			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
+			&i.McpMinCalls,
+			&i.McpForMinutes,
+			&i.McpReadinessScope,
+			&i.LogQuery,
+			&i.CreatedByAccountID,
+			&i.NotifyResolved,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSyntheticCheckRuns = `-- name: ListSyntheticCheckRuns :many
 SELECT check_id, started_at, ok, status_code, latency_ms, error_class FROM synthetic_check_runs WHERE check_id = $1::uuid
 ORDER BY started_at DESC LIMIT $2::integer
@@ -73821,6 +73975,43 @@ func (q *Queries) PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const queueAlertChannelStandDowns = `-- name: QueueAlertChannelStandDowns :execrows
+WITH rule AS (
+    SELECT r.id, r.account_id, r.app_id, r.name, r.metric FROM alert_rules r WHERE r.id = $3::uuid
+), owed AS (
+    SELECT b.channel_id FROM alert_rule_channels b
+     WHERE b.rule_id = $3::uuid
+       AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $3::uuid AND e.resolved_at IS NULL)
+    UNION
+    SELECT x.channel_id FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+), moved AS (
+    DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+)
+INSERT INTO alert_channel_stand_downs
+    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+SELECT rule.id, owed.channel_id, rule.account_id, rule.app_id, rule.name, rule.metric,
+       $1::text, $2::timestamptz, $2::timestamptz
+  FROM rule CROSS JOIN owed
+ON CONFLICT (rule_id, channel_id) DO NOTHING
+`
+
+type QueueAlertChannelStandDownsParams struct {
+	Reason string
+	At     pgtype.Timestamptz
+	RuleID pgtype.UUID
+}
+
+// A rule whose episode ends without it recovering owes each bound channel a
+// recovery notice (ADR-20261104142830): the channels of its open episode,
+// and those whose recovery notice is still being retried, which move here.
+func (q *Queries) QueueAlertChannelStandDowns(ctx context.Context, db DBTX, arg QueueAlertChannelStandDownsParams) (int64, error) {
+	result, err := db.Exec(ctx, queueAlertChannelStandDowns, arg.Reason, arg.At, arg.RuleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const queueApplicationStandardExceptionChange = `-- name: QueueApplicationStandardExceptionChange :execrows
 UPDATE app_application_standards SET desired_revision=desired_revision+1,state='pending',error_code='',updated_at=$1::timestamptz,
  lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
@@ -87721,6 +87912,29 @@ func (q *Queries) RecordAlertChannelResolveRetry(ctx context.Context, db DBTX, a
 		arg.ResolvedAt,
 		arg.NextAttemptAt,
 		arg.LastError,
+	)
+	return err
+}
+
+const recordAlertChannelStandDownAttempt = `-- name: RecordAlertChannelStandDownAttempt :exec
+UPDATE alert_channel_stand_downs
+   SET attempts = attempts + 1, next_attempt_at = $1::timestamptz, last_error = $2::text
+ WHERE rule_id = $3::uuid AND channel_id = $4::uuid
+`
+
+type RecordAlertChannelStandDownAttemptParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+	RuleID        pgtype.UUID
+	ChannelID     pgtype.UUID
+}
+
+func (q *Queries) RecordAlertChannelStandDownAttempt(ctx context.Context, db DBTX, arg RecordAlertChannelStandDownAttemptParams) error {
+	_, err := db.Exec(ctx, recordAlertChannelStandDownAttempt,
+		arg.NextAttemptAt,
+		arg.LastError,
+		arg.RuleID,
+		arg.ChannelID,
 	)
 	return err
 }
@@ -102404,6 +102618,58 @@ func (q *Queries) UpdateInstanceStateIf(ctx context.Context, db DBTX, arg Update
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateNotificationChannel = `-- name: UpdateNotificationChannel :one
+UPDATE notification_channels
+   SET name = coalesce($1::text, name),
+       target_sealed = coalesce($2::bytea, target_sealed),
+       target_hint = coalesce($3::text, target_hint),
+       pagerduty_region = coalesce($4::text, pagerduty_region),
+       last_error = CASE WHEN $2::bytea IS NULL THEN last_error END,
+       last_error_at = CASE WHEN $2::bytea IS NULL THEN last_error_at END,
+       updated_at = now()
+ WHERE account_id = $5::uuid AND id = $6::uuid
+RETURNING id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at
+`
+
+type UpdateNotificationChannelParams struct {
+	Name            pgtype.Text
+	TargetSealed    []byte
+	TargetHint      pgtype.Text
+	PagerdutyRegion pgtype.Text
+	AccountID       pgtype.UUID
+	ID              pgtype.UUID
+}
+
+// Renames a channel or replaces its sealed destination (ADR-20261104142830).
+// A new destination clears the last error, which was the old one's.
+func (q *Queries) UpdateNotificationChannel(ctx context.Context, db DBTX, arg UpdateNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, updateNotificationChannel,
+		arg.Name,
+		arg.TargetSealed,
+		arg.TargetHint,
+		arg.PagerdutyRegion,
+		arg.AccountID,
+		arg.ID,
+	)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateOrgPlan = `-- name: UpdateOrgPlan :exec

@@ -46,9 +46,9 @@ func newAlertChannelCounter(reg prometheus.Registerer) func(kind, outcome string
 func newAlertRuleSkipCounter(reg prometheus.Registerer) func(reason string, n int) {
 	c := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "meterd_alert_rules_skipped_total",
-		Help: "Enabled alert rules a tick did not evaluate, by reason: deferred (the account spent its tick budget; they run first next tick) or not_released (the account's plan or capability flags no longer cover them). ADR-20261028101615.",
+		Help: "Enabled alert rules a tick did not evaluate, by reason: deferred (the account spent its tick budget; they run first next tick), not_released (the account's plan or capability flags no longer cover them) or over_plan_limit (past the plan's per-app or per-account rule cap, kept from a bigger plan). ADR-20261028101615, ADR-20261104142830.",
 	}, []string{"reason"})
-	for _, reason := range []string{"deferred", "not_released"} {
+	for _, reason := range []string{"deferred", "not_released", "over_plan_limit"} {
 		c.WithLabelValues(reason).Add(0)
 	}
 	if reg != nil {

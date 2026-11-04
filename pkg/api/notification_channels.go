@@ -29,6 +29,52 @@ type CreateNotificationChannelRequest struct {
 	Email               string `json:"email,omitempty"`
 }
 
+// UpdateNotificationChannelRequest is the PATCH
+// /v1/notification-channels/{id} body (ADR-20261104142830): a new name, or
+// a new destination for the channel's own kind, so a leaked Slack URL or
+// PagerDuty key is replaced without unbinding the channel from its rules.
+// The kind never changes. A PagerDuty region changes only with a new
+// routing key, because the stored key is sealed.
+type UpdateNotificationChannelRequest struct {
+	Name                *string `json:"name,omitempty"`
+	SlackWebhookURL     string  `json:"slack_webhook_url,omitempty"`
+	PagerDutyRoutingKey string  `json:"pagerduty_routing_key,omitempty"`
+	PagerDutyRegion     string  `json:"pagerduty_region,omitempty"`
+}
+
+// NormalizeUpdateNotificationChannelRequest checks an update against the
+// channel's kind; destination formats are checked by pkg/alertchannels at
+// the handler.
+func NormalizeUpdateNotificationChannelRequest(kind string, req UpdateNotificationChannelRequest) (UpdateNotificationChannelRequest, *Problem) {
+	if req.Name != nil && !notificationChannelNamePattern.MatchString(*req.Name) {
+		return req, ErrNotificationChannelInvalid("name must match [a-z][a-z0-9_-]{0,62}")
+	}
+	switch kind {
+	case "slack":
+		if req.PagerDutyRoutingKey != "" || req.PagerDutyRegion != "" {
+			return req, ErrNotificationChannelInvalid("a slack channel's destination is slack_webhook_url")
+		}
+	case "pagerduty":
+		if req.SlackWebhookURL != "" {
+			return req, ErrNotificationChannelInvalid("a pagerduty channel's destination is pagerduty_routing_key")
+		}
+		if req.PagerDutyRegion != "" && req.PagerDutyRoutingKey == "" {
+			return req, ErrNotificationChannelInvalid("change pagerduty_region together with pagerduty_routing_key; the stored key is sealed")
+		}
+		if req.PagerDutyRoutingKey != "" && req.PagerDutyRegion == "" {
+			req.PagerDutyRegion = "us"
+		}
+	case "email":
+		if req.SlackWebhookURL != "" || req.PagerDutyRoutingKey != "" || req.PagerDutyRegion != "" {
+			return req, ErrNotificationChannelInvalid("an email channel always sends to the account's own email; only its name can change")
+		}
+	}
+	if req.Name == nil && req.SlackWebhookURL == "" && req.PagerDutyRoutingKey == "" {
+		return req, ErrNotificationChannelInvalid("set name or the channel's destination")
+	}
+	return req, nil
+}
+
 // NotificationChannelResponse is one channel. Target is a non-secret hint
 // (Slack workspace and hook ids, the routing key's last four characters, or
 // the email address); the sealed destination is never returned.
@@ -110,6 +156,12 @@ func (c *Client) CreateNotificationChannel(ctx context.Context, req CreateNotifi
 func (c *Client) GetNotificationChannel(ctx context.Context, id string) (NotificationChannelResponse, error) {
 	var out NotificationChannelResponse
 	return out, c.do(ctx, "GET", "/v1/notification-channels/"+id, nil, &out)
+}
+
+// UpdateNotificationChannel renames a channel or replaces its destination.
+func (c *Client) UpdateNotificationChannel(ctx context.Context, id string, req UpdateNotificationChannelRequest) (NotificationChannelResponse, error) {
+	var out NotificationChannelResponse
+	return out, c.do(ctx, "PATCH", "/v1/notification-channels/"+id, req, &out)
 }
 
 // DeleteNotificationChannel removes one channel.

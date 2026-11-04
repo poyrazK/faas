@@ -1204,6 +1204,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// meterd holds the alerting key.
 	go runAlertTestSends(ctx, evaluator, log)
 	evaluator.SetRuleRelease(release.ForAccount)
+	evaluator.SetRuleLimits(release.RuleLimits)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
 	// ADR-20261022172052: firing app alerts carry what the log ledger shows,
 	// for the accounts the log-search capability flag releases it to

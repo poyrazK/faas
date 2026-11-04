@@ -353,6 +353,20 @@ type AlertChannelResolveRetry struct {
 	LastError     string
 }
 
+type AlertChannelStandDown struct {
+	RuleID        pgtype.UUID
+	ChannelID     pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	RuleName      string
+	RuleMetric    string
+	Reason        string
+	QueuedAt      pgtype.Timestamptz
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+}
+
 type AlertDelivery struct {
 	ID                      pgtype.UUID
 	RuleID                  pgtype.UUID

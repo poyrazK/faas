@@ -75,6 +75,13 @@ type SyntheticCheckRun struct {
 	ErrorClass string `json:"error_class,omitempty"`
 }
 
+// SyntheticProbeCookieName names the cookie every synthetic probe carries.
+// A request with a cookie is never answered from the edge cache (ADR-122
+// D3), so a probe reaches the app even on a path the edge caches, and a
+// stale copy served because the app failed cannot pass a check
+// (ADR-20261104142830).
+const SyntheticProbeCookieName = "gregale_synthetic_probe"
+
 // NormalizeCreateSyntheticCheck applies defaults and checks the request
 // against the closed sets the synthetic_checks CHECKs enforce.
 func NormalizeCreateSyntheticCheck(req CreateSyntheticCheckRequest) (CreateSyntheticCheckRequest, *Problem) {

@@ -46,6 +46,8 @@ type Service struct {
 	Enabled bool
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// Reads bounds each account's data reads in flight; nil does not.
+	Reads *ReadSlots
 }
 
 const widgetTitleMax = 80
@@ -275,6 +277,8 @@ func (s *Service) writeErr(w http.ResponseWriter, r *http.Request, op string, er
 			"the account already has a dashboard with that name"))
 	case errors.As(err, &quota):
 		api.WriteProblem(w, api.ErrDashboardQuota(quota.Limit, quota.Observed))
+	case errors.Is(err, ErrDataBusy):
+		api.WriteProblem(w, api.ErrDashboardDataBusy(api.DashboardDataReadsPerAccount))
 	default:
 		s.fail(w, r, op, err)
 	}

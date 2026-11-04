@@ -207,6 +207,7 @@ type Evaluator struct {
 	// Per-account evaluation (ADR-20261028101615); see accounts.go.
 	release       func(ctx context.Context, accountID string) RuleRelease
 	ruleOutcome   func(reason string, n int)
+	ruleLimits    RuleLimits // ADR-20261104142830; nil = no plan caps
 	workers       int
 	accountBudget time.Duration
 	resumeMu      sync.Mutex
@@ -389,6 +390,9 @@ type Stats struct {
 	// SkippedNotReleased counts rules not evaluated because the account's
 	// plan or capability flags no longer cover them (ADR-20261028101615).
 	SkippedNotReleased int
+	// SkippedOverPlanLimit counts rules past the plan's per-app or
+	// per-account cap, kept from a bigger plan (ADR-20261104142830).
+	SkippedOverPlanLimit int
 	// ResolvesDelivered and ResolvesFailed count resolve events sent to the
 	// webhooks of rules that asked for them (ADR-20261029203000).
 	ResolvesDelivered, ResolvesFailed int
@@ -398,6 +402,13 @@ type Stats struct {
 	// notices re-sent to channels that had not taken them, and those given
 	// up after AlertChannelResolveRetryWindow (ADR-20261031144636).
 	ChannelResolvesRetried, ChannelResolvesAbandoned int
+	// StoodDown counts rules whose episode ended without them recovering:
+	// disabled, no longer covered, or their app deleted
+	// (ADR-20261104142830). ChannelStandDownsDelivered and
+	// ChannelStandDownsAbandoned count the recovery notices those episodes
+	// (and deleted rules') owed channels: sent, and given up.
+	StoodDown                                              int
+	ChannelStandDownsDelivered, ChannelStandDownsAbandoned int
 }
 
 // add sums the per-rule counters of an account's tick into s; Evaluated and
@@ -414,8 +425,10 @@ func (s *Stats) add(o Stats) {
 	s.ActionSkipped += o.ActionSkipped
 	s.Deferred += o.Deferred
 	s.SkippedNotReleased += o.SkippedNotReleased
+	s.SkippedOverPlanLimit += o.SkippedOverPlanLimit
 	s.ResolvesDelivered += o.ResolvesDelivered
 	s.ResolvesFailed += o.ResolvesFailed
+	s.StoodDown += o.StoodDown
 }
 
 // RunOnce walks the enabled alert-rule list once and applies the
@@ -459,7 +472,9 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 		}
 	}
 	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
+	e.standDownStranded(ctx, e.now(), &stats)
 	stats.ChannelResolvesRetried, stats.ChannelResolvesAbandoned = e.retryChannelResolves(ctx, e.now())
+	stats.ChannelStandDownsDelivered, stats.ChannelStandDownsAbandoned = e.deliverChannelStandDowns(ctx, e.now())
 	stats.DeliveriesPurged = e.purgeDeliveries(ctx, e.now())
 	return stats, nil
 }
@@ -580,13 +595,17 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		if health != nil {
 			e.recoverMCPConnectionHealth(ctx, rule, observed, health, now, stats)
 		}
-		// Healthy tick — comparison false. If we were firing,
-		// flip back to ok and emit audit.resolved.
+		// Healthy tick — comparison false. If an episode was open, flip
+		// back to ok and announce the recovery. The episode stays open
+		// through degraded and unknown reads, so a firing rule that had
+		// one of those before recovering is announced too
+		// (ADR-20261104142830).
 		if rule.State != state.AlertStateOk {
+			wasFiring := e.episodeWasFiring(ctx, rule)
 			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
-			} else if changed && rule.State == state.AlertStateFiring {
+			} else if changed && wasFiring {
 				if e.audit != nil && !api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
 					e.audit.Emit(ctx, "alert.resolved", &rule.AccountID, map[string]any{
 						"rule_id": rule.ID,
@@ -597,7 +616,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				// close the incident the fire opened.
 				e.notifyChannels(ctx, rule, alertchannels.EventResolve, observed, now)
 				if rule.NotifyResolved && rule.WebhookURL != "" {
-					e.deliverResolve(ctx, rule, observed, now, stats)
+					e.deliverResolve(ctx, rule, &observed, "", now, stats)
 				}
 			}
 		}
@@ -857,7 +876,10 @@ func (e *Evaluator) openIdentities() []*age.X25519Identity {
 // rules that asked for one (ADR-20261029203000). A resolve is not a fire: it
 // takes no delivery-ledger row and runs no action, and a failure is logged and
 // counted, never retried on a later tick.
-func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, observed float64, now time.Time, stats *Stats) {
+// deliverResolve sends the webhook's alert.resolved. A rule stood down
+// (ADR-20261104142830) has no observed value; its payload carries the
+// reason instead.
+func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, observed *float64, reason string, now time.Time, stats *Stats) {
 	idents := e.openIdentities()
 	if len(idents) == 0 {
 		stats.SkippedNoIdentity++
@@ -869,17 +891,21 @@ func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, ob
 		stats.ResolvesFailed++
 		return
 	}
+	payload := map[string]any{
+		"event": eventResolve, "rule_id": rule.ID, "rule_name": rule.Name,
+		"metric": string(rule.Metric), "comparison": string(rule.Comparison), "threshold": rule.Threshold,
+		"observed": observed, "window": string(rule.WindowSpec), "resolved_at": now.UTC().Format(time.RFC3339Nano),
+	}
+	if reason != "" {
+		payload["reason"] = reason
+	}
 	evt := webhookout.Event{
 		ID:         uuid.NewString(),
 		OccurredAt: now,
 		Rule:       rule.Name,
 		RuleName:   rule.Name,
 		AppID:      rule.AppID,
-		Payload: map[string]any{
-			"event": eventResolve, "rule_id": rule.ID, "rule_name": rule.Name,
-			"metric": string(rule.Metric), "comparison": string(rule.Comparison), "threshold": rule.Threshold,
-			"observed": observed, "window": string(rule.WindowSpec), "resolved_at": now.UTC().Format(time.RFC3339Nano),
-		},
+		Payload:    payload,
 	}
 	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
 	result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)

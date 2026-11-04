@@ -677,6 +677,32 @@ CREATE FUNCTION public.alert_rules_log_lines_metric_base() RETURNS text
 
 
 --
+-- Name: alert_rules_queue_channel_stand_downs(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.alert_rules_queue_channel_stand_downs() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO alert_channel_stand_downs
+        (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+    SELECT OLD.id, owed.channel_id, OLD.account_id, OLD.app_id, OLD.name, OLD.metric, 'deleted', now(), now()
+      FROM (
+            SELECT b.channel_id FROM alert_rule_channels b
+             WHERE b.rule_id = OLD.id
+               AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = OLD.id AND e.resolved_at IS NULL)
+            UNION
+            SELECT r.channel_id FROM alert_channel_resolve_retries r WHERE r.rule_id = OLD.id
+           ) owed
+      JOIN notification_channels c ON c.id = owed.channel_id
+      JOIN accounts a ON a.id = OLD.account_id
+    ON CONFLICT (rule_id, channel_id) DO NOTHING;
+    RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: alert_rules_slo_metric_base(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -29021,6 +29047,28 @@ CREATE TABLE public.alert_channel_resolve_retries (
 
 
 --
+-- Name: alert_channel_stand_downs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_channel_stand_downs (
+    rule_id uuid NOT NULL,
+    channel_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid,
+    rule_name text NOT NULL,
+    rule_metric text NOT NULL,
+    reason text NOT NULL,
+    queued_at timestamp with time zone NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT alert_channel_stand_downs_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT alert_channel_stand_downs_last_error_check CHECK ((char_length(last_error) <= 512)),
+    CONSTRAINT alert_channel_stand_downs_reason_check CHECK ((reason = ANY (ARRAY['disabled'::text, 'not_released'::text, 'app_deleted'::text, 'deleted'::text])))
+);
+
+
+--
 -- Name: alert_deliveries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56913,6 +56961,14 @@ ALTER TABLE ONLY public.alert_channel_resolve_retries
 
 
 --
+-- Name: alert_channel_stand_downs alert_channel_stand_downs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_channel_stand_downs
+    ADD CONSTRAINT alert_channel_stand_downs_pkey PRIMARY KEY (rule_id, channel_id);
+
+
+--
 -- Name: alert_deliveries alert_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69374,6 +69430,27 @@ CREATE INDEX alert_channel_resolve_retries_due_idx ON public.alert_channel_resol
 
 
 --
+-- Name: alert_channel_stand_downs_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_channel_stand_downs_account_idx ON public.alert_channel_stand_downs USING btree (account_id);
+
+
+--
+-- Name: alert_channel_stand_downs_channel_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_channel_stand_downs_channel_idx ON public.alert_channel_stand_downs USING btree (channel_id);
+
+
+--
+-- Name: alert_channel_stand_downs_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_channel_stand_downs_due_idx ON public.alert_channel_stand_downs USING btree (next_attempt_at);
+
+
+--
 -- Name: alert_deliveries_fired_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -79840,6 +79917,13 @@ CREATE TRIGGER alert_presets_set_updated_at_trg BEFORE UPDATE ON public.alert_pr
 
 
 --
+-- Name: alert_rules alert_rules_channel_stand_downs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER alert_rules_channel_stand_downs BEFORE DELETE ON public.alert_rules FOR EACH ROW EXECUTE FUNCTION public.alert_rules_queue_channel_stand_downs();
+
+
+--
 -- Name: alert_rules alert_rules_keep_episodes; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -86700,6 +86784,22 @@ ALTER TABLE ONLY public.alert_channel_resolve_retries
 
 ALTER TABLE ONLY public.alert_channel_resolve_retries
     ADD CONSTRAINT alert_channel_resolve_retries_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_channel_stand_downs alert_channel_stand_downs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_channel_stand_downs
+    ADD CONSTRAINT alert_channel_stand_downs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_channel_stand_downs alert_channel_stand_downs_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_channel_stand_downs
+    ADD CONSTRAINT alert_channel_stand_downs_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
 
 
 --
