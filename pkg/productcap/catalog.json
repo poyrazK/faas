@@ -340,6 +340,8 @@
         "/v1/account/keys",
         "/v1/agent-connections",
         "/v1/keys",
+        "/v1/orgs/{}/agent-connections",
+        "/v1/orgs/{}/agent-policy",
         "/v1/orgs/{}/keys"
       ],
       "cli": [

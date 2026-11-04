@@ -36,7 +36,7 @@ class TaskExecutionPolicyTests(unittest.TestCase):
                          [CANONICAL_OWNER, LEGACY_GO_OWNER])
 
 
-if os.environ.get("MCP_TASKS_REQUIRE_POSTGRES") == "1" and not os.environ.get("MCP_TASKS_TEST_DATABASE_URL"):
+if os.environ.get("MCP_TASKS_REQUIRE_POSTGRES", "") == "1" and not os.environ.get("MCP_TASKS_TEST_DATABASE_URL"):
     raise RuntimeError("MCP_TASKS_TEST_DATABASE_URL is required")
 
 
