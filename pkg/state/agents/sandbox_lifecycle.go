@@ -19,10 +19,12 @@ import (
 
 // SandboxClaim is a session a replica holds.
 type SandboxClaim struct {
-	ID         string
-	AccountID  string
-	Plan       string
-	RAMMB      int
+	ID        string
+	AccountID string
+	Plan      string
+	RAMMB     int
+	// Network is the session's network mode (ADR-20261027090013 §6).
+	Network    string
 	LeaseToken string
 	SandboxLease
 }
@@ -72,7 +74,7 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 	if err != nil {
 		return SandboxClaim{}, false, fmt.Errorf("read claimed session: %w", err)
 	}
-	return SandboxClaim{ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), LeaseToken: token,
+	return SandboxClaim{ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode, LeaseToken: token,
 		SandboxLease: SandboxLease{CloseRequested: row.CloseRequested, IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second,
 			ExpiresAt: row.ExpiresAt.Time.UTC()}}, true, nil
 }

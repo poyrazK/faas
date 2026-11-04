@@ -131,7 +131,7 @@ func (m *Manager) coldBootSpecForWake(nc netns.Config, req WakeRequest, serviceD
 		SecretsEnvJSON:     req.preparedSecretsEnvJSON,
 		APIEnvJSON:         req.preparedAPIEnvJSON,
 		ServiceDiscoveryIP: serviceDiscoveryIP,
-		Networkless:        req.ExecutionOnly,
+		Networkless:        req.networkless(),
 		AppTask:            req.AppTaskOnly,
 		AgentInput:         req.agentRunOnly,
 		InputKey:           req.agentRunInputKey,

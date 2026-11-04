@@ -3284,6 +3284,8 @@ type SandboxRunStart struct {
 	RamMb         int32                  `protobuf:"varint,4,opt,name=ram_mb,json=ramMb,proto3" json:"ram_mb,omitempty"`
 	Vcpu          int32                  `protobuf:"varint,5,opt,name=vcpu,proto3" json:"vcpu,omitempty"`
 	CpuMillicores int32                  `protobuf:"varint,6,opt,name=cpu_millicores,json=cpuMillicores,proto3" json:"cpu_millicores,omitempty"`
+	// network_mode is "none" or "registries" (ADR-20261027090013 §6).
+	NetworkMode   string `protobuf:"bytes,7,opt,name=network_mode,json=networkMode,proto3" json:"network_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3358,6 +3360,13 @@ func (x *SandboxRunStart) GetCpuMillicores() int32 {
 		return x.CpuMillicores
 	}
 	return 0
+}
+
+func (x *SandboxRunStart) GetNetworkMode() string {
+	if x != nil {
+		return x.NetworkMode
+	}
+	return ""
 }
 
 type SandboxRunFreeze struct {
@@ -6596,7 +6605,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\aproceed\x18\x02 \x01(\v2&.onebox.faas.schedd.v1.AgentRunProceedH\x00R\aproceed\x12A\n" +
 	"\x06freeze\x18\x03 \x01(\v2'.onebox.faas.schedd.v1.SandboxRunFreezeH\x00R\x06freeze\x12>\n" +
 	"\x05close\x18\x04 \x01(\v2&.onebox.faas.schedd.v1.SandboxRunCloseH\x00R\x05closeB\a\n" +
-	"\x05frame\"\xb5\x01\n" +
+	"\x05frame\"\xd8\x01\n" +
 	"\x0fSandboxRunStart\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
@@ -6605,7 +6614,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x04plan\x18\x03 \x01(\tR\x04plan\x12\x15\n" +
 	"\x06ram_mb\x18\x04 \x01(\x05R\x05ramMb\x12\x12\n" +
 	"\x04vcpu\x18\x05 \x01(\x05R\x04vcpu\x12%\n" +
-	"\x0ecpu_millicores\x18\x06 \x01(\x05R\rcpuMillicores\"\x12\n" +
+	"\x0ecpu_millicores\x18\x06 \x01(\x05R\rcpuMillicores\x12!\n" +
+	"\fnetwork_mode\x18\a \x01(\tR\vnetworkMode\"\x12\n" +
 	"\x10SandboxRunFreeze\"\x11\n" +
 	"\x0fSandboxRunClose\"\xc4\x03\n" +
 	"\x0fSandboxRunEvent\x12?\n" +

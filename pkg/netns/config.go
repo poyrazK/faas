@@ -27,13 +27,17 @@ const (
 	// ~1 s however early the guest came up. The /30 has exactly one
 	// neighbour, so a short interval costs a handful of tiny frames.
 	TapARPRetransMs         = 50
-	AppPort                 = 8080         // the :8080 contract (spec §2)
-	ServiceProxyPort        = 10081        // Fetch-compatible service proxy on HostBridgeIP (ADR-384)
-	LegacyServiceProxyPort  = 10080        // compatibility for persisted bindings (ADR-169)
-	ServiceProxyHTTPSPort   = 443          // opt-in private HTTPS service proxy on HostBridgeIP
-	ServiceDiscoveryDNSPort = 53           // guest service-name resolver on HostBridgeIP (ADR-170)
-	DatabaseRoutePort       = 5432         // managed-database route port on DatabaseRouteAddress (ADR-1027); mirrors api.DatabaseRoutePort
-	TenantBridge            = "br-tenants" // root-ns bridge the veth host-side enslaves to
+	AppPort                 = 8080  // the :8080 contract (spec §2)
+	ServiceProxyPort        = 10081 // Fetch-compatible service proxy on HostBridgeIP (ADR-384)
+	LegacyServiceProxyPort  = 10080 // compatibility for persisted bindings (ADR-169)
+	ServiceProxyHTTPSPort   = 443   // opt-in private HTTPS service proxy on HostBridgeIP
+	ServiceDiscoveryDNSPort = 53    // guest service-name resolver on HostBridgeIP (ADR-170)
+	// SandboxRegistriesDNSPort is the bridge resolver that answers only
+	// package-registry and git-host names, for sandbox sessions in
+	// registries mode (ADR-20261027090013 §6).
+	SandboxRegistriesDNSPort = 5356
+	DatabaseRoutePort        = 5432         // managed-database route port on DatabaseRouteAddress (ADR-1027); mirrors api.DatabaseRoutePort
+	TenantBridge             = "br-tenants" // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
 	// value in the per-netns forward-chain argv, so goconst demands
 	// the literals live in named constants.
@@ -142,6 +146,11 @@ type Config struct {
 	// Tenant egress policy, operator exceptions, private service addresses, and
 	// the legacy proxy do not apply to candidate code.
 	QualificationOnly bool
+	// SandboxRegistries marks a sandbox session VM in registries mode
+	// (ADR-20261027090013 §6): its DNS goes to the registries-only resolver,
+	// it reaches none of the bridge's service ports, and the DNS gate with
+	// port 443 alone leaves it only the addresses that resolver answered.
+	SandboxRegistries bool
 	HostBits          int // prefix length for HostIP (16)
 	EgressMbit        int // per-plan egress cap via tc on VethHost; 0 = no cap (legacy / disabled)
 	// DenySet is the typed egress denylist applied at the per-netns
@@ -346,9 +355,14 @@ func (c Config) databaseRouteRules(nft func(...string) []string) [][]string {
 	if !addr.IsValid() || !addr.Is4() {
 		return nil
 	}
+	drop := nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "drop")
+	if c.SandboxRegistries {
+		// A sandbox session reaches no managed database (ADR-20261027090013 §6).
+		return [][]string{drop}
+	}
 	return [][]string{
 		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "tcp", "dport", strconv.Itoa(DatabaseRoutePort), "accept"),
-		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "drop"),
+		drop,
 	}
 }
 
@@ -365,9 +379,14 @@ func (c Config) serviceAddressRules(nft func(...string) []string) [][]string {
 		return nil
 	}
 	block := prefix.Masked().String()
+	drop := nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", block, "drop")
+	if c.SandboxRegistries {
+		// A sandbox session reaches no private service (ADR-20261027090013 §6).
+		return [][]string{drop}
+	}
 	return [][]string{
 		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", block, "meta", "l4proto", "tcp", "accept"),
-		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", block, "drop"),
+		drop,
 	}
 }
 
@@ -695,6 +714,9 @@ func (c Config) NftCommands() [][]string {
 		if c.QualificationOnly {
 			proxyPorts = []int{ServiceProxyPort}
 		}
+		if c.SandboxRegistries {
+			proxyPorts = nil
+		}
 		if c.RehearsalRunID != "" && !c.QualificationOnly {
 			proxyPorts = append(proxyPorts, rehearsalPostgresProxyPort, rehearsalObjectProxyPort)
 		}
@@ -702,13 +724,16 @@ func (c Config) NftCommands() [][]string {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
 		}
-		if c.ServiceProxyHTTPS {
+		if c.ServiceProxyHTTPS && !c.SandboxRegistries {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept")
 		}
 		dnsPort := ServiceDiscoveryDNSPort
-		if c.RehearsalRunID != "" {
+		switch {
+		case c.RehearsalRunID != "":
 			dnsPort = RehearsalServiceDiscoveryDNSPort
+		case c.SandboxRegistries:
+			dnsPort = SandboxRegistriesDNSPort
 		}
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(dnsPort), "accept")
@@ -1225,14 +1250,19 @@ func (c Config) egressPortRule(nft func(...string) []string, family string) []st
 }
 
 // GuestDNSPinCommands redirects every DNS query the guest sends, to any
-// destination, to the bridge resolver (ADR-361, ADR-170). It is its own nat
+// destination, to the bridge resolver (ADR-361, ADR-170), or to the
+// registries-only resolver for a sandbox in registries mode. It is its own nat
 // chain so RetargetAppPortCommands, which flushes prerouting, never removes
 // it.
 func (c Config) GuestDNSPinCommands(nft func(...string) []string) [][]string {
 	if !c.HostBridgeIP.IsValid() || !c.HostBridgeIP.Is4() {
 		return nil
 	}
-	target := fmt.Sprintf("%s:%d", c.HostBridgeIP, ServiceDiscoveryDNSPort)
+	resolver := ServiceDiscoveryDNSPort
+	if c.SandboxRegistries {
+		resolver = SandboxRegistriesDNSPort
+	}
+	target := fmt.Sprintf("%s:%d", c.HostBridgeIP, resolver)
 	port := strconv.Itoa(ServiceDiscoveryDNSPort)
 	return [][]string{
 		nft("add", "chain", "ip", "faas", guestDNSChain, "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"),

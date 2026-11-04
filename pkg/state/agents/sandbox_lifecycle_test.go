@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/agents"
 )
 
@@ -19,7 +20,7 @@ func TestSandboxLifecycle(t *testing.T) {
 	sb := admitSandbox(t, s, agents.SandboxAdmission{IdleTimeoutSec: 120})
 	claim, found, err := s.ClaimSandbox(ctx, "agentd", "tok-a", ttl, maxLive(5))
 	if err != nil || !found || claim.ID != sb.ID || claim.RAMMB != 1024 || claim.LeaseToken != "tok-a" || claim.IdleTimeout != 2*time.Minute ||
-		claim.CloseRequested || claim.Plan == "" {
+		claim.CloseRequested || claim.Plan == "" || claim.Network != api.SandboxNetworkRegistries {
 		t.Fatalf("claim = %+v, %v, %v", claim, found, err)
 	}
 	if _, found, _ := s.ClaimSandbox(ctx, "agentd", "tok-b", ttl, maxLive(5)); found {

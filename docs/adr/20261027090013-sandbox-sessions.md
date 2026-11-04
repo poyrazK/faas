@@ -150,7 +150,7 @@ Control-plane routes are served by apid and gated. Data-plane routes are served 
 | `network.mode` | Egress |
 |---|---|
 | `none` | None. The ADR-989 relay is available only if the agent version grants integrations |
-| `registries` (default) | Package registries and git hosts (npm, PyPI, crates.io, GitHub) on TCP 443, through an ADR-031 allowlist under ADR-361 |
+| `registries` (default) | Package registries and git hosts (npm, PyPI, crates.io, GitHub) on TCP 443, through a DNS-pinned name allowlist on ADR-373's DNS-gated egress under ADR-361 (step 6) |
 | `web` | General web, through the agent egress gateway and politeness proxy under the acceptable-use policy (ADR-20261027090014 §4). Tier 1 managed fetch and search is reachable through the relay in every mode |
 
 Model credentials never enter a session. The harness that calls the model runs outside it. Commands inside that need a model use the relay (ADR-20261027090010 §7).
@@ -447,6 +447,25 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - backoff for a session that fails to boot again and again;
      - metrics.
 6. Network modes `none` and `registries`.
+   - **As built (local branch, no PR yet).** The mode rides the session from its row to the VM: agentd's claim → schedd `SandboxRunStart.network_mode` → vmmd `RunSandboxStart.network_mode` → `fcvm.SandboxWakeRequest.Network`. An empty mode, from a daemon of the previous release, is `none`. `web` is refused at schedd, vmmd and fcvm.
+   - **`none`** boots without a network, as step 5 did.
+   - **`registries`** uses a DNS-pinned allowlist on ADR-373's DNS-gated egress, not an ADR-031 CIDR list: registry CDNs change addresses too often for a CIDR list.
+     - The VM gets the ordinary netns and `tap0` and stays execution-only. `Lease.AgentSized` keeps agent-run CPU sizing for it.
+     - Egress: the DNS gate, new TCP on 443 only, and the plan's connection rates. The VM reaches no bridge service port, private service address, managed-database route or SMTP.
+     - The guest's DNS is pinned to a third bridge resolver on port 5356 (`gateway.SandboxRegistriesDNSPort`, `netns.SandboxRegistriesDNSPort`). It forwards one A or AAAA question for a name in `api.SandboxRegistryDomains` or a subdomain of one, and answers REFUSED to every other query, private service names included.
+     - Only answers to allowed names reach the egress gate. vmmd checks the name again (`AllowResolvedEgressRequest.name`): a registries VM admits no address for any other name, or for an empty one.
+     - vmmd refuses to boot a registries session when DNS-gated egress is switched off.
+   - **Domains.** `api.SandboxRegistryDomains` covers:
+     - npm and Yarn;
+     - PyPI;
+     - crates.io;
+     - the Go module proxy and checksum database;
+     - GitHub, including `githubusercontent.com`;
+     - the Alpine, Debian and Ubuntu mirrors over HTTPS.
+   - **Known gaps:**
+     - An allowed name on a shared CDN opens that CDN address to every host it serves, so domain fronting through it is possible.
+     - Mirrors that serve only port 80 are unreachable. This affects many apt mirrors, so `apt` needs HTTPS sources.
+     - Private registries and custom git hosts are not yet configurable.
 7. Workspace persist and hydrate.
 8. Exposed ports and preview URLs: the preview domain, per-port DNAT, the gateway host route, tokens, and rate limits (§11).
 9. `GregaleSandboxClient` (with `resolveExposedPort`) and the PR-triage example.

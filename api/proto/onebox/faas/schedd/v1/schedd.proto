@@ -1262,6 +1262,8 @@ message SandboxRunStart {
   int32 ram_mb = 4;
   int32 vcpu = 5;
   int32 cpu_millicores = 6;
+  // network_mode is "none" or "registries" (ADR-20261027090013 §6).
+  string network_mode = 7;
 }
 
 message SandboxRunFreeze {}

@@ -49,7 +49,8 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		return opErr
 	}
 	admission := sched.SandboxAdmission{SandboxID: start.GetSandboxId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
-		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores())}
+		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
+		Network: start.GetNetworkMode()}
 	ctx := stream.Context()
 	var sendMu sync.Mutex
 	send := func(ev *scheddpb.SandboxRunEvent) error {

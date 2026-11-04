@@ -999,7 +999,7 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 }
 
 const getSandboxSessionClaim = `-- name: GetSandboxSessionClaim :one
-SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, sb.idle_timeout_sec, sb.expires_at,
+SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, sb.network_mode, sb.idle_timeout_sec, sb.expires_at,
   (sb.close_requested_at IS NOT NULL)::boolean AS close_requested
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id WHERE sb.id=$1::text::uuid
 `
@@ -1009,6 +1009,7 @@ type GetSandboxSessionClaimRow struct {
 	AccountID      string
 	Plan           string
 	RamMb          int32
+	NetworkMode    string
 	IdleTimeoutSec int32
 	ExpiresAt      pgtype.Timestamptz
 	CloseRequested bool
@@ -1022,6 +1023,7 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.AccountID,
 		&i.Plan,
 		&i.RamMb,
+		&i.NetworkMode,
 		&i.IdleTimeoutSec,
 		&i.ExpiresAt,
 		&i.CloseRequested,

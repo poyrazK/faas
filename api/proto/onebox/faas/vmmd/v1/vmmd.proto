@@ -3300,6 +3300,10 @@ message RunSandboxStart {
   // quiet_pause_after_ms pauses the VM between calls; zero keeps it
   // running.
   int64 quiet_pause_after_ms = 10;
+  // network_mode is "none" or "registries" (ADR-20261027090013 §6):
+  // registries boots the VM with DNS-gated egress to package registries
+  // and git hosts on TCP 443.
+  string network_mode = 11;
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),
@@ -3377,6 +3381,10 @@ message AllowResolvedEgressRequest {
   // app's bound managed databases (ADR 20261026150000): vmmd also opens that
   // TCP port to the addresses. An older resolver leaves it zero.
   uint32 database_port = 4;
+  // name is the answered name. vmmd admits a registries-mode sandbox
+  // session's addresses only for names it allows (ADR-20261027090013 §6);
+  // an older resolver leaves it empty, which admits none for such a VM.
+  string name = 5;
 }
 
 message AllowResolvedEgressAck {

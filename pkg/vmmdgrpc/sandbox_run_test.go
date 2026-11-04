@@ -216,6 +216,11 @@ func TestRunSandboxRefusals(t *testing.T) {
 			r.GetStart().SandboxId = ""
 			return r
 		}(), codes.InvalidArgument},
+		{"web network", true, func() *vmmdpb.RunSandboxRequest {
+			r := sandboxRunStart()
+			r.GetStart().NetworkMode = "web"
+			return r
+		}(), codes.InvalidArgument},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			vmm := newSandboxRunVMM()

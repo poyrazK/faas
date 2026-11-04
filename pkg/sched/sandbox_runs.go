@@ -34,6 +34,17 @@ type SandboxAdmission struct {
 	RAMMB         int
 	VCPU          int
 	CPUMillicores int
+	// Network is the session's network mode (ADR-20261027090013 §6); empty
+	// is none, what an agentd from before network modes sends.
+	Network string
+}
+
+// network is the mode the session boots with.
+func (a SandboxAdmission) network() string {
+	if a.Network == "" {
+		return api.SandboxNetworkNone
+	}
+	return a.Network
 }
 
 // SandboxSpec is the machine vmmd boots for one session.
@@ -48,6 +59,7 @@ type SandboxSpec struct {
 	MemSizeMiB      int
 	CPUMillicores   int
 	QuietPauseAfter time.Duration
+	Network         string
 }
 
 // SandboxControl is a request agentd sends a live session's VM.
@@ -117,7 +129,7 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	}
 	spec := SandboxSpec{Instance: placement.Instance, SandboxID: a.SandboxID, AccountID: a.AccountID, Plan: a.Plan,
 		BaseKey: r.cfg.BaseKey, LayerKey: r.cfg.SandboxLayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB,
-		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond}
+		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network()}
 	if err := router.RunSandbox(ctx, placement.NodeID, spec, hooks, control); err != nil {
 		return fmt.Errorf("sched: sandbox %s on node %s: %w", a.SandboxID, placement.NodeID, err)
 	}
@@ -133,6 +145,8 @@ func (a SandboxAdmission) validate() error {
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox RAM %d MB is outside the %s plan", a.RAMMB, a.Plan)}
 	case a.VCPU < 1 || a.VCPU > api.AgentRunVCPUMax[idx] || a.CPUMillicores < 1:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox vCPU %d is outside the %s plan", a.VCPU, a.Plan)}
+	case a.network() != api.SandboxNetworkNone && a.network() != api.SandboxNetworkRegistries:
+		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox network mode %q is not supported", a.Network)}
 	}
 	return nil
 }
@@ -166,7 +180,7 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 	if err := stream.Send(&vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Start{Start: &vmmdpb.RunSandboxStart{
 		Instance: spec.Instance, SandboxId: spec.SandboxID, AccountId: spec.AccountID, Plan: string(spec.Plan),
 		BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB),
-		CpuMillicores: int32(spec.CPUMillicores), QuietPauseAfterMs: spec.QuietPauseAfter.Milliseconds(),
+		CpuMillicores: int32(spec.CPUMillicores), QuietPauseAfterMs: spec.QuietPauseAfter.Milliseconds(), NetworkMode: spec.Network,
 	}}}); err != nil {
 		return liftErr(err)
 	}

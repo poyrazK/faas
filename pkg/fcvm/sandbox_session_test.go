@@ -31,7 +31,7 @@ func (v *sandboxTestVMM) DialSandbox(context.Context, string) (net.Conn, error) 
 func TestWakeSandboxRejectsIncompleteRequests(t *testing.T) {
 	m := NewManager(&fakeRunner{}, &sandboxTestVMM{fakeVMM: &fakeVMM{}}, Paths{}, "1.0.0", nil, nil)
 	full := SandboxWakeRequest{Instance: "s", SandboxID: "sbx-1", AccountID: "acct", Plan: api.PlanPro, BaseKey: "base/runner-agent-amd64.ext4",
-		LayerKey: "base/sandbox-layer-v1-amd64.ext4", VcpuCount: 1, MemSizeMiB: 1024, CPUMillicores: 1000}
+		LayerKey: "base/sandbox-layer-v1-amd64.ext4", VcpuCount: 1, MemSizeMiB: 1024, CPUMillicores: 1000, Network: api.SandboxNetworkNone}
 	for name, mutate := range map[string]func(*SandboxWakeRequest){
 		"no instance":    func(r *SandboxWakeRequest) { r.Instance = "" },
 		"no sandbox":     func(r *SandboxWakeRequest) { r.SandboxID = "" },
@@ -39,6 +39,8 @@ func TestWakeSandboxRejectsIncompleteRequests(t *testing.T) {
 		"no layer":       func(r *SandboxWakeRequest) { r.LayerKey = "" },
 		"no memory":      func(r *SandboxWakeRequest) { r.MemSizeMiB = 0 },
 		"negative pause": func(r *SandboxWakeRequest) { r.QuietPauseAfter = -time.Second },
+		"no network":     func(r *SandboxWakeRequest) { r.Network = "" },
+		"web network":    func(r *SandboxWakeRequest) { r.Network = api.SandboxNetworkWeb },
 	} {
 		req := full
 		mutate(&req)

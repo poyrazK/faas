@@ -20,6 +20,41 @@ const (
 	SandboxNetworkWeb        = "web"
 )
 
+// SandboxRegistryDomains is what a session in registries mode can resolve
+// and reach (ADR-20261027090013 §6): package registries, git hosts and OS
+// package mirrors, each with its subdomains, on TCP 443 only. Every other
+// name is refused by the session's resolver, and an address it did not
+// answer for one of these names is unreachable.
+var SandboxRegistryDomains = []string{
+	// npm and Yarn.
+	"npmjs.org", "npmjs.com", "yarnpkg.com",
+	// PyPI.
+	"pypi.org", "pythonhosted.org",
+	// crates.io.
+	"crates.io",
+	// Go modules.
+	"proxy.golang.org", "sum.golang.org",
+	// GitHub: clones, archives, raw files and release assets.
+	"github.com", "githubusercontent.com",
+	// OS package mirrors over HTTPS (§10).
+	"alpinelinux.org", "deb.debian.org", "security.debian.org", "archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com",
+}
+
+// SandboxRegistryHost reports whether a registries-mode session may resolve
+// name: one of SandboxRegistryDomains or a subdomain of one.
+func SandboxRegistryHost(name string) bool {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	if name == "" {
+		return false
+	}
+	for _, d := range SandboxRegistryDomains {
+		if name == d || strings.HasSuffix(name, "."+d) {
+			return true
+		}
+	}
+	return false
+}
+
 // Sandbox problem codes.
 const (
 	CodeSandboxNotFound = "sandbox_not_found"

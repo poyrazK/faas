@@ -14364,8 +14364,12 @@ type RunSandboxStart struct {
 	// quiet_pause_after_ms pauses the VM between calls; zero keeps it
 	// running.
 	QuietPauseAfterMs int64 `protobuf:"varint,10,opt,name=quiet_pause_after_ms,json=quietPauseAfterMs,proto3" json:"quiet_pause_after_ms,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// network_mode is "none" or "registries" (ADR-20261027090013 §6):
+	// registries boots the VM with DNS-gated egress to package registries
+	// and git hosts on TCP 443.
+	NetworkMode   string `protobuf:"bytes,11,opt,name=network_mode,json=networkMode,proto3" json:"network_mode,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RunSandboxStart) Reset() {
@@ -14466,6 +14470,13 @@ func (x *RunSandboxStart) GetQuietPauseAfterMs() int64 {
 		return x.QuietPauseAfterMs
 	}
 	return 0
+}
+
+func (x *RunSandboxStart) GetNetworkMode() string {
+	if x != nil {
+		return x.NetworkMode
+	}
+	return ""
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),
@@ -15149,7 +15160,11 @@ type AllowResolvedEgressRequest struct {
 	// database_port is non-zero when the answered name is one of the caller
 	// app's bound managed databases (ADR 20261026150000): vmmd also opens that
 	// TCP port to the addresses. An older resolver leaves it zero.
-	DatabasePort  uint32 `protobuf:"varint,4,opt,name=database_port,json=databasePort,proto3" json:"database_port,omitempty"`
+	DatabasePort uint32 `protobuf:"varint,4,opt,name=database_port,json=databasePort,proto3" json:"database_port,omitempty"`
+	// name is the answered name. vmmd admits a registries-mode sandbox
+	// session's addresses only for names it allows (ADR-20261027090013 §6);
+	// an older resolver leaves it empty, which admits none for such a VM.
+	Name          string `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -15210,6 +15225,13 @@ func (x *AllowResolvedEgressRequest) GetDatabasePort() uint32 {
 		return x.DatabasePort
 	}
 	return 0
+}
+
+func (x *AllowResolvedEgressRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 type AllowResolvedEgressAck struct {
@@ -21666,7 +21688,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05start\x18\x01 \x01(\v2$.onebox.faas.vmmd.v1.RunSandboxStartH\x00R\x05start\x12?\n" +
 	"\x06freeze\x18\x02 \x01(\v2%.onebox.faas.vmmd.v1.RunSandboxFreezeH\x00R\x06freeze\x12<\n" +
 	"\x05close\x18\x03 \x01(\v2$.onebox.faas.vmmd.v1.RunSandboxCloseH\x00R\x05closeB\a\n" +
-	"\x05frame\"\xd0\x02\n" +
+	"\x05frame\"\xf3\x02\n" +
 	"\x0fRunSandboxStart\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -21682,7 +21704,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"memSizeMib\x12%\n" +
 	"\x0ecpu_millicores\x18\t \x01(\x05R\rcpuMillicores\x12/\n" +
 	"\x14quiet_pause_after_ms\x18\n" +
-	" \x01(\x03R\x11quietPauseAfterMs\"\x12\n" +
+	" \x01(\x03R\x11quietPauseAfterMs\x12!\n" +
+	"\fnetwork_mode\x18\v \x01(\tR\vnetworkMode\"\x12\n" +
 	"\x10RunSandboxFreeze\"\x11\n" +
 	"\x0fRunSandboxClose\"\xfb\x02\n" +
 	"\x0fRunSandboxEvent\x12?\n" +
@@ -21715,13 +21738,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x04type\x18\x01 \x01(\rR\x04type\x12\x12\n" +
 	"\x04body\x18\x02 \x01(\fR\x04body\"K\n" +
 	"\x10SandboxCallEvent\x127\n" +
-	"\x05frame\x18\x01 \x01(\v2!.onebox.faas.vmmd.v1.SandboxFrameR\x05frame\"\x9d\x01\n" +
+	"\x05frame\x18\x01 \x01(\v2!.onebox.faas.vmmd.v1.SandboxFrameR\x05frame\"\xb1\x01\n" +
 	"\x1aAllowResolvedEgressRequest\x12\x1b\n" +
 	"\tsource_ip\x18\x01 \x01(\tR\bsourceIp\x12\x1c\n" +
 	"\taddresses\x18\x02 \x03(\tR\taddresses\x12\x1f\n" +
 	"\vttl_seconds\x18\x03 \x01(\rR\n" +
 	"ttlSeconds\x12#\n" +
-	"\rdatabase_port\x18\x04 \x01(\rR\fdatabasePort\"2\n" +
+	"\rdatabase_port\x18\x04 \x01(\rR\fdatabasePort\x12\x12\n" +
+	"\x04name\x18\x05 \x01(\tR\x04name\"2\n" +
 	"\x16AllowResolvedEgressAck\x12\x18\n" +
 	"\amatched\x18\x01 \x01(\bR\amatched\"\x9f\x01\n" +
 	"\x1cUpdateAppEgressPolicyRequest\x12\x15\n" +

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/sandboxproto"
 )
 
@@ -81,10 +82,15 @@ type SandboxWakeRequest struct {
 	// QuietPauseAfter pauses the VM between calls (ADR-20261027090013 §5);
 	// zero keeps it running.
 	QuietPauseAfter time.Duration
+	// Network is the session's network mode (§6): api.SandboxNetworkNone
+	// boots it without a network, api.SandboxNetworkRegistries with
+	// DNS-gated egress to package registries and git hosts on TCP 443.
+	Network string
 }
 
 // WakeSandbox cold-boots one sandbox session VM on the execution-only path
-// (a fresh jail, cgroup and lease, no tenant network) and returns once
+// (a fresh jail, cgroup and lease; a network only in registries mode) and
+// returns once
 // guest-init's sandbox server answers, so the first call never races the
 // boot. The VM lives until Destroy.
 func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Instance, error) {
@@ -95,12 +101,17 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		req.LayerKey == "" || req.VcpuCount <= 0 || req.MemSizeMiB <= 0 || req.CPUMillicores <= 0 || req.QuietPauseAfter < 0 {
 		return nil, errors.New("fcvm: incomplete sandbox wake request")
 	}
+	registries := req.Network == api.SandboxNetworkRegistries
+	if !registries && req.Network != api.SandboxNetworkNone {
+		return nil, fmt.Errorf("fcvm: sandbox network mode %q is not supported", req.Network)
+	}
 	dialer, ok := m.vmm.(SandboxDialer)
 	if !ok {
 		return nil, errors.New("fcvm: the vmm cannot dial sandbox sessions")
 	}
 	inst, err := m.Wake(ctx, WakeRequest{
-		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, AccountID: req.AccountID, Plan: req.Plan,
+		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, sandboxRegistries: registries,
+		AccountID: req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: req.LayerKey, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter,
 	})
@@ -112,8 +123,9 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 		defer cancel()
 		return nil, errors.Join(cause, m.Destroy(destroyCtx, req.Instance))
 	}
-	if inst == nil || !inst.ExecutionOnly || inst.SandboxID != req.SandboxID || !inst.Lease.Networkless {
-		return destroy(errors.New("fcvm: sandbox wake did not produce a networkless sandbox VM"))
+	if inst == nil || !inst.ExecutionOnly || inst.SandboxID != req.SandboxID || inst.Lease.Networkless == registries ||
+		registries && (!inst.Net.SandboxRegistries || !inst.Net.DNSGated) {
+		return destroy(fmt.Errorf("fcvm: sandbox wake did not produce a %s sandbox VM", req.Network))
 	}
 	if err := awaitSandboxListener(ctx, dialer, req.Instance); err != nil {
 		return destroy(err)
@@ -137,5 +149,24 @@ func awaitSandboxListener(ctx context.Context, dialer SandboxDialer, instance st
 			return fmt.Errorf("fcvm: sandbox %s never listened: %w", instance, err)
 		case <-time.After(executionDialStep):
 		}
+	}
+}
+
+// networkless reports whether a wake boots without a tenant network: every
+// execution-only VM except a sandbox session in registries mode.
+func (r WakeRequest) networkless() bool { return r.ExecutionOnly && !r.sandboxRegistries }
+
+// applySandboxRegistriesEgress is a registries-mode sandbox's egress
+// (ADR-20261027090013 §6, under ADR-361 and ADR-373): DNS pinned to the
+// registries-only resolver, new TCP only to addresses it answered and only on
+// 443, and the plan's connection rates. No bridge service, database or
+// extra port is reachable.
+func applySandboxRegistriesEgress(nc *netns.Config, plan api.Plan) {
+	nc.SandboxRegistries = true
+	nc.DNSGated = true
+	nc.EgressPorts = []uint16{443}
+	if lim, ok := api.LimitsFor(plan); ok {
+		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
+		nc.EgressDestConnRate, nc.EgressDestConnBurst = lim.EgressNewConnPerDestPerSecond, lim.EgressNewConnPerDestBurst
 	}
 }

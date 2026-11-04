@@ -244,11 +244,18 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 	wake := fcvm.SandboxWakeRequest{
 		Instance: start.GetInstance(), SandboxID: start.GetSandboxId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
 		BaseKey: start.GetBaseKey(), LayerKey: start.GetLayerKey(), VcpuCount: int(start.GetVcpuCount()),
-		MemSizeMiB: int(start.GetMemSizeMib()), CPUMillicores: int(start.GetCpuMillicores()),
+		MemSizeMiB: int(start.GetMemSizeMib()), CPUMillicores: int(start.GetCpuMillicores()), Network: start.GetNetworkMode(),
+	}
+	// A schedd from before network modes sends none.
+	if wake.Network == "" {
+		wake.Network = api.SandboxNetworkNone
 	}
 	if wake.Instance == "" || wake.SandboxID == "" || wake.AccountID == "" || !wake.Plan.Valid() || wake.BaseKey == "" ||
 		wake.LayerKey == "" || wake.VcpuCount < 1 || wake.MemSizeMiB < 1 || wake.CPUMillicores < 1 {
 		return fcvm.SandboxWakeRequest{}, invalid("instance, sandbox, account, plan, base, layer and a positive machine shape are required")
+	}
+	if wake.Network != api.SandboxNetworkNone && wake.Network != api.SandboxNetworkRegistries {
+		return fcvm.SandboxWakeRequest{}, invalid("network_mode must be none or registries")
 	}
 	ms := start.GetQuietPauseAfterMs()
 	if ms < 0 || ms > api.AgentWaitPauseAfterMaxMillis {

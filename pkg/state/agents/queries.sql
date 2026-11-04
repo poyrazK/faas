@@ -477,7 +477,7 @@ UPDATE sandbox_sessions SET state='starting', lease_token=sqlc.arg(lease_token):
  WHERE id=sqlc.arg(session_id)::text::uuid AND state='queued';
 
 -- name: GetSandboxSessionClaim :one
-SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, sb.idle_timeout_sec, sb.expires_at,
+SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, sb.network_mode, sb.idle_timeout_sec, sb.expires_at,
   (sb.close_requested_at IS NOT NULL)::boolean AS close_requested
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id WHERE sb.id=sqlc.arg(session_id)::text::uuid;
 

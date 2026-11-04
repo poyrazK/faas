@@ -320,10 +320,11 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 }
 
 // leaseCPUMax returns the cpu.max value for a VM lease. An agent run's
-// networkless VM is sized in whole vCPUs (ADR-20261027090014 §3), beyond the app CPU
-// tiers; every other lease keeps the app rules.
+// networkless VM, and a networked sandbox session VM, are sized in whole
+// vCPUs (ADR-20261027090014 §3), beyond the app CPU tiers; every other lease
+// keeps the app rules.
 func leaseCPUMax(l Lease) (string, error) {
-	if !l.Networkless || l.CPUMillicores <= api.DefaultAppCPUMillicores || !api.ValidAgentRunCPUMillicores(l.CPUMillicores) {
+	if !l.Networkless && !l.AgentSized || l.CPUMillicores <= api.DefaultAppCPUMillicores || !api.ValidAgentRunCPUMillicores(l.CPUMillicores) {
 		return appCPUMax(l.Plan, l.CPUMillicores)
 	}
 	period := l.Plan.CPUPeriodUS()

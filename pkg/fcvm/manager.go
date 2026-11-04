@@ -3742,10 +3742,13 @@ type WakeRequest struct {
 	// only with agentRunOnly (ADR-20261027090012).
 	agentRunWaitPauseAfter time.Duration
 	// sandboxID is set only by WakeSandbox (ADR-20261027090013), on top of
-	// ExecutionOnly; it becomes Instance.SandboxID.
-	sandboxID      string
-	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
-	Instance       string
+	// ExecutionOnly; it becomes Instance.SandboxID. sandboxRegistries gives
+	// that VM a network in registries mode (§6): DNS-gated, TCP 443 only,
+	// through the registries-only resolver.
+	sandboxID         string
+	sandboxRegistries bool
+	RehearsalRunID    string // exact durable containment run; ordinary legacy callers may omit it
+	Instance          string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -4755,7 +4758,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// lifetime.
 	lease.Plan = req.Plan
 	lease.AccountID = req.AccountID
-	lease.Networkless = req.ExecutionOnly
+	lease.Networkless = req.networkless()
+	lease.AgentSized = req.sandboxRegistries
 	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
@@ -4792,7 +4796,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 				cleanupNet.PrivateNetworkAppID = req.AppID
 				cleanupNet.PrivateNetworkAccountID = req.AccountID
 			}
-			if req.ExecutionOnly {
+			if req.networkless() {
 				cleanupNet = netns.Config{Instance: lease.Instance}
 			}
 			err = errors.Join(err, m.cleanup(context.WithoutCancel(ctx), lease, cleanupNet, nil))
@@ -4809,7 +4813,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, err
 		}
 	}
-	if req.ExecutionOnly {
+	if req.networkless() {
 		// Keep the allocator-derived identity on Instance for diagnostics, but
 		// never pass a tenant network plan to setup/teardown or host policy.
 		nc = netns.Config{Instance: lease.Instance}
@@ -4885,7 +4889,13 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	nc.RehearsalRunID = req.RehearsalRunID
 	nc.ConntrackCap = m.conntrackCap
 	// ADR-361: default-deny guest egress (base ports + per-plan rate).
-	if !req.ExecutionOnly {
+	switch {
+	case req.sandboxRegistries:
+		if m.dnsGatingOff {
+			return nil, fmt.Errorf("wake %s: sandbox registries egress needs DNS-gated egress, which this vmmd has switched off", req.Instance)
+		}
+		applySandboxRegistriesEgress(&nc, req.Plan)
+	case !req.ExecutionOnly:
 		applyTenantEgressPolicy(&nc, req.Plan, req.EgressPorts)
 		nc.DNSGated = nc.DNSGated && !m.dnsGatingOff
 		nc.EgressCircuitEnabled = m.egressCircuitEnabled && req.AppID != ""
@@ -5060,7 +5070,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// owner. Starting network helpers alongside jail provisioning can leave a
 	// helper in flight when image staging checks the owner's retired effects.
 	// Complete the network before provisioning on native-owned VMs.
-	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly && m.nativeVMM() == nil {
+	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.networkless() && m.nativeVMM() == nil {
 		// See wake_network.go: build the namespace while bringUp stages the
 		// jail; the VMM joins it before startJailer.
 		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() error {
@@ -5098,7 +5108,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		netnsStart := time.Now()
 		preparedHit := false
 		var networkErr error
-		if !req.ExecutionOnly {
+		if !req.networkless() {
 			preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
 			if networkErr == nil {
 				networkErr = m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
@@ -5593,7 +5603,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 // that wire bringUp directly without a Wake frame.
 func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req WakeRequest, timings *bringUpTimings) (WakeMethod, error) {
 	serviceDiscoveryIP := ""
-	if !req.ExecutionOnly && !lease.IsBuilder && nc.HostBridgeIP.IsValid() {
+	if !req.networkless() && !lease.IsBuilder && nc.HostBridgeIP.IsValid() {
 		serviceDiscoveryIP = nc.HostBridgeIP.String()
 	}
 	// issue #299: refuse to bring up an instance whose base ext4
@@ -5707,7 +5717,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			SecretsEnvJSON:     req.preparedSecretsEnvJSON,
 			APIEnvJSON:         req.preparedAPIEnvJSON,
 			ServiceDiscoveryIP: serviceDiscoveryIP,
-			Networkless:        req.ExecutionOnly,
+			Networkless:        req.networkless(),
 			KeepPaused:         req.KeepPaused,
 			AgentInput:         req.agentRunOnly,
 			InputKey:           req.agentRunInputKey,

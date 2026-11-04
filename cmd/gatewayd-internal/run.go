@@ -4573,13 +4573,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if upstreams == nil {
 				upstreams = serviceDiscoveryUpstreams
 			}
-			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort} {
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort} {
 				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 				if dnsErr != nil {
 					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 				}
 				if dnsPort == gateway.RehearsalServiceDiscoveryDNSPort {
 					dnsHandler.WithPrivateServiceNamesOnly()
+				}
+				// ADR-20261027090013 §6: registries-mode sandbox sessions
+				// resolve package registries and git hosts only.
+				if dnsPort == gateway.SandboxRegistriesDNSPort {
+					dnsHandler.WithAllowedNamesOnly(api.SandboxRegistryHost)
 				}
 				if chaosMatchRecorder != nil {
 					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)

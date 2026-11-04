@@ -65,7 +65,7 @@ func newResolvedEgressHook(clients vmmdClientLookup, localNode *localNodeID, dat
 			return fmt.Errorf("local vmmd %s (%s) unavailable", localNode.name, nodeID)
 		}
 		defer func() { _ = closer.Close() }()
-		return allowResolvedEgress(ctx, cli, host, addrs, ttl, databasePort)
+		return allowResolvedEgress(ctx, cli, host, name, addrs, ttl, databasePort)
 	}
 }
 
@@ -215,8 +215,8 @@ func (l *localNodeID) Forget() {
 	l.mu.Unlock()
 }
 
-func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host string, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
-	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, TtlSeconds: uint32(min(ttl/time.Second, 1<<31)), DatabasePort: uint32(databasePort)}
+func allowResolvedEgress(ctx context.Context, cli allowResolvedEgressClient, host, name string, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+	req := &vmmdpb.AllowResolvedEgressRequest{SourceIp: host, Name: name, TtlSeconds: uint32(min(ttl/time.Second, 1<<31)), DatabasePort: uint32(databasePort)}
 	for _, a := range addrs {
 		req.Addresses = append(req.Addresses, a.String())
 	}

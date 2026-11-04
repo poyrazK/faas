@@ -73,7 +73,7 @@ func sandboxRunnerFixture(t *testing.T, layer string) (*sched.AgentRunner, *sand
 
 func sandboxAdmission() sched.SandboxAdmission {
 	return sched.SandboxAdmission{SandboxID: "11111111-2222-3333-4444-555555555555", AccountID: "acct", Plan: api.PlanPro,
-		RAMMB: 1024, VCPU: 1, CPUMillicores: 1000}
+		RAMMB: 1024, VCPU: 1, CPUMillicores: 1000, Network: api.SandboxNetworkRegistries}
 }
 
 func TestSandboxRunnerHoldsTheReservationUntilClose(t *testing.T) {
@@ -108,7 +108,7 @@ func TestSandboxRunnerHoldsTheReservationUntilClose(t *testing.T) {
 		t.Fatalf("placement %+v, router node %s resident %v", placement, router.nodeID, router.resident)
 	}
 	if s := router.spec; s.LayerKey != "base/sandbox-layer-v1-amd64.ext4" || s.BaseKey != "base/agent-base.ext4" || s.SandboxID != sandboxAdmission().SandboxID ||
-		s.MemSizeMiB != 1024 || s.QuietPauseAfter != api.QuietPauseAfterMillis*time.Millisecond {
+		s.MemSizeMiB != 1024 || s.QuietPauseAfter != api.QuietPauseAfterMillis*time.Millisecond || s.Network != api.SandboxNetworkRegistries {
 		t.Fatalf("spec = %+v", s)
 	}
 	if ledger.ResidentFor(placement.Instance) {
@@ -129,6 +129,7 @@ func TestSandboxRunnerRefusals(t *testing.T) {
 		"free plan": func(a *sched.SandboxAdmission) { a.Plan = api.PlanFree },
 		"odd RAM":   func(a *sched.SandboxAdmission) { a.RAMMB = 1000 },
 		"no vCPU":   func(a *sched.SandboxAdmission) { a.VCPU = 0 },
+		"web":       func(a *sched.SandboxAdmission) { a.Network = api.SandboxNetworkWeb },
 	} {
 		a := sandboxAdmission()
 		edit(&a)
