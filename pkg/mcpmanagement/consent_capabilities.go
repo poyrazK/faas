@@ -1,8 +1,10 @@
 package mcpmanagement
 
 import (
+	"context"
 	"errors"
 	"slices"
+	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -44,9 +46,50 @@ func describeCapabilities(scopes []string) []string {
 }
 
 // grantCLI is the hosted bridge's CLI runner for one grant's credential.
-func (r *remoteServer) grantCLI(token string) LocalCLI {
+func (r *remoteServer) grantCLI(accountID, token string) LocalCLI {
 	if r.opts.CLIRunner == nil {
 		return nil
 	}
-	return r.opts.CLIRunner(token)
+	run := r.opts.CLIRunner(token)
+	if run == nil || !r.opts.Hosted {
+		return run
+	}
+	// The bridge's few CLI slots are shared: one account's agents running
+	// several commands made every other account's CLI tools wait (bug hunt
+	// H101), so an account holds at most hostedCLIPerAccount of them.
+	return func(ctx context.Context, args []string, stdin []byte) (LocalCLIResult, error) {
+		if !r.cliAccounts.acquire(accountID) {
+			return LocalCLIResult{}, invalid("cli_busy",
+				"another Gregale CLI command of this account is still running on the hosted bridge; wait for it to finish, then retry")
+		}
+		defer r.cliAccounts.release(accountID)
+		return run(ctx, args, stdin)
+	}
+}
+
+// accountSlots counts CLI commands running per account.
+type accountSlots struct {
+	mu      sync.Mutex
+	running map[string]int
+}
+
+func (s *accountSlots) acquire(accountID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running[accountID] >= hostedCLIPerAccount {
+		return false
+	}
+	if s.running == nil {
+		s.running = make(map[string]int)
+	}
+	s.running[accountID]++
+	return true
+}
+
+func (s *accountSlots) release(accountID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running[accountID]--; s.running[accountID] <= 0 {
+		delete(s.running, accountID)
+	}
 }

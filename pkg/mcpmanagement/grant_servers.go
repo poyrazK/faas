@@ -16,7 +16,7 @@ const idleServerTTL = 10 * time.Minute
 
 // grantOptions are the per-connection server options consent approved.
 func (r *remoteServer) grantOptions(g *oauthGrant, apps map[string]string, environments *EnvironmentConsent) Options {
-	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: r.opts.Toolsets, Capabilities: g.capabilities, LocalCLI: r.grantCLI(g.client.Token()), uploads: r.uploads, Org: g.org}
+	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: r.opts.Toolsets, Capabilities: g.capabilities, LocalCLI: r.grantCLI(g.accountID, g.client.Token()), uploads: r.uploads, Org: g.org}
 }
 
 // serverLocked returns an approved connection's MCP server, building it from
@@ -61,7 +61,7 @@ func (r *remoteServer) holdServer(key string, g *oauthGrant) (*mcp.Server, time.
 // idleServerTTL. A server serving a request, holding work, or holding a
 // secret request (kept only in memory) stays. Caller holds r.mu.
 func (r *remoteServer) dropIdleServersLocked(now time.Time) {
-	r.dropIdleKeyConnectionsLocked(now, idleServerTTL)
+	r.dropIdleKeyConnectionsLocked(now, idleServerTTL, "")
 	for _, g := range r.grants {
 		if g.server != nil && g.inflight == 0 && now.Sub(g.lastUsed) > idleServerTTL && g.management.idle(now) {
 			g.server, g.management = nil, nil
@@ -71,6 +71,17 @@ func (r *remoteServer) dropIdleServersLocked(now time.Time) {
 
 // idle reports whether dropping this server loses nothing a rebuild cannot
 // restore from durable state.
+// holdsPlans reports whether the connection keeps a release or environment
+// plan only in memory, which dropping it would lose.
+func (m *management) holdsPlans() bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.plans)+len(m.environmentPlans) > 0
+}
+
 func (m *management) idle(now time.Time) bool {
 	if m == nil {
 		return true
