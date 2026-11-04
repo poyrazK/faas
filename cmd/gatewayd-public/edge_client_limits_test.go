@@ -26,21 +26,27 @@ import (
 
 func TestEdgeClientLimitsFromEnv(t *testing.T) {
 	for _, tc := range []struct {
-		name, value string
-		mode        publicEdgeMode
-		wantOn      bool
-		wantErr     string
+		name, value, proxies string
+		mode                 publicEdgeMode
+		wantOn               bool
+		wantProxies          int
+		wantErr              string
 	}{
 		{name: "unset", mode: edgeModeCompute},
 		{name: "off", value: "0", mode: edgeModeCompute},
 		{name: "on", value: "1", mode: edgeModeCompute, wantOn: true},
 		{name: "on a control-plane edge", value: "1", mode: edgeModeControlPlane, wantErr: "for a compute edge"},
 		{name: "not a switch value", value: "yes", mode: edgeModeCompute, wantErr: edgeClientLimitsEnv},
+		{name: "on with Cloudflare ranges", value: "1", proxies: "173.245.48.0/20, 2400:cb00::/32", mode: edgeModeCompute, wantOn: true, wantProxies: 2},
+		{name: "a proxy entry is no prefix", value: "1", proxies: "173.245.48.1/20", mode: edgeModeCompute, wantErr: edgeProxyCIDRsEnv},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l, err := edgeClientLimitsFromEnv(tc.mode, func(k string) string {
-				if k == edgeClientLimitsEnv {
+				switch k {
+				case edgeClientLimitsEnv:
 					return tc.value
+				case edgeProxyCIDRsEnv:
+					return tc.proxies
 				}
 				return ""
 			})
@@ -53,8 +59,8 @@ func TestEdgeClientLimitsFromEnv(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if l.on != tc.wantOn {
-				t.Fatalf("on = %v, want %v", l.on, tc.wantOn)
+			if l.on != tc.wantOn || len(l.proxies) != tc.wantProxies {
+				t.Fatalf("on = %v with %d proxies, want %v with %d", l.on, len(l.proxies), tc.wantOn, tc.wantProxies)
 			}
 		})
 	}
