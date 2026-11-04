@@ -1,14 +1,22 @@
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-ALTER TABLE jobs ADD COLUMN environment_git_source_id uuid;
-ALTER TABLE jobs ADD CONSTRAINT jobs_environment_git_source_fk
- FOREIGN KEY (environment_git_source_id) REFERENCES environment_git_sources(id) NOT VALID;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS environment_git_source_id uuid;
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='jobs'::regclass
+  AND conname='jobs_environment_git_source_fk') THEN
+  ALTER TABLE jobs ADD CONSTRAINT jobs_environment_git_source_fk
+   FOREIGN KEY (environment_git_source_id) REFERENCES environment_git_sources(id) NOT VALID;
+ END IF;
+END $$;
+-- +goose StatementEnd
 
 -- Missing attribution remains protected for N-1 writers. Current controllers
 -- stamp the exact source; detach attributes legacy links in its transaction.
 -- +goose StatementBegin
-CREATE FUNCTION environment_workload_job_released(j jobs) RETURNS boolean LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION environment_workload_job_released(j jobs) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT CASE WHEN j.environment_git_source_id IS NOT NULL THEN EXISTS (
   SELECT 1 FROM environment_git_sources s WHERE s.id=j.environment_git_source_id AND s.detached
  ) ELSE EXISTS (
@@ -19,7 +27,7 @@ CREATE FUNCTION environment_workload_job_released(j jobs) RETURNS boolean LANGUA
    AND NOT EXISTS(SELECT 1 FROM active_environment_git_sources active WHERE active.environment_id=s.environment_id)
  ) END;
 $$;
-CREATE FUNCTION environment_workload_job_owned(j jobs) RETURNS boolean LANGUAGE sql STABLE AS $$
+CREATE OR REPLACE FUNCTION environment_workload_job_owned(j jobs) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT NOT environment_workload_job_released(j) AND (j.environment_git_source_id IS NOT NULL
   OR EXISTS(SELECT 1 FROM app_environment_workload_intents i WHERE i.job_id=j.id));
 $$;
