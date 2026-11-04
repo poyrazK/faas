@@ -280,6 +280,10 @@ func (s *Service) Plan(
 		excludeSet[strings.ToLower(strings.TrimSpace(name))] = true
 	}
 	actions := workloadDiff(scan, project, existing, excludeSet)
+	actions, err = preserveEnvironmentOnlyActions(ctx, s.Store, project, actions)
+	if err != nil {
+		return Result{}, err
+	}
 
 	// 4. Project the would-be Result without applying. The shape
 	// mirrors applyActions' return: Added = would-be creates,
