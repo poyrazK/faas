@@ -396,6 +396,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
 		PrivateNetworkID:            app.GetPrivateNetworkId(),
 		PrivateNetworkAddress:       app.GetPrivateNetworkAddress(),
+		StaticEgressIP:              app.GetStaticEgressIp(),
+		StaticEgressExcluded:        app.GetStaticEgressExcluded(),
 		// tier-2 PR-B: schedd fans UpdateEgressAllowlist out by
 		// app_id, so the live Instance needs to remember which app
 		// it was woken for. The scheduler already knows the app
@@ -575,6 +577,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
 		PrivateNetworkID:            app.GetPrivateNetworkId(),
 		PrivateNetworkAddress:       app.GetPrivateNetworkAddress(),
+		StaticEgressIP:              app.GetStaticEgressIp(),
+		StaticEgressExcluded:        app.GetStaticEgressExcluded(),
 		// tier-2 PR-B: see toWakeRequest. The cold-boot path is
 		// the first boot of a deploy; setting AppID here means
 		// the very first UpdateEgressAllowlist fan-out finds the

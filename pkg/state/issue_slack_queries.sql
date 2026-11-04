@@ -199,6 +199,8 @@ SELECT count(*) FROM issue_slack_link_challenges WHERE app_id=$1;
 INSERT INTO issue_slack_link_challenges(token,app_id,delivery_id,request_key,slack_user_id,policy_revision,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7);
 -- name: IssueSlackChallengeConsume :exec
 UPDATE issue_slack_link_challenges SET consumed_at=clock_timestamp() WHERE token=$1;
+-- name: IssueSlackChallengeRotate :exec
+UPDATE issue_slack_link_challenges SET token=$3 WHERE app_id=$1 AND request_key=$2 AND consumed_at IS NULL;
 
 -- name: IssueSlackIdentitiesExpire :exec
 DELETE FROM issue_slack_identities WHERE app_id=$1 AND expires_at<=clock_timestamp();

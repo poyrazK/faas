@@ -14,9 +14,16 @@ import (
 const claimQueuedProfileCapture = `-- name: ClaimQueuedProfileCapture :one
 UPDATE profile_captures SET status = 'capturing', claimed_at = $1::timestamptz
 WHERE id = (SELECT q.id FROM profile_captures q WHERE q.status = 'queued'
+  AND (SELECT count(*) FROM profile_captures r WHERE r.status = 'capturing'
+       AND coalesce(r.capture->>'pool', r.account_id::text) = coalesce(q.capture->>'pool', q.account_id::text)) < $2::int
   ORDER BY (coalesce(q.capture->>'trigger', 'manual') <> 'manual'), q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1)
 RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id, capture, created_at
 `
+
+type ClaimQueuedProfileCaptureParams struct {
+	Now        pgtype.Timestamptz
+	MaxRunning int32
+}
 
 type ClaimQueuedProfileCaptureRow struct {
 	ID        string
@@ -26,9 +33,12 @@ type ClaimQueuedProfileCaptureRow struct {
 	CreatedAt pgtype.Timestamptz
 }
 
-// Manual captures are claimed before automatic ones: someone is waiting.
-func (q *Queries) ClaimQueuedProfileCapture(ctx context.Context, db DBTX, now pgtype.Timestamptz) (ClaimQueuedProfileCaptureRow, error) {
-	row := db.QueryRow(ctx, claimQueuedProfileCapture, now)
+// Manual captures are claimed before automatic ones: someone is waiting. A
+// pool already running max_running captures waits its turn, so one account
+// cannot hold every capture worker (ADR-1155). Concurrent schedds may each
+// pass the check: the cap is soft, by at most one per scheduler.
+func (q *Queries) ClaimQueuedProfileCapture(ctx context.Context, db DBTX, arg ClaimQueuedProfileCaptureParams) (ClaimQueuedProfileCaptureRow, error) {
+	row := db.QueryRow(ctx, claimQueuedProfileCapture, arg.Now, arg.MaxRunning)
 	var i ClaimQueuedProfileCaptureRow
 	err := row.Scan(
 		&i.ID,
@@ -73,19 +83,19 @@ func (q *Queries) CountRecentAutomaticProfileCaptures(ctx context.Context, db DB
 
 const countRecentProfileCaptures = `-- name: CountRecentProfileCaptures :one
 SELECT count(*) FROM profile_captures
-WHERE account_id = $1::text::uuid AND created_at >= $2::timestamptz
+WHERE coalesce(capture->>'pool', account_id::text) = $1::text AND created_at >= $2::timestamptz
   AND (coalesce(capture->>'trigger', 'manual') <> 'manual') = $3::boolean
 `
 
 type CountRecentProfileCapturesParams struct {
-	AccountID string
+	Pool      string
 	Since     pgtype.Timestamptz
 	Automatic bool
 }
 
 // Manual and automatic captures have separate hourly quotas (ADR-1155).
 func (q *Queries) CountRecentProfileCaptures(ctx context.Context, db DBTX, arg CountRecentProfileCapturesParams) (int64, error) {
-	row := db.QueryRow(ctx, countRecentProfileCaptures, arg.AccountID, arg.Since, arg.Automatic)
+	row := db.QueryRow(ctx, countRecentProfileCaptures, arg.Pool, arg.Since, arg.Automatic)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -93,16 +103,16 @@ func (q *Queries) CountRecentProfileCaptures(ctx context.Context, db DBTX, arg C
 
 const deleteAccountProfileCaptures = `-- name: DeleteAccountProfileCaptures :execrows
 DELETE FROM profile_captures
-WHERE account_id = $1::text::uuid AND id = ANY($2::text[]::uuid[])
+WHERE coalesce(capture->>'pool', account_id::text) = $1::text AND id = ANY($2::text[]::uuid[])
 `
 
 type DeleteAccountProfileCapturesParams struct {
-	AccountID string
-	Ids       []string
+	Pool string
+	Ids  []string
 }
 
 func (q *Queries) DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg DeleteAccountProfileCapturesParams) (int64, error) {
-	result, err := db.Exec(ctx, deleteAccountProfileCaptures, arg.AccountID, arg.Ids)
+	result, err := db.Exec(ctx, deleteAccountProfileCaptures, arg.Pool, arg.Ids)
 	if err != nil {
 		return 0, err
 	}
@@ -110,9 +120,13 @@ func (q *Queries) DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg
 }
 
 const deleteExpiredProfileCaptures = `-- name: DeleteExpiredProfileCaptures :execrows
-DELETE FROM profile_captures WHERE expires_at < $1::timestamptz
+DELETE FROM profile_captures p WHERE p.expires_at < $1::timestamptz
+  OR EXISTS (SELECT 1 FROM apps a WHERE a.id = p.app_id AND a.status = 'deleted')
 `
 
+// Expired captures, and every capture of a deleted app: nobody can read or
+// delete those any more, and they would hold their pool's storage until they
+// expired (ADR-1155).
 func (q *Queries) DeleteExpiredProfileCaptures(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error) {
 	result, err := db.Exec(ctx, deleteExpiredProfileCaptures, now)
 	if err != nil {
@@ -270,7 +284,7 @@ func (q *Queries) LatestOOMProfileCapture(ctx context.Context, db DBTX, arg Late
 const listEvictableAutomaticProfileCaptures = `-- name: ListEvictableAutomaticProfileCaptures :many
 SELECT p.id::text AS id, coalesce(sum(octet_length(d.profile)), 0)::bigint AS bytes
 FROM profile_captures p LEFT JOIN profile_capture_data d ON d.capture_id = p.id
-WHERE p.account_id = $1::text::uuid AND p.status IN ('ready', 'failed')
+WHERE coalesce(p.capture->>'pool', p.account_id::text) = $1::text AND p.status IN ('ready', 'failed')
   AND coalesce(p.capture->>'trigger', 'manual') <> 'manual' AND p.capture->>'oom_killed_at' IS NULL
   AND p.expires_at >= $2::timestamptz
 GROUP BY p.id, p.created_at
@@ -279,9 +293,9 @@ LIMIT $3::int
 `
 
 type ListEvictableAutomaticProfileCapturesParams struct {
-	AccountID string
-	Now       pgtype.Timestamptz
-	MaxRows   int32
+	Pool    string
+	Now     pgtype.Timestamptz
+	MaxRows int32
 }
 
 type ListEvictableAutomaticProfileCapturesRow struct {
@@ -293,7 +307,7 @@ type ListEvictableAutomaticProfileCapturesRow struct {
 // oldest first, with their stored bytes. The oldest are rotated out to make
 // room for a newer automatic capture (ADR-1155).
 func (q *Queries) ListEvictableAutomaticProfileCaptures(ctx context.Context, db DBTX, arg ListEvictableAutomaticProfileCapturesParams) ([]ListEvictableAutomaticProfileCapturesRow, error) {
-	rows, err := db.Query(ctx, listEvictableAutomaticProfileCaptures, arg.AccountID, arg.Now, arg.MaxRows)
+	rows, err := db.Query(ctx, listEvictableAutomaticProfileCaptures, arg.Pool, arg.Now, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}
@@ -395,9 +409,10 @@ SELECT pg_advisory_xact_lock(hashtextextended('profile_captures:' || $1::text, 0
 // schedd claims, finishes and expires them. Reads join the owning app so a
 // deleted app's captures are invisible before the cascade removes them.
 // Lifecycle columns are merged into the public capture document on read.
-// Serializes the account-wide quota and storage checks across its apps.
-func (q *Queries) LockProfileCaptureAccount(ctx context.Context, db DBTX, accountID string) error {
-	_, err := db.Exec(ctx, lockProfileCaptureAccount, accountID)
+// Serializes the pool-wide quota and storage checks across its apps. The pool
+// is the app's resource owner: an organization, or an account (ADR-1155).
+func (q *Queries) LockProfileCaptureAccount(ctx context.Context, db DBTX, pool string) error {
+	_, err := db.Exec(ctx, lockProfileCaptureAccount, pool)
 	return err
 }
 
@@ -421,21 +436,21 @@ const profileCaptureAccountStorage = `-- name: ProfileCaptureAccountStorage :one
 SELECT
   (SELECT coalesce(sum(octet_length(d.profile)), 0) FROM profile_capture_data d
      JOIN profile_captures p ON p.id = d.capture_id
-   WHERE p.account_id = $1::text::uuid AND p.expires_at >= $2::timestamptz)::bigint AS stored_bytes,
+   WHERE coalesce(p.capture->>'pool', p.account_id::text) = $1::text AND p.expires_at >= $2::timestamptz)::bigint AS stored_bytes,
   (SELECT count(*) FROM profile_captures
-   WHERE account_id = $1::text::uuid AND status IN ('queued', 'capturing'))::bigint AS active,
+   WHERE coalesce(capture->>'pool', account_id::text) = $1::text AND status IN ('queued', 'capturing'))::bigint AS active,
   (SELECT coalesce(sum(octet_length(d.profile)), 0) FROM profile_capture_data d
      JOIN profile_captures p ON p.id = d.capture_id
-   WHERE p.account_id = $1::text::uuid AND p.expires_at >= $2::timestamptz
+   WHERE coalesce(p.capture->>'pool', p.account_id::text) = $1::text AND p.expires_at >= $2::timestamptz
      AND coalesce(p.capture->>'trigger', 'manual') <> 'manual')::bigint AS automatic_stored_bytes,
   (SELECT count(*) FROM profile_captures
-   WHERE account_id = $1::text::uuid AND status IN ('queued', 'capturing')
+   WHERE coalesce(capture->>'pool', account_id::text) = $1::text AND status IN ('queued', 'capturing')
      AND coalesce(capture->>'trigger', 'manual') <> 'manual')::bigint AS automatic_active
 `
 
 type ProfileCaptureAccountStorageParams struct {
-	AccountID string
-	Now       pgtype.Timestamptz
+	Pool string
+	Now  pgtype.Timestamptz
 }
 
 type ProfileCaptureAccountStorageRow struct {
@@ -445,11 +460,12 @@ type ProfileCaptureAccountStorageRow struct {
 	AutomaticActive      int64
 }
 
-// Stored bytes of the account's unexpired captures and how many of its
-// captures are still queued or running, in total and for automatic captures
-// alone. A capture without a trigger predates automatic captures: manual.
+// Stored bytes of the pool's unexpired captures and how many of its captures
+// are still queued or running, in total and for automatic captures alone. A
+// capture without a trigger predates automatic captures: manual. One without
+// a pool predates pools and counts in its account's.
 func (q *Queries) ProfileCaptureAccountStorage(ctx context.Context, db DBTX, arg ProfileCaptureAccountStorageParams) (ProfileCaptureAccountStorageRow, error) {
-	row := db.QueryRow(ctx, profileCaptureAccountStorage, arg.AccountID, arg.Now)
+	row := db.QueryRow(ctx, profileCaptureAccountStorage, arg.Pool, arg.Now)
 	var i ProfileCaptureAccountStorageRow
 	err := row.Scan(
 		&i.StoredBytes,
@@ -534,6 +550,7 @@ const stampProfileCaptureOOM = `-- name: StampProfileCaptureOOM :one
 WITH target AS (
   SELECT q.id, (q.capture->>'oom_killed_at' IS NULL) AS first_link FROM profile_captures q
   WHERE q.app_id = $4::text::uuid AND q.capture->>'instance_id' = $5::text
+    AND q.status IN ('capturing', 'ready')
     AND q.capture->'kinds' @> '["heap"]'::jsonb AND q.created_at >= $6::timestamptz
   ORDER BY q.created_at DESC, q.id LIMIT 1 FOR UPDATE)
 UPDATE profile_captures p SET capture = p.capture || jsonb_build_object('oom_killed_at', $1::timestamptz, 'oom_peak_mb', $2::int, 'oom_plan_mb', $3::int)
@@ -556,7 +573,9 @@ type StampProfileCaptureOOMRow struct {
 	Status    string
 }
 
-// first_link is true when the capture had no OOM kill before this stamp.
+// first_link is true when the capture had no OOM kill before this stamp. A
+// failed capture holds no heap profile to explain the kill, so it is never
+// linked.
 func (q *Queries) StampProfileCaptureOOM(ctx context.Context, db DBTX, arg StampProfileCaptureOOMParams) (StampProfileCaptureOOMRow, error) {
 	row := db.QueryRow(ctx, stampProfileCaptureOOM,
 		arg.KilledAt,

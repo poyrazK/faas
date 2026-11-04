@@ -83,8 +83,25 @@ type Worker struct {
 	// claim its due switches, false after a tick that could not and after
 	// each step that ended in a retry. nil reports nothing.
 	Report func(ok bool, at time.Time)
-	Log    *slog.Logger
-	Now    func() time.Time
+	// ReleaseGuard rechecks, just before the switch makes its rollback
+	// target live, the guards the rollback met when it was requested (the
+	// pause, freezes and approvals a release that never served meets). It
+	// returns a refusal, or an error when the guard cannot be read. Errors
+	// retry without activating the target. nil checks nothing.
+	ReleaseGuard func(ctx context.Context, sw state.DatabaseSwitch) (string, error)
+	// PromoteRelease checks binding policy at each traffic write, including
+	// compensation. The database cutover independently verifies the copy's
+	// staged credentials before publishing them and lifting the app fence.
+	PromoteRelease func(context.Context, state.DatabaseSwitch, string) error
+	Log            *slog.Logger
+	Now            func() time.Time
+}
+
+func (w *Worker) promoteRelease(ctx context.Context, sw state.DatabaseSwitch, id string) error {
+	if w.PromoteRelease != nil {
+		return w.PromoteRelease(ctx, sw, id)
+	}
+	return w.Releases.MarkDeploymentLive(ctx, id)
 }
 
 func (w *Worker) ownership(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error) {
@@ -254,6 +271,10 @@ const (
 	maxActivationAttempts     = 10
 	transientBackoffCeiling   = time.Minute
 	phaseUnfencedTimeoutLimit = api.DatabaseSwitchRestoreTimeout
+
+	// codeDatabaseLimit: the copy does not fit inside the plan's database
+	// limit, and a switch's copy never takes the restore slot.
+	codeDatabaseLimit = "database_limit"
 )
 
 // wait keeps the phase and checks again after the worker cadence.

@@ -173,9 +173,13 @@ live with traffic in the same environment. A failed dependency or a fixed
 serving. `gregale deploys status` and the dashboard stage summary show the
 blocker. This gates release activation; candidate processes can boot while
 waiting. Declarations allow at most 100 dependency conditions per workload.
-Completion conditions, optional healthy dependencies, and healthy managed or job
-targets are rejected.
-See [ADR-685](adr/685-compose-dependency-release-gates.md).
+Optional healthy dependencies and healthy job targets are rejected. A healthy
+gate on a Compose datastore such as `postgres` is accepted as a plain
+dependency, and a `service_completed_successfully` dependency runs as the
+release command of the waiting service that shares its build
+([multi-service apps](multi-service-apps.md#start-order-and-migrations)).
+See [ADR-685](adr/685-compose-dependency-release-gates.md) and
+[ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md).
 
 Compose `healthcheck:` overrides are also retained for prebuilt image workloads:
 

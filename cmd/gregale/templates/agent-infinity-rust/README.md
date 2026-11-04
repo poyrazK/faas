@@ -33,10 +33,17 @@ Infinity's built-in thread tools work too: a child thread's messages, reports
 and tool errors go back through the inbox (`GregaleSender` in
 `src/platform.rs`).
 
+Gregale's own tools come from its RAP toolset at
+`$GREGALE_API_URL/v1/agent-tools`, loaded once per process. The first is
+`gregale_sleep`: the thread wakes later with the call's result, and while it
+sleeps, Gregale holds the wake-up and the function parks. Gregale checks the
+callback URL each call carries, so these tools need no key. Without the
+toolset, the agent runs with `lookup` alone.
+
 The model is scripted (`src/model.rs`), so the starter runs with no provider
-key: a user message calls `lookup`, and the tool's result is the answer. To
-use a real model, swap it for any Infinity provider, for example
-`infinity-provider-rig`.
+key: a user message calls `lookup`, and the tool's result is the answer.
+`sleep 30` calls `gregale_sleep` for 30 seconds instead. To use a real model,
+swap it for any Infinity provider, for example `infinity-provider-rig`.
 
 ## Deploy
 
@@ -65,6 +72,10 @@ curl -X POST <callback_url> -H "content-type: application/json" \
   -d '{"type":"tool_result","group_id":"t-1","id":"<id>","text":"Valletta"}'
 ```
 
+Publish `{"text":"sleep 30"}` on a new thread, and about 30 seconds later the
+thread answers `gregale_sleep answered: Slept for 30 seconds.` with no post
+from you.
+
 ## Settings
 
 | Setting | |
@@ -72,7 +83,7 @@ curl -X POST <callback_url> -H "content-type: application/json" \
 | `DATABASE_URL` | Infinity's stores: an attached Postgres database. The tables are created on first use. |
 | `AGENT_READ_TOKEN` | Enables `GET /threads/:id` for this bearer token |
 | `TOOL_URL` | Optional: a RAP tool server that `lookup` is invoked on |
-| `GREGALE_API_URL` | The Gregale API; defaults to `https://api.gregale.dev` |
+| `GREGALE_API_URL` | The Gregale API, and its toolset; defaults to `https://api.gregale.dev` |
 
 ## Test
 

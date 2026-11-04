@@ -78,6 +78,12 @@ type PrivateNetworkDurableDeletionStore interface {
 	DeletePrivateNetworkDurably(context.Context, string, string) error
 }
 
+// PrivateNetworkPeeringDurableDeletionStore preserves the revocation handoff
+// even when deletion removes the account/region's final discoverable peering.
+type PrivateNetworkPeeringDurableDeletionStore interface {
+	DeletePrivateNetworkPeeringDurably(context.Context, string, string) error
+}
+
 // PrivateNetworkAddressListStore is the additive read surface for network
 // member inventory. Keeping it separate lets older Store adapters continue to
 // serve network creation and app attachments while the inventory endpoint is
@@ -410,6 +416,11 @@ func (m *MemStore) DeletePrivateNetwork(ctx context.Context, accountID, id strin
 			return ErrConflict
 		}
 	}
+	for _, owner := range m.privateNetworkServiceOwners {
+		if owner.NetworkID == id {
+			return ErrConflict
+		}
+	}
 	delete(m.privateNetworks, id)
 	for addressID, address := range m.privateNetworkAddresses {
 		if address.NetworkID == id && address.AccountID == accountID {
@@ -422,7 +433,7 @@ func (m *MemStore) DeletePrivateNetwork(ctx context.Context, accountID, id strin
 // CreatePrivateNetworkPeering records a pending symmetric route intent. The
 // in-memory implementation mirrors the Postgres checks so API tests exercise
 // account isolation, region matching, and CIDR safety.
-func (m *MemStore) CreatePrivateNetworkPeering(ctx context.Context, peering PrivateNetworkPeering) (PrivateNetworkPeering, error) {
+func (m *MemStore) createPrivateNetworkPeering(ctx context.Context, peering PrivateNetworkPeering) (PrivateNetworkPeering, error) {
 	if err := ctx.Err(); err != nil {
 		return PrivateNetworkPeering{}, err
 	}
@@ -553,7 +564,7 @@ func (m *MemStore) UpdatePrivateNetworkPeeringStatus(ctx context.Context, accoun
 	return clonePrivateNetworkPeering(peering), nil
 }
 
-func (m *MemStore) DeletePrivateNetworkPeering(ctx context.Context, accountID, id string) error {
+func (m *MemStore) deletePrivateNetworkPeering(ctx context.Context, accountID, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -630,6 +641,10 @@ func (m *MemStore) AllocatePrivateNetworkAddress(ctx context.Context, accountID,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.allocatePrivateNetworkAddressLocked(accountID, networkID, ownerType, ownerID)
+}
+
+func (m *MemStore) allocatePrivateNetworkAddressLocked(accountID, networkID, ownerType, ownerID string) (PrivateNetworkAddress, error) {
 	network, ok := m.privateNetworks[networkID]
 	if !ok || network.AccountID != accountID {
 		return PrivateNetworkAddress{}, ErrNotFound
@@ -665,6 +680,13 @@ func (m *MemStore) ReleasePrivateNetworkAddress(ctx context.Context, accountID, 
 	ownerType, ownerID = strings.TrimSpace(ownerType), strings.TrimSpace(ownerID)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if ownerType == "app" {
+		for _, owner := range m.privateNetworkServiceOwners {
+			if owner.AccountID == accountID && owner.NetworkID == networkID && owner.AppID == ownerID {
+				return ErrConflict
+			}
+		}
+	}
 	for id, address := range m.privateNetworkAddresses {
 		if address.AccountID == accountID && address.NetworkID == networkID && address.OwnerType == ownerType && address.OwnerID == ownerID {
 			delete(m.privateNetworkAddresses, id)

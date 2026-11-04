@@ -320,9 +320,12 @@ func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	if err != nil || unchanged.State != StateReady || unchanged.ProviderResourceID != source.ProviderResourceID {
 		t.Fatalf("source changed by restore: %+v, %v", unchanged, err)
 	}
+	// ADR-20261103091657: the source's delete is accepted and waits for the
+	// copy, whose provider resource lives inside the source's.
 	provider.deleteDone = true
-	if _, err := service.Delete(context.Background(), "account-a", source.ID); !errors.Is(err, ErrConflict) {
-		t.Fatalf("source delete with active restore = %v, want conflict", err)
+	kept, err := service.Delete(context.Background(), "account-a", source.ID)
+	if err != nil || kept.State != StateDeleting || kept.LastErrorCode != RestoreCopiesRemainCode || kept.CountsTowardLimit() {
+		t.Fatalf("source delete with active restore = %+v, %v; want kept for its copy", kept, err)
 	}
 	if provider.deleteCalls != 0 {
 		t.Fatalf("source delete contacted provider with active restore %d times", provider.deleteCalls)
@@ -330,8 +333,68 @@ func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	if _, err := service.Delete(context.Background(), "account-a", restored.ID); err != nil {
 		t.Fatalf("restore target delete: %v", err)
 	}
-	if _, err := service.Delete(context.Background(), "account-a", source.ID); err != nil {
-		t.Fatalf("source delete after target cleanup: %v", err)
+	deleted, err := service.Delete(context.Background(), "account-a", source.ID)
+	if err != nil || deleted.State != StateDeleted || provider.lastDelete.ProviderResourceID != source.ProviderResourceID {
+		t.Fatalf("source delete after target cleanup = %+v, %v", deleted, err)
+	}
+}
+
+// adr: 20261103091657
+func TestKeptSourceFreesItsDatabaseLimitAndPurgesAfterItsCopies(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady, deleteDone: true}
+	registry, store := testRegistry(t, provider, nil), NewMemoryStore()
+	clock := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	service, err := NewService(registry, store, ServiceOptions{
+		ProvisioningEnabled:    func() bool { return true },
+		MaxDatabasesPerAccount: func(context.Context, string) (int, error) { return 2, nil },
+		Now: func() time.Time {
+			clock = clock.Add(time.Second)
+			return clock
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	source, err := service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := service.Restore(ctx, RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: "orders-copy", PointInTime: source.CreatedAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "third", Spec: testSpec()}); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("create at the limit = %v, want ErrQuotaExceeded", err)
+	}
+	// A customer's delete keeps an undo window, which still counts.
+	scheduled, err := service.ScheduleDelete(ctx, "account-a", source.ID)
+	if err != nil || !scheduled.Restorable(clock) || !scheduled.CountsTowardLimit() {
+		t.Fatalf("schedule source delete = %+v, %v", scheduled, err)
+	}
+	if count, err := store.CountSubjectDatabases(ctx, "account-a"); err != nil || count != 2 {
+		t.Fatalf("count during the undo window = %d, %v; want 2", count, err)
+	}
+	// The purge keeps the source for its copy, and frees its database.
+	kept, err := service.Delete(ctx, "account-a", source.ID)
+	if err != nil || kept.State != StateDeleting || kept.LastErrorCode != RestoreCopiesRemainCode || provider.deleteCalls != 0 {
+		t.Fatalf("purge with a copy = %+v, %v (provider deletes %d)", kept, err, provider.deleteCalls)
+	}
+	if count, err := store.CountSubjectDatabases(ctx, "account-a"); err != nil || count != 1 {
+		t.Fatalf("count with the source kept = %d, %v; want 1", count, err)
+	}
+	if _, err := service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "third", Spec: testSpec()}); err != nil {
+		t.Fatalf("create after the kept source freed its database: %v", err)
+	}
+	if _, err := service.Undelete(ctx, "account-a", source.ID); err == nil {
+		t.Fatal("undelete of a purged source succeeded")
+	}
+	if _, err := service.Delete(ctx, "account-a", restored.ID); err != nil {
+		t.Fatalf("copy delete: %v", err)
+	}
+	deleted, err := service.Delete(ctx, "account-a", source.ID)
+	if err != nil || deleted.State != StateDeleted || provider.lastDelete.ProviderResourceID != source.ProviderResourceID {
+		t.Fatalf("source purge after its copy = %+v, %v", deleted, err)
 	}
 }
 

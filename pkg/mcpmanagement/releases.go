@@ -20,6 +20,7 @@ const releasePlanTTL = 15 * time.Minute
 const maxReleasePlans = 256
 
 type releasePlan struct {
+	Operation               *operationPlan        `json:"operation,omitempty"`
 	Regression              *regressionActionPlan `json:"regression_triage,omitempty"`
 	regressionResult        *api.DebugRegressionReview
 	Budgets                 *routeBudgetPlan `json:"route_budgets,omitempty"`
@@ -54,6 +55,8 @@ type releasePlan struct {
 	EnvChange               *envChangePlan                     `json:"env_change,omitempty"`
 	Provision               *provisionPlan                     `json:"provision,omitempty"`
 	localReceipt            any
+	failure                 *planFailure
+	configReceipt           *api.EnvBatchResponse
 	localInFlight           bool
 	appHash                 [32]byte
 	latestID                string

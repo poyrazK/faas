@@ -923,7 +923,8 @@ backend (driver name `firecracker`, registered in apid). It reaches schedd
 with apid's client certificate and writes verifiers through `pkg/dbcreds`.
 
 - **Provision** asks schedd for a VM of the class's fixed shape (development
-  1 vCPU/512 MiB, burstable 2 vCPU/1 GiB), then runs an init batch through
+  1 vCPU/512 MiB, burstable 2 vCPU/1 GiB). Once schedd has bootstrapped it
+  (see "Background provisioning"), an init batch runs through
   `DatabaseAdmin`: the `gregale_schema_owner` role, the customer database it
   owns, and PUBLIC locked out of CONNECT/CREATE/TEMPORARY. Inspect derives
   the class back from the VM shape.
@@ -2159,6 +2160,41 @@ Backend configuration (`FAAS_MANAGED_POSTGRES_CONFIG`):
  "secret_env": {"credential-key": "FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY"}}
 ```
 
+### Background provisioning (amendment 2026-11-02)
+
+A new database's bootstrap (volume, initdb, the first base backup) took
+about 10 s on internal-test-1, and schedd ran it inside `ProvisionDatabase`.
+The create request apid serves has a 5 s budget, so creating a native
+database through the API answered 503 although the reconciler later
+finished it. Worse, a caller whose deadline cut the bootstrap off made
+schedd stop the VM and mark the database `failed` for good.
+
+- `ProvisionDatabase` now only places the database and answers
+  `provisioning`. schedd bootstraps it in the background, detached from the
+  RPC, and parks it; `GetDatabase` reports it provisioning until then.
+- The bootstrap runs under a lease in `database_vms`, the column a restore
+  uses (a database is never both), so concurrent schedd replicas do not
+  bootstrap the same database. The replica running it renews the lease;
+  restarts and the idle sweep resume any whose lease lapsed
+  (`ResumeProvisions`). Repeating `ProvisionDatabase` resumes it too.
+- Only a failed step, or `ProvisionTimeout` (default 15 min), fails the
+  database. A bootstrap cut off by a delete, a lost lease or a dying
+  replica leaves the database provisioning for the next holder, which
+  boots it again; every step is safe to repeat.
+- The driver's `Provision` reports the database pending. While the service
+  is still provisioning it, it inspects the database through
+  `InspectProvision` (`managedpostgres.ProvisionInspector`), which runs the
+  init batch once schedd reports the database bootstrapped and only then
+  reports it ready. `Inspect` itself never runs it, so observing a
+  database never wakes it. Qualification polls the same way. A restore
+  needs no init batch: it recovers the source's customer database.
+- Release skew: an apid from before this change, facing the new schedd,
+  runs its init batch while the database is still provisioning. The
+  replica bootstrapping it holds the batch until the bootstrap ends;
+  another refuses it. Either way the service retries `Provision` until the
+  batch lands. A new apid facing an old schedd gets a parked database from
+  `ProvisionDatabase` and runs the init batch at once, as before.
+
 ## Phasing
 
 1. Walking skeleton on one internal database node: create, connect through
@@ -2191,3 +2227,26 @@ native x86_64 KVM database nodes.
 - Separating storage from compute (Neon-style pageserver): the best long-term
   economics, but out of reach today; the volume abstraction keeps it possible.
 - Memory snapshots for wake: RNG replay, volume consistency and disk cost.
+
+## Amendment: connection admission (2026-11-02)
+
+Bug hunt 34 found that the "rate-limits per database and per source" above
+was only concurrency caps: 512 handshakes in flight per instance and 32 per
+address, each held up to the 15 s handshake timeout before the client sent a
+byte. About sixteen addresses holding idle connections filled every slot and
+locked every database on the node out. pgproxyd now:
+
+- allows `startup_timeout` (default 5 s) for TLS and the startup message, and
+  the 15 s handshake timeout only for authentication and the wake;
+- lets connections from `trusted_sources` (the platform's compute node
+  networks, `pgproxyd_trusted_sources` in Ansible) skip both handshake caps,
+  so strangers cannot lock the apps out; they still count against
+  `MaxConnections`;
+- refuses a source for the rest of the minute after `max_auth_failures`
+  (default 10) failed logins to one database (`53300`), without a SCRAM
+  exchange. Keying by database and source keeps one attacker from locking a
+  database out for everyone.
+
+Clients outside the trusted networks still share the handshake caps, so a
+large botnet can still crowd them out; that is the residual risk until a
+SYN-proxy or per-network caps are in front of the listener.

@@ -122,14 +122,24 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		byID[app.ID], bySlug[app.Slug] = app, app
 	}
 	mapped := map[string]bool{}
+	appResources := map[string]string{}
 	for _, resource := range snapshot.Resources {
 		mapped[resource.Resource] = true
 		out.State.ResourceIDs[resource.Resource] = resource.AppID
+		appResources[resource.AppID] = resource.Resource
 	}
-	for name, workload := range desired.Definition.Workloads {
+	for _, name := range sortedEnvironmentWorkloadNames(desired.Definition.Workloads) {
+		workload := desired.Definition.Workloads[name]
 		resource := "workload/" + name
 		if !mapped[resource] && workload.App != "" {
 			out.State.ResourceIDs[resource] = bySlug[workload.App].ID
+		}
+		if appID := out.State.ResourceIDs[resource]; appID != "" {
+			if prior := appResources[appID]; prior != "" && prior != resource {
+				out.State.Unsupported = append(out.State.Unsupported, resource+": app is already mapped to "+prior)
+			} else {
+				appResources[appID] = resource
+			}
 		}
 		if workload.App != "" && out.State.ResourceIDs[resource] != "" && byID[out.State.ResourceIDs[resource]].Slug != workload.App {
 			out.State.Unsupported = append(out.State.Unsupported, resource+": mapped app identity differs from the definition")
@@ -474,7 +484,7 @@ func (s *PgStore) AdoptEnvironmentGitOps(ctx context.Context, accountID, sourceI
 			if !ok {
 				return ErrConflict
 			}
-			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, source, app, row, workload, snapshot.Plan)
+			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, source, app, row, workload, snapshot.Plan, false)
 			if err != nil {
 				return err
 			}
@@ -629,7 +639,7 @@ func (s *PgStore) applyEnvironmentGitOpsOnce(ctx context.Context, lease Environm
 			if !ok {
 				return nil, ErrConflict
 			}
-			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, lease.Source, app, row, workload, snapshot.Plan)
+			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, lease.Source, app, row, workload, snapshot.Plan, true)
 			if err != nil {
 				return nil, err
 			}

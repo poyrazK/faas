@@ -30,14 +30,14 @@ func TestMCPInstanceLogLifecycle(t *testing.T) {
 		identities = append(identities, app+"/"+dep+"/"+instance)
 		return func(logbuf.Line) { commits++ }, func() { stops++ }
 	})
-	ring := v.registerDeploymentRing("replica", "app", "deployment")
+	ring := v.registerDeploymentRing("replica", "app", "deployment", "")
 	_, _ = ring.Write("stdout", []byte("heartbeat\n"))
 	_, _, cancel := ring.SnapshotAndSubscribe(1)
 	cancel()
 	if commits != 1 || identities[0] != "app/deployment/replica" {
 		t.Fatal("identity or replay semantics")
 	}
-	v.registerDeploymentRing("replica", "app", "replacement")
+	v.registerDeploymentRing("replica", "app", "replacement", "")
 	v.unregisterRing("replica")
 	v.unregisterRing("replica")
 	if stops != 2 {

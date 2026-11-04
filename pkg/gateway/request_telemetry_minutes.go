@@ -138,13 +138,16 @@ func (m *requestTelemetryMinutes) takeAll() []RequestTelemetryRow {
 	return m.takeReady(len(m.ready))
 }
 
-// pendingByApp counts the requests held open or waiting to ship, per app.
-func (m *requestTelemetryMinutes) pendingByApp() map[uuid.UUID]int {
+// undeliveredByApp counts the requests in closed minutes that have not
+// shipped yet, per app. Requests still folding into a minute that has not
+// passed its grace are not pending: no consumer reads that minute yet (route
+// evidence waits api.RouteHealthIngestionLag, route removal two minutes), and
+// counting them kept every app with traffic permanently "pending", which
+// blocked route removal for good (ADR-20261028110044 amendment 4).
+func (m *requestTelemetryMinutes) undeliveredByApp() map[uuid.UUID]int {
 	counts := make(map[uuid.UUID]int)
-	for _, rows := range [][]RequestTelemetryRow{m.rows, m.ready} {
-		for _, row := range rows {
-			counts[row.AppID] += normalizedRequestTelemetryCount(row.Count)
-		}
+	for _, row := range m.ready {
+		counts[row.AppID] += normalizedRequestTelemetryCount(row.Count)
 	}
 	return counts
 }

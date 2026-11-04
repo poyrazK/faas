@@ -31,6 +31,11 @@ class CustomDomainResponse:
     """Project environment that owns the route; omitted for legacy application-wide domains."""
     challenge_token: None | str | Unset = UNSET
     verified_at: datetime.datetime | None | Unset = UNSET
+    verification_expires_at: datetime.datetime | Unset = UNSET
+    """Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof."""
+    verification_expired: bool | Unset = UNSET
+    """True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS
+    instructions are omitted; resume domain setup to recreate the claim."""
     txt_record: None | str | Unset = UNSET
     default: bool | Unset = UNSET
     """True when this domain is the app's default. Set via `gregale domains set-default`."""
@@ -77,6 +82,12 @@ class CustomDomainResponse:
             verified_at = self.verified_at.isoformat()
         else:
             verified_at = self.verified_at
+
+        verification_expires_at: str | Unset = UNSET
+        if not isinstance(self.verification_expires_at, Unset):
+            verification_expires_at = self.verification_expires_at.isoformat()
+
+        verification_expired = self.verification_expired
 
         txt_record: None | str | Unset
         if isinstance(self.txt_record, Unset):
@@ -148,6 +159,10 @@ class CustomDomainResponse:
             field_dict["challenge_token"] = challenge_token
         if verified_at is not UNSET:
             field_dict["verified_at"] = verified_at
+        if verification_expires_at is not UNSET:
+            field_dict["verification_expires_at"] = verification_expires_at
+        if verification_expired is not UNSET:
+            field_dict["verification_expired"] = verification_expired
         if txt_record is not UNSET:
             field_dict["txt_record"] = txt_record
         if default is not UNSET:
@@ -207,6 +222,15 @@ class CustomDomainResponse:
             return cast(datetime.datetime | None | Unset, data)
 
         verified_at = _parse_verified_at(d.pop("verified_at", UNSET))
+
+        _verification_expires_at = d.pop("verification_expires_at", UNSET)
+        verification_expires_at: datetime.datetime | Unset
+        if isinstance(_verification_expires_at, Unset):
+            verification_expires_at = UNSET
+        else:
+            verification_expires_at = datetime.datetime.fromisoformat(_verification_expires_at)
+
+        verification_expired = d.pop("verification_expired", UNSET)
 
         def _parse_txt_record(data: object) -> None | str | Unset:
             if data is None:
@@ -306,6 +330,8 @@ class CustomDomainResponse:
             environment=environment,
             challenge_token=challenge_token,
             verified_at=verified_at,
+            verification_expires_at=verification_expires_at,
+            verification_expired=verification_expired,
             txt_record=txt_record,
             default=default,
             cert_not_after=cert_not_after,

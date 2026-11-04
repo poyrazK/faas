@@ -6,11 +6,14 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,8 +27,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// logBucket is an in-process S3-compatible bucket (path-style PUT and GET)
-// standing in for the runtime-log archive.
+// logBucket is an in-process S3-compatible bucket (path-style PUT, GET and a
+// ListObjects listing) standing in for the runtime-log archive. Readers list
+// a day's part objects before reading its whole-day object
+// (ADR-20261028110000), so without the listing every archived day read back
+// as missing.
 type logBucket struct {
 	mu      sync.Mutex
 	objects map[string][]byte
@@ -35,12 +41,14 @@ func (b *logBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimPrefix(r.URL.Path, "/logs-e2e/")
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	switch r.Method {
-	case http.MethodPut:
+	switch {
+	case r.Method == http.MethodGet && r.URL.Query().Has("prefix"):
+		b.listLocked(w, r)
+	case r.Method == http.MethodPut:
 		body, _ := io.ReadAll(r.Body)
 		b.objects[key] = body
 		w.WriteHeader(http.StatusOK)
-	case http.MethodGet:
+	case r.Method == http.MethodGet:
 		object, ok := b.objects[key]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -51,6 +59,45 @@ func (b *logBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// listLocked answers a ListObjects (V1) request: the keys under prefix after
+// marker, in order, at most max-keys of them.
+func (b *logBucket) listLocked(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	prefix, marker := query.Get("prefix"), query.Get("marker")
+	limit, err := strconv.Atoi(query.Get("max-keys"))
+	if err != nil || limit <= 0 {
+		limit = 1000
+	}
+	var keys []string
+	for key := range b.objects {
+		if strings.HasPrefix(key, prefix) && key > marker {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	type content struct {
+		Key string `xml:"Key"`
+	}
+	result := struct {
+		XMLName     xml.Name  `xml:"ListBucketResult"`
+		IsTruncated bool      `xml:"IsTruncated"`
+		Contents    []content `xml:"Contents"`
+	}{IsTruncated: len(keys) > limit}
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+	for _, key := range keys {
+		result.Contents = append(result.Contents, content{Key: key})
+	}
+	body, err := xml.Marshal(result)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	_, _ = w.Write(body)
 }
 
 func (b *logBucket) has(prefix string) bool {

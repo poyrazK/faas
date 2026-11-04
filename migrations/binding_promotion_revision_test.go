@@ -114,6 +114,8 @@ func TestBindingPromotionRevisionMutationRollbackAndMigrationRoundTrip(t *testin
 		"20261016150020007_queue_binding_canaries.sql",
 		"20261016150020008_queue_canary_invocation_fences.sql",
 		"20261017002535947_binding_promotion_ignores_consumer_polls.sql",
+		// The WHEN clauses name watched columns, which an older Down drops.
+		"20261102193333680_trigger_when_unchanged_columns.sql",
 	} {
 		raw, err := os.ReadFile(name)
 		if err != nil {

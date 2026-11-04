@@ -72,10 +72,34 @@ func main() {
 		"ADR-576: keep service-address :443 on the private HTTPS service listener. Set only where that listener is staged. Env: FAAS_SERVICE_TCP_HTTPS=1.")
 	databaseRouteBridgeIP := flag.String("database-route-bridge-ip", "",
 		"ADR-1027: tenant-bridge address of the managed-database route forwarder (e.g. 10.100.0.1). When set, the renderer emits the database route NAT. Env: FAAS_DATABASE_ROUTE_BRIDGE_IP.")
+	publicIngressCIDRs := flag.String("public-ingress-cidrs", "",
+		"ADR-20261102081618: comma-separated sources (Cloudflare's ranges) that alone may reach 80 and 443, as the nftables role's faas_cloudflare_origin_only renders. Env: FAAS_PUBLIC_INGRESS_CIDRS.")
+	publicEntryAddrs := flag.String("public-entry-addrs", "",
+		"ADR-20261103163954: comma-separated public entry addresses of an edge with no proxy in front; they take 443 from every source and nothing else, as the nftables role's faas_public_entry_addrs renders. Env: FAAS_PUBLIC_ENTRY_ADDRS.")
 	flag.Parse()
 
 	policy := netns.DefaultHostPolicy
 	policy.PublicForwarding = *publicForwarding
+	if raw := pickValue(*publicIngressCIDRs, "FAAS_PUBLIC_INGRESS_CIDRS"); raw != "" {
+		for _, entry := range strings.Split(raw, ",") {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(entry))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "faas-nft-render: --public-ingress-cidrs %q: %v\n", entry, err)
+				os.Exit(1)
+			}
+			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())
+		}
+	}
+	if raw := pickValue(*publicEntryAddrs, "FAAS_PUBLIC_ENTRY_ADDRS"); raw != "" {
+		for _, entry := range strings.Split(raw, ",") {
+			addr, err := netip.ParseAddr(strings.TrimSpace(entry))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "faas-nft-render: --public-entry-addrs %q: %v\n", entry, err)
+				os.Exit(1)
+			}
+			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
+		}
+	}
 	if iface := pickValue(*publicIface, "FAAS_PUBLIC_IFACE"); iface != "" {
 		policy.PublicIface = iface
 	}

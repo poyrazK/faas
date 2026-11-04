@@ -37,7 +37,7 @@ func (s *server) planPlatformTenantReconciliation(w http.ResponseWriter, r *http
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	plan, err := store.PlanPlatformTenantReconciliation(r.Context(), in)
+	plan, err := store.PlanPlatformTenantReconciliation(state.WithPublicTenantHostnameClaim(r.Context()), in)
 	if err != nil {
 		s.platformTenantApplyError(w, err, acct.Plan)
 		return
@@ -79,7 +79,7 @@ func (s *server) applyPlatformTenantReconciliation(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	result, err := store.ApplyPlatformTenantReconciliation(r.Context(), in, req.ExpectedPlanHash)
+	result, err := store.ApplyPlatformTenantReconciliation(state.WithPublicTenantHostnameClaim(r.Context()), in, req.ExpectedPlanHash)
 	if err != nil {
 		if errors.Is(err, state.ErrPlatformTenantPlanStale) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "platform_tenant_plan_stale", "Reconciliation plan is stale",

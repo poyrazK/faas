@@ -151,19 +151,39 @@ func PinnedHostPolicyRevision(ctx context.Context, host string) string {
 	return ""
 }
 
+// UnenforceableEdgeRuleError is a pinned host policy holding one of the
+// app owner's rules the gateway cannot enforce, which fails the host closed.
+type UnenforceableEdgeRuleError struct {
+	// RuleID is the broken rule, or "" when the compile error names none.
+	RuleID string
+}
+
+func (e *UnenforceableEdgeRuleError) Error() string {
+	return "compiled host policy contains unavailable owner rules"
+}
+
 // ValidatePinnedHostPolicies runs after owner resolution. A foreign account's
 // free-form host match and broken preset must not take another tenant offline.
+// The error names the first broken rule, sorted by ID so every request names
+// the same one (ADR-091 amendment 2026-11-03, review round 9).
 func ValidatePinnedHostPolicies(ctx context.Context, account string) error {
 	pinned, _ := ctx.Value(pinnedEdgePoliciesKey{}).(map[string]*edgePolicySnapshot)
+	var broken *UnenforceableEdgeRuleError
 	for _, snapshot := range pinned {
 		for _, failure := range snapshot.entry.PathGlobErrs {
 			owner := snapshot.entry.PolicyRuleOwners[failure.RuleID]
-			if owner == "" || owner == account {
-				return errors.New("compiled host policy contains unavailable owner rules")
+			if owner != "" && owner != account {
+				continue
+			}
+			if broken == nil || failure.RuleID != "" && (broken.RuleID == "" || failure.RuleID < broken.RuleID) {
+				broken = &UnenforceableEdgeRuleError{RuleID: failure.RuleID}
 			}
 		}
 	}
-	return nil
+	if broken == nil {
+		return nil
+	}
+	return broken
 }
 
 const policyDigestPrefix = "traffic-v1:"
@@ -364,7 +384,7 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 	}
 	// Validate after the app pins, so the app's own app-wide rules fail closed too.
 	if err := ValidatePinnedHostPolicies(r.Context(), app.AccountID); err != nil {
-		h.writeTrafficPolicyUnavailable(w, r)
+		h.writeUnenforceableEdgeRule(w, r, err)
 		return true
 	}
 	if h.applyTotalDeadline(w, r, *app) {
@@ -443,6 +463,22 @@ func (h *Handler) writeTrafficPolicyUnavailable(w http.ResponseWriter, r *http.R
 	w.Header().Set("Retry-After", "1")
 	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeTrafficPolicyUnavailable,
 		"Traffic policy unavailable", "Gregale could not verify this route's traffic policy. Retry shortly."))
+}
+
+// writeUnenforceableEdgeRule refuses a request whose host carries one of the
+// app owner's edge rules the gateway cannot enforce. The detail names the
+// rule, so the owner can find and fix it; a generic "retry shortly" made a
+// configuration problem look like an outage (ADR-091 amendment 2026-11-03,
+// review round 9). Responses already name edge rules by ID.
+func (h *Handler) writeUnenforceableEdgeRule(w http.ResponseWriter, r *http.Request, err error) {
+	var broken *UnenforceableEdgeRuleError
+	if !errors.As(err, &broken) || broken.RuleID == "" {
+		h.writeTrafficPolicyUnavailable(w, r)
+		return
+	}
+	recordTrafficRefusal(r.Context(), "policy_unavailable")
+	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeTrafficPolicyUnavailable,
+		"Traffic policy unavailable", "edge rule "+broken.RuleID+" on this host cannot be enforced, so Gregale refuses the host's requests until the app's owner fixes or deletes the rule"))
 }
 
 func TrafficPolicyRevision(ctx context.Context) string {

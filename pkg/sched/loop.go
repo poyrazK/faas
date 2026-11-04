@@ -93,6 +93,10 @@ type Loop struct {
 	// through the GatewaySynth interface.
 	gatewayHTTPClient *http.Client
 	gatewayBaseURL    string
+	// triggerClaimRenewInterval is how often a running trigger batch renews
+	// its record claims; zero means api.TriggerRecordClaimRenewInterval.
+	// Tests shorten it.
+	triggerClaimRenewInterval time.Duration
 	// triggerPollers caches one triggerSource per trigger id.
 	// triggerPollerConfigs holds the fingerprint of the config each
 	// poller was built from: a changed trigger (credentials, topic, URL)
@@ -111,9 +115,9 @@ type Loop struct {
 	// seal-domain identity first, then the fleet and host identities
 	// (current and previous during a rotation).
 	triggerSecretIdentities []*age.X25519Identity
-	// rateLimiter is the per-app wake rate limiter (shared with
-	// cron dispatch via pkg/sched/rate_limit.go).
-	rateLimiter *WakeRateLimiter
+	// recordRate caps the records each app's broker triggers take per
+	// second (ADR-20261101093015); nil leaves broker polls uncapped.
+	recordRate *TriggerRecordRateLimiter
 	// triggerWakeup is the channel-side wakeup signal the schedd's
 	// pg_notify subscriber delivers on every NotifyTriggerReady +
 	// NotifyTriggerChanged payload (commit #16). The Loop's run
@@ -145,8 +149,18 @@ type Loop struct {
 	flowCounts            FlowCounter
 	flowReaderUnavailable sync.Once
 	ops                   *wire.OpsMetrics // issue #171 shared registry; nil safe
-	primeMetrics          *snapshotPrimeMetrics
-	cronMetrics           *commandCronMetrics
+	// ownedApps is the previous reaper tick's owned app set, for
+	// forgetDepartedApps (ADR 20261103131546).
+	ownedAppsMu  sync.Mutex
+	ownedApps    map[string]struct{}
+	primeMetrics *snapshotPrimeMetrics
+	cronMetrics  *commandCronMetrics
+	// cronResume asks the main loop to continue a cron sweep that used its
+	// slice; cronSweepTried holds the crons the minute's sweep already
+	// dispatched (runCronSweep).
+	cronResume            chan struct{}
+	cronSweepTried        map[string]struct{}
+	cronSweepSlice        time.Duration
 	audit                 *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
 	watchdog              *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
 	liveness              *wire.Liveness                          // ADR-190 main-loop progress beats; nil opts out
@@ -241,12 +255,16 @@ type Loop struct {
 	workflowsDispatched               bool
 	workflowScheduleMinute            int64
 	workflowFailurePolicyAfter        string
+	workflowFailurePolicyNextPass     time.Time
+	workflowFailurePolicyPassFailed   bool
+	workflowFailurePolicyUncertain    bool
 	workflowScheduleAfter             string
 	workflowScheduleComplete          bool
 	workflowScheduleFailed            bool
 	tenantWorkflowScheduleMinute      int64
 	tenantWorkflowScheduleAfterApp    string
 	tenantWorkflowScheduleAfterTenant string
+	tenantWorkflowScheduleFairAfter   *state.FairTenantScheduleCursor
 	tenantWorkflowScheduleComplete    bool
 	tenantWorkflowScheduleFailed      bool
 	workflowOrch                      *WorkflowOrchestrator
@@ -274,6 +292,7 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 		now:                  time.Now,
 		flowCounts:           noopFlowCounter{},
 		eventRecipientClaims: true,
+		cronResume:           make(chan struct{}, 1),
 	}
 	if engine != nil {
 		engine.SetBrokerLagReader(l)
@@ -927,6 +946,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// TABLE source of truth — the LISTEN is just a wakeup — so we
 	// sweep once on startup to bound the post-restart latency at ~1
 	// round-trip rather than waiting for the 60s safety tick.
+	l.failInterruptedFireNowRequests(ctx)
 	l.drainPendingFireNowRequests(ctx)
 
 	// PR #1099 P2 redesign: drain any operator_intents rows that
@@ -1335,6 +1355,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.dispatchReaper(ctx)
 		case <-cronTicks:
 			l.runCronTick(ctx)
+		case <-l.cronResume:
+			l.runCronSweep(ctx)
 		case <-watchdogTick(watchdogT):
 			l.dispatchWatchdog(ctx)
 		case <-heartbeatTick(heartbeatT):
@@ -1348,11 +1370,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-scaleupTick(scaleupT):
 			l.runScaleUp(ctx)
 		case <-targetsTick(targetsT):
-			l.runTargets(ctx)
+			l.submitWork(workTargets, "tick", func() { l.runTargets(ctx) })
 		case <-floorTick(floorT):
-			l.runFloor(ctx)
+			l.submitWork(workFloor, "tick", func() { l.runFloor(ctx) })
 		case <-prewarmTick(prewarmT):
-			l.runPrewarm(ctx)
+			l.submitWork(workPrewarm, "tick", func() { l.runPrewarm(ctx) })
 		case <-recentLoadTick(recentLoadT):
 			l.runRecentLoad(ctx)
 		case <-migratingWatchdogTick(migratingWatchdogT):
@@ -1366,39 +1388,38 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-jobsTick(jobsDispatchT):
 			l.runJobsDispatchTick(ctx)
 		case <-jobsTick(jobsReaperT):
-			l.runJobsReaperTick(ctx)
+			l.submitWork(workJobsReaper, "tick", func() { l.runJobsReaperTick(ctx) })
 		case <-jobsTick(workflowsDispatchT):
 			l.runWorkflowsDispatchTick(ctx)
 		case <-workflowRetentionFirst:
-			l.runWorkflowRetention(ctx)
+			l.dispatchWorkflowRetention(ctx)
 			workflowRetentionFirst = nil
 		case <-workerRecoveryT.C:
 			l.dispatchWorkerRecovery(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
-			l.runWorkflowRetention(ctx)
+			l.dispatchWorkflowRetention(ctx)
 		case <-retentionFirst:
 			// One-shot first fire (see retentionFirstFireDelay). After
 			// this the channel is set to nil so subsequent ticks
 			// exclusively come from retentionT (the 1h ticker).
-			l.runRetention(ctx)
-			l.runDeadLetterRetention(ctx)
-			l.runCronHistoryRetention(ctx)
+			l.dispatchRetention(ctx)
 			retentionFirst = nil
 		case <-retentionTick(retentionT):
-			l.runRetention(ctx)
-			l.runDeadLetterRetention(ctx)
-			l.runCronHistoryRetention(ctx)
+			l.dispatchRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
 			l.submitWork(workInvocationsRetention, "tick", func() { l.runInvocationsRetention(ctx) })
 		case <-triggersRetentionTick(triggersRetentionT):
-			l.runTriggersRetention(ctx)
+			l.submitWork(workTriggersRetention, "tick", func() { l.runTriggersRetention(ctx) })
 		case <-fireNowT.C:
 			// PR-D / issue #791: safety sweep. Picks up rows that
 			// missed a NotifyCronRunNow delivery (Postgres bounce,
 			// network blip). Same dispatcher as the notify arm —
 			// drainPendingFireNowRequests is the single owner of the
 			// claim + dispatch loop.
-			l.drainPendingFireNowRequests(ctx)
+			l.submitWork(workCronFireNow, "drain", func() {
+				l.failInterruptedFireNowRequests(ctx)
+				l.drainPendingFireNowRequests(ctx)
+			})
 		case <-operatorIntentT.C:
 			// PR #1099 P2 redesign: safety sweep. Picks up rows
 			// that missed a NotifyOperatorIntent delivery
@@ -1782,6 +1803,56 @@ func (l *Loop) runRetention(ctx context.Context) {
 
 // runDeadLetterRetention dispatches one unified Failed Events projection
 // retention sweep. Errors are logged and retried on the next hourly tick.
+// forgetDepartedApps deletes the metric series of every app that was in the
+// previous reaper tick's owned list and is not in apps: deleted, or now owned
+// by another scheduler (ADR 20261103131546). Series an app still emits come
+// back on its next observation.
+func (l *Loop) forgetDepartedApps(apps []state.App) {
+	if l.ops == nil {
+		return
+	}
+	current := make(map[string]struct{}, len(apps))
+	for _, app := range apps {
+		current[app.ID] = struct{}{}
+	}
+	l.ownedAppsMu.Lock()
+	previous := l.ownedApps
+	l.ownedApps = current
+	l.ownedAppsMu.Unlock()
+	for id := range previous {
+		if _, ok := current[id]; !ok {
+			l.ops.ForgetApp(id)
+		}
+	}
+}
+
+// dispatchAppPark parks every live instance of appID on the work pool (ADR
+// 20261103164725). ParkApp snapshots or destroys each instance and checks
+// again under the app lock that the app must still park, so a duplicate or
+// late submit is harmless. A dropped submit is retried by the next reaper
+// tick, which re-reads the app and account status.
+func (l *Loop) dispatchAppPark(ctx context.Context, appID, reason string) {
+	l.submitWork(workAppPark, appID, func() {
+		if acted, err := l.engine.ParkApp(ctx, appID); err != nil {
+			l.log.Warn("sched: park app failed", "app", appID, "reason", reason, "acted", acted, "err", err)
+		} else if acted > 0 {
+			l.log.Info("sched: parked app reconciled", "app", appID, "reason", reason, "instances", acted)
+		}
+	})
+}
+
+// dispatchRetention runs the hourly instance, dead-letter and cron-history
+// retention off the loop (ADR 20261103131546). They delete in repeated
+// batches; inline, a large backlog held the stats tick, cron and the
+// triggers behind them.
+func (l *Loop) dispatchRetention(ctx context.Context) {
+	l.submitWork(workRetention, "tick", func() {
+		l.runRetention(ctx)
+		l.runDeadLetterRetention(ctx)
+		l.runCronHistoryRetention(ctx)
+	})
+}
+
 func (l *Loop) runDeadLetterRetention(ctx context.Context) {
 	if l.deadLetterRetention == nil {
 		return
@@ -1955,6 +2026,21 @@ func (l *Loop) runScalingPolicyObservation(ctx context.Context) {
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			l.log.Warn("scaling policy observation: list apps", "err", err)
+		}
+		return
+	}
+	// ADR 20261103094355: one statement for the pass, rewriting only the
+	// rows that changed or are due a refresh. One statement per app ran on
+	// this loop and held the one-second triggers for a round trip per app.
+	if batch, ok := store.(state.AppScalingPolicyObservationBatchStore); ok {
+		observations := make([]state.AppScalingPolicyObservation, 0, len(apps))
+		for _, app := range apps {
+			if app.ScalingPolicyRevision > 0 && l.engine.ownsAppDecision(app) {
+				observations = append(observations, state.AppScalingPolicyObservation{AppID: app.ID, Revision: app.ScalingPolicyRevision})
+			}
+		}
+		if _, err := batch.RecordAppScalingPolicyObservations(ctx, ownerNodeID, observations); err != nil && !errors.Is(err, context.Canceled) {
+			l.log.Warn("scaling policy observation: record apps", "apps", len(observations), "err", err)
 		}
 		return
 	}
@@ -2342,11 +2428,9 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 				l.log.Warn("sched: park lifecycle notification missing app_id", "kind", p.Kind)
 				return
 			}
-			if acted, err := l.engine.ParkApp(ctx, p.AppID); err != nil {
-				l.log.Warn("sched: park app failed", "app", p.AppID, "acted", acted, "err", err)
-			} else {
-				l.log.Info("sched: parked app reconciled", "app", p.AppID, "kind", p.Kind, "instances", acted)
-			}
+			// ADR 20261103164725: parking snapshots or destroys every live
+			// instance; it runs on the work pool, not this select loop.
+			l.dispatchAppPark(ctx, p.AppID, p.Kind)
 			return
 		}
 		if p.Kind == "restart" {
@@ -2457,14 +2541,25 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// source of truth) — drain handles claim + dispatch
 		// regardless of which request_id the notify carried. This
 		// matches the build_queued notify-loss defense pattern
-		// (cmd/imaged consumer: subscriber re-reads the row).
-		l.drainPendingFireNowRequests(ctx)
+		// (cmd/imaged consumer: subscriber re-reads the row). The drain
+		// runs off the loop (ADR 20261103195512).
+		l.submitWork(workCronFireNow, "drain", func() { l.drainPendingFireNowRequests(ctx) })
 	case db.NotifyInstanceFailureRelayed:
 		// Issue #3359: a peer schedd hosts one of this schedd's instances
 		// and relayed vmmd's terminal failure report. Non-owners discard.
-		if err := l.engine.HandleRelayedInstanceFailure(ctx, n.Payload); err != nil {
-			l.log.Warn("sched: relayed instance failure", "err", err)
+		// The destroy waits on the app lock and vmmd, so it runs off the
+		// loop (ADR 20261103195512).
+		payload := n.Payload
+		var report InstanceFailureReport
+		key := payload
+		if json.Unmarshal([]byte(payload), &report) == nil && report.InstanceID != "" {
+			key = report.InstanceID + "/" + report.Kind
 		}
+		l.submitWork(workInstanceFailure, key, func() {
+			if err := l.engine.HandleRelayedInstanceFailure(ctx, payload); err != nil {
+				l.log.Warn("sched: relayed instance failure", "err", err)
+			}
+		})
 	case db.NotifyFrameworkReadyRelayed:
 		// Hunt 14 H14-104: a peer schedd hosts one of this schedd's instances
 		// and relayed vmmd's framework-ready receipt. Non-owners discard.
@@ -2492,7 +2587,11 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			l.log.Warn("sched: app_delete missing app_id", "payload", n.Payload)
 			return
 		}
-		l.appDelete.evictApp(ctx, p.AppID)
+		// ADR 20261103164725: unwind in-flight wakes at once; destroying the
+		// deleted app's VMs runs on the work pool, not this select loop.
+		l.appDelete.forgetWakes(p.AppID)
+		appID := p.AppID
+		l.submitWork(workAppDelete, appID, func() { l.appDelete.reconcileApp(ctx, appID) })
 	case db.NotifyJobChanged:
 		var p struct {
 			Kind  string `json:"kind"`
@@ -2576,20 +2675,37 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	apps = owned
+	l.forgetDepartedApps(apps)
 	accounts := newReaperAccounts(store)
 	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps,
 	// suspended accounts and accounts at their spend cap (ADR-1162) from the
 	// table source of truth on every reaper tick so a restart or missed
 	// lifecycle notification cannot leave unbillable VMs live. This runs
 	// before the normal idle snapshot.
+	// ADR 20261102160622: one bulk read of the strict compute sweep's inputs
+	// for the tick, not a live listing and a lease read per instance per app.
+	budgetPreload := l.engine.loadStrictComputePreload(ctx, apps)
+	// ADR 20261103164725: read the tick's spend caps in one query; most
+	// billing subjects have none and need no month total.
+	ownerIDs := make([]string, 0, len(apps))
 	for _, app := range apps {
-		if err := l.engine.ReconcileFinancialBudgetStops(ctx, app.ID); err != nil {
-			l.log.Warn("reaper: preview budget stop", "app", app.ID, "err", err)
+		if account, err := accounts.forApp(ctx, app); err == nil {
+			ownerIDs = append(ownerIDs, account.ResourceOwnerID())
+		}
+	}
+	l.engine.prefetchSpendCaps(ctx, ownerIDs)
+	for _, app := range apps {
+		// ADR 20261102205122: an app the sweep has nothing to apply to
+		// costs no lock and no reads.
+		if !budgetPreload.idle(app, l.engine.financialBudgetNow()) {
+			if err := l.engine.reconcileFinancialBudgetStops(ctx, app.ID, budgetPreload); err != nil {
+				l.log.Warn("reaper: preview budget stop", "app", app.ID, "err", err)
+			}
 		}
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
 			if account, accountErr := accounts.forApp(ctx, app); accountErr == nil {
-				mustPark = l.engine.appMustPark(ctx, app, account)
+				mustPark = l.engine.reaperAppMustPark(ctx, app, account)
 			} else {
 				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
 			}
@@ -2597,9 +2713,19 @@ func (l *Loop) runReaper(ctx context.Context) {
 		if !mustPark {
 			continue
 		}
-		if acted, err := l.engine.ParkApp(ctx, app.ID); err != nil {
-			l.log.Warn("reaper: parked app reconcile", "app", app.ID, "acted", acted, "err", err)
+		// An app with nothing live has nothing to park, so it takes no
+		// app_park slot. The pool runs four at once and drops the rest: on
+		// production-us (rc.319, 2026-11-04) nine parked apps with nothing
+		// live filled the slots in the same order every tick, and the same
+		// five were dropped every 10 s for hours. Without a preload the app
+		// parks as before.
+		if budgetPreload.nothingLive(app) {
+			continue
 		}
+		// ADR 20261103164725: whole-app parks run on the work pool, so a
+		// suspended or capped account with many apps no longer holds this
+		// tick's idle parks and memory-pressure eviction behind them.
+		l.dispatchAppPark(ctx, app.ID, "reaper")
 	}
 	// Warm-pool capacity is a durable desired count, so a missed app_changed
 	// notification must not leave an app below its configured resident pool.
@@ -2686,8 +2812,25 @@ func (l *Loop) runReaper(ctx context.Context) {
 	if candidate, ok := store.(state.PrewarmStore); ok {
 		prewarmStore = candidate
 	}
+	// ADR 20261102160622: every owned app's floor in one query when the store
+	// can; a failed or missing bulk read reads per app as before.
+	bulkFloors := false
+	if reader, ok := store.(state.PrewarmFloorsReader); ok && prewarmStore != nil && len(apps) > 0 {
+		ids := make([]string, 0, len(apps))
+		for _, a := range apps {
+			ids = append(ids, a.ID)
+		}
+		if floors, floorErr := reader.ActivePrewarmFloors(ctx, ids, now); floorErr != nil {
+			l.log.Warn("reaper: bulk prewarm floor lookup; reading per app", "err", floorErr)
+		} else {
+			for id, floor := range floors {
+				appPrewarmFloor[id] = max(floor, 0)
+			}
+			bulkFloors = true
+		}
+	}
 	for _, a := range apps {
-		if prewarmStore != nil {
+		if prewarmStore != nil && !bulkFloors {
 			if temporary, floorErr := prewarmStore.ActivePrewarmFloor(ctx, a.ID, now); floorErr != nil {
 				l.log.Warn("reaper: prewarm floor lookup", "app", a.ID, "err", floorErr)
 			} else {
@@ -2852,7 +2995,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		// ADR-1151: an eligible instance freezes in place instead of
 		// parking; anything else parks as before.
 		if !l.freezeFromReaper(ctx, id, activityByInstance[id].ResidentMB) {
-			if err := l.reaperShutdown(ctx, snapshot, id, false); err != nil {
+			if err := l.reaperShutdown(ctx, instanceInfoByID, id, false); err != nil {
 				if !errors.Is(err, ErrParkActivity) {
 					l.log.Warn("reaper: idle park", "instance", id, "err", err)
 				}
@@ -2870,12 +3013,12 @@ func (l *Loop) runReaper(ctx context.Context) {
 		// fallback here would never produce a real label value —
 		// ResolvePriority falls back to 'best_effort' to match the
 		// pre-#475 default).
-		if tier, ok := resolvePriority(snapshot, id); ok {
+		if tier, ok := resolvePriority(instanceInfoByID, id); ok {
 			if counter := l.ops.EvictedPriority(tier, "idle"); counter != nil {
 				counter.Inc()
 			}
 		}
-		if tier, ok := resolveTenantTier(snapshot, id); ok {
+		if tier, ok := resolveTenantTier(instanceInfoByID, id); ok {
 			if counter := l.ops.EvictionFired(tier, "idle"); counter != nil {
 				counter.Inc()
 			}
@@ -2952,12 +3095,12 @@ func (l *Loop) runReaper(ctx context.Context) {
 		// exhausted every best_effort candidate and had to fall
 		// through to the reserved tier; the alert is on a
 		// non-zero rate over a 5-minute window.
-		if tier, ok := resolvePriority(snapshot, id); ok {
+		if tier, ok := resolvePriority(instanceInfoByID, id); ok {
 			if counter := l.ops.EvictedPriority(tier, "eviction_ram"); counter != nil {
 				counter.Inc()
 			}
 		}
-		if tier, ok := resolveTenantTier(snapshot, id); ok {
+		if tier, ok := resolveTenantTier(instanceInfoByID, id); ok {
 			if counter := l.ops.EvictionFired(tier, "ram_pressure"); counter != nil {
 				counter.Inc()
 			}
@@ -3051,8 +3194,8 @@ func (l *Loop) freshGuestActivity(instance string) func(context.Context) (GuestA
 // dispatcher parks instead of stops (or vice versa), and both
 // paths converge on STOPPED. ReaperParkTimeout bounds the
 // synchronous call regardless of which engine path runs.
-func (l *Loop) reaperShutdown(ctx context.Context, snapshot []InstanceInfo, instanceID string, allowNewRequests bool) error {
-	info := l.infoForShutdown(snapshot, instanceID)
+func (l *Loop) reaperShutdown(ctx context.Context, infos map[string]InstanceInfo, instanceID string, allowNewRequests bool) error {
+	info := l.infoForShutdown(infos, instanceID)
 	switch state.InstanceMode(info.Mode) {
 	case state.InstanceModeWorker, state.InstanceModeJob:
 		return l.stopInstanceFromReaper(ctx, instanceID)
@@ -3067,13 +3210,23 @@ func (l *Loop) reaperShutdown(ctx context.Context, snapshot []InstanceInfo, inst
 // entry for id — a benign race covered in reaperShutdown's doc comment.
 // A bare entry has no activity to compare, so any newer request keeps the
 // instance unless allowNewRequests.
-func (l *Loop) infoForShutdown(snapshot []InstanceInfo, instanceID string) InstanceInfo {
-	for _, info := range snapshot {
-		if info.Instance == instanceID {
-			return info
-		}
+func (l *Loop) infoForShutdown(infos map[string]InstanceInfo, instanceID string) InstanceInfo {
+	if info, ok := infos[instanceID]; ok {
+		return info
 	}
 	return InstanceInfo{Instance: instanceID}
+}
+
+// indexInstanceInfos keys a reaper snapshot by instance ID. The reaper looks
+// up each instance it parks or evicts; scanning the snapshot for each made a
+// mass park quadratic in the node's instances (ADR 20261103094355). A
+// snapshot holds each instance once.
+func indexInstanceInfos(snapshot []InstanceInfo) map[string]InstanceInfo {
+	infos := make(map[string]InstanceInfo, len(snapshot))
+	for _, info := range snapshot {
+		infos[info.Instance] = info
+	}
+	return infos
 }
 
 // stopInstanceFromReaper is the reaper-side wrapper around
@@ -3156,32 +3309,28 @@ func reaperInstanceState(s state.State) bool {
 // been backfilled) flows through state.EvictionPriorityOrBestEffort
 // so the metric observation matches the same bucket the INSERT
 // path stamps on a fresh row.
-func resolvePriority(snapshot []InstanceInfo, instanceID string) (string, bool) {
-	for _, s := range snapshot {
-		if s.Instance != instanceID {
-			continue
-		}
-		return state.EvictionPriorityOrBestEffort(s.EvictionPriority), true
+func resolvePriority(infos map[string]InstanceInfo, instanceID string) (string, bool) {
+	s, ok := infos[instanceID]
+	if !ok {
+		return "", false
 	}
-	return "", false
+	return state.EvictionPriorityOrBestEffort(s.EvictionPriority), true
 }
 
 // resolveTenantTier returns the plan label carried by an instance snapshot.
 // The boolean is false when the instance disappeared between snapshot and
 // park, which keeps metric counts tied to successful, identifiable operations.
-func resolveTenantTier(snapshot []InstanceInfo, instanceID string) (string, bool) {
-	for _, s := range snapshot {
-		if s.Instance != instanceID {
-			continue
-		}
-		switch s.Plan {
-		case api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale:
-			return string(s.Plan), true
-		default:
-			return "unknown", true
-		}
+func resolveTenantTier(infos map[string]InstanceInfo, instanceID string) (string, bool) {
+	s, ok := infos[instanceID]
+	if !ok {
+		return "", false
 	}
-	return "", false
+	switch s.Plan {
+	case api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale:
+		return string(s.Plan), true
+	default:
+		return "unknown", true
+	}
 }
 
 // runReaperAggressive (issue #171) is the per-tick body of the
@@ -3193,6 +3342,7 @@ func resolveTenantTier(snapshot []InstanceInfo, instanceID string) (string, bool
 // behaviour is unit-testable without a clock / DB round-trip on
 // the full reaper body.
 func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapshot []InstanceInfo, instanceToApp map[string]string, cooldownHeldByApp map[string]struct{}, now time.Time) {
+	infos := indexInstanceInfos(snapshot)
 	// The existing load feed is app-wide production telemetry. A stage needs
 	// an explicit environment load signal before aggressive scale-in can use
 	// it; idle reaping still uses the stage's own floor and pinned policy.
@@ -3362,7 +3512,7 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		// post-enrichment app-wide max floor.
 		aggressiveParkByEnvironment := map[string]InstanceInfo{}
 		for _, id := range ids {
-			if err := l.reaperShutdown(ctx, snapshot, id, true); err != nil {
+			if err := l.reaperShutdown(ctx, infos, id, true); err != nil {
 				if !errors.Is(err, ErrParkActivity) {
 					l.log.Warn("reaper: aggressive park", "instance", id, "err", err)
 				}
@@ -3374,12 +3524,12 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 			// instances get parked when the rolling-window RPS
 			// signal says the customer is over-provisioned, so
 			// the metric increments once per parked instance.
-			if tier, ok := resolvePriority(snapshot, id); ok {
+			if tier, ok := resolvePriority(infos, id); ok {
 				if counter := l.ops.EvictedPriority(tier, "eviction_aggressive"); counter != nil {
 					counter.Inc()
 				}
 			}
-			if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if tier, ok := resolveTenantTier(infos, id); ok {
 				if counter := l.ops.EvictionFired(tier, "eviction_aggressive"); counter != nil {
 					counter.Inc()
 				}
@@ -3755,6 +3905,17 @@ func (h *httpGatewaySynth) SynthesizeRequest(ctx context.Context, appID, method,
 		return fmt.Errorf("sched: synth request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if h.mintInternalSvcToken != nil {
+		tok, mErr := h.mintInternalSvcToken(appID)
+		if mErr != nil {
+			return fmt.Errorf("sched: synth mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// ADR-119 — attach an Authorization: Bearer JWT when the app
 	// is in 'internal_only' mode. Same helper as Invoke + postBatch
 	// consult the same per-app mode lookup and mint the same JWT.
@@ -4045,6 +4206,17 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 	for key, value := range pkgtrace.InjectHeaders(dispatchCtx) {
 		req.Header.Set(key, value)
 	}
+	// ADR-20261103090000: every synth request carries a scheduler token for
+	// its app, whatever the app's public auth mode. The gateway refuses a
+	// synth request without one, because public traffic reaches the same
+	// listener.
+	if h.mintInternalSvcToken != nil {
+		tok, mErr := h.mintInternalSvcToken(appID)
+		if mErr != nil {
+			return inv, 0, fmt.Errorf("sched: invocation mint: %w", mErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	// Durable workflow steps are an authenticated internal delivery
 	// surface even when the customer app's public_auth_mode is open. The
 	// synth socket is DAC-protected, but the workflow contract also needs a
@@ -4192,6 +4364,9 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 		}
 		firstDue := schedule.NextFireAt(boundary)
 		if firstDue.After(now) {
+			continue
+		}
+		if l.scheduledJobHeld(ctx, job) {
 			continue
 		}
 		scheduledFor := now
@@ -4348,6 +4523,39 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 
 func scheduledTimePointer(at time.Time) *time.Time { return &at }
 
+// scheduledJobRunLookback bounds how many of a job's newest runs
+// scheduledJobHeld reads for a queued scheduled run.
+const scheduledJobRunLookback = 20
+
+// scheduledJobHeld leaves a due recurring job due instead of queueing another
+// run (ADR-1162 amendment 2026-11-03). The dispatcher defers the tasks of an
+// account at its spend cap or held by a strict budget without failing them,
+// so a job firing through the hold queued one run per scheduled time and all
+// of them ran when the hold lifted. Left due, the job runs once afterwards,
+// as after any time Gregale could not reach it, and its missed_runs policy
+// records what it missed. An overlap=allow job also leaves an occurrence due
+// while an earlier scheduled run has not started; skip and replace already
+// decide against queued runs. A read error is no hold.
+func (l *Loop) scheduledJobHeld(ctx context.Context, job state.Job) bool {
+	if l.engine.spendCapReached(ctx, job.AccountID) {
+		return true
+	}
+	if job.SchedulePolicy != nil && job.SchedulePolicy.Overlap != "allow" {
+		return false
+	}
+	runs, err := l.engine.Store().JobRunListByJob(ctx, job.ID, scheduledJobRunLookback, 0)
+	if err != nil {
+		l.log.Warn("schedd: list scheduled job runs failed", "job_id", job.ID, "err", err)
+		return false
+	}
+	for _, run := range runs {
+		if run.TriggerKind == "scheduled" && run.AggregateStatus == "queued" {
+			return true
+		}
+	}
+	return false
+}
+
 // stopPriorScheduledRuns implements overlap=replace. A replacement is only
 // admitted after every earlier scheduled run has a terminal receipt and its
 // VM stop has been confirmed by vmmd.
@@ -4395,11 +4603,15 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	// while every lower slot is still busy, so an idle scheduler polls as
 	// before and capacity grows by one slot a tick under load (ADR-20261025232118).
 	busy := 0
+	gate := newWorkflowDueGate(l.engine.Store())
 	for slot := range api.WorkflowDispatchSlots {
 		if slot >= api.WorkflowDispatchBaseSlots && busy < slot {
 			break
 		}
 		outcome := l.workPool().submit(workWorkflowDispatch, fmt.Sprintf("%d", slot), func() {
+			if !gate.open(ctx) {
+				return
+			}
 			orch := l.workflowOrch
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
@@ -4419,6 +4631,35 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	}
 }
 
+// workflowDueGate asks once per dispatch tick whether any workflow run is due.
+// Each slot's claim used to ask on its own: with nothing due, every scheduler
+// read the same answer once per base slot every second.
+type workflowDueGate struct {
+	once sync.Once
+	read state.WorkflowRunDueReader
+	due  bool
+}
+
+// newWorkflowDueGate gates on store's due check; a store without one opens
+// every slot.
+func newWorkflowDueGate(store state.Store) *workflowDueGate {
+	read, _ := store.(state.WorkflowRunDueReader)
+	return &workflowDueGate{read: read}
+}
+
+// open reports whether a slot should try to claim. A failed check opens it,
+// leaving the decision to the claim.
+func (g *workflowDueGate) open(ctx context.Context) bool {
+	if g.read == nil {
+		return true
+	}
+	g.once.Do(func() {
+		due, err := g.read.WorkflowRunsDue(ctx)
+		g.due = err != nil || due
+	})
+	return g.due
+}
+
 func (l *Loop) dispatchTriggerTick(ctx context.Context) {
 	l.submitWork(workTriggerDispatch, "tick", func() { l.runTriggerTick(ctx) })
 }
@@ -4435,16 +4676,89 @@ func (l *Loop) dispatchEventFanoutSweep(ctx context.Context) {
 	})
 }
 
-func (l *Loop) runWorkflowRetention(ctx context.Context) {
+func (l *Loop) dispatchWorkflowRetention(ctx context.Context) {
+	l.submitWork(workWorkflowRetention, "tick", func() {
+		if l.runWorkflowRetention(ctx) && ctx.Err() == nil {
+			l.dispatchWorkflowRetention(ctx)
+		}
+	})
+}
+
+func (l *Loop) runWorkflowRetention(ctx context.Context) bool {
 	if l.workflowRetention == nil {
-		return
+		return false
 	}
-	if err := l.workflowRetention.SweepOnce(ctx); err != nil {
-		l.log.Warn("workflow retention: sweep failed", "err", err)
+	more, err := l.workflowRetention.sweepOnce(ctx)
+	if err != nil {
+		if l.log != nil {
+			l.log.Warn("workflow retention: sweep failed", "err", err)
+		}
+		// Keep other full phases progressing, but do not hammer a persistently
+		// failing phase on every immediate continuation.
+		if more {
+			timer := time.NewTimer(time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return false
+			}
+		}
+	}
+	return more
+}
+
+// cronSweepSlice bounds one pass of the cron sweep, which runs on schedd's
+// main loop. A minute with more due crons than one pass dispatches continues
+// in further passes, so heartbeats, notifications and the reaper run in
+// between: one long sweep held them all, and past the 90 s heartbeat
+// staleness the node would be taken for dead.
+const cronSweepSlice = 10 * time.Second
+
+// runCronTick starts the minute's cron sweep.
+func (l *Loop) runCronTick(ctx context.Context) {
+	l.cronSweepTried = map[string]struct{}{}
+	l.runCronSweep(ctx)
+}
+
+// cronAppBudgetHeld reports an app a compute budget holds. The drain defers
+// its runs without spending them, so a cron firing through the hold queued a
+// run every scheduled time and all of them were delivered at once when the
+// hold lifted (crons audit 2026-11-02). The sweep leaves such a cron due
+// instead: it runs once after the hold, as after any time Gregale could not
+// reach. A read error is no hold; the drain still defers the run.
+//
+// A billing subject at its monthly spend cap holds its crons the same way
+// (ADR-1162 amendment 2026-11-03): the drain defers their runs, so firing
+// through the cap queued one run per scheduled time too.
+func (l *Loop) cronAppBudgetHeld(ctx context.Context, app state.App) bool {
+	if l.engine.spendCapReached(ctx, l.engine.spendCapSubject(ctx, app)) {
+		return true
+	}
+	err := state.CheckFinancialBudgetAdmissionForScope(ctx, l.engine.Store(), app, "", "", l.engine.financialBudgetNow())
+	return errors.Is(err, state.ErrFinancialBudgetHeld)
+}
+
+// resumeCronSweep asks the main loop to run another pass of the sweep.
+func (l *Loop) resumeCronSweep() {
+	select {
+	case l.cronResume <- struct{}{}:
+	default:
 	}
 }
 
-func (l *Loop) runCronTick(ctx context.Context) {
+// runCronSweep dispatches the due crons the minute's sweep has not tried yet,
+// for one slice, and asks for another pass when the slice runs out. A cron
+// whose dispatch failed is tried again on the next minute, as before.
+func (l *Loop) runCronSweep(ctx context.Context) {
+	if l.cronSweepTried == nil {
+		l.cronSweepTried = map[string]struct{}{}
+	}
+	slice := l.cronSweepSlice
+	if slice <= 0 {
+		slice = cronSweepSlice
+	}
+	sliceStart := time.Now()
 	started := l.cronMetrics.beginSweep()
 	var scanErr error
 	defer func() { l.cronMetrics.finishSweep(ctx, started, scanErr) }()
@@ -4469,7 +4783,11 @@ func (l *Loop) runCronTick(ctx context.Context) {
 	now := l.now()
 	plans := newCronPlanGate(store)
 	apps := map[string]state.App{}
+	budgetHeld := map[string]bool{}
 	for _, c := range crons {
+		if _, tried := l.cronSweepTried[c.ID]; tried {
+			continue
+		}
 		if !cronDue(c, now) {
 			if len(c.Command) > 0 {
 				l.cronMetrics.decision("not_due")
@@ -4508,7 +4826,20 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		if !l.engine.appCapabilityAllowed(ctx, app, "crons") {
 			continue
 		}
+		held, checked := budgetHeld[app.ID]
+		if !checked {
+			held = l.cronAppBudgetHeld(ctx, app)
+			budgetHeld[app.ID] = held
+		}
+		if held {
+			continue
+		}
+		l.cronSweepTried[c.ID] = struct{}{}
 		l.dispatchOneCron(ctx, c, now)
+		if time.Since(sliceStart) >= slice {
+			l.resumeCronSweep()
+			return
+		}
 	}
 }
 
@@ -4732,6 +5063,9 @@ func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due 
 	if !account.Active() {
 		return
 	}
+	if l.suspendIfNoLiveDeployment(ctx, store, c) {
+		return
+	}
 	expectedLastFiredAt := nonZeroSchedTimePtr(c.LastFiredAt)
 	missedRuns := c.SchedulePolicy.MissedRuns
 	for _, missed := range due[:len(due)-1] {
@@ -4759,12 +5093,19 @@ func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due 
 		return
 	}
 	cronID := c.ID
+	inv := state.Invocation{
+		AppID: c.AppID, AccountID: account.ID, Source: state.InvocationCron,
+		Method: "POST", Path: c.Path, CronID: &cronID, Headers: headers,
+		DueAt: scheduledFor, ScheduledAt: &scheduledFor, CreatedAt: now,
+	}
+	// Without failure rules a scheduled time is delivered once, as for a
+	// plain cron (ADR-20261026201726 amendment 2026-11-02); the queue's plan
+	// retry budget redelivered it up to 25 times.
+	if c.FailureRules == nil {
+		inv.RetryPolicyJSON = cronSingleAttemptRetryPolicy
+	}
 	invocation, occurrence, created, err := occurrences.CreateScheduledCronInvocationOccurrence(ctx, c.ID, expectedLastFiredAt, now,
-		state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: c.ScheduleRevision}, state.Invocation{
-			AppID: c.AppID, AccountID: account.ID, Source: state.InvocationCron,
-			Method: "POST", Path: c.Path, CronID: &cronID, Headers: headers,
-			DueAt: scheduledFor, ScheduledAt: &scheduledFor, CreatedAt: now,
-		})
+		state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: c.ScheduleRevision}, inv)
 	if err != nil {
 		l.log.Warn("cron: create scheduled HTTP occurrence", "cron_id", c.ID, "err", err)
 		return
@@ -5085,6 +5426,51 @@ func cronSingleAttempt(inv state.Invocation) bool {
 // (CronRun{}, false) when the suspended-account or capability guard rejects
 // the fire (no audit row, per spec §11 abuse guard).
 func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Time, trigger CronDispatchTrigger, scheduledFor ...time.Time) (CronRun, bool) {
+	run, err := l.dispatchCron(ctx, c, now, trigger, scheduledFor...)
+	return run, cronOccurrenceSettled(err)
+}
+
+// cronOccurrenceSettled reports whether a dispatch outcome consumes the
+// occurrence. A queued run, a cron suspended for want of a live deployment and
+// an enqueue the store refused for good do. A read or enqueue that failed for
+// now leaves it for a later tick: the claim is rolled back instead of the run
+// being lost, as a failed enqueue was.
+func cronOccurrenceSettled(err error) bool {
+	return err == nil || errors.Is(err, ErrNoLiveDeployment) || errors.Is(err, errCronEnqueueRefused)
+}
+
+// cronEnqueueRefused reports an enqueue error that a retry cannot fix.
+func cronEnqueueRefused(err error) bool {
+	return errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation)
+}
+
+// suspendIfNoLiveDeployment suspends the app's crons when it has no live
+// deployment: such a cron cannot recover by firing on every boundary.
+// MarkDeploymentLive clears the reason after a successful redeploy. Parked
+// apps still have a live deployment, so they remain schedulable. Any other
+// lookup error leaves the decision to the drain's wake.
+func (l *Loop) suspendIfNoLiveDeployment(ctx context.Context, store state.Store, c state.Cron) bool {
+	_, liveErr := state.ResolveProductionDeployment(ctx, store, c.AppID)
+	if !errors.Is(liveErr, state.ErrNotFound) {
+		if liveErr != nil {
+			l.log.Warn("cron: verify live deployment", "cron_id", c.ID, "app_id", c.AppID, "err", liveErr)
+		}
+		return false
+	}
+	if suspender, ok := store.(state.CronSuspensionStore); ok {
+		count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+		if suspendErr != nil {
+			l.log.Warn("cron: suspend after missing live deployment", "cron_id", c.ID, "app_id", c.AppID, "err", suspendErr)
+		} else if count > 0 {
+			l.log.Info("cron: suspended until app redeploy", "app_id", c.AppID, "reason", state.CronSuspendedNoLiveDeployment, "count", count)
+		}
+	}
+	l.log.Warn("cron: no live deployment", "cron_id", c.ID, "app_id", c.AppID)
+	return true
+}
+
+// dispatchCron queues one HTTP cron run and says why when it did not.
+func (l *Loop) dispatchCron(ctx context.Context, c state.Cron, now time.Time, trigger CronDispatchTrigger, scheduledFor ...time.Time) (CronRun, error) {
 	dueAt := now
 	if len(scheduledFor) > 0 && !scheduledFor[0].IsZero() {
 		dueAt = scheduledFor[0].UTC()
@@ -5104,24 +5490,24 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	app, err := store.AppByID(ctx, c.AppID)
 	if err != nil {
 		l.log.Warn("cron: app", "cron_id", c.ID, "err", err)
-		return CronRun{}, false
+		return CronRun{}, fmt.Errorf("%w: %w", ErrCronRunNotQueued, err)
 	}
 	acct, err := state.AppResourceAccount(ctx, store, app)
 	if err != nil {
 		l.log.Warn("cron: account", "cron_id", c.ID, "err", err)
-		return CronRun{}, false
+		return CronRun{}, fmt.Errorf("%w: %w", ErrCronRunNotQueued, err)
 	}
 	if !acct.Active() {
 		// Suspended accounts don't get cron traffic (spec §11 abuse
 		// guard). NO audit row — the cron was scheduled by a customer
 		// who is now suspended.
-		return CronRun{}, false
+		return CronRun{}, ErrAccountSuspended
 	}
 	// ADR-20261023115741: crons switched off for the account do not fire,
 	// the same no-fire, no-audit outcome as a suspended account.
 	if !l.engine.appCapabilityAllowed(ctx, app, "crons") {
 		l.log.Debug("cron: capability off; skipped", "cron_id", c.ID, "app_id", app.ID)
-		return CronRun{}, false
+		return CronRun{}, ErrCronsNotEnabled
 	}
 	// Defer the cron.fired emit so every post-guard outcome records a row:
 	// status="queued" once the invocation is persisted, "err" otherwise.
@@ -5153,24 +5539,8 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		}
 		l.audit.Emit(ctx, eventName, &acct.ID, payload)
 	}()
-	// A cron for an app with no live deployment cannot recover by firing
-	// on every boundary. Suspend it with a machine-readable reason;
-	// MarkDeploymentLive clears the reason after a successful redeploy.
-	// Parked apps still have a live deployment, so they remain schedulable.
-	// Any other lookup error leaves the decision to the drain's wake.
-	if _, liveErr := state.ResolveProductionDeployment(ctx, store, c.AppID); errors.Is(liveErr, state.ErrNotFound) {
-		if suspender, ok := store.(state.CronSuspensionStore); ok {
-			count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
-			if suspendErr != nil {
-				l.log.Warn("cron: suspend after missing live deployment", "cron_id", c.ID, "app_id", c.AppID, "err", suspendErr)
-			} else if count > 0 {
-				l.log.Info("cron: suspended until app redeploy", "app_id", c.AppID, "reason", state.CronSuspendedNoLiveDeployment, "count", count)
-			}
-		}
-		l.log.Warn("cron: no live deployment", "cron_id", c.ID, "app_id", c.AppID)
-		return CronRun{}, true
-	} else if liveErr != nil {
-		l.log.Warn("cron: verify live deployment", "cron_id", c.ID, "app_id", c.AppID, "err", liveErr)
+	if l.suspendIfNoLiveDeployment(ctx, store, c) {
+		return CronRun{}, ErrNoLiveDeployment
 	}
 	// Move 1: the cron row in invocations shows up in /v1/invocations and
 	// the meter sees it. cron_id is stamped so the run history joins back
@@ -5179,7 +5549,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	cronHeaders, err := json.Marshal(pkgtrace.MergeHeaderMap(ctx, map[string]string{"x-faas-cron": "true"}))
 	if err != nil {
 		l.log.Warn("cron: encode trace context", "cron_id", c.ID, "err", err)
-		return CronRun{}, true
+		return CronRun{}, fmt.Errorf("%w: %w", ErrCronRunNotQueued, err)
 	}
 	inv := state.Invocation{
 		AppID:        c.AppID,
@@ -5198,7 +5568,10 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	enq, err := store.EnqueueInvocation(ctx, inv)
 	if err != nil {
 		l.log.Warn("cron: enqueue invocation", "cron_id", logsanitize.Field(c.ID), "error_class", dispatchErrorClass(err))
-		return CronRun{}, true
+		if cronEnqueueRefused(err) {
+			return CronRun{}, fmt.Errorf("%w: %w: %w", ErrCronRunNotQueued, errCronEnqueueRefused, err)
+		}
+		return CronRun{}, fmt.Errorf("%w: %w", ErrCronRunNotQueued, err)
 	}
 	status, invocationID = "queued", enq.ID
 	payload, _ := json.Marshal(map[string]any{
@@ -5210,7 +5583,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	if err := l.engine.Notifier().Notify(ctx, db.NotifyCronFired, string(payload)); err != nil {
 		l.log.Warn("cron: notify cron_fired", "err", err)
 	}
-	return CronRun{InvocationID: enq.ID, Queued: true}, true
+	return CronRun{InvocationID: enq.ID, Queued: true}, nil
 }
 
 // ErrCronDisabled is the typed error returned by RunCronNow when
@@ -5224,6 +5597,24 @@ var ErrCronDisabled = errors.New("sched: cron disabled")
 // to a 403 with stable code `account_suspended`. The audit row is
 // NOT emitted in this branch (matches the tick path's behaviour).
 var ErrAccountSuspended = errors.New("sched: account suspended")
+
+// ErrCronsNotEnabled is returned by RunCronNow when crons are switched off for
+// the app's account (ADR-20261023115741).
+var ErrCronsNotEnabled = errors.New("sched: crons are not enabled for this account")
+
+// ErrNoLiveDeployment is returned by RunCronNow when the cron's app has no
+// live deployment; its crons are suspended until the next deploy.
+var ErrNoLiveDeployment = errors.New("sched: the app has no live deployment")
+
+// ErrCronSuspended is returned by RunCronNow for a suspended cron.
+var ErrCronSuspended = errors.New("sched: cron suspended")
+
+// ErrCronRunNotQueued is returned by RunCronNow when the run could not be
+// queued, usually for a moment (a store read or write failed).
+var ErrCronRunNotQueued = errors.New("sched: cron run could not be queued")
+
+// errCronEnqueueRefused marks an enqueue the store refused for good.
+var errCronEnqueueRefused = errors.New("sched: cron run refused by the store")
 
 // ErrNoCapacity is the typed error returned by RunCronNow when the
 // dispatch path cannot produce a wake (no RAM headroom, no
@@ -5253,6 +5644,9 @@ func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, r
 	if !c.Enabled {
 		return CronRun{}, ErrCronDisabled
 	}
+	if c.SuspendedReason != "" {
+		return CronRun{}, fmt.Errorf("%w: %s", ErrCronSuspended, c.SuspendedReason)
+	}
 	now := l.now()
 	if len(c.Command) == 0 {
 		app, appErr := l.engine.Store().AppByID(ctx, c.AppID)
@@ -5269,12 +5663,12 @@ func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, r
 			return run, dispatchErr
 		}
 	}
-	run, ok := l.dispatchCronLocked(ctx, c, now, TriggerManual)
-	if !ok {
-		// Suspended-account guard rejects the fire. The deferred
-		// audit emit does not run (no row written), so fail
-		// closed at the API surface.
-		return CronRun{}, ErrAccountSuspended
+	run, err := l.dispatchCron(ctx, c, now, TriggerManual)
+	if err != nil {
+		// processFireNowRequest tells the requester which: a suspended
+		// owner, crons switched off, no live deployment, or a run that
+		// could not be queued.
+		return CronRun{}, err
 	}
 	// processFireNowRequest maps Queued to a running request that the
 	// invocation's terminal state settles; a fire the audit row recorded
@@ -5333,13 +5727,14 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 	for id, a := range activity {
 		resident[id] = a.ResidentMB
 	}
+	infos := indexInstanceInfos(snapshot)
 	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
 		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
 			continue
 		}
 		l.log.Info("reaper: evicted under measured memory pressure", "instance", id)
-		if tier, ok := resolveTenantTier(snapshot, id); ok {
+		if tier, ok := resolveTenantTier(infos, id); ok {
 			if counter := l.ops.EvictionFired(tier, "measured_memory"); counter != nil {
 				counter.Inc()
 			}

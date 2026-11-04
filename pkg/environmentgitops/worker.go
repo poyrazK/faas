@@ -41,6 +41,14 @@ type RuntimeVerifier interface {
 	VerifyRuntime(context.Context, state.EnvironmentGitOpsLease, environmentsync.Plan) (bool, error)
 }
 
+// RuntimeEffectObserver finalizes previously committed runtime effects that
+// are already fresh in report mode. It must not refresh VMs or change intent.
+// Observation precedes planning so drift or a blocked plan cannot strand the
+// bookkeeping needed to detach the source.
+type RuntimeEffectObserver interface {
+	ObserveRuntimeEffects(context.Context, state.EnvironmentGitOpsLease) error
+}
+
 type Worker struct {
 	Store   state.EnvironmentGitOpsStore
 	Backend Backend
@@ -161,6 +169,11 @@ func (w *Worker) reconcile(ctx context.Context, lease state.EnvironmentGitOpsLea
 	desired, err := environmentsync.Compile(definition)
 	if err != nil || desired.Digest != lease.Revision.Digest {
 		return "failed", environmentsync.Plan{}, steps, "environment_definition_invalid"
+	}
+	if observer, ok := w.Backend.(RuntimeEffectObserver); ok && lease.Source.Spec.Mode == "report" {
+		if err := observer.ObserveRuntimeEffects(ctx, lease); err != nil {
+			return "partial", environmentsync.Plan{}, steps, "environment_runtime_verification_failed"
+		}
 	}
 	if recoverer, ok := w.Backend.(EffectRecoverer); ok && lease.Source.Spec.Mode == "enforce" {
 		if err := recoverer.RecoverEffects(ctx, lease); err != nil {

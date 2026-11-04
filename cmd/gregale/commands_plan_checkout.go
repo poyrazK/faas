@@ -24,11 +24,22 @@ func renderPlanCheckoutHandoff(ae *APIError, target api.Plan) int {
 		_ = writeJSONProblem(ae.Problem)
 		return exitCodeForStatus(ae.Problem.Status)
 	}
-	url, where := ae.Problem.CheckoutURL, "checkout"
-	if url == "" {
-		url, where = ae.Problem.BillingPortalURL, "billing portal"
+	if ae.Problem.CheckoutURL == "" {
+		// An existing subscription's upgrade was not charged (declined, or
+		// the bank asked to confirm it): the portal fixes the card, and the
+		// upgrade is then retried. The detail says which.
+		url := ae.Problem.BillingPortalURL
+		PrintWarn(osStderr, "Upgrade to %s not charged: %s", target, ae.Problem.Detail)
+		_, _ = fmt.Fprintf(osStdout, "Opening %s\n", url)
+		if err := openBrowser(url); err != nil {
+			PrintFail(os.Stderr, "Could not open browser: %v", err)
+			_, _ = fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", url)
+		}
+		_, _ = fmt.Fprintf(osStdout, "Then retry: gregale billing plan %s\n", target)
+		return 0
 	}
-	PrintWarn(osStderr, "Upgrading to %s needs to be confirmed with the billing provider — finish it in the %s.", target, where)
+	url := ae.Problem.CheckoutURL
+	PrintWarn(osStderr, "Upgrading to %s needs to be confirmed with the billing provider — finish it in the checkout.", target)
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", url)
 	if err := openBrowser(url); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)

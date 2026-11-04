@@ -31,8 +31,10 @@ func TestCompileChallengeRules(t *testing.T) {
 		challengeStateRule("second", 20, "/*", &state.EdgeRuleChallengeAction{}),
 		challengeStateRule("first", 10, "/account/*", valid),
 	})
-	if len(parseErrs) != 1 {
-		t.Errorf("parse errors = %v, want one for bad-glob", parseErrs)
+	// A value apid would refuse fails the host closed like a bad glob
+	// (ADR-091 amendment 2026-11-02); a missing action is edgeRuleShapeError's.
+	if len(parseErrs) != 2 || parseErrs[0].RuleID != "too-easy" || parseErrs[1].RuleID != "bad-glob" {
+		t.Errorf("parse errors = %v, want too-easy and bad-glob", parseErrs)
 	}
 	if len(rules) != 2 || rules[0].ID != "first" || rules[1].ID != "second" {
 		t.Fatalf("compiled = %+v, want [first second]", rules)

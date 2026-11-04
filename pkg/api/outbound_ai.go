@@ -2,13 +2,13 @@ package api
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // ValidOutboundAICostLimits accepts optional daily and monthly cost limits
@@ -277,7 +277,7 @@ type PutOutboundBindingAIBudgetRequest struct {
 	DailyTokenLimit *int64 `json:"daily_token_limit"`
 }
 
-var outboundAIRouteName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+var outboundAIRouteName = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // OutboundAIRouteTarget is one fallback step: a managed AI integration and
 // an optional model that replaces the request's "model".
@@ -398,7 +398,7 @@ const (
 // Claude request on Vertex AI carries (ADR-995).
 const OutboundVertexAnthropicVersion = "vertex-2023-10-16"
 
-var outboundVertexBasePattern = regexp.MustCompile(`^/(v1|v1beta1)/projects/([^/]+)/locations/([^/]+)(/|$)`)
+var outboundVertexBasePattern = lazyregexp.New(`^/(v1|v1beta1)/projects/([^/]+)/locations/([^/]+)(/|$)`)
 
 // OutboundVertexBasePath derives "/{version}/projects/{project}/locations/{location}"
 // from a Vertex integration's allowed path prefixes. Translated routes need
@@ -506,7 +506,7 @@ func OutboundAIModelAllowed(patterns []string, model string) bool {
 	return false
 }
 
-var outboundCredentialKeyLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
+var outboundCredentialKeyLabel = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
 
 // ValidOutboundCredentialKeyLabel accepts DNS-label style key labels.
 func ValidOutboundCredentialKeyLabel(label string) bool {

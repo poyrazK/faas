@@ -1537,6 +1537,56 @@ Checked and unchanged: the response cache key already varies on the request
 host (ADR-122, `computeVaryHash`), so one host's cached body is not served on
 another host of the same app.
 
+## Amendment (2026-10-31, later): review round 7 — organization permissions, covering rules in traces, authoritative-policy parity
+
+An end-to-end review found one gap that kept organizations from running edge
+rules and two places that did not show or enforce what the cached gateway
+path does. None changes the rule format.
+
+1. **Edge rules have a reviewed organization permission.** The edge-rule
+   routes were not in the app-access route table, so they fell back to the
+   creator alone: no other owner or admin could change a company app's rules
+   or switch on attack mode under attack, and once the creator left the
+   company nobody could, not even to disable a broken rule. Reads (rules,
+   history, stats, suggestions, events, WAF review, edge protection, attack
+   mode status, the dashboard trace) take `org.read_app`; writes (create,
+   change, delete, WAF exclusions, rollback, attack mode, and the dashboard
+   forms, the app page's list forms included) take
+   `org.manage_app_security`, as the app's security settings do; purging
+   cached responses takes `org.deploy_app`. A request acts on the app's
+   resource account, so rules keep the account the app's rules belong to.
+   Lists and CORS presets stay account objects (assumed; no data-model
+   change): rules on a company app reference the lists of that account, the
+   app page's list forms manage them for owners and admins, a list edit still
+   passes the check of every app whose rules use the list (amendment
+   2026-10-30), and the account-wide `/v1/edge-rule-lists` and
+   `/v1/cors-presets` keep acting on the caller's own account.
+2. **Traces include the rules that cover an app from its siblings.** The
+   gateway applies to an app's hosts the `*`, glob and exact-host rules of the
+   account's other apps in the same owner scope, but the CLI and dashboard
+   traces, and the app's rule list, read the app's own rules only, so a
+   sibling's rule that refused a request never appeared. `GET
+   /v1/apps/{slug}/edge-rules?covering=true` adds those rules (not `@app` ones,
+   not another scope's or a deleted app's, and only of apps the caller may
+   read), each with its own `app_id`; the ETag stays the app's rule set. Both
+   traces use it; an apid that predates the parameter returns the app's own
+   rules, so a newer CLI degrades to the previous trace.
+3. **The authoritative host policy applies the cached path's filters.** With
+   `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` on (ADR-570), a host's rules are
+   read in a Postgres snapshot and compiled without `hostStoreRules`, which
+   had none of the later filters: another owner scope's rules (round 6), rules
+   of deleted apps (amendment 2026-10-28) and a preview's inherited production
+   rules (amendment 2026-10-30). The snapshot's rule query
+   (`ReadPublicHostEdgeRules`) now leaves out the first two in the same read,
+   because the snapshot runs under a short budget and a read per rule's app
+   timed out under load; the owner policy adds the third from the resolved
+   app's `ProductionAppID`, reading only for a preview. The snapshot's app
+   projection now carries `OrgID` for a company organization (a personal one
+   reads as none, so a personal app costs no organization read), so the
+   gateway's route-target scope check and the app's resource account work in
+   this mode too; before, every app read as personal there, and a company
+   app's plan and limits came from its creator's account.
+
 ## Amendment (2026-10-31, later): app-bound credentials write rules for their app only
 
 An edge-security review found that a per-app deploy token, which the docs
@@ -1562,3 +1612,251 @@ the source host, so deploying with a deploy token a manifest that routes
 another app's host to this app is refused too; deploy such a project with an
 account key. Account keys, organization keys and dashboard sessions are not
 limited.
+
+## Amendment (2026-11-02): review round 8 — app-bound route targets, gate paths, JWT audience, rule shapes, renames
+
+A review of main after round 7 found seven more gaps.
+
+1. **An app-bound credential may route only to its own app.** The
+   2026-10-31 check kept a deploy token's rules on its app's hosts, but a
+   `route` rule there could still name any public app of the account: a
+   leaked token could serve another app on its app's hosts, past that app's
+   host-specific rules. `RouteTargetProblem` now refuses, for such a
+   credential, any target but the token's app, on create, update and
+   rollback. The refusal does not depend on whether the slug exists.
+2. **Access gates match the client's path, then the rewritten one.** Rewrite
+   runs before the `ip`, `geo`, `jwt`, `throttle`, `waf` and `challenge`
+   gates, and they matched only the rewritten path: a `jwt` rule on
+   `/api/**` stopped applying once a rewrite took `/api` away. Declared
+   routes and the request deadline already used the client's path. The gates
+   now pick their rule for the client's path first and the rewritten path
+   second (`matchEdgeGate`), so a gate written for either keeps applying; the
+   trace does the same. Later kinds still see the rewritten path.
+3. **A new or edited `jwt` rule names an audience or a required claim.** The
+   gateway skips the `aud` check when `audience` is empty, so such a rule
+   accepted every token its issuer signs, and shared issuers (GitHub Actions
+   OIDC, Google) sign tokens for anyone's audience. Create and update now
+   refuse a rule with neither `audience` nor `required_claims`. Rules saved
+   before keep working and may be restored by rollback; this is a validation
+   change, not a gateway one.
+4. **A rule the gateway cannot enforce fails its host closed.** Every
+   compiler skipped a row whose kind it did not know or whose action was
+   missing, and the WAF and challenge compilers skipped one whose values apid
+   would refuse, all without a compile error, so the rule silently stopped
+   refusing. The control plane upgrades before the edge, so a kind added
+   later reaches older gateways first. Such rows are now compile errors,
+   counted and failing the host closed like a bad glob; a test keeps every
+   `state.EdgeRuleKind` known to the gateway. docs/release-compatibility.md
+   asks that new kinds, and fields that make a rule refuse more, be released
+   behind a capability turned on after the edge rollout.
+5. **The other surfaces that write a company app's rules have organization
+   permissions.** OpenAPI policy apply and route-policy apply create edge
+   rules but had no reviewed action, so only the creator could use them.
+   Applies take `org.manage_app_security`, importing or editing the OpenAPI
+   contract `org.configure_app`, and previews, plans, receipts, throttle
+   suggestions and `GET /v1/apps/{slug}/policy/status` `org.read_app`.
+6. **The MCP access audit reads the rules that apply to the app.** The CLI
+   read `GET /v1/edge-rules`, the caller's own account, so an organization
+   member other than a company app's creator saw none of its rules and the
+   audit failed. It now reads `GET /v1/apps/{slug}/edge-rules?covering=true`,
+   and the server's policy fingerprint covers the same set: the app's own JWT
+   rules and those of its live sibling apps in the same owner scope other
+   than `@app` ones (before, every JWT rule of the account, including other
+   apps' `@app` rules, which never apply to this app).
+7. **A rename moves rules written for the app's platform hostname.** Round 4
+   left exact-host rules on `<slug>.<apps domain>` behind: the rename frees
+   that hostname, so an `ip` allowlist written for it stopped protecting the
+   app without a word, and a later app of the account given the old slug
+   would have taken it. The rename now fences those rules' old and new hosts
+   and moves the account's rules on the old platform hostname (under any
+   apps domain) to the new one, as it retargets route rules. Rules on custom
+   domains are unchanged.
+
+## Amendment (2026-11-02): shared caches and rules that name one host
+
+A further edge-security review found two ways an access rule did not hold.
+
+1. **Cloudflare served gated responses to everyone.** Cloudflare caches
+   responses in front of the public edge by URL alone: static file types by
+   default, and anything the app marks public (a live request to an app host
+   returned `cf-cache-status: HIT` on the second fetch). The gates run at the
+   origin, so once a client a rule admitted fetched a cacheable URL, every
+   other client got the same response from Cloudflare: an address an `ip`
+   rule or the ingress allowlist denies, a country a `geo` rule refuses, a
+   caller without the JWT or key a gate verified. The gateway now marks the
+   response of every request such a control decided with both targeted cache
+   headers, `Cloudflare-CDN-Cache-Control: private` and `CDN-Cache-Control:
+   private` (RFC 9213), replacing any value the app or a `headers` rule set.
+   Browser caching is unchanged. The marked requests are those an `ip`,
+   `geo` or `jwt` rule covered (whatever it decided), those on an app in
+   `ip_allowlist` public-auth mode, and those that carried a credential a
+   gate verified. A challenge or attack mode does not mark: they keep bots
+   off an app, and a cached public file served to a bot costs the app
+   nothing. The gateway's own response cache already ran after these gates.
+   The 404 for a host no app serves is `no-store`, so Cloudflare does not
+   keep serving it after the app is created.
+2. **A rule naming one host left the app's other hosts open.** Every app is
+   served at its platform hostname and any companion hostnames as well as its
+   custom domains, and an exact `match_host` covers only the host it names.
+   The security docs' own WAF and challenge examples named a custom domain,
+   so the same app stayed unprotected at `<slug>.gregale.dev`. Aliases of the
+   apps domain were already folded into their canonical host (ADR-20261026100000
+   section 3); hosts of one app are not. The examples now use `@app`, and
+   `gregale edge rule create` warns when a gate (jwt, ip, geo, limit,
+   throttle, validate, maintenance, waf, challenge) names one exact host. A
+   setting that serves an app only on its custom domains is a separate
+   decision.
+
+## Amendment (2026-11-02, later): method overrides, path parameters, unresolved countries, client-chosen scopes
+
+A fourth edge-security review found gates that a request could step around,
+and a geo rule that refused clients it had no reason to refuse.
+
+1. **Method overrides skipped method-scoped gates.** Express
+   (method-override), Laravel, Rails, Spring and ASP.NET run a POST that
+   carries `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override`,
+   or a `_method` query parameter, as the method it names. A gate scoped to
+   `DELETE` compared the request line's `POST` and let it through. A gate of
+   a kind that denies or constrains (`jwt`, `ip`, `geo`, `limit`, `throttle`,
+   `validate`, `maintenance`, `waf`, `challenge`) now also matches the
+   override method: the gateway selects the higher-priority of the request
+   method's match and the override's (the request method's on a tie), and
+   conditions see the method each selects for. Only the nine standard method
+   names count, an override equal to the request method is ignored, and the
+   headers and query are read before any rewrite runs. The trace simulator
+   applies the same rule and says when a rule matched through an override. A
+   `_method` field in a form body is not read: the edge does not parse request
+   bodies to select rules, and the docs say to leave `match_methods` off a
+   gate for an app that honours one.
+2. **`;` path parameters skipped path-scoped gates.** Servlet containers and
+   Spring drop each segment's `;` parameters before routing, so
+   `/admin;x/users` reaches the app's `/admin/users` while the gate on
+   `/admin/**` compared the raw path. Protective path matching now also
+   tries the normalized path with each segment cut at its first `;` (and that
+   form case-folded). As with the earlier forms, it only adds coverage.
+3. **A deny-only geo rule refused addresses with no country.** The hardening
+   in #1942 answered every lookup that produced no country with 503, so an
+   address the database places in no country (a reserved range, or one
+   allocated after the pinned database was built) could not reach an app
+   whose only geo rule denied two countries. The docs meanwhile said such
+   requests pass. Now only a failed lookup is unavailable (503, as before);
+   an address with no country is in no list, so a deny-only rule passes it
+   and an allow list refuses it with 403 `geo_denied`. The database is a
+   monthly DB-IP release pinned by checksum and never fetched by the daemon;
+   it had not been bumped since 2026-09, and the age gauge
+   (`geoip_db_age_seconds`) was registered but never set. That gauge is
+   replaced by `geoip_db_build_timestamp_seconds`, read at scrape time from
+   the database's `build_epoch`, and `FaasGeoIPDatabaseStale` warns when the
+   loaded database is more than 75 days old (two missed releases). The pin
+   moves to 2026-11. Countries still never come from `CF-IPCountry` or any
+   other request header.
+4. **The challenge pass docs overclaimed.** They said a pass "cannot be
+   copied to another machine". A pass is stateless and bound to the client's
+   IPv4 /24 or IPv6 /48 and User-Agent for up to its TTL (24 hours at most),
+   so every client in that range with that User-Agent can use it. The docs
+   now say so and point to short pass TTLs and an address-keyed `throttle`
+   rule for a range that keeps coming back.
+5. **Gates scoped by client-chosen values.** A gate scoped by
+   `match_headers`, or by a `header:`, `cookie:` or `query:` field in its
+   condition, applies only when the client sends that value. This stays
+   allowed (an app may want a gate only for one client), but
+   `gregale edge rule create` now warns, and the docs say to scope gates by
+   path, method, `client_ip`, `country` or `asn`.
+
+## Amendment (2026-11-03): review round 9 — both paths' gates, route rule edits, rename reports, company lists, broken rules
+
+A review of main after round 8 found these gaps.
+
+1. **Access gates enforce the rule for both paths.** Round 8 made the `ip`,
+   `geo`, `jwt`, `throttle`, `waf` and `challenge` gates match the client's
+   path first and the rewritten path second, but each gate still enforced one
+   rule: a rule written for the rewritten path (an `ip` deny on
+   `/internal/**`) stopped applying whenever another rule of the kind matched
+   the client's path (an `ip` allow on `/legacy/**`). Before round 8 the
+   rewritten-path rule applied. When a rewrite changed the path and the two
+   paths match different rules, the gate now enforces both, client path
+   first; one rule matching both paths applies once. Two `jwt` rules verify
+   the one bearer token against each, two `throttle` rules charge both
+   buckets, and two `waf` rules inspect against each. The trace does the
+   same. A rule's condition on `path` already saw the path the rule is
+   matched on; a test now pins it.
+2. **An app-bound credential cannot widen a route rule it may not write.**
+   The route-target check ran only when an update changed the action, so a
+   deploy token could change `match_path`, methods, headers or `enabled` of
+   an account credential's route rule on its app that serves another app.
+   Every update of a stored route rule now runs the app-bound target check.
+3. **A rename reports rules it could not move.** The rename's route-rule
+   retarget and platform-hostname move ran after the rename committed, and a
+   failure was only logged. Each step re-lists by the old slug, so it is
+   retried once; what still fails is written to the account's audit trail
+   (`app.rename_edge_rules_incomplete`) and answered as a `Warning` header
+   naming the rules to review.
+4. **Organizations manage their own lists and presets.** Lists and CORS
+   presets are account objects, and a company app's rules resolve them in
+   the namespace of the account that owns the app's resources, so only the
+   app's creator could manage them, and once the creator left the lists its
+   rules used were frozen. `edge_rule_lists.org_id` (expand migration) marks
+   a list created through a company app. `/v1/edge-rule-lists` and
+   `/v1/cors-presets` take `?app=<slug>`: for a company app, the member's
+   organization role on it decides (read for GET, manage app security for
+   writes), and the request manages that organization's lists (and personal
+   lists that only its apps' rules use, which predate the marker) and that
+   app's own presets. It never sees the creator's other lists or
+   account-wide presets, and the personal path no longer shows organization
+   lists. The app's dashboard page does the same, and `gregale edge rule-list
+   ... --app` uses it. Lists keep their namespace, which is where the gateway
+   resolves a rule's lists, so the gateway is unchanged; the marker decides
+   who manages a list, not where a rule finds it.
+5. **A list's item cap uses the company's plan.** Through a company app the
+   request acts as the account that owns the app's resources, as every other
+   company-app quota does, so the cap is the organization's plan rather than
+   the creator's personal one.
+6. **A broken rule names itself.** A rule the gateway cannot enforce fails
+   its hosts closed (round 8), but the 503 said "retry shortly", and nothing
+   told the owner which rule. The 503 now names the rule, and `gregale edge
+   rule list` warns about every rule whose stored WAF or challenge values
+   this release refuses (`api.EdgeRuleEnforcementProblem`, the same check the
+   gateway runs). A release that tightens those bounds must first find the
+   stored rules outside them (docs/release-compatibility.md).
+
+## Amendment (2026-11-04): review round 10 — preset references, list and preset scope, exports
+
+A review of main after round 9 found these gaps.
+
+1. **Rules kept no preset.** `ActionFromBody` copied only a cors action's
+   inline fields, so a rule naming `cors_preset_id`, written through the API
+   or the dashboard, was stored as an empty CORS rule; a preset that did not
+   exist was accepted; and `edge_rules.cors_preset_id`, which the preset's
+   fencing, authorization and `ON DELETE SET NULL` work from, was set only by
+   the manifest path. Rule writes now keep the reference in the action and
+   the column (an update that replaces a cors action sets or clears both),
+   and refuse a preset the account does not have, one scoped to another app,
+   or, for a company app, an account-wide preset of the member whose account
+   holds the app's rules. Rules written before this release lost their
+   reference and must be saved again with it. Deleting a preset that rules
+   use is refused (409 naming them), as for lists: it left those rules naming
+   a missing preset, failing their hosts closed.
+2. **A rule names only lists of its app's scope.** List references resolved
+   anywhere in the account's namespace, so naming the app creator's private
+   list from a company rule made it readable to the organization, the error
+   told which private names existed, and naming an organization list from a
+   personal rule froze it for the organization. A company app's rule now
+   names its organization's lists (and personal lists only its
+   organization's apps already use); a personal app's rule names personal
+   lists. Anything else reads as unknown. Lists keep their namespace, which
+   is where the gateway resolves them, so a list created through one
+   member's company app is not available to an app another member created;
+   the refusal says to create it with `--app` for that app. One namespace per
+   organization would need the gateway to resolve lists by organization and
+   is a separate decision.
+3. **Exports and presets of a company app stay with the organization.** The
+   account export carried the organization lists held in a member's
+   account, also after the member left; it now carries personal lists only,
+   and adds the account's CORS presets (account-wide and those of exported
+   apps; rules naming them were exported without them). On the personal
+   path, an app-scoped preset now passes the check of its app's route
+   permission, so a member who left can no longer read, change or delete a
+   company app's presets.
+4. **Each list scope has its own cap.** The per-account list cap counted
+   organization and personal lists together; it now counts the new list's
+   scope.

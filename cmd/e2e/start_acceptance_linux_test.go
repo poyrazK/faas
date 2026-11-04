@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -98,11 +99,18 @@ func newStartAcceptanceFixture(t *testing.T, bin, slug string, private bool, env
 	fixture := &startAcceptanceFixture{platform: f, bin: bin, source: source, stateDir: stateDir, environment: environment, private: private,
 		cliEnv: []string{
 			"PATH=" + os.Getenv("PATH"), "TERM=dumb", "NO_COLOR=1",
-			"FAAS_API=" + f.h.APIDURL, "FAAS_TOKEN=" + f.key,
+			"FAAS_API=" + f.h.APIDURL,
 			"XDG_CONFIG_HOME=" + filepath.Join(root, "config"), "XDG_STATE_HOME=" + stateDir,
 			"XDG_CACHE_HOME=" + filepath.Join(root, "cache"),
 			"HTTPS_PROXY=" + proxy, "NO_PROXY=localhost,127.0.0.1", "SSL_CERT_FILE=" + ca,
 		},
+	}
+	// gregale start refuses FAAS_TOKEN, which would shadow the login it
+	// saves (#6381); sign the CLI in the way a customer's terminal is.
+	login := exec.Command(bin, "login", "--token-stdin")
+	login.Env, login.Stdin = fixture.cliEnv, strings.NewReader(f.key)
+	if out, err := login.CombinedOutput(); err != nil {
+		t.Fatalf("gregale login: %v\n%s", err, strings.ReplaceAll(string(out), f.key, "[REDACTED]"))
 	}
 	return fixture
 }

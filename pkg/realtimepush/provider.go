@@ -159,7 +159,14 @@ func NewClient() *http.Client {
 	return client
 }
 
+// Send makes a provider token for this send only; long-running senders use
+// a TokenCache.
 func Send(ctx context.Context, client *http.Client, c Config, t Target, n Notification) Result {
+	return (*TokenCache)(nil).Send(ctx, client, c, t, n)
+}
+
+// Send delivers one notification, reusing the cache's provider tokens.
+func (tc *TokenCache) Send(ctx context.Context, client *http.Client, c Config, t Target, n Notification) Result {
 	if n.MessageCount < 1 {
 		n.MessageCount = 1
 	}
@@ -182,7 +189,9 @@ func Send(ctx context.Context, client *http.Client, c Config, t Target, n Notifi
 		jwt, _ := google.JWTConfigFromJSON(c.ServiceAccountJSON, "https://www.googleapis.com/auth/firebase.messaging")
 		// Never honor a customer-controlled OAuth endpoint from service-account JSON.
 		jwt.TokenURL = "https://oauth2.googleapis.com/token"
-		token, tokenErr := jwt.TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client)).Token()
+		token, tokenErr := tc.fcmToken(ctx, c, func(ctx context.Context) (*oauth2.Token, error) {
+			return jwt.TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client)).Token()
+		})
 		if tokenErr != nil {
 			return Result{Retry: true, Code: "provider_auth_unavailable"}
 		}
@@ -194,7 +203,9 @@ func Send(ctx context.Context, client *http.Client, c Config, t Target, n Notifi
 		}
 	case "apns":
 		key, _ := appleKey(c.PrivateKey)
-		auth, signErr := signJWT(key, map[string]string{"alg": "ES256", "kid": c.KeyID}, map[string]any{"iss": c.TeamID, "iat": time.Now().Unix()})
+		auth, signErr := tc.apnsToken(c, func(now time.Time) (string, error) {
+			return signJWT(key, map[string]string{"alg": "ES256", "kid": c.KeyID}, map[string]any{"iss": c.TeamID, "iat": now.Unix()})
+		})
 		if signErr != nil {
 			return Result{Retry: true, Code: "provider_auth_unavailable"}
 		}
@@ -230,6 +241,9 @@ func Send(ctx context.Context, client *http.Client, c Config, t Target, n Notifi
 		return result
 	}
 	result.Code = "provider_rejected"
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		tc.forget(c)
+	}
 	result.Retry = response.StatusCode >= 500 || response.StatusCode == 408 || response.StatusCode == 429 || response.StatusCode == 401 || response.StatusCode == 403
 	if (c.Provider == "webpush" && (response.StatusCode == 404 || response.StatusCode == 410)) || (c.Provider == "apns" && response.StatusCode == 410) {
 		return Result{StatusCode: response.StatusCode, InvalidTarget: true, Code: "target_unregistered"}

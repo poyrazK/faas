@@ -295,6 +295,9 @@ func TestMCPNativeJournalCommandOwnership(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(root, "worker", "tasks-release.js"), []byte("// Node release gate fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	plan := filepath.Join(root, "plan.json")
 	if err := os.WriteFile(plan, []byte(`{"web_app":"web","worker_app":"worker","observer_app":"observer","observer_metric_app":"observer","web_path":"web","worker_path":"worker","timeout_seconds":1}`), 0600); err != nil {
 		t.Fatal(err)

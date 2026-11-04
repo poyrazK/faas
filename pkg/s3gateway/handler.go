@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -52,10 +53,15 @@ type Config struct {
 	OpenSecret     func([]byte) (string, error)
 	HTTPClient     *http.Client
 	Enabled        func() bool
-	Host           string
-	Region         string
-	SpoolDir       string
-	MaxPutBytes    int64
+	// Fenced reports a closed object storage restore fence
+	// (ADR-20261025111015): the database was restored, so keys it revoked
+	// may be valid again. Every request is refused while it is closed,
+	// including the deletes Enabled leaves open (bug hunt 33).
+	Fenced      func() bool
+	Host        string
+	Region      string
+	SpoolDir    string
+	MaxPutBytes int64
 	// UploadGrants serves ?gregale-upload= grant uploads. Nothing issues
 	// grants yet, so the path stays off: an unauthenticated request then never
 	// reaches the grant store, and a stray grant row authorizes nothing.
@@ -100,6 +106,7 @@ type Handler struct {
 	openSecret      func([]byte) (string, error)
 	client          *http.Client
 	enabled         func() bool
+	fenced          func() bool
 	host            string
 	region          string
 	spoolDir        string
@@ -190,6 +197,9 @@ func New(c Config) (*Handler, error) {
 	if c.Enabled == nil {
 		c.Enabled = func() bool { return true }
 	}
+	if c.Fenced == nil {
+		c.Fenced = func() bool { return false }
+	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -199,7 +209,7 @@ func New(c Config) (*Handler, error) {
 	return &Handler{
 		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, transfers: c.Transfers, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
-		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
+		enabled:        c.Enabled, fenced: c.Fenced, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
 		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
 		transferTimeout: c.Registry.TransferTimeout(),
@@ -291,6 +301,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cloudflare-CDN-Cache-Control", "no-store")
 	if strings.ToLower(r.Host) != h.host {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Use the configured Gregale S3 endpoint with path-style addressing.", r.URL.Path, requestID)
+		return
+	}
+	// A closed restore fence refuses everything, before CORS, signatures and
+	// the pre-routes: a key the restore un-revoked must not delete objects
+	// or versions the restored database cannot bring back.
+	if h.fenced() {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale Object Storage is temporarily unavailable.", r.URL.Path, requestID)
 		return
 	}
 	if h.handleCORS(w, r, requestID) {
@@ -430,6 +447,12 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestConte
 	}
 	if !hasBucket {
 		if r.Method == http.MethodGet && len(query) == 0 && h.can(req.credential, state.ObjectBucketPermissionRead) {
+			// Bucket-level reads are admitted like listings: over the monthly
+			// limits, or behind a revoked organization fence, they are refused
+			// as every other non-delete request is (bug hunt 33).
+			if !h.admit(w, r, req, "__list__", 0, false) {
+				return
+			}
 			writeS3XML(w, http.StatusOK, req.requestID, listAllMyBucketsResult{XMLNS: s3XMLNamespace, Buckets: listBucketsBody{Buckets: []listBucket{{Name: req.bucket.Name, CreationDate: req.bucket.CreatedAt.UTC().Format(time.RFC3339)}}}})
 			return
 		}
@@ -508,14 +531,14 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 		return
 	}
 	if r.Method == http.MethodHead && len(query) == 0 {
-		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, "__list__", 0, false) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	if r.Method == http.MethodGet && query.Has("location") {
-		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, "__list__", 0, false) {
 			return
 		}
 		writeS3XML(w, http.StatusOK, req.requestID, struct {
@@ -752,6 +775,9 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 			status, code, message = http.StatusForbidden, "AccessDenied", "The storage credential is no longer authorized."
 		} else if errors.Is(err, state.ErrObjectBudget) {
 			status, code, message = http.StatusPaymentRequired, "AccountProblem", objectBudgetMessage(err)
+		} else if limit := (*state.ObjectStorageLimitError)(nil); errors.As(err, &limit) && limit.Kind == "account_bytes" && errors.Is(err, state.ErrObjectCapacity) {
+			// ADR-20261101214152: the account's ceiling, which support can raise.
+			status, code, message = http.StatusConflict, "OperationAborted", fmt.Sprintf("The account would store more than its object storage ceiling: limit %d bytes, observed %d. Delete objects, or ask support for a higher ceiling. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
 		} else if errors.Is(err, state.ErrConflict) {
@@ -769,6 +795,11 @@ func objectBudgetMessage(err error) string {
 	var limit *state.ObjectStorageLimitError
 	if !errors.As(err, &limit) {
 		return "The object storage safety budget has been reached."
+	}
+	if limit.Kind == "account_bytes" {
+		// ADR-20261101214152: downloads stop while the account stores more
+		// than its plan's ceiling; listing, HEAD and DELETE still work.
+		return fmt.Sprintf("The account stores more than its object storage ceiling: limit %d bytes, observed %d. Delete objects to download again, or ask support for a higher ceiling. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 	}
 	return fmt.Sprintf("The account reached its object storage %s limit for the month: limit %d, observed %d. See %s.", limit.Kind, limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 }
@@ -816,6 +847,13 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 	}
 	request, ok := h.readDeleteObjects(w, r, req)
 	if !ok {
+		return
+	}
+	// The operator kill switch leaves cleanup deletes open, but not a
+	// permanent version delete: DELETE ?versionId is refused, and a bulk
+	// delete that names versions is refused the same way (bug hunt 33).
+	if !h.enabled() && slices.ContainsFunc(request.Objects, func(o deleteObjectTarget) bool { return o.VersionID != "" }) {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale Object Storage is temporarily disabled.", r.URL.Path, req.requestID)
 		return
 	}
 

@@ -97,6 +97,13 @@ func testPgTrafficAppActivation(t *testing.T, namespace string) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				// Deleting an app cancels its deploys in progress (#6413), so a
+				// restore's alias must point at the live deployment it brings back.
+				if strings.Contains(operation, "restore") {
+					if err := store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if _, err := store.SetDeploymentAlias(t.Context(), target.ID, "candidate", deployment.ID); err != nil {
 					t.Fatal(err)
 				}

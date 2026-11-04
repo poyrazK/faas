@@ -258,6 +258,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	defer jobMaterializationTicker.Stop()
 	staleDeploymentTicker := time.NewTicker(staleDeploymentSweepEvery)
 	defer staleDeploymentTicker.Stop()
+	releaseApprovalTicker := time.NewTicker(releaseApprovalHoldSweepEvery)
+	defer releaseApprovalTicker.Stop()
 	securityScanEvery := l.securityScanEvery
 	if securityScanEvery <= 0 {
 		securityScanEvery = securityScanSweepEvery
@@ -372,6 +374,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-staleDeploymentTicker.C:
 			l.reconcileStaleDeployments(ctx)
+		case <-releaseApprovalTicker.C:
+			l.resumeReleaseApprovalHolds(ctx)
 		case tick := <-l.securityScanCh:
 			l.reconcileSecurityScans(ctx, tick, securityScanEvery)
 		case tick := <-l.securityLeaseCh:
@@ -454,6 +458,12 @@ func (l *Loop) reconcileStaleDeployments(ctx context.Context) {
 			// than a lost snapshot handoff. Its coordinator owns cancellation.
 			continue
 		}
+		if l.releaseApprovalPending(ctx, deployment) {
+			// Waiting for approval before its release command
+			// (ADR-20261020085706 amendment 12); the policy's timeout
+			// closes it.
+			continue
+		}
 		build, buildErr := l.store.BuildByDeployment(ctx, deployment.ID)
 		if buildErr == nil && (build.Status == state.BuildQueued || build.Status == state.BuildRunning) {
 			continue
@@ -509,7 +519,7 @@ func (l *Loop) observeStaleDeploymentBacklog(ctx context.Context, cutoff, now ti
 	}
 	var oldest time.Duration
 	for _, deployment := range rows {
-		if entered := pipelineStageEnteredAt(deployment); entered.Before(cutoff) {
+		if entered := pipelineStageEnteredAt(deployment); entered.Before(cutoff) && !l.releaseApprovalPending(ctx, deployment) {
 			oldest = max(oldest, now.Sub(entered))
 		}
 	}

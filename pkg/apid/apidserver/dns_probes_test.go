@@ -152,15 +152,18 @@ func TestCheckPointsToGregale_Mismatch(t *testing.T) {
 }
 
 func TestCheckPointsToGregale_NoCNAME(t *testing.T) {
-	withSeams(t, nil, nil, nil, "edge.gregale.dev")
+	missing := func(context.Context, string) ([]string, error) {
+		return nil, &net.DNSError{IsNotFound: true}
+	}
+	withSeams(t, missing, missing, nil, "edge.gregale.dev")
 	prevCNAME := cnameLookupFunc
 	t.Cleanup(func() { cnameLookupFunc = prevCNAME })
 	cnameLookupFunc = func(_ context.Context, _ string) (string, error) {
 		return "", &net.DNSError{Err: "no such host", IsNotFound: true}
 	}
 	res := checkPointsToGregale(context.Background(), "api.example.com")
-	if res.Status != probeNA {
-		t.Fatalf("status = %q, want na", res.Status)
+	if res.Status != probeFail {
+		t.Fatalf("status = %q, want fail for missing CNAME and addresses", res.Status)
 	}
 }
 
@@ -249,9 +252,9 @@ func TestParseCAARecords(t *testing.T) {
 		{"deny all wins", []string{`0 issue ";"`}, false, `0 issue ";"`},
 		{"issuewild permitted", []string{`0 issuewild "letsencrypt.org"`}, true, `0 issuewild "letsencrypt.org"`},
 		{"empty value is no-op", []string{`0 issue ""`}, false, `0 issue ""`},
-		{"non-recognised tag", []string{`0 iodef "mailto:sec@example.com"`}, false, `0 iodef "mailto:sec@example.com"`},
+		{"reporting does not restrict issuance", []string{`0 iodef "mailto:sec@example.com"`}, true, `0 iodef "mailto:sec@example.com"`},
 		{"quoted with whitespace", []string{`  0   issue    "letsencrypt.org"  `}, true, `0   issue    "letsencrypt.org"`},
-		{"unrelated CAA wins on empty value", []string{`0 issue ";"`, `0 issuewild "letsencrypt.org"`}, true, ""}, // issuewild permits despite issue deny
+		{"issuewild cannot permit a concrete host", []string{`0 issue ";"`, `0 issuewild "letsencrypt.org"`}, false, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

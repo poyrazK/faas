@@ -1,0 +1,99 @@
+# ADR-20261102081618 §3: edgednsd's alerts.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a node whose edge stops answering is withdrawn; no ready node pages
+    interval: 1m
+    input_series:
+      - series: edge_dns_records{job="edgednsd",name="*.gregale.dev"}
+        values: 2+0x12
+      - series: edge_dns_node_in{job="edgednsd",node="fsn-2.faas"}
+        values: 1 1 0 0 0 0 0 0 0 0 0 0 0
+      - series: edge_dns_node_in{job="edgednsd",node="fsn-3.faas"}
+        values: 1 1 1 1 1 1 1 1 0 0 0 0 0
+      - series: edge_dns_probe_failures_total{job="edgednsd",node="fsn-2.faas"}
+        values: 0 0 3+1x10
+      - series: edge_dns_probe_failures_total{job="edgednsd",node="fsn-3.faas"}
+        values: 0 0 0 0 0 0 0 0 3+1x4
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasEdgeDNSNodeWithdrawn
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: edgednsd
+              family: compute_edge
+              public_status: internal
+              job: edgednsd
+              node: fsn-2.faas
+            exp_annotations:
+              summary: "The edge on fsn-2.faas is out of DNS"
+              description: "edgednsd withdrew fsn-2.faas's address because its edge stopped answering readiness probes. The other nodes carry its share; it comes back after five answers in a row."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+      - eval_time: 9m
+        alertname: FaasEdgeDNSNoReadyNode
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: FaasEdgeDNSNoReadyNode
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: edgednsd
+              family: compute_edge
+              public_status: internal
+            exp_annotations:
+              summary: "No compute edge is ready for direct entry"
+              description: "For 2 minutes no compute node's edge has answered edgednsd's readiness probes. edgednsd keeps the last address records rather than remove them all, so Cloudflare still sends app requests to edges that may fail them."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
+  - name: no records yet, no page
+    interval: 1m
+    input_series:
+      - series: edge_dns_records{job="edgednsd",name="pilot.gregale.dev"}
+        values: 0+0x10
+      - series: edge_dns_node_in{job="edgednsd",node="fsn-2.faas"}
+        values: 0+0x10
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasEdgeDNSNoReadyNode
+        exp_alerts: []
+
+  - name: failing Cloudflare writes and a down daemon warn
+    interval: 1m
+    input_series:
+      - series: edge_dns_errors_total{job="edgednsd",op="create"}
+        values: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21
+      - series: edge_dns_errors_total{job="edgednsd",op="read"}
+        values: 0+0x21
+      - series: up{job="edgednsd"}
+        values: 1 1 0 0 0 0 0 0 0
+    alert_rule_test:
+      - eval_time: 21m
+        alertname: FaasEdgeDNSWritesFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: edgednsd
+              family: compute_edge
+              public_status: internal
+              op: create
+            exp_annotations:
+              summary: "edgednsd cannot create DNS records"
+              description: "edgednsd's Cloudflare create calls have failed for 10 minutes. The records stay as they are, so a node that fails now is not withdrawn."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+      - eval_time: 8m
+        alertname: FaasEdgeDNSDown
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: edgednsd
+              family: compute_edge
+              public_status: internal
+              job: edgednsd
+            exp_annotations:
+              summary: "edgednsd is not answering"
+              description: "Prometheus cannot scrape edgednsd on the control plane. The records stay as they were, so traffic flows, but a compute node that fails now is not withdrawn."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"

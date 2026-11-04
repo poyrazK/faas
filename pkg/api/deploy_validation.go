@@ -3,8 +3,9 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // FunctionRuntimes is the create-time closed set for function apps. Keep this
@@ -85,11 +86,11 @@ func ValidFunctionRuntime(runtime string) bool {
 
 // deploymentImageRE is the canonical digest-pinned OCI reference grammar used
 // by deploy preview and every deployment admission path.
-var deploymentImageRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
+var deploymentImageRE = lazyregexp.New(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+@sha256:[0-9a-f]{64}$`)
 
 // Project images may name a tag; imaged pins the resolved source before
 // materializing it. References must first be normalized with oci.ParseReference.
-var projectImageRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(@sha256:[0-9a-f]{64})?$`)
+var projectImageRE = lazyregexp.New(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]+)?/[A-Za-z0-9_./-]+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(@sha256:[0-9a-f]{64})?$`)
 
 // ValidProjectImage validates a normalized registry reference with a tag or
 // digest. Unlike direct image API admission, project tags are pinned by imaged.

@@ -32,11 +32,11 @@ func readIssueCodeownersFile(file string) ([]byte, error) {
 func cmdIssueCodeowners(args []string) int {
 	usage := "usage: gregale debug issue codeowners <preview|apply> --file CODEOWNERS --bindings-file owners.json --source-root /app [--app SLUG --replace]"
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	if args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 0
 	}
 	fs := newFlagSet("issues codeowners", flag.ContinueOnError)
@@ -53,7 +53,7 @@ func cmdIssueCodeowners(args []string) int {
 		return 1
 	}
 	if len(positionals) != 0 || *file == "" || *bindingsFile == "" || *root == "" || args[0] != "preview" && args[0] != "apply" {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	if args[0] == "apply" && (*app == "" || !*replace) {

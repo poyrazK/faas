@@ -16,7 +16,7 @@ func (m *MemStore) checkMemTrafficDomainBindingLocked(ctx context.Context, domai
 
 func (m *MemStore) deleteTrafficCustomDomainLocked(ctx context.Context, domain, expectedApp string, activity *OrgActivity) (int64, error) {
 	claim, found := m.domains[domain]
-	if !found || expectedApp != "" && claim.AppID != expectedApp {
+	if !found || !customDomainProbeMatches(ctx, claim) || expectedApp != "" && claim.AppID != expectedApp {
 		return 0, ErrNotFound
 	}
 	if err := m.checkMemTrafficDomainBindingLocked(ctx, domain, CustomDomain{}); err != nil {

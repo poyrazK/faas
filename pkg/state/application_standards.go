@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 type ApplicationStandardVersion = api.ApplicationStandardVersion
@@ -25,7 +25,7 @@ type ApplicationStandardStore interface {
 	ListApplicationStandards(context.Context, string, string, int) ([]ApplicationStandardVersion, error)
 }
 
-var applicationStandardSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
+var applicationStandardSlug = lazyregexp.New(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
 
 func prepareApplicationStandard(p ApplicationStandardPublish) (ApplicationStandardVersion, error) {
 	if !applicationStandardSlug.MatchString(p.Slug) || !utf8.ValidString(p.Description) || len(p.Description) > api.ApplicationStandardMaxDescriptionBytes {

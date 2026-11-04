@@ -8,6 +8,7 @@ import type { APIKeyResponse } from './APIKeyResponse.js';
 import type { AppResponse } from './AppResponse.js';
 import type { AppSecretExportResponse } from './AppSecretExportResponse.js';
 import type { BuildExportResponse } from './BuildExportResponse.js';
+import type { CorsPresetResponse } from './CorsPresetResponse.js';
 import type { CronResponse } from './CronResponse.js';
 import type { CustomDomainResponse } from './CustomDomainResponse.js';
 import type { DeploymentResponse } from './DeploymentResponse.js';
@@ -50,9 +51,13 @@ export type AccountExportResponse = {
    */
   edge_rules?: Array<EdgeRuleResponse>;
   /**
-   * The account's edge rule lists, with their items.
+   * The account's personal edge rule lists, with their items. An organization's lists are not part of a member's export.
    */
   edge_rule_lists?: Array<EdgeRuleListResponse>;
+  /**
+   * The account's CORS presets: account-wide ones and those scoped to the exported apps.
+   */
+  cors_presets?: Array<CorsPresetResponse>;
   audit_trail?: Array<GdprAuditExportResponse>;
 };
 

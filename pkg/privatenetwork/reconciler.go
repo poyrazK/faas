@@ -190,11 +190,10 @@ func (r *Reconciler) SweepNetwork(ctx context.Context, accountID, networkID stri
 	if accountID == "" || networkID == "" {
 		return ReconcileSummary{}, errors.New("privatenetwork: account_id and network_id are required")
 	}
-	rows, err := r.store.ListAppPrivateNetworkAttachments(ctx, []string{
-		api.PrivateNetworkAttachmentStatusPending,
-		api.PrivateNetworkAttachmentStatusReady,
-		api.PrivateNetworkAttachmentStatusError,
-	}, 1000)
+	rows, err := state.ListScopedPrivateNetworkAttachments(ctx, r.store, state.PrivateNetworkAttachmentPage{
+		AccountID: accountID, NetworkID: networkID,
+		Statuses: []string{api.PrivateNetworkAttachmentStatusPending, api.PrivateNetworkAttachmentStatusReady, api.PrivateNetworkAttachmentStatusError},
+	})
 	if err != nil {
 		return ReconcileSummary{}, err
 	}
@@ -209,6 +208,37 @@ func (r *Reconciler) SweepNetwork(ctx context.Context, accountID, networkID stri
 
 func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetworkAttachment) (ReconcileSummary, error) {
 	var summary ReconcileSummary
+	var errs []error
+	for _, selected := range rows {
+		var part ReconcileSummary
+		err := state.WithPrivateNetworkScope(ctx, r.store, state.PrivateNetworkAttachmentScope(selected.AppID), func(ctx context.Context) error {
+			fresh, err := r.store.GetAppPrivateNetworkAttachment(ctx, selected.AccountID, selected.AppID)
+			if errors.Is(err, state.ErrNotFound) {
+				part.Discovered, part.Contended = 1, 1
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			part, err = r.sweepRowsUnfenced(ctx, []state.AppPrivateNetworkAttachment{fresh})
+			return err
+		})
+		summary.Discovered += part.Discovered
+		summary.Ready += part.Ready
+		summary.Pending += part.Pending
+		summary.Failed += part.Failed
+		summary.Contended += part.Contended
+		summary.NodeReady += part.NodeReady
+		summary.NodeFailed += part.NodeFailed
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return summary, errors.Join(errs...)
+}
+
+func (r *Reconciler) sweepRowsUnfenced(ctx context.Context, rows []state.AppPrivateNetworkAttachment) (ReconcileSummary, error) {
+	var summary ReconcileSummary
 	summary.Discovered = len(rows)
 	var sweepErrs []error
 	for _, attachment := range rows {
@@ -216,6 +246,7 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 			return summary, err
 		}
 		started := r.now()
+		failedBefore, pendingBefore := summary.Failed, summary.Pending
 		outcome := "pending"
 		var routeReport RouteApplyReport
 		var fabricReport FabricApplyReport
@@ -225,7 +256,7 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 			outcome = "error"
 			summary.Failed++
 			detail := boundedDetail(checkErr.Error())
-			if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+			if _, updateErr := r.updateAttachmentStatus(ctx, attachment, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
 				sweepErrs = append(sweepErrs, updateErr)
 			} else {
 				sweepErrs = append(sweepErrs, checkErr)
@@ -236,14 +267,14 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 			if detail == "" {
 				detail = "provider attachment is not ready; traffic remains blocked"
 			}
-			if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusPending, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+			if _, updateErr := r.updateAttachmentStatus(ctx, attachment, api.PrivateNetworkAttachmentStatusPending, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
 				sweepErrs = append(sweepErrs, updateErr)
 			}
 		default:
 			if err := validateAttachmentCIDRs(attachment.CIDRs); err != nil {
 				summary.Failed++
 				detail := boundedDetail(err.Error())
-				if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+				if _, updateErr := r.updateAttachmentStatus(ctx, attachment, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
 					sweepErrs = append(sweepErrs, updateErr)
 				} else {
 					sweepErrs = append(sweepErrs, err)
@@ -252,11 +283,11 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 			}
 			effectiveAttachment := attachment
 			effectiveAttachment.FirewallRules = cloneFirewallRules(check.FirewallRules)
-			effectivePolicy, policyErr := mergePrivateNetworkPolicy(check.AllowedCIDRs, attachment.AllowedCIDRs, attachment.CIDRs)
+			effectivePolicy, policyErr := MergePolicyCIDRs(check.AllowedCIDRs, attachment.AllowedCIDRs, attachment.CIDRs)
 			if policyErr != nil {
 				summary.Failed++
 				detail := boundedDetail(policyErr.Error())
-				if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+				if _, updateErr := r.updateAttachmentStatus(ctx, attachment, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
 					sweepErrs = append(sweepErrs, updateErr)
 				} else {
 					sweepErrs = append(sweepErrs, policyErr)
@@ -268,7 +299,7 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 					summary.Failed++
 					policyErr := errors.New("private network firewall policy cannot be enforced by the configured route applier")
 					detail := boundedDetail(policyErr.Error())
-					if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+					if _, updateErr := r.updateAttachmentStatus(ctx, attachment, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
 						sweepErrs = append(sweepErrs, updateErr)
 					} else {
 						sweepErrs = append(sweepErrs, policyErr)
@@ -282,7 +313,7 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 				if checkErr != nil {
 					summary.Failed++
 					detail := boundedDetail(fmt.Sprintf("network fabric activation failed: %v", checkErr))
-					if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+					if _, updateErr := r.updateAttachmentStatus(ctx, attachment, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
 						sweepErrs = append(sweepErrs, updateErr)
 					} else {
 						sweepErrs = append(sweepErrs, checkErr)
@@ -309,7 +340,7 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 			if checkErr != nil {
 				summary.Failed++
 				detail := boundedDetail(fmt.Sprintf("route activation failed: %v", checkErr))
-				if _, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+				if _, updateErr := r.updateAttachmentStatus(ctx, attachment, api.PrivateNetworkAttachmentStatusError, detail); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
 					sweepErrs = append(sweepErrs, updateErr)
 				} else {
 					sweepErrs = append(sweepErrs, checkErr)
@@ -317,9 +348,9 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 				outcome = "error"
 				break
 			}
-			updated, updateErr := r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, attachment.AccountID, attachment.AppID, api.PrivateNetworkAttachmentStatusReady, readyDetail(check.Detail))
+			updated, updateErr := r.updateAttachmentStatus(ctx, attachment, api.PrivateNetworkAttachmentStatusReady, readyDetail(check.Detail))
 			if updateErr != nil {
-				if errors.Is(updateErr, state.ErrNotFound) {
+				if errors.Is(updateErr, state.ErrNotFound) || errors.Is(updateErr, state.ErrConflict) {
 					summary.Contended++
 					outcome = "contended"
 					break
@@ -333,6 +364,27 @@ func (r *Reconciler) sweepRows(ctx context.Context, rows []state.AppPrivateNetwo
 			outcome = "ready"
 			if r.notify != nil {
 				r.notify(ctx, updated)
+			}
+		}
+		if summary.Failed > failedBefore && outcome == "pending" {
+			outcome = "error"
+		}
+		if outcome != "ready" {
+			// Status alone does not revoke a running workload's routes. Replay
+			// withdrawal for pending/error rows too, so a failed node is retried.
+			if err := r.applier.Apply(ctx, attachment.AppID, nil); err != nil {
+				withdrawErr := fmt.Errorf("private network route withdrawal failed: %w", err)
+				sweepErrs = append(sweepErrs, withdrawErr)
+				if summary.Pending > pendingBefore {
+					summary.Pending--
+				}
+				if summary.Failed == failedBefore {
+					summary.Failed++
+				}
+				outcome = "error"
+				if _, updateErr := r.updateAttachmentStatus(ctx, attachment, api.PrivateNetworkAttachmentStatusError, boundedDetail(withdrawErr.Error())); updateErr != nil && !errors.Is(updateErr, state.ErrNotFound) {
+					sweepErrs = append(sweepErrs, updateErr)
+				}
 			}
 		}
 		observation := ReconcileObservation{
@@ -390,6 +442,13 @@ func (r *Reconciler) Run(ctx context.Context) error {
 	}
 }
 
+func (r *Reconciler) updateAttachmentStatus(ctx context.Context, expected state.AppPrivateNetworkAttachment, status, detail string) (state.AppPrivateNetworkAttachment, error) {
+	if conditional, ok := r.store.(state.PrivateNetworkAttachmentIntentStatusStore); ok {
+		return conditional.UpdatePrivateNetworkAttachmentStatusForIntent(ctx, expected, status, detail)
+	}
+	return r.store.UpdateAppPrivateNetworkAttachmentStatus(ctx, expected.AccountID, expected.AppID, status, detail)
+}
+
 func validateAttachmentCIDRs(cidrs []netip.Prefix) error {
 	raw := make([]string, 0, len(cidrs))
 	for _, prefix := range cidrs {
@@ -399,7 +458,10 @@ func validateAttachmentCIDRs(cidrs []netip.Prefix) error {
 	return err
 }
 
-func mergePrivateNetworkPolicy(networkPolicy, appPolicy, destinations []netip.Prefix) ([]netip.Prefix, error) {
+// MergePolicyCIDRs computes the same effective CIDR restriction for wakes,
+// attachment reconciliation and peering replay. An attachment may narrow a
+// network policy but cannot broaden it; an empty network policy is unrestricted.
+func MergePolicyCIDRs(networkPolicy, appPolicy, destinations []netip.Prefix) ([]netip.Prefix, error) {
 	toRaw := func(prefixes []netip.Prefix) []string {
 		raw := make([]string, 0, len(prefixes))
 		for _, prefix := range prefixes {

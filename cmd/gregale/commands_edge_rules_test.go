@@ -946,3 +946,71 @@ func TestWarnRootOnlyProtectiveRule(t *testing.T) {
 		}
 	}
 }
+
+// adr: 091 — amendment 2026-11-02: an app is always served at its platform
+// hostname too, so a gate naming one exact host leaves the app's other hosts
+// open and says so on create.
+func TestWarnSingleHostProtectiveRule(t *testing.T) {
+	cases := []struct {
+		kind, host string
+		warn       bool
+	}{
+		{kind: "waf", host: "shop.example.com", warn: true},
+		{kind: "challenge", host: "shop.example.com", warn: true},
+		{kind: "ip", host: "shop.gregale.dev", warn: true},
+		{kind: "waf", host: "@app"},
+		{kind: "ip", host: "*"},
+		{kind: "geo", host: "*.example.com"},
+		{kind: "redirect", host: "shop.example.com"},
+	}
+	for _, tc := range cases {
+		var stderr bytes.Buffer
+		old := (*main.OsStderr)
+		(*main.OsStderr) = &stderr
+		main.WarnSingleHostProtectiveRule(tc.kind, tc.host, "shop")
+		(*main.OsStderr) = old
+		got := strings.Contains(stderr.String(), "--match-host @app")
+		if got != tc.warn {
+			t.Errorf("kind=%s host=%s: warned=%v, want %v (stderr %q)", tc.kind, tc.host, got, tc.warn, stderr.String())
+		}
+	}
+}
+
+// adr: 091 — amendment 2026-11-02, later: a gate scoped by a header, cookie
+// or query parameter is skipped by a client that sends something else.
+func TestWarnClientScopedProtectiveRule(t *testing.T) {
+	cases := []struct {
+		name      string
+		kind      string
+		headers   map[string]string
+		condition *api.EdgeRuleMatchExpr
+		want      string
+	}{
+		{name: "match header", kind: "jwt", headers: map[string]string{"X-Client": "web"}, want: "scoped by header X-Client"},
+		{name: "nested condition", kind: "ip", condition: &api.EdgeRuleMatchExpr{All: []api.EdgeRuleMatchExpr{
+			{Field: "country", Op: "eq", Value: "US"},
+			{Not: &api.EdgeRuleMatchExpr{Field: "cookie:session", Op: "exists"}},
+			{Any: []api.EdgeRuleMatchExpr{{Field: "query:debug", Op: "eq", Value: "1"}}},
+		}}, want: "scoped by cookie session, query debug"},
+		{name: "server-derived fields", kind: "waf", condition: &api.EdgeRuleMatchExpr{Field: "client_ip", Op: "cidr", Value: "203.0.113.0/24"}},
+		{name: "not a gate", kind: "headers", headers: map[string]string{"X-Client": "web"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			old := (*main.OsStderr)
+			(*main.OsStderr) = &stderr
+			main.WarnClientScopedProtectiveRule(tc.kind, tc.headers, tc.condition)
+			(*main.OsStderr) = old
+			if tc.want == "" {
+				if stderr.Len() != 0 {
+					t.Fatalf("unexpected warning %q", stderr.String())
+				}
+				return
+			}
+			if !strings.Contains(stderr.String(), tc.want) || !strings.Contains(stderr.String(), "which the client chooses") {
+				t.Fatalf("warning %q, want it to contain %q", stderr.String(), tc.want)
+			}
+		})
+	}
+}

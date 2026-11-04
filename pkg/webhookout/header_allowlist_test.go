@@ -19,4 +19,7 @@ func TestOutboundWebhookHeadersReachGuests(t *testing.T) {
 			}
 		}
 	}
+	if !api.IsOutboundWebhookHeader(HeaderWebhookSignaturePrevious) {
+		t.Errorf("%s is stripped before the guest", HeaderWebhookSignaturePrevious)
+	}
 }

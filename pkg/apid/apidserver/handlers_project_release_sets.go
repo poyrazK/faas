@@ -50,6 +50,12 @@ func (s *server) publishProjectReleaseSet(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrCapacity("project release sets are unavailable"))
 		return
 	}
+	// A published set serves at once, so its members meet the release guards
+	// an activation does (ADR-20261019071733 amendment 10).
+	if problem := s.releaseSetMembersGuardProblem(r.Context(), environment, false, members); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if err := s.durable.CheckProjectValidatorMembers(r.Context(), members); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("validator artifact preflight blocked project publication"))
 		return

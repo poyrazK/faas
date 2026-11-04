@@ -246,6 +246,9 @@ func validateRouteHealthReport(r api.RouteHealthReport, deployment string) error
 				if c.Requests < 0 || c.ServerErrors < 0 || c.ServerErrors > c.Requests || math.IsNaN(c.ErrorRate) || math.Abs(c.ErrorRate-want) > 1e-12 {
 					return errors.New("invalid request counts or rate")
 				}
+				if c.LatencyRequests != nil && (*c.LatencyRequests < 0 || *c.LatencyRequests > c.Requests) {
+					return errors.New("invalid latency request count")
+				}
 			}
 		}
 	}
@@ -476,6 +479,10 @@ func renderRouteLatencyWindow(w api.RouteHealthWindowEvidence) {
 		stable = fmt.Sprintf("%.1fms", *w.Stable.P95LatencyMS)
 	}
 	_, _ = fmt.Fprintf(osStdout, "    p95 candidate %s, stable %s", candidate, stable)
+	if w.Candidate.LatencyRequests != nil && w.Stable.LatencyRequests != nil {
+		// The canary guard ranks only requests that did not cold boot.
+		_, _ = fmt.Fprintf(osStdout, " (warm requests %d/%d, %d/%d)", *w.Candidate.LatencyRequests, w.Candidate.Requests, *w.Stable.LatencyRequests, w.Stable.Requests)
+	}
 	if w.LatencyDeltaMS != nil {
 		_, _ = fmt.Fprintf(osStdout, ", delta %+.1fms", *w.LatencyDeltaMS)
 	}

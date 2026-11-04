@@ -16,12 +16,35 @@ the platform user-config directory) with mode `0600`. Supported settings are:
 
 | Key | Values | Default |
 |---|---|---|
-| `api-base` | an `http://` or `https://` URL (without embedded credentials) | `https://api.gregale.dev` |
+| `api-base` | an `https://` URL, or `http://` on this machine (without embedded credentials) | `https://api.gregale.dev` |
 | `json` | `true`, `false`, `on`, `off`, `yes`, `no`, `1`, `0` | `false` |
 
 Environment variables take precedence over the file: `FAAS_API` overrides
 `api-base`, and `FAAS_JSON` overrides `json`. Use `gregale config list --json`
-to see the effective value and its source without exposing credentials.
+to see the effective value and its source without exposing credentials;
+`config list`, `config get` and `context` drop any `user:password@` part of a
+`FAAS_API` URL before printing it.
+
+### Plain-HTTP API addresses
+
+Every request carries your API key, and `gregale login` receives a new one in
+the response, so the CLI refuses a plain `http://` API address unless the host
+is this machine (`localhost`, `127.0.0.1`, `::1`). The rule covers `FAAS_API`,
+`config set api-base`, `profile add` and an address saved by an older release:
+commands that contact the API fail before sending anything, while `config`,
+`profile`, `context` and `completion` keep working so you can switch to an
+`https://` address.
+
+A self-hosted Gregale on a trusted private network can opt in:
+
+```bash
+export GREGALE_ALLOW_INSECURE_API=1
+gregale config set api-base http://gregale.internal:8080
+```
+
+With the opt-in, each command prints one warning on stderr. Anyone on the
+network path can read and reuse the key, so prefer TLS even on private
+networks.
 
 ## Command output and forwarded arguments
 
@@ -126,7 +149,12 @@ gregale --profile staging deploy --size small --dry-run
 ```
 
 `FAAS_API` and `FAAS_TOKEN` still override the selected connection's endpoint
-and credential. JSON preferences remain shared across connections.
+and credential. When `FAAS_TOKEN` replaces an explicit `--profile` or a saved
+login, the command prints a one-line warning on stderr (stdout, including
+`--json` output, is unchanged). `login` and `start` refuse to run while
+`FAAS_TOKEN` is set, because the login they save would never be used;
+`login --token "$FAAS_TOKEN"` with the same value is still accepted. JSON
+preferences remain shared across connections.
 `gregale config set api-base <url>` updates the selected connection; changing
 its endpoint does not clear its stored credential, so log in again when changing
 to a different server. `gregale context` reports the effective profile and API
@@ -147,8 +175,10 @@ and `profile remove`.
 
 `profile remove <name>` removes an inactive connection and clears its locally
 stored credentials, session metadata, and completion caches. Switch away from a
-connection before removing it. Removal does not revoke a server-side session; use
-`gregale --profile <name> logout` first when revocation is needed.
+connection before removing it. When the connection holds a browser login, removal
+also revokes that login's CLI key; if revocation fails it warns with the key ID
+to delete by hand. Keys you created and saved with `login --token` are never
+revoked.
 
 ### Check a connection
 

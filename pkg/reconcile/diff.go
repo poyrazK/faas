@@ -82,13 +82,18 @@ func workloadDiff(
 	// app the operator explicitly asked to leave alone.
 	if len(exclude) > 0 {
 		filtered := make([]state.App, 0, len(existing))
+		excludedNames := make(map[string]bool)
 		for _, a := range existing {
-			if exclude[strings.ToLower(a.WorkloadName)] {
+			if AppMatchesSelectors(exclude, a) {
+				excludedNames[strings.ToLower(a.WorkloadName)] = true
 				continue
 			}
 			filtered = append(filtered, a)
 		}
 		existing = filtered
+		scan.Workloads = slices.DeleteFunc(slices.Clone(scan.Workloads), func(w reposcan.Workload) bool {
+			return WorkloadMatchesSelectors(exclude, w) || excludedNames[strings.ToLower(w.Name)]
+		})
 	}
 	// workload_name is the durable project identity. RootDir is mutable build
 	// metadata, so moving a service directory must produce one update instead
@@ -312,6 +317,10 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	}
 	if !slices.Equal(a.Manifest.ProjectSecretFiles, imageManifest.ProjectSecretFiles) {
 		changed = append(changed, "secret_files")
+	}
+	if !slices.Equal(a.Manifest.ProjectReleaseCommand, imageManifest.ProjectReleaseCommand) ||
+		a.Manifest.ProjectReleaseCommandShell != imageManifest.ProjectReleaseCommandShell {
+		changed = append(changed, "release_command")
 	}
 	changed = append(changed, composeResourcesChanged(a, w)...)
 	if !maps.Equal(a.Manifest.ProjectDependencyConditions, w.DependsOnConditions) {

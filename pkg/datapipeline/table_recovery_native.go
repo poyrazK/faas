@@ -83,7 +83,7 @@ func recoveryPublication(ctx context.Context, p Pipeline, source *pgxpool.Pool, 
 	}
 	action := "DROP TABLE "
 	if include {
-		action = "ADD TABLE "
+		action = "ADD TABLE ONLY "
 	}
 	if _, err = tx.Exec(ctx, "ALTER PUBLICATION "+ident(pipelineName(p))+" "+action+tableIdent(r.Table)); err != nil {
 		return err
