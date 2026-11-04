@@ -85,3 +85,36 @@ func TestCollectMemory(t *testing.T) {
 		t.Fatal("a failed read looked like no pressure")
 	}
 }
+
+// Under memory pressure the check says how much RAM the app needs and
+// whether its plan allows it (ADR-20261102124306 step 3).
+func TestMemoryHealthRightSizing(t *testing.T) {
+	for _, tt := range []struct {
+		name                     string
+		plan                     api.Plan
+		ramMB, totalMB, lowestMB int
+		advice, action           string
+	}{
+		{"fits the plan", api.PlanPro, 512, 490, 40, "Raise ram_mb from 512 MB: about 704 MB would have kept 30% free, and the pro plan allows up to 1024 MB.", "configuration"},
+		{"needs a larger plan", api.PlanFree, 256, 240, 20, "At 256 MB, about 384 MB would have kept 30% free, more than the free plan's 256 MB; the hobby plan allows 512 MB.", "configuration"},
+		{"past every plan", api.PlanScale, 2048, 2000, 100, "more than any plan allows; trim in-memory state", "configuration"},
+		{"plan unknown", "", 512, 490, 40, "", "metrics"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := healthEvidence()
+			e.AssessMemory, e.Plan, e.App.RAMMB = true, tt.plan, tt.ramMB
+			e.Memory = MemoryEvidence{Known: true, Recorded: true, Pressure: state.AppMemoryPressure{
+				WindowStartedAt: e.Now.Add(-time.Hour), LastAt: e.Now, Episodes: 1, LowestAvailableMB: tt.lowestMB, TotalMB: tt.totalMB}}
+			var check api.AppHealthCheck
+			for _, c := range Evaluate(e).Checks {
+				if c.Code == "memory" {
+					check = c
+				}
+			}
+			if check.Action != tt.action || check.Reason != "memory_pressure" || tt.advice != "" && !strings.Contains(check.Detail, tt.advice) ||
+				tt.advice == "" && strings.Contains(check.Detail, "ram_mb") {
+				t.Fatalf("check = %+v", check)
+			}
+		})
+	}
+}

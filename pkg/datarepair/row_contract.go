@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 //go:embed row_contract.sql
@@ -19,7 +21,7 @@ var rowContractV1 string
 //go:embed row_contract_v2.sql
 var rowContractV2 string
 
-var functionDefinition = regexp.MustCompile(`(?s)CREATE(?: OR REPLACE)? FUNCTION gregale_repair\.([a-z_]+)\((.*?)\) RETURNS ([^\n]+)\nLANGUAGE (.*?) AS \$\$(.*?)\$\$;`)
+var functionDefinition = lazyregexp.New(`(?s)CREATE(?: OR REPLACE)? FUNCTION gregale_repair\.([a-z_]+)\((.*?)\) RETURNS ([^\n]+)\nLANGUAGE (.*?) AS \$\$(.*?)\$\$;`)
 
 func embeddedFunction(sql, name string) []string {
 	for _, m := range functionDefinition.FindAllStringSubmatch(sql, -1) {

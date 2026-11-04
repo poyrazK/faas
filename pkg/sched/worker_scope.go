@@ -115,9 +115,7 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	if trigger == "" {
 		trigger = TriggerWorkerPool
 	}
-	mu := e.serviceAppMutex(appID)
-	mu.Lock()
-	defer mu.Unlock()
+	defer e.lockServiceApp(appID)()
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
 		return err

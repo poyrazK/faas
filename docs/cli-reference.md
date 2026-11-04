@@ -4782,6 +4782,33 @@ gregale app scale my-api --plan --ram 512 --out scale-change.json
 gregale app scale my-api --apply scale-change.json --confirm
 ```
 
+### app scaling
+
+Read, guard or recover scaling configuration; prints JSON
+
+`gregale app scaling [--env <ENV>] [--receipt <UUID>] [--request-id <UUID>] [--expected-revision <REVISION>] [--expected-app-id <UUID>] [--expected-environment-id <UUID>] [--ram <MB>] [--cpu-millicores <MILLICORES>] [--max-concurrency <COUNT>] [--min <COUNT>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <ENV>` | named project environment (also --environment) |  |
+| `--receipt <UUID>` | recover a request receipt without writing |  |
+| `--request-id <UUID>` | stable UUID reused with the original write body |  |
+| `--expected-revision <REVISION>` | reviewed scaling revision |  |
+| `--expected-app-id <UUID>` | immutable app UUID required for writes |  |
+| `--expected-environment-id <UUID>` | immutable environment UUID required for named writes |  |
+| `--ram <MB>` | RAM in MB |  |
+| `--cpu-millicores <MILLICORES>` | CPU allowance |  |
+| `--max-concurrency <COUNT>` | maximum instance count |  |
+| `--min <COUNT>` | minimum warm instance count, including zero |  |
+
+Examples:
+
+```sh
+gregale app scaling my-api
+gregale app scaling my-api --expected-app-id 612e5aba-cd70-49e7-b29a-e5f73c29dcf2 --expected-revision 3 --request-id 4ed5f921-9eae-4bd0-a7ab-f851d38f745b --ram 512
+gregale app scaling my-api --receipt 4ed5f921-9eae-4bd0-a7ab-f851d38f745b
+```
+
 ### app costs
 
 Show this app&#39;s attributed usage costs and source coverage
@@ -8319,9 +8346,9 @@ Create or inspect durable object deletions
 
 #### bucket deletion create
 
-Delete current data or an owned version with a retry identity
+Delete current data or an owned version; reuse the request UUID to retry
 
-`gregale bucket deletion create <app> <bucket-id> <key> <request-id> [version-id|null]`
+`gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
 
 #### bucket deletion get
 
@@ -15695,7 +15722,7 @@ List recent request telemetry
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--release <UUID>` | deployment filter (also --deployment-id) |  |
 | `--status <N>` | exact HTTP status (100..599) |  |
 | `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
@@ -15714,7 +15741,7 @@ Export metadata-only request telemetry
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--format <FORMAT>` | export format (default ndjson) | one of `ndjson` · `csv` |
 | `--limit <N>` | maximum exported rows (1..10000) |  |
 | `--output <PATH>` | destination file; - writes stdout |  |
@@ -15728,7 +15755,7 @@ Watch new or changed telemetry rows
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--release <UUID>` | deployment filter (also --deployment-id) |  |
 | `--status <N>` | exact HTTP status (100..599) |  |
 | `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
@@ -15777,7 +15804,7 @@ Inspect one retained request, or the latest one
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--release <UUID>` | deployment filter (also --deployment-id) |  |
 | `--status <N>` | exact HTTP status (100..599) |  |
 | `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
@@ -15965,7 +15992,7 @@ Per-route deployment-vs-deployment compare
 |---|---|---|
 | `--source <ID>` | source deployment ID | required |
 | `--mirror <ID>` | comparison deployment ID | required |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--since <DURATION>` | lookback window |  |
 | `--until <RFC3339>` | end of comparison window (RFC3339) |  |
 

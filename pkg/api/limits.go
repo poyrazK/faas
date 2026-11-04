@@ -2754,10 +2754,17 @@ const (
 	ObjectStorageInventorySweepBatch       = 50
 	ObjectStorageInventorySweepConcurrency = 8
 	ObjectStorageInventorySweepBudget      = 40 * time.Second
-	ObjectCapacityReconciliationLease      = 2 * time.Minute
-	ObjectCapacityReconciliationTimeout    = time.Hour
-	ObjectCapacityReconciliationRetry      = 30 * time.Second
-	ObjectCapacityInventoryTimeout         = 45 * time.Second
+	// The inventory sweep runs on its own loop, apart from billing: gateway
+	// reads and writes need an inventory no older than 900 s, so a slow month
+	// close or progress delivery must not delay it. Each billing step stops
+	// after ObjectStorageBillingStepTimeout, and a failed month close is
+	// retried after ObjectStorageFinalizeRetry rather than every minute.
+	ObjectStorageBillingStepTimeout     = 5 * time.Minute
+	ObjectStorageFinalizeRetry          = 15 * time.Minute
+	ObjectCapacityReconciliationLease   = 2 * time.Minute
+	ObjectCapacityReconciliationTimeout = time.Hour
+	ObjectCapacityReconciliationRetry   = 30 * time.Second
+	ObjectCapacityInventoryTimeout      = 45 * time.Second
 	// After claiming a bucket, inventory waits up to
 	// ObjectInventoryDeletionDrain for deletions admitted before the claim to
 	// settle. New deletions in the bucket wait while the claim is younger than
@@ -13351,6 +13358,27 @@ func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Du
 // per worker.
 const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
 
+// PostgresPoolMaxEnv tells an app how many database connections one of its
+// instances can use (ADR-20261104141122). imaged stamps it at build time for
+// accounts the postgres_pool_sizing flag releases; the SDKs'
+// PostgresPoolBinding hands it to the pool factory as the default size.
+const PostgresPoolMaxEnv = "GREGALE_POSTGRES_POOL_MAX"
+
+// PostgresPoolMaxPerInstance caps the stamped pool size at the pg.Pool
+// default, so no instance's pool grows past what most apps run with today.
+const PostgresPoolMaxPerInstance = 10
+
+// PostgresPoolMax is the pool size one instance of an app needs: its
+// per-instance concurrency, at most PostgresPoolMaxPerInstance. Zero for an
+// unknown plan.
+func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
+	return min(l.PerInstanceConcurrency(requestedPerInstanceConcurrency), PostgresPoolMaxPerInstance)
+}
+
+// PostgresPoolMaxAccepted is the largest GREGALE_POSTGRES_POOL_MAX the SDKs
+// and the binding check accept; a larger value is ignored as unset.
+const PostgresPoolMaxAccepted = 1000
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after
@@ -14765,6 +14793,9 @@ const (
 	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
 	// app health counts the guest's reports within it (ADR-20261102124306).
 	AppHealthMemoryPressureWindow = 24 * time.Hour
+	// MemoryRightSizeStepMB rounds app health's suggested ram_mb for an app
+	// under memory pressure (ADR-20261102124306 step 3).
+	MemoryRightSizeStepMB = 64
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
@@ -17361,8 +17392,10 @@ const (
 	// RateLimitBurst, so the gateway's plan limit answers an app first;
 	// this ceiling bounds what one host costs an edge where no plan limit
 	// applies, such as public bucket reads served before the gateway. At
-	// most EdgeHostTrackedMax hostnames are tracked; the rest share one
-	// bucket.
+	// most EdgeHostTrackedMax hostnames are tracked. The Host header is the
+	// client's to choose, so a hostname the full table cannot track passes
+	// instead of sharing one bucket that a flood of random names would drain
+	// for every tenant (hunt 38); the per-address limit still bounds it.
 	EdgeHostRequestsPerSecond       = 1000
 	EdgeHostRequestsBurst           = 4000
 	EdgeHostTrackedMax              = 100_000
@@ -17401,6 +17434,50 @@ const (
 	// entries to the firewall's block sets: an edit takes effect within
 	// it, and so does an entry a reload by another hand flushed.
 	PublicBlockListRefreshInterval = 30 * time.Second
+)
+
+// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
+// domains' certificate from Let's Encrypt with DNS-01 and renews it
+// EdgeCertificateRenewBefore its expiry, checking every
+// EdgeCertificateCheckInterval. A failed order is retried after
+// EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
+// Encrypt allows 5 failed validations per account, hostname and hour, and 5
+// certificates for the same names in 7 days, so a fault must not turn into a
+// loop. One order solves at most EdgeCertificateOrderTimeout, which covers
+// DNS propagation, and names at most EdgeCertificateNamesMax names. A
+// certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
+// so the Certificate Transparency watch can tell ours from anyone else's.
+const (
+	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateRetryMin        = time.Hour
+	EdgeCertificateRetryMax        = 12 * time.Hour
+	EdgeCertificateOrderTimeout    = 10 * time.Minute
+	EdgeCertificateNamesMax        = 10
+	EdgeCertificateKeepAfterExpiry = 90 * 24 * time.Hour
+	// A compute edge reloads the certificates on each pg_notify and at
+	// least every EdgeCertificateReloadInterval, which covers a notice
+	// missed while its LISTEN connection was down; it reconnects after
+	// EdgeCertificateListenRetry.
+	EdgeCertificateReloadInterval = 10 * time.Minute
+	EdgeCertificateListenRetry    = 5 * time.Second
+	// edgednsd's Certificate Transparency watch reads the apps domain's
+	// unexpired issuances from Cert Spotter every
+	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter
+	// allows a few subdomain queries a day, and Let's Encrypt logs a
+	// certificate before it issues it, so a few hours is still well ahead of
+	// any use of one. A read takes at most
+	// EdgeCertificateTransparencyPagesMax pages, each within
+	// EdgeCertificateTransparencyTimeout and at most
+	// EdgeCertificateTransparencyPageBytesMax long.
+	EdgeCertificateTransparencyInterval     = 6 * time.Hour
+	EdgeCertificateTransparencyTimeout      = 30 * time.Second
+	EdgeCertificateTransparencyPagesMax     = 20
+	EdgeCertificateTransparencyPageBytesMax = 8 << 20
+	// EdgeCertificateTransparencyAllowNamesMax caps the names the watch
+	// accepts on certificates edgednsd did not issue (the CDN's, a hosted
+	// site's).
+	EdgeCertificateTransparencyAllowNamesMax = 32
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one

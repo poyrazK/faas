@@ -304,6 +304,7 @@ var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
 	"RequestRateLimitBurst":     WorkloadFieldCopy,
 	"MinInstances":              WorkloadFieldCopy,
 	"ScalingPolicyRevision":     WorkloadFieldOperational,
+	"ScalingRevision":           WorkloadFieldOperational,
 	"EgressAllowlist":           WorkloadFieldCopy,
 	"EgressPorts":               WorkloadFieldCopy,
 	"StaticEgressIP":            WorkloadFieldRemap,

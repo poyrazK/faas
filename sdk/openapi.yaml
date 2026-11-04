@@ -7230,6 +7230,91 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/scaling:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - {name: environment, in: query, schema: {type: string}, description: Named project environment; omit for the default app.}
+    get:
+      tags: [apps]
+      operationId: getAppScaling
+      summary: Read scaling settings and their revision.
+      description: Requires read access. Named environments must have a materialized workload revision.
+      responses:
+        '200':
+          description: Current desired configuration; does not imply running instance convergence.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppScalingSnapshot'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    post:
+      tags: [apps]
+      operationId: applyAppScaling
+      summary: Commit reviewed scaling settings with a recoverable request ID.
+      description: |
+        Requires deploy:write and the same MFA, plan and capacity admission as app settings updates.
+        The expected app UUID and revision are checked under the write lock. Default revisions advance for
+        every accepted request and for legacy changes to RAM, CPU, concurrency or min instances.
+        Named environments use their workload revision, including no-op revision semantics.
+        Settings and the receipt commit atomically. Reuse request_id with the exact original
+        body after an interruption to recover the original receipt even after later writes.
+        Changing the body under an accepted ID returns scaling_request_conflict; a stale
+        revision returns scaling_revision_conflict. Receipts survive until the app is purged.
+        Named production and protected environments require their existing approved workflow.
+        A receipt confirms desired configuration only; named settings require a subsequent
+        deployment, and default settings do not prove guest readiness or replica convergence.
+      requestBody:
+        description: Reviewed scaling fields and the revision and request identity to preserve on retry.
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApplyAppScalingRequest'}
+      responses:
+        '200':
+          description: Original durable configuration receipt, including on replay.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppScalingReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Write permission, MFA, capability or plan admission denied.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Scaling revision changed, request ID reused, or environment protected.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          description: Commit outcome uncertain; recover or retry the original request ID and body.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/scaling/requests/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - {name: environment, in: query, schema: {type: string}, description: Environment of the original scaling request; omit to recover a default-app request.}
+      - {name: request_id, in: path, required: true, schema: {type: string, format: uuid}, description: Original scaling request UUID.}
+    get:
+      tags: [apps]
+      operationId: getAppScalingReceipt
+      summary: Recover a scaling configuration receipt without performing a write.
+      description: Requires current read access to the app and selected environment. Receipt settings may have been superseded; read the current revision separately.
+      responses:
+        '200':
+          description: Original durable configuration receipt.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppScalingReceipt'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/env/batch:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25077,6 +25162,49 @@ components:
         apps: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/DeletedAppSummary'}}
         next_cursor: {type: string, maxLength: 1024}
         evaluated_at: {type: string, format: date-time}
+    AppScalingSettings:
+      description: Stored RAM, CPU, concurrency and instance-floor settings.
+      type: object
+      required: [ram_mb, cpu_millicores, max_concurrency, min_instances]
+      properties:
+        ram_mb: {type: integer}
+        cpu_millicores: {type: integer, description: Stored CPU allowance; zero uses the plan default.}
+        max_concurrency: {type: integer}
+        min_instances: {type: integer}
+    AppScalingSnapshot:
+      description: Current desired scaling configuration and its compare-and-swap revision.
+      type: object
+      required: [app_id, scope, revision, settings]
+      properties:
+        app_id: {type: string, format: uuid}
+        scope: {type: string}
+        environment_id: {type: string, format: uuid, description: Immutable identity for a named environment.}
+        revision: {type: integer, format: int64}
+        settings: {$ref: '#/components/schemas/AppScalingSettings'}
+    ApplyAppScalingRequest:
+      description: A reviewed partial scaling change with a durable request identity.
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_app_id, expected_revision]
+      properties:
+        expected_app_id: {type: string, format: uuid, description: Immutable app UUID from the reviewed scaling snapshot.}
+        request_id: {type: string, format: uuid}
+        expected_environment_id: {type: string, format: uuid, description: Required for a named environment; must match its immutable identity.}
+        expected_revision: {type: integer, format: int64, minimum: 0}
+        ram_mb: {type: integer, minimum: 1}
+        cpu_millicores: {type: integer, minimum: 1}
+        max_concurrency: {type: integer, minimum: 1}
+        min_instances: {type: integer, minimum: 0}
+    AppScalingReceipt:
+      description: Original atomic scaling configuration commit; does not establish runtime readiness.
+      allOf:
+        - $ref: '#/components/schemas/AppScalingSnapshot'
+        - type: object
+          required: [request_id, previous_revision, committed_at]
+          properties:
+            request_id: {type: string, format: uuid}
+            previous_revision: {type: integer, format: int64}
+            committed_at: {type: string, format: date-time}
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets."
       type: object
@@ -38014,7 +38142,7 @@ components:
       properties:
         code:
           type: string
-          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection]
+          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection, replicas, queue, backlog, dead_letters, memory]
         status:
           type: string
           enum: [pass, warning, fail, unknown, not_applicable]
@@ -38023,7 +38151,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string
