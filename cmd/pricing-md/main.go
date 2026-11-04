@@ -53,7 +53,8 @@ func render() string {
 	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.\n")
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
 	b.WriteString("- **After a plan ends or shrinks**, for example when a subscription lapses, the plan's limits still bind: your oldest deployed apps up to its deployed-app limit keep serving, and other apps, or any app set above its RAM, park and stop waking until they fit. Delete apps, lower an app's RAM (`gregale app APP --ram MB`) or upgrade. A downgrade you request is refused until your apps fit.\n")
-	b.WriteString("- **App egress / month** is the data your apps send each month. It is not charged; an account or organization that reaches its plan's egress stops serving until the month ends or it upgrades.\n")
+	fmt.Fprintf(&b, "- **App egress / month** is the data your apps send each month. Free stops serving at it until the month ends or it upgrades. A paid plan stops at it too, unless the account or organization turns on egress overage (`gregale billing egress-overage on`): egress beyond the plan's then costs %s per GiB, up to the [spend cap](billing.md#spend-cap). Each hour's egress counts against the plan in force that hour; see [egress](billing.md#egress).\n",
+		formatPrice(api.EgressOverageMillicentsPerGiB))
 	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (")
 	var caps []string
 	for _, plan := range api.Plans {
@@ -98,10 +99,28 @@ func render() string {
 	fmt.Fprintf(&b, "\nThe connection limit counts open WebSocket and SSE connections across all of an account's endpoints. One account may also hold at most %d%% of a single realtime node's connections; see [realtime fair use](realtime.md#fair-use-limits).\n",
 		api.RealtimeAccountNodeSharePercent)
 	renderObjectStorage(&b)
+	renderBuilds(&b)
 	b.WriteString("\n## Choose a plan\n\n")
 	b.WriteString("Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).\n\n")
 	b.WriteString("Plan changes are safe to preview with `gregale billing plan`; quota errors include the exact observed value, limit, and next action.\n")
 	return b.String()
+}
+
+// renderBuilds lists each plan's monthly build minutes (ADR-20261103131742
+// amendment 2). ErrPlanLimitBuildMinutes links to its anchor.
+func renderBuilds(b *strings.Builder) {
+	b.WriteString("\n## Builds\n\n")
+	fmt.Fprintf(b, "Source builds are not charged. Each runs in its own builder VM (%d vCPU, %s RAM, up to %d minutes), and each plan includes build minutes a month: a build counts from its start to its finish, across all of an account's or organization's apps. Once they are used up, source deploys are refused with `plan_limit_build_minutes` until the month ends or you upgrade; deploying a prebuilt image still works.\n\n",
+		api.BuildVMVCPU, formatGiB(int64(api.BuildVMRAMMB)<<20), api.BuildTimeoutSeconds/60)
+	b.WriteString("| Plan | Build minutes / month |\n")
+	b.WriteString("|---|---:|\n")
+	for _, plan := range api.Plans {
+		l, ok := api.LimitsFor(plan)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(b, "| **%s** | %s |\n", titlePlan(plan), formatCount(l.MonthlyBuildMinutes))
+	}
 }
 
 // renderObjectStorage lists each plan's included object storage, the

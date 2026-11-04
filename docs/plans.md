@@ -20,7 +20,7 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 - **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.
 - **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.
 - **After a plan ends or shrinks**, for example when a subscription lapses, the plan's limits still bind: your oldest deployed apps up to its deployed-app limit keep serving, and other apps, or any app set above its RAM, park and stop waking until they fit. Delete apps, lower an app's RAM (`gregale app APP --ram MB`) or upgrade. A downgrade you request is refused until your apps fit.
-- **App egress / month** is the data your apps send each month. It is not charged; an account or organization that reaches its plan's egress stops serving until the month ends or it upgrades.
+- **App egress / month** is the data your apps send each month. Free stops serving at it until the month ends or it upgrades. A paid plan stops at it too, unless the account or organization turns on egress overage (`gregale billing egress-overage on`): egress beyond the plan's then costs $0.03 per GiB, up to the [spend cap](billing.md#spend-cap). Each hour's egress counts against the plan in force that hour; see [egress](billing.md#egress).
 - **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (Hobby $2, Pro $10, Scale $30); `gregale billing spend-cap` raises or clears it.
 - **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md). Functions default to 30s on every plan; any app or function can set its own value from 10s up to twice the plan default.
 - **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within 3s and an app request within 30s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and 30s.
@@ -61,6 +61,17 @@ Object storage bills the bytes it holds. Each plan includes an average amount of
 | **Scale** | 200 GiB | $0.03 per GiB-month | 1,000 GiB | 2,000 GiB |
 
 Included storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. A lower spend cap lowers how much a paid plan stores: a $0 cap stops at the included storage. Need more than the plan stores? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused, and downloads stop while you store more than it until you delete objects. A downgrade waits until your data fits. Every plan stores up to 1,000,000 objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends. See [object storage](object-storage.md#limits).
+
+## Builds
+
+Source builds are not charged. Each runs in its own builder VM (2 vCPU, 2 GiB RAM, up to 15 minutes), and each plan includes build minutes a month: a build counts from its start to its finish, across all of an account's or organization's apps. Once they are used up, source deploys are refused with `plan_limit_build_minutes` until the month ends or you upgrade; deploying a prebuilt image still works.
+
+| Plan | Build minutes / month |
+|---|---:|
+| **Free** | 300 |
+| **Hobby** | 1,000 |
+| **Pro** | 3,000 |
+| **Scale** | 6,000 |
 
 ## Choose a plan
 

@@ -203,3 +203,110 @@ cancellation by itself, because the customer may have cancelled before asking
 for deletion; the restore notice names Keep subscription instead. Whether a
 re-added card passes a later upgrade depends on the bank; it still needs a
 sandbox run with a 3-D Secure test card.
+
+## Amendment 2 (2026-11-04): egress overage is a choice, and the GA charging fixes
+
+- **Owner decisions (2026-11-04, billing GA questions):** egress "stop free,
+  on paid plans default no overage at egress, if overage enabled, 0.03 on
+  gib"; builds "Free, monthly quota"; the go-live gate includes fixing the
+  charging bugs first.
+
+The billing GA review found these charging bugs:
+
+- meterd priced each egress hour by the subject's current plan. A downgrade
+  re-priced earlier hours, and hours spent on Free could be billed after an
+  upgrade.
+- Turning the egress meter live would have billed every paid subject, and
+  the egress price came only from an environment value.
+- A `min_instances` floor was priced without its sidecars. The sampler kept
+  writing floor rows for subjects whose spend cap had stopped them, so they
+  were billed for time that did not run.
+- The object storage allowance was the largest plan held in the month: a
+  one-day upgrade gave the whole month the bigger allowance.
+- Managed PostgreSQL overage was billed for the whole month against the
+  current plan. A downgrade re-billed usage the larger allowance had already
+  covered, and an upgrade dropped overage that had already been billed.
+- Source builds had no monthly bound.
+
+Decisions:
+
+1. **Egress overage is a per-subject switch, off by default.**
+   - `egress_overage_choices (subject_id, changed_at, enabled)` keeps every
+     change.
+   - API: `GET`/`PUT /v1/account/egress-overage` and
+     `/v1/orgs/{slug}/egress-overage`. `PUT` is gated like the spend cap:
+     admin scope, MFA, a 5-minute step-up and `Idempotency-Key`; the
+     organization route is the owner's, like a plan change.
+   - CLI: `gregale billing egress-overage [--org SLUG] [on|off]`.
+   - Free cannot turn it on: 403 `plan_egress_overage_not_allowed`.
+   - The price is `api.EgressOverageMillicentsPerGiB` = 3,000 ($0.03 per GiB).
+     The Polar provider refuses to start with any other egress price.
+2. **Each egress hour is priced by the plan held in that hour.**
+   - The plan comes from the subject's price snapshots (`monthGrants.planAt`).
+     A Free hour settles with a zero receipt.
+   - An hour is billed only if overage was on at some moment of it
+     (`state.EgressOverageOnDuring`). Otherwise it settles at zero.
+   - This replaces the last bullet of decision 5. With overage off, a paid
+     subject keeps decision 5's ceiling even after egress bills live. With
+     overage on and egress billed live, there is no ceiling: egress overage
+     counts toward the spend cap and stops there.
+   - The usage summary counts egress beyond the allowance only for months
+     when overage was on.
+3. **`min_instances` floors are priced and stopped like the instances they
+   stand for.**
+   - A floor row is priced at
+     `api.BillableRAMMBWithSidecars(app.RAMMB, sidecars)` of the floor's
+     deployment.
+   - The sampler writes no floor row for a subject whose cap is reached,
+     using schedd's admission rule: compute overage at or above the cap, or a
+     hold that applies to this cap.
+   - A failed cap read writes the row.
+4. **The object storage allowance is shared across the month's plans.** It
+   is weighted by how long each plan was held
+   (`state.MonthPlanSpans`, `state.WeightedMonthAllowance`), like the
+   included GB-RAM-hours.
+5. **Managed PostgreSQL overage is billed per plan span.**
+   - Each span's usage above that span's plan allowance is billed, as app
+     compute is billed hour by hour against the allowance in force
+     (ADR-20261030093512).
+   - The month's charge is then clamped once to the current plan's ceiling:
+     one more allowance.
+   - Suspension stays on the current plan's limits. After a downgrade, the
+     month's usage so far counts against the new allowance. Suspension
+     protects capacity, not the bill.
+6. **Builds are free, with a monthly quota.**
+   - `api.Limits.MonthlyBuildMinutes`: Free 300, Hobby 1,000, Pro 3,000,
+     Scale 6,000.
+   - `apidsource.Enqueue` is the one path for source builds. It refuses a
+     build once the subject's builds that started this month have run the
+     quota: 403 `plan_limit_build_minutes`, with the limit, the observed
+     minutes and `/plans#builds`.
+   - A build counts from `started_at` to `finished_at`, or to now while it
+     runs.
+   - The subject is the organization when it owns its resources, as for
+     managed PostgreSQL usage.
+   - A build deferred behind an identical build has its claim's `started_at`
+     cleared, so only its real run counts.
+   - Image deploys are never refused. A failed read admits the build: the
+     quota protects builders and is not a charge.
+
+Consequences:
+
+- A paid subject that never turns egress overage on is never billed for
+  egress. It stops at its allowance.
+- $0.03 per GiB is below the list price of internet egress on the current
+  GCP production (about $0.085 to $0.12 per GiB). Overage egress loses money
+  there until production moves to bare metal with bundled traffic, or the
+  price changes.
+- The quota is checked at enqueue. Builds that are already running, or
+  enqueued at the same moment, can take a subject past it by up to one
+  build's 15-minute limit each.
+- Release order: meterd N-1 does not read `egress_overage_choices`. Egress
+  must not bill live until every meterd runs this release. Production bills
+  egress in shadow mode or not at all today.
+- Not done:
+  - Strict compute budgets still key their queries by `apps.account_id`,
+    not the billing subject. Strict budgets are off in production. The fix
+    moves to the budgets GA step.
+  - The egress stop email and problem text still say only to resolve
+    billing. `docs/billing.md#egress` explains egress stops and the switch.

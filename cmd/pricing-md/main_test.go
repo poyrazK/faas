@@ -40,6 +40,18 @@ func TestRenderUsesEveryPlanAndCanonicalValues(t *testing.T) {
 			t.Errorf("plan %q missing object-storage row %q", plan, row)
 		}
 	}
+	for plan, row := range map[api.Plan]string{
+		api.PlanFree:  "| **Free** | 300 |",
+		api.PlanScale: "| **Scale** | 6,000 |",
+	} {
+		if !strings.Contains(out, row) {
+			t.Errorf("plan %q missing build-minutes row %q", plan, row)
+		}
+	}
+	// ErrPlanLimitBuildMinutes links to this anchor.
+	if !strings.Contains(out, "## Builds") || !strings.Contains(out, "$0.03 per GiB, up to the [spend cap]") {
+		t.Errorf("render missing the builds section or the egress overage price")
+	}
 	// ErrPlanLimitDeveloperApps/Lease link to this anchor.
 	if !strings.Contains(out, "## Developer environments") {
 		t.Errorf("render missing the developer-environments section")

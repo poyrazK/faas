@@ -117,6 +117,60 @@ has its own cap, with the same defaults. Its owner sets it with
 `GET /v1/orgs/{slug}/overage-cap`. The organization's apps stop at the
 organization's cap, not at the cap of the member who created them.
 
+Object storage and managed PostgreSQL allowances follow plan changes too. The
+included object storage is shared across the month like the included
+GB-RAM-hours: half a month on Hobby then half on Pro includes the average of
+the two. Managed PostgreSQL usage is billed against the allowance of the plan
+held while it ran, like compute: after a downgrade, usage the larger
+allowance covered is not billed again; after an upgrade, overage already
+billed stays billed. The month's managed PostgreSQL charge is still at most
+the current plan's ceiling, and managed PostgreSQL stops at the current
+plan's limits (ADR-20261103131742 amendment 2).
+
+## Egress
+
+Each plan includes an amount of app egress a month, the data your apps send
+(see [Plans and pricing](plans.md)). An account counts its own apps; an
+organization that owns its resources counts the organization's apps.
+
+By default egress is never charged. When the month's egress reaches the
+plan's allowance, apps stop serving until the month ends or you upgrade. Free
+always works this way.
+
+A paid account or organization can turn on egress overage instead. Egress
+beyond the allowance then costs $0.03 per GiB, counts toward the
+[spend cap](#spend-cap), and stops when the cap is reached, like compute
+overage:
+
+```bash
+gregale billing egress-overage                  # show the setting
+gregale billing egress-overage on               # bill egress beyond the allowance
+gregale billing egress-overage off
+gregale billing egress-overage --org acme on    # an organization's setting
+```
+
+`GET` and `PUT /v1/account/egress-overage` (`{"enabled": true}`) and
+`/v1/orgs/{slug}/egress-overage` do the same. Changing it needs the `admin`
+scope and a recent MFA step-up; an organization's setting is changed by its
+owner. Free accounts are refused with `plan_egress_overage_not_allowed`.
+
+Egress is billed hour by hour. An hour counts against the allowance of the
+plan held in that hour and is billed only if egress overage was on at some
+moment of it. Hours on Free are never billed. Turning overage off stops
+billing from the next hour: if the month's egress is already above the
+allowance, apps stop serving at the next quota check, within a minute
+(ADR-20261103131742 amendment 2).
+
+## Builds
+
+Source builds are not charged. Each plan includes monthly build minutes
+(Free 300, Hobby 1,000, Pro 3,000, Scale 6,000; see
+[Plans and pricing](plans.md#builds)). A build counts from its start to its
+finish; an organization that owns its resources shares one allowance across
+its apps. Once the minutes are used up, source deploys are refused with
+`plan_limit_build_minutes` until the month ends or you upgrade. Deploying a
+prebuilt image still works.
+
 ## Retained usage costs and forecasts
 
 This financial visibility preview reports supported usage costs and budget

@@ -3216,7 +3216,7 @@ export class OrgsService {
   /**
    * Read the organization's egress overage choice.
    * Requires current organization membership and usage:read. Off by default: the organization's apps stop at the plan's monthly egress until the month ends.
-   * @returns EgressOverageResponse The egress overage choice and its price.
+   * @returns EgressOverageResponse The organization's egress overage choice and its price.
    * @throws ApiError
    */
   public static getOrgEgressOverage({
@@ -3255,7 +3255,7 @@ export class OrgsService {
    * plan's allowance is billed per GiB under its spend cap. A Free
    * organization cannot turn it on (403 `plan_egress_overage_not_allowed`).
    *
-   * @returns EgressOverageResponse The choice after the change.
+   * @returns EgressOverageResponse The organization's choice after the change.
    * @throws ApiError
    */
   public static setOrgEgressOverage({

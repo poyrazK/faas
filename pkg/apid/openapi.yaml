@@ -64641,7 +64641,7 @@ paths:
       description: "Requires current organization membership and usage:read. Off by default: the organization's apps stop at the plan's monthly egress until the month ends."
       responses:
         '200':
-          description: The egress overage choice and its price.
+          description: The organization's egress overage choice and its price.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EgressOverageResponse' }
@@ -64668,7 +64668,7 @@ paths:
             example: {"enabled": true}
       responses:
         '200':
-          description: The choice after the change.
+          description: The organization's choice after the change.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EgressOverageResponse' }
