@@ -285,3 +285,20 @@ Amendment 12 left three gaps (release review 2026-11-04):
 - **The pause and freezes were checked only at creation.** An approved release resuming later now rechecks them, as a scheduled release does when it starts:
   - **Break-glass pause** (ADR-20261022140000): it waits until the pause is lifted, because its command runs with production secrets. imaged follows `platform_release_pause_enabled` with a runtime-config watcher, and its stale sweep leaves the release alone meanwhile.
   - **Freeze:** a freeze that was not in force when the release was deployed (created since, or whose window opened since) fails the release with `release_frozen` before its command runs. A freeze in force at deploy time was overridden then and still does not stop it.
+
+## Amendment 14 (2026-11-05): schedules, outpaced and dead releases, rollbacks and gates
+
+A release review (2026-11-04) found:
+
+- **A schedule that ends while its release waits for approval closes the release.** A scheduled release with a release command waits for approval before the command (amendment 12). If its schedule ended first (expired after `ScheduledReleaseStartGrace`, blocked or cancelled), approving it later ran the migration at an unplanned time and left the release parked with no schedule. imaged now fails such a release without running its command. While it waits, the schedule says it is waiting for approval, not that its build had not finished.
+- **A newer release that failed or was cancelled does not outpace an older one.** The latest-revision fence (`HasNewerDeploymentRevision`: build claim, release command and go-live) counted any newer revision. A deploy that failed its build then silently superseded a release waiting for approval, and production stayed on the old release. Failed and cancelled revisions no longer count (ADR-20261029103512).
+- **Switching to the immediate release policy is refused while approvals are required.** A policy cannot be set on an app with the immediate release policy, but switching afterwards was allowed and left every default production deploy refused for want of a canary. It now answers `409`, like leaving request mode (amendment 5).
+- **A decision on a release that failed, was cancelled or was superseded is refused** (`409 release_approval_decided`). It decided nothing, yet announced "approved".
+- **A rollback cannot bring back an image the app's current trust list rejects.** A rollback target was verified when it was built, against the trusted signers of that time. After a signer was removed (say, a leaked key) or signing was turned on, a rollback put that image back into service until imaged next restarted. Now:
+  - after a rollback of an app that requires signed images, apid wakes imaged's signature revalidation (`trusted_signer_changed`), which quarantines an image that no longer verifies;
+  - imaged also revalidates every live signed image every 5 minutes. This is the durable fallback for a lost wake-up and for automatic rollbacks, and it covers signing turned on later.
+- **Expired scan evidence is rescanned before the enforce lease parks the app.** Rescans cover live releases only, so a release that serves again after a rollback carries evidence from when it last served, hours old. The lease parked the app (`evicted_cold`) about a minute into the rollback meant to end an incident. Now:
+  - when a live release's evidence has only expired, imaged starts a rescan and the lease waits up to 15 minutes for it;
+  - a rescan that fails leaves the evidence expired, and the lease parks the release when the grace ends;
+  - a rescan that finds the image unsafe parks it at once.
+- **Release gates need a judged release.** Gates are judged by the canary and by the post-release watch, which needs `rollback_on_5xx`. Deleting a gate takes an admin, but `--rollout immediate --rollback-on-5xx=false` turned off both judges with `deploy:write`. A production release of an app with gates that takes traffic without a canary and with `rollback_on_5xx` off is now refused (`409`).
