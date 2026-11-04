@@ -3340,9 +3340,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// ADR-1162: explicit-deployment admissions (min-instance floors,
 		// service replicas, workers, per-deployment wakes) skip the request
 		// gates but not the account spend cap; otherwise always-on capacity
-		// keeps running past the cap. Deployment smoke verifies a release and
-		// mirror instances are never metered, so both stay exempt.
-		if !deploymentSmoke && mode != string(state.InstanceModeMirror) {
+		// keeps running past the cap. Deployment smoke verifies a release, so
+		// it stays exempt; mirror VMs bill (ADR-20261104145353) and stop at
+		// the cap like any other capacity.
+		if !deploymentSmoke {
 			if reached, observed, capped := e.admitSpendCap(ctx, &app); reached {
 				outcome, obsCents, capCents = wakeOverageCapReached, observed, capped
 			}

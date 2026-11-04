@@ -221,38 +221,22 @@ var liveStates = []string{
 // LiveStates returns the states IsLive accepts.
 func LiveStates() []string { return append([]string(nil), liveStates...) }
 
-// IsMeteredSkippableMode reports whether an instance in `mode` should
-// be skipped by the meter sampler (issue #72 / ADR-125 + ADR-137).
-//
-// Pre-M-2: the sampler had an inline `mode == string(state.InstanceModeMirror)`
-// check at pkg/meter/sampler.go:373. M-2 commit 4 introduces this
-// helper as the single source of truth for the meter-skip predicate;
-// commit 9 swaps the inline check for `state.IsMeteredSkippableMode`.
-//
-// The mirror-mode skip is preserved verbatim (ADR-125). The new
-// M-2 modes (worker, service, job) are NOT skipped — they bill at
-// the standard mb_seconds rate (spec §4.7 formula unchanged).
-func IsMeteredSkippableMode(mode string) bool {
-	return mode == string(InstanceModeMirror)
-}
-
 // CountsForRAMByMode reports whether an instance in `mode` counts
 // against the platform's RAM admission ceiling when the state
 // predicate alone would have said "yes" (CountsForRAM). Today every
 // mode counts equally; the helper exists so a future mode (e.g.
 // `ephemeral` for build VMs that share a tenant-slice cgroup) can
 // opt out without rewriting every caller. The mirror mode is already
-// excluded by IsMeteredSkippableMode at the meter layer; this
+// billed at the meter layer like every mode (ADR-20261104145353); this
 // helper is the parallel hook for the schedd admission path if a
 // similar carve-out ever lands there.
 //
 // Return value semantics (ADR-137 §Decision 1):
 //
 //   - normal / worker / service / job → true (RAM counts)
-//   - mirror → true at the RAM-admission layer; the meter sampler
-//     skips it via IsMeteredSkippableMode (different layer). A
-//     mirror VM still consumes the tenant RAM budget while it is
-//     RUNNING; it just does not bill.
+//   - mirror → true: a mirror VM consumes the tenant RAM budget
+//     while it is RUNNING, and bills like any instance
+//     (ADR-20261104145353).
 func CountsForRAMByMode(mode string) bool {
 	switch InstanceMode(mode) {
 	case InstanceModeNormal,

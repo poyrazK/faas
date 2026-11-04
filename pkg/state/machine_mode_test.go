@@ -1,10 +1,9 @@
 // machine_mode_test.go — pins the M-2 mode helpers in pkg/state/machine.go
 // (issue #1186 / ADR-137 §Decision 1 + ADR-138 §Decision 4).
 //
-// These are the single source of truth for the meter-skip and
-// RAM-admission predicates. The values are referenced by
-// pkg/meter/sampler.go (commit 9 wires the inline mirror check to
-// IsMeteredSkippableMode) and pkg/sched/admission.go (commit 6).
+// These are the single source of truth for the RAM-admission
+// predicate referenced by pkg/sched/admission.go (commit 6). Every
+// mode bills at the meter (ADR-20261104145353).
 
 package state_test
 
@@ -12,33 +11,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
-
-// TestIsMeteredSkippableMode pins the meter-skip predicate.
-// Pre-M-2: only mode='mirror' is skipped (ADR-125). Post-M-2
-// (commit 4 + commit 9): the helper is the single source of truth;
-// the new modes (worker / service / job) are NOT skipped because
-// they bill at the standard mb_seconds rate (spec §4.7 unchanged).
-func TestIsMeteredSkippableMode(t *testing.T) {
-	tests := []struct {
-		mode string
-		want bool
-	}{
-		{"normal", false},
-		{"mirror", true},
-		{"worker", false},
-		{"service", false},
-		{"job", false},
-		{"", false},      // empty defaults to non-skip
-		{"bogus", false}, // unknown mode is not skipped (fail-open at the meter layer; CHECK is the load-bearing defence)
-	}
-	for _, tt := range tests {
-		t.Run(tt.mode, func(t *testing.T) {
-			if got := state.IsMeteredSkippableMode(tt.mode); got != tt.want {
-				t.Errorf("IsMeteredSkippableMode(%q)=%v, want %v", tt.mode, got, tt.want)
-			}
-		})
-	}
-}
 
 // TestCountsForRAMByMode pins the RAM-admission predicate.
 // Every mode (including mirror) counts against the tenant budget

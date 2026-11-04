@@ -662,6 +662,9 @@ type Querier interface {
 	// An environment clone copies the source environment's shared secrets as it
 	// copies app secrets: the envelope is not bound to an environment.
 	CopyProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretsParams) (int64, error)
+	// Accounts created at or after since (ADR-20261104145353: the platform-wide
+	// daily sign-up cap). Read only on a sign-up attempt.
+	CountAccountsCreatedSince(ctx context.Context, db DBTX, since pgtype.Timestamptz) (int64, error)
 	CountActiveAppForks(ctx context.Context, db DBTX, arg CountActiveAppForksParams) (CountActiveAppForksRow, error)
 	CountActiveBindingVerificationRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMigrationVerifications(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)

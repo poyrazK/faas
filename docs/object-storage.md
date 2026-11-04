@@ -394,6 +394,7 @@ what you used.
 | CORS rules per bucket | 100 |
 | Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
+| Requests each month | Free 50,000, Hobby 500,000, Pro 2,500,000, Scale 10,000,000 ([plans](plans.md#object-storage)). At the limit, every request is refused until the month ends |
 | Uploads and upload parts in progress through `s3.gregale.dev` | A few per account; more wait up to 15 seconds for a turn, then answer `503 SlowDown` |
 | Stored data | Free stops at 1 GiB, Hobby at 20 GiB, Pro at 250 GiB and Scale at 1,000 GiB. A lower spend cap lowers it to the included storage plus what the cap buys at $0.03 per GiB-month; a $0 cap stops at the included storage. Need more? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused; while you store more than it, downloads answer `402` until you delete objects. Listing, `HEAD` and deletes keep working, and nothing is deleted for you. A downgrade is refused while your data does not fit the new plan |
 | Objects per account, counting retained versions | 1,000,000 on every plan |

@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261104145353: Mirror VMs bill, object storage has monthly request ceilings, and sign-ups have a platform-wide daily cap](20261104145353-mirror-billing-object-requests-signup-cap.md) — accepted; mirror VMs bill per running second and stop at the spend cap, plans cap object storage requests (Free 50k, Hobby 500k, Pro 2.5M, Scale 10M a month), and at most 2,000 accounts are created in any 24 hours
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)
 - [ADR-20261104002000: Serialize rollback recovery](20261104002000-rollback-recovery-serialization.md) — accepted; automatic rollback checks the observed serving release, configuration restoration commits atomically, guards paginate, edge reads hold its mutation lock, database compensation reconciles actual traffic, project rollback conditionally restores all traffic, checked rollback rechecks release controls, and monitor intent commits with its incident link.
 
