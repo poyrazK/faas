@@ -1,8 +1,8 @@
-# ADR-20261103200000: GitOps service policy and scheduled Job handoff
+# ADR-20261103200001: GitOps service policy and scheduled Job handoff
 
 - **Status:** accepted
 - **Date:** 2026-11-03
-- **Related:** ADR-570, ADR-20261103180000, ADR-20261103190000
+- **Related:** ADR-570, ADR-20261103180001, ADR-20261103190000
 
 ## Context
 

@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-11-03
-- **Related:** ADR-568, ADR-20261103180000
+- **Related:** ADR-568, ADR-20261103180001
 
 ## Context
 

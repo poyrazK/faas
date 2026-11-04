@@ -1401,7 +1401,7 @@ Retired binding history remains stored for operator inspection; the status page
 shows the active binding. Repository identity comes from the project's current
 verified GitHub connection. Disconnecting removes the original source binding
 required for its private service aliases; it does not delete any workload or
-queue. See [ADR-20261103180000](adr/20261103180000-gitops-job-serving-and-source-retirement.md).
+queue. See [ADR-20261103180001](adr/20261103180001-gitops-job-serving-and-source-retirement.md).
 
 Workload rollout ownership is scoped to the app and environment. A production
 candidate does not block manual staging traffic or canary advancement. Report
@@ -1426,7 +1426,7 @@ Private GitOps service calls pin the verified release and deployment with their
 reviewed authorization policy. HTTP and HTTPS aliases use the scoped binding
 even when ordinary app policy requires declared dependencies. Tenant checks,
 HTTPS requirements, method/path grants and release selectors still apply. See
-[ADR-20261103200000](adr/20261103200000-gitops-service-policy-and-job-handoff.md).
+[ADR-20261103200001](adr/20261103200001-gitops-service-policy-and-job-handoff.md).
 
 
 Completed report history keeps at most 1,000 runs per source and seven days of

@@ -1,4 +1,4 @@
-# ADR-20261103210000: GitOps serving instance lifecycle
+# ADR-20261103210001: GitOps serving instance lifecycle
 
 - **Status:** accepted
 - **Date:** 2026-11-03

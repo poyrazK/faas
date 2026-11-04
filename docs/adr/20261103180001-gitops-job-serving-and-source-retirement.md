@@ -1,4 +1,4 @@
-# ADR-20261103180000: GitOps Job serving and source retirement
+# ADR-20261103180001: GitOps Job serving and source retirement
 
 - **Status:** accepted
 - **Date:** 2026-11-03

@@ -1,4 +1,4 @@
--- ADR-20261103210000: qualification fences follow the instance's attempt.
+-- ADR-20261103210001: qualification fences follow the instance's attempt.
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
