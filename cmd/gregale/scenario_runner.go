@@ -54,6 +54,7 @@ type testScenario struct {
 	Resilience       *testResilienceSpec       `yaml:"resilience,omitempty"`
 	Project          string                    `yaml:"project"`
 	Source           string                    `yaml:"source"`
+	FromBranch       *testBranchSource         `yaml:"from_branch,omitempty" json:"from_branch,omitempty"`
 	Secrets          map[string]string         `yaml:"secrets"`
 	Consumers        []testConsumer            `yaml:"consumers"`
 	ConsumerAuthMode string                    `yaml:"consumer_auth_mode"`
@@ -92,6 +93,7 @@ type testService struct {
 	Upstream        string            `yaml:"upstream,omitempty"`
 	EgressAllowlist []string          `yaml:"egress_allowlist,omitempty"`
 	Source          string            `yaml:"source"`
+	FromBranch      *testBranchSource `yaml:"from_branch,omitempty"`
 	Fixture         string            `yaml:"fixture"`
 	FailFirst       int               `yaml:"fail_first"`
 	Postgres        bool              `yaml:"postgres"`
@@ -1246,8 +1248,11 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		name, project, sourceDir string
 		config                   devSourceConfig
 		session                  api.DevSessionResponse
+		// branch seeds the workload from a simulated environment branch
+		// instead of deploying sourceDir (ADR-20261031193635 slice 6b).
+		branch *testBranchSource
 	}
-	workloads := []deployedTestService{{name: scenario.Project, project: scenario.Project, sourceDir: sourceDir, config: config, session: session}}
+	workloads := []deployedTestService{{name: scenario.Project, project: scenario.Project, sourceDir: sourceDir, config: config, session: session, branch: scenario.FromBranch}}
 	registered := false
 	destroyed := false
 	destroyWorkloads := func() {
@@ -1308,6 +1313,18 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	for _, serviceName := range serviceNames {
 		spec := scenario.Services[serviceName]
 		serviceDir := ""
+		if spec.FromBranch != nil {
+			projectName := scenario.Project + "-" + serviceName
+			serviceSession, err := client.UpsertDevSession(ctx, projectName, devSourceConfig{shape: shapeApp}.sessionRequest(receipt.RunID, false, "", 0, nil))
+			if err != nil {
+				receipt.Error = fmt.Sprintf("create test workload %s: %v", serviceName, err)
+				releaseUnconfirmedTestSession(ctx, client, projectName, receipt.RunID, err)
+				return
+			}
+			workloads = append(workloads, deployedTestService{name: serviceName, project: projectName, config: devSourceConfig{shape: shapeApp}, session: serviceSession, branch: spec.FromBranch})
+			receipt.WorkloadAppIDs[serviceName] = serviceSession.App.ID
+			continue
+		}
 		if spec.Fixture != "" {
 			var cleanup func()
 			serviceDir, cleanup, err = materializeScenarioFixture(spec.Fixture)
@@ -1542,9 +1559,20 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	for _, workload := range workloads {
 		var deploymentID string
 		var sourceSHA256 string
-		deployResult := cmdDeployTarballToExisting(ctx, workload.config.deployArgs(workload.session.App.Slug, workload.sourceDir), true, deployExecution{
-			onQueued: func(dep api.DeploymentResponse) { deploymentID, sourceSHA256 = dep.ID, dep.SourceSHA256 },
-		})
+		deployResult := 0
+		if workload.branch != nil {
+			var seedErr error
+			deploymentID, seedErr = seedTestWorkloadFromBranch(ctx, client, workload.project, receipt.RunID, *workload.branch)
+			if seedErr != nil {
+				osStdout = previousStdout
+				receipt.Error = fmt.Sprintf("branch deployment for %s: %v", workload.name, seedErr)
+				return
+			}
+		} else {
+			deployResult = cmdDeployTarballToExisting(ctx, workload.config.deployArgs(workload.session.App.Slug, workload.sourceDir), true, deployExecution{
+				onQueued: func(dep api.DeploymentResponse) { deploymentID, sourceSHA256 = dep.ID, dep.SourceSHA256 },
+			})
+		}
 		if deployResult != 0 || deploymentID == "" {
 			osStdout = previousStdout
 			receipt.Error = fmt.Sprintf("source deployment for %s failed (exit %d)", workload.name, deployResult)
