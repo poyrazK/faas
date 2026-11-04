@@ -8346,9 +8346,9 @@ Create or inspect durable object deletions
 
 #### bucket deletion create
 
-Delete current data or an owned version with a retry identity
+Delete current data or an owned version; reuse the request UUID to retry
 
-`gregale bucket deletion create <app> <bucket-id> <key> <request-id> [version-id|null]`
+`gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
 
 #### bucket deletion get
 
@@ -19089,13 +19089,14 @@ List org API keys
 
 Create an org API key; the plaintext is shown once
 
-`gregale org keys add --org <SLUG> --label <TEXT> [--scopes <SCOPES>]`
+`gregale org keys add --org <SLUG> --label <TEXT> [--scopes <SCOPES>] [--projects <SLUG,...>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--org <SLUG>` | organization slug | required |
 | `--label <TEXT>` | key label | required |
 | `--scopes <SCOPES>` | comma-separated scopes (default admin) |  |
+| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
 
 #### org keys info
 
@@ -19181,16 +19182,18 @@ List API keys
 
 Mint a new API key
 
-`gregale key create [--scopes <SCOPE,...>] <label>`
+`gregale key create [--scopes <SCOPE,...>] [--projects <SLUG,...>] <label>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--scopes <SCOPE,...>` | comma-separated API key scopes; omit for full admin access |  |
+| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
 
 Examples:
 
 ```sh
 gregale key create agent-runner --scopes runs:write
+gregale key create ci-agent --scopes agent,deploy:write --projects api,web
 ```
 
 ### key delete

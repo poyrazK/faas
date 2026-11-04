@@ -108,5 +108,41 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 				t.Errorf("%q not rendered:\n%s", line, output)
 			}
 		}
+		if strings.Contains(output, "FAAS_EDGE_PROXY_CIDRS") {
+			t.Errorf("Cloudflare ranges rendered for a node that keeps none:\n%s", output)
+		}
+	})
+	// ADR-20261103163954 §4: a node that keeps Cloudflare's ranges hands them
+	// to the edge, whose connection limits skip them for the flood fallback.
+	t.Run("entry=both front=none cloudflare kept", func(t *testing.T) {
+		output := render(t, map[string]any{
+			"faas_edge_entry": "both", "faas_edge_public_front": "none", "faas_cloudflare_origin_only": true,
+			"faas_edge_cloudflare_ipv4_cidrs": []string{"173.245.48.0/20"}, "faas_edge_cloudflare_ipv6_cidrs": []string{"2400:cb00::/32"},
+		})
+		if line := "Environment=FAAS_EDGE_PROXY_CIDRS=173.245.48.0/20,2400:cb00::/32\n"; !strings.Contains(output, line) {
+			t.Errorf("%q not rendered:\n%s", line, output)
+		}
+	})
+	// ADR-20261103163954 §3: the database source reads no certificate or key
+	// file; the seal_domains role hands the edge the edge-tls identity that
+	// opens the stored key.
+	t.Run("entry=both front=none certificate from the database", func(t *testing.T) {
+		if defaults["faas_edge_public_tls_cert_source"] != "file" {
+			t.Fatalf("faas_edge_public_tls_cert_source defaults to %v, want file", defaults["faas_edge_public_tls_cert_source"])
+		}
+		output := render(t, map[string]any{"faas_edge_entry": "both", "faas_edge_public_front": "none", "faas_edge_public_tls_cert_source": "database"})
+		for _, line := range []string{
+			"LoadCredential=edge_tls_client_ca:/etc/faas/secrets/edge-tls/origin-pull-ca.pem\n",
+			"Environment=FAAS_EDGE_PUBLIC_TLS_CERT_SOURCE=database\n",
+			"Environment=FAAS_EDGE_PUBLIC_TLS_CERT_CA=letsencrypt\n",
+			noFront,
+		} {
+			if !strings.Contains(output, line) {
+				t.Errorf("%q not rendered:\n%s", line, output)
+			}
+		}
+		if strings.Contains(output, "edge_tls_cert") || strings.Contains(output, "edge_tls_key") || strings.Contains(output, "edge-tls.age") {
+			t.Errorf("the database source rendered certificate files or the identity, which seal_domains owns:\n%s", output)
+		}
 	})
 }

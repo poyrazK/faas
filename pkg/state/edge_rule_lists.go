@@ -250,7 +250,10 @@ func (s *PgStore) CreateEdgeRuleList(ctx context.Context, p CreateEdgeRuleListPa
 			return err
 		}
 		var n int
-		if err := tx.QueryRow(ctx, `select count(*) from edge_rule_lists where account_id = $1`, p.AccountID).Scan(&n); err != nil {
+		// The cap counts the lists of the new list's scope: an
+		// organization's lists and the member's personal ones have
+		// separate plans (ADR-091 amendment 2026-11-04).
+		if err := tx.QueryRow(ctx, `select count(*) from edge_rule_lists where account_id = $1 and org_id is not distinct from nullif($2, '')::uuid`, p.AccountID, p.OrgID).Scan(&n); err != nil {
 			return err
 		}
 		if n >= maxLists {
@@ -424,7 +427,7 @@ func (m *MemStore) CreateEdgeRuleList(_ context.Context, p CreateEdgeRuleListPar
 	defer m.mu.Unlock()
 	n := 0
 	for _, l := range m.edgeRuleLists {
-		if l.AccountID == p.AccountID {
+		if l.AccountID == p.AccountID && l.OrgID == p.OrgID {
 			n++
 		}
 	}

@@ -821,7 +821,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                 self.server.app_config.get("auth", {}),
             )
             health["ok"] = health["ready"]
-            health["instance_id"] = os.environ.get("FAAS_INSTANCE_ID", "").strip()
+            health["instance_id"] = self.headers.get("X-Faas-Instance-Id", "").strip()
             self.send_json(200 if health["ready"] else 503, {key: value for key, value in health.items() if key != "ready"})
             return
         if path == self.server.app_config["endpoint"]:

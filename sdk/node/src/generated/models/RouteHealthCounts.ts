@@ -14,7 +14,7 @@ export type RouteHealthCounts = {
    */
   p95_latency_ms?: number;
   /**
-   * Requests the p95 ranked. The canary guard ranks only requests that did not cold boot, and the latency minimum applies to this count. Omitted when every request was ranked.
+   * Requests the p95 ranked, to which the latency minimum applies. The canary guard ranks only requests that did not cold boot, and no reader ranks a long-lived response such as a WebSocket or an event stream. Omitted when every request was ranked.
    */
   latency_requests?: number;
   /**

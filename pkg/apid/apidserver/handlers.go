@@ -68,6 +68,9 @@ func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Accou
 	if p, ok := principalFrom(r); ok && p.Key != nil {
 		resp.KeyScopes = p.Key.Scopes
 		resp.KeyOrg = s.keyOrg(r.Context(), p.Key.OrgID)
+		if p.Key.ProjectLimited {
+			resp.KeyProjects = s.projectSlugsByID(r.Context(), p.Key.ProjectIDs)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -809,6 +809,13 @@ type ApiKeyAgentClient struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+// ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.
+type ApiKeyProjectLimit struct {
+	KeyID      pgtype.UUID
+	ProjectIds []pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+}
+
 type App struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -2810,6 +2817,7 @@ type CliAuthCode struct {
 	CreatedAt  pgtype.Timestamptz
 	DeviceHash []byte
 	OrgID      pgtype.UUID
+	ProjectIds []pgtype.UUID
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -4609,6 +4617,22 @@ type EdgeRuleSetVersion struct {
 	RulesSha256 string
 	RuleCount   int32
 	CreatedAt   pgtype.Timestamptz
+}
+
+// ADR-20261103163954 the apps domains' certificates; edgednsd is the only writer, the key is sealed to the edge-tls seal domain.
+type EdgeTlsCertificate struct {
+	ID         int64
+	Names      []string
+	Ca         string
+	AccountUri string
+	Serial     string
+	Sha256     string
+	ChainPem   string
+	KeySealed  []byte
+	KeyKid     string
+	NotBefore  pgtype.Timestamptz
+	NotAfter   pgtype.Timestamptz
+	IssuedAt   pgtype.Timestamptz
 }
 
 type EgressFlowLog struct {
@@ -13832,6 +13856,8 @@ type RequestTelemetry struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202611 struct {
@@ -13872,6 +13898,8 @@ type RequestTelemetry202611 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202612 struct {
@@ -13912,6 +13940,8 @@ type RequestTelemetry202612 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202701 struct {
@@ -13952,6 +13982,8 @@ type RequestTelemetry202701 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -14017,6 +14049,8 @@ type RequestTelemetryDefault struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type ReservedIpInventory struct {

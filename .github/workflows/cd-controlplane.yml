@@ -690,7 +690,7 @@ jobs:
               rm -f /tmp/grype.tar.gz /tmp/grype
             }
             install_syft() {
-              local v=1.0.0 sha=27dfeaca134cd8aeff6135ba349ff922109bd89b955755459601667d69fed88e
+              local v=1.49.0 sha=7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe
               local t=/usr/local/bin/syft
               [[ -x "$t" && "$(sha256sum "$t" | cut -d" " -f1)" == "$sha" ]] && return 0
               curl -fsSL -o /tmp/syft.tar.gz "https://github.com/anchore/syft/releases/download/v${v}/syft_${v}_linux_amd64.tar.gz"
@@ -864,6 +864,8 @@ jobs:
           SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
           SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
           SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
+          SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
           SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
           SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
           SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}
@@ -1677,6 +1679,8 @@ jobs:
           SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
           SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
           SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
+          SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
           SEAL_DOMAIN_ALERTING_AGE_KEY: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_KEY }}
           SEAL_DOMAIN_ALERTING_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_ALERTING_AGE_RECIPIENT }}
           SEAL_DOMAIN_STORAGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_STORAGE_AGE_KEY }}
