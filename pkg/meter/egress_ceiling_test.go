@@ -7,23 +7,16 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// liveEgressPolicy is a provider that bills egress live for every plan.
-type liveEgressPolicy struct{ billing.Provider }
-
-func (liveEgressPolicy) MeterUsagePolicy(api.Plan, state.BillingMeter) (billing.MeterUsagePolicy, bool) {
-	return billing.MeterUsagePolicy{Mode: billing.MeterDeliveryLive}, true
-}
-
 // Egress no plan bills is capped at the plan's monthly egress: a Pro account
 // past 500 GiB stops like a Free account past its compute allowance, and the
-// next month lifts the stop. Once egress bills live there is no ceiling.
-// adr: 20261103131742
+// next month lifts the stop. The ceiling holds even when egress bills live:
+// no account has opted into egress overage (ADR-20261104090000).
+// adr: 20261103131742 20261104090000
 func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -35,9 +28,9 @@ func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ceiling := meter.EgressCeilingBytes(nil, api.PlanPro)
-	if ceiling != 500<<30 || meter.EgressCeilingBytes(liveEgressPolicy{}, api.PlanPro) != 0 || meter.EgressCeilingBytes(nil, api.PlanFree) != 10<<30 {
-		t.Fatalf("ceilings: Pro %d, Pro billed live %d, Free %d", ceiling, meter.EgressCeilingBytes(liveEgressPolicy{}, api.PlanPro), meter.EgressCeilingBytes(nil, api.PlanFree))
+	ceiling := meter.EgressCeilingBytes(api.PlanPro)
+	if ceiling != 500<<30 || meter.EgressCeilingBytes(api.PlanFree) != 10<<30 {
+		t.Fatalf("ceilings: Pro %d, Free %d", ceiling, meter.EgressCeilingBytes(api.PlanFree))
 	}
 	notif, parker := &fakeNotifier{}, &fakeParker{}
 	enforce := func(at time.Time) meter.QuotaAction {

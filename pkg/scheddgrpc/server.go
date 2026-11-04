@@ -1649,7 +1649,9 @@ func (s *Server) ListInstanceStats(ctx context.Context, _ *scheddpb.ListInstance
 				}
 				r.CPU = instancestats.Unknown
 				r.DiskValid = false
-				rows = append(rows, instanceStatsRowProto(r))
+				row := instanceStatsRowProto(r)
+				row.Departed = true
+				rows = append(rows, row)
 			}
 		}
 		if h := s.ops.CPUStatsCollectDuration(); h != nil {
