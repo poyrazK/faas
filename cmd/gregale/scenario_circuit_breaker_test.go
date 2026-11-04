@@ -165,7 +165,8 @@ func TestCircuitBreakerCounterReader(t *testing.T) {
 			defer server.Close()
 			spec := circuitTestSpec()
 			spec.As = "tester"
-			count, err := readTestCircuitCounter(context.Background(), server.Client(), server.URL, spec, map[string]string{"tester": "secret"})
+			keys := testHTTPConsumerKeys([]string{"GREGALE_TEST_CONSUMER_TESTER_KEY=secret"})
+			count, err := readTestCircuitCounter(context.Background(), server.Client(), server.URL, spec, keys)
 			if body == `{"attempts":12}` {
 				if err != nil || count != 12 {
 					t.Fatalf("count=%d err=%v", count, err)
