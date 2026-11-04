@@ -12833,6 +12833,31 @@ const (
 	// attempt keeps TrafficPublicHostReadTimeout; a failed attempt is retried
 	// once within this bound (ADR-20261027085556 amendment 2).
 	TrafficPublicHostColdReadTimeout = 2 * time.Second
+	// GatewayRouteMissTTL is how long a gateway answers a hostname the store
+	// said routes nowhere without reading it again. Every route invalidation
+	// (an app created or changed, a domain changed, missed notifications)
+	// forgets all remembered misses first, so a new app is never held behind
+	// one (ADR-20261103163954 §4).
+	GatewayRouteMissTTL = 30 * time.Second
+	// GatewayRouteMissMaxHosts bounds the remembered misses. A full set is
+	// dropped whole: a flood of distinct names is what fills it.
+	GatewayRouteMissMaxHosts = 10_000
+	// GatewayRouteKnownMaxHosts bounds the hostnames a gateway has seen
+	// route, which skip the new-host lookup budget. A full set is dropped
+	// whole.
+	GatewayRouteKnownMaxHosts = 100_000
+	// GatewayNewHostLookupsPerSecond and GatewayNewHostLookupBurst are each
+	// gateway's budget of store reads for hostnames it has never seen route.
+	// Normal traffic spends it only on a new app's first request and, after
+	// a restart, each host's first request, which the burst covers. A flood
+	// of random names under the apps wildcard spends this budget instead of
+	// control-plane Postgres reads. A read waits up to
+	// GatewayNewHostLookupMaxWait for budget; past that the request is
+	// answered 503 traffic_policy_unavailable with Retry-After, never 404
+	// (ADR-20261103163954 §4).
+	GatewayNewHostLookupsPerSecond = 25
+	GatewayNewHostLookupBurst      = 500
+	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
