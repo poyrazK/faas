@@ -13351,6 +13351,23 @@ func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Du
 // per worker.
 const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
 
+// PostgresPoolMaxEnv tells an app how many database connections one of its
+// instances can use (ADR-20261104141122). imaged stamps it at build time for
+// accounts the postgres_pool_sizing flag releases; the SDKs'
+// PostgresPoolBinding hands it to the pool factory as the default size.
+const PostgresPoolMaxEnv = "GREGALE_POSTGRES_POOL_MAX"
+
+// PostgresPoolMaxPerInstance caps the stamped pool size at the pg.Pool
+// default, so no instance's pool grows past what most apps run with today.
+const PostgresPoolMaxPerInstance = 10
+
+// PostgresPoolMax is the pool size one instance of an app needs: its
+// per-instance concurrency, at most PostgresPoolMaxPerInstance. Zero for an
+// unknown plan.
+func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
+	return min(l.PerInstanceConcurrency(requestedPerInstanceConcurrency), PostgresPoolMaxPerInstance)
+}
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after
