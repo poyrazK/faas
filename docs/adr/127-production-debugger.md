@@ -398,3 +398,45 @@ labels carry their method.
   evidence.
 - Low-traffic apps still need 100 affected requests in 30 minutes for a
   latency regression; that threshold is unchanged.
+
+## Amendment (2026-11-05): what the regression detector compares, and the debugger's gaps
+
+### Context
+
+A second review of the debugger on main found:
+- **The detector's pair.** It took "current" and "previous" as the two deployments that served most recently. During a canary or a traffic split the two swapped between passes, so a regression could be attributed to the stable deployment.
+- **The detector's windows.** It compared fixed windows behind the clock. Once the old deployment stopped serving, the baseline was empty after an hour.
+- **The detector's inputs.** It counted what the release gates leave out: cold boots of a fresh deployment, the platform's own refusals, requests pinned to a deployment and long-lived streams.
+- **The debugger's gaps:**
+  - requests the per-minute ingest cap turned away were invisible;
+  - dependency history on a busy app read only its newest rows, so the older half of the window had no baseline;
+  - `debug requests watch` read one page per poll;
+  - "why is it running" history competed with the app's other events for a bounded read;
+  - the export ignored the list's filters, did not say when its row limit cut it short, and wrote spreadsheet formulas verbatim;
+  - a long request's evidence logs started a minute before it ended.
+
+### Decision
+
+1. **Pair.**
+   - The current deployment is the newest release among the deployments that served in the last 30 minutes. It is chosen by release order, not by which deployment answered the last request.
+   - Its predecessor is another deployment still serving beside it, compared over the same window. Failing that, it is the deployment that served most recently before it, compared over that deployment's own last 30 minutes of traffic.
+   - A regression is therefore found for as long as both deployments' rows are within the detector's 24-hour lookback.
+2. **Regression view.** The detector's latency reads leave out platform refusals, pinned requests, long-lived streams and cold boots, as the release gates do. Its error reads leave out platform refusals and pinned requests. Compare, debug status and the canary health check keep reading every request.
+3. **Requests not kept.**
+   - Coverage reports `requests_not_retained`: the requests the analytics rollups counted over the window's whole, settled minutes, beyond those the debugger kept. The rollups count every row the plan keeps, including the rows the cap turned away (ADR-20261103113952).
+   - The figure is a lower bound, and it is absent when the rollups do not cover the window.
+   - The dashboard and the CLI show it.
+4. **Dependency history.** The bounded read ranks each route's rows within each half of the window, so both halves keep a share.
+5. **Watch.** After the first poll, a poll pages back until it reaches a request it already showed, up to five pages. Past that it reports a gap: a `gap` event in JSON, a warning otherwise.
+6. **Running history.** The history reads the scheduler's observations by kind, so other events cannot push them out. A store without the kind filter marks the history truncated when its read fills.
+7. **Export.**
+   - It takes the list's filters.
+   - `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+   - In CSV, a cell that would start a formula is written with a leading apostrophe.
+8. **Evidence logs.** A request's row is stamped when it finishes, so its log window opens a minute before its start (its end minus its latency).
+9. **Bring-your-own OpenTelemetry.** Exact samples still follow `tracing.enabled`. The gateway cannot tell a client's sampled trace from the one `gatewayd-public` injects. The tracing guide now tells apps that export their own spans with an API key to set `tracing.enabled`, which leaves their exporter alone.
+
+### Consequences
+
+- Latency regressions are about warm requests; a slower cold boot shows in debug status and wake evidence, not as a route regression.
+- Dependency percentiles still weight a folded row's one traced sample by its request count: a bucket's requests share route, status and latency bucket.

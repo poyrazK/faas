@@ -24687,9 +24687,12 @@ paths:
         available for spreadsheet and support workflows. The export uses the
         same plan retention boundary as the debugger list, never includes
         request bodies, headers, source IPs, or raw span attributes, and is
-        capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-        `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-        applied to the artifact.
+        capped at 10,000 rows. It takes the request list's filters.
+        `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+        describe the effective window applied to the artifact, and
+        `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+        In CSV, a value that would start a spreadsheet formula is written
+        with a leading apostrophe.
       parameters:
         - name: since
           in: query
@@ -24711,6 +24714,31 @@ paths:
           required: false
           schema: { type: [integer, 'null'], minimum: 1, maximum: 10000, default: 10000 }
           description: "Maximum number of retained rows to export."
+        - name: deployment_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], format: uuid }
+          description: "Exact deployment UUID filter."
+        - name: status
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+          description: "Exact HTTP status filter."
+        - name: cold_boot
+          in: query
+          required: false
+          schema: { type: [boolean, 'null'] }
+          description: "Filter cold-start requests when true, or warm requests when false."
+        - name: consumer_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], maxLength: 64 }
+          description: "Consumer UUID, or __anonymous__ for requests without a stable consumer identity."
+        - name: min_latency_ms
+          in: query
+          required: false
+          schema: { type: [integer, 'null'], minimum: 0, maximum: 86400000 }
+          description: "Minimum inclusive latency bucket bound in milliseconds."
       responses:
         '200':
           description: Metadata-only request telemetry export.
@@ -24726,6 +24754,9 @@ paths:
             X-Faas-Request-Log-Retention-Clamped:
               schema: { type: boolean }
               description: Whether the requested window exceeded plan retention.
+            X-Faas-Request-Log-Truncated:
+              schema: { type: boolean }
+              description: Whether more rows matched than the row limit exported.
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -124002,6 +124033,15 @@ components:
         guest_evidence: { $ref: '#/components/schemas/DebugCoverageSignal' }
         oldest_telemetry_at: { type: string, format: date-time }
         latest_telemetry_at: { type: string, format: date-time }
+        requests_not_retained:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Requests the app's request analytics counted in the window's whole
+            minutes that the debugger did not keep, because the plan's
+            per-minute debugger row limit turned them away. A lower bound;
+            absent when request analytics do not cover the window.
 
     DebugRunningRequestAttribution:
       type: object

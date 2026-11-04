@@ -47707,7 +47707,8 @@ const listDeploymentsForCompare = `-- name: ListDeploymentsForCompare :many
 SELECT deployment_id,
        MIN(received_at) AS first_seen,
        MAX(received_at) AS last_seen,
-       COUNT(*)         AS row_count
+       COUNT(*)         AS row_count,
+       MAX(deployment_created_at)::text AS deployment_created_at
 FROM request_telemetry
 WHERE app_id = $1
   AND received_at > now() - $2::interval
@@ -47723,10 +47724,11 @@ type ListDeploymentsForCompareParams struct {
 }
 
 type ListDeploymentsForCompareRow struct {
-	DeploymentID pgtype.UUID
-	FirstSeen    interface{}
-	LastSeen     interface{}
-	RowCount     int64
+	DeploymentID        pgtype.UUID
+	FirstSeen           interface{}
+	LastSeen            interface{}
+	RowCount            int64
+	DeploymentCreatedAt string
 }
 
 // Backs the dashboard compare panel's two `<select>` dropdowns: "pick
@@ -47739,6 +47741,10 @@ type ListDeploymentsForCompareRow struct {
 // PR-B uses this to seed the dropdowns; the actual percentile
 // comparison is two RequestTelemetryBaselineP95ByRoute calls in Go
 // (PR-A ships that query; the regression cron uses the same shape).
+//
+// deployment_created_at lets the regression detector order deployments by
+// release rather than by who served the last request (ADR-127 amendment
+// 2026-11-05).
 func (q *Queries) ListDeploymentsForCompare(ctx context.Context, db DBTX, arg ListDeploymentsForCompareParams) ([]ListDeploymentsForCompareRow, error) {
 	rows, err := db.Query(ctx, listDeploymentsForCompare, arg.AppID, arg.Column2, arg.Limit)
 	if err != nil {
@@ -47753,6 +47759,7 @@ func (q *Queries) ListDeploymentsForCompare(ctx context.Context, db DBTX, arg Li
 			&i.FirstSeen,
 			&i.LastSeen,
 			&i.RowCount,
+			&i.DeploymentCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -49341,6 +49348,66 @@ func (q *Queries) ListEvents(ctx context.Context, db DBTX, arg ListEventsParams)
 	items := []ListEventsRow{}
 	for rows.Next() {
 		var i ListEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Actor,
+			&i.Kind,
+			&i.Subject,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventsBySubjectKind = `-- name: ListEventsBySubjectKind :many
+select id, at, actor, kind, subject, data
+from events
+where subject = $1 and kind = $2 and at >= $3
+order by at desc
+limit $4
+`
+
+type ListEventsBySubjectKindParams struct {
+	Subject pgtype.UUID
+	Kind    string
+	At      pgtype.Timestamptz
+	Limit   int32
+}
+
+type ListEventsBySubjectKindRow struct {
+	ID      int64
+	At      pgtype.Timestamptz
+	Actor   string
+	Kind    string
+	Subject pgtype.UUID
+	Data    []byte
+}
+
+// One kind of a subject's events since a time, newest first: the debugger's
+// "why is it running" history reads only the scheduler's observations, so
+// other events about the app cannot push them out of a bounded read
+// (ADR-127 amendment 2026-11-05). events_subject_idx (subject, at desc).
+func (q *Queries) ListEventsBySubjectKind(ctx context.Context, db DBTX, arg ListEventsBySubjectKindParams) ([]ListEventsBySubjectKindRow, error) {
+	rows, err := db.Query(ctx, listEventsBySubjectKind,
+		arg.Subject,
+		arg.Kind,
+		arg.At,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEventsBySubjectKindRow{}
+	for rows.Next() {
+		var i ListEventsBySubjectKindRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.At,
@@ -53782,7 +53849,7 @@ WITH ranked AS (
     SELECT id, route, method, count, status, trace_id, received_at, spans_summary,
            deployment_id, commit_sha, deployment_tag, deployment_created_at,
            ROW_NUMBER() OVER (
-               PARTITION BY route, method, deployment_id
+               PARTITION BY route, method, deployment_id, (received_at >= $6::timestamptz)
                ORDER BY received_at DESC, id DESC
            ) AS evidence_rank
     FROM request_telemetry
@@ -53805,6 +53872,7 @@ type ListRequestTelemetryDependencySpansParams struct {
 	ReceivedAt   pgtype.Timestamptz
 	ReceivedAt_2 pgtype.Timestamptz
 	Limit        int32
+	Column6      pgtype.Timestamptz
 }
 
 type ListRequestTelemetryDependencySpansRow struct {
@@ -53827,7 +53895,12 @@ type ListRequestTelemetryDependencySpansRow struct {
 // pass an app id from another tenant; the app lookup remains the primary
 // IDOR boundary. Evidence is newest-first within each route/deployment
 // partition, then interleaved so one high-volume revision cannot crowd all
-// prior deployments out of the bounded comparison window.
+// prior deployments out of the bounded comparison window. $6 splits each
+// partition at the time the history compares across (the window's middle),
+// so the older half keeps its share of a busy app's bounded read instead of
+// losing all of it to the newest rows (ADR-127 amendment 2026-11-05); a
+// caller that compares deployments rather than halves passes the window
+// start.
 func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error) {
 	rows, err := db.Query(ctx, listRequestTelemetryDependencySpans,
 		arg.AppID,
@@ -53835,6 +53908,7 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 		arg.ReceivedAt,
 		arg.ReceivedAt_2,
 		arg.Limit,
+		arg.Column6,
 	)
 	if err != nil {
 		return nil, err
@@ -95603,6 +95677,47 @@ func (q *Queries) ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const requestAnalyticsCountedRequests = `-- name: RequestAnalyticsCountedRequests :one
+SELECT (SELECT c.covered_since FROM request_analytics_rollup_coverage c WHERE c.app_id = $1::uuid)::timestamptz AS covered_since,
+       COALESCE((SELECT SUM(m.requests)
+                   FROM request_analytics_minutes m
+                  WHERE m.app_id = $1::uuid
+                    AND m.dimension_kind = 'route'
+                    AND m.bucket_start >= $2::timestamptz
+                    AND m.bucket_start <  $3::timestamptz), 0)::bigint AS requests,
+       COALESCE((SELECT SUM(GREATEST(t.count, 1)::bigint)
+                   FROM request_telemetry t
+                  WHERE t.app_id = $1::uuid
+                    AND t.received_at >= $2::timestamptz
+                    AND t.received_at <  $3::timestamptz), 0)::bigint AS retained
+`
+
+type RequestAnalyticsCountedRequestsParams struct {
+	AppID       pgtype.UUID
+	BucketFrom  pgtype.Timestamptz
+	BucketUntil pgtype.Timestamptz
+}
+
+type RequestAnalyticsCountedRequestsRow struct {
+	CoveredSince pgtype.Timestamptz
+	Requests     int64
+	Retained     int64
+}
+
+// Requests the analytics rollups counted for an app in whole minutes from
+// bucket_from to bucket_until, and the first minute the rollups hold for it.
+// The rollups count every row the plan keeps, including the rows the
+// debugger's per-minute ingest cap turned away (ADR-20261103113952), so the
+// debugger can say how many requests it did not keep (ADR-127 amendment
+// 2026-11-05). Route rows carry every request once. retained is the
+// debugger's own count over the same minutes.
+func (q *Queries) RequestAnalyticsCountedRequests(ctx context.Context, db DBTX, arg RequestAnalyticsCountedRequestsParams) (RequestAnalyticsCountedRequestsRow, error) {
+	row := db.QueryRow(ctx, requestAnalyticsCountedRequests, arg.AppID, arg.BucketFrom, arg.BucketUntil)
+	var i RequestAnalyticsCountedRequestsRow
+	err := row.Scan(&i.CoveredSince, &i.Requests, &i.Retained)
+	return i, err
+}
+
 const requestEnvironmentGitOpsRuntimeRefresh = `-- name: RequestEnvironmentGitOpsRuntimeRefresh :exec
 UPDATE environment_gitops_runtime_effects SET requested_at = now(), next_request_at = $1::timestamptz
 WHERE source_id = $2::uuid AND id = $3::uuid AND completed_at IS NULL
@@ -96961,6 +97076,7 @@ WITH weighted AS (
       AND deployment_id = $2
       AND received_at >= $3
       AND received_at <  $4
+      AND (NOT $5::boolean OR (NOT platform_refusal AND NOT deployment_pinned AND NOT long_lived AND NOT cold_boot))
     GROUP BY route, latency_ms
 ), ranked AS (
     SELECT route,
@@ -97024,6 +97140,7 @@ type RequestTelemetryBaselineP95ByRouteParams struct {
 	DeploymentID pgtype.UUID
 	ReceivedAt   pgtype.Timestamptz
 	ReceivedAt_2 pgtype.Timestamptz
+	Column5      bool
 }
 
 type RequestTelemetryBaselineP95ByRouteRow struct {
@@ -97045,12 +97162,17 @@ type RequestTelemetryBaselineP95ByRouteRow struct {
 // request. The rank/floor formulation below is equivalent to
 // percentile_cont over the expanded multiset of bucket
 // representatives, without materializing one row per request.
+// $5 (regression view, ADR-127 amendment 2026-11-05) leaves out what is
+// not the deployment's own warm latency, as the release gates do:
+// platform refusals, requests pinned to a deployment, long-lived
+// streams and cold boots. Other callers pass false.
 func (q *Queries) RequestTelemetryBaselineP95ByRoute(ctx context.Context, db DBTX, arg RequestTelemetryBaselineP95ByRouteParams) ([]RequestTelemetryBaselineP95ByRouteRow, error) {
 	rows, err := db.Query(ctx, requestTelemetryBaselineP95ByRoute,
 		arg.AppID,
 		arg.DeploymentID,
 		arg.ReceivedAt,
 		arg.ReceivedAt_2,
+		arg.Column5,
 	)
 	if err != nil {
 		return nil, err
@@ -97083,6 +97205,7 @@ WHERE app_id = $1
   AND deployment_id = $2
   AND received_at >= $3
   AND received_at <  $4
+  AND (NOT $6::boolean OR (NOT platform_refusal AND NOT deployment_pinned AND NOT long_lived AND NOT cold_boot))
 ORDER BY received_at DESC
 LIMIT $5
 `
@@ -97093,6 +97216,7 @@ type RequestTelemetryByDeploymentParams struct {
 	ReceivedAt   pgtype.Timestamptz
 	ReceivedAt_2 pgtype.Timestamptz
 	Limit        int32
+	Column6      bool
 }
 
 type RequestTelemetryByDeploymentRow struct {
@@ -97111,6 +97235,7 @@ type RequestTelemetryByDeploymentRow struct {
 // regression detector (PR-B). Includes the publisher's `count`
 // weight so callers can report request totals rather than stored
 // aggregate-row totals. Uses request_telemetry_app_dep_received_idx.
+// $6 is the regression view (see RequestTelemetryBaselineP95ByRoute).
 func (q *Queries) RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg RequestTelemetryByDeploymentParams) ([]RequestTelemetryByDeploymentRow, error) {
 	rows, err := db.Query(ctx, requestTelemetryByDeployment,
 		arg.AppID,
@@ -97118,6 +97243,7 @@ func (q *Queries) RequestTelemetryByDeployment(ctx context.Context, db DBTX, arg
 		arg.ReceivedAt,
 		arg.ReceivedAt_2,
 		arg.Limit,
+		arg.Column6,
 	)
 	if err != nil {
 		return nil, err
@@ -97339,6 +97465,7 @@ WHERE app_id = $1
   AND deployment_id = $2
   AND received_at >= $3
   AND received_at <  $4
+  AND (NOT $5::boolean OR (NOT platform_refusal AND NOT deployment_pinned))
 GROUP BY route
 `
 
@@ -97347,6 +97474,7 @@ type RequestTelemetryErrorsByRouteParams struct {
 	DeploymentID pgtype.UUID
 	ReceivedAt   pgtype.Timestamptz
 	ReceivedAt_2 pgtype.Timestamptz
+	Column5      bool
 }
 
 type RequestTelemetryErrorsByRouteRow struct {
@@ -97371,13 +97499,16 @@ type RequestTelemetryErrorsByRouteRow struct {
 // deployment and window, weighted by the publisher's collapsed-row count.
 // The regression detector compares the error share of the current and the
 // previous deployment (ADR-127 amendment: error-rate regressions). Same
-// index as RequestTelemetryBaselineP95ByRoute.
+// index as RequestTelemetryBaselineP95ByRoute. $5 is the regression view:
+// the platform's own refusals and requests pinned to a deployment are not
+// the deployment's errors.
 func (q *Queries) RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryErrorsByRouteParams) ([]RequestTelemetryErrorsByRouteRow, error) {
 	rows, err := db.Query(ctx, requestTelemetryErrorsByRoute,
 		arg.AppID,
 		arg.DeploymentID,
 		arg.ReceivedAt,
 		arg.ReceivedAt_2,
+		arg.Column5,
 	)
 	if err != nil {
 		return nil, err

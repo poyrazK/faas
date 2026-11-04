@@ -11715,6 +11715,22 @@ type DebugTelemetryExportOptions struct {
 	Route  string
 	Format string
 	Limit  int
+	// The request list's filters, with the same meaning.
+	DeploymentID string
+	Status       int
+	ColdBoot     *bool
+	ConsumerID   string
+	MinLatencyMS int
+}
+
+// DebugTelemetryExport is a downloaded export with what the server applied:
+// the effective window, whether plan retention clamped it, and whether the
+// row limit cut it short.
+type DebugTelemetryExport struct {
+	Data             []byte
+	Window           string
+	RetentionClamped bool
+	Truncated        bool
 }
 
 // DebugTelemetryListResponse is the wire envelope for the debug
@@ -11767,6 +11783,11 @@ type DebugCoverageResponse struct {
 	GuestEvidence       DebugCoverageSignal `json:"guest_evidence"`
 	OldestTelemetryAt   string              `json:"oldest_telemetry_at,omitempty"`
 	LatestTelemetryAt   string              `json:"latest_telemetry_at,omitempty"`
+	// RequestsNotRetained is how many requests the app's request analytics
+	// counted in the window's whole minutes but the debugger did not keep,
+	// because the plan's per-minute debugger row limit turned them away. It
+	// is a lower bound, and absent when analytics do not cover the window.
+	RequestsNotRetained *int64 `json:"requests_not_retained,omitempty"`
 }
 
 // DebugRunningRequestAttribution links request activity to the nearest

@@ -2795,6 +2795,10 @@ type DebugCoverageView struct {
 	GuestEvidence       DebugCoverageSignalView
 	OldestTelemetryAt   string
 	LatestTelemetryAt   string
+	// RequestsNotRetained is the requests analytics counted that the
+	// debugger did not keep; 0 when none or unknown (ADR-127 amendment
+	// 2026-11-05).
+	RequestsNotRetained int64
 }
 
 type DebugCoverageSignalView struct {

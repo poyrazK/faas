@@ -70,6 +70,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"net/url"
@@ -2154,3 +2155,22 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
+
+// RegressionComparison exposes chooseRegressionComparison's choice.
+type RegressionComparison struct {
+	Cur, Prev          string
+	CurStart, CurEnd   time.Time
+	PrevStart, PrevEnd time.Time
+}
+
+func ChooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now time.Time) (RegressionComparison, bool) {
+	c, ok := chooseRegressionComparison(deps, now)
+	return RegressionComparison{
+		Cur: c.cur.DeploymentID.String(), Prev: c.prev.DeploymentID.String(),
+		CurStart: c.curStart, CurEnd: c.curEnd, PrevStart: c.prevStart, PrevEnd: c.prevEnd,
+	}, ok
+}
+
+var DebugEvidenceLogWindow = debugEvidenceLogWindow
+
+var CSVSafeCell = csvSafeCell
