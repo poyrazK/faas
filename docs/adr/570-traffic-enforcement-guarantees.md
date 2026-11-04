@@ -1814,3 +1814,24 @@ stored refusal back for 24 hours. Nothing retried it either.
   the code, not every 4xx with `Retry-After`: an MFA cooldown sends a 24-hour one.
 
 The bound, ceilings, codes and fail-closed behaviour are unchanged.
+
+### Amendment: a failed placement read keeps the lease (2026-11-03)
+
+The placement repair worker and request hydration treated a failed read like
+an answer that cannot prove absence: every target of the batch stopped
+routing at once. On production-us each node logged about 600 placement reads
+and 400 traffic observations a day that missed their deadline, in bursts of
+minutes while the two-vCPU control plane was busy; each burst took running
+apps out of rotation on every node, though nothing about them had changed.
+
+- An answer that cannot prove absence (missing, partial, mismatched or
+  truncated rows) still refuses routing at once and keeps the resident
+  count, as above.
+- A read that fails (an error, or a result after the one-second deadline,
+  which is still discarded) no longer marks the targets. They route until
+  the 30-second lease from their last verified read runs out, then refuse.
+  A lease is never renewed by a failed read, a replayed publication or hot
+  traffic.
+
+The deadline, the lease length, the batch bounds and the fail-closed result
+of a stall longer than the lease are unchanged.

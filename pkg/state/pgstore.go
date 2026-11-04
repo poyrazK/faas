@@ -5103,6 +5103,41 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	if uncertainWrites != 0 {
 		return &AppPurgeBlockedError{Reason: AppPurgeBlockedMultipartWrite, Count: uncertainWrites}
 	}
+	// A running exclusive work operation with an unexpired lease may still
+	// write effects, and an environment clone still fencing or copying one of
+	// the app's buckets releases those rows itself. Finished operations and
+	// expired claims are removed below; until then the purge waits instead of
+	// failing on their keys (2026-11-03: exclusive_work_operations_app_id_fkey
+	// blocked every purge of an app that had run exclusive work).
+	// A managed PostgreSQL cutover of the app that a database, a checkpoint
+	// reservation or a source fence still names belongs to the binding
+	// service, like a live binding.
+	var liveClaims, cloneRefs, cutoverRefs int64
+	if err := tx.QueryRow(ctx,
+		`select (select count(*) from exclusive_work_operations
+		          where app_id = $1 and state = 'running' and lease_expires_at > now()),
+		        (select count(*) from object_buckets b where b.app_id = $1 and (
+		            exists (select 1 from object_bucket_write_fences f where f.bucket_id = b.id)
+		         or exists (select 1 from project_environment_clone_checkpoint_object_targets t where t.source_bucket_id = b.id or t.target_bucket_id = b.id)
+		         or exists (select 1 from project_environment_clone_checkpoint_unused_object_reservations r where r.target_bucket_id = b.id)))
+		      + (select count(*) from project_environment_clone_postgres_bindings c
+		          join managed_postgres_bindings mb on mb.id = c.target_binding_id where mb.app_id = $1),
+		        (select count(*) from managed_postgres_cutovers c where c.app_id = $1 and (
+		            exists (select 1 from managed_postgres_databases d where d.cutover_id = c.id)
+		         or exists (select 1 from managed_postgres_checkpoint_maintenance m where m.reserved_by_cutover_id = c.id)
+		         or exists (select 1 from managed_postgres_cutover_source_fences f where f.cutover_id = c.id)))`,
+		id).Scan(&liveClaims, &cloneRefs, &cutoverRefs); err != nil {
+		return fmt.Errorf("state: count app exclusive work, clone and cutover references: %w", err)
+	}
+	if liveClaims != 0 {
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedExclusiveWork, Count: liveClaims}
+	}
+	if cloneRefs != 0 {
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedEnvironmentClone, Count: cloneRefs}
+	}
+	if cutoverRefs != 0 {
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedManagedPostgresBinding, Count: cutoverRefs}
+	}
 	var exists int
 	if err := tx.QueryRow(ctx,
 		`select 1 from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() and purge_claimed_at is not null for update`, id).Scan(&exists); err != nil {
@@ -5115,55 +5150,9 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		return fmt.Errorf("state: purge customer operation owner: %w", err)
 	}
 
-	steps := []struct {
-		name string
-		sql  string
-	}{
-		{"object_storage_access_grants", `delete from object_storage_access_grants where bucket_id in (select id from object_buckets where app_id = $1)`},
-		// Settled or never-dispatched multipart writers (the uncertain ones
-		// refused the purge above) and the mutations naming them; the bucket
-		// delete would cascade those mutations, but the writers' RESTRICT key
-		// on the bucket comes first.
-		{"object_bucket_mutations", `delete from object_bucket_mutations where multipart_part_writer_id in (select w.id from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id where b.app_id = $1)`},
-		{"object_multipart_part_writers", `delete from object_multipart_part_writers where bucket_id in (select id from object_buckets where app_id = $1)`},
-		{"object_buckets", `delete from object_buckets where app_id = $1`},
-		{"invocations", `delete from invocations where app_id = $1`},
-		{"crons", `delete from crons where app_id = $1`},
-		{"custom_domains", `delete from custom_domains where app_id = $1 or app_id_redirect = $1`},
-		{"job_tasks", `delete from job_tasks where instance_id in (select id from instances where app_id = $1)`},
-		{"instances", `delete from instances where app_id = $1`},
-		{"app_envs", `delete from app_envs where app_id = $1`},
-		{"app_secrets", `delete from app_secrets where app_id = $1`},
-		{"app_trusted_signers", `delete from app_trusted_signers where app_id = $1`},
-		{"builder_usage", `delete from builder_usage where app_id = $1`},
-		// usage_minutes and usage_daily are deliberately retained (ADR-1162):
-		// they are the account's billing evidence. The month's included
-		// allowance, overage deliveries, the spend cap, invoice credits and
-		// the reconciler all sum them, so a mid-month purge would hand the
-		// deleted app's usage back as allowance. Neither table has an FK to
-		// apps; the 13-month usage retention cron and account deletion
-		// remove them.
-		{"snapshot_storage_daily", `delete from snapshot_storage_daily where app_id = $1`},
-		{"request_telemetry", `delete from request_telemetry where app_id = $1`},
-		{"log_events", `delete from log_events where app_id = $1`},
-		{"debug_regression_observations", `delete from debug_regression_observations where app_id = $1`},
-		{"mirror_invocation_results", `delete from mirror_invocation_results where app_id = $1`},
-		{"mirror_invocation_summary", `delete from mirror_invocation_summary where app_id = $1`},
-		{"warm_hint", `delete from warm_hint where app_id = $1`},
-		{"deployment_audit", `delete from deployment_audit where deployment_id in (select id from deployments where app_id = $1)`},
-		{"build_provenance", `delete from build_provenance where build_id in (select b.id from builds b join deployments d on d.id = b.deployment_id where d.app_id = $1)`},
-		{"recent_build_claims", `delete from recent_build_claims where build_id in (select b.id from builds b join deployments d on d.id = b.deployment_id where d.app_id = $1)`},
-		{"snapshots", `delete from snapshots where deployment_id in (select id from deployments where app_id = $1)`},
-		{"builds", `delete from builds where deployment_id in (select id from deployments where app_id = $1)`},
-		{"deployments", `delete from deployments where app_id = $1`},
-		// Deleted managed PostgreSQL binding tombstones (only those remain, see
-		// above), as account deletion removes them; their app secrets went
-		// with app_secrets.
-		{"managed_postgres_bindings", `delete from managed_postgres_bindings where app_id = $1 and state = 'deleted'`},
-	}
-	for _, step := range steps {
+	for _, step := range appPurgeSteps {
 		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
-			return fmt.Errorf("state: purge %s for app %s: %w", step.name, id, appPurgeForeignKeyError(err))
+			return fmt.Errorf("state: purge %s for app %s: %w", step.table, id, appPurgeForeignKeyError(err))
 		}
 	}
 	// Most app-owned tables use ON DELETE CASCADE (alerts, mirrors,
@@ -5191,6 +5180,87 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		return fmt.Errorf("state: commit app purge %s: %w", id, appPurgeForeignKeyError(err))
 	}
 	return nil
+}
+
+// appPurgeStep is one DELETE DeleteAppPermanently runs, in order, with the
+// app id as $1. table names the table it deletes from;
+// TestAppPurgeClearsEveryRestrictingKey checks the list against schema.sql.
+type appPurgeStep struct {
+	table string
+	sql   string
+}
+
+// appPurgeSteps are DeleteAppPermanently's deletes before the apps row.
+// Every row that references the app (or a row deleted here) without ON DELETE
+// CASCADE or SET NULL must be deleted before the row it references.
+var appPurgeSteps = []appPurgeStep{
+	// Exclusive work of the app: effects and submissions reference the
+	// operation without a cascade. A live claim refused the purge above.
+	// Job runs cascade from their exclusive operation; CI attempts of those
+	// runs reference them without a cascade.
+	{"ci_job_attempts", `delete from ci_job_attempts where run_id in (select r.id from job_runs r join exclusive_work_operations o on o.id = r.exclusive_operation_id where o.app_id = $1)`},
+	{"exclusive_work_effects", `delete from exclusive_work_effects where operation_id in (select id from exclusive_work_operations where app_id = $1)`},
+	{"exclusive_work_submissions", `delete from exclusive_work_submissions where operation_id in (select id from exclusive_work_operations where app_id = $1)`},
+	{"exclusive_work_operations", `delete from exclusive_work_operations where app_id = $1`},
+	// Verification, canary, queue-admission, release-pin, qualification and
+	// retirement records name the app's deployments without a cascade.
+	{"binding_verification_runs", `delete from binding_verification_runs where app_id = $1 or deployment_id in (select id from deployments where app_id = $1)`},
+	{"queue_binding_canaries", `delete from queue_binding_canaries where app_id = $1 or deployment_id in (select id from deployments where app_id = $1) or completed_deployment_id in (select id from deployments where app_id = $1)`},
+	{"invocation_environment_queue_admissions", `delete from invocation_environment_queue_admissions where app_id = $1 or deployment_id in (select id from deployments where app_id = $1)`},
+	{"project_worker_release_pins", `delete from project_worker_release_pins where app_id = $1 or deployment_id in (select id from deployments where app_id = $1)`},
+	{"environment_qualification_config_receipts", `delete from environment_qualification_config_receipts where request_id in (select id from environment_workload_qualification_requests where app_id = $1 or deployment_id in (select id from deployments where app_id = $1))`},
+	{"environment_qualification_framework_ready_receipts", `delete from environment_qualification_framework_ready_receipts where request_id in (select id from environment_workload_qualification_requests where app_id = $1 or deployment_id in (select id from deployments where app_id = $1))`},
+	{"environment_workload_qualification_requests", `delete from environment_workload_qualification_requests where app_id = $1 or deployment_id in (select id from deployments where app_id = $1)`},
+	{"environment_workload_retirements", `delete from environment_workload_retirements where app_id = $1 or route_deployment_id in (select id from deployments where app_id = $1)`},
+	// Environment pins of the app's build artifacts, and promotion migration
+	// records naming the app's tasks (a deferred key, checked at commit).
+	{"environment_build_artifact_pins", `delete from environment_build_artifact_pins where artifact_id in (select id from source_build_rootfs where deployment_id in (select id from deployments where app_id = $1))`},
+	{"project_environment_promotion_migrations", `delete from project_environment_promotion_migrations where task_id in (select id from app_tasks where app_id = $1)`},
+	{"object_storage_access_grants", `delete from object_storage_access_grants where bucket_id in (select id from object_buckets where app_id = $1)`},
+	// Settled or never-dispatched multipart writers (the uncertain ones
+	// refused the purge above) and the mutations naming them; the bucket
+	// delete would cascade those mutations, but the writers' RESTRICT key
+	// on the bucket comes first.
+	{"object_bucket_mutations", `delete from object_bucket_mutations where multipart_part_writer_id in (select w.id from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id where b.app_id = $1)`},
+	{"object_multipart_part_writers", `delete from object_multipart_part_writers where bucket_id in (select id from object_buckets where app_id = $1)`},
+	{"object_buckets", `delete from object_buckets where app_id = $1`},
+	{"invocations", `delete from invocations where app_id = $1`},
+	{"crons", `delete from crons where app_id = $1`},
+	{"custom_domains", `delete from custom_domains where app_id = $1 or app_id_redirect = $1`},
+	{"job_tasks", `delete from job_tasks where instance_id in (select id from instances where app_id = $1)`},
+	// CI job runtime rows name the job's instance without a cascade.
+	{"ci_job_runtime", `delete from ci_job_runtime where instance_id in (select id from instances where app_id = $1)`},
+	// Private network service ownership names the app without a cascade.
+	{"private_network_service_owners", `delete from private_network_service_owners where app_id = $1`},
+	{"instances", `delete from instances where app_id = $1`},
+	{"app_envs", `delete from app_envs where app_id = $1`},
+	{"app_secrets", `delete from app_secrets where app_id = $1`},
+	{"app_trusted_signers", `delete from app_trusted_signers where app_id = $1`},
+	{"builder_usage", `delete from builder_usage where app_id = $1`},
+	// usage_minutes and usage_daily are deliberately retained (ADR-1162):
+	// they are the account's billing evidence. The month's included
+	// allowance, overage deliveries, the spend cap, invoice credits and
+	// the reconciler all sum them, so a mid-month purge would hand the
+	// deleted app's usage back as allowance. Neither table has an FK to
+	// apps; the 13-month usage retention cron and account deletion
+	// remove them.
+	{"snapshot_storage_daily", `delete from snapshot_storage_daily where app_id = $1`},
+	{"request_telemetry", `delete from request_telemetry where app_id = $1`},
+	{"log_events", `delete from log_events where app_id = $1`},
+	{"debug_regression_observations", `delete from debug_regression_observations where app_id = $1`},
+	{"mirror_invocation_results", `delete from mirror_invocation_results where app_id = $1`},
+	{"mirror_invocation_summary", `delete from mirror_invocation_summary where app_id = $1`},
+	{"warm_hint", `delete from warm_hint where app_id = $1`},
+	{"deployment_audit", `delete from deployment_audit where deployment_id in (select id from deployments where app_id = $1)`},
+	{"build_provenance", `delete from build_provenance where build_id in (select b.id from builds b join deployments d on d.id = b.deployment_id where d.app_id = $1)`},
+	{"recent_build_claims", `delete from recent_build_claims where build_id in (select b.id from builds b join deployments d on d.id = b.deployment_id where d.app_id = $1)`},
+	{"snapshots", `delete from snapshots where deployment_id in (select id from deployments where app_id = $1)`},
+	{"builds", `delete from builds where deployment_id in (select id from deployments where app_id = $1)`},
+	{"deployments", `delete from deployments where app_id = $1`},
+	// Deleted managed PostgreSQL binding tombstones (only those remain, see
+	// above), as account deletion removes them; their app secrets went
+	// with app_secrets.
+	{"managed_postgres_bindings", `delete from managed_postgres_bindings where app_id = $1 and state = 'deleted'`},
 }
 
 // SoftDeleteAppCascade marks the app deleted and atomically cancels every
@@ -28205,10 +28275,21 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	if activeBuckets != 0 {
 		return ErrConflict
 	}
+	if err := accountPurgeWaitsTx(ctx, tx, id); err != nil {
+		return err
+	}
 	// Only metadata for confirmed-deleted upstream buckets may be purged.
 	// Active-bucket FKs also guard against a concurrent reservation.
 	if err := sqlc.New().ObjectBucketPruneTombstones(ctx, tx, mustPgUUID(id)); err != nil {
 		return fmt.Errorf("state: prune deleted object bucket metadata: %w", err)
+	}
+	// Jobs a Git source manages name it without a cascade, and the job guard
+	// refuses to unlink them, so they go first (an account pending deletion
+	// may delete them), with the rows that reference them without a cascade.
+	for _, step := range accountGitJobPurgeSteps {
+		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
+			return fmt.Errorf("state: delete %s of Git-managed jobs for account %s: %w", step.table, id, err)
+		}
 	}
 	// Release management authority inside this same pending-account purge.
 	// Otherwise the ordinary app/env guards correctly reject the child deletes.
@@ -28322,11 +28403,31 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		// in the deleted tombstone state; remove those tombstones explicitly
 		// before the apps/accounts sentinels so GDPR deletion can complete.
 		{"managed_postgres_usage", `delete from managed_postgres_usage where account_id = $1 and database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where o.personal_org)`},
+		// Usage imports and accounting reconciliations of the personal
+		// database tombstones removed below reference them without a cascade.
+		{"managed_postgres_usage_imports", `delete from managed_postgres_usage_imports where database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where d.account_id = $1 and o.personal_org and d.state = 'deleted')`},
+		{"managed_postgres_accounting_reconciliations", `delete from managed_postgres_accounting_reconciliations where database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where d.account_id = $1 and o.personal_org and d.state = 'deleted')`},
 		{"managed_postgres_bindings", `delete from managed_postgres_bindings where account_id = $1 and database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where o.personal_org) and state = 'deleted'`},
 		{"managed_postgres_databases", `delete from managed_postgres_databases where account_id = $1 and org_id in (select id from orgs where personal_org) and state = 'deleted'`},
 		{"custom_domains", `delete from custom_domains
 		   where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 		{"crons", `delete from crons
+		   where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
+		// Exclusive work of the account cascades from the account row only
+		// after its apps are gone, and its effects, submissions and the CI
+		// attempts of its job runs reference it without a cascade.
+		{"ci_job_attempts", `delete from ci_job_attempts where run_id in (select r.id from job_runs r join exclusive_work_operations o on o.id = r.exclusive_operation_id where o.account_id = $1)`},
+		{"exclusive_work_effects", `delete from exclusive_work_effects where operation_id in (select id from exclusive_work_operations where account_id = $1)`},
+		{"exclusive_work_submissions", `delete from exclusive_work_submissions where operation_id in (select id from exclusive_work_operations where account_id = $1)`},
+		{"exclusive_work_operations", `delete from exclusive_work_operations where account_id = $1`},
+		// Tasks and CI runtime rows on the personal apps' and the account's
+		// job instances reference them without a cascade.
+		{"app_instance_job_tasks", `delete from job_tasks
+		   where instance_id in (select id from instances where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org))))`},
+		{"ci_job_runtime", `delete from ci_job_runtime
+		   where instance_id in (select id from instances where job_id in (select id from jobs where account_id = $1)
+		      or app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org))))`},
+		{"private_network_service_owners", `delete from private_network_service_owners
 		   where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
 		{"instances", `delete from instances
 		   where app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
@@ -28338,6 +28439,23 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		{"job_tasks", `delete from job_tasks
 		   where run_id in (select id from job_runs where account_id = $1 or job_id in (select id from jobs where account_id = $1))`},
 		{"job_instances", `delete from instances where job_id in (select id from jobs where account_id = $1)`},
+		// Verification evidence of the account and its personal apps, and the
+		// graph runs it hangs from; neither cascades from the account.
+		{"binding_verification_runs", `delete from binding_verification_runs
+		   where account_id = $1 or app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org)))`},
+		{"project_binding_verification_runs", `delete from project_binding_verification_runs where account_id = $1`},
+		// Readiness overrides the account made name it as their author, and
+		// automation failure history names it as the actor. An override goes
+		// with its author; the history keeps the event without the person.
+		{"deployment_mcp_readiness_overrides", `delete from deployment_mcp_readiness_overrides where created_by = $1`},
+		{"workflow_automation_failure_history", `update workflow_automation_failure_history set actor_account_id = null where actor_account_id = $1`},
+		// Release stages and additions of the account's projects reference
+		// the account, and stages the project, without a cascade.
+		{"project_release_additions", `delete from project_release_additions where account_id = $1`},
+		{"project_release_stages", `delete from project_release_stages where account_id = $1`},
+		{"build_provenance", `delete from build_provenance
+		   where build_id in (select b.id from builds b join deployments d on d.id = b.deployment_id
+		     where d.app_id in (select id from apps where account_id = $1 and (org_id is null or org_id in (select id from orgs where personal_org))))`},
 		{"snapshots", `delete from snapshots
 		   where deployment_id in
 		     (select id from deployments where app_id in
