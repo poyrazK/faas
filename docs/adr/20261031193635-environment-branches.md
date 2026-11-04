@@ -420,6 +420,33 @@ or `production` (refused for branches).
   today) and side-effect capture: events, queue messages, webhooks and mail are recorded,
   not sent. `gregale test rehearse` can then target a branch.
 
+  **Slice 6b design (decided 2026-11-04): rehearsal twins, not a branch-keyed run.** All
+  rehearsal policy hangs off one `scenario_test_action_policies` row per app, and about 81
+  schema references (mostly triggers and joins on `app_id`, over tables with no
+  deployment scope) assume it. A branch shares its app with production, so a second,
+  branch-scoped row would let a missed join count or capture production traffic into the
+  branch's run. Instead:
+  - A `simulated` branch's own instances get the `contained` profile (6a), unchanged.
+  - **Seeding.** `POST /v1/dev/sessions/{project}/seed` makes a rehearsal member, a
+    dev-session app for the run (`devSessionSlug(account, project, run)`), from one
+    workload of a `simulated` branch. The member gets a deployment that reuses the
+    branch deployment's built artifact (the same rootfs key, digest and sidecar layers;
+    layer GC counts the new reference, and the layer signature is not bound to an app),
+    plus the branch's non-managed variables and secrets. It then goes through the
+    ordinary prime: one boot and a snapshot. No source is built.
+  - **Managed data.** Managed PostgreSQL and object-storage bindings are not copied.
+    Rehearsal members cannot hold real managed bindings (`ErrScenarioManagedBindings`),
+    so the recipe declares isolated `postgres`/`objects` fixtures. A twin never touches
+    the branch's copies, nor the parent's data.
+  - **Rehearse.** A recipe service may name `from_branch: <environment>` instead of a
+    source. The runner seeds that member instead of deploying source, then registers the
+    run as today. Fixtures, the simulation broker, captured events, queue messages,
+    webhooks and mail, and the sealed action inventory all stay keyed by the twin's own
+    app, so no rehearsal query changes and production can never match.
+  - **Gate.** `simulated` uses the same operator gate as `contained`, and seeding also
+    needs the rehearsal gates the run itself requires (network containment and action
+    simulation).
+
 ### 8. Lifecycle, limits and billing
 
 - **Expiry and deletion.**
