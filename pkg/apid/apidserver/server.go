@@ -2139,8 +2139,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOverageCap))))
 	// Raising or clearing the spend cap is a billing change: admin, like
 	// the plan and billing routes, so a deploy-scoped CI key or MCP
-	// connection cannot remove the account's spending ceiling.
-	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.raiseOverageCap)))))
+	// connection cannot remove the account's spending ceiling. A session
+	// also needs a recent step-up, as the dashboard and organization cap
+	// routes do (ADR-20261103131742 amendment 1).
+	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.raiseOverageCap))))))
 	// IAM-5 (issue #189): per-account rotation grace-window
 	// override. Admin-only because the rotation primitive is
 	// admin-only (POST /v1/keys/{id}/rotate mirrors the same
@@ -4825,14 +4827,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/invoices/{id}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceRefresh))))
 	mux.HandleFunc("POST /v1/invoices/backfill", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceHistoryBackfill))))
 
-	// Billing portal link (issue #253). Read-only — the URL itself
-	// does not mutate anything; the customer-facing mutations live
-	// inside the provider-hosted portal that the URL points to. Same
-	// access tier as usage/invoices (usage:read scope) but NO MFA
-	// gate: the portal is a read in HTTP terms, but it creates an
-	// authenticated Stripe session where the customer can mutate billing.
-	// Email verification therefore applies before the redirect leaves Gregale.
-	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.getBillingPortal))))
+	// Billing portal link (issue #253). The URL is a signed-in provider
+	// session where the holder cancels the subscription, replaces the card
+	// and reads invoices, so it takes what cancelling takes: an admin
+	// credential, MFA, a verified email and a recent step-up for a session
+	// (ADR-20261103131742 amendment 1). A usage:read key handed it out
+	// before. authLimited keeps it open to suspended accounts, which pay
+	// through it.
+	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.getBillingPortal))))))
 	// Customer billing status is a read-only account projection. It must not
 	// depend on operator allowlists or provider-specific catalog APIs.
 

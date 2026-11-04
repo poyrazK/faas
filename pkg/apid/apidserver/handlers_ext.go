@@ -5461,6 +5461,12 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		s.scheduleProviderPlanChange(w, r, acct, billingAcct, changer, plan)
 		return
 	}
+	// Asking for the plan already paid for keeps the subscription: a
+	// scheduled cancellation or downgrade is undone (ADR-20261103131742
+	// amendment 1).
+	if s.keepSubscriptionPlan(w, r, acct) {
+		return
+	}
 	if err := s.setAccountPlan(r.Context(), acct, plan); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update plan"))
 		return

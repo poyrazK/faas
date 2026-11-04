@@ -130,6 +130,15 @@ export class AccountService {
    * pays for another account or organization answers 409
    * `billing_email_in_use`.
    *
+   * Asking for the plan the account already pays for keeps its
+   * subscription: a scheduled cancellation or downgrade is undone and the
+   * 200 carries `plan_change_status: scheduled_change_undone`. A
+   * subscription scheduled to end changes no plan, so an upgrade or
+   * downgrade then answers 409 `billing_subscription_ending` until it is
+   * kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+   * answers 402 `payment_authentication_required` with
+   * `billing_portal_url`; nothing is charged and the plan stays.
+   *
    * @returns AccountResponse The updated account profile after the plan change.
    * @throws ApiError
    */
@@ -280,7 +289,8 @@ export class AccountService {
    *
    * Once current-month overage meets/exceeds the cap, the scheduler refuses
    * new wakes with `code: admission_refused` (HTTP 402). The cap is
-   * account-self-scoped (admin scope required) and the response
+   * account-self-scoped (admin scope required; a dashboard session also
+   * needs a step-up within the last 5 minutes) and the response
    * is the post-update account state. Audit row
    * `overage.cap_changed` is emitted on every successful call.
    *
