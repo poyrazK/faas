@@ -768,8 +768,14 @@ consumption and a finite accounting endpoint: the policy window containing the
 provider-confirmed shutdown, rounded up only when shutdown is inside that window.
 The collector waits for an open final window to close, then recovers through that
 endpoint and replays its final three-window tail. Every tail window must have an
-observation at or after the endpoint plus three policy windows. Failed final
-replay leaves admission stale; a newer successful window cannot hide it.
+observation at or after the endpoint plus three policy windows. Admission waits
+for the coverage through the endpoint, not for the tail: the tail revises windows
+that already have a reading, so it blocks admission only once it is overdue by
+`usage.stale_after_seconds` past that deadline. A failed final replay then leaves
+admission stale; a newer successful window cannot hide it. With hourly windows a
+deletion pauses new databases, restores and resizes until the hour it happened in
+has closed and been collected, not for the three hours after
+([ADR-20261104143000](adr/20261104143000-managed-postgres-deletion-does-not-wait-for-corrections.md)).
 
 After that bounded evidence is complete, the tombstone needs no provider calls
 and never ages into staleness merely because it has been deleted. Restore
@@ -837,7 +843,9 @@ Each resource includes its accounting root, required/collected ranges, observati
 times, lease expiry, and stable stale-admission reasons: `identity_unknown`,
 `legacy_identity_unknown`, `coverage_missing`, `window_mismatch`,
 `shutdown_unconfirmed`, `coverage_incomplete`, `observation_stale`, or
-`final_correction_pending`. Shared restores use their root's evidence. Unknown
+`final_correction_pending` (the final correction tail is overdue: its deadline,
+`correction_required_at`, passed more than `usage.stale_after_seconds` ago).
+Shared restores use their root's evidence. Unknown
 legacy tombstones have no confirmed terminal deadline. A disabled policy reports
 no blockers, while retaining identity and coverage metadata. Empty reasons do not
 establish budget headroom or final provider settlement. Provider IDs and credential
