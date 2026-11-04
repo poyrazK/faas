@@ -212,15 +212,15 @@ func TestPGMFAEnabledAlertAtomicEnrollmentAndRollback(t *testing.T) {
 			if len(r.SealedVerification) != 0 || len(r.VerificationTokenHash) != 0 || r.VerificationOrigin != "" {
 				t.Fatal("alert contains credentials")
 			}
-			if err := confirmEnrollment(t, f, id, p); err != nil {
-				t.Fatal("valid repeated confirmation failed", err)
+			if err := confirmEnrollment(t, f, id, p); !errors.Is(err, ErrMFAEnrollmentAlreadyEnabled) {
+				t.Fatal("repeated confirmation must not authenticate another session", err)
 			}
 			var unchanged bool
 			if err := f.pool.QueryRow(t.Context(), "SELECT mfa_enrolled_at=$2 AND mfa_revision=$3,(SELECT count(*) FROM platform_mail_producer_outbox WHERE template='mfa_enabled') FROM accounts WHERE id=$1", id, at, revision).Scan(&unchanged, &events); err != nil || !unchanged || events != 1 {
 				t.Fatal("repeat confirmation rewrote activation or duplicated event", err)
 			}
-			if err := f.service.ConfirmMFAEnrollmentWithAlert(t.Context(), id, "one@example.net", "bad", keys); !errors.Is(err, ErrMFAEnrollmentInvalidCode) {
-				t.Fatal("repeat bypassed TOTP possession", err)
+			if err := f.service.ConfirmMFAEnrollmentWithAlert(t.Context(), id, "one@example.net", "bad", keys); !errors.Is(err, ErrMFAEnrollmentAlreadyEnabled) {
+				t.Fatal("already-enrolled account accepted another confirmation", err)
 			}
 		})
 	}
@@ -233,14 +233,21 @@ func TestPGMFAEnabledAlertConcurrentConfirmationAndSupersededSetup(t *testing.T)
 	saveEnrollment(t, f, id, p)
 	code := p.code(t)
 	var wg sync.WaitGroup
+	var confirmed atomic.Int64
 	for range 2 {
 		wg.Go(func() {
-			if err := f.service.ConfirmMFAEnrollmentWithAlert(t.Context(), id, "one@example.net", code, []*age.X25519Identity{p.host}); err != nil {
+			err := f.service.ConfirmMFAEnrollmentWithAlert(t.Context(), id, "one@example.net", code, []*age.X25519Identity{p.host})
+			if err == nil {
+				confirmed.Add(1)
+			} else if !errors.Is(err, ErrMFAEnrollmentAlreadyEnabled) {
 				t.Error(err)
 			}
 		})
 	}
 	wg.Wait()
+	if confirmed.Load() != 1 {
+		t.Fatalf("accepted %d confirmations, want one", confirmed.Load())
+	}
 	var count int
 	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM platform_mail_producer_outbox WHERE template='mfa_enabled'").Scan(&count); err != nil || count != 1 {
 		t.Fatal("concurrent confirmation duplicated alert", err)
@@ -277,7 +284,7 @@ func TestPGMFAEnabledAlertExistingEnrollmentDoesNotBackfill(t *testing.T) {
 	if err := state.NewPgStore(f.pool).MarkMFAEnrolled(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
-	if err := confirmEnrollment(t, f, id, p); err != nil {
+	if err := confirmEnrollment(t, f, id, p); !errors.Is(err, ErrMFAEnrollmentAlreadyEnabled) {
 		t.Fatal(err)
 	}
 	var n int

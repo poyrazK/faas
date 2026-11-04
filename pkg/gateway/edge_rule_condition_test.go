@@ -57,6 +57,27 @@ func TestApplicableEdgeRulesFiltersByCondition(t *testing.T) {
 	}
 }
 
+// adr: 091 — a condition on path reads the path the rule is being matched
+// on, not the request's current path: an access gate matching the client's
+// path after a rewrite sees the client's path in its condition, and the
+// rewritten-path match sees the rewritten one (amendment 2026-11-03, review
+// round 9).
+func TestEdgeRuleConditionPathIsThePathTheRuleMatchesOn(t *testing.T) {
+	rules := []EdgeRuleResolved{{ID: "api", AccountID: "acct",
+		EdgeRuleCondition: conditionFromJSON(t, `{"field":"path","op":"regex","value":"^/api/"}`)}}
+	account := func(r *EdgeRuleResolved) string { return r.AccountID }
+	req := httptest.NewRequest(http.MethodGet, "http://api.example.com/api/users", nil)
+	ctx := WithEdgeRuleOwner(context.Background(), "acct")
+	ctx = WithEdgeRuleMatchContext(ctx, NewEdgeRuleMatchContext(req, nil, nil, nil))
+	req.URL.Path = "/users" // a rewrite runs after the snapshot is taken
+	if got := ApplicableEdgeRules(ctx, rules, account, "/api/users", http.MethodGet); len(got) != 1 {
+		t.Fatalf("client-path match = %v, want the /api condition to hold", got)
+	}
+	if got := ApplicableEdgeRules(ctx, rules, account, "/users", http.MethodGet); len(got) != 0 {
+		t.Fatalf("rewritten-path match = %v, want the /api condition to fail", got)
+	}
+}
+
 // adr: 962 — the country lookup runs at most once per request, and an
 // untrusted client IP leaves both client_ip and country absent.
 func TestEdgeRuleMatchContextCountryLookupIsLazyAndOnce(t *testing.T) {

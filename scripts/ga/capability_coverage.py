@@ -72,7 +72,7 @@ RULES = [
     (r"retained-service-spans|spans-", "Tracing:"),
     (r"response-status-hooks", "Throttle suggestions"),
     (r"^warmup$", "Warm pool"),
-    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|private-ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|health-path|host|iface|ingress-cidrs|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
+    (r"^(apps-root|artifact-sync-.*|compute-mem-mb|control-plane-api-target|cp-state-backup-.*|curl|drill-.*|edge-discovery-url|git-sha|h2-?c-.*|ha-.*|host-(age-pub|age-recipient-path|bridge-cidr|hmac-key-path|key-path|name)|internal-target|json|masquerade-cidr|origin-ip|output|private-ingress-cidrs|public-(control-addr|edge-control-plane-target|edge-mode|entry-addrs|health-path|host|iface|ingress-cidrs|listen-addr|private-listen-addr)|quiet-pause(-observe)?|rclone-bin|repo-root|require-shared-artifacts|sample-interval|sign-pub|token|trusted-ingress-cidrs)$", "INFRA"),
     (r"^(control|dns-handoff|edge-health-outcome|handler|inflight|pgbackend|rule-label-set|stale-target|workload-retirement)$", "INFRA"),
     (r"^/v1/apps/\\$|^/v1\?api.key", "TEST"),
     (r"^app-layer-max", "Builds in builder"),
@@ -197,7 +197,7 @@ RULES = [
     (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink", "Signup, login"),
     (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags", "Customer feature flags"),
     # --- developer tools
-    (r"mcp-management|mcpmanagement|agent-connections|agentconnections|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
+    (r"mcp-management|mcpmanagement|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
     (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories", "Docs site and trust pages"),
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
@@ -390,6 +390,12 @@ INFRA_RULES = [
     r"^edge-local-first$",
     # ADR-20261102081618: the records that send Cloudflare to the compute edges.
     r"^edgednsd?(-.*)?$",
+    # ADR-20261103163954: what stands in front of a compute edge's TLS listener.
+    r"^edge-public-front$",
+    # ADR-20261103163954 §4: the compute edge's per-client-address limits.
+    r"^edge-client-limits$",
+    # ADR-20261103163954 §4: Cloudflare's ranges skip those connection limits.
+    r"^edge-proxy-cidrs$",
 ]
 
 

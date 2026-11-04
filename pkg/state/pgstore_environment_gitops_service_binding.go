@@ -61,16 +61,18 @@ func (s *PgStore) ResolveEnvironmentGitOpsServiceBinding(ctx context.Context, ca
 	if callerApp.Status == AppDeleted || callerApp.AccountID == "" {
 		return zero, true, false, ErrConflict
 	}
-	var enforce bool
-	if err := s.pool.QueryRow(ctx, `select exists(
-		select 1 from active_environment_git_sources source
+	// Reconciliation mode and suspension do not withdraw an active release.
+	// Keep checking the binding's scope before resolving its frozen members.
+	var reconciling bool
+	if err := s.pool.QueryRow(ctx, `select source.mode='enforce' and not source.suspended
+		from active_environment_git_sources source
 		where source.id=$1::uuid and source.account_id=$2::uuid and source.project_id=$3::uuid
-		  and source.environment_id=$4::uuid and source.mode='enforce' and not source.suspended
-		)`, caller.SourceID, callerApp.AccountID, callerApp.ProjectID, caller.EnvironmentID).Scan(&enforce); err != nil {
+		  and source.environment_id=$4::uuid
+		`, caller.SourceID, callerApp.AccountID, callerApp.ProjectID, caller.EnvironmentID).Scan(&reconciling); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return zero, true, false, ErrConflict
+		}
 		return zero, true, false, err
-	}
-	if !enforce {
-		return zero, true, false, ErrConflict
 	}
 	var release ProjectReleaseSet
 	err = s.pool.QueryRow(ctx, `
@@ -147,5 +149,6 @@ func (s *PgStore) ResolveEnvironmentGitOpsServiceBinding(ctx context.Context, ca
 		TargetAppID: targetAppID, TargetDeploymentID: targetDeploymentID,
 		ReleaseSetID: release.ID, AccountID: callerApp.AccountID,
 		RequireHTTPS: requireHTTPS, CallScope: callScope, Reliability: reliability,
+		ReconciliationActive: reconciling,
 	}, true, true, nil
 }

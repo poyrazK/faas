@@ -188,6 +188,11 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 			deferred++
 			continue
 		}
+		if err := g.startAccountHostingDeletion(ctx, acct.ID); err != nil {
+			g.p.Log.Warn("grace: hosting site cleanup deferred", "account", acct.ID, "err", err)
+			deferred++
+			continue
+		}
 		// Past grace — hard delete. The next tick will skip this row
 		// because DeleteAccount removed it; we still guard on the
 		// returned ErrNotFound for the redelivery race (two ticks
@@ -196,6 +201,17 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 			if errors.Is(err, state.ErrNotFound) {
 				continue
 			}
+			// A refused erasure is held, not dropped: it counts toward
+			// apid_account_grace_deferred_accounts, so
+			// FaasAccountErasureDeferred pages after a day. Before, it was
+			// only this log line, every tick, forever (2026-11-03).
+			deferred++
+			stage := "account_purge"
+			var blocked *state.AccountPurgeBlockedError
+			if errors.As(err, &blocked) {
+				stage = "account_purge_" + blocked.Reason
+			}
+			g.metrics.failure(stage)
 			g.p.Log.Warn("grace: hard delete failed", "account", acct.ID, "err", err)
 			continue
 		}
@@ -253,6 +269,30 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 // tombstone the apps, so the app purge never ran for them and their objects
 // stayed in the snapshot backend and layer store forever (bug hunt
 // 2026-10-28 B19). Any failure defers the account to the next pass.
+// startAccountHostingDeletion starts the deletion of every active hosting site
+// of an account past its grace. The hosting reconciler retires each site's
+// routes and releases and then purges it; DeleteAccount refuses
+// (hosting_site) until none is left, so the account waits a few ticks.
+func (g *Grace) startAccountHostingDeletion(ctx context.Context, accountID string) error {
+	hosting, ok := g.p.Store.(state.HostingStore)
+	if !ok {
+		return nil
+	}
+	sites, err := hosting.ListHostingSites(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("list hosting sites: %w", err)
+	}
+	for _, site := range sites {
+		if site.Status != "active" {
+			continue
+		}
+		if _, err := hosting.DeleteHostingSite(ctx, accountID, site.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("delete hosting site %s: %w", site.ID, err)
+		}
+	}
+	return nil
+}
+
 func (g *Grace) deleteAccountAppArtifacts(ctx context.Context, accountID string) error {
 	apps, err := g.p.Store.ListApps(ctx, accountID)
 	if err != nil {

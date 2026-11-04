@@ -253,6 +253,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	edgeLimits, err := edgeClientLimitsFromEnv(edgeMode, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if edgeTLS.direct() && !edgeLimits.on {
+		log.Warn("gatewayd-public: the edge serves clients directly without per-address limits; set " + edgeClientLimitsEnv + "=1 (ADR-20261103163954 §4)")
+	}
 	// ADR-20261026100000: the platform, apps, deployment-preview and alias
 	// domains. Only FAAS_APPS_DOMAIN set keeps the shared layout.
 	domains, err := hostidentity.DomainsFromEnv(os.Getenv, hostidentity.DefaultAppsDomain, hostidentity.FileConfig{})
@@ -405,6 +412,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	internalURL := &url.URL{Scheme: "http", Host: "gatewayd-internal"}
 	var internalDialer gateway.InternalDialer
 	edgeMetricsSet := newEdgeMetrics()
+	edgeLimits.refused = edgeMetricsSet.refused
 	// A dynamic dialer can pick a different upstream per request, so the
 	// transport must not pool connections under the one logical URL.
 	dynamicUpstream := upstreamMode == internalUpstreamDatabase
@@ -538,6 +546,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(opsMetrics, pool)
+	edgeCerts, err := startEdgeCertificates(ctx, edgeTLS, pool, probe, edgeMetricsSet.registry, log)
+	if err != nil {
+		return err
+	}
 	probe.SetReadyObserver(func(ready bool, reason string) {
 		opsMetrics.MarkReady("gatewayd-public", ready, reason)
 	})
@@ -621,6 +633,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: %w", err)
 		}
+		// ADR-20261103163954 §4: bounded however many clients send them.
+		edgeForward = edgeLimits.forwards(edgeForward)
 	}
 	traceMux := http.NewServeMux()
 	var tenantRoot http.Handler
@@ -700,6 +714,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}()
 	}
 	rootHandler := http.Handler(controlPlaneHandler)
+	// Public-read host lookups run in front of every GET and HEAD; names this
+	// edge never saw name an app spend a budget (ADR-20261103163954 §4).
+	hostLookups := objectstorage.NewHostLookupBudget("gatewayd_public_object")
+	opsMetrics.Registry().MustRegister(hostLookups.Collectors()...)
 	if edgeMode == edgeModeCompute {
 		// Upload routes go to the control plane's edge: only apid resolves
 		// their keys. Public bucket reads are served here once the node holds
@@ -716,14 +734,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			fenceOpen := startObjectStorageFence(runtimeCtx, pgStore, log)
 			reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 			defer stopReads()
-			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, func() bool { return s3Flag.Load() && fenceOpen() },
+			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
 				domains, controlPlaneHandler, log)
 			if err != nil {
 				return err
 			}
 			log.Info("gatewayd-public: public object reads served on this node", "max_bytes_per_second", budget)
 		}
-		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, localReads, pgStore, domains, log)
+		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, localReads, pgStore, hostLookups, domains, log)
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
@@ -743,7 +761,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// flush runs before the pool closes.
 		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 		defer stopReads()
-		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, func() bool { return s3Flag.Load() && fenceOpen() },
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
@@ -790,6 +808,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// mode it is answered here and never reaches tenant code.
 	publicHandler = aliasHosts(publicHandler, domains)
 	if edgeMode == edgeModeCompute {
+		// ADR-20261103163954 §4: inside cloudflareClientIP, so behind
+		// Cloudflare the request rate counts against CF-Connecting-IP.
+		publicHandler = edgeLimits.body(publicHandler)
+		publicHandler = edgeLimits.hosts(publicHandler)
+		publicHandler = edgeLimits.requests(publicHandler, trustedIngressCIDRs)
 		// Outermost, so every layer below sees the canonical client address.
 		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)
 	}
@@ -846,7 +869,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// only serves /healthz, /readyz, /metrics — so it's not
 	// counted.
 	publicSrv.ConnState = inflight.ConnState
-	edgeTLS.attach(publicSrv, log, edgeMetricsSet.tlsHandshakeFailures)
+	edgeTLSErrors := edgeTLS.attach(publicSrv, log, edgeMetricsSet.tlsHandshakeFailures)
 
 	// Tier A8 / ADR-083 (code-review fix #2 + #6): start the
 	// DNSHandoff subscriber and the StandbyWarmup loop. Both are
@@ -870,7 +893,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	if edgeTLS.enabled() {
-		if listeners.tls, err = openEdgeTLSListener(edgeTLS); err != nil {
+		appHost := func(name string) bool { return isAppHost(name, domains) }
+		if listeners.tls, err = openEdgeTLSListener(ctx, edgeTLS, appHost, edgeCerts, edgeLimits, edgeTLSErrors.handshakeFailed); err != nil {
 			listeners.close()
 			return err
 		}

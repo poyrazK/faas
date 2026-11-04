@@ -353,6 +353,10 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 	# kept generous for slow runners. Memory: cmd-e2e-coverage-timeout-edge.md
 	$(GO_TEST) -race -count=1 -timeout=18m $(PKGS)
 
+.PHONY: test-mcp-agent-workflows
+test-mcp-agent-workflows: ## Evaluate MCP discovery and recovery workflows against local native API fixtures
+	$(GO_TEST) -count=1 -run 'Test(AgentWorkflow|RecoveryContracts|VerificationContracts|FocusedCatalog|CoreCatalogStaysSmall)' ./pkg/mcpmanagement
+
 .PHONY: test-apid
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
@@ -1111,6 +1115,7 @@ gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM
 	python3 scripts/ops/gcp_public_beta_iam_test.py
 	python3 deploy/scripts/faas-rclone-backup-identity_test.py
 	bash -n scripts/ops/gcp_public_beta_converge.sh
+	bash scripts/ops/gcp_custom_domain_tls_test.sh
 	bash scripts/ops/gcp_provision_compute_test.sh
 	bash -n scripts/ops/gcp_retire_compute.sh
 
@@ -1427,7 +1432,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/mcpmanagement/statepg/queries.sql pkg/mcpmanagement/statepg/schema.sql "$$tmp/pkg/mcpmanagement/statepg/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/edgecert/certpg pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/applabels pkg/state/resourcelabels pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \
@@ -1446,7 +1451,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/managedpostgres/connectioncapacity"; \
 	  cp pkg/managedpostgres/connectioncapacity/queries.sql pkg/managedpostgres/connectioncapacity/schema.sql "$$tmp/pkg/managedpostgres/connectioncapacity/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
+	  for package in pkg/edgecert/certpg/sqlc pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1998,4 +2003,4 @@ check-binding-runner-sync:
 	python3 scripts/sync_binding_runner.py --check
 .PHONY: test-data-pipeline
 test-data-pipeline: ## Real TLS Postgres replication and signed HTTP acceptance (Docker, Node, Go)
-	@bash scripts/test-data-pipeline.sh
+	@$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) bash scripts/test-data-pipeline.sh

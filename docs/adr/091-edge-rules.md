@@ -1762,3 +1762,101 @@ and a geo rule that refused clients it had no reason to refuse.
    allowed (an app may want a gate only for one client), but
    `gregale edge rule create` now warns, and the docs say to scope gates by
    path, method, `client_ip`, `country` or `asn`.
+
+## Amendment (2026-11-03): review round 9 — both paths' gates, route rule edits, rename reports, company lists, broken rules
+
+A review of main after round 8 found these gaps.
+
+1. **Access gates enforce the rule for both paths.** Round 8 made the `ip`,
+   `geo`, `jwt`, `throttle`, `waf` and `challenge` gates match the client's
+   path first and the rewritten path second, but each gate still enforced one
+   rule: a rule written for the rewritten path (an `ip` deny on
+   `/internal/**`) stopped applying whenever another rule of the kind matched
+   the client's path (an `ip` allow on `/legacy/**`). Before round 8 the
+   rewritten-path rule applied. When a rewrite changed the path and the two
+   paths match different rules, the gate now enforces both, client path
+   first; one rule matching both paths applies once. Two `jwt` rules verify
+   the one bearer token against each, two `throttle` rules charge both
+   buckets, and two `waf` rules inspect against each. The trace does the
+   same. A rule's condition on `path` already saw the path the rule is
+   matched on; a test now pins it.
+2. **An app-bound credential cannot widen a route rule it may not write.**
+   The route-target check ran only when an update changed the action, so a
+   deploy token could change `match_path`, methods, headers or `enabled` of
+   an account credential's route rule on its app that serves another app.
+   Every update of a stored route rule now runs the app-bound target check.
+3. **A rename reports rules it could not move.** The rename's route-rule
+   retarget and platform-hostname move ran after the rename committed, and a
+   failure was only logged. Each step re-lists by the old slug, so it is
+   retried once; what still fails is written to the account's audit trail
+   (`app.rename_edge_rules_incomplete`) and answered as a `Warning` header
+   naming the rules to review.
+4. **Organizations manage their own lists and presets.** Lists and CORS
+   presets are account objects, and a company app's rules resolve them in
+   the namespace of the account that owns the app's resources, so only the
+   app's creator could manage them, and once the creator left the lists its
+   rules used were frozen. `edge_rule_lists.org_id` (expand migration) marks
+   a list created through a company app. `/v1/edge-rule-lists` and
+   `/v1/cors-presets` take `?app=<slug>`: for a company app, the member's
+   organization role on it decides (read for GET, manage app security for
+   writes), and the request manages that organization's lists (and personal
+   lists that only its apps' rules use, which predate the marker) and that
+   app's own presets. It never sees the creator's other lists or
+   account-wide presets, and the personal path no longer shows organization
+   lists. The app's dashboard page does the same, and `gregale edge rule-list
+   ... --app` uses it. Lists keep their namespace, which is where the gateway
+   resolves a rule's lists, so the gateway is unchanged; the marker decides
+   who manages a list, not where a rule finds it.
+5. **A list's item cap uses the company's plan.** Through a company app the
+   request acts as the account that owns the app's resources, as every other
+   company-app quota does, so the cap is the organization's plan rather than
+   the creator's personal one.
+6. **A broken rule names itself.** A rule the gateway cannot enforce fails
+   its hosts closed (round 8), but the 503 said "retry shortly", and nothing
+   told the owner which rule. The 503 now names the rule, and `gregale edge
+   rule list` warns about every rule whose stored WAF or challenge values
+   this release refuses (`api.EdgeRuleEnforcementProblem`, the same check the
+   gateway runs). A release that tightens those bounds must first find the
+   stored rules outside them (docs/release-compatibility.md).
+
+## Amendment (2026-11-04): review round 10 — preset references, list and preset scope, exports
+
+A review of main after round 9 found these gaps.
+
+1. **Rules kept no preset.** `ActionFromBody` copied only a cors action's
+   inline fields, so a rule naming `cors_preset_id`, written through the API
+   or the dashboard, was stored as an empty CORS rule; a preset that did not
+   exist was accepted; and `edge_rules.cors_preset_id`, which the preset's
+   fencing, authorization and `ON DELETE SET NULL` work from, was set only by
+   the manifest path. Rule writes now keep the reference in the action and
+   the column (an update that replaces a cors action sets or clears both),
+   and refuse a preset the account does not have, one scoped to another app,
+   or, for a company app, an account-wide preset of the member whose account
+   holds the app's rules. Rules written before this release lost their
+   reference and must be saved again with it. Deleting a preset that rules
+   use is refused (409 naming them), as for lists: it left those rules naming
+   a missing preset, failing their hosts closed.
+2. **A rule names only lists of its app's scope.** List references resolved
+   anywhere in the account's namespace, so naming the app creator's private
+   list from a company rule made it readable to the organization, the error
+   told which private names existed, and naming an organization list from a
+   personal rule froze it for the organization. A company app's rule now
+   names its organization's lists (and personal lists only its
+   organization's apps already use); a personal app's rule names personal
+   lists. Anything else reads as unknown. Lists keep their namespace, which
+   is where the gateway resolves them, so a list created through one
+   member's company app is not available to an app another member created;
+   the refusal says to create it with `--app` for that app. One namespace per
+   organization would need the gateway to resolve lists by organization and
+   is a separate decision.
+3. **Exports and presets of a company app stay with the organization.** The
+   account export carried the organization lists held in a member's
+   account, also after the member left; it now carries personal lists only,
+   and adds the account's CORS presets (account-wide and those of exported
+   apps; rules naming them were exported without them). On the personal
+   path, an app-scoped preset now passes the check of its app's route
+   permission, so a member who left can no longer read, change or delete a
+   company app's presets.
+4. **Each list scope has its own cap.** The per-account list cap counted
+   organization and personal lists together; it now counts the new list's
+   scope.

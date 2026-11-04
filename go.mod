@@ -38,6 +38,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/klauspost/compress v1.20.3
 	github.com/libdns/libdns v1.1.1
+	github.com/mholt/acmez/v3 v3.1.7
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/nats-io/nats.go v1.55.0
 	github.com/oschwald/maxminddb-golang v1.13.1
@@ -68,7 +69,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.11.1
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.58.0
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0
@@ -309,7 +310,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/mgechev/revive v1.17.0 // indirect
-	github.com/mholt/acmez/v3 v3.1.7 // indirect
 	github.com/miekg/dns v1.1.73
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect

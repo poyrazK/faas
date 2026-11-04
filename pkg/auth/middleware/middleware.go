@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -600,6 +601,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						return
 					}
 				}
+				// ADR-20261104085712: an agent or mcp-login key limited to
+				// projects reaches only their apps and routes.
+				if m.limitKeyToProjects(w, r, acct, &key) {
+					return
+				}
 				*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
 				// TouchKeyLastUsed is observability, not auth —
 				// detached context + bounded timeout so a slow PG
@@ -1059,15 +1065,31 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		}
 		return state.Session{}, true, nil
 	}
-	// (3.5) binding-hash mismatch = stolen-cookie auto-revoke
+	// (3.5) binding mismatch = stolen-cookie auto-revoke
 	// (IAM hardening mega-PR, logical change 5, ADR-076).
-	// Compare the envelope's binding_hash (sealed by AEAD at mint
-	// time) against the sessions row's binding_hash column.
-	// Either side empty = "binding not armed" (pre-PR-076 cookie
-	// or unix-socket code path); cross-check is skipped in that
-	// case. Mismatch ⇒ auto-revoke + audit + 401.
-	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" &&
-		env.BindingHash != sess.BindingHash {
+	// The envelope's binding hash (sealed at mint) must equal the
+	// live row's, and this request's browser family must equal the
+	// family the session was issued to, so a cookie copied into a
+	// different client (curl, another browser) is still caught.
+	//
+	// The client IP is deliberately NOT re-checked per request. The
+	// console reaches apid through a proxy (Vercel) whose egress
+	// address changes between requests, and browsers move between
+	// networks and between IPv4 and IPv6. rc.321 recomputed the
+	// IP-keyed hash on every request and revoked every console
+	// session on its first request from a new egress address.
+	//
+	// Either hash empty = "binding not armed" (pre-PR-076 cookie
+	// or unix-socket code path); the check is skipped in that
+	// case. An empty issued UA skips only the family comparison.
+	// Mismatch ⇒ auto-revoke + audit + 401.
+	bindingArmed := m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != ""
+	issuedFamily, presentedFamily := "", ""
+	if bindingArmed && sess.IssuedUA != "" {
+		issuedFamily = bindinghash.UAFamily(sess.IssuedUA)
+		presentedFamily = bindinghash.UAFamily(r.UserAgent())
+	}
+	if bindingArmed && (env.BindingHash != sess.BindingHash || issuedFamily != presentedFamily) {
 		// Best-effort revoke. Failure is logged but the
 		// 401 still returns — the request is rejected
 		// regardless of the revoke's success.
@@ -1080,11 +1102,13 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 		// Audit emit (best-effort — never blocks the 401).
 		if m.Audit != nil {
 			m.Audit.Emit(ctx, "auth.session.binding_mismatch", &env.AccountID, map[string]any{
-				"sid":              env.Sid,
-				"method":           r.Method,
-				"path":             r.URL.Path,
-				"expected_prefix":  prefix8(sess.BindingHash),
-				"presented_prefix": prefix8(env.BindingHash),
+				"sid":                 env.Sid,
+				"method":              r.Method,
+				"path":                r.URL.Path,
+				"expected_prefix":     prefix8(sess.BindingHash),
+				"presented_prefix":    prefix8(env.BindingHash),
+				"expected_ua_family":  issuedFamily,
+				"presented_ua_family": presentedFamily,
 			})
 		}
 		m.clearSessionCookie(w)
@@ -1252,7 +1276,7 @@ func isBillingRecoveryRoute(method, path string) bool {
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
-		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover":
+		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover", "GET /v1/auth/csrf":
 		return true
 	}
 	return false
@@ -1644,7 +1668,7 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 			"Not found", "no such app"))
 		return state.App{}, false
 	}
-	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" && p.Key.AppID != app.ID {
+	if p, ok := principalFrom(r); ok && p.Key != nil && (p.Key.AppID != "" && p.Key.AppID != app.ID || AppOutsideKeyProjects(p.Key, app)) {
 		// App-bound deploy tokens must not be usable against another
 		// app in the same account. Collapse the mismatch to the same
 		// 404 shape as a cross-account slug probe.
@@ -1681,6 +1705,11 @@ func IsUploadSessionPath(path string) bool {
 // /v1/apps/{slug} routes, the upload routes and its app's deployment reads,
 // and nothing else. It answers the request and reports true when it refuses.
 func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Request, key state.APIKey, title string) bool {
+	// App agents inspect their own minimal principal and platform capabilities
+	// before connecting to MCP. This grants no account inventory or mutations.
+	if slices.Contains(key.Scopes, api.ScopeAgent) && r.Method == http.MethodGet && (r.URL.Path == "/v1/account" || r.URL.Path == "/v1/capabilities") {
+		return false
+	}
 	// The resumable upload routes are the CLI's default source
 	// deploy path. They name their app in the request body or the
 	// stored session, so the app binding is enforced where the
@@ -1690,9 +1719,12 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	// A deploy follows the deployment it created; the route
 	// is bound by the deployment's app, not a path slug.
 	deploymentRead := deployTokenDeploymentReads[r.Pattern]
-	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead {
+	// CI waits for its app's PR previews; the route is bound by the
+	// preview's production app (ADR-20261102203228).
+	previewStatusRead := appBoundPreviewStatusReads[r.Pattern]
+	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead && !previewStatusRead {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments"))
+			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments and preview status"))
 		return true
 	}
 	var bound bool
@@ -1700,6 +1732,8 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	switch {
 	case uploadRoute:
 		bound = key.AppID != ""
+	case previewStatusRead:
+		bound, bindErr = m.credentialBoundToPreview(r, key)
 	case deploymentRead:
 		bound, bindErr = m.deployTokenBoundToDeployment(r, key)
 	default:
@@ -1721,6 +1755,37 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 		return true
 	}
 	return false
+}
+
+// appBoundPreviewStatusReads are the PR preview status reads an app-bound
+// credential may make for its own app's previews.
+var appBoundPreviewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// credentialBoundToPreview reports whether the {slug} of a preview status read
+// names a preview of the app the credential is bound to.
+func (m *Middleware) credentialBoundToPreview(r *http.Request, key state.APIKey) (bool, error) {
+	slug := r.PathValue("slug")
+	if slug == "" || key.AppID == "" {
+		return false, nil
+	}
+	preview, err := m.Authn.AppBySlug(r.Context(), slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil || preview.PreviewOfSlug == "" {
+		return false, err
+	}
+	parent, err := m.Authn.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return parent.ID == key.AppID && parent.AccountID == preview.AccountID, nil
 }
 
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {

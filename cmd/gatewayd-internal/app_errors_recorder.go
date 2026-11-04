@@ -40,9 +40,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/redact"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -166,12 +168,15 @@ type appErrorRow struct {
 	DeploymentCreatedAt string
 	ImageDigest         string
 	RequestID           string
+	IssueEventID        string
 	ReceivedAt          time.Time
 
 	// Count is how many requests the record stands for; RequestRowOmitted
 	// marks a record that only counts them (bug hunt 2026-10-28 H41).
 	Count             int64
 	RequestRowOmitted bool
+	// At most 1,000 millisecond counts for a folded HTTP 5xx batch.
+	IssueTimeBuckets []uint32
 
 	// LastSeen is the LRU bookkeeping field (NOT a wire
 	// field). The recorder bumps LastSeen on every cache
@@ -323,6 +328,14 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 		var redactions []string
 		var headerRedactions []string
 		redactedSample, redactions = r.redact.Apply(sample)
+		// Replacement markers and the redactor's ellipsis can exceed its
+		// input cap. Bound the final evidence before the receiver validates it.
+		// The legacy PostgreSQL CHECK measures the text datum, including its
+		// four-byte varlena header, rather than just its UTF-8 bytes.
+		if len(redactedSample) > api.AppErrorsSampleMessageCapBytes-4 {
+			redactedSample = safetext.Truncate(redactedSample, api.AppErrorsSampleMessageCapBytes-4)
+			redactions = mergeRedactions(redactions, []string{"truncated"})
+		}
 		redactedHeaders, headerRedactions := r.redact.ApplyHeaders(headers)
 		allRedactions = mergeRedactions(redactions, headerRedactions)
 		headersJSON = mapToJSON(redactedHeaders)
@@ -416,7 +429,7 @@ func (r *appErrorsRecorder) cacheAdmit(key string) bool {
 	return true
 }
 
-// enqueue queues row for key (app + fingerprint), or adds it to the count of
+// enqueue queues row for key (app + fingerprint + deployment), or adds it to the count of
 // the newest queued record for key. A request gets its own record while key
 // has fewer than api.AppErrorsRequestSamplesPerFlush request rows queued and
 // its app has request rows left this minute; the first record for key since
@@ -426,11 +439,25 @@ func (r *appErrorsRecorder) cacheAdmit(key string) bool {
 func (r *appErrorsRecorder) enqueue(key string, row appErrorRow) {
 	r.ringMu.Lock()
 	defer r.ringMu.Unlock()
+	// Never fold observations from different releases into one occurrence.
+	key += "\x00" + row.DeploymentID
 	i, queued := r.latest[key]
 	sample := r.sampled[key] < api.AppErrorsRequestSamplesPerFlush && r.takeRequestRow(row.AppID, row.ReceivedAt)
 	if queued && (!sample || len(r.queue) >= appErrorsRingSize) {
-		r.queue[i].Count++
-		return
+		current := &r.queue[i]
+		// A compact histogram keeps every HTTP failure's millisecond. Never
+		// fold across seconds, where a bounded histogram could not describe it.
+		if row.HTTPStatus < 500 || (current.ReceivedAt.Unix() == row.ReceivedAt.Unix() && current.Count < api.IssueHTTPBatchMaxCount) {
+			if row.HTTPStatus >= 500 {
+				if current.IssueTimeBuckets == nil {
+					current.IssueTimeBuckets = make([]uint32, 1000)
+					current.IssueTimeBuckets[current.ReceivedAt.UnixMilli()%1000] = 1
+				}
+				current.IssueTimeBuckets[row.ReceivedAt.UnixMilli()%1000]++
+			}
+			current.Count++
+			return
+		}
 	}
 	if len(r.queue) >= appErrorsRingSize {
 		if r.ops != nil {
@@ -439,6 +466,7 @@ func (r *appErrorsRecorder) enqueue(key string, row appErrorRow) {
 		return
 	}
 	row.Count = 1
+	row.IssueEventID = uuid.NewString()
 	row.RequestRowOmitted = !sample
 	r.queue = append(r.queue, row)
 	r.latest[key] = len(r.queue) - 1
@@ -719,9 +747,8 @@ func sortStringsLen(s []string) {
 }
 
 // appErrorsRingSize is the per-process ringbuffer capacity.
-// 4096 rows × ~1 KiB per row ≈ 4 MiB worst case per gateway
-// instance; the publisher drains every 5s so the ring rarely
-// exceeds a few hundred entries in normal operation.
+// Each folded HTTP 5xx row may also hold 1,000 uint32 counters, adding
+// up to roughly 16 MiB across a full ring. The publisher drains every 5s.
 const appErrorsRingSize = 4096
 
 // statusRecorder is the recorder-local ResponseWriter wrapper

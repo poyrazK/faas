@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppCostsResponse } from '../models/AppCostsResponse.js';
 import type { BillingCancelResponse } from '../models/BillingCancelResponse.js';
 import type { BillingPortalResponse } from '../models/BillingPortalResponse.js';
 import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
@@ -125,6 +126,53 @@ export class BillingService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read retained usage costs attributed to one application.
+   * Requires usage:read and current application access. App-agent credentials may
+   * opt into usage:read for their bound app; account billing remains inaccessible.
+   * Uses the native billing subject and the canonical allocation of included
+   * usage. Excludes other applications, account totals, invoices, forecasts,
+   * and account-wide unpriced or nonbillable quantities. Sampling windows remain
+   * explicit; per-app quantity coverage and a complete bill estimate are unknown.
+   * All monetary amounts use integer millicents. This endpoint has no writes.
+   *
+   * @returns AppCostsResponse Application allocations and source-window coverage, without account financial details.
+   * @throws ApiError
+   */
+  public static getAppCosts({
+    slug,
+    month,
+  }: {
+    /**
+     * Application slug whose retained allocations are requested.
+     */
+    slug: string,
+    /**
+     * UTC month for this application's retained cost allocations; omit for the current month.
+     */
+    month?: string,
+  }): CancelablePromise<AppCostsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/costs',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'month': month,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -645,7 +693,10 @@ export class BillingService {
    * Get the authenticated customer's billing status.
    * Returns a provider-independent deployment and account billing
    * projection. This customer endpoint requires usage:read and never
-   * calls an operator catalog surface.
+   * calls an operator catalog surface. A scheduled cancellation
+   * (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+   * `scheduled_plan_at`) is reported before it applies; asking for the
+   * current plan with PATCH /v1/account/plan undoes it.
    *
    * @returns BillingStatusResponse Current deployment billing mode and customer attachment status.
    * @throws ApiError
@@ -672,7 +723,10 @@ export class BillingService {
    * download receipts, cancel). When the active provider exposes
    * customer sessions, the server creates a short-lived authenticated
    * portal URL. Otherwise it renders the operator's
-   * `FAAS_BILLING_PORTAL_URL` template.
+   * `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+   * that can cancel the subscription and replace the card, so the route
+   * takes an admin credential, MFA, a verified email and, for a dashboard
+   * session, a step-up within the last 5 minutes.
    *
    * The response also carries a `payment_method` block — the card-on-file summary (brand, last-4, expiry).
    * The CLI's `faas billing payment-method` renders from this

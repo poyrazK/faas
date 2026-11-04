@@ -429,3 +429,41 @@ func TestRunDiff_StrictBaselineFailureReturnsNonzero(t *testing.T) {
 		t.Fatalf("strict error omitted API problem detail: %s", stderr.String())
 	}
 }
+
+// rc.318 field report: `deploy --dry-run` with an app deploy token failed
+// with insufficient_scope, because the env and edge-rule baseline reads need
+// apps:read. It now asks apid's diff, which admits deploy:write.
+func TestRunDiff_DeployTokenFallsBackToServerDiff(t *testing.T) {
+	var serverDiffs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/apps/target":
+			_, _ = w.Write([]byte(`{"id":"app-target","slug":"target","type":"app"}`))
+		case "/v1/apps/target/deployments":
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		case "/v1/apps/target/env":
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Forbidden", "this credential lacks the apps:read scope"))
+		case "/v1/apps/target/diff":
+			serverDiffs++
+			_, _ = w.Write([]byte(`{"slug":"target","diff":{"changes":[],"breaks":[]},"blocking":false}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+
+	code := main.RunDiff(context.Background(), main.NewClient(srv.URL, "deploy-token"), main.DiffCLIOptions{
+		Slug:      "target",
+		Cwd:       t.TempDir(),
+		JSON:      true,
+		BuildPlan: &api.BuildPlan{Class: "app"},
+	})
+	if code != 0 || serverDiffs != 1 {
+		t.Fatalf("exit = %d, server diffs = %d; want the server diff once; stderr=%s", code, serverDiffs, stderr.String())
+	}
+}

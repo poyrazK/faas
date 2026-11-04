@@ -107,10 +107,11 @@ func (r *Registry) ProductionReadiness(approval ProductionApproval, now time.Tim
 	return QualificationReadiness{Ready: len(reasons) == 0, Reasons: reasons}
 }
 
-// NewProvisioningGate is the rollout gate for customer provisioning. In
-// production it opens only while ProductionReadiness holds, so an approval
-// that expires closes new provisioning without touching existing databases;
-// every other environment keeps the staging qualification gate.
+// NewProvisioningGate is the rollout gate for new databases. In production it
+// opens only while ProductionReadiness holds, so an approval that expires
+// closes new provisioning without touching existing databases, which
+// NewOperationsGate governs; every other environment keeps the staging
+// qualification gate.
 func NewProvisioningGate(registry *Registry, getenv func(string) string, now func() time.Time) func() bool {
 	if !ProductionEnvironmentActive(getenv) {
 		return NewStagingProvisioningGate(registry, getenv, now)
@@ -121,5 +122,22 @@ func NewProvisioningGate(registry *Registry, getenv func(string) string, now fun
 	approval := LoadProductionApproval(getenv)
 	return func() bool {
 		return registry.ProductionReadiness(approval, now().UTC()).Ready
+	}
+}
+
+// NewOperationsGate is the gate for work on databases that already exist:
+// their bindings and credential rotation, resize, restore and database
+// switches, and finishing a database that admission already reserved
+// (ADR-20261103091657). In production it follows the operator's
+// provisioning_enabled switch alone, so an approval that lapses, or a
+// backend change that awaits a new one, closes new databases without
+// stranding a customer's recovery or a credential rotation. Every other
+// environment keeps the staging qualification gate for both.
+func NewOperationsGate(registry *Registry, getenv func(string) string, now func() time.Time) func() bool {
+	if !ProductionEnvironmentActive(getenv) {
+		return NewStagingProvisioningGate(registry, getenv, now)
+	}
+	return func() bool {
+		return registry != nil && registry.ProvisioningEnabled
 	}
 }

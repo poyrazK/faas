@@ -32,19 +32,19 @@ func render() string {
 	var b strings.Builder
 	b.WriteString("# Plans and pricing\n\n")
 	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
-	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly and shown in US dollars. Usage beyond the included GB-RAM-hours is billed at $0.01 per GB-RAM-hour on paid plans.\n\n")
+	b.WriteString("Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go). The same table is enforced by the API, so this page is generated rather than maintained separately. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at $0.01 per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
-	b.WriteString("| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App layer | Idle timeout | Max request timeout |\n")
-	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	b.WriteString("| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App egress / month | App layer | Idle timeout | Max request timeout |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, plan := range api.Plans {
 		l, ok := api.LimitsFor(plan)
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "| **%s** | %s | %d | %d | %d | %d | %d MB | %d | %d MB | %s | %s |\n",
+		fmt.Fprintf(&b, "| **%s** | %s | %d | %d | %d | %d | %d MB | %d | %s GiB | %d MB | %s | %s |\n",
 			titlePlan(plan), formatPrice(l.PriceMillicents), l.DeployedApps,
 			l.PreviewApps, l.DeveloperApps, l.MaxConcurrency, l.RAMMB, l.IncludedGBHours,
-			l.AppLayerMaxMB,
+			formatThousands(l.MonthlyEgressGiB), l.AppLayerMaxMB,
 			formatDuration(l.IdleTimeoutS), formatDuration(int(l.RequestBudgetMaxDuration().Seconds())))
 	}
 	b.WriteString("\n## What each limit means\n\n")
@@ -52,6 +52,8 @@ func render() string {
 	b.WriteString("- **PR preview environments** is the separate limit for temporary pull-request previews: one per open pull request, however many workloads it runs. One environment runs at most as many workloads as the plan can deploy, and a closed pull request frees its environment at once. See [PR preview environments](preview-environments.md#quota).\n")
 	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.\n")
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
+	b.WriteString("- **After a plan ends or shrinks**, for example when a subscription lapses, the plan's limits still bind: your oldest deployed apps up to its deployed-app limit keep serving, and other apps, or any app set above its RAM, park and stop waking until they fit. Delete apps, lower an app's RAM (`gregale app APP --ram MB`) or upgrade. A downgrade you request is refused until your apps fit.\n")
+	b.WriteString("- **App egress / month** is the data your apps send each month. It is not charged; an account or organization that reaches its plan's egress stops serving until the month ends or it upgrades.\n")
 	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (")
 	var caps []string
 	for _, plan := range api.Plans {
@@ -172,4 +174,13 @@ func formatDuration(seconds int) string {
 		return fmt.Sprintf("%dm", seconds/60)
 	}
 	return fmt.Sprintf("%ds", seconds)
+}
+
+// formatThousands renders n with comma thousands separators.
+func formatThousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	for i := len(s) - 3; i > 0 && s[i-1] != '-'; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }

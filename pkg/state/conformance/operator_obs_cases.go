@@ -243,6 +243,25 @@ func testOperatorActionsReachAuditLog(t *testing.T, fx *Fixture) {
 	}
 }
 
+// testOperatorEventsNewestFirst pins ADR-20261103094121: the operator events
+// list returns the newest rows first, stops at the limit, and matches the kind
+// prefix literally ('_' is not a wildcard).
+func testOperatorEventsNewestFirst(t *testing.T, fx *Fixture) {
+	for _, kind := range []string{"conf_list.first", "confXlist.lookalike", "conf_list.second"} {
+		if err := fx.Store.AppendEvent(fx.Ctx, "apid", kind, nil, []byte(`{}`)); err != nil {
+			t.Fatalf("append %s: %v", kind, err)
+		}
+	}
+	rows, err := fx.Store.ListAllEventsPaged(fx.Ctx, "", "conf_list.", "", time.Time{}, 10)
+	if err != nil || len(rows) != 2 || rows[0].Kind != "conf_list.second" || rows[1].Kind != "conf_list.first" {
+		t.Fatalf("prefix list: %+v %v", rows, err)
+	}
+	newest, err := fx.Store.ListAllEventsPaged(fx.Ctx, "", "", "", time.Time{}, 1)
+	if err != nil || len(newest) != 1 || newest[0].Kind != "conf_list.second" {
+		t.Fatalf("newest event: %+v %v", newest, err)
+	}
+}
+
 func testOperatorEvidenceProjections(t *testing.T, fx *Fixture) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	overview, err := fx.Store.OperatorOverview(fx.Ctx, now)

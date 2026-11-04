@@ -287,6 +287,9 @@ type PGBackend struct {
 	// stale (ADR-190) is the last-known-good host -> App tier consulted
 	// only when the Router errors. See stale_routes.go.
 	stale *staleRoutes
+	// misses remembers hosts that route nowhere and budgets reads of hosts
+	// this gateway has never seen route. See route_miss_guard.go.
+	misses *routeMissGuard
 
 	appsMu sync.RWMutex
 	apps   map[string]App // app_id -> App (plan)
@@ -936,6 +939,7 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		routes:          NewRouteCache(RouteCacheCap),
 		rechecks:        newRouteRecheckMemo(),
 		stale:           newStaleRoutes(RouteCacheCap, routeStaleTTL()),
+		misses:          newRouteMissGuard(),
 		apps:            map[string]App{},
 		appsPicker:      map[string]*appPicker{},
 		mirrorRules:     map[string][]MirrorRuleRow{},
@@ -1139,7 +1143,11 @@ const RouteCacheCap = 10_000
 // routes that were invalidated or evicted. Without a stale entry the host
 // policy lookup gets the error, so the handler retries it within the cold
 // bound and then refuses with 503 (ADR-20261027085556 amendment 3); Lookup's
-// callers, which have no error path, still treat it as a miss.
+// callers, which have no error path, still treat it as a miss. A host the
+// store just said routes nowhere is answered from
+// memory, and a read of a host this gateway has never seen route spends a
+// per-gateway budget; a read past the budget is errRouteLookupShed
+// (route_miss_guard.go).
 func (b *PGBackend) LookupHostPolicy(ctx context.Context, host string) (App, bool, error) {
 	if b.requiresFreshHostPolicy() {
 		return b.router.ResolveHost(ctx, host)
@@ -1152,25 +1160,34 @@ func (b *PGBackend) requiresFreshHostPolicy() bool {
 	return ok && router.RequiresFreshHostPolicy()
 }
 
-// Lookup is LookupHostPolicy for callers without an error path: a failed
-// read with no last-known-good route is a miss there.
+// Lookup is LookupHostPolicy for callers without an error path: a shed or
+// failed read is a miss there.
 func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	app, found, _ := b.lookup(ctx, host)
 	return app, found
 }
 
-// lookup returns the router's error when a read failed and no last-known-good
-// route answers it, so the host policy lookup retries it and then refuses with
-// 503 instead of calling the host unknown (ADR-20261027085556 amendment 3).
+// lookup returns an error when the route miss guard refused the store read,
+// or when a read failed and no last-known-good route answers it, so the host
+// policy lookup retries it and then refuses with 503 instead of calling the
+// host unknown (ADR-20261027085556 amendment 3).
 func (b *PGBackend) lookup(ctx context.Context, host string) (App, bool, error) {
 	matcher, dynamic := b.router.(DynamicRouteHostMatcher)
-	if b.requiresFreshHostPolicy() || dynamic && matcher.IsDynamicRouteHost(host) {
+	if fresh := b.requiresFreshHostPolicy(); fresh || dynamic && matcher.IsDynamicRouteHost(host) {
+		if !fresh {
+			if err := b.misses.admit(ctx, host); err != nil {
+				return b.refusedLookup(err)
+			}
+		}
 		app, found, err := b.router.ResolveHost(ctx, host)
 		if err != nil {
 			if b.log != nil {
 				b.log.Warn("gateway: authoritative host policy lookup failed", "host", host, "err", err)
 			}
 			return App{}, false, err
+		}
+		if found && !fresh {
+			b.misses.found(host)
 		}
 		return app, found, nil
 	}
@@ -1223,15 +1240,24 @@ func (b *PGBackend) lookup(ctx context.Context, host string) (App, bool, error) 
 			b.stale.Delete(host)
 		}
 	}
+	if b.misses.missed(host) {
+		b.metrics.ObserveRouteLookupUnknownHost("remembered_miss")
+		return App{}, false, nil
+	}
 	app, ok, readSeq, err := b.resolveHostShared(ctx, host)
+	if errors.Is(err, errRouteLookupShed) {
+		return b.refusedLookup(err)
+	}
 	if err != nil {
 		return b.lookupStale(ctx, host, err)
 	}
 	if !ok {
 		// Positive "no such route": never serve it stale again.
 		b.stale.Delete(host)
+		b.rememberMiss(host, readSeq)
 		return App{}, false, nil
 	}
+	b.misses.found(host)
 	if app.DynamicRoute || app.PinnedDeploymentID != "" || app.EnvironmentNotReady {
 		// Exact routes carry deployment-specific settings. Caching that App
 		// by app ID would replace production's settings with a stage's.
@@ -1254,6 +1280,30 @@ func (b *PGBackend) lookup(ctx context.Context, host string) (App, bool, error) 
 		b.stale.Delete(host)
 	}
 	return app, true, nil
+}
+
+// refusedLookup answers a store read the route miss guard refused. A shed
+// read is counted, not logged: under a flood of random names every request
+// would log.
+func (b *PGBackend) refusedLookup(err error) (App, bool, error) {
+	if errors.Is(err, errRouteLookupShed) {
+		b.metrics.ObserveRouteLookupUnknownHost("shed")
+	}
+	return App{}, false, err
+}
+
+// rememberMiss records the store's answer that host routes nowhere, unless a
+// route invalidation overtook the read: that invalidation may be the route
+// that now exists. One landing after the second check forgets every
+// remembered miss itself.
+func (b *PGBackend) rememberMiss(host string, readSeq uint64) {
+	if b.routeInvalidations.current() != readSeq {
+		return
+	}
+	b.misses.notFound(host)
+	if b.routeInvalidations.current() != readSeq {
+		b.misses.forget(host)
+	}
 }
 
 // cacheResolvedRoute stores a host's resolved route: its target, the app
@@ -1357,7 +1407,7 @@ func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host str
 			b.rechecks.rememberTenant(host, binding, found)
 		}
 	}
-	if err != nil || (found && binding.Suspended) {
+	if err != nil || (found && binding.Verified && binding.Suspended) {
 		// A control-plane error cannot justify serving a possibly suspended
 		// customer. Do not enter the stale route tier for this host.
 		return false, true
@@ -1395,6 +1445,10 @@ func (b *PGBackend) resolveHostShared(ctx context.Context, host string) (App, bo
 			var cancel context.CancelFunc
 			readCtx, cancel = context.WithDeadline(readCtx, deadline)
 			defer cancel()
+		}
+		// Only the shared read spends the new-host budget, once per host.
+		if err := b.misses.admit(readCtx, host); err != nil {
+			return resolved{}, err
 		}
 		app, ok, err := b.router.ResolveHost(readCtx, host)
 		return resolved{app: app, ok: ok}, err
@@ -2994,6 +3048,7 @@ func (b *PGBackend) WithMirrorStore(s mirrorRulesStore) *PGBackend {
 // or deleted app is re-resolved (or 404'd) on the next request.
 func (b *PGBackend) FlushRoutes() {
 	b.routeInvalidations.invalidate("")
+	b.misses.forgetMisses()
 	b.workloadAdmissions.reset()
 	b.routes.Reset()
 	b.rechecks.reset()
@@ -3010,6 +3065,8 @@ func (b *PGBackend) InvalidateRoutesForApp(appID string) {
 		return
 	}
 	b.routeInvalidations.invalidate(appID)
+	// The app may be new, so any remembered miss may be its host.
+	b.misses.forgetMisses()
 	b.InvalidateWorkloadAdmission(appID)
 	if b.routes != nil {
 		b.routes.InvalidateApp(appID)

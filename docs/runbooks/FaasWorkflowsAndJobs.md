@@ -106,6 +106,17 @@ lease are not counted.
    with thousands of due runs shows lag only for that app's runs. Compare
    with `sum by (app) (rate(workflow_runs_total[10m]))`.
 
+## Workflow retention
+
+Completed workflow runs and their steps are retained for 30 days. Run events
+are retained for 90 days from receipt, including after the run is removed;
+those events move to `workflow_event_archive`. Permanent app deletion removes
+the archive for that app. Active runs keep their events until they terminate.
+
+The hourly retention worker removes expired rows in bounded batches away from
+the scheduler loop. A backlog or failed sweep can delay physical removal; check
+the schedd journal for `workflow retention: sweep failed` before intervening.
+
 ## FaasJobsQueueBacklog
 
 See [FaasJobsQueueBacklog](FaasJobsQueueBacklog.md).

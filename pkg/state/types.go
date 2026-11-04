@@ -1245,6 +1245,12 @@ type APIKey struct {
 	// account/org API keys leave it empty; authz.LoadApp uses it as an
 	// additional tenant boundary when the principal is app-scoped.
 	AppID string
+	// ProjectLimited and ProjectIDs: an agent or mcp-login key limited to
+	// projects of its organization (ADR-20261104085712). The middleware
+	// stamps them on the principal's copy when it authenticates the key;
+	// stores' key reads leave them unset.
+	ProjectLimited bool
+	ProjectIDs     []string
 	// OrgID is the org the key was minted against (issue #190 / IAM-6,
 	// PR 6). Migration 00127 flips api_keys.org_id from NULL to
 	// NOT NULL after the deterministic personal-org backfill, so every
@@ -3466,6 +3472,12 @@ type CronOptions struct {
 	CommandMaxOutputBytes int
 	RetryMax              int
 	RetryBackoffSeconds   int
+	// ClearSchedulePolicy and ClearFailureRules remove the cron's policy or
+	// rules on an update; a nil SchedulePolicy or FailureRules leaves them
+	// as they are. Nothing could remove either once set (crons audit
+	// 2026-11-03).
+	ClearSchedulePolicy bool
+	ClearFailureRules   bool
 }
 
 const (
@@ -4330,7 +4342,25 @@ type UpdateAppWebhookParams struct {
 	DeliveryFormat      *AppWebhookDeliveryFormat
 	Enabled             *bool
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
+	// PreviousSecretUntil, set with WebhookSecretSealed, keeps the secret
+	// being replaced as the previous secret until this instant
+	// (ADR-20261101093517): deliveries carry a second signature made with
+	// it. A rotation inside the window replaces the previous secret with
+	// the one it retires. Ignored without WebhookSecretSealed.
+	PreviousSecretUntil *time.Time
 }
+
+// AppWebhookPreviousSecretStore reads the secret a rotation replaced while
+// its overlap window lasts (ADR-20261101093517). nil means none: never
+// rotated, rotated without overlap, or the window has passed.
+type AppWebhookPreviousSecretStore interface {
+	PreviousAppWebhookSecret(ctx context.Context, webhookID string, now time.Time) ([]byte, error)
+}
+
+var (
+	_ AppWebhookPreviousSecretStore = (*MemStore)(nil)
+	_ AppWebhookPreviousSecretStore = (*PgStore)(nil)
+)
 
 // AppWebhookScope is the closed storage vocabulary for outbound subscriptions.
 type AppWebhookScope string
@@ -4503,6 +4533,40 @@ type AppWebhookDelivery struct {
 	DeliveredAt      *time.Time // nil until status=succeeded
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+
+	// AdmissionMaxPending and AdmissionMaxBacklogBytes are the producer's
+	// caps on the account's undelivered deliveries (ADR-20261101093517):
+	// RecordAppWebhookDelivery counts the account's pending and in-flight
+	// rows and their payload bytes under a per-account lock and refuses
+	// with *AppWebhookOutboxFullError at either cap. Zero leaves that cap
+	// off. Admission input only; never stored.
+	AdmissionMaxPending      int   `json:"-"`
+	AdmissionMaxBacklogBytes int64 `json:"-"`
+}
+
+// AppWebhookOutboxFullError reports that an admission-capped
+// RecordAppWebhookDelivery found the account's undelivered deliveries at a
+// cap. It unwraps to ErrQuotaExceeded.
+type AppWebhookOutboxFullError struct {
+	Bytes    bool // the payload-bytes cap refused; otherwise the count cap
+	Limit    int64
+	Observed int64
+}
+
+func (e *AppWebhookOutboxFullError) Error() string { return ErrQuotaExceeded.Error() }
+func (e *AppWebhookOutboxFullError) Unwrap() error { return ErrQuotaExceeded }
+
+// appWebhookOutboxAdmission applies the caps to the account's undelivered
+// count and payload bytes. A delivery admitted just under the bytes cap may
+// pass it by its own size, as queue admission does.
+func appWebhookOutboxAdmission(in AppWebhookDelivery, pending, held int64) error {
+	if in.AdmissionMaxPending > 0 && pending >= int64(in.AdmissionMaxPending) {
+		return &AppWebhookOutboxFullError{Limit: int64(in.AdmissionMaxPending), Observed: pending}
+	}
+	if in.AdmissionMaxBacklogBytes > 0 && held >= in.AdmissionMaxBacklogBytes {
+		return &AppWebhookOutboxFullError{Bytes: true, Limit: in.AdmissionMaxBacklogBytes, Observed: held}
+	}
+	return nil
 }
 
 // AppWebhookAttemptMetadata records the wall-clock interval of a dispatch.
@@ -7163,6 +7227,13 @@ type CliAuthCode struct {
 	AccountID  string // empty until ClaimCliAuthCode
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
+	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
+	// approval; "" is the personal one (ADR-20261101225122).
+	OrgID string
+	// ProjectIDs are the projects the sign-in was limited to at approval;
+	// nil is every project (ADR-20261104085712). MemStore only: the Pg
+	// store reads it through CliAuthCodeProjects.
+	ProjectIDs []string
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row

@@ -93,6 +93,11 @@
 
       {{if .Data.HasPaidPlan}}
         <h2>Manage billing</h2>
+        {{if .Data.UpgradeNotice}}<p class="notice">{{.Data.UpgradeNotice}}</p>{{end}}
+        {{if .Data.ScheduledChange}}
+          <p class="notice">{{.Data.ScheduledChange}} <a class="btn" href="/dashboard/upgrade">Keep subscription</a></p>
+        {{end}}
+        <p><a href="/dashboard/upgrade">Change plan</a> — upgrades are charged now (prorated, before tax); downgrades apply at the end of the billing period.</p>
         {{if .Data.PortalURL}}
           <p><a class="btn" href="{{.Data.PortalURL}}" rel="noopener">Open {{if eq .Data.Provider "polar"}}Polar{{else if eq .Data.Provider "paddle"}}Paddle{{else}}billing{{end}} portal</a></p>
           <p>Update your payment method, manage your subscription, view invoices, and download receipts. The portal is hosted by the billing provider; no card data touches this server.</p>
@@ -121,7 +126,7 @@
               <li><a class="btn" href="/dashboard/upgrade?plan={{.Plan}}">Upgrade to {{.Plan}}</a> — {{.PriceFormatted}} / month, {{.IncludedGBHours}} GB-hours included, up to {{.RAMMB}} MB RAM per app</li>
             {{end}}
           </ul>
-          <p>Checkout is hosted by the billing provider; no card data touches this server. Your plan changes as soon as the payment is confirmed.</p>
+          <p>Prices exclude tax; any sales tax or VAT where you live is added at checkout. Checkout is hosted by the billing provider; no card data touches this server. Your plan changes as soon as the payment is confirmed.</p>
         {{else}}
           <p>Hosted checkout is not available on this deployment. Change plan via the CLI: <code>gregale plan &lt;plan&gt;</code>.</p>
         {{end}}

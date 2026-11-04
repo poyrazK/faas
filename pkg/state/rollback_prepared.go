@@ -2,6 +2,20 @@ package state
 
 import "context"
 
+type expectedRollbackCurrentKey struct{}
+
+// WithExpectedRollbackCurrent binds an automatic rollback to the release
+// whose health was judged. Preparation checks it under the traffic lock;
+// the existing preparation marker fences any later cutover.
+func WithExpectedRollbackCurrent(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, expectedRollbackCurrentKey{}, id)
+}
+
+func expectedRollbackCurrent(ctx context.Context) string {
+	id, _ := ctx.Value(expectedRollbackCurrentKey{}).(string)
+	return id
+}
+
 // RollbackPreparedStore reports whether an explicit rollback prepared a
 // deployment for activation (ADR-1446). imaged promotes such a target without
 // the latest-revision fence: an older revision is the point of a rollback.

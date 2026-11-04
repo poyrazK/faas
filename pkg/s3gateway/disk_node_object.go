@@ -34,7 +34,7 @@ func (h *DiskHandler) object(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
-		if !queryKeysOnly(q, "response-content-type", "response-content-disposition", "response-cache-control", "response-content-encoding", "response-content-language", "response-expires") || headerOrQueryValue(r, "X-Amz-Checksum-Mode") != "" && headerOrQueryValue(r, "X-Amz-Checksum-Mode") != "ENABLED" {
+		if !queryKeysOnly(q, "response-content-type", "response-content-disposition", "response-cache-control", "response-content-encoding", "response-content-language", "response-expires") || checksumMode(r) != "" && checksumMode(r) != "ENABLED" {
 			h.unsupported(w, r, id)
 			return
 		}
@@ -77,7 +77,7 @@ func (h *DiskHandler) read(w http.ResponseWriter, r *http.Request, bucket, key, 
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
-	if o.ChecksumAlgorithm != "" && headerOrQueryValue(r, "X-Amz-Checksum-Mode") == "ENABLED" {
+	if o.ChecksumAlgorithm != "" && checksumMode(r) == "ENABLED" {
 		w.Header().Set("X-Amz-Checksum-"+o.ChecksumAlgorithm, o.Checksum)
 		if o.ChecksumType != "" {
 			w.Header().Set("X-Amz-Checksum-Type", o.ChecksumType)

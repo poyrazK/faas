@@ -43,9 +43,17 @@ and `gregale edge rule create` warns when it does.
 
 In an organization, members who can read an app read its rules, history,
 events and traces; owners and admins create, change and delete them, roll
-them back and switch attack mode, whoever created the app. Lists and CORS
-presets stay with the account that holds the app's rules; an organization
-app's dashboard page manages the lists its rules use.
+them back and switch attack mode, whoever created the app. The organization
+also has its own lists and CORS presets: name one of its apps with `?app=<slug>`
+on `/v1/edge-rule-lists` and `/v1/cors-presets` (`--app` on `gregale edge
+rule-list`), or use the app's dashboard page. Members who can read the app
+read them, and owners and admins change them. They are separate from each
+member's personal lists and presets, which the organization never sees, and
+the organization's plan sets their limits. A company app's rules name only
+its organization's lists and the app's own presets, and a personal app's
+rules only personal ones. Lists live with the account that holds the app's
+rules, so a list created through one member's company app is not available
+to an app another member created; create it with `--app` for that app.
 
 A rule only ever applies to hosts your account owns: another account's rule
 never runs on your traffic, even with `match_host` `*`. A host pattern other
@@ -138,8 +146,9 @@ described under [AI crawlers](security#ai-crawlers).
 
 ### Lists
 
-`in_list` names a reusable list on your account, so one list of office IPs or
-blocked countries can serve many rules. A list has a kind (`ip`, `country`,
+`in_list` names a reusable list on your account (or your organization's, for a
+rule on one of its apps), so one list of office IPs or blocked countries can
+serve many rules. A list has a kind (`ip`, `country`,
 `host`, `string` or `asn`) that must fit the field it is used with. Editing a
 list is applied like a rule change (see [Changing rules](#changing-rules)),
 and a list cannot be deleted while a rule uses it. A rule that names a list
@@ -149,6 +158,7 @@ requests to the rule's hosts get 503 rather than skipping the rule.
 ```sh
 gregale edge rule-list create office-ips --kind ip --item 203.0.113.0/24 --item 2001:db8::1
 gregale edge rule-list update office-ips --add 198.51.100.7
+gregale edge rule-list create team-ips --app company-api --kind ip --item 203.0.113.0/24
 ```
 
 Lists are available on Hobby and above; see [Limits](#limits).
@@ -200,8 +210,9 @@ ends it, and later kinds do not run.
 `ip`, `geo`, `jwt`, `throttle`, `waf` and `challenge` match the path the
 client sent, and the rewritten path when a `rewrite` changed it: a gate on
 `/api/**` keeps applying after a rewrite takes `/api` away, and a gate written
-for the rewritten path still applies. The kinds after them (`limit`,
-`validate`, `respond`, `cache`, `async`) see the rewritten path.
+for the rewritten path still applies. When the two paths match different
+rules of a kind, both apply, the client path's first. The kinds after them
+(`limit`, `validate`, `respond`, `cache`, `async`) see the rewritten path.
 
 Refusals are ordered from cheapest to most expensive, so a request blocked by
 IP or country never costs a token check or a body read, and a request
@@ -343,8 +354,9 @@ headers. An origin is
 domain (`https://*.<your apps domain>`): other customers' apps are served
 there. List your app origins instead. `max_age_seconds` is at most 86400.
 Instead of inline fields, `cors_preset_id` can name a CORS preset shared by
-several rules (`/v1/cors-presets`). Editing or deleting a preset is applied
-like a rule change to every rule that uses it. `gregale edge cors allow`
+several rules (`/v1/cors-presets`): an account-wide preset or one scoped to
+the rule's app. Editing a preset is applied like a rule change to every rule
+that uses it, and a preset rules use cannot be deleted. `gregale edge cors allow`
 creates a simple rule.
 
 ### jwt
@@ -496,8 +508,10 @@ gateway bounds the request bodies it holds in memory at once; when that bound
 is reached, a request gets 503 `capacity_unavailable` with `Retry-After`
 before its body is read. Set
 `reject_on_unknown_fields` to reject properties the schema does not declare,
-and `apply_while_streaming` to validate requests the gateway would otherwise
-stream to the app.
+and `apply_while_streaming` to validate a WebSocket handshake too. Path,
+query and header parameters are always checked, and so is any body sent with
+`Connection: Upgrade`: servers that do not speak the named protocol run such a
+request as usual.
 
 ### maintenance
 
@@ -546,7 +560,7 @@ or `Accept-Encoding` to the cache key. Responses over 1 MiB are not cached,
 and each gateway keeps at most 16 MiB of one app's responses: past that, the
 app's least recently used responses are dropped first.
 
-Requests with credentials (`Authorization`, cookies) are never cached or
+Requests with credentials (`Authorization`, `Proxy-Authorization`, `X-API-Key`, cookies) are never cached or
 served from the cache, and neither are responses with `Set-Cookie` or
 `Cache-Control: no-store` or `private`. `gregale edge cache purge` removes cached
 responses. Changing an edge rule also clears the cached responses of the
@@ -721,6 +735,7 @@ refused until the plan allows them again. Delete the ones you no longer need.
 | 429 `rate_limited` | `throttle` |
 | 503 `edge_rule_maintenance` | `maintenance` |
 | 503 `capacity_unavailable` | a rule change being applied, rules the gateway cannot load, an unreachable JWKS |
+| 503 `traffic_policy_unavailable` | a rule on the host the gateway cannot enforce; the detail names it, and `gregale edge rule list` warns about it |
 | 503 `request_budget_exceeded` | `budget` |
 
 Errors use the [problem format](errors); `gregale edge rule events

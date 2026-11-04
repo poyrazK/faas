@@ -134,20 +134,25 @@ func environmentWorkloadHeldFlag(value bool) *bool { return &value }
 
 func (m *MemStore) environmentGitOpsManagedForScopeLocked(appID, scope string) bool {
 	for _, deployment := range m.deployments {
-		if deployment.AppID == appID && normalizedDeploymentScope(deployment.Scope) == normalizedDeploymentScope(scope) && deployment.EnvironmentWorkloadManaged() {
+		if deployment.AppID == appID && normalizedDeploymentScope(deployment.Scope) == normalizedDeploymentScope(scope) && m.environmentGitOpsOwnsDeploymentLocked(deployment) {
 			return true
 		}
 	}
 	return false
 }
 
-func (m *MemStore) environmentGitOpsManagedForAppLocked(appID string) bool {
-	for _, deployment := range m.deployments {
-		if deployment.AppID == appID && deployment.EnvironmentWorkloadManaged() {
-			return true
-		}
+// Frozen inputs remain immutable history after detach. Only an explicitly
+// detached source releases ownership; missing or malformed authority fails closed.
+func (m *MemStore) environmentGitOpsOwnsDeploymentLocked(deployment Deployment) bool {
+	if !deployment.EnvironmentWorkloadManaged() {
+		return false
 	}
-	return false
+	var frozen EnvironmentWorkloadRuntime
+	if json.Unmarshal([]byte(deployment.EnvironmentWorkloadRuntime), &frozen) != nil {
+		return true
+	}
+	source, exists := m.environmentGitOps[frozen.SourceID]
+	return !exists || !source.source.Detached
 }
 
 func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error) {
@@ -562,6 +567,16 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 			continue
 		}
 		app := byID[ids[resource]]
+		// Keep inherited inputs from previous releases, while excluding the
+		// current cohort once activation makes its own candidates visible.
+		baselines := make([]gitOpsSourceBaseline, 0, len(app.Sources))
+		for _, baseline := range app.Sources {
+			if !baseline.Managed || baseline.PlanHash != plan.Hash {
+				baselines = append(baselines, baseline)
+			}
+		}
+		slices.SortFunc(baselines, func(a, b gitOpsSourceBaseline) int { return strings.Compare(a.ID, b.ID) })
+		app.Sources = baselines
 		intent := app.WorkloadIntent
 		workloadSource, _, reason := observedWorkloadSource(app, snapshot.GitSource)
 		if app.ID == "" {
@@ -618,7 +633,6 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 			Schedule: desired.Definition.Workloads[name].Schedule, ServiceBindings: serviceBindings}
 		sourceCopy := *workloadSource
 		frozen.Source = &sourceCopy
-		slices.SortFunc(app.Sources, func(a, b gitOpsSourceBaseline) int { return strings.Compare(a.ID, b.ID) })
 		for i, baseline := range app.Sources {
 			raw, _ := json.Marshal(baseline.Inputs)
 			raw, _ = canonicalGitOpsValue(raw)

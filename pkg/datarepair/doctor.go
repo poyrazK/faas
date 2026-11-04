@@ -58,7 +58,7 @@ func doctorMessages() map[string]doctorMessage {
 		"functions_incompatible": {"functions", "blocked", "Repair functions are missing, changed or overloaded.", "Have the database owner review gregale data-repair schema --upgrade and restore the matching function definitions; base capture functions require review against gregale data-repair schema."},
 		"enrolled":               {"enrollment", "ready", "The named table has a valid field enrollment.", "Use the enrolled fields in opted-in capture commands."},
 		"not_enrolled":           {"enrollment", "blocked", "No enrollment matches the exact qualified table name.", "Have the database owner enroll the intended table and fields with gregale data-repair enroll."},
-		"enrollment_invalid":     {"enrollment", "blocked", "The enrollment no longer identifies a supported table and fields.", "Investigate table replacement, renamed or removed fields, row security and registry changes with the database owner; do not rewrite stored fingerprints."},
+		"enrollment_invalid":     {"enrollment", "blocked", "The enrollment no longer identifies a supported table and fields.", "Investigate table replacement, renamed or removed fields, generated columns, row security and registry changes with the database owner; do not rewrite stored fingerprints."},
 		"fingerprint_matches":    {"fingerprint", "ready", "The table catalog fingerprint matches its enrollment.", "Review any later schema change before preparing a repair."},
 		"fingerprint_changed":    {"fingerprint", "blocked", "The table schema differs from its enrollment fingerprint.", "Have the database owner investigate schema drift and restore the reviewed schema; do not refresh the fingerprint to bypass this finding."},
 		"triggers_enabled":       {"triggers", "ready", "Capture and row-version triggers have the expected definitions and are enabled.", "Keep both triggers enabled for ordinary application writes."},
@@ -211,7 +211,7 @@ func (e *Engine) Doctor(ctx context.Context, s Scope, table string) (DoctorRepor
 		defer stop()
 		_ = tx.Rollback(clean)
 	}()
-	if _, err = tx.Exec(ctx, `SELECT set_config('search_path','pg_catalog',true),set_config('statement_timeout',$1,true),set_config('lock_timeout',$1,true)`, strconv.Itoa(api.DataRepairDoctorTimeoutSeconds*1000)); err == nil {
+	if _, err = tx.Exec(ctx, `SELECT set_config('jit','off',true),set_config('search_path','pg_catalog',true),set_config('statement_timeout',$1,true),set_config('lock_timeout',$1,true)`, strconv.Itoa(api.DataRepairDoctorTimeoutSeconds*1000)); err == nil {
 		err = doctorInspect(ctx, tx, &r)
 	}
 	if err != nil {

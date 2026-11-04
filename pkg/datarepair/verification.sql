@@ -1,9 +1,9 @@
 -- Observe a committed repair through its own journal, independently of the
 -- pre-apply selection. This function never refreshes evidence or writes data.
 CREATE OR REPLACE FUNCTION gregale_repair.verify_plan(plan uuid, expected_scope jsonb, expected_digest text) RETURNS jsonb
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog AS $$
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET jit = 'off' AS $$
 DECLARE p gregale_repair.plans; op gregale_repair.operations; e gregale_repair.enrollments; c gregale_repair.changes;
- current_version text; values_match boolean; fields text; reason text; key_text text; omitted boolean;
+ current_version text; values_match boolean; reason text; key_text text; omitted boolean;
  issues jsonb:='[]'; rows jsonb:='[]'; checked integer:=0; unchanged integer:=0; edited integer:=0; missing integer:=0;
  schema_changed boolean:=false; journal_rows bigint; key_bytes integer:=0;
 BEGIN
@@ -28,14 +28,13 @@ BEGIN
   schema_changed:=NOT FOUND;
   BEGIN
    IF NOT schema_changed THEN
-    schema_changed:=e.fingerprint IS DISTINCT FROM op.schema_fingerprint OR
-     e.fingerprint IS DISTINCT FROM gregale_repair.fingerprint(e.relation) OR
+    schema_changed:=e.fingerprint_datestyle IS NULL OR e.fingerprint_intervalstyle IS NULL OR __TYPE_CONTRACT_CHANGED__ OR __CASCADING_ENROLLED_FIELDS__ OR e.fingerprint_timezone IS NULL OR e.fingerprint IS DISTINCT FROM op.schema_fingerprint OR
+     e.fingerprint IS DISTINCT FROM gregale_repair.fingerprint(e.relation) OR __UNSUPPORTED_ENROLLED_EXPRESSIONS__ OR __LOSSY_ENROLLED_TYPES__ OR __UNPROVEN_PLAN__ OR __UNPROVEN_OPERATION__ OR
      NOT EXISTS(SELECT 1 FROM pg_class WHERE oid=e.relation AND NOT relrowsecurity AND NOT relforcerowsecurity);
    END IF;
    IF NOT schema_changed THEN
     FOR c IN SELECT * FROM gregale_repair.changes WHERE operation_id=op.id ORDER BY row_identity LOOP
-     SELECT string_agg(format('%L,t.%I',k,k),',' ORDER BY k) INTO fields FROM jsonb_object_keys(c.after_values) k;
-     EXECUTE format('SELECT gregale_row_version::text,jsonb_build_object(%s) @> $2 FROM %s t WHERE gregale_row_identity=$1',fields,e.relation)
+     EXECUTE format('SELECT gregale_row_version::text,gregale_repair.values_match(t.*,$2) FROM %s t WHERE gregale_row_identity=$1',e.relation)
       INTO current_version,values_match USING c.row_identity,c.after_values;
      reason:=CASE WHEN current_version IS NULL THEN 'record_missing'
       WHEN current_version IS DISTINCT FROM c.after_version::text THEN 'record_version_changed'

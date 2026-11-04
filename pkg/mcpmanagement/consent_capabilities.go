@@ -11,13 +11,15 @@ import (
 // beyond inspection and writes, with what they let the agent do
 // (ADR-20261026195952). Domains and crons need only write access.
 var consentCapabilities = []struct{ scope, description string }{
+	{api.ScopeEnvWrite, "change non-secret environment variables and restore configuration revisions"},
+	{api.ScopeUsageRead, "read usage and billing cost summaries"},
 	{api.ScopeSecretsRequest, "ask you to enter secrets on a Gregale page; it never sees their values"},
 	{api.ScopeStorageManage, "create object storage buckets and bind them to apps"},
 	{api.ScopeManagedPostgresManage, "create managed PostgreSQL databases and bind them to apps (billed)"},
 }
 
 // chosenCapabilities validates the capability checkboxes: known scopes,
-// once each, and only with write access.
+// once each; usage reads may also accompany a read-only connection.
 func chosenCapabilities(values []string, writes bool) ([]string, error) {
 	var chosen []string
 	for _, value := range values {
@@ -26,9 +28,9 @@ func chosenCapabilities(values []string, writes bool) ([]string, error) {
 			return nil, errors.New("unknown or repeated capability")
 		}
 		chosen = append(chosen, value)
-	}
-	if len(chosen) > 0 && !writes {
-		return nil, errors.New("these capabilities need write access")
+		if !writes && value != api.ScopeUsageRead {
+			return nil, errors.New("this capability needs write access")
+		}
 	}
 	return chosen, nil
 }

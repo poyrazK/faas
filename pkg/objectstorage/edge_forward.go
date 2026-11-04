@@ -11,11 +11,14 @@ import (
 // holds no storage credentials (ADR-1343 §2). It needs only the read-only
 // lookup state; Forward serves every request a public bucket would answer.
 type PublicReadForwardConfig struct {
-	Store      PublicReadStore
-	AppsDomain string
-	Forward    http.Handler
-	Next       http.Handler
-	Log        *slog.Logger
+	Store PublicReadStore
+	// HostLookups bounds store reads for hostnames never seen naming an
+	// app; nil leaves them unbounded (ADR-20261103163954 §4).
+	HostLookups *HostLookupBudget
+	AppsDomain  string
+	Forward     http.Handler
+	Next        http.Handler
+	Log         *slog.Logger
 }
 
 type publicReadForwarder struct {
@@ -41,7 +44,7 @@ func NewPublicReadForwarder(c PublicReadForwardConfig) (http.Handler, error) {
 		appsDomain = "gregale.dev"
 	}
 	return &publicReadForwarder{
-		match:   &publicReadHandler{store: c.Store, appsDomain: appsDomain, mounts: newPublicMountCache()},
+		match:   &publicReadHandler{store: c.Store, appsDomain: appsDomain, mounts: newPublicMountCache(), hostLookups: c.HostLookups},
 		forward: c.Forward, next: c.Next, log: c.Log,
 	}, nil
 }
@@ -52,6 +55,10 @@ func (f *publicReadForwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	_, _, matched, err := f.match.lookup(r)
+	if errors.Is(err, errHostLookupShed) {
+		writeHostLookupShed(w)
+		return
+	}
 	if err != nil && !matched {
 		f.log.Warn("public object lookup failed", "host", r.Host, "path", r.URL.Path)
 		f.next.ServeHTTP(w, r)

@@ -59,6 +59,14 @@ func (c *Client) GetOrgOverageCap(ctx context.Context, slug string) (AccountOver
 	return out, err
 }
 
+// SetOrgBillingEmail sets the email the organization bills to; its billing
+// customer moves with it (ADR-20261103131742).
+func (c *Client) SetOrgBillingEmail(ctx context.Context, slug, email string) (OrgBillingEmailResponse, error) {
+	var out OrgBillingEmailResponse
+	err := c.do(ctx, http.MethodPut, "/v1/orgs/"+url.PathEscape(slug)+"/billing/email", OrgBillingEmailRequest{BillingEmail: email}, &out)
+	return out, err
+}
+
 // SetOrgOverageCap sets the organization's monthly spend cap in cents, or
 // clears it with nil.
 func (c *Client) SetOrgOverageCap(ctx context.Context, slug string, overageCapCents *int64) (AccountOverageCapResponse, error) {

@@ -314,14 +314,17 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 				return fmt.Errorf("%w: GitOps runtime effect is still pending", ErrConflict)
 			}
 		}
-		// As HasEnvironmentGitOpsRuntimeDrift: the current revision's served
-		// graph meets the unqualified-workload fence.
-		served := false
-		if evidence, err := m.currentEnvironmentGitOpsWorkloadEvidenceLocked(memory.source.AccountID, memory.source.ID); err == nil && evidence != nil {
-			served = evidence.Serving && evidence.Generation == memory.source.Generation && evidence.RevisionID == memory.source.ApprovedRevisionID
+		targets, err := m.gitOpsRuntimeTargetsLocked(memory)
+		if err != nil {
+			return err
 		}
-		if !gitOpsRuntimeReadyAfterServing(m.gitOpsRuntimeTargetsLocked(memory), served) {
+		if !gitOpsRuntimeReady(targets) {
 			return fmt.Errorf("%w: GitOps runtime targets are not fresh", ErrConflict)
+		}
+		for _, target := range m.gitOpsRuntimeTargetsInScopeLocked(memory) {
+			if !target.Fresh() {
+				return fmt.Errorf("%w: GitOps runtime scope is not fresh", ErrConflict)
+			}
 		}
 	}
 	completed := now.UTC()

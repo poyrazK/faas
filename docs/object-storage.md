@@ -132,7 +132,9 @@ POST /v1/apps/{app}/upload-routes
 ```
 
 Clients then `POST /uploads/avatar` on your app's hostname with an API key that
-has `storage:write`. Send an `Idempotency-Key` header so retries cannot store a
+has `storage:write`. The route itself authorizes writes to its bucket, so the key
+needs no bucket grant; each key's uploads land under its own key ID below the
+route's prefix. Send an `Idempotency-Key` header so retries cannot store a
 file twice; `GET /uploads/avatar/receipts/{id}` reports an upload's status.
 
 ## Use an S3 SDK
@@ -323,12 +325,17 @@ enabled for your account, your own enrolled keys. See the
 
 - Tag objects with `gregale bucket tags`, or with S3 tagging calls.
 - `CopyObject` copies within a bucket. To copy from another of your buckets, give
-  the S3 credential a copy-source grant on it (`gregale bucket copy-source`).
+  the S3 credential a copy-source grant on it (`gregale bucket copy-source`) and
+  name the source by its bucket ID, as `x-amz-copy-source: <source-bucket-id>/<key>`;
+  a source named by its bucket name answers `NoSuchKey`.
 - Conditional writes (`If-None-Match: *`, `If-Match`) work on single uploads.
 - Where your bucket's storage supports them, multipart uploads can carry CRC32,
   CRC32C, CRC64NVME, SHA1 or SHA256 checksums, validated on every part, and
   completing a multipart upload can be conditional. Otherwise the endpoint
-  answers `NotImplemented`.
+  answers `NotImplemented`. Recent AWS CLI and SDK releases add a checksum to
+  every multipart upload by default; where your storage lacks them, set
+  `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` (or
+  `request_checksum_calculation = when_required` in `~/.aws/config`).
 
 ## Events and notifications
 
@@ -341,6 +348,9 @@ or queue with the bucket's notification configuration:
 ```sh
 gregale bucket notifications set my-api BUCKET_ID notifications.json
 ```
+
+Notifications and compute triggers run app code, so they need a paid plan;
+Free answers `402`, like other triggers.
 
 ## Browser access (CORS)
 

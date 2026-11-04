@@ -249,6 +249,10 @@ ADR-568 requires.
       through, as the instance reservation guard already did.
     - It is in the same unreleased migration and is covered by the same
       Postgres test.
+    - Main's `20261103210000001` (ADR-20261103210001) later replaced both
+      guards with a superset of these exemptions. The branch's migration was
+      dropped before it landed, so it cannot run after main's and restore the
+      older definitions; the Postgres test now covers main's guards.
 - 2026-10-29, n2, rerun with 680403868b, after the user approved removing
   two leaked builder jails another session left behind (their TUN device
   mounts stopped every native vmmd from starting):

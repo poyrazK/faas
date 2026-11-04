@@ -442,3 +442,33 @@ func TestDiff_FiresOnMemoryHigh(t *testing.T) {
 		t.Errorf("Diff should fire on MemoryHigh; got %v", got)
 	}
 }
+
+// SystemCallFilter renders one directive per entry, in order, after
+// SystemCallArchitectures; systemd applies them in turn, so a reordering is a
+// real change.
+func TestRender_SystemCallFilterRoundTrip(t *testing.T) {
+	u := Unit{
+		Type: "simple", ExecStart: "/bin/true",
+		ProtectKernelLogs:       true,
+		SystemCallArchitectures: "native",
+		SystemCallFilter:        []string{"@system-service", "~@privileged @resources"},
+		SystemCallErrorNumber:   "EPERM",
+	}
+	rendered := string(u.Render())
+	want := "SystemCallArchitectures=native\nSystemCallFilter=@system-service\nSystemCallFilter=~@privileged @resources\nSystemCallErrorNumber=EPERM\n"
+	if !strings.Contains(rendered, want) || !strings.Contains(rendered, "ProtectKernelLogs=yes\n") {
+		t.Fatalf("rendered unit lacks the filter block %q:\n%s", want, rendered)
+	}
+	decoded, err := Decode([]byte(rendered))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if d := Diff(u, decoded); len(d) != 0 {
+		t.Fatalf("round trip changed the unit: %v", d)
+	}
+	reordered := u
+	reordered.SystemCallFilter = []string{"~@privileged @resources", "@system-service"}
+	if d := Diff(u, reordered); len(d) != 1 || !strings.Contains(d[0], "SystemCallFilter") {
+		t.Fatalf("Diff should fire on a reordered filter; got %v", d)
+	}
+}

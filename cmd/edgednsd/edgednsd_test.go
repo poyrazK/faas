@@ -9,9 +9,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/edgecert"
 	"github.com/onebox-faas/faas/pkg/edgedns"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// withCert returns env with a complete certificate configuration, then
+// overrides applied.
+func withCert(env, overrides map[string]string) map[string]string {
+	out := map[string]string{
+		"FAAS_EDGEDNS_CERT_NAMES":            "gregale.dev, *.Gregale.dev",
+		"FAAS_EDGEDNS_CERT_ZONE_ID":          "zone-1",
+		"FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE": "/run/credentials/faas-edgednsd.service/acme_account_key",
+		"FAAS_EDGEDNS_CERT_RECIPIENT_FILE":   "/run/credentials/faas-edgednsd.service/edge_tls_recipient",
+	}
+	for k, v := range env {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
+}
+
+// withWatch returns env with the transparency settings in overrides.
+func withWatch(env, overrides map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range env {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
+}
 
 func TestConfigFromEnv(t *testing.T) {
 	base := map[string]string{
@@ -54,11 +85,50 @@ func TestConfigFromEnv(t *testing.T) {
 				t.Fatal("only 0 turns dry run off")
 			}
 		}},
+		{name: "modes", env: with("FAAS_EDGEDNS_NAMES", "zone-1:*.gregale.dev:proxied,zone-1:pilot.gregale.dev:dns-only"), check: func(t *testing.T, c config) {
+			want := []edgedns.Name{{ZoneID: "zone-1", Host: "*.gregale.dev"}, {ZoneID: "zone-1", Host: "pilot.gregale.dev", DNSOnly: true}}
+			if len(c.names) != 2 || c.names[0] != want[0] || c.names[1] != want[1] {
+				t.Fatalf("names = %+v, want %+v", c.names, want)
+			}
+		}},
+		{name: "an unknown mode", env: with("FAAS_EDGEDNS_NAMES", "zone-1:pilot.gregale.dev:direct"), wantErr: "is not proxied or dns-only"},
+		{name: "a name twice", env: with("FAAS_EDGEDNS_NAMES", "zone-1:pilot.gregale.dev,zone-1:Pilot.gregale.dev:dns-only"), wantErr: "twice"},
 		{name: "no names", env: with("FAAS_EDGEDNS_NAMES", " "), wantErr: "no host"},
 		{name: "a name without a zone", env: with("FAAS_EDGEDNS_NAMES", "*.gregale.dev"), wantErr: "<zone id>:<host>"},
 		{name: "a bad address", env: with("FAAS_EDGEDNS_NODE_ADDRESSES", "gregale-compute-1=not-an-ip"), wantErr: "<node>=<address>"},
 		{name: "no token", env: with("FAAS_EDGEDNS_CF_TOKEN_FILE", ""), wantErr: "TOKEN_FILE"},
 		{name: "too short an interval", env: with("FAAS_EDGEDNS_INTERVAL", "100ms"), wantErr: "at least 1s"},
+		{name: "no certificate by default", env: base, check: func(t *testing.T, c config) {
+			if c.cert.enabled() {
+				t.Fatalf("cert = %+v, want off", c.cert)
+			}
+		}},
+		{name: "certificate", env: withCert(base, nil), check: func(t *testing.T, c config) {
+			if !c.cert.enabled() || strings.Join(c.cert.names, ",") != "*.gregale.dev,gregale.dev" || c.cert.ca != edgecert.CALetsEncryptStaging || c.cert.zoneID != "zone-1" {
+				t.Fatalf("cert = %+v; want both names, staging first", c.cert)
+			}
+		}},
+		{name: "certificate from production", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_CA": "letsencrypt"}), check: func(t *testing.T, c config) {
+			if c.cert.ca != edgecert.CALetsEncrypt {
+				t.Fatalf("ca = %q", c.cert.ca)
+			}
+		}},
+		{name: "an unknown CA", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_CA": "zerossl"}), wantErr: "FAAS_EDGEDNS_ACME_CA"},
+		{name: "a certificate without its files", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE": "", "FAAS_EDGEDNS_CERT_ZONE_ID": ""}), wantErr: "FAAS_EDGEDNS_CERT_ZONE_ID, FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE"},
+		{name: "a bad certificate name", env: withCert(base, map[string]string{"FAAS_EDGEDNS_CERT_NAMES": "*.*.gregale.dev"}), wantErr: "FAAS_EDGEDNS_CERT_NAMES"},
+		{name: "certificate settings without names", env: with("FAAS_EDGEDNS_ACME_CA", "letsencrypt"), wantErr: "names no host"},
+		{name: "no transparency watch by default", env: base, check: func(t *testing.T, c config) {
+			if c.watch.enabled() {
+				t.Fatalf("watch = %+v, want off", c.watch)
+			}
+		}},
+		{name: "transparency watch", env: withWatch(base, map[string]string{"FAAS_EDGEDNS_CT_DOMAIN": "Gregale.dev", "FAAS_EDGEDNS_CT_ALLOW_NAMES": "*.gregale.dev, Operations.gregale.dev"}), check: func(t *testing.T, c config) {
+			if !c.watch.enabled() || c.watch.domain != "gregale.dev" || strings.Join(c.watch.allow, ",") != "*.gregale.dev,operations.gregale.dev" || c.watch.apiKeyFile != "" {
+				t.Fatalf("watch = %+v", c.watch)
+			}
+		}},
+		{name: "a wildcard watch domain", env: withWatch(base, map[string]string{"FAAS_EDGEDNS_CT_DOMAIN": "*.gregale.dev"}), wantErr: "FAAS_EDGEDNS_CT_*"},
+		{name: "watch settings without a domain", env: withWatch(base, map[string]string{"FAAS_EDGEDNS_CT_ALLOW_NAMES": "gregale.dev"}), wantErr: "names no domain"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := configFromEnv(func(k string) string { return tc.env[k] })

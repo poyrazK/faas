@@ -18,6 +18,17 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_interface: true
+  # The apps domains' certificates, written by edgednsd (ADR-20261103163954 §3).
+  - engine: "postgresql"
+    queries: "pkg/edgecert/certpg/queries.sql"
+    schema: "pkg/edgecert/certpg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/edgecert/certpg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   # Hosted management MCP bridge state and lease (ADR-20261026195952).
   - engine: "postgresql"
     queries: "pkg/mcpmanagement/statepg/queries.sql"
@@ -216,6 +227,8 @@ sql:
       - "pkg/state/build_coalescing_queries.sql"
       - "pkg/state/build_dependency_queries.sql"
       - "pkg/state/config_revision_queries.sql"
+      - "pkg/state/env_batch_queries.sql"
+      - "pkg/state/app_resource_inventory_queries.sql"
       - "pkg/state/cron_delete_queries.sql"
       - "pkg/state/cron_fire_now_recovery_queries.sql"
       - "pkg/state/cron_history_queries.sql"
@@ -283,6 +296,7 @@ sql:
       - "pkg/state/issue_tracker_linear_queries.sql"
       - "pkg/state/issue_tracker_links_queries.sql"
       - "pkg/state/job_log_retention_queries.sql"
+      - "pkg/state/key_project_limit_queries.sql"
       - "pkg/state/keyed_replay_queries.sql"
       - "pkg/state/managed_postgres_cutover_activation_queries.sql"
       - "pkg/state/managed_postgres_drain_plan_queries.sql"
@@ -299,6 +313,7 @@ sql:
       - "pkg/state/migration_cutover_queries.sql"
       - "pkg/state/migration_source_queries.sql"
       - "pkg/state/migration_verification_queries.sql"
+      - "pkg/state/org_agent_queries.sql"
       - "pkg/state/native_issue_ticket_queries.sql"
       - "pkg/state/node_admission_queries.sql"
       - "pkg/state/node_lease_queries.sql"
@@ -316,6 +331,7 @@ sql:
       - "pkg/state/operator_recovery_submission_queries.sql"
       - "pkg/state/operator_restart_queries.sql"
       - "pkg/state/org_object_ownership_queries.sql"
+      - "pkg/state/org_admission_queries.sql"
       - "pkg/state/org_queue_ownership_queries.sql"
       - "pkg/state/password_credential_queries.sql"
       - "pkg/state/plain_replay_queries.sql"
@@ -360,6 +376,8 @@ sql:
       - "pkg/state/release_freeze_queries.sql"
       - "pkg/state/release_gate_queries.sql"
       - "pkg/state/release_review_queries.sql"
+      - "pkg/state/request_analytics_rollup_queries.sql"
+      - "pkg/state/rollback_traffic_queries.sql"
       - "pkg/state/route_advice_queries.sql"
       - "pkg/state/route_alert_queries.sql"
       - "pkg/state/route_awake_queries.sql"

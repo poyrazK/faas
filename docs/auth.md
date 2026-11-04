@@ -54,6 +54,23 @@ scopes pick the agent's tools; see
 
 Interactive users can enable MFA from the account settings page. Each authenticator code works once: a code that already verified a session is refused if it is sent again, so wait for the next code. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
 
+`gregale account mfa enroll`, `confirm`, `verify`, `recover`, and `disable`
+open the corresponding form in your signed-in browser. You can use recovery
+before completing CLI login. Enter passwords and codes in the browser;
+the CLI prints a URL, and `--json` returns that URL with `requires_browser: true`.
+In a terminal without a browser, open the printed URL on a device where you
+can sign in. Setup shows the QR code and recovery codes in the browser.
+Legacy code, password, and `--qr-out` arguments remain accepted but do not
+submit credentials or write setup material. A browser handoff is complete
+only after the browser confirms the action succeeded.
+
+Enrollment confirmation spends its authenticator code and grants the current
+session a fresh MFA verification. Accounts with a password must enter their
+current password to confirm setup. A pending setup cannot verify a session
+or provide recovery access. An already-enrolled account uses `verify`
+for further challenges; repeating `confirm` returns a conflict. A suspended
+account can obtain the CSRF token needed to use its saved recovery codes.
+
 For shared applications, the current organization role and the credential's
 scope both apply. Use an organization-bound key to work on a teammate's app;
 see [team application access](organization-app-access.md) for the permission
@@ -104,6 +121,11 @@ available and defaults to the same deploy-only bearer. Its optional closed
 environment-preflight GitHub Action uses that profile to qualify a source
 release set and check promotion policy without receiving deployment or secret
 permissions; see [the Action guide](../.github/actions/environment-preflight/README.md).
+`capability: preview-read` grants only `previews:read`: the status of one app's
+PR previews (`GET /v1/preview/{slug}` and its environment), and nothing else.
+Under a policy Gregale created it is issued to any run of the repository,
+pull request runs included, for an app bound to it
+([ADR-20261102203228](adr/20261102203228-ci-reads-its-preview-status.md)).
 
 For GitHub Actions, first-use account lookup accepts both the legacy
 `repo:OWNER/REPO:...` subject and GitHub's immutable

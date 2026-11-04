@@ -66,6 +66,12 @@ func (s *server) ApprovalTrafficProblemForTest(ctx context.Context, app state.Ap
 	return s.approvalTrafficProblem(ctx, app, d)
 }
 
+// ReleaseSetMembersGuardProblemForTest holds publishing members as a release
+// set in environment to the release guards (ADR-20261019071733 amendment 10).
+func (s *server) ReleaseSetMembersGuardProblemForTest(ctx context.Context, environment string, members []state.ProjectReleaseMember) *api.Problem {
+	return s.releaseSetMembersGuardProblem(ctx, environment, false, members)
+}
+
 // RenderReleaseSafetyForTest renders the release safety dashboard page for
 // acct's app slug.
 func (s *server) RenderReleaseSafetyForTest(acct state.Account, slug string) *httptest.ResponseRecorder {
@@ -80,5 +86,8 @@ func (s *server) RenderReleaseSafetyForTest(acct state.Account, slug string) *ht
 // GitOpsReleaseHoldForTest names what holds activating graph, or "".
 func (s *server) GitOpsReleaseHoldForTest(ctx context.Context, lease state.EnvironmentGitOpsLease, graph state.EnvironmentWorkloadGraph) (string, error) {
 	b := &environmentGitOpsBackend{server: s}
+	if lease.Source.ID != "" {
+		b.intent, _ = s.store.(state.EnvironmentGitOpsIntentStore)
+	}
 	return b.gitOpsReleaseHold(ctx, lease, graph)
 }

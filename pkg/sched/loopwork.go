@@ -94,6 +94,24 @@ const (
 	workRetention         workKind = "retention"
 	workWorkflowRetention workKind = "workflow_retention"
 	workTriggersRetention workKind = "triggers_retention"
+	// workAppPark parks a whole app (an evicted app, a suspended or
+	// abuse-held account, a spend cap) and workAppDelete destroys a deleted
+	// app's VMs. Both snapshot or destroy every live instance, so they run
+	// off the loop and off the reaper (ADR 20261103164725).
+	workAppPark   workKind = "app_park"
+	workAppDelete workKind = "app_delete"
+	// workInstanceFailure destroys an instance a peer schedd relayed a
+	// terminal failure for; workJobsReaper is the stuck-job reaper tick and
+	// workCronFireNow drains manual cron runs. The first two wait on VM
+	// destroys and the app lock, the third on many enqueues, so they run off
+	// the loop (ADR 20261103195512).
+	workInstanceFailure workKind = "instance_failure"
+	workJobsReaper      workKind = "jobs_reaper"
+	workCronFireNow     workKind = "cron_fire_now"
+	// workInstanceEnforcement runs the stats tick's per-instance actions:
+	// disk-pressure and egress-abuse recycles (app lock plus a destroy) and
+	// CPU saturation captures (ADR 20261104143005).
+	workInstanceEnforcement workKind = "instance_enforcement"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -104,6 +122,9 @@ var workKinds = []workKind{
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
 	workAppWake, workRuntimeConfigRestart, workWatchdog, workInvocationsRetention,
 	workTargets, workFloor, workPrewarm, workRetention, workWorkflowRetention, workTriggersRetention,
+	workAppPark, workAppDelete,
+	workInstanceFailure, workJobsReaper, workCronFireNow,
+	workInstanceEnforcement,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -207,8 +228,27 @@ var workSpecs = map[workKind]workSpec{
 	// One pass of each retention at a time; a tick while one runs
 	// coalesces, and the next pass carries on where it stopped.
 	workRetention:         {slots: 1, overflow: overflowDrop},
-	workWorkflowRetention: {slots: 1, overflow: overflowDrop},
+	workWorkflowRetention: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	workTriggersRetention: {slots: 1, overflow: overflowDrop},
+	// Whole-app parks and deleted-app cleanups, one per app (the key) and
+	// four apps at once. A dropped park is retried by the next reaper tick; a
+	// dropped cleanup by the reaper's lifecycle reconciliation, which lists
+	// deleted apps' live instances every tick.
+	workAppPark:   {slots: 4, overflow: overflowDrop},
+	workAppDelete: {slots: 4, overflow: overflowDrop},
+	// A relayed failure is consumed with its notification and nothing
+	// replays it, so a full pool runs it inline as before rather than drop
+	// it. The key is the report, so a duplicate delivery coalesces.
+	workInstanceFailure: {slots: 8, overflow: overflowInline},
+	// One stuck-job pass at a time; the next 5 s tick finds what is left.
+	workJobsReaper: {slots: 1, overflow: overflowDrop},
+	// One fire-now drain at a time. A run-now that arrives during a drain
+	// asks for one more pass; the minute safety tick covers anything else.
+	workCronFireNow: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// Keyed by action and instance. An action is recorded as taken only when
+	// it succeeds, so a dropped one is submitted again by the next 200 ms
+	// tick that still sees the condition.
+	workInstanceEnforcement: {slots: 4, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

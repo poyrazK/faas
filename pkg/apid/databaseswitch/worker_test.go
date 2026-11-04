@@ -3,6 +3,7 @@ package databaseswitch_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -13,6 +14,44 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestDatabaseSwitchRetriesUnavailableReleaseGuard(t *testing.T) {
+	h := newHarness(t)
+	unavailable := true
+	h.worker.ReleaseGuard = func(context.Context, state.DatabaseSwitch) (string, error) {
+		if unavailable {
+			return "", errors.New("temporarily unavailable")
+		}
+		return "", nil
+	}
+	h.databases.target.State = managedpostgres.StateReady
+	h.runUntil(state.DatabaseSwitchDraining, 12)
+	h.completeDrain()
+	h.tick()
+	sw := h.tick()
+	if sw.Phase != state.DatabaseSwitchSwitching || sw.LastErrorCode != "release_guard_unavailable" || len(h.releases.marked) != 0 {
+		t.Fatalf("unavailable guard changed the release: %+v marked %v", sw, h.releases.marked)
+	}
+	unavailable = false
+	h.runUntil(state.DatabaseSwitchCompleted, 8)
+}
+
+func TestDatabaseSwitchChecksBindingsOnSwitchAndCompensation(t *testing.T) {
+	h := newHarness(t)
+	var checked []string
+	h.worker.PromoteRelease = func(ctx context.Context, _ state.DatabaseSwitch, id string) error {
+		checked = append(checked, id)
+		return h.releases.MarkDeploymentLive(ctx, id)
+	}
+	h.databases.target.State = managedpostgres.StateReady
+	h.cutovers.activateErr = &managedpostgres.ActivationBlockedError{Code: managedpostgres.ActivationBindingsChanged}
+	h.runUntil(state.DatabaseSwitchDraining, 12)
+	h.completeDrain()
+	h.runUntil(state.DatabaseSwitchFailed, 10)
+	if !slices.Equal(checked, []string{h.sw.TargetDeploymentID, h.sw.FromDeploymentID}) {
+		t.Fatalf("binding checks = %v", checked)
+	}
+}
 
 type fakeDatabases struct {
 	restoreErr error
@@ -414,6 +453,31 @@ func TestDatabaseSwitchRefusesWhenAnotherReleaseStartedServing(t *testing.T) {
 	sw := h.runUntil(state.DatabaseSwitchFailed, 6)
 	if sw.FailureCode != "release_changed" || len(h.releases.marked) != 0 || slices.Contains(h.cutovers.calls, "activate") {
 		t.Fatalf("got %+v marked %v calls %v", sw, h.releases.marked, h.cutovers.calls)
+	}
+}
+
+// A guard that began after the switch was requested (a pause, a freeze, an
+// approval change) stops the target before it goes live (ADR-20261023181931
+// amendment 2).
+func TestDatabaseSwitchRechecksTheReleaseGuardsBeforeTheTargetGoesLive(t *testing.T) {
+	h := newHarness(t)
+	var checked []string
+	h.worker.ReleaseGuard = func(_ context.Context, sw state.DatabaseSwitch) (string, error) {
+		checked = append(checked, sw.TargetDeploymentID)
+		return "Releases are paused.", nil
+	}
+	h.databases.target.State = managedpostgres.StateReady
+	h.runUntil(state.DatabaseSwitchDraining, 12)
+	h.completeDrain()
+	sw := h.runUntil(state.DatabaseSwitchFailed, 6)
+	if sw.FailureCode != "release_switch_failed" || len(h.releases.marked) != 0 || slices.Contains(h.cutovers.calls, "activate") {
+		t.Fatalf("got %+v marked %v calls %v", sw, h.releases.marked, h.cutovers.calls)
+	}
+	if len(checked) == 0 || checked[0] != h.sw.TargetDeploymentID {
+		t.Fatalf("guard checked %v, want the target", checked)
+	}
+	if h.releases.live["default"] != h.sw.FromDeploymentID {
+		t.Fatalf("live release = %s, want the previous one kept", h.releases.live["default"])
 	}
 }
 

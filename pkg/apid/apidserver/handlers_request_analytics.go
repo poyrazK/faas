@@ -312,19 +312,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		ReceivedAt:   pgtype.Timestamptz{Time: window.From, Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: window.Until, Valid: true},
 	}
-	summary, err := s.store.RequestTelemetryAnalyticsSummary(ctx, params)
-	if err != nil {
-		return api.RequestAnalyticsResponse{}, err
-	}
-
-	groupRows, err := s.store.RequestTelemetryAnalyticsByDimension(ctx, sqlc.RequestTelemetryAnalyticsByDimensionParams{
-		AppID:        params.AppID,
-		AccountID:    params.AccountID,
-		ReceivedAt:   params.ReceivedAt,
-		ReceivedAt_2: params.ReceivedAt_2,
-		GroupBy:      groupBy,
-		Limit:        requestAnalyticsGroupLimit,
-	})
+	summary, groupRows, err := s.requestAnalyticsTotals(ctx, app, acct, window, groupBy, params)
 	if err != nil {
 		return api.RequestAnalyticsResponse{}, err
 	}
@@ -1104,14 +1092,7 @@ func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app sta
 	if groupBy != "" {
 		return s.requestAnalyticsGroupedTimeseriesResponse(ctx, app, acct, window, groupBy, route, method)
 	}
-	rows, err := s.store.RequestTelemetryAnalyticsTimeseries(ctx, sqlc.RequestTelemetryAnalyticsTimeseriesParams{
-		AppID:       stringToPgUUID(app.ID),
-		AccountID:   stringToPgUUID(acct.ID),
-		ReceivedAt:  pgtype.Timestamptz{Time: window.From, Valid: true},
-		ReceivedAt2: pgtype.Timestamptz{Time: window.Until, Valid: true},
-		Route:       route,
-		Method:      method,
-	})
+	rows, err := s.requestAnalyticsTimeseriesRows(ctx, app, acct, window, route, method)
 	if err != nil {
 		return api.RequestAnalyticsTimeseriesResponse{}, err
 	}
@@ -1146,16 +1127,7 @@ func (s *server) requestAnalyticsTimeseriesResponse(ctx context.Context, app sta
 }
 
 func (s *server) requestAnalyticsGroupedTimeseriesResponse(ctx context.Context, app state.App, acct state.Account, window requestAnalyticsWindow, groupBy, route, method string) (api.RequestAnalyticsTimeseriesResponse, error) {
-	rows, err := s.store.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, sqlc.RequestTelemetryAnalyticsTimeseriesGroupedParams{
-		AppID:       stringToPgUUID(app.ID),
-		AccountID:   stringToPgUUID(acct.ID),
-		ReceivedAt:  pgtype.Timestamptz{Time: window.From, Valid: true},
-		ReceivedAt2: pgtype.Timestamptz{Time: window.Until, Valid: true},
-		GroupBy:     groupBy,
-		Route:       route,
-		Method:      method,
-		Limit:       requestAnalyticsGroupLimit,
-	})
+	rows, err := s.requestAnalyticsGroupedTimeseriesRows(ctx, app, acct, window, groupBy, route, method)
 	if err != nil {
 		return api.RequestAnalyticsTimeseriesResponse{}, err
 	}

@@ -121,7 +121,7 @@ Create a bucket with `public: true` and a stable `serve_at` path, for example
 is ready, `GET` and `HEAD` requests to
 `https://<app>.<apps-domain>/assets/<key>` are served directly by
 `gatewayd-public`; a route hit never wakes or proxies to the app. Responses
-use `Cache-Control: public, max-age=300, must-revalidate` and do not require a
+use `Cache-Control: public, max-age=300, must-revalidate, no-transform` and do not require a
 Gregale or S3 signed URL. Caches revalidate every five minutes, so deleting or
 replacing an object takes it down everywhere within that time. Anonymous reads
 may use at most 75% of the account's monthly request and egress ceilings, so
@@ -553,7 +553,10 @@ concurrent writes to the same part return 409. Different parts remain concurrent
 Successful verified transfers settle their token. Failed or uncertain transfers
 block finalization for a conservative 36-minute window (30-minute transfer
 context, 60-second internal URL, five-minute grace). Expiry alone releases no
-capacity. Completion checks the part revision and absence of in-flight writes,
+capacity. An abort settles an uncertain attempt once its window has ended and
+the native abort is verified (no parts or `NoSuchUpload`), so an upload a
+client abandoned mid-part finishes aborting instead of retrying forever
+(ADR-20261104151650); completion still waits for proof. Completion checks the part revision and absence of in-flight writes,
 then atomically persists its size, exact part list, and final-object grant.
 
 Conditional completion also persists its immutable condition in a distinct
@@ -932,19 +935,37 @@ authorization ceilings of their own, so size those values, and
 million (`api.MaxObjectStorageAccountKeys`), because a bucket is metered by
 listing it whole.
 
-Example safety values **only**, not approved pricing or plan allowances:
+apid enforces the tighter of the safety policy and the plan, so a policy
+below what the plans sell holds every account below its plan. With
+`FAAS_ENVIRONMENT=production`, apid refuses new buckets and withdraws object
+storage from capabilities until `max_account_bytes` and `max_bucket_bytes`
+reach the largest plan ceiling (1,000 GiB), `max_monthly_egress_bytes` the
+largest plan egress (2,000 GiB) and `max_account_keys` one million; every
+environment logs the shortfall at startup (`object storage safety policy
+sells plans less than they promise`). CD sets `FAAS_ENVIRONMENT=production`
+for apid in every `production*` environment (the control-plane role's
+`faas_environment`, staged by `scripts/ci/faas_environment_vars.sh`); before
+2026-11-03 no deploy set it, so the refusal never ran. A support grant above
+`max_account_bytes` is refused, because it would not take effect.
+
+A provider that refuses the installation's credentials withdraws object
+storage for an hour; after that the next bucket operation tries the provider
+again and restores it or renews the hour.
+
+Example safety values, sized for the plans (production-us runs these since
+2026-11-02); they are not plan allowances:
 
 ```json
 "accounting": {
   "accounting_mode": "gateway_safety_v1",
   "gateway_metering_since": "2026-11-01T00:00:00Z",
-  "max_account_bytes": 10737418240,
-  "max_bucket_bytes": 5368709120,
-  "max_account_keys": 100000,
+  "max_account_bytes": 1099511627776,
+  "max_bucket_bytes": 1099511627776,
+  "max_account_keys": 1000000,
   "max_monthly_cost_millicents": 0,
-  "max_monthly_requests": 1000000,
-  "max_monthly_egress_bytes": 10737418240,
-  "max_monthly_authorizations": 100000,
+  "max_monthly_requests": 10000000,
+  "max_monthly_egress_bytes": 2147483648000,
+  "max_monthly_authorizations": 1000000,
   "max_report_age_seconds": 7200
 }
 ```
@@ -1310,6 +1331,15 @@ GCS supports tracked receipts and generation-based historical confirmation.
 Third-party writers without the tracked capability retain conservative
 admissions and the previous failure-receipt behavior. Historical/direct signed
 uploads, copies and uncertain writes still cannot be force-refunded.
+
+Known GCS limitation: GCS returns a generation for every object, even in a
+bucket without versioning, and accounting reads any native version ID as
+retained versions. A GCS bucket's first tracked write therefore moves it to
+`all_versions` accounting, after which ADR-540 declines direct signed PUTs,
+untracked gateway writes and multipart completion with 409. S3 backends (OVH)
+return no version ID for an unversioned bucket and are unaffected. Object
+storage moves to OVH before customer launch, so this is not fixed on GCS
+(production journey 2026-11-03).
 
 The route policy is provider-neutral. It uses the registry's optional streaming
 writer, so switching an immutable bucket placement between OVH, R2, AWS, GCS,

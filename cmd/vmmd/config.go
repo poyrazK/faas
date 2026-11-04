@@ -455,6 +455,13 @@ type ComputeNodeConfig struct {
 	// faas_cloudflare_origin_only. The vmmd egress drop-in supplies
 	// Cloudflare's pinned ranges (ADR-20261102081618 §2).
 	PublicIngressCIDRs []string `toml:"public_ingress_cidrs"`
+	// PublicEntryAddrs, when set, are this compute edge's public entry
+	// addresses with no proxy in front, as the nftables role renders for
+	// faas_public_entry_addrs (ADR-20261103163954 §2): 443 from every source
+	// to them only, nothing else to them. Takes precedence over
+	// PublicIngressCIDRs, which the drop-in sends beside it for a vmmd that
+	// predates this field.
+	PublicEntryAddrs []string `toml:"public_entry_addrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
 	// `tailscale ip -4` (Mega-PR-B Commit 3). Defaults to
@@ -477,6 +484,7 @@ type ComputeNodeConfig struct {
 	// VXLAN seam. It is disabled by default until the operator has provisioned
 	// a shared encrypted overlay for every node in the region.
 	PrivateNetworkTransportEnabled bool `toml:"private_network_transport_enabled"`
+	PrivateNetworkTransportMTU     int  `toml:"private_network_transport_mtu"`
 	// ServiceTCPEnabled turns on private TCP service addressing (ADR-576):
 	// every new netns admits guest TCP to api.ServiceAddressCIDR, the runtime
 	// host policy DNATs it onto the tenant-bridge service listeners, and the
@@ -844,6 +852,9 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_PUBLIC_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PublicIngressCIDRs = splitNonEmpty(v)
 	}
+	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
+		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
+	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_TCP_PORTS"); v != "" {
 		ports, perr := parseTCPPorts(v)
 		if perr != nil {
@@ -885,6 +896,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_VMMD_DATABASE_ROUTE_ENABLED %q invalid: %w", v, perr)
 		}
 		c.ComputeNode.DatabaseRouteEnabled = parsed
+	}
+	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_MTU"); v != "" {
+		mtu, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("vmmd: invalid private transport MTU: %w", err)
+		}
+		c.ComputeNode.PrivateNetworkTransportMTU = mtu
 	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE"); v != "" {
 		c.ComputeNode.PrivateNetworkTransportInterface = v
@@ -1163,6 +1181,9 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.TenantEgressIface = iface
 	}
+	if mtu := c.ComputeNode.PrivateNetworkTransportMTU; mtu != 0 && (mtu < 576 || mtu > 1500) {
+		return nil, fmt.Errorf("vmmd: private_network_transport_mtu must be between 576 and 1500")
+	}
 	if iface := strings.TrimSpace(c.ComputeNode.PrivateNetworkTransportInterface); iface != "" {
 		if err := validatePublicIface(iface); err != nil {
 			return nil, fmt.Errorf("vmmd: [compute_node].private_network_transport_interface %q invalid: %w", iface, err)
@@ -1204,7 +1225,26 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.PublicIngressCIDRs[i] = prefix.Masked().String()
 	}
+	if err := validatePublicEntryAddrs(c.ComputeNode); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// validatePublicEntryAddrs holds each entry address to the form the nftables
+// role writes verbatim, so the boot policy and vmmd's runtime policy stay
+// byte-identical.
+func validatePublicEntryAddrs(cfg ComputeNodeConfig) error {
+	for i, raw := range cfg.PublicEntryAddrs {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			return fmt.Errorf("vmmd: public_entry_addrs[%d] %q invalid: %w", i, raw, err)
+		}
+		if addr.Zone() != "" || addr.Is4In6() || addr.String() != raw {
+			return fmt.Errorf("vmmd: public_entry_addrs[%d] %q must be a plain address in canonical form (%s)", i, raw, addr.Unmap().WithZone(""))
+		}
+	}
+	return nil
 }
 
 func validateAdoptionConfig(record, adopt, nativeRecovery bool) error {
@@ -1339,6 +1379,11 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	for _, raw := range cfg.PublicIngressCIDRs {
 		if prefix, err := netip.ParsePrefix(raw); err == nil {
 			policy.PublicInputSourceCIDRs = append(policy.PublicInputSourceCIDRs, prefix.Masked())
+		}
+	}
+	for _, raw := range cfg.PublicEntryAddrs {
+		if addr, err := netip.ParseAddr(raw); err == nil {
+			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
 		}
 	}
 	if cfg.ServiceTCPEnabled {

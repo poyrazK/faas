@@ -281,6 +281,34 @@ func (s *server) waitingReleaseApprovals(ctx context.Context, app state.App) ([]
 			out = append(out, status)
 		}
 	}
+	held, err := s.releasesWaitingBeforeReleaseCommand(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, held...), nil
+}
+
+// releasesWaitingBeforeReleaseCommand lists the app's releases waiting for
+// approval before their release command runs (ADR-20261020085706 amendment
+// 12): they are not live yet, but they wait for the same people.
+func (s *server) releasesWaitingBeforeReleaseCommand(ctx context.Context, app state.App) ([]api.ReleaseApprovalStatus, error) {
+	rows, err := s.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		AppID: app.ID, Statuses: []state.DeploymentStatus{state.DeploySnapshotting}, OldestFirst: true, Limit: 50,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list releases in their release phase: %w", err)
+	}
+	out := []api.ReleaseApprovalStatus{}
+	now := time.Now()
+	for _, d := range rows {
+		wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now)
+		if err != nil {
+			return nil, fmt.Errorf("read release approvals: %w", err)
+		}
+		if wait.Waits && (wait.Status.State == api.ReleaseApprovalStateWaiting || wait.Status.State == api.ReleaseApprovalStateExpired) {
+			out = append(out, wait.Status)
+		}
+	}
 	return out, nil
 }
 
@@ -482,6 +510,13 @@ func (s *server) releaseApprovalState(ctx context.Context, app state.App, d stat
 	if err != nil {
 		return nil, api.ReleaseApprovalStatus{}, fmt.Errorf("read release approval policy: %w", err)
 	}
+	// A release waiting before its release command waits from its release
+	// phase, for the policy's timeout (ADR-20261020085706 amendment 12).
+	if wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now); err != nil {
+		return nil, api.ReleaseApprovalStatus{}, err
+	} else if wait.Waits {
+		return wait.Policy, wait.Status, nil
+	}
 	var decisions []state.ReleaseApproval
 	if approval.Gated(&policy, app, d) {
 		if decisions, err = store.ListReleaseApprovals(ctx, d.ID); err != nil {
@@ -545,7 +580,8 @@ func (s *server) supersededRollbackTargetProblem(ctx context.Context, app state.
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(ctx, s.store, app, target.Scope, now)
 	if err != nil {
-		s.log.Warn("deploy freeze: could not read freezes; rolling back", "app", app.ID, "err", err)
+		s.log.Warn("deploy freeze: could not read freezes for a never-served rollback target", "app", app.ID, "err", err)
+		return api.ErrCapacity("could not read release freezes for this rollback target")
 	} else if len(active) > 0 {
 		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
 		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
@@ -687,10 +723,42 @@ func (s *server) abortForApproval(ctx context.Context, app state.App, d state.De
 		return
 	}
 	reason := "release approval: " + summary
-	if _, _, err := decisions.RecoverRolloutWithDecision(ctx, app.ID, "abort", reason,
-		approval.AbortDecision(rule, summary, d, time.Now())); err != nil {
+	decision := approval.AbortDecision(rule, summary, d, time.Now())
+	// Abort this release, not the app's newest rollout: with another
+	// environment rolling out, an app-level abort is ambiguous and refused,
+	// and the rejected release would keep its canary traffic (approvals ADR
+	// amendment 11).
+	var err error
+	if predecessor, ok := s.rolloutPredecessor(ctx, d); ok {
+		_, _, err = decisions.RecoverRolloutForDeploymentWithDecision(ctx, app.ID, d.ID, predecessor.ID, "abort", reason, decision)
+	} else {
+		_, _, err = decisions.RecoverRolloutWithDecision(ctx, app.ID, "abort", reason, decision)
+	}
+	if err != nil {
 		s.log.Warn("apid: abort release for approval failed", "deployment", d.ID, "rule", rule, "err", err)
 	}
+}
+
+// rolloutPredecessor is the release a canary in flight returns its traffic
+// to on abort: the newest earlier live release of its scope that serves.
+func (s *server) rolloutPredecessor(ctx context.Context, d state.Deployment) (state.Deployment, bool) {
+	live, err := s.store.LiveDeployments(ctx, d.AppID)
+	if err != nil {
+		s.log.Warn("apid: read rollout predecessor", "deployment", d.ID, "err", err)
+		return state.Deployment{}, false
+	}
+	var best state.Deployment
+	found := false
+	for _, other := range live {
+		if other.ID == d.ID || other.TrafficPercent <= 0 || recoveryScope(other.Scope) != recoveryScope(d.Scope) ||
+			!other.CreatedAt.Before(d.CreatedAt) {
+			continue
+		}
+		if !found || other.CreatedAt.After(best.CreatedAt) {
+			best, found = other, true
+		}
+	}
+	return best, found
 }
 
 // appSharedInOrg reports whether more than one person can act on app.

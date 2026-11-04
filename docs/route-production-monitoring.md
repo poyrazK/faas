@@ -129,7 +129,10 @@ bucket representatives, including successful responses and cold boot latency.
 A 5xx the gateway returns because a Gregale dependency could not admit the
 request (node admission, traffic policy, rate-limit or revocation state was
 unavailable) is not counted: it says nothing about the release. Deadlines, open
-circuits, capacity refusals and failed wakes or boots still count.
+circuits, capacity refusals and failed wakes or boots still count. Requests
+sent to a deployment's own URL (its preview URL, an alias URL or a revision pin)
+are not counted either, and a long-lived response such as a WebSocket or an
+event stream counts as a request but not as latency.
 Coverage is `observed_only`: this does not establish complete capture, an end-user
 count or compliance with an SLO. Low-traffic routes may stay unknown.
 

@@ -212,7 +212,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if targetErr != nil {
 			return nil, fmt.Errorf("host %s schedd target: %w", host.Name, targetErr)
 		}
-		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
+		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.DNS.OriginPull, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
 		body += renderDomainLayoutVars(m.DNS)
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
@@ -225,7 +225,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 		}
 		body += databases.hostVars(host, hostScheddTarget)
-		body += renderComputeEdgeVars(m.PublicEdge, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		body += renderComputeEdgeVars(m.PublicEdge, host, postgresListenAddress, computeAllowedCIDRs)
 		if host.Role == roleControlPlane {
 			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts)
 		}
@@ -521,7 +521,7 @@ func writeInventoryGroup(out *bytes.Buffer, group string, hosts []string) {
 	out.WriteByte('\n')
 }
 
-func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewaySynthTarget, scheddTarget, controlPlaneAPIDLoopback string, internalHosts []manifestInternalHost, overlayCIDRs, overlayProvider, publicDNSMode, privateDNSMode, privateDNSZone, postgresListenAddress string, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs []string, storageMountpoint string) string {
+func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewaySynthTarget, scheddTarget, controlPlaneAPIDLoopback string, internalHosts []manifestInternalHost, overlayCIDRs, overlayProvider, publicDNSMode, publicOriginPull, privateDNSMode, privateDNSZone, postgresListenAddress string, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs []string, storageMountpoint string) string {
 	var b strings.Builder
 	canonicalNodeName := canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role))
 	fmt.Fprintf(&b, "# Generated from the split-box manifest for %s; do not hand-edit.\n", host.Name)
@@ -596,6 +596,15 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayS
 		b.WriteString("faas_compute_gateway_discovery: database\n")
 		if publicDNSMode == "cloudflare" {
 			b.WriteString("faas_cloudflare_origin_only: true\n")
+			// ADR-20261103172551: the platform site admits Cloudflare's
+			// ranges, which every zone uses; the operator picks the zone's
+			// client certificate or, knowingly, any zone.
+			switch publicOriginPull {
+			case manifest.DNSOriginPullRequired:
+				b.WriteString("faas_public_edge_authenticated_origin_pulls: true\n")
+			case manifest.DNSOriginPullAnyZone:
+				b.WriteString("faas_public_edge_allow_any_cloudflare_zone: true\n")
+			}
 		}
 		fmt.Fprintf(&b, "faas_apid_app_errors_listen: %q\n", fmt.Sprintf("tcp://0.0.0.0:%d", manifestAppErrorsPort))
 		fmt.Fprintf(&b, "faas_githubd_listen_addr: %q\n", fmt.Sprintf("tcp://0.0.0.0:%d", manifestGithubdPort))
@@ -756,7 +765,8 @@ func renderWorkloadIdentityVars(w manifest.WorkloadIdentity) string {
 	return fmt.Sprintf("faas_workload_identity_source_dir: %q\n", w.SourceDir)
 }
 
-func renderComputeEdgeVars(edge manifest.PublicEdge, role, controlPlaneAddress string, computeCIDRs []string) string {
+func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, controlPlaneAddress string, computeCIDRs []string) string {
+	role := host.Role
 	if !edge.ComputeNodes || controlPlaneAddress == "" {
 		return ""
 	}
@@ -789,25 +799,61 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, role, controlPlaneAddress s
 			fmt.Fprintf(&b, "faas_edge_entry: %q\n", edge.Entry)
 			b.WriteString("faas_cloudflare_origin_only: true\n")
 		}
+		// ADR-20261103163954 §6: with nothing in front, clients reach the
+		// edge on the entry address, which takes 443 from everyone and
+		// nothing else, and the edge applies the client limits itself. The
+		// entry-address rules take precedence over the Cloudflare-only ones
+		// above, which stay as the fail-closed fallback.
+		if edge.NoFront() {
+			fmt.Fprintf(&b, "faas_edge_public_front: %q\n", edge.Front)
+			b.WriteString("faas_edge_client_limits: true\n")
+			fmt.Fprintf(&b, "faas_public_entry_addrs: [%s]\n", quotedYAMLList([]string{host.EntryAddress()}))
+		}
+		// ADR-20261103163954 §3: the edge serves the certificate edgednsd
+		// stored from the serve CA, its key opened with the edge-tls
+		// identity.
+		if cert := edgeCertificate(edge); edge.DirectEntry() && cert != nil && cert.Serve != "" {
+			b.WriteString("faas_edge_public_tls_cert_source: \"database\"\n")
+			fmt.Fprintf(&b, "faas_edge_public_tls_cert_ca: %q\n", cert.Serve)
+		}
 	}
 	return b.String()
 }
 
 // renderEdgeDNSVars turns on edgednsd on the control plane
 // (ADR-20261102081618 §3) with the managed names and each compute host's
-// public address under the name it registers with.
+// public address under the name it registers with. Under front: none the
+// names are DNS-only, apart from the proxied ones, and point at the entry
+// addresses (ADR-20261103163954 §1).
 func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
 	if edge.DNS == nil || !edge.DirectEntry() {
 		return ""
 	}
-	names := make([]string, 0, len(edge.DNS.Names))
+	proxied := map[string]bool{}
+	for _, name := range edge.DNS.Proxied {
+		proxied[name] = true
+	}
+	names := make([]string, 0, len(edge.DNS.Names)+len(edge.DNS.Proxied))
 	for _, name := range edge.DNS.Names {
-		names = append(names, edge.DNS.ZoneID+":"+name)
+		entry := edge.DNS.ZoneID + ":" + name
+		if edge.NoFront() && !proxied[name] {
+			entry += ":dns-only"
+		}
+		names = append(names, entry)
+	}
+	for _, name := range edge.DNS.Proxied {
+		if !slices.Contains(edge.DNS.Names, name) {
+			names = append(names, edge.DNS.ZoneID+":"+name)
+		}
 	}
 	var addresses []string
 	for _, h := range hosts {
-		if h.Role == roleComputeOnly && h.PublicIPv4 != "" {
-			addresses = append(addresses, canonicalComputeNodeName(h.Name, roleTemplating.Role(h.Role))+"="+h.PublicIPv4)
+		addr := h.PublicIPv4
+		if edge.NoFront() {
+			addr = h.EntryAddress()
+		}
+		if h.Role == roleComputeOnly && addr != "" {
+			addresses = append(addresses, canonicalComputeNodeName(h.Name, roleTemplating.Role(h.Role))+"="+addr)
 		}
 	}
 	var b strings.Builder
@@ -815,7 +861,28 @@ func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
 	fmt.Fprintf(&b, "faas_edgednsd_names: [%s]\n", quotedYAMLList(names))
 	fmt.Fprintf(&b, "faas_edgednsd_node_addresses: [%s]\n", quotedYAMLList(addresses))
 	fmt.Fprintf(&b, "faas_edgednsd_dry_run: %t\n", !edge.DNS.Live)
+	// ADR-20261103163954 §3: edgednsd orders the apps domains' certificate
+	// with the DNS-01 challenge in the managed zone.
+	if cert := edge.DNS.Certificate; cert != nil {
+		fmt.Fprintf(&b, "faas_edgednsd_certificate_names: [%s]\n", quotedYAMLList(cert.Names))
+		fmt.Fprintf(&b, "faas_edgednsd_certificate_zone_id: %q\n", edge.DNS.ZoneID)
+		fmt.Fprintf(&b, "faas_edgednsd_acme_ca: %q\n", cert.CAOrDefault())
+		// The Certificate Transparency watch pages on certificates under
+		// the domain that edgednsd did not issue.
+		if ct := cert.Transparency; ct != nil {
+			fmt.Fprintf(&b, "faas_edgednsd_ct_domain: %q\n", strings.ToLower(strings.TrimSpace(ct.Domain)))
+			fmt.Fprintf(&b, "faas_edgednsd_ct_allow_names: [%s]\n", quotedYAMLList(ct.AllowNames))
+		}
+	}
 	return b.String()
+}
+
+// edgeCertificate is the manifest's apps-domain certificate, nil without one.
+func edgeCertificate(edge manifest.PublicEdge) *manifest.PublicEdgeCertificate {
+	if edge.DNS == nil {
+		return nil
+	}
+	return edge.DNS.Certificate
 }
 
 func renderPublicControlAddr(host manifest.Host) string {

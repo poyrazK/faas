@@ -26,7 +26,7 @@ func TestBuildFabricPlanUsesStableAccountScopedBridge(t *testing.T) {
 	if len(plan.BridgeName) > 15 || plan.BridgeName != BridgeName("acct-a", "prod") {
 		t.Fatalf("bridge name = %q, want stable <= 15-byte name", plan.BridgeName)
 	}
-	if got := plan.Setup[1]; len(got) != 6 || got[0] != "ip" || got[1] != "addr" || got[2] != "replace" || got[3] != "10.42.0.1/16" {
+	if got := plan.Setup[1]; len(got) != 5 || got[0] != "ip" || got[1] != "addr" || got[2] != "flush" || got[4] != plan.BridgeName {
 		t.Fatalf("gateway setup command = %v", got)
 	}
 	if BridgeName("acct-a", "prod") == BridgeName("acct-b", "prod") {

@@ -96,7 +96,7 @@ func (s *PgStore) appendManagedRealtimeInboxMessage(ctx context.Context, endpoin
 	}
 	if !held {
 		var lockedID string
-		if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpointID).Scan(&lockedID); err != nil {
+		if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for no key update`, endpointID).Scan(&lockedID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ManagedRealtimeChannelMessage{}, ErrNotFound
 			}

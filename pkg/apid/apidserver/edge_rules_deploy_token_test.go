@@ -74,10 +74,31 @@ func TestDeployTokenEdgeRulesStayOnItsApp(t *testing.T) {
 	if rec := route("edge-token-a"); rec.Code != http.StatusCreated {
 		t.Fatalf("deploy token route to its own app = %d %s, want 201", rec.Code, rec.Body.String())
 	}
-	if rec := e.Do(t, http.MethodPost, "/v1/apps/edge-token-a/edge-rules", api.CreateEdgeRuleRequest{
+	siblingRec := e.Do(t, http.MethodPost, "/v1/apps/edge-token-a/edge-rules", api.CreateEdgeRuleRequest{
 		MatchHost: "@app", MatchPath: "/b/**", Kind: "route", Action: json.RawMessage(`{"target_app_slug":"edge-token-b"}`),
-	}, nil); rec.Code != http.StatusCreated {
-		t.Fatalf("session route to a sibling app = %d %s, want 201", rec.Code, rec.Body.String())
+	}, nil)
+	if siblingRec.Code != http.StatusCreated {
+		t.Fatalf("session route to a sibling app = %d %s, want 201", siblingRec.Code, siblingRec.Body.String())
+	}
+	var sibling api.EdgeRuleResponse
+	if err := json.Unmarshal(siblingRec.Body.Bytes(), &sibling); err != nil {
+		t.Fatal(err)
+	}
+	// Nor may it widen or re-enable that account route without touching its
+	// action (amendment 2026-11-03, review round 9).
+	patch := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/v1/edge-rules/"+sibling.ID, bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer "+token.Plaintext)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(rec, req)
+		return rec
+	}
+	for _, body := range []string{`{"match_path":"/**"}`, `{"enabled":true}`, `{"match_methods":["GET"]}`} {
+		if rec := patch(body); rec.Code != http.StatusForbidden {
+			t.Fatalf("deploy token PATCH %s of a sibling route = %d %s, want 403", body, rec.Code, rec.Body.String())
+		}
 	}
 	// The account's own session still writes a rule for every host.
 	if rec := e.Do(t, http.MethodPost, "/v1/apps/edge-token-a/edge-rules", api.CreateEdgeRuleRequest{

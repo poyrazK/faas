@@ -1,0 +1,17 @@
+---
+# ADR-20261023104734 (contract amendment, 2026-11-03): the control-plane
+# daemons that run as the shared `faas` OS user log in as faas_shared, the
+# runtime role `faas_map faas faas_shared` maps that user to. They move with
+# the same switch as the daemons with their own OS users
+# (faas_postgres_runtime_roles_enabled, control_plane_service). Only units
+# that open the database are listed; a unit not installed on the host is
+# skipped. Each one must run as User=faas.
+faas_postgres_shared_runtime_role: faas_shared
+faas_postgres_shared_runtime_role_os_user: faas
+faas_postgres_shared_runtime_role_units:
+  - faas-gatewayd-public
+  - faas-githubd
+  - faas-s3-gatewayd
+  - faas-maild
+  - faas-agentd
+  - faas-edgednsd

@@ -29,8 +29,10 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/cronrun"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -193,6 +195,9 @@ func (s *server) fireCronFromDashboard(ctx context.Context, acct state.Account, 
 	if s.cronRunOverPlan(ctx, app, c) != nil {
 		return ErrDashboardCronPlanBlocked
 	}
+	if cronrun.BudgetHeld(ctx, s.store, app, time.Now().UTC()) {
+		return ErrDashboardCronBudgetHeld
+	}
 	requestID, err := s.insertCronFireNowRequest(ctx, c.ID, acct.ID)
 	var capErr *state.FireNowCapError
 	if errors.As(err, &capErr) {
@@ -248,6 +253,9 @@ var (
 	// ErrDashboardCronBusy covers a cron already holding
 	// api.CronFireNowActivePerCron manual runs; the v1 endpoint answers 429.
 	ErrDashboardCronBusy = errors.New("dashboard: cron has too many manual runs waiting")
+	// ErrDashboardCronBudgetHeld covers an app a compute budget holds; the
+	// v1 endpoint answers 402 financial_budget_held.
+	ErrDashboardCronBudgetHeld = errors.New("dashboard: app held by a compute budget")
 )
 
 // dashboardFireCronFlag is the ?fired= value naming why a dashboard
@@ -264,6 +272,8 @@ func dashboardFireCronFlag(err error) string {
 		return "suspended"
 	case errors.Is(err, ErrDashboardCronPlanBlocked):
 		return "plan"
+	case errors.Is(err, ErrDashboardCronBudgetHeld):
+		return "budget"
 	default:
 		return "error"
 	}
