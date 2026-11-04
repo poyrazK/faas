@@ -266,10 +266,19 @@ records do not contain that timing evidence, and windows crossing their batch
 boundaries remain approximate. Apply the schema and upgrade all apid writers
 before upgrading gateways if precise timing is required: an older apid ignores
 the new bucket field, and those timestamps cannot be recovered later.
+If the gateway's legacy error stream fails, the gateway keeps eligible HTTP
+Issues in a separate bounded in-memory queue and retries them using their
+stable event IDs. It does not retry the legacy counter, whose commit may have
+been ambiguous. The queue holds at most 1,024 records, at most 128 per app,
+for up to an hour; overflow, expiry or a gateway restart can lose records.
+Deploy apid before gateways: older apid versions do not implement this retry
+RPC, so queued records wait until a compatible apid is available or expire.
 If recording an HTTP Issue fails transiently, apid retries the Issue independently
 of the legacy error count. Initial attempts allow 128 concurrent records, at most 8 per app. Up to 1,024
 additional records can wait for an initial attempt, at most 128 per app. Retries
-remain in memory for up to an hour; a full queue, expiry, or process restart can
+run at most 128 at a time, at most 8 per app; another 1,024 failed records can
+wait for a retry slot, at most 128 per app. They remain in memory for up to an
+hour from the initial attempt; a full queue, expiry, or process restart can
 still lose records.
 The `retry_recovered`, `retry_dropped`, and `retry_skipped` ingestion outcomes
 expose recovery, exhaustion, and events no longer eligible for ingestion.
@@ -404,7 +413,7 @@ npx gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace
 ```
 
 The command is installed with `@gregale/sdk-node`; the programmatic equivalent
-is `buildIssueSourceMapManifest(directory)` from `@gregale/sdk-node/issues/source-maps`.
+is `buildIssueSourceMapManifest(directory)` from `@gregale/sdk-node/preview/issues/source-maps`.
 Discovery reads local `.js`, `.mjs`, and `.cjs` bundles. It uses the last
 `sourceMappingURL` comment, or an adjacent `bundle.js.map` for hidden-map builds.
 Map paths must stay inside the selected directory. Dependency directories,

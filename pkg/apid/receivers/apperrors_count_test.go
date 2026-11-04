@@ -77,6 +77,40 @@ func TestHTTPFailureRetryStopsOnPermanentRejection(t *testing.T) {
 	}
 }
 
+func TestHTTPIssueRetryWaitsForPerAppSlot(t *testing.T) {
+	receiver := NewAppErrorsReceiver(nil, nil, true)
+	app := uuid.NewString()
+	for i := 0; i < issueRetryPerApp; i++ {
+		if !receiver.acquireHTTPIssueRetry(context.Background(), app) {
+			t.Fatal("initial retry slot unavailable")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	acquired := make(chan bool, 1)
+	go func() { acquired <- receiver.acquireHTTPIssueRetry(ctx, app) }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		receiver.issueRetryMu.Lock()
+		waiting := receiver.issueRetryWaitApps[app]
+		receiver.issueRetryMu.Unlock()
+		if waiting == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("retry did not wait for a slot")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	receiver.releaseHTTPIssueRetry(app)
+	if !<-acquired {
+		t.Fatal("waiting retry was dropped instead of admitted")
+	}
+	for i := 0; i < issueRetryPerApp; i++ {
+		receiver.releaseHTTPIssueRetry(app)
+	}
+}
+
 type issueCaptureStore struct {
 	*countingAppErrorsStore
 	state.IssueStore
@@ -126,6 +160,18 @@ func TestHTTPFailureFirstAttemptIsIndependentOfRetrySlots(t *testing.T) {
 	defer store.mu.Unlock()
 	if len(store.counts) != 1 || store.counts[0] != 42 {
 		t.Fatalf("gateway count was not preserved: %v", store.counts)
+	}
+}
+
+func TestRecordHTTPIssueDoesNotReplayLegacyCounts(t *testing.T) {
+	store := &issueCaptureStore{countingAppErrorsStore: &countingAppErrorsStore{plan: api.PlanHobby}}
+	receiver := NewAppErrorsReceiver(store, nil, true)
+	req := &apidpb.IncrementAppErrorRequest{AccountId: uuid.NewString(), AppId: uuid.NewString(), DeploymentId: uuid.NewString(), RequestId: uuid.NewString(), IssueEventId: uuid.NewString(), RouteTemplate: "GET /orders", HttpStatus: 500, ErrorClass: "unhandled", Fingerprint: strings.Repeat("a", 64), ReceivedAtUnixMs: time.Now().UnixMilli()}
+	if _, err := receiver.RecordHTTPIssue(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.increments) != 0 || len(store.eventIDs) != 1 || store.eventIDs[0] != req.IssueEventId {
+		t.Fatalf("issue retry changed legacy counts or event identity: increments=%d events=%v", len(store.increments), store.eventIDs)
 	}
 }
 

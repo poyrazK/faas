@@ -23,7 +23,7 @@ func retryableHTTPIssueError(err error) bool {
 	if errors.As(err, &limit) {
 		return limit.Rate || limit.Resource == "events"
 	}
-	return err != nil && !errors.Is(err, errHTTPIssueSkipped) && !errors.Is(err, state.ErrInvalidArgument) && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrIssueEventConflict) && !errors.Is(err, state.ErrIssueQuota)
+	return err != nil && !errors.Is(err, errHTTPIssueSkipped) && !errors.Is(err, state.ErrInvalidArgument) && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrIssueEventConflict) && !errors.Is(err, state.ErrIssueQuota) && !errors.Is(err, state.ErrIssuePolicyChanged)
 }
 
 // enqueueHTTPIssue keeps Issue storage latency off the non-idempotent legacy
@@ -104,24 +104,13 @@ func (a *appErrorsReceiver) startHTTPIssue(snapshot *apidpb.IncrementAppErrorReq
 			a.issueAttemptApps[waitingApp]++
 			break
 		}
-		reserved := retryableHTTPIssueError(err) && a.issueRetryCount < issueRetryCapacity && a.issueRetryApps[app] < issueRetryPerApp
-		if reserved {
-			a.issueRetryCount++
-			a.issueRetryApps[app]++
-		}
 		a.issueRetryMu.Unlock()
 		if next != nil {
 			a.startHTTPIssue(next)
 		}
-		if reserved {
+		if retryableHTTPIssueError(err) && a.acquireHTTPIssueRetry(ctx, app) {
 			err = retryHTTPIssueUntil(ctx, attempt, time.Second, time.Minute)
-			a.issueRetryMu.Lock()
-			a.issueRetryCount--
-			a.issueRetryApps[app]--
-			if a.issueRetryApps[app] == 0 {
-				delete(a.issueRetryApps, app)
-			}
-			a.issueRetryMu.Unlock()
+			a.releaseHTTPIssueRetry(app)
 		}
 		switch {
 		case errors.Is(err, errHTTPIssueSkipped):
@@ -136,6 +125,62 @@ func (a *appErrorsReceiver) startHTTPIssue(snapshot *apidpb.IncrementAppErrorReq
 			a.ops.ObserveIssueEvent("accepted")
 		}
 	}()
+}
+
+// acquireHTTPIssueRetry bounds waiting records independently of active retry
+// workers. A burst of transient failures can wait for a slot instead of being
+// discarded merely because eight retries for the app are already active.
+func (a *appErrorsReceiver) acquireHTTPIssueRetry(ctx context.Context, app string) bool {
+	a.issueRetryMu.Lock()
+	if ctx.Err() == nil && a.issueRetryCount < issueRetryCapacity && a.issueRetryApps[app] < issueRetryPerApp {
+		a.issueRetryCount++
+		a.issueRetryApps[app]++
+		a.issueRetryMu.Unlock()
+		return true
+	}
+	if a.issueRetryWaiting >= issuePendingCapacity || a.issueRetryWaitApps[app] >= issuePendingPerApp {
+		a.issueRetryMu.Unlock()
+		return false
+	}
+	a.issueRetryWaiting++
+	a.issueRetryWaitApps[app]++
+	defer func() {
+		a.issueRetryWaiting--
+		a.issueRetryWaitApps[app]--
+		if a.issueRetryWaitApps[app] == 0 {
+			delete(a.issueRetryWaitApps, app)
+		}
+		a.issueRetryMu.Unlock()
+	}()
+	for {
+		if ctx.Err() != nil {
+			return false
+		}
+		if a.issueRetryCount < issueRetryCapacity && a.issueRetryApps[app] < issueRetryPerApp {
+			a.issueRetryCount++
+			a.issueRetryApps[app]++
+			return true
+		}
+		changed := a.issueRetryChanged
+		a.issueRetryMu.Unlock()
+		select {
+		case <-ctx.Done():
+		case <-changed:
+		}
+		a.issueRetryMu.Lock()
+	}
+}
+
+func (a *appErrorsReceiver) releaseHTTPIssueRetry(app string) {
+	a.issueRetryMu.Lock()
+	defer a.issueRetryMu.Unlock()
+	a.issueRetryCount--
+	a.issueRetryApps[app]--
+	if a.issueRetryApps[app] == 0 {
+		delete(a.issueRetryApps, app)
+	}
+	close(a.issueRetryChanged)
+	a.issueRetryChanged = make(chan struct{})
 }
 
 func retryHTTPIssueUntil(ctx context.Context, attempt func(context.Context) error, delay, maxDelay time.Duration) error {

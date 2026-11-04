@@ -40822,6 +40822,69 @@ func (q *Queries) IssueObserveRelease(ctx context.Context, db DBTX, arg IssueObs
 	return err
 }
 
+const issuePolicyApp = `-- name: IssuePolicyApp :one
+SELECT account_id, org_id FROM apps WHERE id = $1
+`
+
+type IssuePolicyAppRow struct {
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+}
+
+func (q *Queries) IssuePolicyApp(ctx context.Context, db DBTX, appID pgtype.UUID) (IssuePolicyAppRow, error) {
+	row := db.QueryRow(ctx, issuePolicyApp, appID)
+	var i IssuePolicyAppRow
+	err := row.Scan(&i.AccountID, &i.OrgID)
+	return i, err
+}
+
+const issuePolicyLockAccount = `-- name: IssuePolicyLockAccount :one
+SELECT plan, status, abuse_hold_at FROM accounts WHERE id = $1 FOR SHARE
+`
+
+type IssuePolicyLockAccountRow struct {
+	Plan        string
+	Status      string
+	AbuseHoldAt pgtype.Timestamptz
+}
+
+func (q *Queries) IssuePolicyLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (IssuePolicyLockAccountRow, error) {
+	row := db.QueryRow(ctx, issuePolicyLockAccount, accountID)
+	var i IssuePolicyLockAccountRow
+	err := row.Scan(&i.Plan, &i.Status, &i.AbuseHoldAt)
+	return i, err
+}
+
+const issuePolicyLockOrg = `-- name: IssuePolicyLockOrg :one
+SELECT personal_org, personal_owner_account_id, resource_ownership_enabled, plan, status, deleted_pending, abuse_hold_at
+FROM orgs WHERE id = $1 FOR SHARE
+`
+
+type IssuePolicyLockOrgRow struct {
+	PersonalOrg              bool
+	PersonalOwnerAccountID   pgtype.UUID
+	ResourceOwnershipEnabled bool
+	Plan                     string
+	Status                   string
+	DeletedPending           bool
+	AbuseHoldAt              pgtype.Timestamptz
+}
+
+func (q *Queries) IssuePolicyLockOrg(ctx context.Context, db DBTX, orgID pgtype.UUID) (IssuePolicyLockOrgRow, error) {
+	row := db.QueryRow(ctx, issuePolicyLockOrg, orgID)
+	var i IssuePolicyLockOrgRow
+	err := row.Scan(
+		&i.PersonalOrg,
+		&i.PersonalOwnerAccountID,
+		&i.ResourceOwnershipEnabled,
+		&i.Plan,
+		&i.Status,
+		&i.DeletedPending,
+		&i.AbuseHoldAt,
+	)
+	return i, err
+}
+
 const issuePurgeEvents = `-- name: IssuePurgeEvents :exec
 DELETE FROM issue_events WHERE app_id = $1 AND received_at < $2
 `

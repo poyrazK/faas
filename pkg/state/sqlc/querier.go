@@ -3062,6 +3062,9 @@ type Querier interface {
 	IssueMarkAttributionReviewed(ctx context.Context, db DBTX, id pgtype.UUID) error
 	IssueObserve(ctx context.Context, db DBTX, arg IssueObserveParams) (AppIssue, error)
 	IssueObserveRelease(ctx context.Context, db DBTX, arg IssueObserveReleaseParams) error
+	IssuePolicyApp(ctx context.Context, db DBTX, appID pgtype.UUID) (IssuePolicyAppRow, error)
+	IssuePolicyLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (IssuePolicyLockAccountRow, error)
+	IssuePolicyLockOrg(ctx context.Context, db DBTX, orgID pgtype.UUID) (IssuePolicyLockOrgRow, error)
 	IssuePublishSourceMaps(ctx context.Context, db DBTX, arg IssuePublishSourceMapsParams) (IssueSourceMapArtifact, error)
 	IssuePurgeEvents(ctx context.Context, db DBTX, arg IssuePurgeEventsParams) error
 	IssuePurgeEventsBounded(ctx context.Context, db DBTX, arg IssuePurgeEventsBoundedParams) (int64, error)

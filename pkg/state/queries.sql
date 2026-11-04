@@ -10555,6 +10555,13 @@ ORDER BY i.started_at DESC NULLS LAST, i.id
 LIMIT 1;
 -- name: IssueLockApp :one
 SELECT id, account_id, org_id FROM apps WHERE id = sqlc.arg(app_id) FOR UPDATE;
+-- name: IssuePolicyApp :one
+SELECT account_id, org_id FROM apps WHERE id = sqlc.arg(app_id);
+-- name: IssuePolicyLockAccount :one
+SELECT plan, status, abuse_hold_at FROM accounts WHERE id = sqlc.arg(account_id) FOR SHARE;
+-- name: IssuePolicyLockOrg :one
+SELECT personal_org, personal_owner_account_id, resource_ownership_enabled, plan, status, deleted_pending, abuse_hold_at
+FROM orgs WHERE id = sqlc.arg(org_id) FOR SHARE;
 -- name: IssueDeploymentScope :one
 SELECT d.id, d.commit_sha, d.image_digest, d.created_at FROM deployments d JOIN apps a ON a.id = d.app_id
 WHERE d.id = sqlc.arg(deployment_id) AND d.app_id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)

@@ -13,7 +13,44 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issues"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+// RecordHTTPIssue provides an idempotent retry path for an ambiguous legacy
+// stream failure. It does not touch the non-idempotent app-error counters.
+func (a *appErrorsReceiver) RecordHTTPIssue(ctx context.Context, req *apidpb.IncrementAppErrorRequest) (*apidpb.IncrementAppErrorResponse, error) {
+	if !a.enabled {
+		return nil, status.Error(codes.Unavailable, "app_errors disabled")
+	}
+	req = normalizeAppErrorSample(req)
+	if err := validateIncrementRequest(req); err != nil {
+		return nil, err
+	}
+	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" || req.GetRequestId() == "" || req.GetIssueEventId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "HTTP issue identity required")
+	}
+	release, err := a.gate.acquire(ctx)
+	if err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
+	defer release()
+	outcome, err := recordHTTPIssue(ctx, a.store, req)
+	if err != nil {
+		if retryableHTTPIssueError(err) {
+			return nil, status.Error(codes.Unavailable, "HTTP issue recording unavailable")
+		}
+		return nil, status.Error(codes.InvalidArgument, "HTTP issue rejected")
+	}
+	result := "accepted"
+	if outcome == httpIssueDuplicate {
+		result = "duplicate"
+	} else if outcome == httpIssueSkipped {
+		result = "retry_skipped"
+	}
+	a.ops.ObserveIssueEvent(result)
+	return &apidpb.IncrementAppErrorResponse{Outcome: result}, nil
+}
 
 // HTTP grouping is a separate source kind: observing a 500 does not prove an
 // application exception. Ordinary client errors remain in the existing API.
@@ -99,7 +136,7 @@ func recordHTTPIssue(ctx context.Context, store AppErrorsStore, req *apidpb.Incr
 		raw, _ := json.Marshal(req.GetIssueTimeBuckets())
 		digest = fmt.Sprintf("%x", sha256.Sum256(append([]byte(digest+":"), raw...)))
 	}
-	out, err := st.RecordIssue(ctx, state.RecordIssueParams{Credential: state.IssueCredential{AccountID: req.GetAccountId(), AppID: req.GetAppId(), DeploymentID: req.GetDeploymentId(), Environment: "application"}, Event: normalized, Fingerprint: fp, Title: title, PayloadHash: digest, GroupingVersion: issues.GroupingVersion, OccurrenceCount: count, TimeBuckets: buckets, Limits: lim, Now: now})
+	out, err := st.RecordIssue(ctx, state.RecordIssueParams{Credential: state.IssueCredential{AccountID: req.GetAccountId(), AppID: req.GetAppId(), DeploymentID: req.GetDeploymentId(), Environment: "application"}, Event: normalized, Fingerprint: fp, Title: title, PayloadHash: digest, GroupingVersion: issues.GroupingVersion, OccurrenceCount: count, TimeBuckets: buckets, Limits: lim, Now: now, EnforceResourcePolicy: true})
 	if err != nil {
 		return httpIssueSkipped, err
 	}

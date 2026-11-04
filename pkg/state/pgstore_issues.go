@@ -153,7 +153,7 @@ func (s *PgStore) RecordIssueBatch(ctx context.Context, inputs []RecordIssuePara
 		return nil, ErrInvalidArgument
 	}
 	for _, in := range inputs {
-		if in.Credential != inputs[0].Credential || in.Limits != inputs[0].Limits {
+		if in.Credential != inputs[0].Credential || in.Limits != inputs[0].Limits || in.EnforceResourcePolicy != inputs[0].EnforceResourcePolicy {
 			return nil, ErrInvalidArgument
 		}
 	}
@@ -162,6 +162,20 @@ func (s *PgStore) RecordIssueBatch(ctx context.Context, inputs []RecordIssuePara
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if len(inputs) > 0 && inputs[0].EnforceResourcePolicy {
+		limits, err := lockIssueResourcePolicy(ctx, tx, inputs[0].Credential)
+		if err != nil {
+			return nil, err
+		}
+		inputs = append([]RecordIssueParams(nil), inputs...)
+		retentionFloor := time.Now().UTC().AddDate(0, 0, -limits.RetentionDays)
+		for i := range inputs {
+			inputs[i].Limits = limits
+			if inputs[i].Event.OccurredAt.Before(retentionFloor) {
+				return nil, ErrInvalidArgument
+			}
+		}
+	}
 	results := make([]api.IssueEventResponse, 0, len(inputs))
 	batchMaps := make(map[string]*issues.SourceMapSet)
 	for _, in := range inputs {
@@ -193,6 +207,58 @@ func (s *PgStore) RecordIssueBatch(ctx context.Context, inputs []RecordIssuePara
 		return nil, err
 	}
 	return results, nil
+}
+
+// Lock the financial owner before the app, matching plan-update lock order.
+// This prevents an in-flight capture from committing after a suspension or
+// downgrade using an earlier policy snapshot.
+func lockIssueResourcePolicy(ctx context.Context, tx pgx.Tx, credential IssueCredential) (api.IssueLimits, error) {
+	q := sqlc.New()
+	app, err := q.IssuePolicyApp(ctx, tx, issueUUID(credential.AppID))
+	if err != nil {
+		return api.IssueLimits{}, mapErr(err)
+	}
+	if issueID(app.AccountID) != credential.AccountID {
+		return api.IssueLimits{}, ErrNotFound
+	}
+	account, err := q.IssuePolicyLockAccount(ctx, tx, app.AccountID)
+	if err != nil {
+		return api.IssueLimits{}, mapErr(err)
+	}
+	policy := Account{Plan: api.Plan(account.Plan), Status: AccountStatus(account.Status), AbuseHoldAt: issueTimePtr(account.AbuseHoldAt)}
+	if app.OrgID.Valid {
+		org, orgErr := q.IssuePolicyLockOrg(ctx, tx, app.OrgID)
+		if orgErr != nil {
+			return api.IssueLimits{}, mapErr(orgErr)
+		}
+		if org.PersonalOrg {
+			if org.PersonalOwnerAccountID != app.AccountID {
+				return api.IssueLimits{}, ErrConflict
+			}
+		} else if org.ResourceOwnershipEnabled {
+			policy = Account{Plan: api.Plan(org.Plan), Status: AccountStatus(org.Status), AbuseHoldAt: issueTimePtr(org.AbuseHoldAt)}
+			if org.DeletedPending {
+				policy.Status = AccountDeletedPending
+			}
+		} else {
+			policy.Status = orgLegacyOwnerStatus(Org{Status: OrgStatus(org.Status), DeletedPending: org.DeletedPending}, policy.Status)
+			if org.AbuseHoldAt.Valid {
+				policy.AbuseHoldAt = issueTimePtr(org.AbuseHoldAt)
+			}
+		}
+	}
+	locked, err := q.IssueLockApp(ctx, tx, issueUUID(credential.AppID))
+	if err != nil {
+		return api.IssueLimits{}, mapErr(err)
+	}
+	if locked.AccountID != app.AccountID || locked.OrgID != app.OrgID {
+		return api.IssueLimits{}, ErrConflict
+	}
+	limits := policy.Plan.IssueLimits()
+	if !policy.Active() || !limits.Enabled {
+		return api.IssueLimits{}, ErrIssuePolicyChanged
+	}
+	return limits, nil
 }
 
 func validateIssueTimeBuckets(in RecordIssueParams, count int64) error {

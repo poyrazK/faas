@@ -73,22 +73,25 @@ type AppErrorsStore interface {
 // false; PR-B flips it to true.
 type appErrorsReceiver struct {
 	apidpb.UnimplementedAppErrorsServer
-	store             AppErrorsStore
-	ops               *wire.OpsMetrics
-	enabled           bool
-	gate              IngestGate
-	issueRetryMu      sync.Mutex
-	issueRetryCount   int
-	issueRetryApps    map[string]int
-	issueAttemptCount int
-	issueAttemptApps  map[string]int
-	issuePending      []*apidpb.IncrementAppErrorRequest
-	issuePendingApps  map[string]int
+	store              AppErrorsStore
+	ops                *wire.OpsMetrics
+	enabled            bool
+	gate               IngestGate
+	issueRetryMu       sync.Mutex
+	issueRetryCount    int
+	issueRetryApps     map[string]int
+	issueRetryWaiting  int
+	issueRetryWaitApps map[string]int
+	issueRetryChanged  chan struct{}
+	issueAttemptCount  int
+	issueAttemptApps   map[string]int
+	issuePending       []*apidpb.IncrementAppErrorRequest
+	issuePendingApps   map[string]int
 }
 
 // NewAppErrorsReceiver wires a production receiver.
 func NewAppErrorsReceiver(store AppErrorsStore, ops *wire.OpsMetrics, enabled bool) *appErrorsReceiver {
-	return &appErrorsReceiver{store: store, ops: ops, enabled: enabled, issueRetryApps: make(map[string]int), issueAttemptApps: make(map[string]int), issuePendingApps: make(map[string]int)}
+	return &appErrorsReceiver{store: store, ops: ops, enabled: enabled, issueRetryApps: make(map[string]int), issueRetryWaitApps: make(map[string]int), issueRetryChanged: make(chan struct{}), issueAttemptApps: make(map[string]int), issuePendingApps: make(map[string]int)}
 }
 
 // IncrementAppError streams per-record error records from the
@@ -137,6 +140,23 @@ func (a *appErrorsReceiver) IncrementAppError(stream apidpb.AppErrors_IncrementA
 // Returns a non-nil IncrementAppErrorResponse for every record;
 // callers must Send() unconditionally.
 func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.IncrementAppErrorRequest) *apidpb.IncrementAppErrorResponse {
+	req = normalizeAppErrorSample(req)
+	out := &apidpb.IncrementAppErrorResponse{Fingerprint: req.GetFingerprint()}
+
+	// ---- 1. Validate ----
+	if err := validateIncrementRequest(req); err != nil {
+		// Treat as redaction_failed (it's not — but the gateway
+		// MUST NOT retry on InvalidArgument, and the metric
+		// signal belongs on the same counter).
+		a.observe(outcomeRedactionFailed)
+		out.Outcome = outcomeRedactionFailed
+		return out
+	}
+
+	return a.handleValidatedAppError(ctx, req, out)
+}
+
+func normalizeAppErrorSample(req *apidpb.IncrementAppErrorRequest) *apidpb.IncrementAppErrorRequest {
 	// Older gateways can send a redacted sample larger than the wire cap.
 	// Preserve those bounded records and reserve the PostgreSQL text header.
 	if req != nil && len(req.GetSampleMessage()) > api.AppErrorsSampleMessageCapBytes-4 && len(req.GetSampleMessage()) <= 8*1024 {
@@ -153,18 +173,10 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 			req.RedactionsApplied = append(req.RedactionsApplied, "truncated")
 		}
 	}
-	out := &apidpb.IncrementAppErrorResponse{Fingerprint: req.GetFingerprint()}
+	return req
+}
 
-	// ---- 1. Validate ----
-	if err := validateIncrementRequest(req); err != nil {
-		// Treat as redaction_failed (it's not — but the gateway
-		// MUST NOT retry on InvalidArgument, and the metric
-		// signal belongs on the same counter).
-		a.observe(outcomeRedactionFailed)
-		out.Outcome = outcomeRedactionFailed
-		return out
-	}
-
+func (a *appErrorsReceiver) handleValidatedAppError(ctx context.Context, req *apidpb.IncrementAppErrorRequest, out *apidpb.IncrementAppErrorResponse) *apidpb.IncrementAppErrorResponse {
 	// ---- 2. Resolve UUIDs ----
 	accountID, err := uuid.Parse(req.GetAccountId())
 	if err != nil {

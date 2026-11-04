@@ -420,9 +420,10 @@ const file_onebox_faas_apid_v1_app_errors_proto_rawDesc = "" +
 	"\x19IncrementAppErrorResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12 \n" +
 	"\vfingerprint\x18\x02 \x01(\tR\vfingerprint\x12#\n" +
-	"\rdedupe_merged\x18\x03 \x01(\bR\fdedupeMerged2\x83\x01\n" +
+	"\rdedupe_merged\x18\x03 \x01(\bR\fdedupeMerged2\xf5\x01\n" +
 	"\tAppErrors\x12v\n" +
-	"\x11IncrementAppError\x12-.onebox.faas.apid.v1.IncrementAppErrorRequest\x1a..onebox.faas.apid.v1.IncrementAppErrorResponse(\x010\x01BBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
+	"\x11IncrementAppError\x12-.onebox.faas.apid.v1.IncrementAppErrorRequest\x1a..onebox.faas.apid.v1.IncrementAppErrorResponse(\x010\x01\x12p\n" +
+	"\x0fRecordHTTPIssue\x12-.onebox.faas.apid.v1.IncrementAppErrorRequest\x1a..onebox.faas.apid.v1.IncrementAppErrorResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
 
 var (
 	file_onebox_faas_apid_v1_app_errors_proto_rawDescOnce sync.Once
@@ -443,9 +444,11 @@ var file_onebox_faas_apid_v1_app_errors_proto_goTypes = []any{
 }
 var file_onebox_faas_apid_v1_app_errors_proto_depIdxs = []int32{
 	0, // 0: onebox.faas.apid.v1.AppErrors.IncrementAppError:input_type -> onebox.faas.apid.v1.IncrementAppErrorRequest
-	1, // 1: onebox.faas.apid.v1.AppErrors.IncrementAppError:output_type -> onebox.faas.apid.v1.IncrementAppErrorResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	0, // 1: onebox.faas.apid.v1.AppErrors.RecordHTTPIssue:input_type -> onebox.faas.apid.v1.IncrementAppErrorRequest
+	1, // 2: onebox.faas.apid.v1.AppErrors.IncrementAppError:output_type -> onebox.faas.apid.v1.IncrementAppErrorResponse
+	1, // 3: onebox.faas.apid.v1.AppErrors.RecordHTTPIssue:output_type -> onebox.faas.apid.v1.IncrementAppErrorResponse
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
