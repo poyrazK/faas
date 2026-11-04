@@ -104,17 +104,19 @@ func (m *management) persistPlans() error {
 			legacy[id] = entry
 		}
 	}
+	defaults, named := m.serviceAbortOutcomeSnapshots()
 	return m.opts.planStore.updateMany(map[string]any{
-		serviceAbortOutcomeNamespace + m.opts.planNamespace: serviceAbortOutcomeSnapshot{Version: 1, Items: m.serviceAbortOutcomes},
-		rollbackOutcomeNamespace + m.opts.planNamespace:     rollbackOutcomeSnapshot{Version: 1, Items: m.rollbackOutcomes},
-		promotionOutcomeNamespace + m.opts.planNamespace:    promotionOutcomeSnapshot{Version: 1, Items: m.promotionOutcomes},
-		deploymentOutcomeNamespace + m.opts.planNamespace:   deploymentOutcomeSnapshot{Version: 1, Items: m.deploymentOutcomes},
-		budgetOutcomeNamespace + m.opts.planNamespace:       budgetOutcomeSnapshot{Version: 1, Items: m.budgetOutcomes},
-		"environment-plans/" + m.opts.planNamespace:         environments,
-		environmentActionsNamespace + m.opts.planNamespace:  environmentActionSnapshot{Version: 1, Items: m.environmentActions},
-		"plans/" + m.opts.planNamespace:                     records,
-		"actions/" + m.opts.planNamespace:                   actionHistorySnapshot{Version: 1, Items: legacy},
-		workloadActionsNamespace + m.opts.planNamespace:     actionHistorySnapshot{Version: 1, Items: workloads},
-		budgetActionsNamespace + m.opts.planNamespace:       actionHistorySnapshot{Version: 1, Items: budgets},
+		namedServiceAbortOutcomeNamespace + m.opts.planNamespace: named,
+		serviceAbortOutcomeNamespace + m.opts.planNamespace:      defaults,
+		rollbackOutcomeNamespace + m.opts.planNamespace:          rollbackOutcomeSnapshot{Version: 1, Items: m.rollbackOutcomes},
+		promotionOutcomeNamespace + m.opts.planNamespace:         promotionOutcomeSnapshot{Version: 1, Items: m.promotionOutcomes},
+		deploymentOutcomeNamespace + m.opts.planNamespace:        deploymentOutcomeSnapshot{Version: 1, Items: m.deploymentOutcomes},
+		budgetOutcomeNamespace + m.opts.planNamespace:            budgetOutcomeSnapshot{Version: 1, Items: m.budgetOutcomes},
+		"environment-plans/" + m.opts.planNamespace:              environments,
+		environmentActionsNamespace + m.opts.planNamespace:       environmentActionSnapshot{Version: 1, Items: m.environmentActions},
+		"plans/" + m.opts.planNamespace:                          records,
+		"actions/" + m.opts.planNamespace:                        actionHistorySnapshot{Version: 1, Items: legacy},
+		workloadActionsNamespace + m.opts.planNamespace:          actionHistorySnapshot{Version: 1, Items: workloads},
+		budgetActionsNamespace + m.opts.planNamespace:            actionHistorySnapshot{Version: 1, Items: budgets},
 	})
 }

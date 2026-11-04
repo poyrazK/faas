@@ -78925,12 +78925,37 @@ func (q *Queries) ReadSavedRouteRequirements(ctx context.Context, db DBTX, arg R
 	return saved, err
 }
 
+const readServiceAbortAcceptance = `-- name: ReadServiceAbortAcceptance :one
+SELECT (r.data->'service_abort_receipt')::jsonb AS receipt
+FROM deployment_audit r JOIN apps a ON a.id=$1::text::uuid
+WHERE r.data ? 'service_abort_receipt' AND r.data->'service_abort_receipt'->>'app_id'=$1::text::uuid::text
+ AND r.data->'service_abort_receipt'->>'attempt_id'=$2::text AND a.status <> 'deleted'
+`
+
+type ReadServiceAbortAcceptanceParams struct {
+	AppID     string
+	AttemptID string
+}
+
+func (q *Queries) ReadServiceAbortAcceptance(ctx context.Context, db DBTX, arg ReadServiceAbortAcceptanceParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readServiceAbortAcceptance, arg.AppID, arg.AttemptID)
+	var receipt []byte
+	err := row.Scan(&receipt)
+	return receipt, err
+}
+
 const readServiceAbortReceipt = `-- name: ReadServiceAbortReceipt :one
 SELECT (r.data->'service_abort_receipt')::jsonb AS receipt
 FROM deployment_audit r JOIN deployments d ON d.id=r.deployment_id JOIN apps a ON a.id=d.app_id
 WHERE r.data ? 'service_abort_receipt' AND r.data->'service_abort_receipt'->>'app_id'=$1::text::uuid::text
  AND r.data->'service_abort_receipt'->>'attempt_id'=$2::text
- AND d.app_id=$1::text::uuid AND a.status <> 'deleted' AND d.scope='default'
+ AND d.app_id=$1::text::uuid AND a.status <> 'deleted'
+ AND d.scope=r.data->'service_abort_receipt'->>'scope'
+ AND ((d.scope='default' AND coalesce(r.data->'service_abort_receipt'->>'project_id','')='' AND coalesce(r.data->'service_abort_receipt'->>'environment_id','')='')
+ OR (d.scope <> 'default' AND EXISTS(SELECT 1 FROM project_environments e
+ WHERE e.id::text=r.data->'service_abort_receipt'->>'environment_id'
+ AND e.project_id::text=r.data->'service_abort_receipt'->>'project_id'
+ AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope)))
 `
 
 type ReadServiceAbortReceiptParams struct {

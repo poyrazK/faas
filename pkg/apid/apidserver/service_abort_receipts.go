@@ -42,27 +42,24 @@ func (s *server) serviceAbortAttempt(ctx context.Context, r *http.Request, app s
 	if len(values) == 0 {
 		return "", nil
 	}
-	if len(values) != 1 || !api.ValidDeploymentAttemptID(values[0]) || req.Action != "abort" || req.ExpectedReview == nil || (req.ExpectedReview.Scope != "" && req.ExpectedReview.Scope != api.DefaultEnvScope) || req.ExpectedReview.ProjectID != "" || req.ExpectedReview.EnvironmentID != "" {
-		return "", api.ErrValidation("Service-Abort-Attempt-ID requires an exact reviewed default-scope service abort")
+	if len(values) != 1 || !api.ValidDeploymentAttemptID(values[0]) || req.Action != "abort" || req.ExpectedReview == nil || !api.ValidServiceAbortScope(req.ExpectedReview.Scope, req.ExpectedReview.ProjectID, req.ExpectedReview.EnvironmentID) {
+		return "", api.ErrValidation("Service-Abort-Attempt-ID requires an exact reviewed service abort with immutable scope identities")
 	}
 	candidate, e1 := uuid.Parse(req.DeploymentID)
 	predecessor, e2 := uuid.Parse(req.ExpectedPredecessorDeploymentID)
 	if e1 != nil || e2 != nil || candidate == predecessor {
 		return "", api.ErrValidation("service abort attempts require distinct exact deployment UUIDs")
 	}
-	store, ok := s.store.(state.ServiceAbortReceiptStore)
+	store, ok := s.store.(state.ServiceAbortAttemptStore)
 	if !ok {
-		return "", api.ErrCapacity("service abort receipts unavailable")
+		return "", api.ErrCapacity("service abort attempts unavailable")
 	}
-	prior, err := store.ServiceAbortReceipt(ctx, app.ID, values[0])
-	if err == nil {
-		if prior.RequestHash != api.ServiceAbortRequestHash(app.ID, req) {
-			return "", serviceAbortAttemptProblem(state.ErrServiceAbortAttemptConflict)
-		}
-		return "", serviceAbortAttemptProblem(state.ErrServiceAbortAttemptAccepted)
+	err := store.CheckServiceAbortAttempt(ctx, app.ID, values[0], api.ServiceAbortRequestHash(app.ID, req))
+	if p := serviceAbortAttemptProblem(err); p != nil {
+		return "", p
 	}
 	if !errors.Is(err, state.ErrNotFound) {
-		return "", api.ErrCapacity("could not verify service abort receipt")
+		return "", api.ErrCapacity("could not verify service abort attempt")
 	}
 	return values[0], nil
 }

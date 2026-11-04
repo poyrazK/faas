@@ -5385,7 +5385,6 @@ from .send_app_message_request_datacontenttype import SendAppMessageRequestDatac
 from .send_app_message_response import SendAppMessageResponse
 from .send_app_message_response_status import SendAppMessageResponseStatus
 from .service_abort_receipt import ServiceAbortReceipt
-from .service_abort_receipt_scope import ServiceAbortReceiptScope
 from .service_authorization_check import ServiceAuthorizationCheck
 from .service_authorization_check_result import ServiceAuthorizationCheckResult
 from .service_binding_explanation import ServiceBindingExplanation
@@ -11110,7 +11109,6 @@ __all__ = (
     "SendAppMessageResponse",
     "SendAppMessageResponseStatus",
     "ServiceAbortReceipt",
-    "ServiceAbortReceiptScope",
     "ServiceAuthorizationCheck",
     "ServiceAuthorizationCheckResult",
     "ServiceBindingExplanation",

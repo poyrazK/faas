@@ -10,7 +10,7 @@ const ServiceAbortAttemptHeader = api.ServiceAbortAttemptHeader
 type ServiceAbortReceipt = api.ServiceAbortReceipt
 type AppReleaseReview = api.AppReleaseReview
 
-// ContextWithServiceAbortAttempt binds an exact reviewed default-scope service
+// ContextWithServiceAbortAttempt binds an exact reviewed service
 // abort to immutable acceptance evidence. Save the opaque ID before submission.
 func ContextWithServiceAbortAttempt(ctx context.Context, id string) context.Context {
 	return api.ContextWithServiceAbortAttempt(ctx, id)

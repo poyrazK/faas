@@ -113,7 +113,7 @@ func (m *MemStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pr
 		if err != nil {
 			return Deployment{}, 0, err
 		}
-		prior, err := m.serviceAbortReceiptLocked(appID, serviceAbortAttempt(ctx))
+		prior, err := m.serviceAbortAcceptanceLocked(appID, serviceAbortAttempt(ctx))
 		if err == nil {
 			return Deployment{}, 0, serviceAbortPrior(prior, hash)
 		}
@@ -140,9 +140,6 @@ func (m *MemStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pr
 	previous, found := previousMemServiceRolloutRow(target, rows)
 	if !found || previous.id != predecessorID {
 		return target, 0, ErrServiceRolloutInvalid
-	}
-	if serviceAbortAttempt(ctx) != "" && normalizedDeploymentScope(target.Scope) != api.DefaultEnvScope {
-		return target, 0, ErrInvalidArgument
 	}
 	target = queueServiceBindingCheck(target, ServiceRolloutActionAbort, predecessorID, predecessorID, reason)
 	accountID := uuid.MustParse(m.apps[target.AppID].AccountID)

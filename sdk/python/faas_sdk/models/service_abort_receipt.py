@@ -8,7 +8,7 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.service_abort_receipt_scope import ServiceAbortReceiptScope, check_service_abort_receipt_scope
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ServiceAbortReceipt")
 
@@ -26,8 +26,13 @@ class ServiceAbortReceipt:
     deployment_id: UUID
     predecessor_deployment_id: UUID
     request_id: UUID
-    scope: ServiceAbortReceiptScope
+    scope: str
+    """Default scope or the original named environment slug."""
     accepted_at: datetime.datetime
+    project_id: UUID | Unset = UNSET
+    """Original project identity; present for named scopes."""
+    environment_id: UUID | Unset = UNSET
+    """Original environment identity; present for named scopes."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,9 +48,17 @@ class ServiceAbortReceipt:
 
         request_id = str(self.request_id)
 
-        scope: str = self.scope
+        scope = self.scope
 
         accepted_at = self.accepted_at.isoformat()
+
+        project_id: str | Unset = UNSET
+        if not isinstance(self.project_id, Unset):
+            project_id = str(self.project_id)
+
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -61,6 +74,10 @@ class ServiceAbortReceipt:
                 "accepted_at": accepted_at,
             }
         )
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
 
         return field_dict
 
@@ -79,9 +96,23 @@ class ServiceAbortReceipt:
 
         request_id = UUID(d.pop("request_id"))
 
-        scope = check_service_abort_receipt_scope(d.pop("scope"))
+        scope = d.pop("scope")
 
         accepted_at = datetime.datetime.fromisoformat(d.pop("accepted_at"))
+
+        _project_id = d.pop("project_id", UNSET)
+        project_id: UUID | Unset
+        if isinstance(_project_id, Unset):
+            project_id = UNSET
+        else:
+            project_id = UUID(_project_id)
+
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
 
         service_abort_receipt = cls(
             attempt_id=attempt_id,
@@ -92,6 +123,8 @@ class ServiceAbortReceipt:
             request_id=request_id,
             scope=scope,
             accepted_at=accepted_at,
+            project_id=project_id,
+            environment_id=environment_id,
         )
 
         service_abort_receipt.additional_properties = d

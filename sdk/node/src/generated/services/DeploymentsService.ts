@@ -352,12 +352,14 @@ export class DeploymentsService {
   /**
    * Read the immutable acceptance receipt for a service-abort attempt.
    * Requires deployment-read access to the owned app. Returns immutable acceptance
-   * of an exact reviewed default-scope service abort, including the original native
+   * of an exact reviewed default or named-environment service abort, including the original native
    * reverse-handoff request ID, even after the current handoff changes. Acceptance
    * does not establish gateway acknowledgement, request draining, completion or
    * current health. Compare the request ID separately with the observed handoff.
    * A 404 means no retained evidence; it never proves rejection or permits replay.
-   * The receipt is retained with the candidate deployment audit and app.
+   * The receipt is retained with the candidate deployment audit and app. Named receipts
+   * also require the original project/environment UUIDs to match the current app
+   * and environment. Deleted, replaced or moved targets return no evidence.
    *
    * @returns ServiceAbortReceipt The immutable receipt for the original reviewed service abort.
    * @throws ApiError
@@ -1280,12 +1282,13 @@ export class DeploymentsService {
      */
     idempotencyKey?: string,
     /**
-     * Opaque identity saved before an exact reviewed default-scope service abort.
+     * Opaque identity saved before an exact reviewed default or named-environment service abort.
      * Acceptance is recorded atomically with reverse-handoff intent. Accepted
      * repeats return 409 service_abort_attempt_accepted; a changed reviewed
      * request returns 409 service_abort_attempt_conflict. Read the retained
      * service-aborts receipt after a lost response; never replay accepted intent.
-     * Unsupported recovery modes and named scopes reject this header.
+     * Named scopes require the complete project/environment release review and current
+     * unprotected write admission. Unsupported recovery modes reject this header.
      *
      */
     serviceAbortAttemptId?: string,

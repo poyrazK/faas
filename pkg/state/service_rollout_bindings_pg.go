@@ -120,19 +120,14 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 		return Deployment{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// A retained acceptance remains a tombstone even if its environment was
+	// deleted or moved; scoped receipt reads may legitimately be unavailable.
 	if serviceAbortAttempt(ctx) != "" {
 		hash, err := serviceAbortHash(ctx, appID, id, predecessorID, reason)
 		if err != nil {
 			return Deployment{}, 0, err
 		}
-		// Preserve the ordinary route-snapshot/app/deployment lock order.
-		if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
-			return Deployment{}, 0, err
-		}
-		if _, err := sqlc.New().LockServiceAbortApp(ctx, tx, appID); err != nil {
-			return Deployment{}, 0, mapErr(err)
-		}
-		prior, err := readServiceAbortReceipt(ctx, tx, appID, serviceAbortAttempt(ctx))
+		prior, err := readServiceAbortAcceptance(ctx, tx, appID, serviceAbortAttempt(ctx))
 		if err == nil {
 			return Deployment{}, 0, serviceAbortPrior(prior, hash)
 		}
@@ -146,6 +141,26 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 			return Deployment{}, 0, mapErr(err)
 		}
 		if err := sqlc.New().LockReviewedRoutePolicy(ctx, tx, sqlc.LockReviewedRoutePolicyParams(params)); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
+	if serviceAbortAttempt(ctx) != "" {
+		hash, err := serviceAbortHash(ctx, appID, id, predecessorID, reason)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		// Preserve the ordinary route-snapshot/app/deployment lock order.
+		if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
+			return Deployment{}, 0, err
+		}
+		if _, err := sqlc.New().LockServiceAbortApp(ctx, tx, appID); err != nil {
+			return Deployment{}, 0, mapErr(err)
+		}
+		prior, err := readServiceAbortAcceptance(ctx, tx, appID, serviceAbortAttempt(ctx))
+		if err == nil {
+			return Deployment{}, 0, serviceAbortPrior(prior, hash)
+		}
+		if !errors.Is(err, ErrNotFound) {
 			return Deployment{}, 0, err
 		}
 	}
@@ -168,9 +183,6 @@ func (s *PgStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, pre
 	previous, found := previousServiceRolloutRow(target, rows)
 	if !found || previous.id != predecessorID {
 		return target, 0, ErrServiceRolloutInvalid
-	}
-	if serviceAbortAttempt(ctx) != "" && normalizedDeploymentScope(target.Scope) != api.DefaultEnvScope {
-		return target, 0, ErrInvalidArgument
 	}
 	target = queueServiceBindingCheck(target, ServiceRolloutActionAbort, predecessorID, predecessorID, reason)
 	if err := saveServiceHandoff(ctx, tx, target); err != nil {

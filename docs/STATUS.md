@@ -7,6 +7,29 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP named service-abort outcomes — 2026-11-04 (branch, not released)
+
+Named service-abort recovery now preserves project/environment UUIDs in the native
+acceptance receipt and the existing MCP outcome workflow. Scoped reads reject
+replaced/deleted environments and moved apps; retained acceptance independently
+blocks replay. Fresh writes retain release-review and protection guards. Passive
+history, resources and prompts survive expiry/restart and preserve named rollout
+selectors. No catalog counts or migrations change.
+
+Memory/PostgreSQL and HTTP race checks pass, including concurrent duplicates,
+protected fresh intents, lost replies and environment replacement. Focused and
+full MCP race tests and all three pinned Codex profiles pass named recovery
+through restart, refresh and revocation, with zero model requests and zero native
+writes in the read-only fixtures. Go SDK tests, 781 Node transport/smoke tests,
+nine Node generator tests and four Python transport tests pass. SQLC regeneration
+is clean; Node/Python generation is deterministic. API, state, handler and MCP lint
+report zero issues. Spec/docs parity, typed-client coverage, migration, ADR, store,
+sealing and shared-runner gates pass. Version-skew checks preserve all proto and
+guest JSON keys against the feature baseline.
+
+Native/provider deployment qualification remains separate from portable fixtures.
+See [ADR-20261104173000](adr/20261104173000-management-mcp-named-service-abort-outcomes.md).
+
 ## Management MCP service-abort outcomes — 2026-11-04 (branch, not released)
 
 Reviewed default-scope service aborts now retain immutable acceptance evidence in

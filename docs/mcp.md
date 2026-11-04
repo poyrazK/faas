@@ -1576,15 +1576,15 @@ recipes expose `recovery.outcome` without reading native receipts or changing
 history. Current read consent, original identities, retention and storage remain
 mandatory. Missing evidence stays unresolved; never reconstruct an expired
 request or issue another rollback to resolve ambiguity. Legacy attempted plans
-receive no replacement identity. Service rollback and named service-abort outcome
-recovery remain unsupported. Reviewed default-scope service-abort recovery is
+receive no replacement identity. Service rollback outcome recovery remains unsupported. Reviewed default and
+named-environment service-abort recovery is
 described below. Request rollback adds no tool or migration. See
 [ADR-20261026090000](adr/20261026090000-management-mcp-rollback-outcomes.md).
 
 ## Resolve an ambiguous reviewed service abort
 
-New default-scope reviewed service-abort plans persist an opaque attempt before
-POST. After a lost response, restart or plan expiry, follow the retained history's
+New reviewed service-abort plans in default and named environments persist an
+opaque attempt before POST. After a lost response, restart or plan expiry, follow the retained history's
 `outcome` link to `gregale_get_action_outcome` (default `phase=apply`). It verifies
 the original native receipt and returns the exact candidate rollout observation
 call plus `receipt.recovery_request_id`. Compare that ID with the observed native
@@ -1593,10 +1593,15 @@ Acceptance remains separate from gateway acknowledgement, request draining and
 current health. Recovery is read-only, works with writes disabled, and never
 changes history, extends expiry or permits replay. Missing evidence remains
 unresolved. Current read consent, immutable target identity and retained storage
-are mandatory. Older attempted plans and named service aborts receive no new
-identity. Native API callers can explicitly persist `Service-Abort-Attempt-ID`
+are mandatory. Older attempted plans receive no new identity. Native API callers
+can explicitly persist `Service-Abort-Attempt-ID`
 before reviewed recovery and read the owned
-`GET /v1/apps/{slug}/service-aborts/{attempt_id}` receipt. See
+`GET /v1/apps/{slug}/service-aborts/{attempt_id}` receipt. Named receipts bind the
+original project and environment UUIDs. Use the original `project` and `environment` selectors; the observation call
+preserves both. Deleted, recreated or moved targets cannot release the old receipt.
+A later protection change allows historical reads but never authorizes a fresh
+write. Retained acceptance still blocks duplicate attempts even when scoped reads
+are unavailable. See [ADR-20261104173000](adr/20261104173000-management-mcp-named-service-abort-outcomes.md) and
 [ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
 
 ## Resolve an ambiguous request promotion
@@ -1654,8 +1659,8 @@ known deployment ID contains history/outcome calls only; follow the observation
 returned by the outcome rather than inventing a target. Current read consent,
 immutable identities, storage and the retained reference are checked again before
 release. No read replays a write, extends expiry or changes recorded uncertainty.
-Service rollback and named service-abort outcomes remain unsupported. Reviewed
-default-scope service-abort acceptance is described below. Exact request rollback
+Service rollback outcome recovery remains unsupported. Reviewed default and
+named-environment service-abort acceptance is described above. Exact request rollback
 and explicit request promotion recovery are described above. See
 [ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
 
@@ -1678,8 +1683,8 @@ plan or extends its expiry. `native_completion` remains `not_observed`.
 Unavailable, missing or mismatched receipts return `unresolved`. This never
 proves that the original write did not commit. Deployment and service/worker rollout apply acceptance use the submission lookup
 described above; explicit request promotions support phase=promotion. Reviewed
-default-scope service-abort acceptance is described below. Service rollback and
-named service-abort outcomes remain unsupported. Older bridges/APIs and expired
+default and named-environment service-abort acceptance is described above. Service
+rollback outcome recovery remains unsupported. Older bridges/APIs and expired
 legacy actions without a saved
 lookup reference also remain unresolved; do not create a replacement request
 to resolve ambiguity.

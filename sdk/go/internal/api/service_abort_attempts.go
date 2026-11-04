@@ -36,6 +36,8 @@ type ServiceAbortReceipt struct {
 	PredecessorDeploymentID string    `json:"predecessor_deployment_id"`
 	RequestID               string    `json:"request_id"`
 	Scope                   string    `json:"scope"`
+	ProjectID               string    `json:"project_id,omitempty"`
+	EnvironmentID           string    `json:"environment_id,omitempty"`
 	AcceptedAt              time.Time `json:"accepted_at"`
 }
 

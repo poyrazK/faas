@@ -27,7 +27,7 @@ type actionOutcomeArgs struct {
 }
 
 func registerActionOutcomes(s *mcp.Server, m *management) {
-	register(s, m, "gregale_get_action_outcome", "Read native durable receipts for the original apply phase of retained route-budget, deployment and service/worker rollout actions, including after plan expiry. Requires current immutable target/read consent. Receipt verification confirms historical policy intent or deployment acceptance only; missing or unavailable evidence remains unresolved. Never replays a write, changes history or renews expiry. Explicit request-deployment promotion receipts are available with phase=promotion. Exact default-scope request rollback acceptance is also recoverable through its original native operation; Default-scope reviewed service-abort receipts recover the original reverse-handoff request ID, separately from ACK/drain completion. Service rollback remains unsupported.", m.getPhasedActionOutcome)
+	register(s, m, "gregale_get_action_outcome", "Read native durable receipts for the original apply phase of retained route-budget, deployment and service/worker rollout actions, including after plan expiry. Requires current immutable target/read consent. Receipt verification confirms historical policy intent or deployment acceptance only; missing or unavailable evidence remains unresolved. Never replays a write, changes history or renews expiry. Explicit request-deployment promotion receipts are available with phase=promotion. Exact default-scope request rollback acceptance is also recoverable through its original native operation; Reviewed default and named-environment service-abort receipts recover the original reverse-handoff request ID, separately from ACK/drain completion. Service rollback remains unsupported.", m.getPhasedActionOutcome)
 }
 
 func (m *management) getActionOutcome(ctx context.Context, args getActionArgs) (any, error) {
@@ -72,7 +72,7 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 			m.readPromotionOutcome(ctx, entry, promotionLookup, &out)
 		}
 	case entry.Action == "service_abort":
-		if entry.Scope != api.DefaultEnvScope {
+		if !serviceAbortScopeMatches(entry.Scope, entry.ProjectID, entry.EnvironmentID) {
 			out.Reason = "unsupported_action"
 		} else if entry.Apply.State == "not_attempted" {
 			out.Reason = "no_recorded_attempt"

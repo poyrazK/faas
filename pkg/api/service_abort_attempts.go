@@ -42,7 +42,20 @@ type ServiceAbortReceipt struct {
 	PredecessorDeploymentID string    `json:"predecessor_deployment_id"`
 	RequestID               string    `json:"request_id"`
 	Scope                   string    `json:"scope"`
+	ProjectID               string    `json:"project_id,omitempty"`
+	EnvironmentID           string    `json:"environment_id,omitempty"`
 	AcceptedAt              time.Time `json:"accepted_at"`
+}
+
+// ValidServiceAbortScope checks the immutable identity shape, not admission.
+// Named targets still require the current atomic release-review guard.
+func ValidServiceAbortScope(scope, projectID, environmentID string) bool {
+	if scope == "" || scope == DefaultEnvScope {
+		return projectID == "" && environmentID == ""
+	}
+	_, projectErr := uuid.Parse(projectID)
+	_, environmentErr := uuid.Parse(environmentID)
+	return ValidProjectEnvironmentSlug(scope) && projectErr == nil && environmentErr == nil
 }
 
 // ServiceAbortRequestHash includes the complete reviewed request, with UUID

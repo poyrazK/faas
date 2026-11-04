@@ -16,6 +16,12 @@ type ServiceAbortReceiptStore interface {
 	ServiceAbortReceipt(context.Context, string, string) (api.ServiceAbortReceipt, error)
 }
 
+// ServiceAbortAttemptStore checks retained acceptance independently of mutable
+// environment identity. It exposes no receipt when that identity is unavailable.
+type ServiceAbortAttemptStore interface {
+	CheckServiceAbortAttempt(context.Context, string, string, string) error
+}
+
 var (
 	ErrServiceAbortAttemptAccepted = errors.New("service abort attempt already accepted")
 	ErrServiceAbortAttemptConflict = errors.New("service abort attempt conflicts with original request")
@@ -36,7 +42,7 @@ func serviceAbortAttempt(ctx context.Context) string {
 
 func serviceAbortHash(ctx context.Context, appID, id, predecessorID, reason string) (string, error) {
 	review, ok := serviceRecoveryReview(ctx)
-	if !api.ValidDeploymentAttemptID(serviceAbortAttempt(ctx)) || !ok || normalizedDeploymentScope(review.Scope) != api.DefaultEnvScope || review.EnvironmentID != "" || review.ProjectID != "" || !sameDeploymentID(review.AppID, appID) {
+	if !api.ValidDeploymentAttemptID(serviceAbortAttempt(ctx)) || !ok || !api.ValidServiceAbortScope(review.Scope, review.ProjectID, review.EnvironmentID) || !sameDeploymentID(review.AppID, appID) {
 		return "", ErrInvalidArgument
 	}
 	return api.ServiceAbortRequestHash(appID, api.RecoverRolloutRequest{Action: "abort", Reason: reason, DeploymentID: id, ExpectedPredecessorDeploymentID: predecessorID, ExpectedReview: &review}), nil
@@ -57,11 +63,16 @@ func serviceAbortReceiptData(ctx context.Context, d Deployment, reason string) [
 	}
 	if attempt := serviceAbortAttempt(ctx); attempt != "" {
 		hash, _ := serviceAbortHash(ctx, d.AppID, d.ID, d.ServiceRolloutHandoff.PredecessorDeploymentID, reason)
-		data["service_abort_receipt"] = api.ServiceAbortReceipt{
+		receipt := api.ServiceAbortReceipt{
 			AttemptID: attempt, RequestHash: hash, AppID: uuid.MustParse(d.AppID).String(),
 			DeploymentID: uuid.MustParse(d.ID).String(), PredecessorDeploymentID: uuid.MustParse(d.ServiceRolloutHandoff.PredecessorDeploymentID).String(),
-			RequestID: d.ServiceRolloutHandoff.BindingsCheck.RequestID, Scope: api.DefaultEnvScope, AcceptedAt: time.Now().UTC(),
+			RequestID: d.ServiceRolloutHandoff.BindingsCheck.RequestID, Scope: normalizedDeploymentScope(d.Scope), AcceptedAt: time.Now().UTC(),
 		}
+		if receipt.Scope != api.DefaultEnvScope {
+			review, _ := serviceRecoveryReview(ctx)
+			receipt.ProjectID, receipt.EnvironmentID = uuid.MustParse(review.ProjectID).String(), uuid.MustParse(review.EnvironmentID).String()
+		}
+		data["service_abort_receipt"] = receipt
 	}
 	payload, _ := json.Marshal(data)
 	return payload
@@ -74,6 +85,26 @@ func (m *MemStore) ServiceAbortReceipt(_ context.Context, appID, attempt string)
 }
 
 func (m *MemStore) serviceAbortReceiptLocked(appID, attempt string) (api.ServiceAbortReceipt, error) {
+	r, err := m.serviceAbortAcceptanceLocked(appID, attempt)
+	if err != nil {
+		return r, err
+	}
+	app := m.apps[appID]
+	if r.Scope != api.DefaultEnvScope {
+		env, err := m.workloadSpecEnvironmentLocked(app.AccountID, app.ProjectID, r.Scope, appID)
+		if err != nil || !sameDeploymentID(env.ID, r.EnvironmentID) || !sameDeploymentID(app.ProjectID, r.ProjectID) {
+			return api.ServiceAbortReceipt{}, ErrNotFound
+		}
+	}
+	for _, d := range m.deployments {
+		if sameDeploymentID(d.ID, r.DeploymentID) && d.AppID == appID && normalizedDeploymentScope(d.Scope) == r.Scope {
+			return r, nil
+		}
+	}
+	return api.ServiceAbortReceipt{}, ErrNotFound
+}
+
+func (m *MemStore) serviceAbortAcceptanceLocked(appID, attempt string) (api.ServiceAbortReceipt, error) {
 	app, ok := m.apps[appID]
 	if !ok || app.Status == AppDeleted {
 		return api.ServiceAbortReceipt{}, ErrNotFound
@@ -89,13 +120,39 @@ func (m *MemStore) serviceAbortReceiptLocked(appID, attempt string) (api.Service
 		if r.AttemptID != attempt || !sameDeploymentID(r.AppID, appID) {
 			continue
 		}
-		for _, d := range m.deployments {
-			if sameDeploymentID(d.ID, r.DeploymentID) && d.AppID == appID && normalizedDeploymentScope(d.Scope) == api.DefaultEnvScope {
-				return r, nil
-			}
-		}
+		return r, nil
 	}
 	return api.ServiceAbortReceipt{}, ErrNotFound
+}
+
+func (m *MemStore) CheckServiceAbortAttempt(_ context.Context, appID, attempt, hash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prior, err := m.serviceAbortAcceptanceLocked(appID, attempt)
+	if err != nil {
+		return err
+	}
+	return serviceAbortPrior(prior, hash)
+}
+
+func (s *PgStore) CheckServiceAbortAttempt(ctx context.Context, appID, attempt, hash string) error {
+	prior, err := readServiceAbortAcceptance(ctx, s.pool, appID, attempt)
+	if err != nil {
+		return err
+	}
+	return serviceAbortPrior(prior, hash)
+}
+
+func readServiceAbortAcceptance(ctx context.Context, db sqlc.DBTX, appID, attempt string) (api.ServiceAbortReceipt, error) {
+	data, err := sqlc.New().ReadServiceAbortAcceptance(ctx, db, sqlc.ReadServiceAbortAcceptanceParams{AppID: appID, AttemptID: attempt})
+	if err != nil {
+		return api.ServiceAbortReceipt{}, mapErr(err)
+	}
+	var receipt api.ServiceAbortReceipt
+	if err := json.Unmarshal(data, &receipt); err != nil {
+		return api.ServiceAbortReceipt{}, err
+	}
+	return receipt, nil
 }
 
 func (s *PgStore) ServiceAbortReceipt(ctx context.Context, appID, attempt string) (api.ServiceAbortReceipt, error) {

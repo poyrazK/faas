@@ -23893,12 +23893,14 @@ paths:
       summary: Read the immutable acceptance receipt for a service-abort attempt.
       description: |
         Requires deployment-read access to the owned app. Returns immutable acceptance
-        of an exact reviewed default-scope service abort, including the original native
+        of an exact reviewed default or named-environment service abort, including the original native
         reverse-handoff request ID, even after the current handoff changes. Acceptance
         does not establish gateway acknowledgement, request draining, completion or
         current health. Compare the request ID separately with the observed handoff.
         A 404 means no retained evidence; it never proves rejection or permits replay.
-        The receipt is retained with the candidate deployment audit and app.
+        The receipt is retained with the candidate deployment audit and app. Named receipts
+        also require the original project/environment UUIDs to match the current app
+        and environment. Deleted, replaced or moved targets return no evidence.
       responses:
         '200':
           description: The immutable receipt for the original reviewed service abort.
@@ -26663,12 +26665,13 @@ paths:
           in: header
           required: false
           description: |
-            Opaque identity saved before an exact reviewed default-scope service abort.
+            Opaque identity saved before an exact reviewed default or named-environment service abort.
             Acceptance is recorded atomically with reverse-handoff intent. Accepted
             repeats return 409 service_abort_attempt_accepted; a changed reviewed
             request returns 409 service_abort_attempt_conflict. Read the retained
             service-aborts receipt after a lost response; never replay accepted intent.
-            Unsupported recovery modes and named scopes reject this header.
+            Named scopes require the complete project/environment release review and current
+            unprotected write admission. Unsupported recovery modes reject this header.
           schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
       requestBody:
         required: true
@@ -90015,7 +90018,9 @@ components:
         deployment_id: { type: string, format: uuid }
         predecessor_deployment_id: { type: string, format: uuid }
         request_id: { type: string, format: uuid }
-        scope: { type: string, enum: [default] }
+        scope: { type: string, description: Default scope or the original named environment slug. }
+        project_id: { type: string, format: uuid, description: Original project identity; present for named scopes. }
+        environment_id: { type: string, format: uuid, description: Original environment identity; present for named scopes. }
         accepted_at: { type: string, format: date-time }
     DeploymentPromotionReceipt:
       description: Immutable acceptance of an original guarded 100 percent traffic promotion; current traffic and health are separate.

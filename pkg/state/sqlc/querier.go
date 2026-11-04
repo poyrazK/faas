@@ -5056,6 +5056,7 @@ type Querier interface {
 	ReadScheduledStartDeployment(ctx context.Context, db DBTX, id pgtype.UUID) (ReadScheduledStartDeploymentRow, error)
 	ReadSecretEncryptionKeyUsage(ctx context.Context, db DBTX, kid string) (ReadSecretEncryptionKeyUsageRow, error)
 	ReadSecretKeyRetirementFence(ctx context.Context, db DBTX) (int64, error)
+	ReadServiceAbortAcceptance(ctx context.Context, db DBTX, arg ReadServiceAbortAcceptanceParams) ([]byte, error)
 	ReadServiceAbortReceipt(ctx context.Context, db DBTX, arg ReadServiceAbortReceiptParams) ([]byte, error)
 	ReadServiceBindingRevision(ctx context.Context, db DBTX, arg ReadServiceBindingRevisionParams) (string, error)
 	ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error)

@@ -12,6 +12,7 @@ import (
 )
 
 const serviceAbortOutcomeNamespace = "service-abort-outcome-lookups/"
+const namedServiceAbortOutcomeNamespace = "named-service-abort-outcome-lookups/"
 
 type serviceAbortOutcomeLookup struct {
 	AttemptID, RequestHash, Binding string
@@ -29,13 +30,19 @@ func serviceAbortRequest(p *releasePlan) api.RecoverRolloutRequest {
 func validServiceAbortOutcomeLookup(ref serviceAbortOutcomeLookup) bool {
 	return api.ValidDeploymentAttemptID(ref.AttemptID) && validOutcomeHash(ref.RequestHash) && validOutcomeHash(ref.Binding) && validateSegment(ref.TargetID, "deployment_id") == nil && validateSegment(ref.PredecessorID, "deployment_id") == nil && ref.TargetID != ref.PredecessorID
 }
+func serviceAbortScopeMatches(scope, projectID, environmentID string) bool {
+	if scope == api.DefaultEnvScope {
+		return projectID == "" && environmentID == ""
+	}
+	return api.ValidProjectEnvironmentSlug(scope) && validateSegment(projectID, "project_id") == nil && validateSegment(environmentID, "environment_id") == nil
+}
 func serviceAbortReferenceMatches(entry actionRecord, ref serviceAbortOutcomeLookup) bool {
-	return entry.Action == "service_abort" && entry.Scope == api.DefaultEnvScope && entry.Apply.State != "not_attempted" && entry.Workload != nil && entry.Workload.Mode == api.ExecutionModeService && entry.Workload.DeploymentID == ref.TargetID && entry.Workload.PredecessorDeploymentID == ref.PredecessorID && validServiceAbortOutcomeLookup(ref) && ref.Binding == deploymentOutcomeBinding(entry)
+	return entry.Action == "service_abort" && serviceAbortScopeMatches(entry.Scope, entry.ProjectID, entry.EnvironmentID) && entry.Apply.State != "not_attempted" && entry.Workload != nil && entry.Workload.Mode == api.ExecutionModeService && entry.Workload.DeploymentID == ref.TargetID && entry.Workload.PredecessorDeploymentID == ref.PredecessorID && validServiceAbortOutcomeLookup(ref) && ref.Binding == deploymentOutcomeBinding(entry)
 }
 
 // Called under m.mu, before persisting the original attempt and sending a POST.
 func (m *management) prepareServiceAbortOutcome(ctx context.Context, p *releasePlan) (context.Context, error) {
-	if p.RolloutMode != api.ExecutionModeService || p.Scope != api.DefaultEnvScope {
+	if p.RolloutMode != api.ExecutionModeService || !serviceAbortScopeMatches(p.Scope, p.ProjectID, p.EnvironmentID) {
 		return ctx, nil
 	}
 	if m.serviceAbortOutcomes == nil {
@@ -59,26 +66,53 @@ func (m *management) prepareServiceAbortOutcome(ctx context.Context, p *releaseP
 	}
 	return api.ContextWithServiceAbortAttempt(ctx, ref.AttemptID), nil
 }
+
+// Separate named references from the N-1 bridge's default-only namespace.
+func (m *management) serviceAbortOutcomeSnapshots() (serviceAbortOutcomeSnapshot, serviceAbortOutcomeSnapshot) {
+	defaults := serviceAbortOutcomeSnapshot{Version: 1, Items: map[string]serviceAbortOutcomeLookup{}}
+	named := serviceAbortOutcomeSnapshot{Version: 1, Items: map[string]serviceAbortOutcomeLookup{}}
+	for id, ref := range m.serviceAbortOutcomes {
+		if m.actions[id].Scope == api.DefaultEnvScope {
+			defaults.Items[id] = ref
+		} else {
+			named.Items[id] = ref
+		}
+	}
+	return defaults, named
+}
 func (m *management) restoreServiceAbortOutcomeLookups() error {
-	var saved serviceAbortOutcomeSnapshot
-	if err := m.opts.planStore.read(serviceAbortOutcomeNamespace+m.opts.planNamespace, &saved); err != nil {
-		return err
-	}
-	if saved.Version != 1 && (saved.Version != 0 || len(saved.Items) != 0) || len(saved.Items) > api.ManagementMCPActionHistoryMax {
-		return errors.New("invalid service abort outcome snapshot")
-	}
 	m.serviceAbortOutcomes = map[string]serviceAbortOutcomeLookup{}
-	for id, ref := range saved.Items {
-		if !validActionID(id) || !validServiceAbortOutcomeLookup(ref) {
-			return errors.New("invalid service abort outcome reference")
+	for _, bucket := range []struct {
+		namespace string
+		named     bool
+	}{{serviceAbortOutcomeNamespace, false}, {namedServiceAbortOutcomeNamespace, true}} {
+		var saved serviceAbortOutcomeSnapshot
+		if err := m.opts.planStore.read(bucket.namespace+m.opts.planNamespace, &saved); err != nil {
+			return err
 		}
-		if entry, ok := m.actions[id]; ok && time.Now().Before(entry.RetainedUntil) && !serviceAbortReferenceMatches(entry, ref) {
-			p := m.plans[id]
-			if p == nil || !serviceAbortReferenceMatches(recordAction(p), ref) {
-				return errors.New("service abort outcome binding mismatch")
+		if saved.Version != 1 && (saved.Version != 0 || len(saved.Items) != 0) || len(m.serviceAbortOutcomes)+len(saved.Items) > api.ManagementMCPActionHistoryMax {
+			return errors.New("invalid service abort outcome snapshot")
+		}
+		for id, ref := range saved.Items {
+			if !validActionID(id) || !validServiceAbortOutcomeLookup(ref) {
+				return errors.New("invalid service abort outcome reference")
 			}
+			if _, duplicate := m.serviceAbortOutcomes[id]; duplicate {
+				return errors.New("duplicate service abort outcome reference")
+			}
+			if entry, ok := m.actions[id]; ok && time.Now().Before(entry.RetainedUntil) {
+				if bucket.named != (entry.Scope != api.DefaultEnvScope) {
+					return errors.New("service abort outcome namespace mismatch")
+				}
+				if !serviceAbortReferenceMatches(entry, ref) {
+					p := m.plans[id]
+					if p == nil || !serviceAbortReferenceMatches(recordAction(p), ref) {
+						return errors.New("service abort outcome binding mismatch")
+					}
+				}
+			}
+			m.serviceAbortOutcomes[id] = ref
 		}
-		m.serviceAbortOutcomes[id] = ref
 	}
 	return nil
 }
@@ -90,7 +124,7 @@ func (m *management) syncServiceAbortOutcomeLookups(now time.Time) error {
 			continue
 		}
 		if p := m.plans[id]; p != nil && p.Action == "service_abort" && p.attempted {
-			if p.RolloutMode != api.ExecutionModeService || p.Scope != api.DefaultEnvScope || ref.RequestHash != api.ServiceAbortRequestHash(p.AppID, serviceAbortRequest(p)) || ref.TargetID != p.TargetDeploymentID || ref.PredecessorID != p.PredecessorDeploymentID {
+			if p.RolloutMode != api.ExecutionModeService || !serviceAbortScopeMatches(p.Scope, p.ProjectID, p.EnvironmentID) || ref.RequestHash != api.ServiceAbortRequestHash(p.AppID, serviceAbortRequest(p)) || ref.TargetID != p.TargetDeploymentID || ref.PredecessorID != p.PredecessorDeploymentID {
 				return invalid("invalid_plan", "original service abort request changed")
 			}
 			ref.Binding = deploymentOutcomeBinding(entry)
@@ -109,7 +143,7 @@ func (m *management) readServiceAbortOutcome(ctx context.Context, entry actionRe
 		return
 	}
 	_, requestErr := uuid.Parse(r.RequestID)
-	if requestErr != nil || r.AttemptID != ref.AttemptID || r.RequestHash != ref.RequestHash || !promotionServingMatches(r.AppID, entry.AppID) || r.Scope != api.DefaultEnvScope || r.AcceptedAt.IsZero() || r.RequestID == "" || validateSegment(r.RequestID, "request_id") != nil || !promotionServingMatches(r.DeploymentID, ref.TargetID) || !promotionServingMatches(r.PredecessorDeploymentID, ref.PredecessorID) {
+	if requestErr != nil || r.AttemptID != ref.AttemptID || r.RequestHash != ref.RequestHash || !promotionServingMatches(r.AppID, entry.AppID) || r.Scope != entry.Scope || !promotionServingMatches(r.ProjectID, entry.ProjectID) || !promotionServingMatches(r.EnvironmentID, entry.EnvironmentID) || r.AcceptedAt.IsZero() || r.RequestID == "" || validateSegment(r.RequestID, "request_id") != nil || !promotionServingMatches(r.DeploymentID, ref.TargetID) || !promotionServingMatches(r.PredecessorDeploymentID, ref.PredecessorID) {
 		out.Reason = "receipt_unverified"
 		return
 	}
@@ -119,6 +153,10 @@ func (m *management) readServiceAbortOutcome(ctx context.Context, entry actionRe
 	}
 	out.Outcome = "verified_receipt"
 	out.Receipt = &actionReceipt{DeploymentID: ref.TargetID, RecoveryRequestID: r.RequestID}
-	out.Observation = &savedPlanReference{Tool: "gregale_get_rollout", Arguments: waitArgs{App: entry.App, DeploymentID: ref.TargetID}}
+	environment := entry.Scope
+	if environment == api.DefaultEnvScope {
+		environment = ""
+	}
+	out.Observation = &savedPlanReference{Tool: "gregale_get_rollout", Arguments: waitArgs{App: entry.App, DeploymentID: ref.TargetID, Project: entry.Project, Environment: environment}}
 	out.Instruction += " Compare the observed reverse-handoff request ID with this receipt. A different current request cannot establish completion of the original accepted abort. Gateway ACK and request draining remain separate."
 }

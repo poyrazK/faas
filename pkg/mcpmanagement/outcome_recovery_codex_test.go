@@ -190,7 +190,7 @@ func seedCodexRollbackOutcome(remote *remoteServer) (api.RollbackOperation, erro
 }
 
 // Synthetic service-abort acceptance survives expiry; no native write is made.
-func seedCodexServiceAbortOutcome(remote *remoteServer) (api.ServiceAbortReceipt, error) {
+func seedCodexServiceAbortOutcome(remote *remoteServer, named bool) (api.ServiceAbortReceipt, error) {
 	remote.mu.Lock()
 	var managers []*management
 	for _, grant := range remote.grants {
@@ -200,6 +200,9 @@ func seedCodexServiceAbortOutcome(remote *remoteServer) (api.ServiceAbortReceipt
 	}
 	remote.mu.Unlock()
 	id := strings.Repeat("1", 64)
+	if named {
+		id = strings.Repeat("2", 64)
+	}
 	for _, m := range managers {
 		m.mu.Lock()
 		if _, found := m.actions[id]; !found {
@@ -212,6 +215,20 @@ func seedCodexServiceAbortOutcome(remote *remoteServer) (api.ServiceAbortReceipt
 				seed.TargetDeploymentID, seed.PredecessorDeploymentID = "service-abort-target", "service-abort-serving"
 				seed.Reason, seed.Source, seed.attempted, seed.result = "PRIVATE_SERVICE_ABORT_REASON", nil, false, nil
 				seed.ExpiresAt = time.Now().Add(-time.Minute)
+				if named {
+					grant, ok := m.opts.Environments.Named["shop/staging"]
+					if !ok {
+						continue
+					}
+					seed.Project, seed.Scope = "shop", "staging"
+					seed.ProjectID, seed.EnvironmentID = grant.ProjectID, grant.EnvironmentID
+					seed.TargetDeploymentID, seed.PredecessorDeploymentID = "named-service-abort-target", "named-service-abort-serving"
+					if seed.review != nil {
+						review := *seed.review
+						review.Scope, review.ProjectID, review.EnvironmentID = seed.Scope, seed.ProjectID, seed.EnvironmentID
+						seed.review = &review
+					}
+				}
 				if _, err := m.prepareServiceAbortOutcome(context.Background(), &seed); err != nil {
 					m.mu.Unlock()
 					return api.ServiceAbortReceipt{}, err
@@ -228,7 +245,7 @@ func seedCodexServiceAbortOutcome(remote *remoteServer) (api.ServiceAbortReceipt
 		entry, found := m.actions[id]
 		ref := m.serviceAbortOutcomes[id]
 		if found && validServiceAbortOutcomeLookup(ref) {
-			receipt := api.ServiceAbortReceipt{AttemptID: ref.AttemptID, RequestHash: ref.RequestHash, AppID: entry.AppID, Scope: entry.Scope, DeploymentID: ref.TargetID, PredecessorDeploymentID: ref.PredecessorID, RequestID: "d5c0a595-f6d7-415e-a9d8-d6634052f03a", AcceptedAt: entry.RecordedAt}
+			receipt := api.ServiceAbortReceipt{AttemptID: ref.AttemptID, RequestHash: ref.RequestHash, AppID: entry.AppID, Scope: entry.Scope, ProjectID: entry.ProjectID, EnvironmentID: entry.EnvironmentID, DeploymentID: ref.TargetID, PredecessorDeploymentID: ref.PredecessorID, RequestID: "d5c0a595-f6d7-415e-a9d8-d6634052f03a", AcceptedAt: entry.RecordedAt}
 			m.mu.Unlock()
 			return receipt, nil
 		}

@@ -91,12 +91,14 @@ def sync_detailed(
     """Read the immutable acceptance receipt for a service-abort attempt.
 
      Requires deployment-read access to the owned app. Returns immutable acceptance
-    of an exact reviewed default-scope service abort, including the original native
+    of an exact reviewed default or named-environment service abort, including the original native
     reverse-handoff request ID, even after the current handoff changes. Acceptance
     does not establish gateway acknowledgement, request draining, completion or
     current health. Compare the request ID separately with the observed handoff.
     A 404 means no retained evidence; it never proves rejection or permits replay.
-    The receipt is retained with the candidate deployment audit and app.
+    The receipt is retained with the candidate deployment audit and app. Named receipts
+    also require the original project/environment UUIDs to match the current app
+    and environment. Deleted, replaced or moved targets return no evidence.
 
     Args:
         slug (str):
@@ -131,12 +133,14 @@ def sync(
     """Read the immutable acceptance receipt for a service-abort attempt.
 
      Requires deployment-read access to the owned app. Returns immutable acceptance
-    of an exact reviewed default-scope service abort, including the original native
+    of an exact reviewed default or named-environment service abort, including the original native
     reverse-handoff request ID, even after the current handoff changes. Acceptance
     does not establish gateway acknowledgement, request draining, completion or
     current health. Compare the request ID separately with the observed handoff.
     A 404 means no retained evidence; it never proves rejection or permits replay.
-    The receipt is retained with the candidate deployment audit and app.
+    The receipt is retained with the candidate deployment audit and app. Named receipts
+    also require the original project/environment UUIDs to match the current app
+    and environment. Deleted, replaced or moved targets return no evidence.
 
     Args:
         slug (str):
@@ -166,12 +170,14 @@ async def asyncio_detailed(
     """Read the immutable acceptance receipt for a service-abort attempt.
 
      Requires deployment-read access to the owned app. Returns immutable acceptance
-    of an exact reviewed default-scope service abort, including the original native
+    of an exact reviewed default or named-environment service abort, including the original native
     reverse-handoff request ID, even after the current handoff changes. Acceptance
     does not establish gateway acknowledgement, request draining, completion or
     current health. Compare the request ID separately with the observed handoff.
     A 404 means no retained evidence; it never proves rejection or permits replay.
-    The receipt is retained with the candidate deployment audit and app.
+    The receipt is retained with the candidate deployment audit and app. Named receipts
+    also require the original project/environment UUIDs to match the current app
+    and environment. Deleted, replaced or moved targets return no evidence.
 
     Args:
         slug (str):
@@ -204,12 +210,14 @@ async def asyncio(
     """Read the immutable acceptance receipt for a service-abort attempt.
 
      Requires deployment-read access to the owned app. Returns immutable acceptance
-    of an exact reviewed default-scope service abort, including the original native
+    of an exact reviewed default or named-environment service abort, including the original native
     reverse-handoff request ID, even after the current handoff changes. Acceptance
     does not establish gateway acknowledgement, request draining, completion or
     current health. Compare the request ID separately with the observed handoff.
     A 404 means no retained evidence; it never proves rejection or permits replay.
-    The receipt is retained with the candidate deployment audit and app.
+    The receipt is retained with the candidate deployment audit and app. Named receipts
+    also require the original project/environment UUIDs to match the current app
+    and environment. Deleted, replaced or moved targets return no evidence.
 
     Args:
         slug (str):

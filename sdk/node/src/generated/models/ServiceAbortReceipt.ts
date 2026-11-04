@@ -12,7 +12,18 @@ export type ServiceAbortReceipt = {
   deployment_id: string;
   predecessor_deployment_id: string;
   request_id: string;
-  scope: 'default';
+  /**
+   * Default scope or the original named environment slug.
+   */
+  scope: string;
+  /**
+   * Original project identity; present for named scopes.
+   */
+  project_id?: string;
+  /**
+   * Original environment identity; present for named scopes.
+   */
+  environment_id?: string;
   accepted_at: string;
 };
 

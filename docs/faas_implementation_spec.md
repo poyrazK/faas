@@ -3118,6 +3118,27 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP named service-abort outcomes (ADR-20261104173000)
+
+Exact reviewed service aborts in named environments use the same opaque attempt
+and immutable audit receipt as default-scope aborts. Named evidence includes the
+original project/environment UUIDs. Fresh intents still require the current full
+release review and unprotected environment admission. Receipt reads require the
+retained app/candidate and current matching project/environment identities; a
+same-slug replacement or project move cannot retarget historical evidence. A
+protection change alone does not erase acceptance. Duplicate-attempt detection
+uses the retained audit acceptance independently of mutable environment identity,
+so unavailable scoped evidence cannot permit reexecution of accepted intent.
+
+The existing MCP action-outcome tool, history, resources and prompt preserve the
+original named selectors through restart/expiry, with writes disabled. Read
+consent and immutable identities are rechecked before release. The rollout
+observation call includes the project/environment; acceptance remains separate
+from gateway ACK, drain and completion. Legacy attempted plans gain no identity.
+No new migration, tool, prompt, template or quota is needed. Service rollback
+outcome recovery remains separate. See
+[ADR-20261104173000](adr/20261104173000-management-mcp-named-service-abort-outcomes.md).
+
 ## Management MCP service-abort outcomes (ADR-20261104144000)
 
 Exact reviewed default-scope service aborts accept a stable opaque
@@ -3136,8 +3157,8 @@ with current handoff evidence; acceptance does not prove gateway ACK, request dr
 or completion. History/resources/prompts offer passive discovery without renewed
 write authority. Legacy attempted plans are never backfilled. Missing evidence
 remains unresolved. Retention, consent, immutable identities and storage are
-rechecked before release. No MCP tools or quotas are added. Named service aborts
-and service rollback remain separate. See
+rechecked before release. No MCP tools or quotas are added. Named service aborts are extended by
+ADR-20261104173000 above; service rollback remains separate. See
 [ADR-20261104144000](adr/20261104144000-management-mcp-service-abort-outcomes.md).
 
 ## Management MCP request rollback outcomes (ADR-20261026090000)
