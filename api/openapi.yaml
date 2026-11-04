@@ -83363,6 +83363,9 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIEvaluationItem' }
+        content_withheld:
+          type: boolean
+          description: The items' output texts were left out; reading them needs admin or secrets:read.
     OutboundAIEvaluationList:
       type: object
       description: A route's latest evaluations, newest first.
@@ -83745,6 +83748,9 @@ components:
         results:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIReplayResult' }
+        content_withheld:
+          type: boolean
+          description: The source's and results' answers were left out; reading them needs admin or secrets:read.
     OutboundAIRequestLogList:
       type: object
       description: One newest-first page of the AI request log.

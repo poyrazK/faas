@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.outbound_ai_replay_state import OutboundAIReplayState, check_outbound_ai_replay_state
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.outbound_ai_replay_result import OutboundAIReplayResult
@@ -34,6 +35,8 @@ class OutboundAIReplay:
     source: OutboundAIReplaySource
     """The captured call a replay resends."""
     results: list[OutboundAIReplayResult]
+    content_withheld: bool | Unset = UNSET
+    """The source's and results' answers were left out; reading them needs admin or secrets:read."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -68,6 +71,8 @@ class OutboundAIReplay:
             results_item = results_item_data.to_dict()
             results.append(results_item)
 
+        content_withheld = self.content_withheld
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -84,6 +89,8 @@ class OutboundAIReplay:
                 "results": results,
             }
         )
+        if content_withheld is not UNSET:
+            field_dict["content_withheld"] = content_withheld
 
         return field_dict
 
@@ -142,6 +149,8 @@ class OutboundAIReplay:
 
             results.append(results_item)
 
+        content_withheld = d.pop("content_withheld", UNSET)
+
         outbound_ai_replay = cls(
             id=id,
             integration_id=integration_id,
@@ -153,6 +162,7 @@ class OutboundAIReplay:
             targets=targets,
             source=source,
             results=results,
+            content_withheld=content_withheld,
         )
 
         outbound_ai_replay.additional_properties = d
