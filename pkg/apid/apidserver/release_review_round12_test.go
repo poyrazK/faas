@@ -68,10 +68,27 @@ func TestReleaseApprovalRefusedOnAReleaseThatEnded(t *testing.T) {
 // policy: its releases would have no canary to wait in.
 func TestImmediateReleasePolicyRefusedWhileApprovalsAreRequired(t *testing.T) {
 	ctx := context.Background()
-	f := newApprovalFixture(ctx, t, "approval-immediate", time.Now(), api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1})
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	app, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "approval-immediate", RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetReleaseApprovalPolicy(ctx, state.ReleaseApprovalPolicy{
+		AppID: app.ID, AccountID: app.AccountID, RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60,
+		Approvers: state.ReleaseApproversAdmin, UpdatedBy: "owner@example.com",
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	immediate := api.ReleasePolicyImmediate
-	apidserver.AssertProblem(t, f.e.Do(t, http.MethodPatch, "/v1/apps/approval-immediate", api.UpdateAppRequest{ReleasePolicy: &immediate}, nil),
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPatch, "/v1/apps/approval-immediate", api.UpdateAppRequest{ReleasePolicy: &immediate}, nil),
 		http.StatusConflict, api.CodeConflict)
+	if _, err := store.DeleteReleaseApprovalPolicy(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.Do(t, http.MethodPatch, "/v1/apps/approval-immediate", api.UpdateAppRequest{ReleasePolicy: &immediate}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("immediate without a policy = %d %s, want 200", rec.Code, rec.Body)
+	}
 }
 
 // A production release of an app with release gates cannot turn off both of
