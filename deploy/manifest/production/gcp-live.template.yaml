@@ -40,10 +40,15 @@ fleet:
     - name: fsn-2
       role: compute-only
       address: fsn-2.gregale.dev:50051
+      # ADR-20261102081618: gregale-compute-1-edge, forwarded to the node's
+      # TLS listener on port 443 (deploy/scripts/gcp-compute-edge-address.sh).
+      public_ipv4: 34.148.143.180
       tags: ["gcp-vpc"]
     - name: fsn-3
       role: compute-only
       address: fsn-3.gregale.dev:50051
+      # ADR-20261102081618: gregale-compute-2-edge, as fsn-2's above.
+      public_ipv4: 34.26.249.95
       tags: ["gcp-vpc"]
 
 daemons:
@@ -167,6 +172,13 @@ public_edge:
   # ADR-20261031105055: Cloudflare sends almost every request to one
   # connector; each edge hands a host to the node that last served it.
   placement_routing: true
+  # ADR-20261102081618: each edge also takes Cloudflare's direct connections
+  # on port 443, beside the tunnel. edgednsd plans the pilot host's records
+  # but writes none until live: true.
+  entry: both
+  dns:
+    zone_id: c0baeb8d33b48ec1704766edcb695394
+    names: [h10-hello-node.gregale.dev]
 
 # Customer log archive (pkg/logarchive). Keyless: every node's attached
 # service account holds roles/storage.objectUser on the bucket, whose
