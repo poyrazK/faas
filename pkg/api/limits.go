@@ -13921,6 +13921,14 @@ const (
 	// ended scenario run takes effect within the TTL.
 	ServiceDNSChaosCacheTTL = 2 * time.Second
 	ServiceDNSChaosCacheMax = 4096
+	// PlatformTenantJWTCacheTTL is how long a gateway keeps a JWT customer
+	// claim's platform tenant, found or not; a suspended tenant is refused
+	// within it. While the store is unavailable the last answer serves for
+	// PlatformTenantJWTOutageGrace instead of refusing every request.
+	// PlatformTenantJWTCacheMax bounds the claims kept (bug hunt H29).
+	PlatformTenantJWTCacheTTL    = 5 * time.Second
+	PlatformTenantJWTOutageGrace = 5 * time.Minute
+	PlatformTenantJWTCacheMax    = 20_000
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
