@@ -703,10 +703,18 @@ the moment it runs and aborting a canary does not undo it. It is listed in
 `gregale release approval pending` like any waiting release, for the same
 timeout. Once approved, the command runs and the release rolls out without
 waiting again. If it is rejected or times out, the deployment fails without
-running the command and production keeps the current release. The app's
-first production release has no canary to wait in, so its command runs at
-once
-([amendment 12](adr/20261020085706-release-approvals.md#amendment-12-2026-11-04-a-release-waits-for-approval-before-its-release-command)).
+running the command and production keeps the current release. When it is
+approved, Gregale checks again before running the command:
+- **A newer release:** if you deployed a newer release of the app to the
+  same environment meanwhile, this one is superseded and its command never
+  runs.
+- **The break-glass pause:** it waits until the pause is lifted.
+- **A deploy freeze:** a freeze that started after you deployed fails it
+  with `release_frozen`. A freeze you overrode when deploying does not.
+
+The app's first production release has no canary to wait in, so its command
+runs at once
+([amendments 12 and 13](adr/20261020085706-release-approvals.md#amendment-12-2026-11-04-a-release-waits-for-approval-before-its-release-command)).
 
 A person approves on the release's approval page in the dashboard
 (`/dashboard/releases/<deployment>/approval`, linked from the notification),
