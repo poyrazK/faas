@@ -25,7 +25,15 @@ func (s *Service) edgeRuleListStore(w http.ResponseWriter) (state.EdgeRuleListSt
 // validateEdgeRuleMatchLists resolves a condition's list references against
 // the account: an unknown list, or one whose kind does not fit its field, is
 // a validation error. Conditions without references need no lookup.
-func (s *Service) validateEdgeRuleMatchLists(ctx context.Context, accountID string, expr *api.EdgeRuleMatchExpr) *api.Problem {
+//
+// A rule names only lists of its app's scope (ADR-091 amendment 2026-11-04,
+// review round 10): a company app's rule names its organization's lists (and
+// personal lists only its organization's apps already use), and a personal
+// app's rule names personal lists. Otherwise a member could make the app
+// creator's private list readable to the organization by naming it, learn
+// which private list names exist, or freeze an organization list by naming
+// it from a personal rule. A list outside the scope reads as unknown.
+func (s *Service) validateEdgeRuleMatchLists(ctx context.Context, accountID string, app state.App, expr *api.EdgeRuleMatchExpr) *api.Problem {
 	names := api.EdgeRuleMatchListRefs(expr)
 	if len(names) == 0 {
 		return nil
@@ -38,8 +46,25 @@ func (s *Service) validateEdgeRuleMatchLists(ctx context.Context, accountID stri
 	if err != nil {
 		return api.ErrCapacity("could not read edge rule lists")
 	}
+	orgID, err := s.companyOrgID(ctx, app)
+	if err != nil {
+		return api.ErrCapacity("could not read the app's organization")
+	}
+	v := listVisibility{s: s, scope: listScope{orgID: orgID}}
 	lists := make(api.EdgeRuleLists, len(rows))
 	for _, l := range rows {
+		if orgID != "" && l.OrgID == "" && v.refs == nil {
+			if v.refs, err = store.EdgeRuleListReferences(ctx, accountID); err != nil {
+				return api.ErrCapacity("could not read edge rule list references")
+			}
+		}
+		visible, err := v.visible(ctx, l)
+		if err != nil {
+			return api.ErrCapacity("could not read the apps that use edge rule lists")
+		}
+		if !visible {
+			continue
+		}
 		// Kind is all validation needs; items were validated on write.
 		compiled, err := api.CompileEdgeRuleList(l.Kind, nil)
 		if err != nil {
@@ -47,7 +72,19 @@ func (s *Service) validateEdgeRuleMatchLists(ctx context.Context, accountID stri
 		}
 		lists[l.Name] = compiled
 	}
-	return api.ValidateEdgeRuleMatchWithLists(expr, lists)
+	prob := api.ValidateEdgeRuleMatchWithLists(expr, lists)
+	if prob != nil && orgID != "" {
+		for _, name := range names {
+			if _, ok := lists[name]; !ok {
+				// Lists live with the account that owns a company app's
+				// resources, so a list made through another member's app
+				// is not this app's (ADR-091 amendment 2026-11-04).
+				prob.Detail += "; a company app's rules use the lists created for it: gregale edge rule-list create --app " + app.Slug
+				break
+			}
+		}
+	}
+	return prob
 }
 
 func EdgeRuleListResponse(l state.EdgeRuleList, refs []state.EdgeRuleListRef, withItems bool) api.EdgeRuleListResponse {
@@ -165,7 +202,13 @@ func (s *Service) CreateEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 	switch {
 	case errors.Is(err, state.ErrEdgeRuleListQuota):
 		existing, _ := store.ListEdgeRuleLists(r.Context(), acct.ID)
-		api.WriteProblem(w, api.ErrPlanLimitEdgeRuleLists(acct.Plan, maxLists, len(existing)))
+		scope, observed := listScopeFor(r), 0
+		for _, l := range existing {
+			if l.OrgID == scope.orgID {
+				observed++
+			}
+		}
+		api.WriteProblem(w, api.ErrPlanLimitEdgeRuleLists(acct.Plan, maxLists, observed))
 		return
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.ErrEdgeRuleListExists(req.Name))

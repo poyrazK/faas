@@ -81,6 +81,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 			RequestCount: r.GatewayRequestCount, EgressBytes: r.GatewayEgressBytes, GatewayMetricsKnown: true,
 			StoredByteHours: r.GatewayStoredByteHours, StorageMeteredThrough: r.GatewayStorageThrough.Time,
 			InventoryScan: ObjectInventoryScan{StartedAt: r.ScanStartedAt.Time, ProgressAt: r.ScanProgressAt.Time, Bytes: r.ScanBytes.Int64, Keys: r.ScanKeys.Int64, Pages: int(r.ScanPages.Int32), Complete: r.ScanComplete.Bool},
+			InventoryHeld: r.InventoryHeld,
 		})
 	}
 	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})

@@ -144,3 +144,39 @@ func (s *PgStore) BeginObjectCrossBucketMultipartPart(ctx context.Context, accou
 	}
 	return s.admitMultipartCapacity(ctx, account, bucket, id, "", part, size, maxObject, p, token, nil, &source)
 }
+
+func (s *PgStore) SettleAbandonedObjectMultipartPartWriters(ctx context.Context, id, token string) (int, error) {
+	if token == "" {
+		return 0, ErrConflict
+	}
+	q := sqlc.New()
+	owner, err := q.ObjectMultipartAbortOwner(ctx, s.pool, sqlc.ObjectMultipartAbortOwnerParams{ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: token, Valid: true}})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrConflict
+	}
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	// The writer guard takes account, bucket and upload locks; take them in
+	// that order first, as the abort's own finish does.
+	if _, err = lockObjectUsageScope(ctx, tx, owner.AccountID, owner.BucketID); err != nil {
+		return 0, mapErr(err)
+	}
+	row, err := q.ObjectMultipartCapacityLock(ctx, tx, sqlc.ObjectMultipartCapacityLockParams{ID: mustPgUUID(id), AccountID: owner.AccountID, BucketID: owner.BucketID})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	if row.State != ObjectMultipartAborting || row.LeaseToken.String != token {
+		return 0, ErrConflict
+	}
+	n, err := q.ObjectMultipartAbandonedPartWritersSettle(ctx, tx, sqlc.ObjectMultipartAbandonedPartWritersSettleParams{ID: mustPgUUID(id), LeaseToken: token})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return int(n), mapErr(tx.Commit(ctx))
+}

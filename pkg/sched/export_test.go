@@ -1278,3 +1278,9 @@ func RealtimeIdleDelays(sizes []int) []time.Duration {
 	}
 	return out
 }
+
+// KeyedLocks exposes keyedLocks to sched_test (ADR 20261104143005).
+type KeyedLocks = keyedLocks
+
+func (k *keyedLocks) Lock(key string) func() { return k.lock(key) }
+func (k *keyedLocks) Size() int              { return k.size() }

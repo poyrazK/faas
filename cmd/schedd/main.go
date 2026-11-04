@@ -2122,6 +2122,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// accountor and the broker egress was effectively unbounded
 	// in prod. A parse error fails boot loudly so a typo can't
 	// silently disable the shaper.
+	// ADR 20261104143005: the stats tick runs on the loop; its recycles and
+	// capture requests run on the loop's work pool instead.
+	statsPoller.WithEnforcementDispatch(loop.EnforcementDispatch)
 	if beCfg, ok, err := brokerEgressConfigFromEnv(); err != nil {
 		log.Error("broker egress config: invalid env", "err", err)
 		os.Exit(1)

@@ -2054,6 +2054,23 @@ groups:
           description: "The compute edge on {{ $labels.node }} answered {{ $value | humanize }} requests/s with 421 for hosts outside the apps domain for 15 minutes. The tunnel's ingress rules likely send platform or custom-domain hosts to the compute edge."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
+      # ADR-20261103163954 §3: edgednsd renews the apps domains' certificate
+      # 30 days before it expires, so an edge serving one with 14 days left
+      # means renewal has failed for two weeks, or this edge is not loading
+      # the new one.
+      - alert: FaasEdgeCertificateExpiringSoon
+        expr: min by (node, name) (edge_certificate_expiry_seconds) < 14 * 86400
+        for: 30m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The edge on {{ $labels.node }} serves a certificate for {{ $labels.name }} that expires within 14 days"
+          description: "The certificate the compute edge on {{ $labels.node }} serves for {{ $labels.name }} expires in {{ $value | humanizeDuration }}. edgednsd renews 30 days ahead, so either renewal is failing or this edge has not loaded the renewed certificate. Clients connecting directly fail their handshakes once it expires."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
+
   # ────────────────────────────────────────────────────────────────────
   # ADR-20261031122757 §2: the S3 gateway on each compute node (s3-gatewayd
   # in compute mode and its s3 tunnel connector). Prometheus scrapes the two
@@ -2124,6 +2141,51 @@ groups:
           summary: "edgednsd is not answering"
           description: "Prometheus cannot scrape edgednsd on the control plane. The records stay as they were, so traffic flows, but a compute node that fails now is not withdrawn."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeDNS.md"
+
+      # ADR-20261103163954 §3: edgednsd should have renewed 30 days ahead;
+      # 21 days left means a week of failed orders, before any edge alerts.
+      - alert: FaasEdgeCertificateRenewalOverdue
+        expr: (min by (ca) (edge_certificate_stored_expiry_timestamp_seconds) - time()) < 21 * 86400
+        for: 1h
+        labels:
+          severity: warn
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "edgednsd has not renewed the apps domains' {{ $labels.ca }} certificate"
+          description: "The newest apps-domain certificate edgednsd stored from {{ $labels.ca }} expires in {{ $value | humanizeDuration }}; it renews 30 days ahead, so its orders have been failing for a week. edge_certificate_orders_total{result=\"failed\"} and edgednsd's log say why."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
+
+      # ADR-20261103163954 §3: the Certificate Transparency watch. A
+      # certificate edgednsd did not issue may be a compromised node's for
+      # the hosts it serves, and it outlives the key rotation; a wildcard one
+      # means the zone's DNS is compromised.
+      - alert: FaasEdgeCertificateUnexpected
+        expr: max(edge_certificate_transparency_unexpected) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "A publicly trusted certificate for the apps domain that edgednsd did not issue"
+          description: "Certificate Transparency lists {{ $value }} unexpired certificate(s) under the apps domain that edgednsd did not issue and the allow list does not cover. edgednsd's log line 'a certificate edgednsd did not issue' names each one."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
+
+      - alert: FaasEdgeCertificateTransparencyStale
+        expr: (time() - max(edge_certificate_transparency_last_success_timestamp_seconds)) > 86400
+        for: 1h
+        labels:
+          severity: warn
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "edgednsd's Certificate Transparency watch has not completed a check for a day"
+          description: "The last successful check was {{ $value | humanizeDuration }} ago; it checks every 6 hours. edge_certificate_transparency_checks_total by result and edgednsd's log say why (rate_limited: stage a Cert Spotter API key)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
 
   - name: faas_compute_object_gateway
     rules:
@@ -2699,6 +2761,21 @@ groups:
           summary: "lv-fc usage > 80%"
           description: "lv-fc usage between 80% and 90% for 10m. Schedule the next LV-resize runbook before the page-tier crossing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLvFcUsageHigh.md"
+
+      # ADR-20261103163954 §4: public connections share the conntrack table
+      # with tenant NAT; a full table drops new connections for both, and
+      # every guest loses new outbound connections.
+      - alert: FaasConntrackTableFilling
+        expr: max by (instance) (node_nf_conntrack_entries / node_nf_conntrack_entries_limit) > 0.8
+        for: 5m
+        labels:
+          severity: warn
+          component: host
+          family: conntrack
+        annotations:
+          summary: "conntrack table over 80% full on {{ $labels.instance }}"
+          description: "The node's conntrack table, shared by public connections and tenant NAT, has been over 80% full for 5m. When it fills, new connections are dropped for both; a SYN flood on a public entry address is the usual cause."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConntrackTableFilling.md"
 
       # ─────────────────────────────────────────────────────────────────
       # Build queue wait p95 (builderd)

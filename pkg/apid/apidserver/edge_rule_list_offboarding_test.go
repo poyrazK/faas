@@ -41,7 +41,9 @@ func TestEdgeRuleListEditAuthorizesTheAppsUsingIt(t *testing.T) {
 		rec := e.Do(t, method, path, body, map[string]string{"Idempotency-Key": key})
 		return rec.Code, rec.Body.String()
 	}
-	if code, body := do(http.MethodPost, "/v1/edge-rule-lists", api.CreateEdgeRuleListRequest{
+	// A company app's rules use the organization's lists (ADR-091 amendment
+	// 2026-11-04), which the app's members manage through ?app=.
+	if code, body := do(http.MethodPost, "/v1/edge-rule-lists?app=acme-api", api.CreateEdgeRuleListRequest{
 		Name: "blocked", Kind: "ip", Items: []string{"203.0.113.0/24"},
 	}, "list"); code != http.StatusCreated {
 		t.Fatalf("create list: %d %s", code, body)
@@ -53,19 +55,21 @@ func TestEdgeRuleListEditAuthorizesTheAppsUsingIt(t *testing.T) {
 	}, "rule"); code != http.StatusCreated {
 		t.Fatalf("create the company app's rule: %d %s", code, body)
 	}
-	edit := func(item, key string) (int, string) {
+	edit := func(path, item, key string) (int, string) {
 		items := []string{item}
-		return do(http.MethodPatch, "/v1/edge-rule-lists/blocked", api.UpdateEdgeRuleListRequest{Items: &items}, key)
+		return do(http.MethodPatch, path, api.UpdateEdgeRuleListRequest{Items: &items}, key)
 	}
-	if code, body := edit("198.51.100.0/24", "member-edit"); code != http.StatusOK {
+	if code, body := edit("/v1/edge-rule-lists/blocked?app=acme-api", "198.51.100.0/24", "member-edit"); code != http.StatusOK {
 		t.Fatalf("a company admin's list edit = %d %s, want 200", code, body)
 	}
 
 	if err := store.RemoveOrgMember(ctx, org.ID, creator.ID); err != nil {
 		t.Fatal(err)
 	}
-	if code, body := edit("192.0.2.0/24", "offboarded-edit"); code < 400 || code >= 500 {
-		t.Fatalf("an offboarded creator's list edit = %d %s, want a 4xx refusal", code, body)
+	for _, path := range []string{"/v1/edge-rule-lists/blocked?app=acme-api", "/v1/edge-rule-lists/blocked"} {
+		if code, body := edit(path, "192.0.2.0/24", "offboarded-edit "+path); code < 400 || code >= 500 {
+			t.Fatalf("an offboarded creator's list edit through %s = %d %s, want a 4xx refusal", path, code, body)
+		}
 	}
 	lists, err := store.EdgeRuleListsByName(ctx, creator.ID, []string{"blocked"})
 	if err != nil || len(lists) != 1 || len(lists[0].Items) != 1 || lists[0].Items[0] != "198.51.100.0/24" {
