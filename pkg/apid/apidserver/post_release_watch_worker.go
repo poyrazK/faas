@@ -116,7 +116,7 @@ func (s *server) postReleaseRollback(ctx context.Context, store state.PostReleas
 	if err != nil {
 		return fmt.Errorf("load account: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+	request, err := http.NewRequestWithContext(state.WithExpectedRollbackCurrent(ctx, c.DeploymentID), http.MethodPost, "/", nil)
 	if err != nil {
 		return err
 	}

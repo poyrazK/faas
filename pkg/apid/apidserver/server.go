@@ -178,6 +178,8 @@ type server struct {
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore
+	configGuardSweepMu   sync.Mutex
+	configGuardCursor    state.ConfigGuardCursor
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
 	postReleaseTelemetry rollbackOn5xxTelemetry
@@ -2866,12 +2868,13 @@ func (s *server) handler() http.Handler {
 	// PR-1 of the deploy-diff cluster — server-side pre-deploy
 	// preview. Read-only (no DB writes, no audit row, no deployment
 	// row), so the auth chain matches GET /v1/apps/{slug}/metrics
-	// (server.go:785): authLimited → requireScope(ScopesReadSurface)
-	// with NO requireMFA. A CI key with `apps:read` is sufficient;
-	// typical deploy-write keys also pass (ScopeAdmin covers the
-	// read surface). Cross-account isolation is via loadApp at
+	// (server.go:785): authLimited with NO requireMFA. A CI key with
+	// `apps:read` is sufficient, and so is deploy:write: a deploy token
+	// previews the deploy it may make (rc.318 field report). The diff
+	// names env keys, never values, and a deploy token stays bound to its
+	// app (ADR-20261031162858). Cross-account isolation is via loadApp at
 	// handlers_diff.go:diffApp.
-	mux.HandleFunc("POST /v1/apps/{slug}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.diffApp)))
+	mux.HandleFunc("POST /v1/apps/{slug}/diff", s.authLimited(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.diffApp)))
 	// ADR-126 / issue #975 item #2 — OpenAPI Import + Auto-Generation.
 	// Five app-scoped routes keyed on {slug}, distinct from the
 	// deployment-keyed getOpenAPIDoc / patchOpenAPIDoc / openAPIDocDelete

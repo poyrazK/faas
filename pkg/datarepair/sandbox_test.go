@@ -47,3 +47,34 @@ func TestSnapshotBoundCannotBeBypassedByReaderFrom(t *testing.T) {
 		t.Fatal("oversized snapshot was retained")
 	}
 }
+
+func TestSnapshotPreservesFailoverHosts(t *testing.T) {
+	for _, tc := range []struct{ name, source, hosts, ports string }{
+		{"explicit ports", "postgresql://writer@127.0.0.1:1,127.0.0.1:55432/catalog?sslmode=disable", "127.0.0.1,127.0.0.1", "1,55432"},
+		{"TLS alternatives", "postgresql://writer@first:5433,second:5434/catalog?sslmode=prefer", "first,second", "5433,5434"},
+		{"TLS allow", "postgresql://writer@first:5433,second:5434/catalog?sslmode=allow", "first,second", "5433,5434"},
+		{"query host override", "postgresql://writer@unused/catalog?host=first,second&port=5433&sslmode=disable", "first,second", "5433,5433"},
+		{"IPv6", "postgresql://writer@[::1]:5433,[::2]:5434/catalog?sslmode=disable", "::1,::2", "5433,5434"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("EXPECTED_HOSTS", tc.hosts)
+			t.Setenv("EXPECTED_PORTS", tc.ports)
+			program := filepath.Join(t.TempDir(), "pg-dump-fixture")
+			script := `#!/bin/sh
+set -eu
+test "$PGHOST" = "$EXPECTED_HOSTS"
+test "$PGPORT" = "$EXPECTED_PORTS"
+test "$PGTARGETSESSIONATTRS" = 'read-write'
+test "$PGCONNECT_TIMEOUT" = '2'
+printf '%s' 'failover snapshot'
+`
+			if err := os.WriteFile(program, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			r := SnapshotExporter{SourceURL: tc.source + "&target_session_attrs=read-write&connect_timeout=2", DumpBinary: program}
+			if dump, _, err := r.snapshot(t.Context()); err != nil || string(dump) != "failover snapshot" {
+				t.Fatalf("snapshot lost its failover policy: %q %v", dump, err)
+			}
+		})
+	}
+}

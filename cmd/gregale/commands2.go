@@ -3153,6 +3153,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if len(queueCanaryBindings) > 0 {
 				return printErr("Invalid flags", errors.New("--queue-canary-binding requires a single workload"))
 			}
+			// --plan/--preview stays local: the fan-out reserved each app
+			// before its child plan refused --runtime (rc.318 field report).
+			if *simplePlan {
+				return functionSetDeploy{cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest, out: osStdout}.printPlan()
+			}
 			return deployFunctionSet(ctx, functionSetDeploy{
 				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
 				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,

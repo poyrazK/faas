@@ -10605,6 +10605,10 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			return err
 		}
 	}
+	dep, err = rollbackTrafficTargetTx(ctx, tx, dep)
+	if err != nil {
+		return err
+	}
 	if recovery {
 		if dep.Status == DeploySuperseded {
 			return ErrDeploymentSuperseded
@@ -10706,6 +10710,9 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	}
 	// ADR-1446: a prepared rollback is consumed by its promotion. Clearing it
 	// in this transaction means a failed promotion keeps the marker for retry.
+	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `update deployments set rollback_prepared_at = null where id = $1 and rollback_prepared_at is not null`, id); err != nil {
 		return fmt.Errorf("state: clear rollback marker: %w", err)
 	}
@@ -12152,6 +12159,12 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 			return Deployment{}, ErrNoRollbackTarget
 		}
 		return Deployment{}, fmt.Errorf("state: prepare rollback load target: %w", err)
+	}
+	if current := expectedRollbackCurrent(ctx); current != "" {
+		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
+		if err := rollbackCurrentMatches(ctx, tx, r); err != nil {
+			return Deployment{}, err
+		}
 	}
 	managed, err := environmentGitOpsManagedForScopeTx(ctx, tx, target.AppID, target.Scope)
 	if err != nil {
@@ -24956,6 +24969,14 @@ func (s *PgStore) DeleteAppSecretInScopeWithRevocation(ctx context.Context, acco
 	if err := lockAppSecretTarget(ctx, tx, appID, scope, key); err != nil {
 		return AppSecretRevocation{}, err
 	}
+	r, err := deleteAppSecretInScopeTx(ctx, tx, accountID, appID, scope, key)
+	if err != nil {
+		return AppSecretRevocation{}, err
+	}
+	return r, mapErr(tx.Commit(ctx))
+}
+
+func deleteAppSecretInScopeTx(ctx context.Context, tx pgx.Tx, accountID, appID, scope, key string) (AppSecretRevocation, error) {
 	queries := sqlc.New()
 	if err := rejectManagedSecretDelete(ctx, tx, queries, accountID, appID, scope, key); err != nil {
 		return AppSecretRevocation{}, err
@@ -24987,9 +25008,6 @@ func (s *PgStore) DeleteAppSecretInScopeWithRevocation(ctx context.Context, acco
 	}
 	if deleted != 1 {
 		return AppSecretRevocation{}, ErrNotFound
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return AppSecretRevocation{}, mapErr(err)
 	}
 	return revocation, nil
 }
