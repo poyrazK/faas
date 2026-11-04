@@ -2,6 +2,7 @@
 
 - **Status:** proposed
 - **Date:** 2026-11-03
+- **Amended:** 2026-11-04: no CAA records (§3); the issuer is acmez
 - **Amends (when accepted):**
   - ADR-20261102081618 §1–§3, and its rejected alternative "Unproxied
     round-robin DNS": the app records become DNS-only; the edge presents a
@@ -137,10 +138,11 @@ port 443:
 
 - **Issuer.** `edgednsd` already holds the cell's only Cloudflare token
   (Zone DNS: Edit). It obtains the apps-domain wildcard certificates from
-  Let's Encrypt with the DNS-01 challenge, through the certmagic issuer
-  ADR-100 added, with a Cloudflare `libdns` provider beside the Hetzner one.
-  It renews 30 days before expiry. The token still never reaches a compute
-  node or an internet-facing process.
+  Let's Encrypt with the DNS-01 challenge, through acmez (the ACME client
+  under ADR-100's certmagic issuer) and certmagic's DNS-01 solver over a
+  Cloudflare `libdns` provider. A fixed account key, created once, keeps one
+  ACME account. It renews 30 days before expiry. The token still never
+  reaches a compute node or an internet-facing process.
 - **One issuer per cell.** Let's Encrypt issues at most 5 certificates for
   the same set of names in 7 days, with no override. Issuing on each node
   would cap a cell at about five nodes, and DNS-01 would put the token on
@@ -157,12 +159,27 @@ port 443:
   guest escape on any node exposes it for every app host until the next
   renewal. In-memory keys and per-renewal rotation bound that; the
   key-loss runbook revokes and reissues.
-- **CAA.** The apps domain publishes `issue` and `issuewild` records naming
+- **No CAA records** (amended 2026-11-04, owner). This record first had the
+  apps domain publish CAA `issue` and `issuewild` records naming
   `letsencrypt.org` with `accounturi` set to `edgednsd`'s ACME account
-  (RFC 8657), so no other CA or account can issue for it. Today
-  `docs/domains.md` mentions CAA only for customers' domains.
-- **Transparency.** A watch on Certificate Transparency logs for the apps
-  domain pages on any certificate `edgednsd` did not issue.
+  (RFC 8657). That pin cannot bind on gregale.dev: the apps domain is the
+  zone apex, the proxied platform hosts use Cloudflare's Universal SSL
+  certificate, and Cloudflare adds hidden CAA records for its partner CAs
+  (`letsencrypt.org`, `pki.goog`, `ssl.com`, `sectigo.com`, none with
+  `accounturi`) to any such zone that has CAA records. A bare
+  `letsencrypt.org` record lets every Let's Encrypt account issue, so
+  publishing ours would only narrow issuance to those four CAs. What CAA was
+  for, a compromised node answering a CA's TLS-ALPN-01 challenge for the
+  hosts it serves and holding a certificate that outlives the key rotation,
+  falls to the Transparency watch and the key-loss runbook. Revisit if the
+  platform hosts leave Universal SSL.
+- **Transparency.** `edgednsd` reads the unexpired certificates for the
+  apps domain and every name under it from Cert Spotter (SSLMate's
+  Certificate Transparency search) every 6 hours, and pages on any whose key
+  it did not store, unless every name on it is on an allow list (Cloudflare's
+  own apex and wildcard certificate, hosted sites). A wildcard certificate
+  whose names are all allowed passes; issuing one needs control of the
+  zone's DNS, which Cloudflare's audit log records.
 - **Expiry.** `edge_certificate_expiry_seconds{name}` on each edge, an alert
   at 14 days and a runbook, before the first host goes live.
 - **Custom domains** stay off (ADR-520). Their certificates are an open
@@ -275,8 +292,8 @@ move too. This is a later step with its own switch, off by default.
    rate, all off by default. Gateways remember misses and budget reads of
    unseen hosts (#6491, on by default).
 2. **Certificates:** issuance in `edgednsd` with an ECDSA key, the table,
-   in-memory loading in the edge, the expiry alert, the CAA records and the
-   Certificate Transparency watch. Let's Encrypt's staging CA first.
+   in-memory loading in the edge, the expiry alert and the Certificate
+   Transparency watch. Let's Encrypt's staging CA first.
 3. **Ansible and the manifest:** `front`, the firewall scoped to the entry
    address with SSH off it, the kernel connection limits, conntrack sizing
    and its alert, the block-list set, and the OVH entry address with its
