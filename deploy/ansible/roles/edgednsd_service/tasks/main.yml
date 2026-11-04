@@ -88,8 +88,8 @@
   when: faas_edgednsd_enabled | bool and faas_edgednsd_certificate_names | length > 0
 
 # PRIVATE: the ACME account's key, created once and never replaced or
-# removed here. The zone's CAA records pin the account (RFC 8657), so a new
-# key would stop issuance until they change. The directory is root-only.
+# removed here: it is the account that ordered, and can revoke, every stored
+# certificate. The directory is root-only.
 - name: edgednsd_service — create the ACME account key
   ansible.builtin.command:
     argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, "ec_paramgen_curve:P-256", -out, /etc/faas/secrets/edgednsd/acme-account.key]
@@ -104,6 +104,20 @@
     group: root
     mode: "0400"
   when: faas_edgednsd_enabled | bool and faas_edgednsd_certificate_names | length > 0
+
+# The Certificate Transparency watch reads Cert Spotter with an API key when
+# the operator staged one at /etc/faas/secrets/edgednsd/certspotter-api-key
+# (root, 0400); without one it stays inside Cert Spotter's anonymous quota.
+- name: edgednsd_service — look for a Cert Spotter API key
+  ansible.builtin.stat:
+    path: /etc/faas/secrets/edgednsd/certspotter-api-key
+  register: faas_edgednsd_ct_api_key
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_ct_domain | length > 0
+
+- name: edgednsd_service — note whether the watch has an API key
+  ansible.builtin.set_fact:
+    faas_edgednsd_ct_api_key_staged: "{{ faas_edgednsd_ct_api_key.stat.exists }}"
+  when: faas_edgednsd_enabled | bool and faas_edgednsd_ct_domain | length > 0
 
 - name: edgednsd_service — install the database environment
   ansible.builtin.copy:

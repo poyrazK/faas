@@ -27,7 +27,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"ca"}),
 		account: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "edge_certificate_acme_account_info",
-			Help: "1 for the ACME account edgednsd orders with, by CA and account URI, which the apps domains' CAA accounturi names (ADR-20261103163954 §3).",
+			Help: "1 for the ACME account edgednsd orders with, by CA and account URI (ADR-20261103163954 §3).",
 		}, []string{"ca", "account_uri"}),
 	}
 	reg.MustRegister(m.orders, m.expiry, m.account)

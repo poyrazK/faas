@@ -855,12 +855,31 @@ type PublicEdgeCertificate struct {
 	// from it: an edge without one is not ready, so switching both at once
 	// would take every edge out of DNS until the new order lands.
 	Serve string `yaml:"serve,omitempty"`
+	// Transparency turns on edgednsd's Certificate Transparency watch,
+	// which pages on publicly trusted certificates it did not issue.
+	Transparency *PublicEdgeTransparency `yaml:"transparency,omitempty"`
+}
+
+// PublicEdgeTransparency is edgednsd's Certificate Transparency watch
+// (ADR-20261103163954 §3).
+type PublicEdgeTransparency struct {
+	// Domain is the domain whose certificates, and those of every name
+	// under it, the watch reads, e.g. gregale.dev.
+	Domain string `yaml:"domain"`
+	// AllowNames are the names a certificate edgednsd did not issue may
+	// carry without a page: a certificate whose every name is listed is
+	// someone else's by design, such as the CDN's own certificate for the
+	// zone ("gregale.dev", "*.gregale.dev") or a hosted site's.
+	AllowNames []string `yaml:"allow_names,omitempty"`
 }
 
 // The CAs a public_edge.dns.certificate comes from.
 const (
 	EdgeCertificateCAStaging    = "letsencrypt-staging"
 	EdgeCertificateCAProduction = "letsencrypt"
+	// edgeTransparencyAllowNamesMax is
+	// api.EdgeCertificateTransparencyAllowNamesMax.
+	edgeTransparencyAllowNamesMax = 32
 	// edgeCertificateNamesMax is api.EdgeCertificateNamesMax, which the
 	// edgednsd unit refuses past.
 	edgeCertificateNamesMax = 10
@@ -1053,6 +1072,29 @@ func (c *PublicEdgeCertificate) validate() Errors {
 	}
 	if !contains([]string{"", EdgeCertificateCAStaging, EdgeCertificateCAProduction}, c.Serve) {
 		errs = append(errs, Error{"public_edge.dns.certificate.serve", fmt.Sprintf("unsupported %q (allowed: empty, %s or %s)", c.Serve, EdgeCertificateCAStaging, EdgeCertificateCAProduction)})
+	}
+	return append(errs, c.Transparency.validate()...)
+}
+
+func (t *PublicEdgeTransparency) validate() Errors {
+	if t == nil {
+		return nil
+	}
+	var errs Errors
+	domain := strings.ToLower(strings.TrimSpace(t.Domain))
+	if domain == "" || strings.Contains(domain, "*") || !strings.Contains(domain, ".") {
+		errs = append(errs, Error{"public_edge.dns.certificate.transparency.domain", fmt.Sprintf("%q is not a domain name", t.Domain)})
+	}
+	if len(t.AllowNames) > edgeTransparencyAllowNamesMax {
+		errs = append(errs, Error{"public_edge.dns.certificate.transparency.allow_names", fmt.Sprintf("at most %d names, not %d", edgeTransparencyAllowNamesMax, len(t.AllowNames))})
+	}
+	seen := map[string]bool{}
+	for i, name := range t.AllowNames {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "" || seen[lower] || !strings.Contains(strings.TrimPrefix(lower, "*."), ".") || strings.Contains(strings.TrimPrefix(lower, "*."), "*") {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.transparency.allow_names[%d]", i), fmt.Sprintf("%q is empty, listed twice, or not a host name or *. wildcard", name)})
+		}
+		seen[lower] = true
 	}
 	return errs
 }

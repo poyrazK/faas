@@ -53,3 +53,24 @@ func TestNewCertManagerReadsItsCredentials(t *testing.T) {
 		t.Fatalf("a recipient as the account key: err = %v", err)
 	}
 }
+
+// The watch reads Cert Spotter with the API key from its credential file,
+// when there is one.
+func TestNewTransparencyReadsItsKey(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	c := watchConfig{domain: "gregale.dev", allow: []string{"*.gregale.dev"}}
+	w, err := newTransparency(c, nil, nil, log)
+	if err != nil || w.Domain != "gregale.dev" || w.Source.(*edgecert.CertSpotter).Key != "" {
+		t.Fatalf("no key: %+v, %v", w, err)
+	}
+	c.apiKeyFile = filepath.Join(t.TempDir(), "certspotter_api_key")
+	if _, err := newTransparency(c, nil, nil, log); err == nil || !strings.Contains(err.Error(), "Cert Spotter API key") {
+		t.Fatalf("a missing key file: err = %v", err)
+	}
+	if err := os.WriteFile(c.apiKeyFile, []byte("k-123\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if w, err = newTransparency(c, nil, nil, log); err != nil || w.Source.(*edgecert.CertSpotter).Key != "k-123" {
+		t.Fatalf("key: %+v, %v", w, err)
+	}
+}

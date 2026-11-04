@@ -837,6 +837,18 @@ func TestRenderManifestAnsibleFiles_EdgeCertificate(t *testing.T) {
 	if strings.Contains(computeVars, "faas_edge_public_tls_cert_source") {
 		t.Errorf("the edges serve the certificate before serve is set:\n%s", computeVars)
 	}
+	if strings.Contains(controlVars, "faas_edgednsd_ct_") {
+		t.Errorf("a transparency watch rendered without its block:\n%s", controlVars)
+	}
+	controlVars, _ = render(t, base+"    certificate:\n      names: [\"*.example.dev\"]\n      transparency:\n        domain: Example.dev\n        allow_names: [\"example.dev\", \"*.example.dev\"]\n")
+	for _, want := range []string{
+		"faas_edgednsd_ct_domain: \"example.dev\"\n",
+		"faas_edgednsd_ct_allow_names: [\"example.dev\", \"*.example.dev\"]\n",
+	} {
+		if !strings.Contains(controlVars, want) {
+			t.Errorf("control plane vars missing %q:\n%s", want, controlVars)
+		}
+	}
 	// The move to production: edgednsd orders from it while the edges still
 	// serve the staging certificate it stored before.
 	controlVars, computeVars = render(t, base+"    certificate:\n      names: [\"*.example.dev\"]\n      ca: letsencrypt\n      serve: letsencrypt-staging\n")

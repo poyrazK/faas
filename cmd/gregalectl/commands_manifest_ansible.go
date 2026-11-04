@@ -867,6 +867,12 @@ func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
 		fmt.Fprintf(&b, "faas_edgednsd_certificate_names: [%s]\n", quotedYAMLList(cert.Names))
 		fmt.Fprintf(&b, "faas_edgednsd_certificate_zone_id: %q\n", edge.DNS.ZoneID)
 		fmt.Fprintf(&b, "faas_edgednsd_acme_ca: %q\n", cert.CAOrDefault())
+		// The Certificate Transparency watch pages on certificates under
+		// the domain that edgednsd did not issue.
+		if ct := cert.Transparency; ct != nil {
+			fmt.Fprintf(&b, "faas_edgednsd_ct_domain: %q\n", strings.ToLower(strings.TrimSpace(ct.Domain)))
+			fmt.Fprintf(&b, "faas_edgednsd_ct_allow_names: [%s]\n", quotedYAMLList(ct.AllowNames))
+		}
 	}
 	return b.String()
 }

@@ -2157,6 +2157,36 @@ groups:
           description: "The newest apps-domain certificate edgednsd stored from {{ $labels.ca }} expires in {{ $value | humanizeDuration }}; it renews 30 days ahead, so its orders have been failing for a week. edge_certificate_orders_total{result=\"failed\"} and edgednsd's log say why."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
 
+      # ADR-20261103163954 §3: the Certificate Transparency watch. A
+      # certificate edgednsd did not issue may be a compromised node's for
+      # the hosts it serves, and it outlives the key rotation; a wildcard one
+      # means the zone's DNS is compromised.
+      - alert: FaasEdgeCertificateUnexpected
+        expr: max(edge_certificate_transparency_unexpected) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "A publicly trusted certificate for the apps domain that edgednsd did not issue"
+          description: "Certificate Transparency lists {{ $value }} unexpired certificate(s) under the apps domain that edgednsd did not issue and the allow list does not cover. edgednsd's log line 'a certificate edgednsd did not issue' names each one."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
+
+      - alert: FaasEdgeCertificateTransparencyStale
+        expr: (time() - max(edge_certificate_transparency_last_success_timestamp_seconds)) > 86400
+        for: 1h
+        labels:
+          severity: warn
+          component: edgednsd
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "edgednsd's Certificate Transparency watch has not completed a check for a day"
+          description: "The last successful check was {{ $value | humanizeDuration }} ago; it checks every 6 hours. edge_certificate_transparency_checks_total by result and edgednsd's log say why (rate_limited: stage a Cert Spotter API key)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCertificate.md"
+
   - name: faas_compute_object_gateway
     rules:
       # Gated on the s3_endpoint_route target label, which Prometheus sets

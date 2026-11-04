@@ -105,6 +105,10 @@ func TestPublicEdgeDNS(t *testing.T) {
 		{name: "a certificate naming a host twice", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev", "*.Gregale.dev"}}), hosts: fleet, wantErr: "public_edge.dns.certificate.names[1]"},
 		{name: "a certificate for a deep wildcard", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.*.gregale.dev"}}), hosts: fleet, wantErr: "public_edge.dns.certificate.names[0]"},
 		{name: "a certificate from another CA", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, CA: "zerossl"}), hosts: fleet, wantErr: "public_edge.dns.certificate.ca"},
+		{name: "a transparency watch", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{Domain: "gregale.dev", AllowNames: []string{"gregale.dev", "*.gregale.dev"}}}), hosts: fleet},
+		{name: "a watch without a domain", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{}}), hosts: fleet, wantErr: "public_edge.dns.certificate.transparency.domain"},
+		{name: "a watch on a wildcard", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{Domain: "*.gregale.dev"}}), hosts: fleet, wantErr: "public_edge.dns.certificate.transparency.domain"},
+		{name: "a watch allowing a name twice", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{Domain: "gregale.dev", AllowNames: []string{"gregale.dev", "Gregale.dev"}}}), hosts: fleet, wantErr: "public_edge.dns.certificate.transparency.allow_names[1]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			errs := tc.edge.validate(tc.hosts)

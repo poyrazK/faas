@@ -26,6 +26,7 @@ type config struct {
 	edgePort    string
 	metricsAddr string
 	cert        certConfig
+	watch       watchConfig
 }
 
 // certConfig is the apps domains' certificate (ADR-20261103163954 §3). Its
@@ -41,6 +42,16 @@ type certConfig struct {
 
 func (c certConfig) enabled() bool { return len(c.names) > 0 }
 
+// watchConfig is the Certificate Transparency watch (ADR-20261103163954 §3).
+// Its zero value watches nothing.
+type watchConfig struct {
+	domain     string
+	allow      []string
+	apiKeyFile string
+}
+
+func (c watchConfig) enabled() bool { return c.domain != "" }
+
 // configFromEnv reads edgednsd's settings, which the edgednsd role renders
 // from the manifest:
 //
@@ -54,7 +65,9 @@ func (c certConfig) enabled() bool { return len(c.names) > 0 }
 //   - FAAS_EDGEDNS_INTERVAL, FAAS_EDGEDNS_EDGE_CONTROL_PORT and
 //     FAAS_EDGEDNS_METRICS_ADDR, with defaults;
 //   - the certificate's settings (certConfigFromEnv), off unless
-//     FAAS_EDGEDNS_CERT_NAMES names a host.
+//     FAAS_EDGEDNS_CERT_NAMES names a host;
+//   - the Certificate Transparency watch's (watchConfigFromEnv), off unless
+//     FAAS_EDGEDNS_CT_DOMAIN names the domain.
 func configFromEnv(getenv func(string) string) (config, error) {
 	c := config{
 		public:      map[string]netip.Addr{},
@@ -117,6 +130,37 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		return config{}, err
 	}
 	c.cert = cert
+	watch, err := watchConfigFromEnv(getenv)
+	if err != nil {
+		return config{}, err
+	}
+	c.watch = watch
+	return c, nil
+}
+
+// watchConfigFromEnv reads the Certificate Transparency watch's settings:
+//
+//   - FAAS_EDGEDNS_CT_DOMAIN: the domain whose certificates, and those of
+//     every name under it, the watch reads; empty watches nothing;
+//   - FAAS_EDGEDNS_CT_ALLOW_NAMES: the names a certificate edgednsd did not
+//     issue may carry, "<name>,...", such as the CDN's own certificate for
+//     the zone;
+//   - FAAS_EDGEDNS_CT_API_KEY_FILE: a Cert Spotter API key, optional.
+func watchConfigFromEnv(getenv func(string) string) (watchConfig, error) {
+	c := watchConfig{apiKeyFile: strings.TrimSpace(getenv("FAAS_EDGEDNS_CT_API_KEY_FILE"))}
+	raw := strings.TrimSpace(getenv("FAAS_EDGEDNS_CT_DOMAIN"))
+	allow := splitList(getenv("FAAS_EDGEDNS_CT_ALLOW_NAMES"))
+	if raw == "" {
+		if len(allow) > 0 || c.apiKeyFile != "" {
+			return watchConfig{}, errors.New("edgednsd: Certificate Transparency settings are set but FAAS_EDGEDNS_CT_DOMAIN names no domain")
+		}
+		return watchConfig{}, nil
+	}
+	domain, allow, err := edgecert.NormalizeWatch(raw, allow)
+	if err != nil {
+		return watchConfig{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_CT_*: %w", err)
+	}
+	c.domain, c.allow = domain, allow
 	return c, nil
 }
 

@@ -32,6 +32,18 @@ func withCert(env, overrides map[string]string) map[string]string {
 	return out
 }
 
+// withWatch returns env with the transparency settings in overrides.
+func withWatch(env, overrides map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range env {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
+}
+
 func TestConfigFromEnv(t *testing.T) {
 	base := map[string]string{
 		"FAAS_EDGEDNS_NAMES":          "zone-1:*.Gregale.dev, zone-1:pilot.gregale.dev",
@@ -105,6 +117,18 @@ func TestConfigFromEnv(t *testing.T) {
 		{name: "a certificate without its files", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE": "", "FAAS_EDGEDNS_CERT_ZONE_ID": ""}), wantErr: "FAAS_EDGEDNS_CERT_ZONE_ID, FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE"},
 		{name: "a bad certificate name", env: withCert(base, map[string]string{"FAAS_EDGEDNS_CERT_NAMES": "*.*.gregale.dev"}), wantErr: "FAAS_EDGEDNS_CERT_NAMES"},
 		{name: "certificate settings without names", env: with("FAAS_EDGEDNS_ACME_CA", "letsencrypt"), wantErr: "names no host"},
+		{name: "no transparency watch by default", env: base, check: func(t *testing.T, c config) {
+			if c.watch.enabled() {
+				t.Fatalf("watch = %+v, want off", c.watch)
+			}
+		}},
+		{name: "transparency watch", env: withWatch(base, map[string]string{"FAAS_EDGEDNS_CT_DOMAIN": "Gregale.dev", "FAAS_EDGEDNS_CT_ALLOW_NAMES": "*.gregale.dev, Operations.gregale.dev"}), check: func(t *testing.T, c config) {
+			if !c.watch.enabled() || c.watch.domain != "gregale.dev" || strings.Join(c.watch.allow, ",") != "*.gregale.dev,operations.gregale.dev" || c.watch.apiKeyFile != "" {
+				t.Fatalf("watch = %+v", c.watch)
+			}
+		}},
+		{name: "a wildcard watch domain", env: withWatch(base, map[string]string{"FAAS_EDGEDNS_CT_DOMAIN": "*.gregale.dev"}), wantErr: "FAAS_EDGEDNS_CT_*"},
+		{name: "watch settings without a domain", env: withWatch(base, map[string]string{"FAAS_EDGEDNS_CT_ALLOW_NAMES": "gregale.dev"}), wantErr: "names no domain"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := configFromEnv(func(k string) string { return tc.env[k] })
