@@ -17353,8 +17353,21 @@ const (
 	EdgeClientRequestsPerSecondPerAddr = 500
 	EdgeClientRequestsBurstPerAddr     = 1000
 	EdgeClientTrackedAddrsMax          = 200_000
-	EdgeTLSHandshakesInFlightPerCPU    = 128
-	EdgeTLSHandshakeTimeout            = 10 * time.Second
+	// EdgeHostRequestsPerSecond and EdgeHostRequestsBurst are a node's
+	// ceiling for one hostname, checked at the edge before the request is
+	// forwarded, routed or wakes anything (ADR-20261103163954 §4): every
+	// node takes every app host, so a flood on one app reaches every edge.
+	// They sit at twice the highest plan's per-app RateLimitRPS and
+	// RateLimitBurst, so the gateway's plan limit answers an app first;
+	// this ceiling bounds what one host costs an edge where no plan limit
+	// applies, such as public bucket reads served before the gateway. At
+	// most EdgeHostTrackedMax hostnames are tracked; the rest share one
+	// bucket.
+	EdgeHostRequestsPerSecond       = 1000
+	EdgeHostRequestsBurst           = 4000
+	EdgeHostTrackedMax              = 100_000
+	EdgeTLSHandshakesInFlightPerCPU = 128
+	EdgeTLSHandshakeTimeout         = 10 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.

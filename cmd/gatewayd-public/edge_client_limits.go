@@ -104,6 +104,32 @@ func (l edgeClientLimits) requests(h http.Handler, trusted []netip.Prefix) http.
 	return clientlimit.Requests(h, limits, clientAddr, l.count, nil)
 }
 
+// hosts limits each hostname's request rate on this node in front of h,
+// after the per-address limit, so one client's flood is charged to the
+// client first.
+func (l edgeClientLimits) hosts(h http.Handler) http.Handler {
+	if !l.on {
+		return h
+	}
+	limits := clientlimit.RequestLimits{
+		PerSecond:       api.EdgeHostRequestsPerSecond,
+		Burst:           api.EdgeHostRequestsBurst,
+		TrackedAddrsMax: api.EdgeHostTrackedMax,
+	}
+	return clientlimit.Hosts(h, limits, edgeRequestHost, l.count, nil)
+}
+
+// edgeRequestHost is r's hostname, lowercased, without a port or a trailing
+// dot.
+func edgeRequestHost(r *http.Request) (string, bool) {
+	host := strings.ToLower(strings.TrimSpace(r.Host))
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(host, ".")
+	return host, host != ""
+}
+
 // body ends a request whose body arrives slower than the minimum rate. gRPC
 // client streams may idle, so they are exempt.
 func (l edgeClientLimits) body(h http.Handler) http.Handler {
