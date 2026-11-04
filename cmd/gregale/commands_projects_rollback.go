@@ -101,15 +101,15 @@ func renderProjectRollbackPlan(project string, order []api.ProjectWorkloadRespon
 		}
 		return jsonOut(writeJSON(map[string]any{"project": project, "dry_run": true, "steps": steps}))
 	}
-	fmt.Fprintf(osStdout, "Would roll back %d services of %s to their previous live deployment, in this order:\n", len(order), project)
+	_, _ = fmt.Fprintf(osStdout, "Would roll back %d services of %s to their previous live deployment, in this order:\n", len(order), project)
 	for i, workload := range order {
 		after := ""
 		if len(workload.DependsOn) > 0 {
 			after = " (after " + strings.Join(workload.DependsOn, ", ") + ")"
 		}
-		fmt.Fprintf(osStdout, "  %d. %s (%s)%s\n", i+1, workload.WorkloadName, workload.Slug, after)
+		_, _ = fmt.Fprintf(osStdout, "  %d. %s (%s)%s\n", i+1, workload.WorkloadName, workload.Slug, after)
 	}
-	fmt.Fprintf(osStdout, "Run again with --yes to roll back.\n")
+	_, _ = fmt.Fprintf(osStdout, "Run again with --yes to roll back.\n")
 	return 0
 }
 
