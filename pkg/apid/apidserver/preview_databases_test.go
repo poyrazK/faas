@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -186,5 +187,37 @@ func TestPreviewDatabasesBuildStatus(t *testing.T) {
 	refused := apidserver.PreviewDatabasesStatus(&previewdb.RefusedError{Reason: "the plan's PR preview databases are all in use", Err: managedpostgres.ErrPreviewDatabaseLimit})
 	if status.Convert(refused).Message() != "EnqueueBuild: the plan's PR preview databases are all in use" {
 		t.Fatalf("refusal message = %q", status.Convert(refused).Message())
+	}
+}
+
+// A teardown that stopped before it released its database leaves the
+// database to the sweep, which keeps the open PR's.
+func TestPreviewDatabaseSweepFinishesAStoppedTeardown(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := t.Context()
+	service, _, _, orders := previewDatabaseFixture(t, e)
+	acct := *e.Acct()
+	if _, err := service.SetPreviews(ctx, acct.ID, orders.ID, managedpostgres.PreviewsEmpty); err != nil {
+		t.Fatal(err)
+	}
+	stopped, open := createPreview(t, e, 7), createPreview(t, e, 8)
+	if _, err := (*e.Store()).SoftDeleteAppCascade(ctx, stopped.ID); err != nil {
+		t.Fatal(err)
+	}
+	if purged, err := (*e.S()).SweepPreviewDatabases(ctx, time.Now().Add(-time.Hour)); err != nil || purged != 0 {
+		t.Fatalf("sweep of databases set up within the grace = %d, %v", purged, err)
+	}
+	if purged, err := (*e.S()).SweepPreviewDatabases(ctx, time.Now().Add(time.Hour)); err != nil || purged != 1 {
+		t.Fatalf("sweep = %d, %v; want the stopped teardown's database purged", purged, err)
+	}
+	for _, tc := range []struct {
+		app  state.App
+		want int
+	}{{stopped, 0}, {open, 1}} {
+		environmentID, prNumber, _ := previewdb.Environment(tc.app)
+		want := tc.want
+		if databases, err := service.PreviewDatabases(ctx, acct.ID, environmentID, prNumber); err != nil || len(databases) != want {
+			t.Fatalf("PR %d's databases after the sweep = %+v, %v; want %d", prNumber, databases, err, want)
+		}
 	}
 }

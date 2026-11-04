@@ -1637,6 +1637,10 @@ func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) 
 // Preview databases (ADR-20261102123523).
 var PreviewDatabasesStatus = previewDatabasesStatus
 
+func (r *server) SweepPreviewDatabases(ctx context.Context, setupBefore time.Time) (int, error) {
+	return r.previewDatabaseManager().SweepAll(ctx, r.store, setupBefore)
+}
+
 func (r *server) PrepareBuildPreviewDatabases(ctx context.Context, acct state.Account, plan api.Plan, preview state.App) error {
 	return r.prepareBuildPreviewDatabases(ctx, acct, plan, preview)
 }

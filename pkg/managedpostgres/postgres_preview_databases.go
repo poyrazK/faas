@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -132,6 +134,27 @@ func (s *PostgresStore) ListPreviewDatabases(ctx context.Context, accountID, env
 	}
 	rows, err := new(sqlc.Queries).ListManagedPostgresPreviewDatabases(ctx, s.catalog, sqlc.ListManagedPostgresPreviewDatabasesParams{
 		AccountID: account, EnvironmentID: environmentID, PrNumber: int32(prNumber)})
+	if err != nil {
+		return nil, mapPostgresError(err)
+	}
+	databases := make([]Database, 0, len(rows))
+	for _, row := range rows {
+		databases = append(databases, databaseFromSQL(row))
+	}
+	return databases, nil
+}
+
+// ListPreviewDatabasePage implements PreviewDatabaseStore.
+func (s *PostgresStore) ListPreviewDatabasePage(ctx context.Context, afterID string, limit int) ([]Database, error) {
+	after := pgtype.UUID{Valid: true}
+	if afterID != "" {
+		var err error
+		if after, err = postgresUUID(afterID); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := new(sqlc.Queries).ListManagedPostgresPreviewDatabasePage(ctx, s.catalog, sqlc.ListManagedPostgresPreviewDatabasePageParams{
+		AfterID: after, PageSize: int32(min(limit, math.MaxInt32))})
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}

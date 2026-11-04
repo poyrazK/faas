@@ -74,6 +74,23 @@ func TestPostgresStorePreviewDatabases(t *testing.T) {
 	if err != nil || len(listed) != 1 || listed[0].ID != first.ID {
 		t.Fatalf("ListPreviewDatabases = %+v, %v", listed, err)
 	}
+	var paged []Database
+	for after := ""; ; {
+		page, err := store.ListPreviewDatabasePage(ctx, after, 1)
+		if err != nil {
+			t.Fatalf("ListPreviewDatabasePage = %v", err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		if page[0].AccountID == accountID {
+			paged = append(paged, page[0])
+		}
+		after = page[0].ID
+	}
+	if len(paged) != 2 || paged[0].ID >= paged[1].ID || paged[0].Preview.IsZero() || paged[1].Preview.IsZero() {
+		t.Fatalf("ListPreviewDatabasePage = %+v, want the two preview databases in ID order", paged)
+	}
 	off, err := store.SetPreviews(ctx, accountID, source.ID, PreviewsOff, at)
 	if err != nil || off.Previews != "" {
 		t.Fatalf("SetPreviews(off) = %+v, %v", off, err)

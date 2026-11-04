@@ -119,3 +119,20 @@ func (s *MemoryStore) ListPreviewDatabases(_ context.Context, accountID, environ
 	})
 	return databases, nil
 }
+
+// ListPreviewDatabasePage implements PreviewDatabaseStore.
+func (s *MemoryStore) ListPreviewDatabasePage(_ context.Context, afterID string, limit int) ([]Database, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var databases []Database
+	for _, database := range s.databases {
+		if !database.Preview.IsZero() && database.DeletedAt == nil && database.ID > afterID {
+			databases = append(databases, cloneDatabase(database))
+		}
+	}
+	slices.SortFunc(databases, func(a, b Database) int { return strings.Compare(a.ID, b.ID) })
+	if len(databases) > limit {
+		databases = databases[:limit]
+	}
+	return databases, nil
+}

@@ -14807,6 +14807,14 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND preview_environment_id=sqlc.arg(
  AND preview_pr_number=sqlc.arg(pr_number)::integer AND deleted_at IS NULL
 ORDER BY created_at,id;
 
+-- name: ListManagedPostgresPreviewDatabasePage :many
+-- ADR-20261102123523: the preview-database sweep's page of undeleted preview
+-- databases across accounts, in ID order after after_id.
+SELECT * FROM managed_postgres_databases
+WHERE preview_source_database_id IS NOT NULL AND deleted_at IS NULL AND id>sqlc.arg(after_id)::uuid
+ORDER BY id
+LIMIT sqlc.arg(page_size)::integer;
+
 -- name: RecordManagedPostgresRestoreSlotNotice :execrows
 -- ADR-20261031123259: one notice per copy and kind; the first sweep to reach
 -- it records it and later sweeps leave it alone.

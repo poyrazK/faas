@@ -10,6 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -22,6 +24,7 @@ type Databases interface {
 	EnsurePreviewDatabase(ctx context.Context, request managedpostgres.PreviewDatabaseRequest) (managedpostgres.Database, error)
 	PreviewDatabases(ctx context.Context, accountID, environmentID string, prNumber int) ([]managedpostgres.Database, error)
 	DeletePreviewDatabase(ctx context.Context, accountID, databaseID string) (managedpostgres.Database, error)
+	PreviewDatabasePage(ctx context.Context, afterID string, limit int) ([]managedpostgres.Database, error)
 }
 
 // Bindings is the managed PostgreSQL binding service previewdb uses.
@@ -167,6 +170,127 @@ func (m Manager) Purge(ctx context.Context, accountID, databaseID string) (manag
 		}
 	}
 	return m.Databases.DeletePreviewDatabase(ctx, accountID, databaseID)
+}
+
+// Previews lists an account's undeleted PR previews.
+type Previews interface {
+	ListPreviewsForAccount(ctx context.Context, accountID string) ([]state.App, error)
+}
+
+type environment struct {
+	id       string
+	prNumber int
+}
+
+// Sweep purges the databases among page whose PR environment has no
+// undeleted preview left: a teardown that stopped midway, or one an older
+// apid ran. A database set up at or after setupBefore is left for a later
+// sweep, so one the preview listing may not show yet keeps its database. It
+// returns how many it purged.
+func (m Manager) Sweep(ctx context.Context, previews Previews, page []managedpostgres.Database, setupBefore time.Time) (int, error) {
+	open := map[string]map[environment]bool{}
+	purged := 0
+	var errs error
+	for _, database := range page {
+		if database.Preview.IsZero() || database.State == managedpostgres.StateDeleting || database.State == managedpostgres.StateDeleted ||
+			!database.CreatedAt.Before(setupBefore) {
+			continue
+		}
+		environments, listed := open[database.AccountID]
+		if !listed {
+			var err error
+			if environments, err = openEnvironments(ctx, previews, database.AccountID); err != nil {
+				errs = errors.Join(errs, err)
+			}
+			open[database.AccountID] = environments
+		}
+		// An account whose previews could not be listed keeps its databases.
+		if environments == nil || environments[environment{database.Preview.EnvironmentID, database.Preview.PRNumber}] {
+			continue
+		}
+		_, err := m.Purge(ctx, database.AccountID, database.ID)
+		switch {
+		case err == nil:
+			purged++
+		case errors.Is(err, managedpostgres.ErrNotFound), errors.Is(err, managedpostgres.ErrConflict):
+			// Already gone, or its bindings are still being revoked.
+		default:
+			errs = errors.Join(errs, fmt.Errorf("previewdb: purge preview database %s: %w", database.ID, err))
+		}
+	}
+	return purged, errs
+}
+
+// SweepAll pages through every preview database and sweeps each page.
+func (m Manager) SweepAll(ctx context.Context, previews Previews, setupBefore time.Time) (int, error) {
+	purged := 0
+	var errs error
+	for after := ""; ; {
+		if err := ctx.Err(); err != nil {
+			return purged, errors.Join(errs, err)
+		}
+		page, err := m.Databases.PreviewDatabasePage(ctx, after, sweepPageSize)
+		if err != nil {
+			return purged, errors.Join(errs, fmt.Errorf("previewdb: list preview databases: %w", err))
+		}
+		n, err := m.Sweep(ctx, previews, page, setupBefore)
+		purged, errs = purged+n, errors.Join(errs, err)
+		if len(page) < sweepPageSize {
+			return purged, errs
+		}
+		after = page[len(page)-1].ID
+	}
+}
+
+const (
+	// SweepInterval is how often RunSweep looks for preview databases
+	// whose PR environment closed. The preview's own teardown purges
+	// them; the sweep only finishes teardowns that stopped midway.
+	SweepInterval = 10 * time.Minute
+	// sweepStartupDelay lets apid's startup settle before the first sweep.
+	sweepStartupDelay = 2 * time.Minute
+	// sweepSetupGrace leaves a database set up this recently alone.
+	sweepSetupGrace = 10 * time.Minute
+	sweepPageSize   = 100
+)
+
+// RunSweep sweeps every SweepInterval until ctx ends. Each apid replica may
+// run it: a purge is idempotent.
+func RunSweep(ctx context.Context, m Manager, previews Previews, log *slog.Logger) {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	timer := time.NewTimer(sweepStartupDelay)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		purged, err := m.SweepAll(ctx, previews, time.Now().Add(-sweepSetupGrace))
+		switch {
+		case err != nil && ctx.Err() == nil:
+			log.Warn("preview database sweep failed", "purged", purged, "err", err)
+		case purged > 0:
+			log.Info("preview database sweep purged the databases of closed PR environments", "purged", purged)
+		}
+		timer.Reset(SweepInterval)
+	}
+}
+
+func openEnvironments(ctx context.Context, previews Previews, accountID string) (map[environment]bool, error) {
+	apps, err := previews.ListPreviewsForAccount(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("previewdb: list previews of account %s: %w", accountID, err)
+	}
+	environments := map[environment]bool{}
+	for _, app := range apps {
+		if id, prNumber, ok := Environment(app); ok {
+			environments[environment{id, prNumber}] = true
+		}
+	}
+	return environments, nil
 }
 
 func (m Manager) release(ctx context.Context, preview state.App, database managedpostgres.Database) error {

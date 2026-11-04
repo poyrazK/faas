@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -238,5 +239,26 @@ func TestDeletePreviewDatabasePurgesIt(t *testing.T) {
 	again, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", 7))
 	if err != nil || again.ID == preview.ID || again.Name != preview.Name || again.State != StateReady {
 		t.Fatalf("set up again after the purge = %+v, %v", again, err)
+	}
+	other, err := f.service.EnsurePreviewDatabase(ctx, previewRequest(source, "project-a", 8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The sweep's pages hold the undeleted preview databases only, in ID order.
+	var paged []string
+	for after := ""; ; {
+		page, err := f.service.PreviewDatabasePage(ctx, after, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		paged, after = append(paged, page[0].ID), page[0].ID
+	}
+	want := []string{again.ID, other.ID}
+	slices.Sort(want)
+	if !slices.Equal(paged, want) {
+		t.Fatalf("preview database pages = %v, want %v", paged, want)
 	}
 }

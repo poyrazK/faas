@@ -25,6 +25,17 @@ func (s *server) previewDatabaseManager() *previewdb.Manager {
 	return &previewdb.Manager{Databases: s.managedPostgres, Bindings: s.managedPostgresBindings}
 }
 
+// runPreviewDatabaseSweep purges preview databases whose PR environment
+// closed while a teardown stopped midway, or while an older apid tore it
+// down. It is not behind the capability: it only removes preview databases.
+func (s *server) runPreviewDatabaseSweep(ctx context.Context) {
+	manager := s.previewDatabaseManager()
+	if manager == nil {
+		return
+	}
+	previewdb.RunSweep(ctx, *manager, s.store, s.log)
+}
+
 // preparePreviewDatabases gives a PR preview its own databases for the
 // production databases with previews on. It returns previewdb.ErrPending
 // while one is provisioning and a *previewdb.RefusedError when setup is

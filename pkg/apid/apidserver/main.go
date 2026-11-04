@@ -839,6 +839,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.object.RunObjectStorageUsageExports(ctx, os.Getenv)
 		go srv.runManagedPostgresReconciler(ctx)
 		go srv.runManagedPostgresBindingReconciler(ctx)
+		go srv.runPreviewDatabaseSweep(ctx)
 		go srv.runProjectEnvironmentCleanupReconciler(ctx)
 		go srv.runProjectEnvironmentCloneCoordinator(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)

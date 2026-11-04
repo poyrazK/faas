@@ -357,3 +357,57 @@ func TestPurgeRemovesAPreviewDatabaseAndItsBindings(t *testing.T) {
 		t.Fatalf("set up again = %+v", again)
 	}
 }
+
+type previewList struct {
+	apps []state.App
+	err  error
+}
+
+func (l previewList) ListPreviewsForAccount(context.Context, string) ([]state.App, error) {
+	return l.apps, l.err
+}
+
+func TestSweepPurgesTheDatabasesOfClosedEnvironments(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.database(t, "orders", managedpostgres.PreviewsEmpty,
+		managedpostgres.CreateBindingRequest{Scope: api.DefaultEnvScope, EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite})
+	closed, legacy, open := preview("app-pr-7", 7, "project-1"), preview("app-pr-8", 8, ""), preview("app-pr-9", 9, "project-1")
+	for _, pr := range []state.App{closed, legacy, open} {
+		if err := f.manager.Prepare(ctx, api.PlanPro, f.parent, pr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := f.service.PreviewDatabasePage(ctx, "", 100)
+	if err != nil || len(page) != 3 {
+		t.Fatalf("preview database page = %+v, %v", page, err)
+	}
+	// Only PR 9 is still open; PR 7's and the legacy PR 8's teardowns
+	// stopped before they released their databases.
+	stillOpen := previewList{apps: []state.App{open, {ID: "app-shop", AccountID: account, Slug: "shop"}}}
+
+	if purged, err := f.manager.Sweep(ctx, stillOpen, page, f.clock.Now()); err != nil || purged != 0 {
+		t.Fatalf("Sweep of databases set up just now = %d, %v; want none purged", purged, err)
+	}
+	if purged, err := f.manager.Sweep(ctx, previewList{err: errors.New("replica unavailable")}, page, f.clock.Now().Add(time.Minute)); err == nil || purged != 0 {
+		t.Fatalf("Sweep without the account's previews = %d, %v; want an error and none purged", purged, err)
+	}
+	purged, err := f.manager.Sweep(ctx, stillOpen, page, f.clock.Now().Add(time.Minute))
+	if err != nil || purged != 2 {
+		t.Fatalf("Sweep = %d, %v; want PR 7's and PR 8's databases purged", purged, err)
+	}
+	for _, gone := range []state.App{closed, legacy} {
+		id, prNumber, _ := previewdb.Environment(gone)
+		if left, _ := f.service.PreviewDatabases(ctx, account, id, prNumber); len(left) != 0 {
+			t.Fatalf("%s's databases after the sweep = %+v", gone.ID, left)
+		}
+	}
+	if kept, _ := f.service.PreviewDatabases(ctx, account, "project-1", 9); len(kept) != 1 || len(f.previewBindings(t, kept[0], open.ID)) != 1 {
+		t.Fatalf("the open PR's database after the sweep = %+v", kept)
+	}
+	// Another replica's sweep over the same, now stale, page deletes nothing
+	// more at the provider.
+	if _, err := f.manager.Sweep(ctx, stillOpen, page, f.clock.Now().Add(time.Minute)); err != nil || len(f.provider.deleted) != 2 {
+		t.Fatalf("second Sweep = %v; provider deletes %v", err, f.provider.deleted)
+	}
+}

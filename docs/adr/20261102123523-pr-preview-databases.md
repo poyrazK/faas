@@ -40,7 +40,7 @@
        - A `migration` binding becomes a `migration` binding on the preview, so the PR's release command migrates the PR's own database.
        - Production's bindings and credentials are never copied. Each preview binding has its own login.
      - **Ownership:**
-       - The preview database row records its source (`preview_source_database_id`), its environment (`preview_environment_id`: the project's ID, or for a legacy preview the production app's) and its PR (`preview_pr_number`).
+       - The preview database row records its source (`preview_source_database_id`), its environment (`preview_environment_id`: the project's ID, or for a legacy preview the preview app's own) and its PR (`preview_pr_number`).
        - A unique index over the three, for undeleted rows, makes setup idempotent across retries and apid replicas.
      - **Name:** `pr-<N>-<source name>-<6 hex characters of the environment ID>`. The source name is shortened to fit 63 characters, and the suffix keeps two projects that preview the same database apart.
      - **`empty`:**
@@ -62,7 +62,7 @@
   4. **Teardown removes the database.**
      - When a preview app is torn down (destroy, the janitor after the close grace or lease end, a repository disconnect), apid deletes its preview bindings in the same teardown that already removes a developer session's database.
      - A preview database with no open member left in its environment is deleted and purged at once, with no 7-day undo. It is disposable, and a copy holds production data that should not outlive the review.
-     - The lifecycle reconciler sweeps preview databases whose environment has no open member, for teardowns that stopped midway.
+     - A sweep in apid purges preview databases whose environment has no undeleted preview left, for teardowns that stopped midway. It runs every 10 minutes on each replica (a purge is idempotent) and leaves a database set up in the last 10 minutes alone, so a preview the listing does not show yet keeps its database.
      - A customer may delete a preview database like any other; the next preview build sets it up again.
      - Deleting a source database deletes its preview copies first: Neon cannot delete a branch that has children. Empty preview databases do not depend on their source.
   5. **Limits.**
@@ -100,7 +100,7 @@
      - only the setup may bind a preview database (`CreateBindingRequest.PreviewSetup`).
 
      Organization-owned databases are not set up in this step: setup and the setting route use the account's personal ownership, as developer-session databases do.
-  3b. **The reconciler sweep** for preview databases whose environment closed while a teardown stopped midway, or while an older apid tore it down.
+  3b. **The sweep** (`previewdb.RunSweep`) for preview databases whose environment closed while a teardown stopped midway, or while an older apid tore it down. It pages through the undeleted preview databases across accounts and checks each against its account's undeleted previews (`ListPreviewsForAccount`); an account whose previews cannot be listed keeps its databases. It is not behind the flag: it only removes preview databases.
   4. **Guards:** the storage pool exclusion and the compute hold (decision 6).
   5. **`copy`.**
   6. **Launch:** customer docs, the dashboard, a `tests/journeys` journey (preview with an empty database migrated by its release command, torn down with the PR), then `beta`.

@@ -78,6 +78,10 @@ type PreviewDatabaseStore interface {
 	FindPreviewDatabase(ctx context.Context, owner PreviewOwner) (Database, error)
 	ReservePreview(ctx context.Context, database Database, limit int) (Database, bool, error)
 	ListPreviewDatabases(ctx context.Context, accountID, environmentID string, prNumber int) ([]Database, error)
+	// ListPreviewDatabasePage returns up to limit undeleted preview
+	// databases across accounts, in ID order after afterID ("" for the
+	// first page).
+	ListPreviewDatabasePage(ctx context.Context, afterID string, limit int) ([]Database, error)
 }
 
 // PreviewDatabaseName is pr-<N>-<source name>-<6 hex characters of the
@@ -237,6 +241,20 @@ func (s *Service) PreviewDatabases(ctx context.Context, accountID, environmentID
 		return nil, ErrInvalid
 	}
 	return store.ListPreviewDatabases(ctx, accountID, environmentID, prNumber)
+}
+
+// PreviewDatabasePage returns up to limit undeleted preview databases across
+// accounts, in ID order after afterID ("" for the first page), for the sweep
+// that purges those whose PR environment closed.
+func (s *Service) PreviewDatabasePage(ctx context.Context, afterID string, limit int) ([]Database, error) {
+	store, ok := s.store.(PreviewDatabaseStore)
+	if !ok {
+		return nil, nil
+	}
+	if limit <= 0 {
+		return nil, ErrInvalid
+	}
+	return store.ListPreviewDatabasePage(ctx, afterID, limit)
 }
 
 // DeletePreviewDatabase deletes and purges a PR preview environment's
