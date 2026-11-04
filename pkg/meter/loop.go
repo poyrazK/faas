@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"sync"
 	"time"
 
@@ -633,6 +632,7 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 		capCache = map[string]int64{}
 	}
 	now := l.now()
+	elections := l.loadEgressOverageElections(ctx, accounts)
 	for _, acct := range accounts {
 		usages, err := MonthUsageForAccount(ctx, l.store, acct.ID, now)
 		if err != nil {
@@ -649,7 +649,7 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			used = l.freePeriodUsageGB(ctx, acct, now, used)
 		}
 		params := QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands,
-			EgressBytes: MonthlyEgressBytes(usages), EgressCeilingBytes: EgressCeilingBytes(acct.Plan)}
+			EgressBytes: MonthlyEgressBytes(usages), EgressCeilingBytes: EgressCeilingBytes(l.pusher, acct.Plan, elections[acct.ID], now)}
 		if _, err := params.Enforce(ctx, acct, used, now); err != nil {
 			// EnforceQuota already logged + skipped parked-instance failures;
 			// only status/structural errors reach here.
@@ -744,26 +744,41 @@ func liveMeterOverageCents(ctx context.Context, store state.Store, provider bill
 	if policy.EffectiveFrom.After(start) {
 		start = policy.EffectiveFrom
 	}
+	if meter != state.BillingMeterEgress {
+		return 0, nil
+	}
+	// Only egress in hours the election covers is billed (ADR-20261104204500).
+	election, err := billing.EgressOverageElectionFor(ctx, store, acct.ID)
+	if err != nil || election.EnabledAt == nil {
+		return 0, err
+	}
 	usages, err := store.UsageByHour(ctx, acct.ID, start, now.UTC())
 	if err != nil {
 		return 0, err
 	}
-	var total int64
-	for _, usage := range usages {
-		var quantity int64
-		switch meter {
-		case state.BillingMeterEgress:
-			quantity = usage.NetTxBytes
-		default:
-			return 0, nil
-		}
-		if quantity > math.MaxInt64-total {
-			total = math.MaxInt64
-			break
-		}
-		total += quantity
+	return billing.MeterUsageCents(policy, billing.ElectedEgressOverage(usages, policy.IncludedQuantity, election)), nil
+}
+
+// loadEgressOverageElections reads the egress overage elections of the
+// quota tick's subjects in one query. A read failure keeps every ceiling in
+// place for this tick: failing closed stops apps that elected, which a later
+// tick undoes, while failing open would let unelected egress run past the
+// allowance.
+func (l *Loop) loadEgressOverageElections(ctx context.Context, accounts []state.Account) map[string]state.EgressOverageElection {
+	reader, ok := l.store.(state.EgressOverageStore)
+	if !ok {
+		return nil
 	}
-	return billing.MeterUsageCents(policy, max(total-policy.IncludedQuantity, 0)), nil
+	ids := make([]string, 0, len(accounts))
+	for _, acct := range accounts {
+		ids = append(ids, acct.ID)
+	}
+	elections, err := reader.EgressOverageElections(ctx, ids)
+	if err != nil {
+		l.log.Warn("meter: egress overage elections load failed", "err", err)
+		return nil
+	}
+	return elections
 }
 
 // emitFloorApplied (ADR-060, issue #515) groups the sampler's

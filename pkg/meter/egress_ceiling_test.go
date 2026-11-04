@@ -15,7 +15,7 @@ import (
 // Egress no plan bills is capped at the plan's monthly egress: a Pro account
 // past 500 GiB stops like a Free account past its compute allowance, and the
 // next month lifts the stop. The ceiling holds even when egress bills live:
-// no account has opted into egress overage (ADR-20261104090000).
+// the account has not elected egress overage (ADR-20261104204500).
 // adr: 20261103131742 20261104090000
 func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	t.Parallel()
@@ -28,9 +28,9 @@ func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ceiling := meter.EgressCeilingBytes(api.PlanPro)
-	if ceiling != 500<<30 || meter.EgressCeilingBytes(api.PlanFree) != 10<<30 {
-		t.Fatalf("ceilings: Pro %d, Free %d", ceiling, meter.EgressCeilingBytes(api.PlanFree))
+	ceiling := meter.EgressCeilingBytes(nil, api.PlanPro, state.EgressOverageElection{}, now)
+	if ceiling != 500<<30 || meter.EgressCeilingBytes(nil, api.PlanFree, state.EgressOverageElection{}, now) != 10<<30 {
+		t.Fatalf("ceilings: Pro %d, Free %d", ceiling, meter.EgressCeilingBytes(nil, api.PlanFree, state.EgressOverageElection{}, now))
 	}
 	notif, parker := &fakeNotifier{}, &fakeParker{}
 	enforce := func(at time.Time) meter.QuotaAction {
