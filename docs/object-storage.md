@@ -328,7 +328,10 @@ enabled for your account, your own enrolled keys. See the
 - Where your bucket's storage supports them, multipart uploads can carry CRC32,
   CRC32C, CRC64NVME, SHA1 or SHA256 checksums, validated on every part, and
   completing a multipart upload can be conditional. Otherwise the endpoint
-  answers `NotImplemented`.
+  answers `NotImplemented`. Recent AWS CLI and SDK releases add a checksum to
+  every multipart upload by default; where your storage lacks them, set
+  `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` (or
+  `request_checksum_calculation = when_required` in `~/.aws/config`).
 
 ## Events and notifications
 
