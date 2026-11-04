@@ -547,6 +547,69 @@ func TestRenderManifestAnsibleFiles_CustomDomainEdge(t *testing.T) {
 	}
 }
 
+// ADR-20261103172551: dns.origin_pull sets how the control plane's Caddy
+// treats Cloudflare, the zone's client certificate or, knowingly, any zone;
+// unset renders neither, so the public_edge role refuses to deploy.
+func TestRenderManifestAnsibleFiles_DNSOriginPull(t *testing.T) {
+	const (
+		required = "faas_public_edge_authenticated_origin_pulls: true"
+		anyZone  = "faas_public_edge_allow_any_cloudflare_zone: true"
+	)
+	for _, tc := range []struct {
+		originPull string
+		want       []string
+		absent     []string
+	}{
+		{"", nil, []string{required, anyZone}},
+		{manifest.DNSOriginPullRequired, []string{required}, []string{anyZone}},
+		{manifest.DNSOriginPullAnyZone, []string{anyZone}, []string{required}},
+	} {
+		t.Run("origin_pull="+tc.originPull, func(t *testing.T) {
+			yaml := strings.Replace(validManifestYAML,
+				"    - name: fsn-1\n      role: control-plane\n",
+				"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+			if tc.originPull != "" {
+				yaml = strings.Replace(yaml, "  mode: cloudflare\n", "  mode: cloudflare\n  origin_pull: "+tc.originPull+"\n", 1)
+			}
+			m, err := manifest.Parse([]byte(yaml))
+			if err != nil {
+				t.Fatalf("manifest.Parse: %v", err)
+			}
+			if errs := m.Validate(); errs != nil {
+				t.Fatalf("manifest.Validate: %v", errs)
+			}
+			files, err := renderManifestAnsibleFiles(m, t.TempDir())
+			if err != nil {
+				t.Fatalf("renderManifestAnsibleFiles: %v", err)
+			}
+			var controlVars, computeVars string
+			for _, file := range files {
+				switch {
+				case strings.HasSuffix(file.Path, "fsn-1.yml"):
+					controlVars = string(file.Body)
+				case strings.HasSuffix(file.Path, "fsn-2.yml"):
+					computeVars = string(file.Body)
+				}
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(controlVars, want) {
+					t.Errorf("control host vars missing %q:\n%s", want, controlVars)
+				}
+			}
+			for _, absent := range append(tc.absent, tc.want...) {
+				if strings.Contains(computeVars, absent) {
+					t.Errorf("compute host vars carry %q:\n%s", absent, computeVars)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(controlVars, absent) {
+					t.Errorf("control host vars carry %q:\n%s", absent, controlVars)
+				}
+			}
+		})
+	}
+}
+
 // ADR-1343: public_edge.compute_nodes runs the app edge on the compute nodes.
 // The control plane gets a private listener for the edges' forwarded routes,
 // each compute node gets that listener as its target and admits its peers'

@@ -48,6 +48,26 @@ Edit. Cloudflare then presents the client certificate to every origin in the
 zone. Origins that do not ask for one, such as the control plane's Caddy and
 Vercel, ignore it.
 
+### The control plane's Caddy
+
+The control plane's platform site needs the same certificate check
+(ADR-20261103172551): it admits Cloudflare's address ranges, which every
+Cloudflare customer's zone also uses. The public_edge role refuses to deploy
+without it.
+
+1. Upload the client certificate to every zone the site serves (the platform,
+   apps, deployment-preview and alias domains), all signed by the same CA.
+2. Install `origin-pull-ca.pem` on the control plane at
+   `/etc/caddy/tls/cloudflare-origin-pull-ca.pem` (root-owned, 0644).
+3. Set `dns.origin_pull: required` in the manifest and deploy (it renders
+   `faas_public_edge_authenticated_origin_pulls: true`).
+
+Never install Cloudflare's shared origin-pull CA there: Cloudflare presents
+that certificate for every zone, and the role refuses it. To deploy before
+the certificate is in place, set `dns.origin_pull: any_zone` (it renders
+`faas_public_edge_allow_any_cloudflare_zone: true`), and change it to
+`required` once the check is on.
+
 ## 4. Check the edges' certificate for app hosts
 
 ```bash

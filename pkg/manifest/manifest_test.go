@@ -220,6 +220,37 @@ func TestValidate_MultiHostEndpointContract(t *testing.T) {
 	}
 }
 
+// ADR-20261103172551: dns.origin_pull takes required or any_zone, and only
+// with dns.mode cloudflare.
+func TestValidate_DNSOriginPull(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode, originPull, want string
+	}{
+		{"required", "cloudflare", "required", ""},
+		{"any zone", "cloudflare", "any_zone", ""},
+		{"unknown value", "cloudflare", "sometimes", "dns.origin_pull"},
+		{"not cloudflare", "manual", "required", "applies only with dns.mode cloudflare"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.Replace(validManifest, "  mode: cloudflare\n", "  mode: "+tc.mode+"\n  origin_pull: "+tc.originPull+"\n", 1)
+			m, err := Parse([]byte(body))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			errs := m.Validate()
+			if tc.want == "" {
+				if errs != nil {
+					t.Fatalf("Validate = %v, want nil", errs)
+				}
+				return
+			}
+			if errs == nil || !strings.Contains(errs.Error(), tc.want) {
+				t.Fatalf("Validate = %v, want substring %q", errs, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidate_HostnameFleetRequiresPrivateResolver(t *testing.T) {
 	body := strings.Replace(validManifest, "      address: 10.42.0.1:7100", "      address: fsn-1.gregale.dev:7100", 1)
 	body = strings.Replace(body, "      address: 10.42.0.2:50051", "      address: fsn-2.gregale.dev:50051", 1)
