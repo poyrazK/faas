@@ -178,6 +178,7 @@ var sessionScopedAcquire = map[string]string{
 	"pkg/db/notify_hub.go":                      "LISTEN: the hub parks one connection per daemon",
 	"pkg/db/notify.go":                          "LISTEN: legacy per-subscriber path",
 	"pkg/db/wait_for.go":                        "LISTEN: short-lived per-request wait",
+	"pkg/edgecert/serve.go":                     "LISTEN: an edge waits for newly stored apps-domain certificates",
 	"pkg/db/migrate_advisory.go":                "session pg_advisory_lock held across statements",
 	"pkg/state/pgstore.go":                      "session pg_advisory_lock for the edge-rule mutation fence",
 	"pkg/state/pgstore_edge_rule_batch_lock.go": "session pg_advisory_lock for all apps in an environment policy batch",
