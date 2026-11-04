@@ -1032,6 +1032,7 @@ type Querier interface {
 	DeleteOperationConcurrencyPolicy(ctx context.Context, db DBTX, arg DeleteOperationConcurrencyPolicyParams) (int64, error)
 	DeleteOperationWebhookBinding(ctx context.Context, db DBTX, arg DeleteOperationWebhookBindingParams) (int64, error)
 	DeleteOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg DeleteOutboundBindingProbePolicyParams) (int64, error)
+	DeleteOwnedProject(ctx context.Context, db DBTX, arg DeleteOwnedProjectParams) (int64, error)
 	DeleteProductionDeadLetterEvent(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventParams) (int64, error)
 	DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventsParams) (int64, error)
 	// A customer deletes one capture of a live app; its profiles cascade.
@@ -1062,6 +1063,7 @@ type Querier interface {
 	DeleteWebhookAutomationBinding(ctx context.Context, db DBTX, arg DeleteWebhookAutomationBindingParams) (int64, error)
 	// ADR-566: immutable retained evidence, bounded snapshot paging, and prices.
 	DeletedAppIDsInBillingWindow(ctx context.Context, db DBTX, arg DeletedAppIDsInBillingWindowParams) ([]pgtype.UUID, error)
+	DeploymentActivationServingMatches(ctx context.Context, db DBTX, arg DeploymentActivationServingMatchesParams) (bool, error)
 	// The hostname label uses the app's immutable UUID so aliases remain stable
 	// across app slug renames. Keep the deployment join app-scoped and hide
 	// soft-deleted owners/targets.
@@ -1155,6 +1157,9 @@ type Querier interface {
 	EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, arg EnvironmentGitOpsQueueForUpdateParams) (QueueBinding, error)
 	EnvironmentGitOpsUnqualifiedWorkloads(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitOpsUnqualifiedWorkloadsRow, error)
 	EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg EnvironmentGitSourceHealthParams) (EnvironmentGitSourceHealthRow, error)
+	// A stage-owned head without any production admission is not a production
+	// removal candidate. Keep legacy project members under the existing policy.
+	EnvironmentOnlyProjectAppIDs(ctx context.Context, db DBTX, arg EnvironmentOnlyProjectAppIDsParams) ([]string, error)
 	EnvironmentQualificationAdmissionInputs(ctx context.Context, db DBTX, arg EnvironmentQualificationAdmissionInputsParams) (EnvironmentQualificationAdmissionInputsRow, error)
 	EnvironmentQualificationAppProtocol(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
 	EnvironmentQualificationConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (EnvironmentQualificationConfigReceipt, error)
@@ -2939,9 +2944,11 @@ type Querier interface {
 	IssueCountTokens(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountTrackerLinks(ctx context.Context, db DBTX, canonicalIssueID pgtype.UUID) (int64, error)
 	IssueCreate(ctx context.Context, db DBTX, arg IssueCreateParams) (AppIssue, error)
+	IssueCreateEventUsage(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueCreateSplitGroup(ctx context.Context, db DBTX, arg IssueCreateSplitGroupParams) (AppIssue, error)
 	IssueCreateSplitRule(ctx context.Context, db DBTX, arg IssueCreateSplitRuleParams) (IssueSplitRule, error)
 	IssueCreateTrackerLink(ctx context.Context, db DBTX, arg IssueCreateTrackerLinkParams) (IssueTrackerLink, error)
+	// Both correlation hints must agree with any retained request evidence.
 	IssueDebugRequest(ctx context.Context, db DBTX, arg IssueDebugRequestParams) ([]pgtype.UUID, error)
 	IssueDeleteImpactAlertPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueDeleteOwnershipRules(ctx context.Context, db DBTX, appID pgtype.UUID) error
@@ -2974,9 +2981,11 @@ type Querier interface {
 	IssueGetTrackerLink(ctx context.Context, db DBTX, arg IssueGetTrackerLinkParams) (IssueTrackerLink, error)
 	IssueGroupMembers(ctx context.Context, db DBTX, id pgtype.UUID) ([]AppIssue, error)
 	IssueHasSplitAudit(ctx context.Context, db DBTX, arg IssueHasSplitAuditParams) (bool, error)
+	IssueHistoricalAttributionEvents(ctx context.Context, db DBTX, arg IssueHistoricalAttributionEventsParams) ([]IssueHistoricalAttributionEventsRow, error)
 	IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParams) (IssueImpactRow, error)
 	IssueImpactCustomerCount(ctx context.Context, db DBTX, arg IssueImpactCustomerCountParams) (int64, error)
 	IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueImpactSummariesParams) ([]IssueImpactSummariesRow, error)
+	IssueInitializeEventUsage(ctx context.Context, db DBTX, arg IssueInitializeEventUsageParams) error
 	IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsertEventParams) error
 	IssueInsertOwnershipRule(ctx context.Context, db DBTX, arg IssueInsertOwnershipRuleParams) error
 	IssueInsertToken(ctx context.Context, db DBTX, arg IssueInsertTokenParams) (IssueIngestToken, error)
@@ -2999,23 +3008,28 @@ type Querier interface {
 	IssueListTokens(ctx context.Context, db DBTX, appID pgtype.UUID) ([]IssueIngestToken, error)
 	IssueListTrackerLinks(ctx context.Context, db DBTX, arg IssueListTrackerLinksParams) ([]IssueTrackerLink, error)
 	IssueLockApp(ctx context.Context, db DBTX, appID pgtype.UUID) (IssueLockAppRow, error)
+	IssueLockEventUsage(ctx context.Context, db DBTX, appID pgtype.UUID) (IssueLockEventUsageRow, error)
 	// Keep legacy reissuance mutually exclusive with saved durable credentials.
 	// Lock account first, then tokens, matching durable issuance and confirmation.
 	IssueMFADisableRequest(ctx context.Context, db DBTX, arg IssueMFADisableRequestParams) (int64, error)
+	IssueMarkAttributionReviewed(ctx context.Context, db DBTX, id pgtype.UUID) error
 	IssueObserve(ctx context.Context, db DBTX, arg IssueObserveParams) (AppIssue, error)
 	IssueObserveRelease(ctx context.Context, db DBTX, arg IssueObserveReleaseParams) error
 	IssuePublishSourceMaps(ctx context.Context, db DBTX, arg IssuePublishSourceMapsParams) (IssueSourceMapArtifact, error)
 	IssuePurgeEvents(ctx context.Context, db DBTX, arg IssuePurgeEventsParams) error
+	IssuePurgeEventsBounded(ctx context.Context, db DBTX, arg IssuePurgeEventsBoundedParams) (int64, error)
 	IssuePurgeExpiredTokens(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
 	IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePurgePlanEventsParams) (int64, error)
 	IssuePutSavedView(ctx context.Context, db DBTX, arg IssuePutSavedViewParams) (AppIssueSavedView, error)
 	IssuePutTeam(ctx context.Context, db DBTX, arg IssuePutTeamParams) (AppIssueTeam, error)
+	IssueReadSourceMapStatus(ctx context.Context, db DBTX, arg IssueReadSourceMapStatusParams) (IssueReadSourceMapStatusRow, error)
 	IssueReadSourceMaps(ctx context.Context, db DBTX, arg IssueReadSourceMapsParams) (IssueSourceMapArtifact, error)
 	// Independent aggregates avoid multiplying request weights by issue occurrences.
 	IssueReleaseHealth(ctx context.Context, db DBTX, arg IssueReleaseHealthParams) (IssueReleaseHealthRow, error)
 	IssueReopenGroup(ctx context.Context, db DBTX, id pgtype.UUID) error
 	IssueReparentGroup(ctx context.Context, db DBTX, arg IssueReparentGroupParams) error
 	IssueRequestAttribution(ctx context.Context, db DBTX, arg IssueRequestAttributionParams) ([]IssueRequestAttributionRow, error)
+	IssueRequestTraceJournal(ctx context.Context, db DBTX, arg IssueRequestTraceJournalParams) ([]pgtype.Text, error)
 	IssueRetireSourceMaps(ctx context.Context, db DBTX, arg IssueRetireSourceMapsParams) (IssueSourceMapArtifact, error)
 	IssueRevokeToken(ctx context.Context, db DBTX, arg IssueRevokeTokenParams) (int64, error)
 	IssueSavedViewOwner(ctx context.Context, db DBTX, arg IssueSavedViewOwnerParams) (pgtype.UUID, error)
@@ -3158,6 +3172,8 @@ type Querier interface {
 	IssueTrackerTriagePrune(ctx context.Context, db DBTX, linkID pgtype.UUID) error
 	IssueTrackerTriagePut(ctx context.Context, db DBTX, arg IssueTrackerTriagePutParams) error
 	IssueTrackerTriageScope(ctx context.Context, db DBTX, arg IssueTrackerTriageScopeParams) (IssueTrackerTriageScopeRow, error)
+	// Use the partial and complete indexes separately so old complete rows do not
+	// crowd out first checks or force an unbounded scan after deployment.
 	IssueUnattributedEvents(ctx context.Context, db DBTX, arg IssueUnattributedEventsParams) ([]IssueUnattributedEventsRow, error)
 	IssueUnlinkGroup(ctx context.Context, db DBTX, arg IssueUnlinkGroupParams) (int64, error)
 	IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdateActionParams) (AppIssue, error)
@@ -4519,6 +4535,8 @@ type Querier interface {
 	MigrationTaskAllowed(ctx context.Context, db DBTX, id string) (bool, error)
 	MigrationTaskIsContract(ctx context.Context, db DBTX, arg MigrationTaskIsContractParams) (bool, error)
 	NativeIssueTicketClaim(ctx context.Context, db DBTX, arg NativeIssueTicketClaimParams) (NativeIssueTicketReceipt, error)
+	// Completed links and explicit provider rejections remain as durable
+	// idempotency evidence, but no longer occupy an unresolved-request slot.
 	NativeIssueTicketCount(ctx context.Context, db DBTX, issueID pgtype.UUID) (int64, error)
 	NativeIssueTicketFinish(ctx context.Context, db DBTX, arg NativeIssueTicketFinishParams) (NativeIssueTicketReceipt, error)
 	NativeIssueTicketGet(ctx context.Context, db DBTX, arg NativeIssueTicketGetParams) (NativeIssueTicketReceipt, error)
@@ -5267,10 +5285,12 @@ type Querier interface {
 	ProfileRequestMix(ctx context.Context, db DBTX, arg ProfileRequestMixParams) ([]ProfileRequestMixRow, error)
 	ProjectBuildDependencyGate(ctx context.Context, db DBTX, arg ProjectBuildDependencyGateParams) error
 	ProjectDeploymentDependencyGateProgress(ctx context.Context, db DBTX, arg ProjectDeploymentDependencyGateProgressParams) error
+	ProjectEnvironmentAppIDs(ctx context.Context, db DBTX, arg ProjectEnvironmentAppIDsParams) ([]string, error)
 	// Counts include reference intent in the shared environment-key quota.
 	ProjectEnvironmentCloneQuota(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneQuotaParams) ([]ProjectEnvironmentCloneQuotaRow, error)
 	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
 	ProjectEnvironmentIDForSecrets(ctx context.Context, db DBTX, arg ProjectEnvironmentIDForSecretsParams) (pgtype.UUID, error)
+	ProjectHasNamedStages(ctx context.Context, db DBTX, projectID pgtype.UUID) (bool, error)
 	ProjectMigrationAdmissionAllowed(ctx context.Context, db DBTX, arg ProjectMigrationAdmissionAllowedParams) (pgtype.Bool, error)
 	ProjectProductionScalingState(ctx context.Context, db DBTX, arg ProjectProductionScalingStateParams) error
 	ProjectReleaseStageByID(ctx context.Context, db DBTX, arg ProjectReleaseStageByIDParams) (ProjectReleaseStage, error)

@@ -19604,6 +19604,53 @@ $$;
 
 
 --
+-- Name: issue_event_usage_app_delete(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_event_usage_app_delete() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ DELETE FROM issue_event_usage WHERE app_id=OLD.id;
+ RETURN OLD;
+END $$;
+
+
+--
+-- Name: issue_event_usage_delete(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_event_usage_delete() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ INSERT INTO issue_event_usage (app_id, retained_count, initialized)
+ SELECT d.app_id, count(*)::bigint, false FROM deleted_issue_events d JOIN apps a ON a.id=d.app_id
+ GROUP BY d.app_id ORDER BY d.app_id
+ ON CONFLICT (app_id) DO UPDATE SET retained_count=CASE WHEN issue_event_usage.initialized
+  THEN issue_event_usage.retained_count-EXCLUDED.retained_count ELSE issue_event_usage.retained_count END;
+ RETURN NULL;
+END $$;
+
+
+--
+-- Name: issue_event_usage_insert(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_event_usage_insert() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ INSERT INTO issue_event_usage (app_id, retained_count, initialized)
+ SELECT n.app_id, count(*)::bigint, false FROM inserted_issue_events n JOIN apps a ON a.id=n.app_id
+ GROUP BY n.app_id ORDER BY n.app_id
+ ON CONFLICT (app_id) DO UPDATE SET retained_count=CASE WHEN issue_event_usage.initialized
+  THEN issue_event_usage.retained_count+EXCLUDED.retained_count ELSE issue_event_usage.retained_count END;
+ RETURN NULL;
+END $$;
+
+
+--
 -- Name: issue_slack_revoke_mfa_links(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19699,6 +19746,34 @@ CREATE FUNCTION public.issue_tracker_source_bump(target uuid) RETURNS void
  INSERT INTO issue_tracker_source_guards(issue_id) SELECT id FROM app_issues WHERE id=target
  ON CONFLICT(issue_id) DO UPDATE SET revision=nextval('issue_tracker_source_revision_seq');
 $$;
+
+
+--
+-- Name: issue_window_weight(timestamp with time zone, bigint, jsonb, timestamp with time zone, timestamp with time zone, boolean, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_window_weight(sample_time timestamp with time zone, total bigint, buckets jsonb, window_start timestamp with time zone, window_end timestamp with time zone, start_inclusive boolean, end_inclusive boolean) RETURNS bigint
+    LANGUAGE plpgsql STABLE PARALLEL SAFE
+    AS $$
+DECLARE result bigint;
+BEGIN
+ -- A whole second is inside the window, so no histogram needs loading.
+ IF (date_trunc('second',sample_time) > window_start OR
+    (start_inclusive AND date_trunc('second',sample_time) = window_start))
+    AND date_trunc('second',sample_time) + interval '1 second' <= window_end THEN RETURN total; END IF;
+ IF jsonb_array_length(buckets) = 0 THEN
+  IF (sample_time > window_start OR (start_inclusive AND sample_time = window_start))
+   AND (sample_time < window_end OR (end_inclusive AND sample_time = window_end)) THEN RETURN total; END IF;
+  RETURN 0;
+ END IF;
+ SELECT COALESCE(sum((b->>1)::bigint),0)::bigint INTO result
+ FROM jsonb_array_elements(buckets) b
+ WHERE ((b->>0)::numeric > extract(epoch FROM window_start)*1000 OR
+        (start_inclusive AND (b->>0)::numeric = extract(epoch FROM window_start)*1000))
+   AND ((b->>0)::numeric < extract(epoch FROM window_end)*1000 OR
+        (end_inclusive AND (b->>0)::numeric = extract(epoch FROM window_end)*1000));
+ RETURN result;
+END $$;
 
 
 --
@@ -20608,6 +20683,23 @@ BEGIN
  UPDATE event_execution_coverage SET ledger_lost_through_at=greatest(ledger_lost_through_at,OLD.finished_at)
  WHERE subscription_id=OLD.subscription_id;
  RETURN OLD;
+END $$;
+
+
+--
+-- Name: mark_issue_attribution_for_review(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mark_issue_attribution_for_review() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.attribution_version = OLD.attribution_version AND
+    (NEW.verified_consumer_id, NEW.verified_platform_tenant_id)
+      IS DISTINCT FROM (OLD.verified_consumer_id, OLD.verified_platform_tenant_id) THEN
+  NEW.attribution_version := 1;
+ END IF;
+ RETURN NEW;
 END $$;
 
 
@@ -42165,6 +42257,18 @@ CREATE TABLE public.issue_compound_alert_receipts (
 
 
 --
+-- Name: issue_event_usage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_event_usage (
+    app_id uuid NOT NULL,
+    retained_count bigint DEFAULT 0 NOT NULL,
+    initialized boolean DEFAULT false NOT NULL,
+    CONSTRAINT issue_event_usage_retained_count_check CHECK ((retained_count >= 0))
+);
+
+
+--
 -- Name: issue_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -42182,8 +42286,12 @@ CREATE TABLE public.issue_events (
     verified_consumer_id uuid,
     verified_platform_tenant_id uuid,
     original_issue_id uuid,
-    CONSTRAINT issue_events_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 65536))),
-    CONSTRAINT issue_events_payload_hash_check CHECK ((payload_hash ~ '^[a-f0-9]{64}$'::text))
+    occurrence_count bigint DEFAULT 1 NOT NULL,
+    attribution_version integer DEFAULT 1 NOT NULL,
+    occurrence_weight_known boolean DEFAULT false NOT NULL,
+    http_time_buckets jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT issue_events_payload_hash_check CHECK ((payload_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT issue_events_payload_v2_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 1048576)))
 );
 
 
@@ -63700,6 +63808,14 @@ ALTER TABLE ONLY public.issue_compound_alert_receipts
 
 
 --
+-- Name: issue_event_usage issue_event_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_event_usage
+    ADD CONSTRAINT issue_event_usage_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: issue_events issue_events_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75512,6 +75628,13 @@ CREATE INDEX issue_events_attribution_idx ON public.issue_events USING btree (at
 
 
 --
+-- Name: issue_events_attribution_review_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_events_attribution_review_idx ON public.issue_events USING btree (id) WHERE ((attribution_version < 2) AND ((verified_consumer_id IS NOT NULL) OR (verified_platform_tenant_id IS NOT NULL)));
+
+
+--
 -- Name: issue_events_list_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -75519,10 +75642,38 @@ CREATE INDEX issue_events_list_idx ON public.issue_events USING btree (issue_id,
 
 
 --
+-- Name: issue_events_partial_attribution_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_events_partial_attribution_idx ON public.issue_events USING btree (attribution_checked_at) WHERE ((verified_consumer_id IS NULL) OR (verified_platform_tenant_id IS NULL));
+
+
+--
+-- Name: issue_events_pending_attribution_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_events_pending_attribution_idx ON public.issue_events USING btree (attribution_checked_at) WHERE (attribution_checked_at <> 'infinity'::timestamp with time zone);
+
+
+--
+-- Name: issue_events_recent_verified_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_events_recent_verified_idx ON public.issue_events USING btree (received_at, attribution_checked_at) WHERE ((verified_consumer_id IS NOT NULL) AND (verified_platform_tenant_id IS NOT NULL) AND (attribution_checked_at <> 'infinity'::timestamp with time zone));
+
+
+--
 -- Name: issue_events_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX issue_events_retention_idx ON public.issue_events USING btree (app_id, received_at);
+
+
+--
+-- Name: issue_events_unknown_http_weight_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_events_unknown_http_weight_idx ON public.issue_events USING btree (issue_id, occurred_at) WHERE ((NOT occurrence_weight_known) AND (occurrence_count = 1) AND ((payload ->> 'source_kind'::text) = 'http'::text));
 
 
 --
@@ -76895,6 +77046,13 @@ CREATE INDEX mirror_rules_source_idx ON public.mirror_rules USING btree (source_
 --
 
 CREATE INDEX mirror_slot_leases_rule_expiry_idx ON public.mirror_slot_leases USING btree (mirror_rule_id, expires_at);
+
+
+--
+-- Name: native_issue_ticket_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_issue_ticket_pending_idx ON public.native_issue_ticket_receipts USING btree (issue_id) WHERE ((state = ANY (ARRAY['dispatching'::text, 'created'::text])) OR ((state = 'ready'::text) AND (claim_id IS NULL)));
 
 
 --
@@ -79156,6 +79314,13 @@ CREATE INDEX request_audit_events_app_route_idx ON public.request_audit_events U
 --
 
 CREATE INDEX request_audit_events_app_time_idx ON public.request_audit_events USING btree (account_id, app_id, occurred_at DESC, event_id DESC);
+
+
+--
+-- Name: request_audit_events_issue_request_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_audit_events_issue_request_idx ON public.request_audit_events USING btree (account_id, app_id, deployment_id, request_id, occurred_at);
 
 
 --
@@ -84805,6 +84970,34 @@ CREATE TRIGGER invocations_capture_dead_letter_event AFTER UPDATE OF state ON pu
 --
 
 CREATE TRIGGER invocations_schedule_occurrence AFTER UPDATE OF state ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.sync_invocation_schedule_occurrence();
+
+
+--
+-- Name: issue_events issue_attribution_review_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_attribution_review_fence BEFORE UPDATE OF verified_consumer_id, verified_platform_tenant_id ON public.issue_events FOR EACH ROW EXECUTE FUNCTION public.mark_issue_attribution_for_review();
+
+
+--
+-- Name: apps issue_event_usage_app_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_event_usage_app_delete AFTER DELETE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.issue_event_usage_app_delete();
+
+
+--
+-- Name: issue_events issue_event_usage_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_event_usage_delete AFTER DELETE ON public.issue_events REFERENCING OLD TABLE AS deleted_issue_events FOR EACH STATEMENT EXECUTE FUNCTION public.issue_event_usage_delete();
+
+
+--
+-- Name: issue_events issue_event_usage_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_event_usage_insert AFTER INSERT ON public.issue_events REFERENCING NEW TABLE AS inserted_issue_events FOR EACH STATEMENT EXECUTE FUNCTION public.issue_event_usage_insert();
 
 
 --

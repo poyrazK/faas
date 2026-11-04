@@ -8876,14 +8876,27 @@
     "kind": "operational"
   },
   {
+    "table": "issue_event_usage",
+    "columns": [
+      "app_id",
+      "initialized",
+      "retained_count"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "issue_events",
     "columns": [
       "app_id",
       "attribution_checked_at",
+      "attribution_version",
       "deployment_id",
       "event_id",
+      "http_time_buckets",
       "id",
       "issue_id",
+      "occurrence_count",
+      "occurrence_weight_known",
       "occurred_at",
       "original_issue_id",
       "payload",

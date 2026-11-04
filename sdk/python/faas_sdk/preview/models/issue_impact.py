@@ -7,6 +7,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="IssueImpact")
 
 
@@ -20,6 +22,8 @@ class IssueImpact:
     observed_events: int
     unattributed_events: int
     coverage: str
+    unknown_http_batches: int | Unset = UNSET
+    """Legacy HTTP batches in this impact window have unknown folded weights; observed events are a lower bound."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +39,8 @@ class IssueImpact:
 
         coverage = self.coverage
 
+        unknown_http_batches = self.unknown_http_batches
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -47,6 +53,8 @@ class IssueImpact:
                 "coverage": coverage,
             }
         )
+        if unknown_http_batches is not UNSET:
+            field_dict["unknown_http_batches"] = unknown_http_batches
 
         return field_dict
 
@@ -65,6 +73,8 @@ class IssueImpact:
 
         coverage = d.pop("coverage")
 
+        unknown_http_batches = d.pop("unknown_http_batches", UNSET)
+
         issue_impact = cls(
             window_start=window_start,
             window_end=window_end,
@@ -72,6 +82,7 @@ class IssueImpact:
             observed_events=observed_events,
             unattributed_events=unattributed_events,
             coverage=coverage,
+            unknown_http_batches=unknown_http_batches,
         )
 
         issue_impact.additional_properties = d

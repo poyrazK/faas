@@ -411,26 +411,28 @@ var featureRouteActions = map[string]authz.OrgAction{
 	// invoke
 	"POST /v1/apps/{slug}/invoke":       authz.OrgActionDeployApp,
 	"POST /v1/apps/{slug}/invoke/async": authz.OrgActionDeployApp,
+	// Issue integration, alert, and ownership writes are restricted to owners
+	// and admins; issue evidence uses the same read permission as app logs.
 	// issue-compound-alert-policy
 	"GET /v1/apps/{slug}/issue-compound-alert-policy":          authz.OrgActionReadApp,
-	"PUT /v1/apps/{slug}/issue-compound-alert-policy":          authz.OrgActionConfigureApp,
+	"PUT /v1/apps/{slug}/issue-compound-alert-policy":          authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/issue-compound-alert-policy/preview": authz.OrgActionReadApp,
 	// issue-events
 	"POST /v1/apps/{slug}/issue-events":               authz.OrgActionConfigureApp,
 	"POST /v1/apps/{slug}/issue-events/otlp/{signal}": authz.OrgActionConfigureApp,
 	// issue-frequency-alert-policy
 	"GET /v1/apps/{slug}/issue-frequency-alert-policy": authz.OrgActionReadApp,
-	"PUT /v1/apps/{slug}/issue-frequency-alert-policy": authz.OrgActionConfigureApp,
+	"PUT /v1/apps/{slug}/issue-frequency-alert-policy": authz.OrgActionManageAppSecurity,
 	// issue-impact-alert-policy
 	"GET /v1/apps/{slug}/issue-impact-alert-policy": authz.OrgActionReadApp,
-	"PUT /v1/apps/{slug}/issue-impact-alert-policy": authz.OrgActionConfigureApp,
+	"PUT /v1/apps/{slug}/issue-impact-alert-policy": authz.OrgActionManageAppSecurity,
 	// issue-lifecycle-alert-policy
 	"GET /v1/apps/{slug}/issue-lifecycle-alert-policy":          authz.OrgActionReadApp,
-	"PUT /v1/apps/{slug}/issue-lifecycle-alert-policy":          authz.OrgActionConfigureApp,
+	"PUT /v1/apps/{slug}/issue-lifecycle-alert-policy":          authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview": authz.OrgActionReadApp,
 	// issue-ownership-rules
 	"GET /v1/apps/{slug}/issue-ownership-rules": authz.OrgActionReadApp,
-	"PUT /v1/apps/{slug}/issue-ownership-rules": authz.OrgActionConfigureApp,
+	"PUT /v1/apps/{slug}/issue-ownership-rules": authz.OrgActionManageAppSecurity,
 	// issue-release-comparison
 	"GET /v1/apps/{slug}/issue-release-comparison": authz.OrgActionReadApp,
 	// issue-saved-views
@@ -445,27 +447,27 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"PUT /v1/apps/{slug}/issue-teams/{team_key}":    authz.OrgActionConfigureApp,
 	// issue-tracker-linear-connection
 	"GET /v1/apps/{slug}/issue-tracker-linear-connection": authz.OrgActionReadApp,
-	"PUT /v1/apps/{slug}/issue-tracker-linear-connection": authz.OrgActionConfigureApp,
+	"PUT /v1/apps/{slug}/issue-tracker-linear-connection": authz.OrgActionManageAppSecurity,
 	// issues
 	"GET /v1/apps/{slug}/issues":                                                          authz.OrgActionReadAppLogs,
 	"POST /v1/apps/{slug}/issues/bulk-actions":                                            authz.OrgActionConfigureApp,
 	"GET /v1/apps/{slug}/issues/{issue_id}":                                               authz.OrgActionReadAppLogs,
 	"POST /v1/apps/{slug}/issues/{issue_id}/actions":                                      authz.OrgActionConfigureApp,
-	"POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets":                        authz.OrgActionConfigureApp,
-	"POST /v1/apps/{slug}/issues/{issue_id}/native-tickets":                               authz.OrgActionConfigureApp,
+	"POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets":                        authz.OrgActionManageAppSecurity,
+	"POST /v1/apps/{slug}/issues/{issue_id}/native-tickets":                               authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/issues/{issue_id}/split-preview":                                authz.OrgActionConfigureApp,
 	"POST /v1/apps/{slug}/issues/{issue_id}/split-rules":                                  authz.OrgActionConfigureApp,
 	"PATCH /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":                       authz.OrgActionConfigureApp,
 	"POST /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo":                   authz.OrgActionConfigureApp,
 	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links":                                 authz.OrgActionReadAppLogs,
-	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links":                                authz.OrgActionConfigureApp,
-	"DELETE /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}":                    authz.OrgActionConfigureApp,
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links":                                authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}":                    authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             authz.OrgActionReadAppLogs,
-	"PUT /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             authz.OrgActionConfigureApp,
+	"PUT /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status":  authz.OrgActionReadAppLogs,
-	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status": authz.OrgActionConfigureApp,
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status": authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":         authz.OrgActionReadAppLogs,
-	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":        authz.OrgActionConfigureApp,
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":        authz.OrgActionManageAppSecurity,
 	// log-events
 	"GET /v1/apps/{slug}/log-events":        authz.OrgActionReadAppLogs,
 	"GET /v1/apps/{slug}/log-events/facets": authz.OrgActionReadAppLogs,

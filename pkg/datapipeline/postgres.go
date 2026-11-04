@@ -162,6 +162,7 @@ func (s *PostgresStore) DeleteConnection(ctx context.Context, account, id string
 }
 
 func (s *PostgresStore) Create(ctx context.Context, p Pipeline) (Pipeline, error) {
+	p.SourceConnectionID, p.DatabaseID = canonicalID(p.SourceConnectionID), canonicalID(p.DatabaseID)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Pipeline{}, storeError(err)
@@ -299,6 +300,7 @@ func (s *PostgresStore) Control(ctx context.Context, account, id string, revisio
 			return Pipeline{}, ErrConflict
 		}
 		arg.VerifyRequested = true
+		arg.StartVerification = true
 	default:
 		return Pipeline{}, ErrInvalid
 	}
