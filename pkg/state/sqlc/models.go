@@ -7804,6 +7804,7 @@ type Job struct {
 	ImageEntrypoint                   []string
 	ImageCmd                          []string
 	Labels                            []byte
+	EnvironmentGitSourceID            pgtype.UUID
 }
 
 type JobRegistryCredential struct {

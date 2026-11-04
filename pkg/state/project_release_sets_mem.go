@@ -442,7 +442,7 @@ func (m *MemStore) validateGitOpsReleaseMembersLocked(activeID string, proposed 
 	}
 	for _, member := range active.Members {
 		deployment, exists := m.deployments[member.DeploymentID]
-		if exists && deployment.EnvironmentWorkloadManaged() && proposed[member.AppID] != member.DeploymentID {
+		if exists && m.environmentGitOpsOwnsDeploymentLocked(deployment) && proposed[member.AppID] != member.DeploymentID {
 			return ErrConflict
 		}
 	}
@@ -451,7 +451,7 @@ func (m *MemStore) validateGitOpsReleaseMembersLocked(activeID string, proposed 
 
 func (m *MemStore) releaseSetHasManagedMembersLocked(release ProjectReleaseSet) bool {
 	for _, member := range release.Members {
-		if deployment, ok := m.deployments[member.DeploymentID]; ok && deployment.EnvironmentWorkloadManaged() {
+		if deployment, ok := m.deployments[member.DeploymentID]; ok && m.environmentGitOpsOwnsDeploymentLocked(deployment) {
 			return true
 		}
 	}

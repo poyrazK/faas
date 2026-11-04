@@ -54,6 +54,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -1927,6 +1928,11 @@ func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, int
 	lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
 	b := &environmentGitOpsBackend{server: s, intent: intent}
 	return b.prepareWorkloadCandidates(ctx, lease, plan)
+}
+
+// EnvironmentGitOpsBackendForTest exercises the production worker adapters.
+func (s *server) EnvironmentGitOpsBackendForTest(intent state.EnvironmentGitOpsIntentStore, effects state.EnvironmentGitOpsEffectStore) environmentgitops.Backend {
+	return &environmentGitOpsBackend{server: s, intent: intent, effects: effects}
 }
 
 // DashboardWidgetAppForTest resolves a dashboard widget's app as the

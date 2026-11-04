@@ -1055,7 +1055,7 @@ func validateGitOpsReleaseMembersTx(ctx context.Context, tx pgx.Tx, releaseID st
 	rows, err := tx.Query(ctx, `select rm.app_id::text, rm.deployment_id::text
 		from project_release_members rm
 		join deployments d on d.id = rm.deployment_id
-		where rm.release_id = $1::uuid and d.environment_workload_runtime is not null
+		where rm.release_id = $1::uuid and environment_workload_ownership_active(d)
 		order by rm.app_id for update of d`, releaseID)
 	if err != nil {
 		return fmt.Errorf("state: lock managed release members: %w", err)
@@ -1078,7 +1078,7 @@ func gitOpsReleaseSetHasManagedMembersTx(ctx context.Context, tx pgx.Tx, release
 	err := tx.QueryRow(ctx, `select exists (
 		select 1 from project_release_members rm
 		join deployments d on d.id = rm.deployment_id
-		where rm.release_id = $1::uuid and d.environment_workload_runtime is not null
+		where rm.release_id = $1::uuid and environment_workload_ownership_active(d)
 	)`, releaseID).Scan(&managed)
 	return managed, err
 }

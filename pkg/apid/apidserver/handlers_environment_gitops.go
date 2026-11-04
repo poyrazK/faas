@@ -224,8 +224,10 @@ func (s *server) getEnvironmentGitOps(w http.ResponseWriter, r *http.Request, ac
 		writeEnvironmentGitOpsError(w, err)
 		return
 	}
-	if runs == nil {
-		runs = []state.EnvironmentGitOpsRun{}
+	runs, err = gitopsapi.RedactRuns(runs)
+	if err != nil {
+		writeEnvironmentGitOpsError(w, err)
+		return
 	}
 	response := api.EnvironmentGitOpsStatusResponse{Source: source, Runs: runs}
 	response.Approval, err = s.environmentGitApprovalForSource(r.Context(), source)
@@ -281,7 +283,7 @@ func (s *server) previewEnvironmentGitOpsAdoption(w http.ResponseWriter, r *http
 		writeEnvironmentGitOpsError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, plan)
+	writeJSON(w, http.StatusOK, gitopsapi.RedactPlan(plan))
 }
 
 func (s *server) adoptEnvironmentGitOps(w http.ResponseWriter, r *http.Request, acct state.Account) {

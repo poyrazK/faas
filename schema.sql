@@ -10663,6 +10663,109 @@ $_$;
 
 
 --
+-- Name: jobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    name text NOT NULL,
+    image_ref text NOT NULL,
+    ram_mb integer NOT NULL,
+    task_timeout_s integer NOT NULL,
+    max_parallelism integer NOT NULL,
+    retry_max integer NOT NULL,
+    env_overrides jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    command text[] NOT NULL,
+    image_resolved_digest text,
+    image_storage_key text,
+    image_materialization_status text DEFAULT 'pending'::text NOT NULL,
+    image_materialization_error text,
+    image_materialized_at timestamp with time zone,
+    image_materialization_attempts integer DEFAULT 0 NOT NULL,
+    image_materialization_next_attempt_at timestamp with time zone,
+    image_materialization_lease_owner text,
+    image_materialization_lease_until timestamp with time zone,
+    cron_schedule text,
+    cron_timezone text DEFAULT 'UTC'::text NOT NULL,
+    last_scheduled_at timestamp with time zone,
+    schedule_policy jsonb,
+    failure_rules jsonb,
+    schedule_revision bigint DEFAULT 1 NOT NULL,
+    image_entrypoint text[],
+    image_cmd text[],
+    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    environment_git_source_id uuid,
+    CONSTRAINT jobs_command_min_chk CHECK (((array_length(command, 1) IS NULL) OR ((array_length(command, 1) >= 0) AND (array_length(command, 1) <= 64)))),
+    CONSTRAINT jobs_failure_rules_shape CHECK (((failure_rules IS NULL) OR ((jsonb_typeof(failure_rules) = 'object'::text) AND ((failure_rules ->> 'version'::text) = '1'::text)))),
+    CONSTRAINT jobs_image_cmd_chk CHECK (((image_cmd IS NULL) OR (cardinality(image_cmd) <= 64))),
+    CONSTRAINT jobs_image_entrypoint_chk CHECK (((image_entrypoint IS NULL) OR (cardinality(image_entrypoint) <= 64))),
+    CONSTRAINT jobs_image_materialization_attempts_check CHECK ((image_materialization_attempts >= 0)),
+    CONSTRAINT jobs_image_materialization_status_check CHECK ((image_materialization_status = ANY (ARRAY['pending'::text, 'verifying_legacy'::text, 'ready'::text, 'failed'::text]))),
+    CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['batch'::text, 'recurring'::text, 'image_run'::text]))),
+    CONSTRAINT jobs_labels_object_chk CHECK ((jsonb_typeof(labels) = 'object'::text)),
+    CONSTRAINT jobs_max_parallelism_check CHECK (((max_parallelism >= 1) AND (max_parallelism <= 1000))),
+    CONSTRAINT jobs_name_check CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT jobs_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT jobs_retry_max_check CHECK (((retry_max >= 0) AND (retry_max <= 10))),
+    CONSTRAINT jobs_schedule_kind_check CHECK ((((kind = ANY (ARRAY['batch'::text, 'image_run'::text])) AND (cron_schedule IS NULL)) OR ((kind = 'recurring'::text) AND (cron_schedule IS NOT NULL) AND (btrim(cron_schedule) <> ''::text)))),
+    CONSTRAINT jobs_schedule_policy_shape CHECK (((schedule_policy IS NULL) OR ((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text)))),
+    CONSTRAINT jobs_schedule_revision_check CHECK ((schedule_revision >= 1)),
+    CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'deleted'::text]))),
+    CONSTRAINT jobs_task_timeout_s_check CHECK (((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))
+);
+
+
+--
+-- Name: environment_workload_job_owned(public.jobs); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_job_owned(j public.jobs) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT NOT environment_workload_job_released(j) AND (j.environment_git_source_id IS NOT NULL
+  OR EXISTS(SELECT 1 FROM app_environment_workload_intents i WHERE i.job_id=j.id));
+$$;
+
+
+--
+-- Name: environment_workload_job_released(public.jobs); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_job_released(j public.jobs) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT CASE WHEN j.environment_git_source_id IS NOT NULL THEN EXISTS (
+  SELECT 1 FROM environment_git_sources s WHERE s.id=j.environment_git_source_id AND s.detached
+ ) ELSE EXISTS (
+  SELECT 1 FROM app_environment_workload_intents i
+  JOIN environment_git_sources s ON s.account_id=i.account_id AND s.environment_id=i.environment_id
+  JOIN environment_gitops_resources r ON r.source_id=s.id AND r.app_id=i.app_id
+  WHERE i.job_id=j.id AND i.account_id=j.account_id AND s.detached AND j.created_at<=s.updated_at
+   AND NOT EXISTS(SELECT 1 FROM active_environment_git_sources active WHERE active.environment_id=s.environment_id)
+ ) END;
+$$;
+
+
+--
+-- Name: environment_workload_ownership_active(public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_ownership_active(d public.deployments) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT d.environment_workload_runtime IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM environment_git_sources source
+  WHERE source.id::text=d.environment_workload_runtime->>'source_id' AND source.detached
+ );
+$$;
+
+
+--
 -- Name: environment_workload_qualification_evidence_current(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15279,7 +15382,12 @@ BEGIN
    IS DISTINCT FROM ROW(OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.ram_mb) THEN
    RAISE EXCEPTION 'qualification placement survives parent removal' USING ERRCODE='23514';
   END IF;
- ELSIF EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id AND environment_workload_runtime IS NOT NULL)
+ -- A serving deployment retains its frozen inputs. Its ordinary instances
+ -- have no native qualification debt. A retained request/restore reservation
+ -- or a held candidate without a frame remains unsafe to retire generically.
+ ELSIF (EXISTS(SELECT 1 FROM environment_workload_qualification_requests WHERE reserved_instance_id=OLD.id)
+  OR EXISTS(SELECT 1 FROM environment_qualification_restore_reservations WHERE instance_id=OLD.id)
+  OR EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id AND environment_workload_held))
   AND (TG_OP='DELETE' OR NEW.state NOT IN ('cold_booting','waking','running','draining','warm')) THEN
   RAISE EXCEPTION 'legacy qualification has no recoverable execution frame' USING ERRCODE='23514';
  END IF;
@@ -15444,7 +15552,16 @@ DECLARE q environment_workload_qualification_requests%ROWTYPE; i instances%ROWTY
         b environment_qualification_restore_reservations%ROWTYPE; restoring boolean:=false;
 BEGIN
  SELECT * INTO i FROM instances WHERE id=NEW.instance_id;
-	IF i.id IS NULL OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=i.deployment_id AND environment_workload_runtime IS NOT NULL) THEN RETURN NEW; END IF;
+ -- Frozen deployment inputs survive activation. Only an attempt's own
+ -- capture/restore VM needs its private lease; ordinary serving VMs do not.
+ -- Keep held legacy candidates fenced even if their frame is missing.
+ IF i.id IS NULL THEN RETURN NEW; END IF;
+ IF NOT EXISTS(SELECT 1 FROM environment_qualification_executions WHERE instance_id=i.id)
+  AND NOT EXISTS(SELECT 1 FROM environment_workload_qualification_requests WHERE reserved_instance_id=i.id)
+  AND NOT EXISTS(SELECT 1 FROM environment_qualification_restore_reservations WHERE instance_id=i.id)
+  AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=i.deployment_id AND environment_workload_held) THEN
+  RETURN NEW;
+ END IF;
  SELECT * INTO q FROM environment_workload_qualification_requests WHERE reserved_instance_id=i.id;
  IF q.id IS NULL THEN
   SELECT * INTO b FROM environment_qualification_restore_reservations WHERE instance_id=i.id;
@@ -15799,23 +15916,27 @@ CREATE FUNCTION public.guard_environment_source_job_artifact() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    IF (OLD.image_ref LIKE 'gregale-source://%' OR NEW.image_ref LIKE 'gregale-source://%') AND
-       ROW(NEW.image_resolved_digest,NEW.image_storage_key,NEW.image_materialization_status,
-           NEW.image_materialization_attempts,NEW.schedule_revision)
-       IS DISTINCT FROM ROW(OLD.image_resolved_digest,OLD.image_storage_key,OLD.image_materialization_status,
-           OLD.image_materialization_attempts,OLD.schedule_revision) AND NOT EXISTS (
-        SELECT 1 FROM app_environment_workload_intents i
-        JOIN active_environment_git_sources s ON s.account_id=i.account_id AND s.environment_id=i.environment_id
-        JOIN environment_gitops_jobs work ON work.source_id=s.id
-        WHERE i.job_id=OLD.id AND s.mode='enforce' AND NOT s.suspended
-            AND work.desired_generation=s.generation AND work.claimed_generation=s.generation
-            AND work.lease_until>clock_timestamp() AND work.lease_token<>''
-            AND work.lease_token=current_setting('gregale.gitops_lease',true)
-    ) THEN
-        RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
-            MESSAGE='Source Job artifacts require the environment controller lease';
-    END IF;
-    RETURN NEW;
+ IF environment_workload_job_released(OLD) AND (
+  NEW.image_ref NOT LIKE 'gregale-source://%' OR
+  ROW(NEW.image_resolved_digest,NEW.image_storage_key,NEW.image_materialization_status,NEW.image_materialization_attempts)
+   IS NOT DISTINCT FROM ROW(OLD.image_resolved_digest,OLD.image_storage_key,OLD.image_materialization_status,OLD.image_materialization_attempts)
+ ) THEN RETURN NEW; END IF;
+ IF (OLD.image_ref LIKE 'gregale-source://%' OR NEW.image_ref LIKE 'gregale-source://%') AND
+  ROW(NEW.image_resolved_digest,NEW.image_storage_key,NEW.image_materialization_status,NEW.image_materialization_attempts,NEW.schedule_revision)
+   IS DISTINCT FROM ROW(OLD.image_resolved_digest,OLD.image_storage_key,OLD.image_materialization_status,OLD.image_materialization_attempts,OLD.schedule_revision)
+  AND NOT EXISTS (
+   SELECT 1 FROM app_environment_workload_intents i
+   JOIN active_environment_git_sources s ON s.account_id=i.account_id AND s.environment_id=i.environment_id
+   JOIN environment_gitops_jobs work ON work.source_id=s.id
+   WHERE i.job_id=OLD.id AND s.mode='enforce' AND NOT s.suspended
+    AND work.desired_generation=s.generation AND work.claimed_generation=s.generation
+    AND work.lease_until>clock_timestamp() AND work.lease_token<>''
+    AND work.lease_token=current_setting('gregale.gitops_lease',true)
+  ) THEN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
+   MESSAGE='Source Job artifacts require the environment controller lease';
+ END IF;
+ RETURN NEW;
 END;
 $$;
 
@@ -15832,20 +15953,20 @@ BEGIN
  frozen:=NEW.environment_workload_runtime;
  IF NEW.status='live' THEN
   IF TG_OP='INSERT' THEN
-   IF EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND d.environment_workload_runtime IS NOT NULL)
+   IF EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND environment_workload_ownership_active(d))
     AND NOT environment_workload_activation_authorized(NEW) THEN
     RAISE EXCEPTION 'GitOps-managed workload promotion requires graph activation' USING ERRCODE='23514';
    END IF;
   ELSIF TG_OP='UPDATE' THEN
    IF OLD.status IS DISTINCT FROM 'live' AND
-    EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND d.environment_workload_runtime IS NOT NULL)
+    EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=NEW.app_id AND d.scope=NEW.scope AND environment_workload_ownership_active(d))
     AND NOT environment_workload_activation_authorized(NEW) THEN
     RAISE EXCEPTION 'GitOps-managed workload promotion requires graph activation' USING ERRCODE='23514';
    END IF;
   END IF;
  END IF;
  IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL AND OLD.status='live' AND
-  NEW.status NOT IN ('live','failed') AND NOT (NEW.status='superseded' AND environment_workload_retirement_drain_authorized(OLD)) THEN
+  NEW.status NOT IN ('live','failed') AND NOT (NEW.status='superseded' AND (environment_workload_retirement_drain_authorized(OLD) OR NOT environment_workload_ownership_active(OLD))) THEN
   RAISE EXCEPTION 'activated environment workload status is immutable' USING ERRCODE='23514';
  END IF;
  IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL AND OLD.status='live' AND
@@ -16277,57 +16398,70 @@ $_$;
 CREATE FUNCTION public.guard_environment_workload_job() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE
-    managed boolean;
-    controller boolean;
-    deleting_account boolean;
+DECLARE controller_source uuid; deleting_account boolean; allowed boolean;
 BEGIN
-    SELECT EXISTS (
-        SELECT 1 FROM app_environment_workload_intents i
-        WHERE i.job_id=OLD.id
-    ) INTO managed;
-    IF NOT managed THEN
-        IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
-    END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.environment_git_source_id IS NOT NULL AND NOT EXISTS (
+   SELECT 1 FROM active_environment_git_sources s JOIN environment_gitops_jobs work ON work.source_id=s.id
+   WHERE s.id=NEW.environment_git_source_id AND s.account_id=NEW.account_id
+    AND s.mode='enforce' AND NOT s.suspended AND s.approved_revision_id IS NOT NULL
+    AND work.desired_generation=s.generation AND work.claimed_generation=s.generation
+    AND work.lease_until>clock_timestamp() AND work.lease_token<>''
+    AND work.lease_token=current_setting('gregale.gitops_lease',true)
+  ) THEN
+   RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
+    MESSAGE='Job ownership requires the environment controller lease';
+  END IF;
+  RETURN NEW;
+ END IF;
+ SELECT s.id INTO controller_source
+ FROM app_environment_workload_intents i
+ JOIN active_environment_git_sources s ON s.account_id=i.account_id AND s.environment_id=i.environment_id
+ JOIN environment_gitops_resources r ON r.source_id=s.id AND r.app_id=i.app_id
+ JOIN environment_gitops_jobs work ON work.source_id=s.id
+ WHERE i.job_id=OLD.id AND s.mode='enforce' AND NOT s.suspended AND s.approved_revision_id IS NOT NULL
+  AND work.desired_generation=s.generation AND work.claimed_generation=s.generation
+  AND work.lease_until>clock_timestamp() AND work.lease_token<>''
+  AND work.lease_token=current_setting('gregale.gitops_lease',true);
 
-    SELECT EXISTS (
-        SELECT 1
-        FROM app_environment_workload_intents i
-        JOIN active_environment_git_sources s
-          ON s.account_id=i.account_id AND s.environment_id=i.environment_id
-        JOIN environment_gitops_resources r
-          ON r.source_id=s.id AND r.app_id=i.app_id
-        JOIN environment_gitops_jobs j ON j.source_id=s.id
-        WHERE i.job_id=OLD.id AND s.mode='enforce' AND NOT s.suspended
-          AND s.approved_revision_id IS NOT NULL
-          AND j.desired_generation=s.generation AND j.claimed_generation=s.generation
-          AND j.lease_until>clock_timestamp() AND j.lease_token<>''
-          AND j.lease_token=current_setting('gregale.gitops_lease',true)
-    ) INTO controller;
-    SELECT EXISTS (
-        SELECT 1 FROM accounts WHERE id=OLD.account_id AND status='deleted_pending'
-    ) INTO deleting_account;
-
-    IF TG_OP='DELETE' THEN
-        IF NOT controller AND NOT deleting_account THEN
-            RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
-                MESSAGE='Job settings are managed by the environment Git source';
-        END IF;
-        RETURN OLD;
-    END IF;
-
-    IF ROW(NEW.account_id,NEW.kind,NEW.name,NEW.image_ref,NEW.ram_mb,NEW.task_timeout_s,
-           NEW.max_parallelism,NEW.retry_max,NEW.env_overrides,NEW.status,NEW.command,
-           NEW.cron_schedule,NEW.cron_timezone,NEW.schedule_policy,NEW.failure_rules)
-       IS DISTINCT FROM
-       ROW(OLD.account_id,OLD.kind,OLD.name,OLD.image_ref,OLD.ram_mb,OLD.task_timeout_s,
-           OLD.max_parallelism,OLD.retry_max,OLD.env_overrides,OLD.status,OLD.command,
-           OLD.cron_schedule,OLD.cron_timezone,OLD.schedule_policy,OLD.failure_rules)
-       AND NOT controller AND NOT deleting_account THEN
-        RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
-            MESSAGE='Job settings are managed by the environment Git source';
-    END IF;
-    RETURN NEW;
+ IF TG_OP='UPDATE' AND NEW.environment_git_source_id IS DISTINCT FROM OLD.environment_git_source_id THEN
+  allowed:=NEW.environment_git_source_id IS NOT NULL AND NEW.environment_git_source_id=controller_source;
+  -- Only the just-retired binding can attribute an unmarked legacy link.
+  allowed:=coalesce(allowed,false) OR (OLD.environment_git_source_id IS NULL AND EXISTS (
+   SELECT 1 FROM environment_git_sources s
+   JOIN environment_gitops_resources r ON r.source_id=s.id
+   JOIN app_environment_workload_intents i ON i.app_id=r.app_id AND i.environment_id=s.environment_id AND i.account_id=s.account_id
+   WHERE s.id=NEW.environment_git_source_id AND s.detached AND i.job_id=OLD.id AND OLD.account_id=s.account_id
+    AND NOT EXISTS(SELECT 1 FROM active_environment_git_sources active WHERE active.environment_id=s.environment_id)
+  ));
+  IF NOT allowed THEN
+   RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
+    MESSAGE='Job ownership requires the original source or controller lease';
+  END IF;
+ END IF;
+ IF NOT environment_workload_job_owned(OLD) THEN
+  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+ END IF;
+ SELECT EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id AND status='deleted_pending') INTO deleting_account;
+ IF TG_OP='DELETE' THEN
+  IF controller_source IS NULL AND NOT deleting_account THEN
+   RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
+    MESSAGE='Job settings are managed by the environment Git source';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF ROW(NEW.account_id,NEW.kind,NEW.name,NEW.image_ref,NEW.ram_mb,NEW.task_timeout_s,
+        NEW.max_parallelism,NEW.retry_max,NEW.env_overrides,NEW.status,NEW.command,
+        NEW.cron_schedule,NEW.cron_timezone,NEW.schedule_policy,NEW.failure_rules)
+  IS DISTINCT FROM
+    ROW(OLD.account_id,OLD.kind,OLD.name,OLD.image_ref,OLD.ram_mb,OLD.task_timeout_s,
+        OLD.max_parallelism,OLD.retry_max,OLD.env_overrides,OLD.status,OLD.command,
+        OLD.cron_schedule,OLD.cron_timezone,OLD.schedule_policy,OLD.failure_rules)
+  AND controller_source IS NULL AND NOT deleting_account THEN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
+   MESSAGE='Job settings are managed by the environment Git source';
+ END IF;
+ RETURN NEW;
 END;
 $$;
 
@@ -16340,6 +16474,11 @@ CREATE FUNCTION public.guard_environment_workload_job_link() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
+ -- A released link is retained history until the replacement controller
+ -- reconciles the Job. It carries no scheduler/runtime authority.
+ IF TG_OP<>'DELETE' AND NEW.job_id IS NOT NULL AND EXISTS (
+  SELECT 1 FROM jobs j WHERE j.id=NEW.job_id AND j.account_id=NEW.account_id AND environment_workload_job_released(j)
+ ) THEN RETURN NEW; END IF;
     IF TG_OP<>'DELETE' AND NEW.job_id IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM jobs j
         WHERE j.id=NEW.job_id AND j.account_id=NEW.account_id
@@ -16698,7 +16837,7 @@ CREATE FUNCTION public.guard_environment_workload_serving_traffic() RETURNS trig
     AS $$
 BEGIN
  IF NEW.traffic_percent IS DISTINCT FROM OLD.traffic_percent AND
-    EXISTS(SELECT 1 FROM deployments managed WHERE managed.app_id=OLD.app_id AND managed.scope=OLD.scope AND managed.environment_workload_runtime IS NOT NULL) AND
+    EXISTS(SELECT 1 FROM deployments managed WHERE managed.app_id=OLD.app_id AND managed.scope=OLD.scope AND environment_workload_ownership_active(managed)) AND
     NOT environment_workload_serving_traffic_authorized(NEW.app_id,NEW.scope,NEW.id,NEW.traffic_percent) AND
     NOT (NEW.traffic_percent=0 AND NEW.traffic_percent_explicit AND environment_workload_retirement_withdrawal_authorized(OLD)) AND
     NOT (NEW.traffic_percent=0 AND OLD.environment_workload_held AND NOT NEW.environment_workload_held AND
@@ -37424,7 +37563,7 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
              JOIN public.apps a ON (((a.id = r.app_id) AND (a.account_id = s.account_id) AND (a.project_id = s.project_id))))
           WHERE ((cardinality(public.environment_scoped_secret_suppressions(r.app_id, e.slug)) > 0) OR (EXISTS ( SELECT 1
                    FROM public.environment_managed_fields f
-                  WHERE ((f.source_id = s.id) AND (f.resource = r.logical_name) AND ((f.field_path ~~ 'variables/%'::text) OR (f.field_path ~~ 'secret_refs/%'::text))))) OR (EXISTS ( SELECT 1
+                  WHERE ((f.source_id = s.id) AND (f.resource = r.logical_name) AND ((f.field_path = ANY (ARRAY['source'::text, 'source_revision'::text, 'schedule'::text])) OR starts_with(f.field_path, 'runtime/'::text) OR starts_with(f.field_path, 'service_bindings/'::text) OR starts_with(f.field_path, 'queue_bindings/'::text) OR (f.field_path ~~ 'variables/%'::text) OR (f.field_path ~~ 'secret_refs/%'::text))))) OR (EXISTS ( SELECT 1
                    FROM public.environment_gitops_runtime_effects x
                   WHERE ((x.source_id = s.id) AND (x.app_id = r.app_id) AND (x.completed_at IS NULL)))))
         ), boundaries AS (
@@ -43310,63 +43449,6 @@ CREATE TABLE public.job_tasks (
     CONSTRAINT job_tasks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'claimed'::text, 'succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text]))),
     CONSTRAINT job_tasks_task_index_check CHECK ((task_index >= 0)),
     CONSTRAINT job_tasks_terminal_pair_chk CHECK ((((finished_at IS NULL) AND (status = ANY (ARRAY['queued'::text, 'claimed'::text]))) OR ((finished_at IS NOT NULL) AND (status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text])))))
-);
-
-
---
--- Name: jobs; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.jobs (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    kind text NOT NULL,
-    name text NOT NULL,
-    image_ref text NOT NULL,
-    ram_mb integer NOT NULL,
-    task_timeout_s integer NOT NULL,
-    max_parallelism integer NOT NULL,
-    retry_max integer NOT NULL,
-    env_overrides jsonb DEFAULT '{}'::jsonb NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    command text[] NOT NULL,
-    image_resolved_digest text,
-    image_storage_key text,
-    image_materialization_status text DEFAULT 'pending'::text NOT NULL,
-    image_materialization_error text,
-    image_materialized_at timestamp with time zone,
-    image_materialization_attempts integer DEFAULT 0 NOT NULL,
-    image_materialization_next_attempt_at timestamp with time zone,
-    image_materialization_lease_owner text,
-    image_materialization_lease_until timestamp with time zone,
-    cron_schedule text,
-    cron_timezone text DEFAULT 'UTC'::text NOT NULL,
-    last_scheduled_at timestamp with time zone,
-    schedule_policy jsonb,
-    failure_rules jsonb,
-    schedule_revision bigint DEFAULT 1 NOT NULL,
-    image_entrypoint text[],
-    image_cmd text[],
-    labels jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT jobs_command_min_chk CHECK (((array_length(command, 1) IS NULL) OR ((array_length(command, 1) >= 0) AND (array_length(command, 1) <= 64)))),
-    CONSTRAINT jobs_failure_rules_shape CHECK (((failure_rules IS NULL) OR ((jsonb_typeof(failure_rules) = 'object'::text) AND ((failure_rules ->> 'version'::text) = '1'::text)))),
-    CONSTRAINT jobs_image_cmd_chk CHECK (((image_cmd IS NULL) OR (cardinality(image_cmd) <= 64))),
-    CONSTRAINT jobs_image_entrypoint_chk CHECK (((image_entrypoint IS NULL) OR (cardinality(image_entrypoint) <= 64))),
-    CONSTRAINT jobs_image_materialization_attempts_check CHECK ((image_materialization_attempts >= 0)),
-    CONSTRAINT jobs_image_materialization_status_check CHECK ((image_materialization_status = ANY (ARRAY['pending'::text, 'verifying_legacy'::text, 'ready'::text, 'failed'::text]))),
-    CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['batch'::text, 'recurring'::text, 'image_run'::text]))),
-    CONSTRAINT jobs_labels_object_chk CHECK ((jsonb_typeof(labels) = 'object'::text)),
-    CONSTRAINT jobs_max_parallelism_check CHECK (((max_parallelism >= 1) AND (max_parallelism <= 1000))),
-    CONSTRAINT jobs_name_check CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT jobs_ram_mb_check CHECK ((ram_mb > 0)),
-    CONSTRAINT jobs_retry_max_check CHECK (((retry_max >= 0) AND (retry_max <= 10))),
-    CONSTRAINT jobs_schedule_kind_check CHECK ((((kind = ANY (ARRAY['batch'::text, 'image_run'::text])) AND (cron_schedule IS NULL)) OR ((kind = 'recurring'::text) AND (cron_schedule IS NOT NULL) AND (btrim(cron_schedule) <> ''::text)))),
-    CONSTRAINT jobs_schedule_policy_shape CHECK (((schedule_policy IS NULL) OR ((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text)))),
-    CONSTRAINT jobs_schedule_revision_check CHECK ((schedule_revision >= 1)),
-    CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'deleted'::text]))),
-    CONSTRAINT jobs_task_timeout_s_check CHECK (((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))
 );
 
 
@@ -84753,7 +84835,7 @@ CREATE TRIGGER guard_environment_workload_instance BEFORE INSERT OR DELETE OR UP
 -- Name: jobs guard_environment_workload_job; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER guard_environment_workload_job BEFORE DELETE OR UPDATE ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_job();
+CREATE TRIGGER guard_environment_workload_job BEFORE INSERT OR DELETE OR UPDATE ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_job();
 
 
 --
@@ -96423,6 +96505,14 @@ ALTER TABLE ONLY public.job_tasks
 
 ALTER TABLE ONLY public.jobs
     ADD CONSTRAINT jobs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: jobs jobs_environment_git_source_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.jobs
+    ADD CONSTRAINT jobs_environment_git_source_fk FOREIGN KEY (environment_git_source_id) REFERENCES public.environment_git_sources(id);
 
 
 --

@@ -41,6 +41,10 @@ func (*stubVmmdClient) UpdateAdmittedAppEgressPolicy(context.Context, *vmmdpb.Up
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not install admitted runtime egress policies")
 }
 
+func (*stubVmmdClient) ReconcilePrivateNetworkPeerings(context.Context, *vmmdpb.ReconcilePrivateNetworkPeeringsRequest, ...grpc.CallOption) (*vmmdpb.ReconcilePrivateNetworkPeeringsAck, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not reconcile private network peerings")
+}
+
 func (*stubVmmdClient) MaterializeVerifiedParentExt4(context.Context, *vmmdpb.MaterializeVerifiedParentExt4Request, ...grpc.CallOption) (*vmmdpb.MaterializeVerifiedParentExt4Response, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not materialize verified parents")
 }
