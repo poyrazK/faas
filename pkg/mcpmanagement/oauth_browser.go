@@ -33,6 +33,8 @@ type consentView struct {
 	// Org is the shared organization the connection acts in
 	// (ADR-20261101225122).
 	Org string
+	// Projects the connection is limited to (ADR-20261104085712).
+	Projects []string
 	// SameTab: the hosted bridge sends the browser to sign-in and back.
 	SameTab      bool
 	Apps         []consentApp
@@ -100,6 +102,7 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 		view.Capabilities = describeCapabilities(g.capabilities)
 		view.Writes = slices.Contains(g.scopes, scopeWrite)
 		view.Org = g.orgName
+		view.Projects = g.projects
 		view.Environments = g.availableEnvironments
 		for _, app := range g.availableApps {
 			view.Apps = append(view.Apps, consentApp{Slug: app.Slug})

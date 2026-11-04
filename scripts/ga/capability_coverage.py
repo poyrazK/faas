@@ -394,6 +394,8 @@ INFRA_RULES = [
     r"^edge-public-front$",
     # ADR-20261103163954 §4: the compute edge's per-client-address limits.
     r"^edge-client-limits$",
+    # ADR-20261103163954 §4: Cloudflare's ranges skip those connection limits.
+    r"^edge-proxy-cidrs$",
 ]
 
 

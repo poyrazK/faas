@@ -43,6 +43,10 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		case "github-deploys", "pr-previews":
 			// PR previews are built from the same GitHub push/PR pipeline.
 			available = s.githubDeploysAvailable != nil && s.githubDeploysAvailable(r.Context())
+		case "release-commands":
+			// imaged fails a release command while FAAS_RELEASE_PHASE_ENABLED
+			// is off, so it is advertised only when apid says it is on.
+			available = !s.releasePhaseOff
 		case "custom-domains":
 			// production-us hunt #8: with ADR-520 on-demand TLS off, a
 			// customer hostname can never obtain a certificate or reach

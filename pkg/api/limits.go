@@ -176,6 +176,12 @@ const AgentKeyLifetime = 90 * 24 * time.Hour
 // before it gets 429 without a lookup.
 const InboundWebhookFailuresPerIPPerMinute = 30
 
+// SelfVerifiedRouteFailuresPerIPPerMinute is how many refused requests (401,
+// 403, 404) one client IP may send a minute to the other unauthenticated
+// routes that check their own credential with a database lookup (consumer
+// billing keys) before it gets 429 without one (bug hunt H15).
+const SelfVerifiedRouteFailuresPerIPPerMinute = 30
+
 // AppWebhookMaxInFlightPerAccount bounds one account's concurrent outbound
 // webhook requests across every scheduler (ADR-20261101093517). Each
 // scheduler runs 64 delivery slots and each subscription may hold 4, so an
@@ -2444,6 +2450,14 @@ const (
 	// OutboundAIAccessTokenLookupsMax bounds the database lookups of
 	// uncached access tokens that run at once (ADR 20261027132936).
 	OutboundAIAccessTokenLookupsMax = 8
+	// OutboundAIAccessTokenGuessesPerWindow unknown access tokens a client
+	// network (IPv4 /24, IPv6 /64) may present on the public AI host per
+	// OutboundAIAccessTokenGuessWindow before it gets 429 without a lookup;
+	// OutboundAIAccessTokenGuessClientsMax bounds the networks tracked (bug
+	// hunt H82).
+	OutboundAIAccessTokenGuessesPerWindow = 30
+	OutboundAIAccessTokenGuessWindow      = time.Minute
+	OutboundAIAccessTokenGuessClientsMax  = 10_000
 	// Batches (ADR-1431): the share of the list price a batch costs; the
 	// largest OpenAI input file read at creation, Anthropic batch body and
 	// JSONL line the gateway parses; how often open batches are polled and
@@ -2754,10 +2768,17 @@ const (
 	ObjectStorageInventorySweepBatch       = 50
 	ObjectStorageInventorySweepConcurrency = 8
 	ObjectStorageInventorySweepBudget      = 40 * time.Second
-	ObjectCapacityReconciliationLease      = 2 * time.Minute
-	ObjectCapacityReconciliationTimeout    = time.Hour
-	ObjectCapacityReconciliationRetry      = 30 * time.Second
-	ObjectCapacityInventoryTimeout         = 45 * time.Second
+	// The inventory sweep runs on its own loop, apart from billing: gateway
+	// reads and writes need an inventory no older than 900 s, so a slow month
+	// close or progress delivery must not delay it. Each billing step stops
+	// after ObjectStorageBillingStepTimeout, and a failed month close is
+	// retried after ObjectStorageFinalizeRetry rather than every minute.
+	ObjectStorageBillingStepTimeout     = 5 * time.Minute
+	ObjectStorageFinalizeRetry          = 15 * time.Minute
+	ObjectCapacityReconciliationLease   = 2 * time.Minute
+	ObjectCapacityReconciliationTimeout = time.Hour
+	ObjectCapacityReconciliationRetry   = 30 * time.Second
+	ObjectCapacityInventoryTimeout      = 45 * time.Second
 	// After claiming a bucket, inventory waits up to
 	// ObjectInventoryDeletionDrain for deletions admitted before the claim to
 	// settle. New deletions in the bucket wait while the claim is younger than
@@ -3683,6 +3704,19 @@ const (
 	// a public object without revalidating, so a delete or overwrite takes
 	// effect within minutes rather than a year (H9-S144).
 	PublicObjectReadMaxAgeSeconds = 300
+	// PublicReadNewHostLookupsPerSecond and PublicReadNewHostLookupBurst are
+	// each edge's budget of public-read host lookups (store reads) for
+	// hostnames it has never seen name an app. The matcher runs in front of
+	// every GET and HEAD, so a flood of random names under the apps wildcard
+	// spends this budget instead of control-plane Postgres reads; past it the
+	// request is answered 503 traffic_policy_unavailable with Retry-After.
+	// Normal traffic spends it only on a host's first request after a
+	// restart, which the burst covers. PublicReadKnownHostsMax bounds the
+	// hostnames that skip the budget; a full set is dropped whole
+	// (ADR-20261103163954 §4).
+	PublicReadNewHostLookupsPerSecond = 25
+	PublicReadNewHostLookupBurst      = 500
+	PublicReadKnownHostsMax           = 100_000
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -13338,6 +13372,27 @@ func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Du
 // per worker.
 const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
 
+// PostgresPoolMaxEnv tells an app how many database connections one of its
+// instances can use (ADR-20261104141122). imaged stamps it at build time for
+// accounts the postgres_pool_sizing flag releases; the SDKs'
+// PostgresPoolBinding hands it to the pool factory as the default size.
+const PostgresPoolMaxEnv = "GREGALE_POSTGRES_POOL_MAX"
+
+// PostgresPoolMaxPerInstance caps the stamped pool size at the pg.Pool
+// default, so no instance's pool grows past what most apps run with today.
+const PostgresPoolMaxPerInstance = 10
+
+// PostgresPoolMax is the pool size one instance of an app needs: its
+// per-instance concurrency, at most PostgresPoolMaxPerInstance. Zero for an
+// unknown plan.
+func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
+	return min(l.PerInstanceConcurrency(requestedPerInstanceConcurrency), PostgresPoolMaxPerInstance)
+}
+
+// PostgresPoolMaxAccepted is the largest GREGALE_POSTGRES_POOL_MAX the SDKs
+// and the binding check accept; a larger value is ignored as unset.
+const PostgresPoolMaxAccepted = 1000
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after
@@ -14752,6 +14807,9 @@ const (
 	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
 	// app health counts the guest's reports within it (ADR-20261102124306).
 	AppHealthMemoryPressureWindow = 24 * time.Hour
+	// MemoryRightSizeStepMB rounds app health's suggested ram_mb for an app
+	// under memory pressure (ADR-20261102124306 step 3).
+	MemoryRightSizeStepMB = 64
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
@@ -17340,8 +17398,23 @@ const (
 	EdgeClientRequestsPerSecondPerAddr = 500
 	EdgeClientRequestsBurstPerAddr     = 1000
 	EdgeClientTrackedAddrsMax          = 200_000
-	EdgeTLSHandshakesInFlightPerCPU    = 128
-	EdgeTLSHandshakeTimeout            = 10 * time.Second
+	// EdgeHostRequestsPerSecond and EdgeHostRequestsBurst are a node's
+	// ceiling for one hostname, checked at the edge before the request is
+	// forwarded, routed or wakes anything (ADR-20261103163954 §4): every
+	// node takes every app host, so a flood on one app reaches every edge.
+	// They sit at twice the highest plan's per-app RateLimitRPS and
+	// RateLimitBurst, so the gateway's plan limit answers an app first;
+	// this ceiling bounds what one host costs an edge where no plan limit
+	// applies, such as public bucket reads served before the gateway. At
+	// most EdgeHostTrackedMax hostnames are tracked. The Host header is the
+	// client's to choose, so a hostname the full table cannot track passes
+	// instead of sharing one bucket that a flood of random names would drain
+	// for every tenant (hunt 38); the per-address limit still bounds it.
+	EdgeHostRequestsPerSecond       = 1000
+	EdgeHostRequestsBurst           = 4000
+	EdgeHostTrackedMax              = 100_000
+	EdgeTLSHandshakesInFlightPerCPU = 128
+	EdgeTLSHandshakeTimeout         = 10 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.
@@ -17353,6 +17426,72 @@ const (
 	// (uploads, public reads, OTLP), so direct clients cannot push more at
 	// the control plane than Cloudflare let through.
 	EdgeControlPlaneForwardsInFlightMax = 256
+)
+
+// The host firewall's backstop for a compute edge's public entry address
+// (ADR-20261103163954 §4). The edge refuses a client past its own
+// per-address limits only after the kernel has accepted the connection; the
+// firewall drops a source's new connections to the entry address's 443 before
+// userspace sees them once it holds PublicEntryConnsPerSourceMax connections
+// or opens them faster than PublicEntryNewConnsPerSecondPerSource (burst
+// PublicEntryNewConnsBurstPerSource). Each is twice the edge's own limit, so
+// a client the edge would serve never meets it. The firewall tracks at most
+// PublicEntryTrackedSourcesMax sources per limit; past that a new source is
+// not limited by the kernel, only by the edge.
+const (
+	PublicEntryConnsPerSourceMax          = 2 * EdgeClientOpenConnsPerAddrMax
+	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
+	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
+	PublicEntryTrackedSourcesMax          = 65536
+	// PublicBlockListRefreshInterval is how often vmmd re-reads the
+	// operator's block list (/etc/faas/public-block-list) and adds its
+	// entries to the firewall's block sets: an edit takes effect within
+	// it, and so does an entry a reload by another hand flushed.
+	PublicBlockListRefreshInterval = 30 * time.Second
+)
+
+// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
+// domains' certificate from Let's Encrypt with DNS-01 and renews it
+// EdgeCertificateRenewBefore its expiry, checking every
+// EdgeCertificateCheckInterval. A failed order is retried after
+// EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
+// Encrypt allows 5 failed validations per account, hostname and hour, and 5
+// certificates for the same names in 7 days, so a fault must not turn into a
+// loop. One order solves at most EdgeCertificateOrderTimeout, which covers
+// DNS propagation, and names at most EdgeCertificateNamesMax names. A
+// certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
+// so the Certificate Transparency watch can tell ours from anyone else's.
+const (
+	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateRetryMin        = time.Hour
+	EdgeCertificateRetryMax        = 12 * time.Hour
+	EdgeCertificateOrderTimeout    = 10 * time.Minute
+	EdgeCertificateNamesMax        = 10
+	EdgeCertificateKeepAfterExpiry = 90 * 24 * time.Hour
+	// A compute edge reloads the certificates on each pg_notify and at
+	// least every EdgeCertificateReloadInterval, which covers a notice
+	// missed while its LISTEN connection was down; it reconnects after
+	// EdgeCertificateListenRetry.
+	EdgeCertificateReloadInterval = 10 * time.Minute
+	EdgeCertificateListenRetry    = 5 * time.Second
+	// edgednsd's Certificate Transparency watch reads the apps domain's
+	// unexpired issuances from Cert Spotter every
+	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter
+	// allows a few subdomain queries a day, and Let's Encrypt logs a
+	// certificate before it issues it, so a few hours is still well ahead of
+	// any use of one. A read takes at most
+	// EdgeCertificateTransparencyPagesMax pages, each within
+	// EdgeCertificateTransparencyTimeout and at most
+	// EdgeCertificateTransparencyPageBytesMax long.
+	EdgeCertificateTransparencyInterval     = 6 * time.Hour
+	EdgeCertificateTransparencyTimeout      = 30 * time.Second
+	EdgeCertificateTransparencyPagesMax     = 20
+	EdgeCertificateTransparencyPageBytesMax = 8 << 20
+	// EdgeCertificateTransparencyAllowNamesMax caps the names the watch
+	// accepts on certificates edgednsd did not issue (the CDN's, a hosted
+	// site's).
+	EdgeCertificateTransparencyAllowNamesMax = 32
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one

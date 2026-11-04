@@ -812,6 +812,7 @@ func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, 
 		{"api_keys", func() (any, error) { return listKeysForAccountExport(ctx, s.store, acct.ID) }},
 		{"edge_rules", func() (any, error) { return s.listEdgeRulesForAccountExport(ctx, acct) }},
 		{"edge_rule_lists", func() (any, error) { return listEdgeRuleListsForAccountExport(ctx, s.store, acct.ID) }},
+		{"cors_presets", func() (any, error) { return s.listCorsPresetsForAccountExport(ctx, acct) }},
 	}
 	for _, section := range sections {
 		value, err := section.load()

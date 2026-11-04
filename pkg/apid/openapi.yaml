@@ -31256,6 +31256,93 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/scaling:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: environment, in: query, schema: { type: string }, description: Named project environment; omit for the default app. }
+    get:
+      tags: [apps]
+      operationId: getAppScaling
+      summary: Read scaling settings and their revision.
+      description: Requires read access. Named environments must have a materialized workload revision.
+      responses:
+        '200':
+          description: Current desired configuration; does not imply running instance convergence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppScalingSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [apps]
+      operationId: applyAppScaling
+      summary: Commit reviewed scaling settings with a recoverable request ID.
+      description: |
+        Requires deploy:write and the same MFA, plan and capacity admission as app settings updates.
+        The expected app UUID and revision are checked under the write lock. Default revisions advance for
+        every accepted request and for legacy changes to RAM, CPU, concurrency or min instances.
+        Named environments use their workload revision, including no-op revision semantics.
+        Settings and the receipt commit atomically. Reuse request_id with the exact original
+        body after an interruption to recover the original receipt even after later writes.
+        Changing the body under an accepted ID returns scaling_request_conflict; a stale
+        revision returns scaling_revision_conflict. Receipts survive until the app is purged.
+        Named production and protected environments require their existing approved workflow.
+        A receipt confirms desired configuration only; named settings require a subsequent
+        deployment, and default settings do not prove guest readiness or replica convergence.
+      requestBody:
+        description: Reviewed scaling fields and the revision and request identity to preserve on retry.
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyAppScalingRequest' }
+      responses:
+        '200':
+          description: Original durable configuration receipt, including on replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppScalingReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Write permission, MFA, capability or plan admission denied.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Scaling revision changed, request ID reused, or environment protected.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Commit outcome uncertain; recover or retry the original request ID and body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/scaling/requests/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: environment, in: query, schema: { type: string }, description: Environment of the original scaling request; omit to recover a default-app request. }
+      - { name: request_id, in: path, required: true, schema: { type: string, format: uuid }, description: Original scaling request UUID. }
+    get:
+      tags: [apps]
+      operationId: getAppScalingReceipt
+      summary: Recover a scaling configuration receipt without performing a write.
+      description: Requires current read access to the app and selected environment. Receipt settings may have been superseded; read the current revision separately.
+      responses:
+        '200':
+          description: Original durable configuration receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppScalingReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/env/batch:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -80578,7 +80665,7 @@ components:
         server_errors: { type: integer, format: int64, minimum: 0 }
         error_rate: { type: number, minimum: 0, maximum: 1 }
         p95_latency_ms: { type: number, minimum: 0, description: 'Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not selected or evidence is unavailable; zero is a valid observation.' }
-        latency_requests: { type: integer, format: int64, minimum: 0, description: 'Requests the p95 ranked. The canary guard ranks only requests that did not cold boot, and the latency minimum applies to this count. Omitted when every request was ranked.' }
+        latency_requests: { type: integer, format: int64, minimum: 0, description: 'Requests the p95 ranked, to which the latency minimum applies. The canary guard ranks only requests that did not cold boot, and no reader ranks a long-lived response such as a WebSocket or an event stream. Omitted when every request was ranked.' }
         unauthenticated: { type: integer, format: int64, minimum: 0, description: 'Synthetic probe responses rejected by customer auth gates (401/403). Only present in synthetic_windows; a window where at least half of either side was rejected is unknown (probe_unauthenticated).' }
     RouteHealthWindowEvidence:
       type: object
@@ -86632,6 +86719,7 @@ components:
         key_scopes: { type: array, items: { type: string }, description: "Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it." }
         key_app: { $ref: '#/components/schemas/AppAgentBinding' }
         key_org: { $ref: '#/components/schemas/KeyOrg' }
+        key_projects: { type: array, items: { type: string }, description: "Slugs of the projects the authenticating key is limited to; absent when the key reaches every project." }
         abuse_hold: { $ref: '#/components/schemas/AccountAbuseHold' }
 
     AppAgentBinding:
@@ -86806,7 +86894,8 @@ components:
         api_keys: { type: array, items: { $ref: '#/components/schemas/APIKeyExportResponse' } }
         app_secrets: { type: array, items: { $ref: '#/components/schemas/AppSecretExportResponse' } }
         edge_rules: { type: array, items: { $ref: '#/components/schemas/EdgeRuleResponse' }, description: "Edge rules on the exported apps." }
-        edge_rule_lists: { type: array, items: { $ref: '#/components/schemas/EdgeRuleListResponse' }, description: "The account's edge rule lists, with their items." }
+        edge_rule_lists: { type: array, items: { $ref: '#/components/schemas/EdgeRuleListResponse' }, description: "The account's personal edge rule lists, with their items. An organization's lists are not part of a member's export." }
+        cors_presets: { type: array, items: { $ref: '#/components/schemas/CorsPresetResponse' }, description: "The account's CORS presets: account-wide ones and those scoped to the exported apps." }
         audit_trail:
           type: array
           items: { $ref: '#/components/schemas/GdprAuditExportResponse' }
@@ -88955,6 +89044,50 @@ components:
         apps: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/DeletedAppSummary' } }
         next_cursor: { type: string, maxLength: 1024 }
         evaluated_at: { type: string, format: date-time }
+
+    AppScalingSettings:
+      description: Stored RAM, CPU, concurrency and instance-floor settings.
+      type: object
+      required: [ram_mb, cpu_millicores, max_concurrency, min_instances]
+      properties:
+        ram_mb: { type: integer }
+        cpu_millicores: { type: integer, description: Stored CPU allowance; zero uses the plan default. }
+        max_concurrency: { type: integer }
+        min_instances: { type: integer }
+    AppScalingSnapshot:
+      description: Current desired scaling configuration and its compare-and-swap revision.
+      type: object
+      required: [app_id, scope, revision, settings]
+      properties:
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        environment_id: { type: string, format: uuid, description: Immutable identity for a named environment. }
+        revision: { type: integer, format: int64 }
+        settings: { $ref: '#/components/schemas/AppScalingSettings' }
+    ApplyAppScalingRequest:
+      description: A reviewed partial scaling change with a durable request identity.
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_app_id, expected_revision]
+      properties:
+        expected_app_id: { type: string, format: uuid, description: Immutable app UUID from the reviewed scaling snapshot. }
+        request_id: { type: string, format: uuid }
+        expected_environment_id: { type: string, format: uuid, description: Required for a named environment; must match its immutable identity. }
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        ram_mb: { type: integer, minimum: 1 }
+        cpu_millicores: { type: integer, minimum: 1 }
+        max_concurrency: { type: integer, minimum: 1 }
+        min_instances: { type: integer, minimum: 0 }
+    AppScalingReceipt:
+      description: Original atomic scaling configuration commit; does not establish runtime readiness.
+      allOf:
+        - $ref: '#/components/schemas/AppScalingSnapshot'
+        - type: object
+          required: [request_id, previous_revision, committed_at]
+          properties:
+            request_id: { type: string, format: uuid }
+            previous_revision: { type: integer, format: int64 }
+            committed_at: { type: string, format: date-time }
 
     AppResponse:
       description: "An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist, and reactive scale-up trigger targets."
@@ -111936,6 +112069,7 @@ components:
         expires_at: { type: string, format: date-time }
         org_id: { type: string, format: uuid, description: The organization the agent acts in. }
         member: { type: string, description: "Email of the member who connected the agent, in an organization's list." }
+        projects: { type: array, items: { type: string }, description: "Slugs of the projects the agent is limited to; absent when it reaches every project." }
       example: {id: "3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19", kind: hosted_mcp, client_name: Claude, client_site: claude.ai, label: mcp-login, prefix: "fp_live_ab12cd34", scopes: ["apps:read"], created_at: "2026-10-30T11:25:00Z", last_used_at: "2026-10-30T12:05:00Z", expires_at: "2026-11-06T12:05:00Z"}
 
     AgentConnectionsResponse:
@@ -112025,6 +112159,7 @@ components:
         plaintext:
           type: [string, "null"]
           description: PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again.
+        projects: { type: array, items: { type: string }, description: "Project slugs the key was limited to, on the create response of a limited agent key." }
       example: {id: "0123456789abcdef0123456789abcdef", org_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c", prefix: "fp_live_ab12cd34", label: "ci-deploy", scopes: [apps:read, deploy:write], created_at: "2026-08-02T11:25:00Z", expires_at: "2027-08-02T11:25:00Z", status: "active", last_used_at: "2026-07-25T13:25:00Z"}
 
     DeployTokenResponse:
@@ -112097,6 +112232,7 @@ components:
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
+        projects: { type: array, maxItems: 100, items: { type: string }, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project." }
 
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
@@ -112124,6 +112260,7 @@ components:
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
+        projects: { type: array, maxItems: 100, items: { type: string }, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project." }
 
     ListOrgAPIKeysResponse:
       description: "GET /v1/orgs/{slug}/keys body. Returns every key minted against the org (active + grace + revoked). Newest first; matches the legacy `GET /v1/keys` ordering."
@@ -113846,7 +113983,7 @@ components:
       properties:
         code:
           type: string
-          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection]
+          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection, replicas, queue, backlog, dead_letters, memory]
         status:
           type: string
           enum: [pass, warning, fail, unknown, not_applicable]
@@ -113855,7 +113992,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string

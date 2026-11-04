@@ -163,6 +163,10 @@ func (m *management) operationFailure(p *releasePlan, err error, priorAttempt bo
 	status := "outcome_unknown"
 	if p.configReceipt != nil {
 		status = "partial"
+	} else if p.Operation.Kind == "scale" && knownScalingRefusal(err) {
+		// Atomic receipts are returned before revision checks, so this native
+		// conflict proves the reviewed request did not commit, even on retry.
+		status = "refused"
 	} else if !priorAttempt && p.Operation.Kind != "config_rollback" {
 		var native *api.APIError
 		if errors.As(err, &native) && native.Problem.Status >= 400 && native.Problem.Status < 500 &&

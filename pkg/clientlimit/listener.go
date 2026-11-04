@@ -18,10 +18,11 @@ const (
 	ReasonRequestRate     = "request_rate"
 	ReasonBodyRate        = "body_rate"
 	ReasonForwardInFlight = "forward_in_flight"
+	ReasonHostRequestRate = "host_request_rate"
 )
 
 // Reasons lists every refusal reason, so a counter can start each at zero.
-var Reasons = []string{ReasonOpenConnections, ReasonConnectionRate, ReasonHandshakes, ReasonRequestRate, ReasonBodyRate, ReasonForwardInFlight}
+var Reasons = []string{ReasonOpenConnections, ReasonConnectionRate, ReasonHandshakes, ReasonRequestRate, ReasonBodyRate, ReasonForwardInFlight, ReasonHostRequestRate}
 
 // ConnLimits bound one client address's connections to a listener.
 type ConnLimits struct {
@@ -32,6 +33,10 @@ type ConnLimits struct {
 	NewBurst     int
 	// TrackedAddrsMax bounds the addresses kept in memory.
 	TrackedAddrsMax int
+	// Exempt are a proxy's addresses, each carrying many clients: their
+	// connections are not limited or tracked. The proxy's clients are
+	// limited per request by the address it forwards instead.
+	Exempt []netip.Prefix
 }
 
 // Listener refuses a connection, with a TCP reset, when its address already
@@ -41,7 +46,7 @@ type ConnLimits struct {
 type Listener struct {
 	net.Listener
 	limits  ConnLimits
-	table   *table
+	table   *table[netip.Prefix]
 	refused func(reason string)
 }
 
@@ -51,7 +56,7 @@ func NewListener(inner net.Listener, limits ConnLimits, refused func(reason stri
 	return &Listener{
 		Listener: inner,
 		limits:   limits,
-		table:    newTable(limits.NewPerSecond, limits.NewBurst, limits.TrackedAddrsMax, now),
+		table:    newTable[netip.Prefix](limits.NewPerSecond, limits.NewBurst, limits.TrackedAddrsMax, now),
 		refused:  refused,
 	}
 }
@@ -65,7 +70,7 @@ func (l *Listener) Accept() (net.Conn, error) {
 			return nil, err
 		}
 		key, ok := keyOf(c.RemoteAddr())
-		if !ok {
+		if !ok || l.exempt(key) {
 			return c, nil
 		}
 		e, reason := l.admit(key)
@@ -76,6 +81,16 @@ func (l *Listener) Accept() (net.Conn, error) {
 		}
 		return &limitedConn{Conn: c, release: func() { l.release(e) }}, nil
 	}
+}
+
+// exempt reports whether key belongs to an exempt proxy.
+func (l *Listener) exempt(key netip.Prefix) bool {
+	for _, p := range l.limits.Exempt {
+		if p.Contains(key.Addr()) {
+			return true
+		}
+	}
+	return false
 }
 
 // admit counts a new connection from key, or names the limit it breaks.

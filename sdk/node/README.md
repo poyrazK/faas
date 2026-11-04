@@ -831,6 +831,15 @@ Omitting the helper or carrier makes a call unlinked to the parent deadline.
 The platform's complete-path acceptance is still pending; see
 [the deadline contract](../../docs/ops/traffic-total-deadline.md).
 
+The helper also captures `X-Faas-Deadline-Ms`, the time Gregale gives the
+request to run, and `serviceFetch` sends the time still left on each managed
+call, so the service proxy ends a downstream call when the caller's request
+runs out (ADR-20261102082606). It only shortens: a smaller value you set on the
+call is kept, and a request with no time left sends `1`, which the proxy
+refuses without waking the target. `gregaleRequestTimeRemainingMs()` returns
+the time left inside the handler. The proxy honours the header once the
+platform enables service-call deadlines.
+
 ### Browser SPA release pinning
 
 For an SSR-rendered document, put the release selected on the inbound page

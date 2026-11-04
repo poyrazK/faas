@@ -49,7 +49,11 @@ on `/v1/edge-rule-lists` and `/v1/cors-presets` (`--app` on `gregale edge
 rule-list`), or use the app's dashboard page. Members who can read the app
 read them, and owners and admins change them. They are separate from each
 member's personal lists and presets, which the organization never sees, and
-the organization's plan sets their limits.
+the organization's plan sets their limits. A company app's rules name only
+its organization's lists and the app's own presets, and a personal app's
+rules only personal ones. Lists live with the account that holds the app's
+rules, so a list created through one member's company app is not available
+to an app another member created; create it with `--app` for that app.
 
 A rule only ever applies to hosts your account owns: another account's rule
 never runs on your traffic, even with `match_host` `*`. A host pattern other
@@ -350,8 +354,9 @@ headers. An origin is
 domain (`https://*.<your apps domain>`): other customers' apps are served
 there. List your app origins instead. `max_age_seconds` is at most 86400.
 Instead of inline fields, `cors_preset_id` can name a CORS preset shared by
-several rules (`/v1/cors-presets`). Editing or deleting a preset is applied
-like a rule change to every rule that uses it. `gregale edge cors allow`
+several rules (`/v1/cors-presets`): an account-wide preset or one scoped to
+the rule's app. Editing a preset is applied like a rule change to every rule
+that uses it, and a preset rules use cannot be deleted. `gregale edge cors allow`
 creates a simple rule.
 
 ### jwt

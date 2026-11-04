@@ -88,6 +88,15 @@ func (s *PgStore) changeObjectBucketNotifications(ctx context.Context, account, 
 		if _, e = q.ObjectNotificationTargetApp(ctx, tx, sqlc.ObjectNotificationTargetAppParams{ID: mustPgUUID(t.AppID), AccountID: mustPgUUID(account)}); e != nil {
 			return p, mapNotificationDestinationError(e)
 		}
+		if producer := objectNotificationProducer(b); producer != "" {
+			inReach, e := q.ObjectNotificationTargetInReach(ctx, tx, sqlc.ObjectNotificationTargetInReachParams{AccountID: mustPgUUID(account), Producer: producer, TargetAppID: t.AppID})
+			if e != nil {
+				return p, mapErr(e)
+			}
+			if !inReach {
+				return p, ErrObjectNotificationInvalid
+			}
+		}
 		if t.Kind == "queue" {
 			if _, _, e = pgNotificationQueue(ctx, tx, t); e != nil {
 				return p, mapNotificationDestinationError(e)

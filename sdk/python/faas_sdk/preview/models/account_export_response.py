@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.app_response import AppResponse
     from ..models.app_secret_export_response import AppSecretExportResponse
     from ..models.build_export_response import BuildExportResponse
+    from ..models.cors_preset_response import CorsPresetResponse
     from ..models.cron_response import CronResponse
     from ..models.custom_domain_response import CustomDomainResponse
     from ..models.deployment_response import DeploymentResponse
@@ -66,7 +67,10 @@ class AccountExportResponse:
     edge_rules: list[EdgeRuleResponse] | Unset = UNSET
     """Edge rules on the exported apps."""
     edge_rule_lists: list[EdgeRuleListResponse] | Unset = UNSET
-    """The account's edge rule lists, with their items."""
+    """The account's personal edge rule lists, with their items. An organization's lists are not part of a member's
+    export."""
+    cors_presets: list[CorsPresetResponse] | Unset = UNSET
+    """The account's CORS presets: account-wide ones and those scoped to the exported apps."""
     audit_trail: list[GdprAuditExportResponse] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -156,6 +160,13 @@ class AccountExportResponse:
                 edge_rule_lists_item = edge_rule_lists_item_data.to_dict()
                 edge_rule_lists.append(edge_rule_lists_item)
 
+        cors_presets: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.cors_presets, Unset):
+            cors_presets = []
+            for cors_presets_item_data in self.cors_presets:
+                cors_presets_item = cors_presets_item_data.to_dict()
+                cors_presets.append(cors_presets_item)
+
         audit_trail: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.audit_trail, Unset):
             audit_trail = []
@@ -189,6 +200,8 @@ class AccountExportResponse:
             field_dict["edge_rules"] = edge_rules
         if edge_rule_lists is not UNSET:
             field_dict["edge_rule_lists"] = edge_rule_lists
+        if cors_presets is not UNSET:
+            field_dict["cors_presets"] = cors_presets
         if audit_trail is not UNSET:
             field_dict["audit_trail"] = audit_trail
 
@@ -202,6 +215,7 @@ class AccountExportResponse:
         from ..models.app_response import AppResponse
         from ..models.app_secret_export_response import AppSecretExportResponse
         from ..models.build_export_response import BuildExportResponse
+        from ..models.cors_preset_response import CorsPresetResponse
         from ..models.cron_response import CronResponse
         from ..models.custom_domain_response import CustomDomainResponse
         from ..models.deployment_response import DeploymentResponse
@@ -330,6 +344,15 @@ class AccountExportResponse:
 
                 edge_rule_lists.append(edge_rule_lists_item)
 
+        _cors_presets = d.pop("cors_presets", UNSET)
+        cors_presets: list[CorsPresetResponse] | Unset = UNSET
+        if _cors_presets is not UNSET:
+            cors_presets = []
+            for cors_presets_item_data in _cors_presets:
+                cors_presets_item = CorsPresetResponse.from_dict(cors_presets_item_data)
+
+                cors_presets.append(cors_presets_item)
+
         _audit_trail = d.pop("audit_trail", UNSET)
         audit_trail: list[GdprAuditExportResponse] | Unset = UNSET
         if _audit_trail is not UNSET:
@@ -358,6 +381,7 @@ class AccountExportResponse:
             app_secrets=app_secrets,
             edge_rules=edge_rules,
             edge_rule_lists=edge_rule_lists,
+            cors_presets=cors_presets,
             audit_trail=audit_trail,
         )
 
