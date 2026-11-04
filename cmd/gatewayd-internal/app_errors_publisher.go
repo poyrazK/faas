@@ -95,6 +95,8 @@ type appErrorsPublisher struct {
 	issueMu             sync.Mutex
 	issueQueue          []httpIssueRetry
 	issueApps           map[string]int
+	issueKeys           map[string]bool
+	issueWake           chan struct{}
 
 	// NotifyEnqueued is called by the recorder after every
 	// enqueue. Used to wake the flush loop early when the
@@ -114,6 +116,8 @@ func newAppErrorsPublisher(rec *appErrorsRecorder, client apidgrpc.AppErrorsClie
 		log:       log,
 		notifier:  make(chan struct{}, 1),
 		issueApps: make(map[string]int),
+		issueKeys: make(map[string]bool),
+		issueWake: make(chan struct{}, 1),
 	}
 }
 
@@ -139,13 +143,19 @@ func (p *appErrorsPublisher) Run(ctx context.Context) {
 	}
 	t := time.NewTicker(AppErrorsFlushInterval)
 	defer t.Stop()
+	retryCtx, stopRetries := context.WithCancel(ctx)
+	retryDone := make(chan struct{})
+	go func() {
+		defer close(retryDone)
+		p.runHTTPIssueRetries(retryCtx)
+	}()
+	defer func() { stopRetries(); <-retryDone }()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			p.tryFlush(ctx)
-			p.retryHTTPIssues(ctx)
 		case <-p.notifier:
 			// Wakeup: only flush if the ringbuffer is
 			// actually full enough to bother. Avoids a
@@ -228,6 +238,9 @@ func (p *appErrorsPublisher) flushBatch(ctx context.Context, batch []appErrorRow
 		responses++
 		if responses > len(batch) {
 			return errors.New("app errors stream returned too many responses")
+		}
+		if resp.GetIssueHandoff() == "retry" {
+			p.queueHTTPIssueRetries(batch[responses-1 : responses])
 		}
 		if resp.GetOutcome() == "merged" && p.ops != nil {
 			p.ops.ObserveAppErrorsDedupeMerge()

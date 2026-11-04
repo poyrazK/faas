@@ -111,6 +111,46 @@ func TestHTTPIssueRetryWaitsForPerAppSlot(t *testing.T) {
 	}
 }
 
+func TestHTTPFailureReportsFullIssueQueue(t *testing.T) {
+	store := &countingAppErrorsStore{plan: api.PlanHobby}
+	receiver := NewAppErrorsReceiver(store, nil, true)
+	app := uuid.NewString()
+	receiver.issueAttemptApps[app] = issueRetryPerApp
+	receiver.issuePendingApps[app] = issuePendingPerApp
+	req := &apidpb.IncrementAppErrorRequest{AccountId: uuid.NewString(), AppId: app, DeploymentId: uuid.NewString(), RequestId: uuid.NewString(), IssueEventId: uuid.NewString(), RouteTemplate: "/orders", HttpStatus: 500, ErrorClass: "unhandled", Fingerprint: strings.Repeat("a", 64), ReceivedAtUnixMs: time.Now().UnixMilli(), RequestRowOmitted: true}
+	out := receiver.HandleOne(context.Background(), req)
+	if out.GetOutcome() != OutcomeInserted || out.GetIssueHandoff() != "retry" || len(store.increments) != 1 {
+		t.Fatalf("legacy write and independent retry signal: %+v", out)
+	}
+}
+
+func TestHTTPFailureAttemptsUseSharedIngestGate(t *testing.T) {
+	store := &issueCaptureStore{countingAppErrorsStore: &countingAppErrorsStore{plan: api.PlanHobby}, events: make(chan struct{}, 1)}
+	receiver := NewAppErrorsReceiver(store, nil, true)
+	receiver.gate = NewIngestGate(1)
+	release, err := receiver.gate.acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { release() }()
+	req := &apidpb.IncrementAppErrorRequest{AccountId: uuid.NewString(), AppId: uuid.NewString(), DeploymentId: uuid.NewString(), RequestId: uuid.NewString(), IssueEventId: uuid.NewString(), RouteTemplate: "/orders", HttpStatus: 500, ErrorClass: "unhandled", Fingerprint: strings.Repeat("a", 64), ReceivedAtUnixMs: time.Now().UnixMilli()}
+	if got := receiver.enqueueHTTPIssue(req); got != "queued" {
+		t.Fatalf("handoff = %q", got)
+	}
+	select {
+	case <-store.events:
+		t.Fatal("issue write bypassed the held ingest gate")
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	release = func() {}
+	select {
+	case <-store.events:
+	case <-time.After(time.Second):
+		t.Fatal("issue write did not start after gate release")
+	}
+}
+
 type issueCaptureStore struct {
 	*countingAppErrorsStore
 	state.IssueStore

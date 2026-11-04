@@ -5,12 +5,15 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -25,6 +28,7 @@ type retryIssueClient struct {
 	batchStreamClient
 	retried []*apidpb.IncrementAppErrorRequest
 	err     error
+	outcome string
 }
 
 func (c *retryIssueClient) RecordHTTPIssue(_ context.Context, req *apidpb.IncrementAppErrorRequest) (*apidpb.IncrementAppErrorResponse, error) {
@@ -32,7 +36,99 @@ func (c *retryIssueClient) RecordHTTPIssue(_ context.Context, req *apidpb.Increm
 	if c.err != nil {
 		return nil, c.err
 	}
-	return &apidpb.IncrementAppErrorResponse{Outcome: "accepted"}, nil
+	outcome := c.outcome
+	if outcome == "" {
+		outcome = "accepted"
+	}
+	return &apidpb.IncrementAppErrorResponse{Outcome: outcome}, nil
+}
+
+type handoffClient struct{ retryIssueClient }
+
+func (c *handoffClient) IncrementAppError(context.Context) (apidgrpc.AppErrorStream, error) {
+	return &handoffStream{}, nil
+}
+
+type handoffStream struct{ batchStream }
+
+func (s *handoffStream) Recv() (*apidpb.IncrementAppErrorResponse, error) {
+	resp, err := s.batchStream.Recv()
+	if resp != nil {
+		resp.IssueHandoff = "retry"
+	}
+	return resp, err
+}
+
+func TestAppErrorsPublisherRetriesRejectedIssueHandoff(t *testing.T) {
+	client := &handoffClient{}
+	rec := newAppErrorsRecorder(appErrorsRecorderConfig{Enabled: true}, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	rec.enqueue("app\x00fingerprint", appErrorRow{AppID: "app", DeploymentID: "deployment", RequestID: "request", IssueEventID: "event", HTTPStatus: 500, ReceivedAt: time.Now()})
+	p := newAppErrorsPublisher(rec, client, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	p.tryFlush(context.Background())
+	if len(p.issueQueue) != 1 {
+		t.Fatalf("queued retries = %d", len(p.issueQueue))
+	}
+	// An ambiguous later stream failure must not enqueue the same record twice.
+	p.queueHTTPIssueRetries([]appErrorRow{p.issueQueue[0].row})
+	if len(p.issueQueue) != 1 {
+		t.Fatal("duplicate retry")
+	}
+	p.retryHTTPIssues(context.Background())
+	if len(client.retried) != 1 || len(p.issueQueue) != 0 {
+		t.Fatal("Issue-only retry was not delivered")
+	}
+}
+
+func TestAppErrorsPublisherReportsSkippedRetry(t *testing.T) {
+	client := &retryIssueClient{outcome: "retry_skipped"}
+	ops := wire.NewOpsMetrics("gatewayd_internal")
+	p := newAppErrorsPublisher(&appErrorsRecorder{}, client, ops, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	p.queueHTTPIssueRetries([]appErrorRow{{AppID: "app", DeploymentID: "deployment", RequestID: "request", IssueEventID: "event", HTTPStatus: 500}})
+	p.retryHTTPIssues(context.Background())
+	w := httptest.NewRecorder()
+	ops.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	if !strings.Contains(w.Body.String(), `outcome="retry_skipped"} 1`) || strings.Contains(w.Body.String(), `outcome="retry_recovered"} 1`) {
+		t.Fatal("skipped Issue was not reported as skipped")
+	}
+}
+
+type blockingRetryClient struct {
+	batchStreamClient
+	started chan struct{}
+	opened  chan struct{}
+}
+
+func (c *blockingRetryClient) RecordHTTPIssue(ctx context.Context, _ *apidpb.IncrementAppErrorRequest) (*apidpb.IncrementAppErrorResponse, error) {
+	close(c.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (c *blockingRetryClient) IncrementAppError(ctx context.Context) (apidgrpc.AppErrorStream, error) {
+	close(c.opened)
+	return c.batchStreamClient.IncrementAppError(ctx)
+}
+
+func TestAppErrorsPublisherFlushesWhileIssueRetryBlocks(t *testing.T) {
+	client := &blockingRetryClient{started: make(chan struct{}), opened: make(chan struct{})}
+	rec := newAppErrorsRecorder(appErrorsRecorderConfig{Enabled: true}, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	rec.queue = make([]appErrorRow, AppErrorsFlushBatchSize)
+	p := newAppErrorsPublisher(rec, client, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	p.queueHTTPIssueRetries([]appErrorRow{{AppID: "app", DeploymentID: "deployment", RequestID: "request", IssueEventID: "event", HTTPStatus: 500}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); p.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("retry did not start")
+	}
+	p.NotifyEnqueued()
+	select {
+	case <-client.opened:
+	case <-time.After(time.Second):
+		t.Fatal("blocked retry prevented fresh flush")
+	}
 }
 
 func TestAppErrorsPublisherWaitsForCompatibleApid(t *testing.T) {

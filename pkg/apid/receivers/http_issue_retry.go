@@ -28,9 +28,9 @@ func retryableHTTPIssueError(err error) bool {
 
 // enqueueHTTPIssue keeps Issue storage latency off the non-idempotent legacy
 // counting path. Its bounded in-memory queue remains best effort on restart.
-func (a *appErrorsReceiver) enqueueHTTPIssue(req *apidpb.IncrementAppErrorRequest) {
+func (a *appErrorsReceiver) enqueueHTTPIssue(req *apidpb.IncrementAppErrorRequest) string {
 	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" || req.GetRequestId() == "" {
-		return
+		return ""
 	}
 	// Snapshot before returning to the streaming handler, which may reuse req.
 	snapshot := &apidpb.IncrementAppErrorRequest{
@@ -46,17 +46,18 @@ func (a *appErrorsReceiver) enqueueHTTPIssue(req *apidpb.IncrementAppErrorReques
 		if len(a.issuePending) >= issuePendingCapacity || a.issuePendingApps[app] >= issuePendingPerApp {
 			a.issueRetryMu.Unlock()
 			a.ops.ObserveIssueEvent("retry_dropped")
-			return
+			return "retry"
 		}
 		a.issuePending = append(a.issuePending, snapshot)
 		a.issuePendingApps[app]++
 		a.issueRetryMu.Unlock()
-		return
+		return "queued"
 	}
 	a.issueAttemptCount++
 	a.issueAttemptApps[app]++
 	a.issueRetryMu.Unlock()
 	a.startHTTPIssue(snapshot)
+	return "queued"
 }
 
 // startHTTPIssue owns one initial-attempt slot; completion wakes the oldest
@@ -70,7 +71,11 @@ func (a *appErrorsReceiver) startHTTPIssue(snapshot *apidpb.IncrementAppErrorReq
 		outcome := httpIssueSkipped
 		attempt := func(ctx context.Context) error {
 			attempts++
-			var err error
+			release, err := a.gate.acquire(ctx)
+			if err != nil {
+				return err
+			}
+			defer release()
 			outcome, err = recordHTTPIssue(ctx, a.store, snapshot)
 			if err == nil && outcome == httpIssueSkipped {
 				return errHTTPIssueSkipped

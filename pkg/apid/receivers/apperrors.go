@@ -211,7 +211,7 @@ func (a *appErrorsReceiver) handleValidatedAppError(ctx context.Context, req *ap
 
 	// Issues have their own retention and quotas. Do not gate them on the
 	// legacy aggregate or its optional per-request detail row.
-	a.enqueueHTTPIssue(req) //nolint:contextcheck // Bounded issue delivery must outlive the request stream.
+	out.IssueHandoff = a.enqueueHTTPIssue(req) //nolint:contextcheck // Bounded issue delivery must outlive the request stream.
 
 	// ---- 4. IncrementAppError (dedupe-merge INSERT) ----
 	//

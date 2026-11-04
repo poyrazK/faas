@@ -122,6 +122,14 @@ records with `exception.type` or `exception.message`. Standard exception type,
 message, and stacktrace attributes are supported. Optional `gregale.request_id`,
 `gregale.invocation_id`, and `gregale.issue.event_id` attributes supply correlation
 or an explicit UUID. Unrelated logs/spans/resource tags are ignored.
+For HTTP fallback grouping, trace exports use `http.route` and integer
+`http.response.status_code` (or the older `http.status_code`) on the span;
+exception event attributes override span attributes. Log exports can provide
+the same attributes on each log record. Only status codes 400–599 are used.
+These fields become part of generated event identity, so an unchanged export
+retried across the rollout of this support can be recorded a second time.
+An explicit `gregale.issue.event_id` preserves identity, but a retry of an
+already stored event can then conflict because its HTTP context has changed.
 
 Trace and span IDs follow the [OTLP JSON encoding specification](https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding). Unknown protocol fields are ignored.
 Invalid or all-zero optional log trace and span IDs are treated as absent; span
@@ -266,17 +274,21 @@ records do not contain that timing evidence, and windows crossing their batch
 boundaries remain approximate. Apply the schema and upgrade all apid writers
 before upgrading gateways if precise timing is required: an older apid ignores
 the new bucket field, and those timestamps cannot be recovered later.
-If the gateway's legacy error stream fails, the gateway keeps eligible HTTP
+If the gateway's legacy error stream fails or apid reports that its Issue
+handoff queue is full, the gateway keeps eligible HTTP
 Issues in a separate bounded in-memory queue and retries them using their
 stable event IDs. It does not retry the legacy counter, whose commit may have
 been ambiguous. The queue holds at most 1,024 records, at most 128 per app,
 for up to an hour; overflow, expiry or a gateway restart can lose records.
-Deploy apid before gateways: older apid versions do not implement this retry
-RPC, so queued records wait until a compatible apid is available or expire.
+Deploy apid before gateways: older apid versions do not report handoff overflow
+and do not implement the retry RPC, so queued records wait until a compatible
+apid is available or expire. Successful handoff is still in memory; a receiver
+restart or a later exhausted retry can lose a record after acknowledgement.
 If recording an HTTP Issue fails transiently, apid retries the Issue independently
 of the legacy error count. Initial attempts allow 128 concurrent records, at most 8 per app. Up to 1,024
 additional records can wait for an initial attempt, at most 128 per app. Retries
-run at most 128 at a time, at most 8 per app; another 1,024 failed records can
+run at most 128 at a time, at most 8 per app; database attempts share the
+four-slot telemetry ingest gate. Another 1,024 failed records can
 wait for a retry slot, at most 128 per app. They remain in memory for up to an
 hour from the initial attempt; a full queue, expiry, or process restart can
 still lose records.

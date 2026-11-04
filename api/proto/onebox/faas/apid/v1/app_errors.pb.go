@@ -325,7 +325,11 @@ type IncrementAppErrorResponse struct {
 	// dedupe_merged — true when outcome=="merged". Mirrors the
 	// outcome string but lets the gateway hot-path avoid a string
 	// compare on every record.
-	DedupeMerged  bool `protobuf:"varint,3,opt,name=dedupe_merged,json=dedupeMerged,proto3" json:"dedupe_merged,omitempty"`
+	DedupeMerged bool `protobuf:"varint,3,opt,name=dedupe_merged,json=dedupeMerged,proto3" json:"dedupe_merged,omitempty"`
+	// "queued" means the receiver accepted the Issue for asynchronous work;
+	// "retry" asks a new gateway to retry the Issue alone after queue overflow.
+	// Empty means an older receiver or a record ineligible for Issues.
+	IssueHandoff  string `protobuf:"bytes,4,opt,name=issue_handoff,json=issueHandoff,proto3" json:"issue_handoff,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -381,6 +385,13 @@ func (x *IncrementAppErrorResponse) GetDedupeMerged() bool {
 	return false
 }
 
+func (x *IncrementAppErrorResponse) GetIssueHandoff() string {
+	if x != nil {
+		return x.IssueHandoff
+	}
+	return ""
+}
+
 var File_onebox_faas_apid_v1_app_errors_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_apid_v1_app_errors_proto_rawDesc = "" +
@@ -416,11 +427,12 @@ const file_onebox_faas_apid_v1_app_errors_proto_rawDesc = "" +
 	"\x05count\x18\x14 \x01(\x03R\x05count\x12.\n" +
 	"\x13request_row_omitted\x18\x15 \x01(\bR\x11requestRowOmitted\x12$\n" +
 	"\x0eissue_event_id\x18\x16 \x01(\tR\fissueEventId\x12,\n" +
-	"\x12issue_time_buckets\x18\x17 \x03(\rR\x10issueTimeBuckets\"|\n" +
+	"\x12issue_time_buckets\x18\x17 \x03(\rR\x10issueTimeBuckets\"\xa1\x01\n" +
 	"\x19IncrementAppErrorResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12 \n" +
 	"\vfingerprint\x18\x02 \x01(\tR\vfingerprint\x12#\n" +
-	"\rdedupe_merged\x18\x03 \x01(\bR\fdedupeMerged2\xf5\x01\n" +
+	"\rdedupe_merged\x18\x03 \x01(\bR\fdedupeMerged\x12#\n" +
+	"\rissue_handoff\x18\x04 \x01(\tR\fissueHandoff2\xf5\x01\n" +
 	"\tAppErrors\x12v\n" +
 	"\x11IncrementAppError\x12-.onebox.faas.apid.v1.IncrementAppErrorRequest\x1a..onebox.faas.apid.v1.IncrementAppErrorResponse(\x010\x01\x12p\n" +
 	"\x0fRecordHTTPIssue\x12-.onebox.faas.apid.v1.IncrementAppErrorRequest\x1a..onebox.faas.apid.v1.IncrementAppErrorResponseBBZ@github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1;apidpbb\x06proto3"
