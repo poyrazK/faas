@@ -214,6 +214,7 @@ flags in the table below release their capability; every other capability in
 | `strict_budgets` | Strict compute and egress budgets (ADR-1750) | apid | none (off until an operator writes it) |
 | `app_health_workers` | App health assesses worker pools: replicas against the pool minimum, backlog age, recent dead letters (ADR-20261102091500) | apid | none (off until an operator writes it) |
 | `app_health_memory` | App health warns when an app's guests ran short of memory in the last day, before an OOM kill (ADR-20261102124306) | apid | none (off until an operator writes it) |
+| `postgres_pool_sizing` | Deployments carry `GREGALE_POSTGRES_POOL_MAX`, the per-instance concurrency capped at 10, which the SDKs' Postgres pool bindings use as the default pool size (ADR-20261104141122) | imaged | none (off until an operator writes it) |
 | `quiet_pause_unbilled` | Unbilled quiet pause: bill running seconds, not quiet-paused ones (ADR-20261023171905). Takes effect only where meterd's `quiet_pause_unbilled` mode is `on`; accounts it does not release are counted as in shadow mode and billed in full | meterd | none (off until an operator writes it) |
 | `edge_waf_blocking` | Warn and block modes of WAF edge rules (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_challenge` | Challenge edge rules, with difficulty escalation (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |

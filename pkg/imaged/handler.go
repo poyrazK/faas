@@ -114,6 +114,9 @@ type Handler struct {
 	// profileCapturesReleased decides the profile-captures capability for a
 	// deployment's account (ADR-20261023115741); nil releases it.
 	profileCapturesReleased func(platformflags.Subject) bool
+	// postgresPoolSizingReleased decides the postgres_pool_sizing flag for a
+	// deployment's account (ADR-20261104141122); nil releases it to none.
+	postgresPoolSizingReleased func(platformflags.Subject) bool
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -559,6 +562,13 @@ func (h *Handler) WithProfilingOnDemand(enabled bool) *Handler {
 // paths, but deploys from a source ref copy it from gregale.yaml as is.
 func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
 	h.continuousProfiling = enabled
+	return h
+}
+
+// WithPostgresPoolSizingRelease installs the per-account decision of the
+// postgres_pool_sizing platform flag (ADR-20261104141122).
+func (h *Handler) WithPostgresPoolSizingRelease(released func(platformflags.Subject) bool) *Handler {
+	h.postgresPoolSizingReleased = released
 	return h
 }
 
@@ -2531,7 +2541,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), app, acct)
+	manifest = h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3216,7 +3226,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyFunctionConcurrency(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app)
+	manifest = applyFunctionConcurrency(h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)

@@ -23,6 +23,24 @@ remain prompt even when an application callback ignores cancellation; cleanup
 must wait until that callback returns. Direct Node reloads await their callbacks,
 and direct synchronous Python reloads run on the caller's thread.
 
+## Pool size
+
+Where Gregale has released it to your account, a deployment carries
+`GREGALE_POSTGRES_POOL_MAX`: how many database connections one instance can
+use, which is its per-instance concurrency (`scaling_policy.per_instance_concurrency`,
+else the plan's `concurrency_per_vm`) capped at 10 (ADR-20261104141122). The
+whole app then opens at most `(max_concurrency + 1) × GREGALE_POSTGRES_POOL_MAX`
+connections, the extra instance being the one a rollout may run beside the
+serving release. The value is set when the deployment is built, so a changed
+plan or scaling policy applies from the next deploy; your own environment
+variable of the same name wins.
+
+The binding hands it to your factory as the pool configuration's `max`
+(Node, the `pg.Pool` option, so `new pg.Pool({...config})` uses it),
+`MaxConnections` (Go, for `db.SetMaxOpenConns`) or `max_size` (Python). It is
+unset when the variable is absent or outside 1–1000, and a size you set in
+the factory always wins.
+
 ## Node
 
 Import the server-only `@gregale/sdk-node/postgres/runtime` entrypoint. It adds no
