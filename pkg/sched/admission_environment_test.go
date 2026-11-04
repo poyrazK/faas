@@ -284,15 +284,27 @@ func TestEnvironmentLedgerRecoveryRecordsOverCapServingRows(t *testing.T) {
 	}
 }
 
-func TestReaperRejectsScalingHistoryFromDifferentEnvironmentLifetime(t *testing.T) {
+type foreignScalingOwnerStore struct{ MemStore *state.MemStore }
+
+func (s foreignScalingOwnerStore) RuntimeScalingStateForDeployment(ctx context.Context, accountID, appID, deploymentID string) (state.RuntimeScalingState, error) {
+	row, err := s.MemStore.RuntimeScalingStateForDeployment(ctx, accountID, appID, deploymentID)
+	row.DeploymentID = "another-deployment"
+	return row, err
+}
+
+// The reaper takes a deployment's environment and scale clocks from its
+// scaling state alone (ADR 20261102205122), so a scaling state that names
+// another owner must leave the row's policy unavailable rather than reap it
+// on that owner's clock.
+func TestReaperRejectsScalingStateOfAnotherOwner(t *testing.T) {
 	f := sched.SeedStageSnapshotPolicy(t, 0, false)
-	store := foreignScalingEnvironmentStore{(*f.Store())}
+	store := foreignScalingOwnerStore{(*f.Store())}
 	loop := sched.NewLoop(nil, sched.XNewEngine(t, statetest.NewMem(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0"), sched.TestLog())
 	now := time.Now()
 	rows := []sched.InstanceInfo{{Instance: "stage", AppID: (*f.App()).ID, DeploymentID: (*f.Stage()).ID, State: state.StateRunning, Plan: api.PlanPro, Started: now.Add(-time.Hour), LastRequest: now.Add(-time.Hour)}}
 	loop.EnrichReaperEnvironmentPolicies(t.Context(), []state.App{(*f.App())}, rows, nil)
 	if !rows[0].PolicyUnavailable || len(sched.ReapIdle(now, rows, nil, nil)) != 0 {
-		t.Fatalf("different lifetime's clock authorized reaping: %+v", rows)
+		t.Fatalf("another owner's scaling state authorized reaping: %+v", rows)
 	}
 }
 

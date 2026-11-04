@@ -478,6 +478,11 @@ func TestE2E_OrgLifecycle_PeekTerminalStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OrgBySlug: %v", err)
 	}
+	// A new org has no seats to accept into; the consumed case needs one
+	// (#6515 refuses acceptance on a plan without members).
+	if err := store.UpdateOrgPlan(ctx, peekOrg.ID, api.PlanPro); err != nil {
+		t.Fatalf("UpdateOrgPlan: %v", err)
+	}
 
 	// mint a fresh invitation row, then stamp it into one of the
 	// three terminal states. Each sub-test owns its own seeded
