@@ -13672,6 +13672,15 @@ func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {
 	return reason, forbidden
 }
 
+// VmmdLogRingBudgetBytes bounds the customer log lines all live instances'
+// rings hold in one vmmd's memory, which the control-plane slice pays for,
+// split evenly across live instances but never below VmmdLogRingFloorBytes
+// each (bug hunt H47). Lines a ring evicts go to the log archive spool.
+const (
+	VmmdLogRingBudgetBytes int64 = 512 << 20
+	VmmdLogRingFloorBytes  int64 = 256 << 10
+)
+
 // UDPDatagramMaxBytes is the largest UDP payload on the IPv4 guest network:
 // a 65535-byte IP packet minus the minimum 20-byte IP and 8-byte UDP headers.
 const UDPDatagramMaxBytes = 65507
