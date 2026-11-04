@@ -59,7 +59,12 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		if p.State == "deleted" {
 			h.Code, h.Message, h.Recovery = "deleted", "Pipeline deleted.", "Imported rows were retained."
 		}
-	case p.DesiredState == "paused" && p.State != "resync_required":
+	case p.DesiredState == "paused" && p.State != "resync_required" && (!p.ObservationFresh || p.State != "paused"):
+		h.Code, h.Message, h.Recovery = "pause_failed", "Pause could not be confirmed; replication may still be running.", "Check worker and mirror access. The saved pause request retries automatically."
+		if !p.ObservationFresh {
+			h.State, h.Code, h.Message, h.Recovery = "unknown", "pause_pending", "Pause is unconfirmed; replication may still be running.", "Wait for a current worker observation and check worker availability if monitoring stays stale."
+		}
+	case p.DesiredState == "paused" && p.State == "paused":
 		h.State, h.Code, h.Message, h.Recovery, h.Action = "inactive", "paused", "Sync is paused.", "Resume to continue replication; monitor retained WAL while paused.", "resume"
 	case !p.ObservationFresh:
 		h.State, h.Code, h.Message, h.Recovery = "unknown", "monitoring_stale", "Monitoring is stale; data freshness is unknown.", "Check worker availability and refresh status. Native replication may still be running."
@@ -67,6 +72,10 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		h.Code, h.Message, h.Recovery, h.Action, h.RequiresConfirmation = p.Reason, "Replication requires a new copy.", "Resolve the reported source problem, then confirm replacement of the imported tables. Reads can be interrupted.", "resync", true
 	case p.Reason == "table_addition_pending":
 		h.Message, h.Recovery, h.RequiresConfirmation = "New tables need approval.", "Review the table preview and reader access in Data connections. Existing tables remain readable.", true
+	case p.Reason == "source_storage_verification":
+		h.Message, h.Recovery = "Source storage changed; imported rows are being checked.", "Reads stay gated until verification passes. If stopped or limited, retry verification after resolving its cause, or confirm a full resync."
+	case p.Reason == "replication_continuity_verification":
+		h.Message, h.Recovery = "Replication continuity is unconfirmed; imported rows are being checked.", "Reads stay gated until a fresh verification passes. If stopped or limited, retry verification after resolving its cause, or confirm a full resync."
 	case p.Reason == "table_addition_unsupported":
 		h.Message, h.Recovery = "A selected table is unsupported.", "Review discovery issues or discard the pending selection. Existing tables remain readable."
 	case p.Reason == "table_addition_copying" || p.Reason == "table_addition_verifying":
