@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "cd0b02d563d891eeae25ed1bb8555190e40d0ade6872c921609b29fe33ecfaea",
+      "revision": "c01a3a168cdc0149259174f8c8c5aae30cf4323f6a137c469502a2260cc962fe",
       "files": [
         "faas.rules.yml"
       ],
@@ -1437,6 +1437,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "aa1f2eb1e79f2d351b501a08c7c2a288b2e7b0c8896f5921cdd000151845e3a6"
+          }
+        },
+        {
+          "id": "31b7b69bcdfee3b9a7e3fdfc307b0dd825fc1e24356b0cc6aaa2952003825278",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_compute_edge",
+          "rule_name": "FaasEdgeCertificateExpiringSoon",
+          "definition": {
+            "expression_hash": "fd3f0d406294d25c8d3a4ace747ef1c20c95648be53c95b30c2b93045b68bb38",
+            "labels_hash": "4a22e539b275945c1a41b3c577eceb35730aaab00303f6e7112e73a61087f1d8",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "cae16490cb95c9960393be49439f78fe8413e9ca44a296513e273232209c78e4"
           }
         },
         {
@@ -4677,6 +4690,19 @@
           }
         },
         {
+          "id": "ae1fb5b94aa2c061a15cce54c02cf910a72b20b9942e1f97c21b1423b4ae4ddc",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_dns",
+          "rule_name": "FaasEdgeCertificateRenewalOverdue",
+          "definition": {
+            "expression_hash": "8f93a31bda697f00147358408164ebc1aec14f8ea5e0033ad86038d63e06d51b",
+            "labels_hash": "fb0e113eb144e985c749472ac1d45e76708f42a3a189d43d1d0d01821865e321",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "287ac041bafbd96623580d68e897aa5f3482fddf831a674bc47e1fded1d5bd7a"
+          }
+        },
+        {
           "id": "af2a792029c0e160cd7e34cfb2fb8749d1316bad5f789854bd18c3e5c41dab12",
           "file_name": "faas.rules.yml",
           "group_name": "faas_mcp_protocol",
@@ -6799,7 +6825,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "c87694889b256fff72563af0350d5cf96551946e31af79cbcf8d7e9f28a4e1f4",
+      "revision": "49aa5b0c342855df28e8d8e24e3a411450f2e7f0147baaae65fadec02ef8a5f2",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8314,6 +8340,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "aa1f2eb1e79f2d351b501a08c7c2a288b2e7b0c8896f5921cdd000151845e3a6"
+          }
+        },
+        {
+          "id": "31b7b69bcdfee3b9a7e3fdfc307b0dd825fc1e24356b0cc6aaa2952003825278",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_compute_edge",
+          "rule_name": "FaasEdgeCertificateExpiringSoon",
+          "definition": {
+            "expression_hash": "fd3f0d406294d25c8d3a4ace747ef1c20c95648be53c95b30c2b93045b68bb38",
+            "labels_hash": "4a22e539b275945c1a41b3c577eceb35730aaab00303f6e7112e73a61087f1d8",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "cae16490cb95c9960393be49439f78fe8413e9ca44a296513e273232209c78e4"
           }
         },
         {
@@ -11681,6 +11720,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2ffdb6e08350d28cf8e6f721d42831513cb382cd3de16d1d45ff7f4a795f4c8e"
+          }
+        },
+        {
+          "id": "ae1fb5b94aa2c061a15cce54c02cf910a72b20b9942e1f97c21b1423b4ae4ddc",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_dns",
+          "rule_name": "FaasEdgeCertificateRenewalOverdue",
+          "definition": {
+            "expression_hash": "8f93a31bda697f00147358408164ebc1aec14f8ea5e0033ad86038d63e06d51b",
+            "labels_hash": "fb0e113eb144e985c749472ac1d45e76708f42a3a189d43d1d0d01821865e321",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "287ac041bafbd96623580d68e897aa5f3482fddf831a674bc47e1fded1d5bd7a"
           }
         },
         {

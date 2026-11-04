@@ -1,0 +1,10 @@
+# Managed by the seal_domains role (ADR-20261103163954 §3): the compute edge
+# opens the apps domains' certificate key with the edge-tls identity, and
+# with the previous one during a rotation, so the certificate sealed before
+# it still opens until edgednsd has ordered one for the new recipient.
+[Service]
+LoadCredential=faas_seal_domain_edge_tls:/etc/faas/secrets/domains/edge-tls.age
+{% if faas_seal_domain_edge_tls_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_edge_tls_previous:/etc/faas/secrets/domains/edge-tls.age.previous
+{% endif %}
+Environment=FAAS_SEAL_DOMAIN_EDGE_TLS_IDENTITY_PATH=%d/faas_seal_domain_edge_tls

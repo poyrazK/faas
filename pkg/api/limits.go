@@ -17425,6 +17425,12 @@ const (
 	EdgeCertificateOrderTimeout    = 10 * time.Minute
 	EdgeCertificateNamesMax        = 10
 	EdgeCertificateKeepAfterExpiry = 90 * 24 * time.Hour
+	// A compute edge reloads the certificates on each pg_notify and at
+	// least every EdgeCertificateReloadInterval, which covers a notice
+	// missed while its LISTEN connection was down; it reconnects after
+	// EdgeCertificateListenRetry.
+	EdgeCertificateReloadInterval = 10 * time.Minute
+	EdgeCertificateListenRetry    = 5 * time.Second
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one

@@ -36,6 +36,26 @@ through systemd `LoadCredential`:
 
 Never put them in the repository or in inventory.
 
+**Or the certificate edgednsd keeps** (ADR-20261103163954 §3). With nothing
+in front, the edge needs a publicly trusted certificate for the apps domain.
+edgednsd orders it from Let's Encrypt and stores its key sealed to the
+`edge-tls` seal domain; each edge loads it with
+`faas_edge_public_tls_cert_source: database` and opens the key in memory
+with the domain's identity, so no certificate or key file sits on the node.
+Order first, then switch the edges:
+
+1. `gregalectl seal-domain init --domain edge-tls`, then the seal_domains
+   role: the recipient on the control plane, the identity on compute nodes.
+2. edgednsd with `faas_edgednsd_certificate_names` (staging CA first; see
+   roles/edgednsd_service/README.md). Wait for
+   `edge_certificate_orders_total{result="issued"}`.
+3. The edges with `faas_edge_public_tls_cert_source: database` and
+   `faas_edge_public_tls_cert_ca` matching edgednsd's CA. An edge is not
+   ready until it has loaded one, so edgednsd keeps it out of DNS until then.
+
+Only `origin-pull-ca.pem` is still staged by hand. Alerts and failures:
+[FaasEdgeCertificate](FaasEdgeCertificate.md).
+
 ## 3. Turn on zone-level Authenticated Origin Pulls
 
 ```bash
