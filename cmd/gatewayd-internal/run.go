@@ -86,6 +86,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
+	"github.com/onebox-faas/faas/pkg/sandboxtoken"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
@@ -1312,7 +1313,10 @@ type runDeps struct {
 	edgeChallengeSecret    []byte
 	edgeChallengeKeySource string
 	trafficDeadlines       *trafficdeadline.Signer
-	trafficRevocations     *trafficrevocation.Registry
+	// sandboxTokens verifies sandbox session tokens with apid's public keys
+	// (ADR-20261027090013); nil keeps the sandbox data plane off.
+	sandboxTokens      *sandboxtoken.Verifier
+	trafficRevocations *trafficrevocation.Registry
 	// publicRoutingView admits ordinary public requests (ADR-20261027085556);
 	// runWithDeps builds it when nil.
 	publicRoutingView *publicrouting.Registry
@@ -1636,6 +1640,10 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	defer func() { _ = credentialAuth.Close() }()
 	credentialMatcher := apidgrpc.NewCredentialMatcher(credentialAuth)
 	deps.credentialMatcher = credentialMatcher
+	// ADR-20261027090013: sandbox session tokens verify with apid's public
+	// key, fetched over the same channel; the gateway can mint none.
+	deps.sandboxTokens = sandboxtoken.NewVerifier()
+	go apidgrpc.RefreshSandboxKeys(ctx, credentialAuth, deps.sandboxTokens, log)
 	// Operation capabilities and dev-bridge tokens are keyed under rings this
 	// node never holds; apid matches them (amendment 1, decision 2).
 	credhash.SetRemote(credhash.FamilyScheduler, credentialMatcher.Remote())
@@ -3810,7 +3818,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-20261027090013: sandbox session commands and files run in the
 	// session's VM, so they are compute-owned like attach.
-	if sandbox := newSandboxDataHandler(deps, nil, log); sandbox != nil {
+	if sandbox := newSandboxDataHandler(deps, deps.sandboxTokens, log); sandbox != nil {
 		apidHandler = sandboxDataCarveOut{sandbox: sandbox, next: apidHandler}
 	}
 

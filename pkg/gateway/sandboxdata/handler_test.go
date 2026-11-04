@@ -146,7 +146,7 @@ func (n nodes) ClientFor(_ context.Context, nodeID string) (vmmdpb.VmmdClient, i
 
 type fixture struct {
 	vmmd   *fakeVmmd
-	signer *sandboxtoken.Signer
+	signer *sandboxtoken.Issuer
 	mux    *http.ServeMux
 }
 
@@ -166,13 +166,13 @@ func newFixture(t *testing.T) fixture {
 	t.Cleanup(func() { _ = conn.Close() })
 	signer := newSigner(t, "a")
 	mux := http.NewServeMux()
-	(&sandboxdata.Handler{Tokens: signer, Nodes: nodes{client: vmmdpb.NewVmmdClient(conn)}, Now: func() time.Time { return testNow }}).Routes(mux)
+	(&sandboxdata.Handler{Tokens: sandboxtoken.NewVerifier(signer.PublicKey()), Nodes: nodes{client: vmmdpb.NewVmmdClient(conn)}, Now: func() time.Time { return testNow }}).Routes(mux)
 	return fixture{vmmd: vmmd, signer: signer, mux: mux}
 }
 
-func newSigner(t *testing.T, fill string) *sandboxtoken.Signer {
+func newSigner(t *testing.T, fill string) *sandboxtoken.Issuer {
 	t.Helper()
-	s, err := sandboxtoken.NewSigner([]byte(strings.Repeat(fill, 32)))
+	s, err := sandboxtoken.NewIssuer([]byte(strings.Repeat(fill, 32)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,8 +3,9 @@
 // session's VM, served by gatewayd-internal and run by the session node's
 // vmmd over SandboxCall.
 //
-// The session token is the only credential. It is verified here with a key
-// apid shares through the session binding key, and a placed session's token
+// The session token is the only credential. It is verified here with apid's
+// Ed25519 public key, which the gateway fetches from apid and which mints
+// nothing (ADR-20261102191500), and a placed session's token
 // names the node and instance it runs on, so no call reads the control
 // plane's database. A call with a token that is missing, forged, expired or
 // for another session answers like an absent route; a closed session's VM is
@@ -36,9 +37,14 @@ type Nodes interface {
 	ClientFor(ctx context.Context, nodeID string) (vmmdpb.VmmdClient, io.Closer, bool)
 }
 
+// TokenVerifier checks session tokens; *sandboxtoken.Verifier implements it.
+type TokenVerifier interface {
+	Verify(token string, now time.Time) (sandboxtoken.Claims, error)
+}
+
 // Handler serves the data-plane routes. Now is time.Now unless set.
 type Handler struct {
-	Tokens *sandboxtoken.Signer
+	Tokens TokenVerifier
 	Nodes  Nodes
 	Log    *slog.Logger
 	Now    func() time.Time

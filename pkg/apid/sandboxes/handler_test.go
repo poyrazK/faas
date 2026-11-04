@@ -134,21 +134,21 @@ func (f *fakeStore) CloseSandbox(_ context.Context, accountID, id string) (agent
 type fixture struct {
 	h      *sandboxes.Handler
 	store  *fakeStore
-	signer *sandboxtoken.Signer
+	signer *sandboxtoken.Verifier
 	now    time.Time
 	audits []string
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	signer, err := sandboxtoken.NewSigner(bytes.Repeat([]byte{9}, 32))
+	issuer, err := sandboxtoken.NewIssuer(bytes.Repeat([]byte{9}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{signer: signer, now: time.Unix(1_800_000_000, 0).UTC()}
+	f := &fixture{signer: sandboxtoken.NewVerifier(issuer.PublicKey()), now: time.Unix(1_800_000_000, 0).UTC()}
 	clock := func() time.Time { return f.now }
 	f.store = &fakeStore{now: clock}
-	f.h = &sandboxes.Handler{Store: f.store, Tokens: signer, Now: clock, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	f.h = &sandboxes.Handler{Store: f.store, Tokens: issuer, Now: clock, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Audit: func(_ context.Context, action, _ string, _ map[string]any) { f.audits = append(f.audits, action) }}
 	return f
 }

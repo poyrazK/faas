@@ -40,6 +40,7 @@ const (
 	Auth_AuthenticateCredential_FullMethodName = "/onebox.faas.apid.v1.Auth/AuthenticateCredential"
 	Auth_MatchCredential_FullMethodName        = "/onebox.faas.apid.v1.Auth/MatchCredential"
 	Auth_VerifySession_FullMethodName          = "/onebox.faas.apid.v1.Auth/VerifySession"
+	Auth_SandboxTokenKeys_FullMethodName       = "/onebox.faas.apid.v1.Auth/SandboxTokenKeys"
 )
 
 // AuthClient is the client API for Auth service.
@@ -92,6 +93,11 @@ type AuthClient interface {
 	// caller still checks the session row itself. Errors are InvalidArgument
 	// (empty cookie) and Unavailable (apid has no session manager).
 	VerifySession(ctx context.Context, in *VerifySessionRequest, opts ...grpc.CallOption) (*VerifySessionResponse, error)
+	// SandboxTokenKeys returns the public keys that verify sandbox session
+	// tokens (ADR-20261027090013 §3). apid signs them with an Ed25519 key
+	// derived from its session key; a gateway verifies with these and cannot
+	// mint one (ADR-20261102191500). Unavailable: apid has no session key.
+	SandboxTokenKeys(ctx context.Context, in *SandboxTokenKeysRequest, opts ...grpc.CallOption) (*SandboxTokenKeysResponse, error)
 }
 
 type authClient struct {
@@ -136,6 +142,16 @@ func (c *authClient) VerifySession(ctx context.Context, in *VerifySessionRequest
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VerifySessionResponse)
 	err := c.cc.Invoke(ctx, Auth_VerifySession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authClient) SandboxTokenKeys(ctx context.Context, in *SandboxTokenKeysRequest, opts ...grpc.CallOption) (*SandboxTokenKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SandboxTokenKeysResponse)
+	err := c.cc.Invoke(ctx, Auth_SandboxTokenKeys_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +208,11 @@ type AuthServer interface {
 	// caller still checks the session row itself. Errors are InvalidArgument
 	// (empty cookie) and Unavailable (apid has no session manager).
 	VerifySession(context.Context, *VerifySessionRequest) (*VerifySessionResponse, error)
+	// SandboxTokenKeys returns the public keys that verify sandbox session
+	// tokens (ADR-20261027090013 §3). apid signs them with an Ed25519 key
+	// derived from its session key; a gateway verifies with these and cannot
+	// mint one (ADR-20261102191500). Unavailable: apid has no session key.
+	SandboxTokenKeys(context.Context, *SandboxTokenKeysRequest) (*SandboxTokenKeysResponse, error)
 	mustEmbedUnimplementedAuthServer()
 }
 
@@ -213,6 +234,9 @@ func (UnimplementedAuthServer) MatchCredential(context.Context, *MatchCredential
 }
 func (UnimplementedAuthServer) VerifySession(context.Context, *VerifySessionRequest) (*VerifySessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method VerifySession not implemented")
+}
+func (UnimplementedAuthServer) SandboxTokenKeys(context.Context, *SandboxTokenKeysRequest) (*SandboxTokenKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SandboxTokenKeys not implemented")
 }
 func (UnimplementedAuthServer) mustEmbedUnimplementedAuthServer() {}
 func (UnimplementedAuthServer) testEmbeddedByValue()              {}
@@ -307,6 +331,24 @@ func _Auth_VerifySession_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Auth_SandboxTokenKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SandboxTokenKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).SandboxTokenKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_SandboxTokenKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).SandboxTokenKeys(ctx, req.(*SandboxTokenKeysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Auth_ServiceDesc is the grpc.ServiceDesc for Auth service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -329,6 +371,10 @@ var Auth_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VerifySession",
 			Handler:    _Auth_VerifySession_Handler,
+		},
+		{
+			MethodName: "SandboxTokenKeys",
+			Handler:    _Auth_SandboxTokenKeys_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -10,12 +10,10 @@ import (
 )
 
 // newSandboxDataHandler serves sandbox session data-plane calls
-// (ADR-20261027090013 §4), verifying session tokens with tokens. Nil when
-// there is no verifier or node cache: the gateway holds no session key
-// (ADR-20261102191500), so until the session-token key reaches gateways the
-// data plane stays off and its paths fall through to apid, which owns none
-// of them.
-func newSandboxDataHandler(deps runDeps, tokens *sandboxtoken.Signer, log *slog.Logger) http.Handler {
+// (ADR-20261027090013 §4), verifying session tokens with apid's public keys.
+// Nil without a verifier or node cache. Until the first keys arrive every
+// token is refused like an absent route.
+func newSandboxDataHandler(deps runDeps, tokens *sandboxtoken.Verifier, log *slog.Logger) http.Handler {
 	if deps.nodeCache == nil || tokens == nil {
 		return nil
 	}

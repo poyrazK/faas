@@ -367,7 +367,7 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - Free creates none, since its `SandboxMaxLifetimeSec` is 0.
      - Queued sessions share `AgentRunQueuedPerAccount` with queued runs, counted under the account's agent lock. Concurrency stays agentd's, at claim time.
      - Closing a queued session closes it. A claimed one gets `close_requested_at`, which agentd acts on (step 5).
-   - **Tokens** (`pkg/sandboxtoken`, format `sbx1`) are HMAC-signed and bound to the session, account and tenant.
+   - **Tokens** (`pkg/sandboxtoken`) are signed and bound to the session, account and tenant. They were HMAC-signed (`sbx1`) as first built; step 5 moved them to Ed25519 (`sbx2`).
      - A token lives `SandboxTokenTTLSec` (900 s), never past the session's end.
      - Create and every read of a live session return a fresh one, so reading needs `deploy:write`; the list carries none.
      - The key derives from apid's session key. The data plane (step 4) verifies tokens without reading Postgres, and treats a session it no longer routes as revoked.
@@ -403,7 +403,7 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - `POST …/exec` takes a command line, which runs under `/bin/sh -c`, or an argument vector. It answers JSON, or SSE (`stdout`, `stderr`, then `result` or `error`) under `Accept: text/event-stream`, or `202 {handle}` for a background command. The timeout defaults to 60 s within the plan cap. A value above a cap is refused with `agent_limit`, carrying the limit and the observed value. `tty` is `sandbox_unsupported` until the interactive attach.
      - `GET …/exec`, `GET`/`DELETE …/exec/{handle}`.
      - `GET`/`PUT …/files?path=`, `…/files:list`, `…/files:stat`, and `POST …/files:remove`, `:mkdir`, `:rename`.
-   - **Credentials.** The token is the only credential. The gateway verifies it with the session binding key it shares with apid, so no call reads Postgres. A missing, forged, expired or other-session token answers `404`, like an absent route.
+   - **Credentials.** The token is the only credential. The gateway verifies it with apid's public key (see step 5's token keys), so no call reads Postgres. A missing, forged, expired or other-session token answers `404`, like an absent route.
    - **Problem codes.** Guest refusals get stable codes of their own: `sandbox_entry_not_found`, `sandbox_path_exists`, `sandbox_path_outside_workspace`, `sandbox_not_a_directory`, `sandbox_is_a_directory`, `sandbox_directory_not_empty`, `sandbox_too_large`, `sandbox_busy` and `sandbox_command_start_failed`. A session no longer on its node is `sandbox_not_found`.
    - **Not yet:**
      - the terminal (`stdin`, the WebSocket) and the archive routes, which come with step 7;
@@ -435,13 +435,16 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - It destroys the VM on close and whenever the stream ends.
      - `SandboxCall` thaws a frozen session in place, waiting out a freeze in progress, and reports `thawed`. A call never waits on schedd or the database.
      - Session VMs are carved out of the guards that keep execution-only VMs from being quiet-paused (§5, 2 s between calls) and frozen; `ExecuteExecution` and `RunAgent` refuse them.
-   - **Data plane off.** ADR-20261102191500 took the session key off every gateway. Compute nodes had held per-host session keys anyway, so step 4's tokens would not have verified on another node. The gateway's sandbox routes are therefore not mounted until session tokens are signed with a key gateways can verify without being able to mint, which is an open decision. Until then, calls reach apid and answer 404.
+   - **Token keys (owner decision, 2026-11-04).** ADR-20261102191500 took the session key off every gateway, and compute nodes had held per-host session keys anyway, so step 4's HMAC tokens would not have verified on another node.
+     - Tokens are now Ed25519-signed (format `sbx2.<key id>.<payload>.<signature>`). apid derives the private key from its session key.
+     - Gateways fetch the public keys over the Auth gRPC (`SandboxTokenKeys`, on the channel `VerifySession` uses). They refetch every 5 minutes, and every 5 s until the first answer.
+     - A gateway verifies tokens and cannot mint one. Until its keys arrive it refuses every token like an absent route.
+     - Rotation follows apid's session key: a token signed under a retired key fails at the next refetch.
    - **Not yet:**
      - preset snapshots for sessions (every session cold-boots);
      - the workspace scratch drive (the workspace lives on drive1's 512 MB);
      - memory reclaim on freeze;
      - backoff for a session that fails to boot again and again;
-     - vmmd's own token check;
      - metrics.
 6. Network modes `none` and `registries`.
 7. Workspace persist and hydrate.

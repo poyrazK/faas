@@ -28,8 +28,10 @@ func (s *server) configureSandboxes(pool *pgxpool.Pool) {
 		h.Store = agentstore.New(pool)
 	}
 	if s.sessions != nil {
-		if signer, err := sandboxtoken.NewSigner(s.sessions.BindingKey()); err == nil {
-			h.Tokens = signer
+		// Ed25519, derived from apid's session key: gateways verify with
+		// the public key from Auth.SandboxTokenKeys and cannot mint.
+		if issuer, err := sandboxtoken.NewIssuer(s.sessions.BindingKey()); err == nil {
+			h.Tokens = issuer
 		} else {
 			s.log.Warn("sandbox tokens disabled", "err", err)
 		}

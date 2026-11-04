@@ -37,7 +37,7 @@ type Store interface {
 // answer capacity_unavailable. Now is time.Now unless set.
 type Handler struct {
 	Store  Store
-	Tokens *sandboxtoken.Signer
+	Tokens *sandboxtoken.Issuer
 	Audit  func(ctx context.Context, action, accountID string, fields map[string]any)
 	Log    *slog.Logger
 	Now    func() time.Time
