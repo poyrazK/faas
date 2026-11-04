@@ -80075,6 +80075,7 @@ SELECT (jsonb_build_object(
     'customer_operation_code_pins_owner_fk', (SELECT count(*) FROM customer_operation_code_pins WHERE deployment_id = $1::uuid),
     'customer_operation_definitions_deployment_id_fkey', (SELECT count(*) FROM customer_operation_definitions WHERE deployment_id = $1::uuid),
     'deployment_aliases_deployment_id_fkey', (SELECT count(*) FROM deployment_aliases WHERE deployment_id = $1::uuid),
+    'deployment_event_subscription_intents_deployment_id_fkey', (SELECT count(*) FROM deployment_event_subscription_intents WHERE deployment_id = $1::uuid),
     'deployment_image_preparations_deployment_id_fkey', (SELECT count(*) FROM deployment_image_preparations WHERE deployment_id = $1::uuid),
     'deployment_logs_deployment_id_fkey', (SELECT count(*) FROM deployment_logs WHERE deployment_id = $1::uuid),
     'deployment_openapi_docs_deployment_id_fkey', (SELECT count(*) FROM deployment_openapi_docs WHERE deployment_id = $1::uuid),

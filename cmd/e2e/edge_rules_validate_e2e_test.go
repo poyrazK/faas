@@ -467,7 +467,10 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	headers, respBody, status := doReqHeaders(t, h, synthHost, http.MethodPost,
 		"/users", body)
 
-	if status != http.StatusServiceUnavailable || problemCode(respBody) != api.CodeTrafficPolicyUnavailable || headers.Get("Retry-After") != "1" {
+	// A rule the gateway cannot enforce is the owner's to fix, not an outage:
+	// the refusal names the rule and asks for no retry (ADR-091 amendment
+	// 2026-11-03).
+	if status != http.StatusServiceUnavailable || problemCode(respBody) != api.CodeTrafficPolicyUnavailable || headers.Get("Retry-After") != "" || !bytes.Contains(respBody, []byte(invalidRuleID)) {
 		t.Fatalf("uncompiled owned policy did not refuse dispatch: status=%d body=%s headers=%v", status, respBody, headers)
 	}
 	metricsReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
