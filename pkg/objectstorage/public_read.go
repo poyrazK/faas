@@ -412,7 +412,7 @@ func validPublicKey(key string) bool {
 }
 
 func copyPublicObjectHeaders(dst, src http.Header) {
-	for _, name := range []string{"Accept-Ranges", "Content-Length", "Content-Range", "Content-Type", "ETag", "Expires", "Last-Modified"} {
+	for _, name := range []string{"Accept-Ranges", "Content-Encoding", "Content-Language", "Content-Length", "Content-Range", "Content-Type", "ETag", "Expires", "Last-Modified"} {
 		if value := src.Get(name); value != "" {
 			dst.Set(name, value)
 		}

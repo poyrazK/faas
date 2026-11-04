@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/signal"
 	"time"
@@ -11,6 +12,7 @@ type testPreparedScenario struct {
 	Name        string
 	Scenario    testScenario
 	ManifestDir string
+	DataPath    string
 	Engine      string
 	Profiles    []string
 	Cases       []testDataCase
@@ -59,18 +61,20 @@ func prepareTestRunPlans(scenarios []testPreparedScenario, repeat int) []testRun
 }
 
 func executePreparedTests(client *Client, suite string, scenarios []testPreparedScenario, repeat int, failFast bool, reportPath, junitPath, htmlPath, baselinePath string, recoveryBaselinePaths ...string) int {
+	var inputs []string
+	for _, s := range scenarios {
+		inputs = append(inputs, s.DataPath)
+		inputs = append(inputs, testScenarioInputPaths(s.Scenario, s.ManifestDir)...)
+	}
+	if err := validateTestReportInputs(inputs, reportPath, junitPath, htmlPath); err != nil {
+		return printErr("Invalid test report paths", err)
+	}
 	for _, s := range scenarios {
 		if s.Scenario.CommandExecution != nil && s.Load != nil {
 			return printErr("Invalid contained command recipe", fmt.Errorf("contained commands do not support load overrides"))
 		}
-		profiles := s.Profiles
-		if len(profiles) == 0 {
-			profiles = []string{s.Engine}
-		}
-		for _, p := range profiles {
-			if err := validateTestCommandExecution(s.Scenario, s.Engine, p); err != nil {
-				return printErr("Invalid contained command recipe", err)
-			}
+		if err := validateTestScenarioExecution(s.Scenario, s.Engine, s.Profiles...); err != nil {
+			return printErr("Invalid scenario execution", err)
 		}
 		if err := validateTestCampaignGuidanceOptions(s.Scenario, s.Name, s.Profiles, []string{reportPath, junitPath, htmlPath}); err != nil {
 			return printErr("Invalid campaign guidance", err)
@@ -169,8 +173,16 @@ func executeTestRunPlan(ctx context.Context, client *Client, plan testRunPlan) t
 			receipt.Replay = plan.ReplayManifest
 			if receipt.Replay == nil {
 				receipt.Replay = newTestReplayManifest(p.Name, plan.Profile, plan.ReplayCase, p.Scenario)
-				receipt.Replay.Sweep = plan.ReplaySweep
-				receipt.Replay.Version = testFaultReplayVersion(receipt.Replay)
+				if receipt.Replay == nil {
+					receipt.Status = "failed"
+					if receipt.Error != "" {
+						receipt.Error += "; "
+					}
+					receipt.Error += "replay configuration could not be encoded"
+				} else {
+					receipt.Replay.Sweep = plan.ReplaySweep
+					receipt.Replay.Version = testFaultReplayVersion(receipt.Replay)
+				}
 			}
 		}
 		return receipt
@@ -401,28 +413,29 @@ func formatTestStagedLoadComparisonCheck(check testStagedLoadComparisonCheck) st
 }
 
 func finishTestRunReports(suite string, results []testRunReceipt, reportPath, junitPath string, htmlPaths ...string) int {
+	var outputErrors []error
 	htmlPath := ""
 	if len(htmlPaths) > 0 {
 		htmlPath = htmlPaths[0]
 	}
 	if reportPath != "" {
 		if err := writeTestReport(reportPath, results); err != nil {
-			return printErr("Could not save test report", err)
+			outputErrors = append(outputErrors, fmt.Errorf("JSON report: %w", err))
 		}
 	}
 	if junitPath != "" {
 		if err := writeTestJUnit(junitPath, results); err != nil {
-			return printErr("Could not save JUnit report", err)
+			outputErrors = append(outputErrors, fmt.Errorf("JUnit report: %w", err))
 		}
 	}
 	if htmlPath != "" {
 		if err := writeTestHTMLReport(htmlPath, suite, results); err != nil {
-			return printErr("Could not save HTML report", err)
+			outputErrors = append(outputErrors, fmt.Errorf("HTML report: %w", err))
 		}
 	}
 	if jsonOutput {
 		if err := writeJSON(results); err != nil {
-			return printErr("Could not print test report", err)
+			outputErrors = append(outputErrors, fmt.Errorf("JSON stdout: %w", err))
 		}
 	}
 	passed, failed, skipped := 0, 0, 0
@@ -438,6 +451,9 @@ func finishTestRunReports(suite string, results []testRunReceipt, reportPath, ju
 	}
 	if suite != "" && !jsonOutput {
 		_, _ = fmt.Fprintf(osStdout, "suite %s: %d passed, %d failed, %d skipped\n", suite, passed, failed, skipped)
+	}
+	if err := errors.Join(outputErrors...); err != nil {
+		return printErr("Could not save test reports", &exitErr{msg: err.Error(), code: 1})
 	}
 	if failed > 0 || skipped > 0 || len(results) == 0 {
 		return 1

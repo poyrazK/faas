@@ -2172,3 +2172,7 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
+
+// ManagedPostgresCapNoticeReady exposes the H88 startup gate on compute cap
+// enforcement.
+var ManagedPostgresCapNoticeReady = managedPostgresCapNoticeReady
