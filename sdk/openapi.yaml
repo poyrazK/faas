@@ -1366,6 +1366,9 @@ paths:
         cookie without the mfa_pending flag; future dashboard logins
         will require a TOTP verification because enrollment is the
         customer's explicit opt-in.
+        If the account has a password, current_password is also required
+        to authorize this new factor. An unconfirmed setup secret cannot
+        be used for session verification or recovery.
       requestBody:
         required: true
         content:
@@ -1379,12 +1382,17 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/MFAConfirmResponse'}
         '401':
-          description: Invalid TOTP code.
+          description: Invalid TOTP code or missing/incorrect current password.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '404':
           description: No in-flight enrollment. Call /enroll first.
+        '409':
+          description: MFA is already enrolled; use /verify for a subsequent challenge.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/account/mfa/verify:
     post:
       tags: [mfa]
@@ -1412,16 +1420,21 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+        '409':
+          description: MFA setup is incomplete; finish /confirm first.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/account/mfa/recover:
     post:
       tags: [mfa]
       operationId: mfaRecover
       summary: Burn a recovery code to regain access.
       description: |
-        Use when the customer's TOTP device is lost. Removes
-        one matching SHA-256 hash from the stored set; if the
-        customer burns the last code, /recover still works but
-        /disable via recovery_code no longer does.
+        Use when an enrolled customer's TOTP device is lost. Removes
+        one matching recovery-code hash from the stored set. The last
+        code is reserved for disabling MFA via recovery_code instead.
+        Pending setup material does not authorize recovery.
       requestBody:
         required: true
         content:
@@ -1436,6 +1449,11 @@ paths:
               schema: {$ref: '#/components/schemas/MFARecoverResponse'}
         '401':
           description: No matching recovery code.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '409':
+          description: MFA setup is incomplete, or only the last recovery code remains.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -40014,7 +40032,7 @@ components:
             step. Each code is hashed (SHA-256) before storage;
             the plaintext never reappears.
     MFAConfirmRequest:
-      description: Body for /confirm — a single 6-digit TOTP code.
+      description: Body for /confirm — a TOTP code and the existing password, if set.
       type: object
       required: [totp]
       properties:
@@ -40022,6 +40040,10 @@ components:
           type: string
           pattern: '^[0-9]{6}$'
           description: 6-digit rotating code from the authenticator app.
+        current_password:
+          type: string
+          format: password
+          description: Required when the account already has a password; authorizes the new factor.
         csrf_token:
           type: string
           description: |

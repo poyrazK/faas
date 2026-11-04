@@ -26,6 +26,7 @@ type Account struct {
 	PastDueAt                       pgtype.Timestamptz
 	SuspendedReason                 pgtype.Text
 	DeletionIncludesManagedPostgres bool
+	MfaTotpLastStep                 pgtype.Int8
 	PasswordResetRevision           int64
 	MfaRevision                     int64
 	BillingMailRevision             int64

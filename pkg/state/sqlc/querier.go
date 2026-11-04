@@ -630,6 +630,9 @@ type Querier interface {
 	// JIT compilation can consume its entire latency budget before rows execute.
 	// Keep both settings local to the transaction and restore them after the read.
 	ConfigureTrafficPolicyAnalysisTimeout(ctx context.Context, db DBTX, timeout string) (ConfigureTrafficPolicyAnalysisTimeoutRow, error)
+	// Enrollment and spending its proof commit together against the exact factor
+	// verified by the caller. A stale or repeated confirmation changes nothing.
+	ConfirmPendingMFA(ctx context.Context, db DBTX, arg ConfirmPendingMFAParams) (pgtype.UUID, error)
 	// The parent run lock serializes this consumption with guest reporting and
 	// coordinator transitions. A missing HTTP response never releases delivery.
 	ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg ConsumeCustomerOperationWorkflowGuestParams) (int64, error)
@@ -638,6 +641,7 @@ type Querier interface {
 	// Empty address is the unchanged legacy token format. New bound tokens never
 	// verify a different current address, including after the maild handoff.
 	ConsumeEmailVerificationToken(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error)
+	ConsumeInlineResetToken(ctx context.Context, db DBTX, arg ConsumeInlineResetTokenParams) (pgtype.UUID, error)
 	ConsumePromotionAdmissionApproval(ctx context.Context, db DBTX, arg ConsumePromotionAdmissionApprovalParams) (ConsumePromotionAdmissionApprovalRow, error)
 	ConsumeTrafficRateToken(ctx context.Context, db DBTX, arg ConsumeTrafficRateTokenParams) (int64, error)
 	// ADR-104/570: serialize coalesced consults without changing refill, debt,
@@ -659,6 +663,7 @@ type Querier interface {
 	CountActiveMigrationVerifications(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
 	CountActiveNativeWorkflowRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	CountActiveOrgMembers(ctx context.Context, db DBTX, orgID pgtype.UUID) (int64, error)
 	CountActiveProfileCaptures(ctx context.Context, db DBTX, appID string) (int64, error)
 	CountActiveProjectBindingVerificationRuns(ctx context.Context, db DBTX, arg CountActiveProjectBindingVerificationRunsParams) (int64, error)
 	CountActiveProjectReleaseSecretBundles(ctx context.Context, db DBTX, arg CountActiveProjectReleaseSecretBundlesParams) (int64, error)
@@ -716,6 +721,7 @@ type Querier interface {
 	CountOperationConcurrencyPolicies(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountOperationsInFlight(ctx context.Context, db DBTX, arg CountOperationsInFlightParams) (int64, error)
 	CountOwnedActiveOperationJobTasksForPurge(ctx context.Context, db DBTX, arg CountOwnedActiveOperationJobTasksForPurgeParams) (int64, error)
+	CountOwnedFreeSharedOrgs(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountPendingCustomerOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProductionPendingInvocations(ctx context.Context, db DBTX, arg CountProductionPendingInvocationsParams) (int64, error)
 	CountProductionPendingQueueWorkInLane(ctx context.Context, db DBTX, arg CountProductionPendingQueueWorkInLaneParams) (int64, error)
@@ -1905,6 +1911,9 @@ type Querier interface {
 	FindForeignVerifiedDomainForTenantHostname(ctx context.Context, db DBTX, arg FindForeignVerifiedDomainForTenantHostnameParams) (string, error)
 	// The caller holds the domain publication guard and destination app lock.
 	FindForeignVerifiedWildcardForClaim(ctx context.Context, db DBTX, arg FindForeignVerifiedWildcardForClaimParams) (string, error)
+	// Inline reset links share the legacy login_tokens table. Account-first locks
+	// match the durable credential writers; the final CAS rechecks absolute expiry.
+	FindInlineResetAccount(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error)
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
 	FindManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg FindManagedPostgresLifecycleDatabaseParams) (ManagedPostgresDatabase, error)
@@ -2644,6 +2653,7 @@ type Querier interface {
 	InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error
 	InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg InsertExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
+	InsertFreeSharedOrg(ctx context.Context, db DBTX, arg InsertFreeSharedOrgParams) (InsertFreeSharedOrgRow, error)
 	InsertFunctionMigrationDestination(ctx context.Context, db DBTX, arg InsertFunctionMigrationDestinationParams) error
 	InsertInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardBootParams) error
 	InsertInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardPromotionParams) error
@@ -2816,6 +2826,7 @@ type Querier interface {
 	InsertScenarioTestMember(ctx context.Context, db DBTX, arg InsertScenarioTestMemberParams) error
 	InsertScheduledRelease(ctx context.Context, db DBTX, arg InsertScheduledReleaseParams) (ScheduledRelease, error)
 	InsertScheduledWorkflowRun(ctx context.Context, db DBTX, arg InsertScheduledWorkflowRunParams) (InsertScheduledWorkflowRunRow, error)
+	InsertSharedOrgOwner(ctx context.Context, db DBTX, arg InsertSharedOrgOwnerParams) error
 	InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, arg InsertSnapshotRuntimeConfigReceiptParams) error
 	InsertSourceBuildRootfs(ctx context.Context, db DBTX, arg InsertSourceBuildRootfsParams) (SourceBuildRootf, error)
 	InsertStaticEgressProvisioningGrant(ctx context.Context, db DBTX, arg InsertStaticEgressProvisioningGrantParams) error
@@ -4178,6 +4189,8 @@ type Querier interface {
 	LockFunctionMigrationSourceLease(ctx context.Context, db DBTX, arg LockFunctionMigrationSourceLeaseParams) (LockFunctionMigrationSourceLeaseRow, error)
 	LockFunctionMigrationSourceNode(ctx context.Context, db DBTX, arg LockFunctionMigrationSourceNodeParams) error
 	LockImagePreparationDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockImagePreparationDeploymentRow, error)
+	LockInlineResetAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	LockInlineResetToken(ctx context.Context, db DBTX, arg LockInlineResetTokenParams) (LockInlineResetTokenRow, error)
 	LockInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg LockInstanceApplicationStandardBootParams) ([]byte, error)
 	LockInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg LockInstanceApplicationStandardPromotionParams) ([]byte, error)
 	LockInstanceMigrationCommit(ctx context.Context, db DBTX, instanceID pgtype.UUID) (LockInstanceMigrationCommitRow, error)
@@ -4262,6 +4275,9 @@ type Querier interface {
 	LockOperatorRecoverySubmission(ctx context.Context, db DBTX, arg LockOperatorRecoverySubmissionParams) error
 	LockOperatorRestart(ctx context.Context, db DBTX, intentID pgtype.UUID) (OperatorRestartExecution, error)
 	LockOperatorRestartInstance(ctx context.Context, db DBTX, id pgtype.UUID) (LockOperatorRestartInstanceRow, error)
+	// Membership accepts and lifecycle/plan writes serialize on the organization.
+	// NO KEY UPDATE remains compatible with foreign-key key-share locks.
+	LockOrgInvitationTarget(ctx context.Context, db DBTX, id pgtype.UUID) (LockOrgInvitationTargetRow, error)
 	LockOwnedActiveOperationJobTasksForPurge(ctx context.Context, db DBTX, arg LockOwnedActiveOperationJobTasksForPurgeParams) ([]LockOwnedActiveOperationJobTasksForPurgeRow, error)
 	LockOwnedInvoiceSnapshot(ctx context.Context, db DBTX, arg LockOwnedInvoiceSnapshotParams) (LockOwnedInvoiceSnapshotRow, error)
 	// Lifecycle writers take incompatible locks, held until the transfer commits.
@@ -4396,6 +4412,8 @@ type Querier interface {
 	LockScheduledRelease(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduledRelease, error)
 	LockSecretEncryptionKeyRetirement(ctx context.Context, db DBTX) error
 	LockSecretRekeyApp(ctx context.Context, db DBTX, arg LockSecretRekeyAppParams) error
+	// Account lock serializes Free organization creation across apid processes.
+	LockSharedOrgCreator(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	LockSnapshotPublicationApp(ctx context.Context, db DBTX, arg LockSnapshotPublicationAppParams) (pgtype.UUID, error)
 	LockSnapshotPublicationDeployment(ctx context.Context, db DBTX, arg LockSnapshotPublicationDeploymentParams) (pgtype.UUID, error)
 	// Parent locks follow the same app/deployment order as runtime publication.
@@ -6922,6 +6940,8 @@ type Querier interface {
 	SaveMigrationCutover(ctx context.Context, db DBTX, arg SaveMigrationCutoverParams) (int64, error)
 	SaveMigrationVerification(ctx context.Context, db DBTX, arg SaveMigrationVerificationParams) (int64, error)
 	SaveOperationWebhookBinding(ctx context.Context, db DBTX, arg SaveOperationWebhookBindingParams) (CustomerOperationWebhookBinding, error)
+	// A setup request cannot replace a factor confirmed while it was in flight.
+	SavePendingMFASecret(ctx context.Context, db DBTX, arg SavePendingMFASecretParams) (pgtype.UUID, error)
 	SaveProjectMigration(ctx context.Context, db DBTX, arg SaveProjectMigrationParams) (int64, error)
 	SaveProjectReleaseCanary(ctx context.Context, db DBTX, arg SaveProjectReleaseCanaryParams) (int64, error)
 	SavePromotionHealth(ctx context.Context, db DBTX, arg SavePromotionHealthParams) (int64, error)

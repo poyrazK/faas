@@ -47,6 +47,11 @@ def _parse_response(
         response_404 = cast(Any, None)
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -76,9 +81,13 @@ def sync_detailed(
     cookie without the mfa_pending flag; future dashboard logins
     will require a TOTP verification because enrollment is the
     customer's explicit opt-in.
+    If the account has a password, current_password is also required
+    to authorize this new factor. An unconfirmed setup secret cannot
+    be used for session verification or recovery.
 
     Args:
-        body (MFAConfirmRequest): Body for /confirm — a single 6-digit TOTP code.
+        body (MFAConfirmRequest): Body for /confirm — a TOTP code and the existing password, if
+            set.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -111,9 +120,13 @@ def sync(
     cookie without the mfa_pending flag; future dashboard logins
     will require a TOTP verification because enrollment is the
     customer's explicit opt-in.
+    If the account has a password, current_password is also required
+    to authorize this new factor. An unconfirmed setup secret cannot
+    be used for session verification or recovery.
 
     Args:
-        body (MFAConfirmRequest): Body for /confirm — a single 6-digit TOTP code.
+        body (MFAConfirmRequest): Body for /confirm — a TOTP code and the existing password, if
+            set.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,9 +154,13 @@ async def asyncio_detailed(
     cookie without the mfa_pending flag; future dashboard logins
     will require a TOTP verification because enrollment is the
     customer's explicit opt-in.
+    If the account has a password, current_password is also required
+    to authorize this new factor. An unconfirmed setup secret cannot
+    be used for session verification or recovery.
 
     Args:
-        body (MFAConfirmRequest): Body for /confirm — a single 6-digit TOTP code.
+        body (MFAConfirmRequest): Body for /confirm — a TOTP code and the existing password, if
+            set.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -174,9 +191,13 @@ async def asyncio(
     cookie without the mfa_pending flag; future dashboard logins
     will require a TOTP verification because enrollment is the
     customer's explicit opt-in.
+    If the account has a password, current_password is also required
+    to authorize this new factor. An unconfirmed setup secret cannot
+    be used for session verification or recovery.
 
     Args:
-        body (MFAConfirmRequest): Body for /confirm — a single 6-digit TOTP code.
+        body (MFAConfirmRequest): Body for /confirm — a TOTP code and the existing password, if
+            set.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
