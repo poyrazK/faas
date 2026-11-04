@@ -82,6 +82,9 @@ type trafficDecisionSnapshot struct {
 	durations      [trafficPhaseCount]int64
 	streamDetached bool
 	edgeResponse   bool
+	// deploymentPinned: the request named its deployment (a deployment
+	// preview or alias URL, or a revision pin), not production routing.
+	deploymentPinned bool
 }
 
 type trafficDecision struct {
@@ -179,6 +182,12 @@ func recordTrafficAttempt(ctx context.Context) {
 			value.attempts++
 		}
 	})
+}
+
+// recordTrafficDeploymentPinned marks a request that named its deployment, so
+// route evidence leaves it out (ADR-20261028110044 amendment 5).
+func recordTrafficDeploymentPinned(ctx context.Context) {
+	mutateTrafficDecision(ctx, func(value *trafficDecisionSnapshot) { value.deploymentPinned = true })
 }
 
 func recordTrafficStreamDetached(ctx context.Context) {
