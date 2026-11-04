@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -27,10 +28,19 @@ const (
 	uploadReadDeadline   = 10 * time.Minute
 	maxUploadsPerAccount = 2
 	maxUploads           = 200
-	maxUploadEntries     = 10_000
-	maxInlineFiles       = 200
-	maxInlineBytes       = 96 << 10
-	maxUploadPath        = 1024
+	// Staged bytes (bug hunt H92): an upload reserves its compressed limit
+	// and a plan directory four times it from creation until it is removed,
+	// per account and across the bridge, and nothing new is staged while the
+	// upload directory's filesystem has less than uploadFreeFloor free.
+	maxStagedPerAccount      = 4
+	maxStagedBytesPerAccount = int64(2 << 30)
+	maxStagedBytes           = int64(16 << 30)
+	uploadFreeFloor          = int64(4 << 30)
+	unpackFactor             = 4
+	maxUploadEntries         = 10_000
+	maxInlineFiles           = 200
+	maxInlineBytes           = 96 << 10
+	maxUploadPath            = 1024
 )
 
 // uploadStore holds pending uploads and the directories plans deploy from.
@@ -40,7 +50,16 @@ type uploadStore struct {
 	base    string
 	uploads map[string]*sourceUpload
 	tokens  map[string]string
-	dirs    map[string]time.Time
+	dirs    map[string]planDir
+	// freeBytes reports the free space under root; tests replace it.
+	freeBytes func(string) (int64, error)
+}
+
+// planDir is a directory a plan deploys from, with what it reserves.
+type planDir struct {
+	accountID string
+	expires   time.Time
+	bytes     int64
 }
 
 type sourceUpload struct {
@@ -63,7 +82,8 @@ func newUploadStore(root, resourceURL string) (*uploadStore, error) {
 	if err := os.MkdirAll(filepath.Join(root, "plans"), 0o700); err != nil {
 		return nil, fmt.Errorf("create upload directory: %w", err)
 	}
-	return &uploadStore{root: root, base: resourceURL + "/uploads/", uploads: map[string]*sourceUpload{}, tokens: map[string]string{}, dirs: map[string]time.Time{}}, nil
+	return &uploadStore{root: root, base: resourceURL + "/uploads/", uploads: map[string]*sourceUpload{}, tokens: map[string]string{},
+		dirs: map[string]planDir{}, freeBytes: filesystemFreeBytes}, nil
 }
 
 func randomHex(n int) (string, error) {
@@ -90,8 +110,8 @@ func (u *uploadStore) pruneLocked() {
 			delete(u.tokens, token)
 		}
 	}
-	for dir, expires := range u.dirs {
-		if now.After(expires) {
+	for dir, d := range u.dirs {
+		if now.After(d.expires) {
 			_ = os.RemoveAll(dir)
 			delete(u.dirs, dir)
 		}
@@ -109,8 +129,14 @@ func (u *uploadStore) create(grantID, accountID, app string, maxBytes int64) (*s
 			pending++
 		}
 	}
-	if pending >= maxUploadsPerAccount || len(u.uploads) >= maxUploads {
+	if pending >= maxUploadsPerAccount {
 		return nil, "", invalid("upload_capacity", fmt.Sprintf("at most %d uploads may wait per account; deploy or let one expire", maxUploadsPerAccount))
+	}
+	if len(u.uploads) >= maxUploads {
+		return nil, "", errUploadsBusy
+	}
+	if err := u.admitLocked(accountID, maxBytes); err != nil {
+		return nil, "", err
 	}
 	id, err := randomHex(16)
 	if err != nil {
@@ -199,19 +225,77 @@ func (u *uploadStore) take(grantID, id string) (*sourceUpload, string, error) {
 	return up, u.tarball(id), nil
 }
 
-// newDir is a private directory a plan deploys from, removed after use.
-func (u *uploadStore) newDir() (string, error) {
+// errUploadsBusy is the bridge-wide refusal, distinct from one account's
+// limit.
+var errUploadsBusy = invalid("upload_service_busy", "the hosted bridge is holding as many uploads as it can; retry in a few minutes")
+
+// stagedLocked counts what accountID holds (uploads not yet planned, and
+// live plan directories, so a create, upload and plan loop stays bounded)
+// and the bytes the account and the bridge reserve.
+func (u *uploadStore) stagedLocked(accountID string) (items int, accountBytes, totalBytes int64) {
+	for _, up := range u.uploads {
+		// A taken upload's archive is unpacked into a plan directory, which
+		// holds the reservation from then on.
+		if up.taken {
+			continue
+		}
+		totalBytes += up.maxBytes
+		if up.accountID == accountID {
+			items++
+			accountBytes += up.maxBytes
+		}
+	}
+	for _, d := range u.dirs {
+		totalBytes += d.bytes
+		if d.accountID == accountID {
+			items++
+			accountBytes += d.bytes
+		}
+	}
+	return items, accountBytes, totalBytes
+}
+
+// admitLocked refuses staging bytes more for accountID past the account's
+// share, the bridge's total or the disk's free-space floor (bug hunt H92).
+func (u *uploadStore) admitLocked(accountID string, bytes int64) error {
+	items, accountBytes, totalBytes := u.stagedLocked(accountID)
+	if items >= maxStagedPerAccount || accountBytes+bytes > maxStagedBytesPerAccount {
+		return invalid("upload_capacity", fmt.Sprintf("this account already stages %d uploads or plans (at most %d, %d bytes); deploy or let one expire",
+			items, maxStagedPerAccount, maxStagedBytesPerAccount))
+	}
+	if totalBytes+bytes > maxStagedBytes {
+		return errUploadsBusy
+	}
+	if u.freeBytes != nil {
+		free, err := u.freeBytes(u.root)
+		if err != nil || free-bytes < uploadFreeFloor {
+			return errUploadsBusy
+		}
+	}
+	return nil
+}
+
+// newDir is a private directory a plan deploys from, removed after use. It
+// reserves bytes for accountID until then.
+func (u *uploadStore) newDir(accountID string, bytes int64) (string, error) {
+	u.mu.Lock()
+	u.pruneLocked()
+	if err := u.admitLocked(accountID, bytes); err != nil {
+		u.mu.Unlock()
+		return "", err
+	}
 	id, err := randomHex(16)
 	if err != nil {
+		u.mu.Unlock()
 		return "", err
 	}
 	dir := filepath.Join(u.root, "plans", id)
+	u.dirs[dir] = planDir{accountID: accountID, expires: time.Now().Add(uploadDirTTL), bytes: bytes}
+	u.mu.Unlock()
 	if err := os.Mkdir(dir, 0o700); err != nil {
+		u.removeDir(dir)
 		return "", err
 	}
-	u.mu.Lock()
-	u.dirs[dir] = time.Now().Add(uploadDirTTL)
-	u.mu.Unlock()
 	return dir, nil
 }
 
@@ -354,4 +438,13 @@ func writeInlineFiles(dir string, files []inlineFile) error {
 		}
 	}
 	return nil
+}
+
+// filesystemFreeBytes is the space available to the bridge under dir.
+func filesystemFreeBytes(dir string) (int64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dir, &st); err != nil {
+		return 0, err
+	}
+	return int64(uint64(st.Bavail) * uint64(st.Bsize)), nil //nolint:gosec // block counts fit int64 on any real filesystem
 }
