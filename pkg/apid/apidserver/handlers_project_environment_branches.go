@@ -317,7 +317,7 @@ func (s *server) environmentBranchEgressProblem(egress string) *api.Problem {
 	case !s.environmentBranchContainmentEnabled:
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchUnavailable, "Contained environment branches are unavailable",
 			egress+" egress is not enabled on this platform; create the branch with live egress")
-	case egress == api.EnvironmentBranchEgressSimulated && !(s.rehearsalNetworkEnabled && s.rehearsalSimulationEnabled):
+	case egress == api.EnvironmentBranchEgressSimulated && (!s.rehearsalNetworkEnabled || !s.rehearsalSimulationEnabled):
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchUnavailable, "Simulated environment branches are unavailable",
 			"simulated egress needs rehearsal containment and action simulation, which are not enabled on this platform")
 	}
