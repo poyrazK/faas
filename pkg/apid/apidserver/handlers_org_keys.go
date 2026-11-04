@@ -159,6 +159,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, p)
 		return
 	}
+	if p := s.orgAgentKeyProblem(r.Context(), mem.OrgID, acct.ID, scopes); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
@@ -172,6 +176,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	var expiresAt *time.Time
 	if !slices.Contains(scopes, api.ScopeAdmin) {
 		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
+		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
+		if slices.Contains(scopes, api.ScopeAgent) {
+			t = time.Now().UTC().Add(api.AgentKeyLifetime)
+		}
 		expiresAt = &t
 	}
 	// IAM hardening mega-PR (logical change 2): stamp the

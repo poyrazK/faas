@@ -134,7 +134,92 @@ host's records, which take precedence over the wildcard, so only that host
 leaves the tunnel. Run the ADR's step 0 questions against it. Remove each
 injected failure as soon as it is measured.
 
+## Client limits (ADR-20261103163954 §4)
+
+`faas_edge_client_limits: true` on the edge role sets
+`FAAS_EDGE_CLIENT_LIMITS=1`. The values are in `pkg/api/limits.go`
+(`EdgeClient*`, `EdgeTLSHandshake*`); each is per node and per client address
+(an IPv4 address or an IPv6 /64).
+
+- **Requests a second**, on any front. Behind Cloudflare the client is
+  `CF-Connecting-IP`; with no front it is the connection's peer, whatever the
+  request claims. A refusal is `429 rate_limited` with `Retry-After: 1`,
+  `x-faas-rate-limit-scope: client-address`, the limit and the observed value.
+- **Open connections, new connections a second and TLS handshakes in
+  progress**, only with `faas_edge_public_front: none`. A refused connection
+  is reset before TLS; a handshake slot is held at most
+  `EdgeTLSHandshakeTimeout`.
+
+- **A minimum request-body rate**, on any front: a body must bring
+  `EdgeClientBodyMinBytesPerWindow` bytes every `EdgeClientBodyRateWindow`,
+  or its read fails. gRPC client streams are exempt.
+- **A cap on requests forwarded to the control plane** (uploads, public
+  reads, OTLP), `EdgeControlPlaneForwardsInFlightMax` at once per edge; past
+  it the edge answers `503 control_plane_busy` with `Retry-After: 1`.
+
+`gatewayd_public_edge_refused_total{reason}` counts refusals by
+`open_connections`, `connection_rate`, `handshakes`, `request_rate`,
+`body_rate` and `forward_in_flight`. A
+burst on one reason from many addresses is a flood; a steady stream from one
+address may be carrier-grade NAT, where the starting values need raising.
+An edge with no front and the limits off logs a warning at start.
+
+## Nothing in front (ADR-20261103163954), pilot
+
+Clients reach the pilot host straight at the compute nodes, with DNS-only
+records. The owner decides each step marked **owner**.
+
+1. **owner:** approve `access.direct_entry` in
+   `deploy/gcp/public-beta-policy.json`: one VPC rule admits TCP 443, and
+   only 443, from every source to instances tagged `gregale-entry`, compute
+   nodes only. `scripts/ops/gcp_public_beta_audit.py` fails on anything
+   wider, and on any other rule that opens 80 or 443 to everyone.
+2. **owner:** run `deploy/scripts/gcp-compute-edge-address.sh entry NODE...`,
+   read what it would do, then rerun with `APPLY=1`. It creates
+   `gregale-direct-entry-v4` once and tags each node. The forwarding rule from
+   step 5 must already exist: it carries 443 alone, so the node's own
+   addresses stay unreachable.
+3. **owner:** put a publicly trusted certificate for the apps domain (a
+   wildcard, from a DNS-01 challenge) at the edge role's
+   `faas_edge_public_tls_cert` and key paths on every compute node. Cloudflare
+   still accepts it for the proxied names.
+4. In the manifest, mark each compute host's forwarded address and turn the
+   front off:
+
+   ```yaml
+   fleet:
+     hosts:
+       - name: fsn-2
+         role: compute-only
+         public_ipv4: <address from step 5>
+         public_ipv4_forwarded: true
+   public_edge:
+     entry: both
+     front: none
+     dns:
+       zone_id: <zone id>
+       names: [<new pilot app host>]
+       live: true
+   ```
+
+   Release only once every compute node runs the release that has the entry
+   addresses (#6501). The vmmd drop-in also sends Cloudflare's ranges, so an
+   older vmmd stays Cloudflare-only rather than open.
+5. Check: `nft list chain inet faas input` on a node shows the
+   `public entry` accept and drop ahead of sshd; `curl -v
+   https://<pilot host>` from outside reaches the node without Cloudflare
+   (`server` and the certificate issuer show it); `dig` returns the nodes'
+   addresses with TTL 60.
+
+To put one host back behind Cloudflare, add it to `public_edge.dns.proxied`
+and release: edgednsd switches its records to proxied in place.
+
 ## Undo
+
+- **Nothing in front:** set `public_edge.front: cloudflare` (or remove it)
+  and release; edgednsd switches the names' records back to proxied. Then
+  `APPLY=1 gcp-compute-edge-address.sh unentry NODE...`, and delete
+  `gregale-direct-entry-v4` once no node carries the tag.
 
 - **Pilot:** remove `public_edge.dns` and release, then delete the pilot host's
   A records. Their comment reads `edgednsd (ADR-20261102081618)`.

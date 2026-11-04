@@ -1,5 +1,6 @@
-// Command edgednsd keeps the app hosts' proxied address records in step with
-// the compute nodes whose edges are ready (ADR-20261102081618 §3).
+// Command edgednsd keeps the app hosts' address records in step with the
+// compute nodes whose edges are ready (ADR-20261102081618 §3), proxied or
+// DNS-only per name (ADR-20261103163954 §1).
 //
 // It runs on the control plane. It holds the zone's DNS: Edit token, which
 // never reaches a compute node or an internet-facing process, and listens

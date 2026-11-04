@@ -8,9 +8,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -245,6 +247,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metricIntegrationID := integration.MetricLabel()
+	if integration.OwnerKind == IntegrationOwnerCustomer && accountSuspended(integration.AccountStatus) {
+		// ADR 20261027132936: a suspended account's integrations call nothing,
+		// from its apps or from outside with an access token.
+		h.Metrics.ObserveRejection(metricIntegrationID, "account_suspended")
+		writeProblem(w, http.StatusForbidden, "outbound_account_suspended", "The account is suspended", "")
+		return
+	}
 	if integration.AIProvider != "" && !h.aiGatewayOn() {
 		h.Metrics.ObserveRejection(metricIntegrationID, "ai_gateway_disabled")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_ai_gateway_disabled", "The AI gateway is not enabled on this platform", "")
@@ -434,6 +443,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.Metrics.ObserveAIUnmetered(metricIntegrationID)
 		}
 	}
+	if rejection == nil {
+		// ADR 20261027132936: a cost cap cannot count a model with no price.
+		rejection = checkAICallPriced(integration, aiPlan, aiEndUser, aiTags, aiTrace)
+	}
 	if rejection != nil {
 		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
 		writeProblem(w, rejection.status, rejection.code, rejection.title, "")
@@ -526,7 +539,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if requestTimeout <= 0 {
 		requestTimeout = integration.RequestTimeout
 	}
-	if requestTimeout > 0 {
+	// ADR 20261027132936: a billable AI call's request timeout bounds the
+	// wait for its response headers; its answer may take longer.
+	var aiCall *aiCallContext
+	if aiPlan != nil && aiPlan.endpoint.billable() && batch == nil && realtime == realtimeNone {
+		aiCall = newAICallContext(ctx, requestTimeout, time.Now())
+		defer aiCall.Close()
+		ctx = aiCall //nolint:contextcheck // aiCall is derived from ctx through context.WithDeadline and WithCancelCause.
+		defer h.renewAILease(integration.ID, decision.LeaseID, requestTimeout)()
+	} else if requestTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, requestTimeout)
 		defer cancel()
@@ -551,15 +572,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		defer h.dropUnconfirmedBatch(ctx, batch)
 	}
-	// ADR-1340: the moderation check runs after admission, so a call its
-	// caps refuse never pays for one. Replays and checks are not checked.
 	var moderation aiModerationOutcome
-	if aiPlan != nil && aiPlan.endpoint.billable() && !isReplay && !isInternal && integration.AIContentPolicy.Moderation.Active() {
-		var proceed bool
-		if moderation, proceed = h.moderateAICall(ctx, w, integration, aiReq, metricIntegrationID); !proceed {
-			return
-		}
-	}
 	if integration.ProviderAuthMode == ProviderAuthManaged && integration.CredentialSource == CredentialSourceCustomerSealed {
 		if h.CredentialResolver == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_provider_credential_unavailable", "Outbound provider credential is unavailable", "1")
@@ -596,6 +609,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencyCtx, dependencySpan := trace.StartSpan(ctx, dependencySpanName(integration), dependencySpanAttributes(integration, appID)...)
 	defer dependencySpan.End()
+	// ADR 20261027132936: a billable call the provider received settles
+	// even when its answer never comes back.
+	var requestSent atomic.Bool
+	if aiCall != nil {
+		dependencyCtx = httptrace.WithClientTrace(dependencyCtx, &httptrace.ClientTrace{
+			WroteRequest: func(info httptrace.WroteRequestInfo) {
+				if info.Err == nil {
+					requestSent.Store(true)
+				}
+			},
+		})
+	}
 	upstreamReq, err := http.NewRequestWithContext(dependencyCtx, r.Method, upstreamURL, r.Body)
 	if err != nil {
 		dependencySpan.RecordError(err)
@@ -661,6 +686,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	dependencySpan.SetAttributes(attribute.Bool("gregale.outbound.cache_hit", cacheHit))
+	// ADR-1340: the moderation check runs after admission, so a call its
+	// caps refuse never pays for one. Replays and checks are not checked.
+	// It runs only on a cache miss: a hit matched a call already checked
+	// under the same policy revision (ADR 20261027132936).
+	if !cacheHit && aiPlan != nil && aiPlan.endpoint.billable() && !isReplay && !isInternal && integration.AIContentPolicy.Moderation.Active() {
+		var proceed bool
+		if moderation, proceed = h.moderateAICall(ctx, w, integration, aiReq, metricIntegrationID); !proceed {
+			return
+		}
+		upstreamStarted = time.Now()
+	}
 	if !cacheHit {
 		cooldown, ok := h.Backend.(ProviderCooldownBackend)
 		if !ok {
@@ -762,9 +798,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	dependencySpan.SetAttributes(attribute.Int("gregale.outbound.attempt_count", attempts))
+	if aiCall != nil {
+		aiCall.headersArrived()
+	}
+	// aiSettlementFor is the settlement of this call's AI usage.
+	aiSettlementFor := func(status int, check *aiResponseCheck) aiSettlement {
+		settlement := aiSettlement{
+			status: status, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
+			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, callID: aiCallID,
+			instanceID: callerInstance,
+			route:      routeAttemptFromContext(r.Context()),
+			moderation: moderation,
+			response:   check, cacheHit: cacheHit,
+		}
+		if aiPlan != nil {
+			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
+			settlement.media, settlement.characters = aiPlan.endpoint.media, aiPlan.facts.characters
+			settlement.videoSeconds, settlement.videoResolution = aiPlan.facts.videoSeconds, aiPlan.facts.videoResolution
+			settlement.codeGB = aiPlan.facts.tools.codeGB
+			settlement.requestModel = aiPlan.facts.model
+		}
+		return settlement
+	}
 	if err != nil {
 		dependencySpan.RecordError(err)
 		dependencySpan.SetStatus(codes.Error, "upstream request failed")
+		if status, unanswered := unansweredAIStatus(err); aiCall != nil && unanswered && requestSent.Load() {
+			h.settleUnansweredAICall(ctx, integration, appID, aiSettlementFor(status, nil), dependencySpan, metricIntegrationID)
+		}
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			writeProblem(w, http.StatusRequestEntityTooLarge, "outbound_request_too_large", "Outbound request body exceeds the gateway limit", "")
@@ -792,27 +853,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.finishBatchCreation(ctx, w, resp, batch, metricIntegrationID)
 		return
 	}
+	if aiCall != nil {
+		// ADR 20261027132936: a streamed answer ends after a long silence,
+		// and the answer may be written until the call's end.
+		if streamingMediaType(resp.Header.Get("Content-Type")) {
+			resp.Body = boundStreamIdle(resp.Body, aiCall, aiStreamIdleBound)
+		}
+		if deadline, ok := aiCall.Deadline(); ok {
+			_ = http.NewResponseController(w).SetWriteDeadline(deadline)
+		}
+	}
 	var responseCheck *aiResponseCheck
 	if responseCheckApplies(integration, r, aiPlan, resp, isReplay, isInternal) {
 		responseCheck = &aiResponseCheck{}
 	}
 	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq, aiPlan); aiObserver != nil {
 		// Deferred so an aborted stream still settles the tokens it used.
-		settlement := aiSettlement{
-			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
-			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, callID: aiCallID,
-			instanceID: callerInstance,
-			route:      routeAttemptFromContext(r.Context()),
-			moderation: moderation,
-			response:   responseCheck, cacheHit: cacheHit,
-		}
-		if aiPlan != nil {
-			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
-			settlement.media, settlement.characters = aiPlan.endpoint.media, aiPlan.facts.characters
-			settlement.videoSeconds, settlement.videoResolution = aiPlan.facts.videoSeconds, aiPlan.facts.videoResolution
-			settlement.codeGB = aiPlan.facts.tools.codeGB
-		}
-		defer h.settleAIUsage(ctx, integration, appID, settlement, aiObserver, dependencySpan, metricIntegrationID)
+		defer h.settleAIUsage(ctx, integration, appID, aiSettlementFor(resp.StatusCode, responseCheck), aiObserver, dependencySpan, metricIntegrationID)
 	}
 	if responseCheck != nil && !h.applyResponseCheck(ctx, w, integration, aiPlan, resp, responseCheck, metricIntegrationID) {
 		return
@@ -1093,6 +1150,11 @@ var _ http.Handler = (*Handler)(nil)
 // aiGatewayAdmitsAccount applies the staged rollout and plan entitlement to a
 // customer AI integration (ADR-998). Operator integrations are not
 // customer-entitled and pass.
+// accountSuspended reports an account status whose integrations refuse calls.
+func accountSuspended(status string) bool {
+	return status == "suspended" || status == "deleted_pending"
+}
+
 func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
 	if integration.OwnerKind != IntegrationOwnerCustomer {
 		return true

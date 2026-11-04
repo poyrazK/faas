@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -316,6 +317,14 @@ func (e *Engine) privateNetworkProjection(ctx context.Context, app state.App) pr
 	if network.Status != "" && network.Status != api.PrivateNetworkStatusReady {
 		return privateNetworkProjection{}
 	}
+	allowed, err := privatenetwork.MergePolicyCIDRs(network.AllowedCIDRs, attachment.AllowedCIDRs, attachment.CIDRs)
+	if err != nil {
+		if e.log != nil {
+			e.log.Warn("sched: private network policy invalid; keeping attachment disconnected", "app_id", app.ID, "err", err)
+		}
+		return privateNetworkProjection{}
+	}
+	projection.AllowedCIDRs = prefixesToCIDRStrings(allowed)
 	address, err := privateStore.AllocatePrivateNetworkAddress(ctx, app.AccountID, attachment.NetworkID, "app", app.ID)
 	if err != nil {
 		if e.log != nil {
@@ -710,10 +719,12 @@ type Engine struct {
 	earlyFreezeAfterMS atomic.Int64
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
-	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.
-	restorePlacementMu               sync.Mutex
-	restorePlacementInFlight         map[string]int
-	restorePlacementFallbackInFlight map[string]int
+	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns;
+	// restorePlacementLeases holds this engine's shared lease IDs, which the
+	// shared count leaves out because restorePlacementInFlight has them.
+	restorePlacementMu       sync.Mutex
+	restorePlacementInFlight map[string]int
+	restorePlacementLeases   map[string]struct{}
 	// restartMu/restartInFlight coalesce duplicate restart notifications for
 	// one app. The notification is a best-effort hint and can be delivered
 	// more than once, so a second caller waits for the first park+fresh-wake
@@ -769,6 +780,10 @@ type Engine struct {
 	// billing subject, so the spend cap gate reads the right cap without a
 	// store read per wake (ADR-20261030093512).
 	capSubjects spendCapSubjects
+	// planFits remembers, per billing subject, which of its apps are
+	// outside its plan, so wakes refuse them without a store read per wake
+	// (ADR-20261103131742).
+	planFits planFitCache
 	// (obs, cap) cents ride on the (outcome, obs, cap) tuple
 	// admitGate returns. The earlier field-on-Engine shape was
 	// racy across goroutines hitting the cap-reached branch.
@@ -3278,6 +3293,19 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		}
 	}
 
+	// ADR-20261103131742: an app outside its subject's plan (past the
+	// deployed-app limit, oldest kept, or above the plan's RAM) does not
+	// wake, on the request path or an explicit deployment, so a plan that
+	// ended or shrank does not keep the higher plan's entitlements.
+	// Deployment smoke verifies a release and mirror instances are never
+	// metered, as for the spend cap.
+	if !deploymentSmoke && mode != string(state.InstanceModeMirror) {
+		if problem := e.planFitProblem(ctx, app, acct); problem != nil {
+			release()
+			return WakeResult{}, errors.Join(ErrPermanentWake, problem)
+		}
+	}
+
 	// PR-C (issue #462): wake-gate consult. Three short-circuit
 	// outcomes route to typed errors or AtCapacity=true without
 	// touching the ledger or the instances table. The cooldown
@@ -4025,7 +4053,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// their old netns — the app_changed pg_notify path
 		// fires UpdateStaticEgressIP gRPC to patch them
 		// (pkg/sched/egress_drift.go).
-		StaticEgressIP: deploymentStaticEgressIP(app, dep),
+		StaticEgressIP:       deploymentStaticEgressIP(app, dep),
+		StaticEgressExcluded: !state.ProductionDeploymentScope(dep.Scope),
 		// Issue #460 / ADR-053 (PR-C): per-deployment runtime port
 		// resolved from the explicit override or persisted source
 		// profile. The host-facing readiness port stays on 8080;
@@ -5301,11 +5330,12 @@ func (e *Engine) withAppInstances(r Request) Request {
 	return r
 }
 
-// chooseRestorePlacementLocked snapshots local restore pressure, selects a
-// fitting node, and reserves one in-flight slot before another restore may
-// make a placement decision. When the store supports shared coordination,
-// the fleet-wide lease lasts through the vmmd RPC; local counts remain a
-// fallback if the coordinator is temporarily unavailable.
+// chooseRestorePlacementLocked counts restore pressure, selects a fitting
+// node, and reserves one in-flight slot before another restore on this engine
+// may make a placement decision. When the store keeps shared leases, the
+// other schedds' in-flight restores are read without a lock and this engine's
+// lease lasts through the vmmd RPC (ADR 20261103195512); local counts alone
+// remain the fallback if the store is temporarily unavailable.
 func (e *Engine) chooseRestorePlacementLocked(ctx context.Context, r Request) (Placement, func(), error) {
 	r.restorePressureAware = !r.PrioritizeSnapshotLocality
 	r = e.withAppInstances(r)
@@ -5314,88 +5344,80 @@ func (e *Engine) chooseRestorePlacementLocked(ctx context.Context, r Request) (P
 		return Placement{}, nil, err
 	}
 
-	if coordinator, ok := e.store.(state.SnapshotRestorePressureCoordinator); ok {
-		coordCtx, cancelCoord := context.WithTimeout(ctx, restorePressureCoordinationTimeout)
-		session, err := coordinator.AcquireSnapshotRestorePressure(coordCtx)
-		if err == nil {
-			counts, countsErr := session.ActiveSnapshotRestoreCounts(coordCtx)
-			if countsErr == nil {
-				if counts == nil {
-					counts = make(map[string]int)
-				}
-				e.restorePlacementMu.Lock()
-				for nodeID, inFlight := range e.restorePlacementFallbackInFlight {
-					counts[nodeID] += inFlight
-				}
-				e.restorePlacementMu.Unlock()
-				r.restorePressureByNode = counts
-				placement, chooseErr := snapshot.choose(r)
-				if chooseErr != nil {
-					session.Close()
-					cancelCoord()
-					return Placement{}, nil, chooseErr
-				}
-				sharedRelease, reserveErr := session.ReserveSnapshotRestore(coordCtx, placement.NodeID, restorePressureLeaseTTL)
-				session.Close()
-				cancelCoord()
-				if reserveErr == nil {
-					e.restorePlacementMu.Lock()
-					localRelease := e.reserveLocalRestorePlacementLocked(placement.NodeID, false)
-					e.restorePlacementMu.Unlock()
-					return placement, combineRestorePressureReleases(sharedRelease, localRelease), nil
-				}
-				if ctx.Err() != nil {
-					return Placement{}, nil, ctx.Err()
-				}
-				e.warnRestorePressureFallback("reserve shared lease", reserveErr)
-			} else {
-				session.Close()
-				cancelCoord()
-				if ctx.Err() != nil {
-					return Placement{}, nil, ctx.Err()
-				}
-				e.warnRestorePressureFallback("read shared counts", countsErr)
-			}
-		} else {
-			cancelCoord()
+	leases, shared := e.store.(state.SnapshotRestorePressureLeases)
+	var sharedCounts map[string]int
+	if shared {
+		e.restorePlacementMu.Lock()
+		own := make([]string, 0, len(e.restorePlacementLeases))
+		for leaseID := range e.restorePlacementLeases {
+			own = append(own, leaseID)
+		}
+		e.restorePlacementMu.Unlock()
+		countCtx, cancel := context.WithTimeout(ctx, restorePressureCoordinationTimeout)
+		sharedCounts, err = leases.ActiveSnapshotRestoreCounts(countCtx, own)
+		cancel()
+		if err != nil {
 			if ctx.Err() != nil {
 				return Placement{}, nil, ctx.Err()
 			}
-			e.warnRestorePressureFallback("acquire coordinator", err)
+			e.warnRestorePressureFallback("read shared counts", err)
+			shared = false
 		}
 	}
 
 	e.restorePlacementMu.Lock()
-	defer e.restorePlacementMu.Unlock()
-	r.restorePressureByNode = make(map[string]int, len(e.restorePlacementInFlight))
-	for nodeID, inFlight := range e.restorePlacementInFlight {
-		r.restorePressureByNode[nodeID] = inFlight
+	pressure := make(map[string]int, len(sharedCounts)+len(e.restorePlacementInFlight))
+	for nodeID, inFlight := range sharedCounts {
+		pressure[nodeID] = inFlight
 	}
+	for nodeID, inFlight := range e.restorePlacementInFlight {
+		pressure[nodeID] += inFlight
+	}
+	r.restorePressureByNode = pressure
 	placement, err := snapshot.choose(r)
 	if err != nil {
+		e.restorePlacementMu.Unlock()
 		return Placement{}, nil, err
 	}
-	return placement, e.reserveLocalRestorePlacementLocked(placement.NodeID, true), nil
+	leaseID := ""
+	if shared {
+		leaseID = uuid.NewString()
+	}
+	localRelease := e.reserveLocalRestorePlacementLocked(placement.NodeID, leaseID)
+	e.restorePlacementMu.Unlock()
+	if !shared {
+		return placement, localRelease, nil
+	}
+	sharedRelease, err := leases.ReserveSnapshotRestore(ctx, leaseID, placement.NodeID, restorePressureLeaseTTL)
+	if err != nil {
+		if ctx.Err() != nil {
+			localRelease()
+			return Placement{}, nil, ctx.Err()
+		}
+		e.warnRestorePressureFallback("reserve shared lease", err)
+		return placement, localRelease, nil
+	}
+	return placement, combineRestorePressureReleases(sharedRelease, localRelease), nil
 }
 
 // The vmmd restore RPC is bounded by WakingTimeout (6s); this lease allows
 // process and RPC cleanup time before a crashed schedd's reservation expires.
 const restorePressureLeaseTTL = 30 * time.Second
 
-// Keep coordination lock contention well below the wake budget. A brief
-// store hiccup falls back to local accounting instead of delaying the wake.
+// Bounds the shared count read. A brief store hiccup falls back to local
+// accounting instead of delaying the wake.
 const restorePressureCoordinationTimeout = 250 * time.Millisecond
 
-func (e *Engine) reserveLocalRestorePlacementLocked(nodeID string, fallback bool) func() {
+func (e *Engine) reserveLocalRestorePlacementLocked(nodeID, leaseID string) func() {
 	if e.restorePlacementInFlight == nil {
 		e.restorePlacementInFlight = make(map[string]int)
 	}
 	e.restorePlacementInFlight[nodeID]++
-	if fallback {
-		if e.restorePlacementFallbackInFlight == nil {
-			e.restorePlacementFallbackInFlight = make(map[string]int)
+	if leaseID != "" {
+		if e.restorePlacementLeases == nil {
+			e.restorePlacementLeases = make(map[string]struct{})
 		}
-		e.restorePlacementFallbackInFlight[nodeID]++
+		e.restorePlacementLeases[leaseID] = struct{}{}
 	}
 
 	var once sync.Once
@@ -5408,12 +5430,8 @@ func (e *Engine) reserveLocalRestorePlacementLocked(nodeID string, fallback bool
 			} else {
 				delete(e.restorePlacementInFlight, nodeID)
 			}
-			if fallback {
-				if inFlight := e.restorePlacementFallbackInFlight[nodeID]; inFlight > 1 {
-					e.restorePlacementFallbackInFlight[nodeID] = inFlight - 1
-				} else {
-					delete(e.restorePlacementFallbackInFlight, nodeID)
-				}
+			if leaseID != "" {
+				delete(e.restorePlacementLeases, leaseID)
 			}
 		})
 	}
@@ -6113,7 +6131,8 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
-		StaticEgressIP: deploymentStaticEgressIP(app, dep),
+		StaticEgressIP:       deploymentStaticEgressIP(app, dep),
+		StaticEgressExcluded: !state.ProductionDeploymentScope(dep.Scope),
 		// Issue #460 / ADR-053 (PR-C): effective deployment runtime
 		// port. 0 = legacy 8080 (vmmd wire default).
 		Port: deploymentRuntimePort(dep),
@@ -7361,12 +7380,17 @@ func deletedAppCleanupStates() []string {
 // owns its resources, its ID is the creator's and the organization's cap
 // governs (ADR-20261030093512, as spendCapSubject). The cap check is cached
 // and fails open (OverageChecker), so a transient read error never parks an
-// app.
+// app. An app outside its subject's plan parks too (ADR-20261103131742),
+// with the same cached, fail-open read.
 func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.Account) bool {
 	if app.Status == state.AppEvictedCold || account.Status == state.AccountSuspended || account.AbuseHeld() {
 		return true
 	}
-	return e.spendCapReached(ctx, account.ResourceOwnerID())
+	if e.spendCapReached(ctx, account.ResourceOwnerID()) {
+		return true
+	}
+	_, _, over := e.planOverage(ctx, app, account)
+	return over
 }
 
 // ParkApp tears down every live instance of an app whose lifecycle has already

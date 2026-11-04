@@ -98,6 +98,9 @@ func startVerification(ctx context.Context, p Pipeline, target *pgx.Conn, relati
 	}
 	now := time.Now().UTC()
 	c := &verificationCheckpoint{Generation: p.Generation, Spec: spec, Storage: storage, Progress: VerificationProgress{ID: id, IntentID: intent, Restarts: restarts, State: "running", Phase: "scan", TablesTotal: len(relations), StartedAt: now, UpdatedAt: now}}
+	if schema, attempt := verificationAttempt(p); schema == "" {
+		c.Progress.ManualAttempt = attempt
+	}
 	for _, r := range relations {
 		c.Tables = append(c.Tables, r.Name)
 		c.Progress.Tables = append(c.Progress.Tables, r.Name)
@@ -255,6 +258,27 @@ func removeVerification(ctx context.Context, p Pipeline, target receiptSQL, rela
 	_, err = target.Exec(ctx, `DELETE FROM gregale_pipeline.verifications WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation)
 	return err
 }
+
+// Destination-only cleanup; callers hold the destination lock and lease fence.
+// A different run or an active table retirement retains its own tracking.
+func cleanupCancelledVerification(ctx context.Context, p Pipeline, target *pgx.Conn, current func(context.Context) error) error {
+	v := p.VerificationProgress
+	if activeTableCancellation(p) || v == nil || v.State != "cancelled" {
+		return nil
+	}
+	c, err := loadVerification(ctx, target, p)
+	if err != nil || c == nil {
+		return err
+	}
+	if c.Progress.ID != v.ID && (v.IntentID == "" || c.Progress.IntentID != v.IntentID) {
+		return nil
+	}
+	if err = current(ctx); err != nil {
+		return err
+	}
+	return cleanupVerification(ctx, p, target)
+}
+
 func cleanupVerification(ctx context.Context, p Pipeline, target *pgx.Conn) error {
 	c, err := loadVerification(ctx, target, p)
 	if err != nil || c == nil {

@@ -506,7 +506,9 @@ func TestPgStore_ConsumeOrgInvitation_ErrorPaths(t *testing.T) {
 		"00000000-0000-0000-0000-0000000000f2",
 	)
 
-	o, err := s.CreateOrg(ctx, newTestOrg("consume-err-pg"))
+	seed := newTestOrg("consume-err-pg")
+	seed.Plan = api.PlanHobby // this case exercises token errors within an allowed plan
+	o, err := s.CreateOrg(ctx, seed)
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}

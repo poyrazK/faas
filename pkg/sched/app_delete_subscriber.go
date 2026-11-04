@@ -94,14 +94,23 @@ func (d *AppDeleteSubscriber) handle(ctx context.Context, n db.Notification) {
 // evictApp evicts any in-flight wake and reconciles live instances for appID.
 // Both operations are idempotent, so notification redelivery is safe.
 func (d *AppDeleteSubscriber) evictApp(ctx context.Context, appID string) {
-	if d.engine.wakeCoord == nil {
-		// Defensive: a test wiring an Engine without wakeCoord
-		// shouldn't crash on this path.
-		// The lifecycle cleanup is still safe and should not depend on
-		// the optional wake coordinator test seam.
-	} else {
+	d.forgetWakes(appID)
+	d.reconcileApp(ctx, appID)
+}
+
+// forgetWakes unwinds appID's in-flight wake so its followers return
+// ErrAppDeleted. It is cheap, so schedd's loop runs it on the notification.
+func (d *AppDeleteSubscriber) forgetWakes(appID string) {
+	// A test wiring an Engine without wakeCoord still gets the lifecycle
+	// cleanup, which does not depend on the optional wake coordinator.
+	if d.engine.wakeCoord != nil {
 		d.engine.wakeCoord.Forget(appID)
 	}
+}
+
+// reconcileApp destroys appID's live instances. Each destroy can wait on
+// vmmd, so schedd's loop runs it on the work pool (ADR 20261103164725).
+func (d *AppDeleteSubscriber) reconcileApp(ctx context.Context, appID string) {
 	acted, err := d.engine.ReconcileDeletedApp(ctx, appID)
 	if err != nil {
 		d.log.Warn("schedd: app-delete subscriber lifecycle reconcile failed",

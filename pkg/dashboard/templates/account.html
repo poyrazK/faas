@@ -38,6 +38,7 @@
     {{template "email-verification-banner" .}}
     <h1>Account</h1>
     <p>Signed in as <code>{{.Account.Email}}</code> on the <strong>{{.Account.Plan}}</strong> plan.</p>
+	<p><a href="/dashboard/account/mfa">Manage two-factor authentication</a></p>
 
     {{if .Data}}
       {{$d := .Data}}

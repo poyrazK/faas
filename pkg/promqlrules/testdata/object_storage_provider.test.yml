@@ -1,0 +1,62 @@
+# Hunt 14 H14-14: provider credential refusals and stalled bucket operations.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a provider refusal that holds for 10m warns
+    interval: 1m
+    input_series:
+      - series: faas_object_storage_provider_refusing_credentials{job="apid",instance="cp"}
+        values: 0x5 1x30
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasObjectStorageProviderRefusingCredentials
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasObjectStorageProviderRefusingCredentials
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: object_storage
+            exp_annotations:
+              summary: "A storage provider is refusing Gregale's credentials"
+              description: "A provider answered 401/403 to a bucket operation, so apid withdrew object storage: capabilities report it off and bucket creates answer 503 object_storage_unavailable. Check the provider account (credentials, billing, project) before the next retry."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
+  - name: bucket creates that only defer warn
+    interval: 5m
+    input_series:
+      - series: faas_object_storage_recovery_attempts_total{job="apid",instance="cp",operation="provisioning",outcome="deferred"}
+        values: 0+1x24
+      - series: faas_object_storage_recovery_attempts_total{job="apid",instance="cp",operation="provisioning",outcome="success"}
+        values: 3x24
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasObjectStorageBucketOperationsStalled
+        exp_alerts: []
+      - eval_time: 1h
+        alertname: FaasObjectStorageBucketOperationsStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: object_storage
+            exp_annotations:
+              summary: "Bucket creates and deletes keep failing"
+              description: "apid retried bucket creates or deletes over the last 2h and none succeeded. Customers see buckets stuck in provisioning or deleting. apid logs each attempt as 'object storage operation deferred' with its error_code."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+
+  - name: a deferred create next to successes stays quiet
+    interval: 5m
+    input_series:
+      - series: faas_object_storage_recovery_attempts_total{job="apid",instance="cp",operation="provisioning",outcome="deferred"}
+        values: 0+1x24
+      - series: faas_object_storage_recovery_attempts_total{job="apid",instance="cp",operation="provisioning",outcome="success"}
+        values: 0+1x24
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: FaasObjectStorageBucketOperationsStalled
+        exp_alerts: []

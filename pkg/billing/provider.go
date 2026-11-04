@@ -337,8 +337,10 @@ type CustomerPortalProvider interface {
 // changes leave customers on the hosted billing portal path.
 //
 // targetPlan == api.PlanFree means cancel the subscription at period end;
-// paid-to-paid changes should use the provider's non-prorating or
-// next-period semantics unless the provider explicitly documents otherwise.
+// a downgrade takes effect at the period end. An upgrade is charged and
+// applied now, and fails without changing anything when the charge does not
+// go through: it is the upgrade path for an existing subscription, because
+// the provider's customer portal does not switch plans (ADR-20261103131742).
 type SubscriptionPlanChangeProvider interface {
 	ChangeSubscriptionPlan(ctx context.Context, acct state.Account, targetPlan api.Plan) (effectiveAt time.Time, err error)
 }
@@ -412,6 +414,41 @@ type InvoicePDFRequester interface {
 type CustomerBillingInfoProvider interface {
 	SyncCustomerBillingInfo(ctx context.Context, acct state.Account) error
 }
+
+// CustomerEmailUpdater is an optional provider surface for moving an
+// existing billing customer to the subject's current billing email
+// (ADR-20261103131742). A provider whose customer email must be unique
+// returns a *CustomerEmailInUseError when another customer holds it.
+type CustomerEmailUpdater interface {
+	UpdateCustomerEmail(ctx context.Context, acct state.Account) error
+}
+
+// CustomerDeleter is an optional provider surface for deleting a billing
+// customer whose Gregale subject no longer exists, so a returning customer
+// can reuse the email it held (ADR-20261103131742). Deleting a customer
+// that is already gone succeeds.
+type CustomerDeleter interface {
+	DeleteCustomer(ctx context.Context, customerID string) error
+}
+
+// ErrCustomerEmailInUse matches a *CustomerEmailInUseError with errors.Is.
+var ErrCustomerEmailInUse = errors.New("billing: another billing customer uses this email")
+
+// CustomerEmailInUseError reports that a provider keeps one customer per
+// email and another customer already holds the subject's billing email.
+// ExternalID is that customer's Gregale subject ID when it has one, so the
+// caller can tell a deleted subject's leftover customer from a live one.
+type CustomerEmailInUseError struct {
+	Email      string
+	CustomerID string
+	ExternalID string
+}
+
+func (e *CustomerEmailInUseError) Error() string {
+	return "billing: another billing customer uses this email"
+}
+
+func (e *CustomerEmailInUseError) Is(target error) bool { return target == ErrCustomerEmailInUse }
 
 // CatalogProvider is an optional operator surface for inspecting and
 // revalidating the active provider's configured product catalog. The API

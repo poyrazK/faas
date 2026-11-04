@@ -1061,13 +1061,16 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 	}
 	// (3.5) binding-hash mismatch = stolen-cookie auto-revoke
 	// (IAM hardening mega-PR, logical change 5, ADR-076).
-	// Compare the envelope's binding_hash (sealed by AEAD at mint
-	// time) against the sessions row's binding_hash column.
+	// Compare the envelope and live row, then recompute the fingerprint from
+	// this request. Two unchanged stored values cannot detect a copied cookie.
 	// Either side empty = "binding not armed" (pre-PR-076 cookie
 	// or unix-socket code path); cross-check is skipped in that
 	// case. Mismatch ⇒ auto-revoke + audit + 401.
-	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" &&
-		env.BindingHash != sess.BindingHash {
+	presentedBinding := env.BindingHash
+	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" && env.BindingHash == sess.BindingHash {
+		presentedBinding = bindinghash.Compute(middleware.ClientIP(r), bindinghash.UAFamily(r.UserAgent()), m.BindingKeyFn)
+	}
+	if m.BindingKeyFn != nil && env.BindingHash != "" && sess.BindingHash != "" && presentedBinding != sess.BindingHash {
 		// Best-effort revoke. Failure is logged but the
 		// 401 still returns — the request is rejected
 		// regardless of the revoke's success.
@@ -1084,7 +1087,7 @@ func (m *Middleware) RequireSessionCookie(w http.ResponseWriter,
 				"method":           r.Method,
 				"path":             r.URL.Path,
 				"expected_prefix":  prefix8(sess.BindingHash),
-				"presented_prefix": prefix8(env.BindingHash),
+				"presented_prefix": prefix8(presentedBinding),
 			})
 		}
 		m.clearSessionCookie(w)
@@ -1252,7 +1255,7 @@ func isBillingRecoveryRoute(method, path string) bool {
 		"PATCH /v1/account/plan",
 		// Completing MFA is what clears an mfa_pending session and
 		// stamps the step-up that retry and plan change require.
-		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover":
+		"POST /v1/account/mfa/verify", "POST /v1/account/mfa/recover", "GET /v1/auth/csrf":
 		return true
 	}
 	return false
@@ -1690,9 +1693,12 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	// A deploy follows the deployment it created; the route
 	// is bound by the deployment's app, not a path slug.
 	deploymentRead := deployTokenDeploymentReads[r.Pattern]
-	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead {
+	// CI waits for its app's PR previews; the route is bound by the
+	// preview's production app (ADR-20261102203228).
+	previewStatusRead := appBoundPreviewStatusReads[r.Pattern]
+	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead && !previewStatusRead {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments"))
+			title, "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments and preview status"))
 		return true
 	}
 	var bound bool
@@ -1700,6 +1706,8 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 	switch {
 	case uploadRoute:
 		bound = key.AppID != ""
+	case previewStatusRead:
+		bound, bindErr = m.credentialBoundToPreview(r, key)
 	case deploymentRead:
 		bound, bindErr = m.deployTokenBoundToDeployment(r, key)
 	default:
@@ -1721,6 +1729,37 @@ func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Re
 		return true
 	}
 	return false
+}
+
+// appBoundPreviewStatusReads are the PR preview status reads an app-bound
+// credential may make for its own app's previews.
+var appBoundPreviewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// credentialBoundToPreview reports whether the {slug} of a preview status read
+// names a preview of the app the credential is bound to.
+func (m *Middleware) credentialBoundToPreview(r *http.Request, key state.APIKey) (bool, error) {
+	slug := r.PathValue("slug")
+	if slug == "" || key.AppID == "" {
+		return false, nil
+	}
+	preview, err := m.Authn.AppBySlug(r.Context(), slug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil || preview.PreviewOfSlug == "" {
+		return false, err
+	}
+	parent, err := m.Authn.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return parent.ID == key.AppID && parent.AccountID == preview.AccountID, nil
 }
 
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {

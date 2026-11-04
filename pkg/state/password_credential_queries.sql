@@ -20,3 +20,19 @@ WITH changed AS (
     WHERE id=$1 RETURNING id
 )
 DELETE FROM account_passwords p USING changed a WHERE p.account_id=a.id;
+
+-- Inline reset links share the legacy login_tokens table. Account-first locks
+-- match the durable credential writers; the final CAS rechecks absolute expiry.
+-- name: FindInlineResetAccount :one
+SELECT account_id FROM login_tokens WHERE token_hash=$1;
+
+-- name: LockInlineResetAccount :one
+SELECT id FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: LockInlineResetToken :one
+SELECT consumed_at,expires_at FROM login_tokens WHERE token_hash=$1 AND account_id=$2 FOR UPDATE;
+
+-- name: ConsumeInlineResetToken :one
+UPDATE login_tokens SET consumed_at=clock_timestamp()
+WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp()
+RETURNING account_id;

@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -422,6 +423,44 @@ func TestEnv_AuditEmit_IncludesScope(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Scope != "staging" {
 		t.Errorf("store rows: got %+v, want one row with scope=staging", rows)
+	}
+}
+
+// A protected environment other than production takes configuration through
+// an approved plan or promotion: setting an env var, a secret value or the
+// project environment configuration there is refused, while production and
+// unprotected scopes keep direct writes (ADR-20261019071733 amendment 11).
+func TestProtectedEnvironmentRefusesDirectConfigWrites(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := context.Background()
+	store := *e.Store()
+	acct := *e.Acct()
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "guarded-shop", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "preprod", Protected: true}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "guarded-api", WorkloadName: "api", Type: state.AppTypeApp, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := func(name string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), api.CodeProjectEnvironmentApprovalRequired) {
+			t.Fatalf("%s = %d %s, want 409 project_environment_approval_required", name, rec.Code, rec.Body)
+		}
+	}
+	refused("env set", e.Do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/env/MODE?scope=preprod", api.PutAppEnvRequest{Value: "x"}, nil))
+	refused("env delete", e.Do(t, http.MethodDelete, "/v1/apps/"+app.Slug+"/env/MODE?scope=preprod", nil, nil))
+	refused("secret set", e.Do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/secrets/TOKEN?scope=preprod", api.PutAppSecretRequest{Value: "s3cret"}, nil))
+	refused("project config", e.Do(t, http.MethodPut, "/v1/projects/"+project.Slug+"/environments/preprod/config",
+		api.UpdateProjectEnvironmentConfigRequest{Values: json.RawMessage(`{"MODE":"x"}`)}, nil))
+	for _, scope := range []string{"production", "default", "qa"} {
+		if rec := e.Do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/env/MODE?scope="+scope, api.PutAppEnvRequest{Value: "x"}, nil); rec.Code != http.StatusOK {
+			t.Fatalf("env set in %s = %d %s, want it allowed", scope, rec.Code, rec.Body)
+		}
 	}
 }
 

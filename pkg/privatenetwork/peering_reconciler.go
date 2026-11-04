@@ -124,7 +124,27 @@ func (r *PeeringReconciler) Sweep(ctx context.Context) (PeeringReconcileSummary,
 	if err != nil {
 		return PeeringReconcileSummary{}, err
 	}
-	return r.sweepRows(ctx, rows)
+	// The batch selects scopes only. Reload their complete current intent
+	// after acquiring the same fence used by API create/delete operations.
+	groups := make(map[string]state.PrivateNetworkPeering)
+	for _, row := range rows {
+		groups[row.AccountID+"\x00"+row.Region] = row
+	}
+	var summary PeeringReconcileSummary
+	var errs []error
+	for _, row := range groups {
+		part, err := r.SweepAccountRegion(ctx, row.AccountID, row.Region)
+		summary.Discovered += part.Discovered
+		summary.Peerings += part.Peerings
+		summary.Routes += part.Routes
+		summary.Ready += part.Ready
+		summary.Failed += part.Failed
+		summary.Contended += part.Contended
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return summary, errors.Join(errs...)
 }
 
 // SweepAccountRegion immediately converges one account/region after a
@@ -137,6 +157,16 @@ func (r *PeeringReconciler) SweepAccountRegion(ctx context.Context, accountID, r
 	if accountID == "" || region == "" {
 		return PeeringReconcileSummary{}, errors.New("privatenetwork: account_id and region are required")
 	}
+	var summary PeeringReconcileSummary
+	err := state.WithPrivateNetworkScope(ctx, r.store, state.PrivateNetworkPeeringScope(accountID, region), func(ctx context.Context) error {
+		var err error
+		summary, err = r.sweepAccountRegionLocked(ctx, accountID, region)
+		return err
+	})
+	return summary, err
+}
+
+func (r *PeeringReconciler) sweepAccountRegionLocked(ctx context.Context, accountID, region string) (PeeringReconcileSummary, error) {
 	rows, err := r.store.ListPrivateNetworkPeerings(ctx, accountID, "")
 	if err != nil {
 		return PeeringReconcileSummary{}, err
@@ -250,9 +280,8 @@ func (r *PeeringReconciler) sweepRows(ctx context.Context, rows []state.PrivateN
 			if _, blocked := group.blocked[row.ID]; blocked {
 				continue
 			}
-			if row.Status == api.PrivateNetworkPeeringStatusReady {
-				continue
-			}
+			// Advance the oldest-first queue even for already-ready rows.
+			// Otherwise a full batch of ready peerings starves newer intent.
 			if _, updateErr := r.store.UpdatePrivateNetworkPeeringStatus(ctx, row.AccountID, row.ID, api.PrivateNetworkPeeringStatusReady, "private network routes active"); updateErr != nil {
 				if errors.Is(updateErr, state.ErrNotFound) {
 					summary.Contended++
@@ -262,7 +291,9 @@ func (r *PeeringReconciler) sweepRows(ctx context.Context, rows []state.PrivateN
 				sweepErrs = append(sweepErrs, updateErr)
 				continue
 			}
-			summary.Ready++
+			if row.Status != api.PrivateNetworkPeeringStatusReady {
+				summary.Ready++
+			}
 		}
 		outcome, failed := "ready", 0
 		if len(group.blocked) > 0 {

@@ -12,9 +12,18 @@ import (
 )
 
 const issueReleaseHealth = `-- name: IssueReleaseHealth :one
+WITH impact_events AS MATERIALIZED (
+ SELECT a.canonical_issue_id,CASE WHEN e.occurred_at >= $1::timestamptz AND e.occurred_at < $2::timestamptz THEN e.verified_platform_tenant_id END AS verified_platform_tenant_id, CASE WHEN e.occurred_at >= $1::timestamptz AND e.occurred_at < $2::timestamptz THEN e.verified_consumer_id END AS verified_consumer_id, issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$1::timestamptz,$2::timestamptz,true,false)::bigint AS occurrence_count
+ FROM issue_events e JOIN app_issues i ON i.id=e.issue_id JOIN issue_group_assignments a ON a.original_issue_id=e.issue_id
+ WHERE e.app_id=$3::uuid AND e.deployment_id=$4::uuid AND i.environment=$5::text
+ AND e.occurred_at>=$1::timestamptz - interval '1 second' AND e.occurred_at<$2::timestamptz + interval '1 second'
+ AND issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$1::timestamptz,$2::timestamptz,true,false)>0
+), linked_customers AS (
+ SELECT DISTINCT verified_consumer_id FROM impact_events WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+)
 SELECT d.id AS deployment_id,d.commit_sha,d.created_at,
  requests.observed_requests,requests.http_5xx_requests,
- events.observed_issue_events,events.observed_issue_groups,events.identified_customers,events.unattributed_events,
+ events.observed_issue_events,events.observed_issue_groups,events.identified_customers,events.unattributed_events,unknown_events.unknown_http_batches,
  activity.new_issue_groups,activity.regressed_issue_groups
 FROM deployments d JOIN apps app ON app.id=d.app_id
 CROSS JOIN LATERAL (
@@ -24,30 +33,36 @@ CROSS JOIN LATERAL (
  AND t.received_at>=$1::timestamptz AND t.received_at<$2::timestamptz
 ) requests
 CROSS JOIN LATERAL (
- SELECT count(*) AS observed_issue_events,count(DISTINCT a.canonical_issue_id) AS observed_issue_groups,
- count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
- count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
- FROM issue_events e JOIN app_issues i ON i.id=e.issue_id JOIN issue_group_assignments a ON a.original_issue_id=e.issue_id
- WHERE e.app_id=app.id AND e.deployment_id=d.id AND i.environment=$3::text
- AND e.occurred_at>=$1::timestamptz AND e.occurred_at<$2::timestamptz
+ SELECT COALESCE(sum(e.occurrence_count),0)::bigint AS observed_issue_events,count(DISTINCT e.canonical_issue_id) AS observed_issue_groups,
+ (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+ FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS identified_customers,
+ COALESCE(sum(e.occurrence_count - CASE WHEN e.verified_platform_tenant_id IS NOT NULL OR e.verified_consumer_id IS NOT NULL THEN 1 ELSE 0 END),0)::bigint AS unattributed_events
+ FROM impact_events e LEFT JOIN linked_customers l ON l.verified_consumer_id=e.verified_consumer_id
 ) events
+CROSS JOIN LATERAL (
+ SELECT count(*)::bigint AS unknown_http_batches
+ FROM issue_events legacy JOIN app_issues li ON li.id=legacy.issue_id
+ WHERE legacy.app_id=$3::uuid AND legacy.deployment_id=$4::uuid AND li.environment=$5::text
+ AND legacy.occurred_at>=$1::timestamptz AND legacy.occurred_at<$2::timestamptz
+ AND NOT legacy.occurrence_weight_known AND legacy.occurrence_count=1 AND legacy.payload->>'source_kind'='http'
+) unknown_events
 CROSS JOIN LATERAL (
  SELECT count(DISTINCT a.canonical_issue_id) FILTER(WHERE act.action='created') AS new_issue_groups,
  count(DISTINCT a.canonical_issue_id) FILTER(WHERE act.action='regressed') AS regressed_issue_groups
  FROM issue_activity act JOIN app_issues i ON i.id=act.issue_id JOIN issue_group_assignments a ON a.original_issue_id=i.id
- WHERE i.app_id=app.id AND i.environment=$3::text AND act.details->>'deployment_id'=d.id::text
+ WHERE i.app_id=app.id AND i.environment=$5::text AND act.details->>'deployment_id'=d.id::text
  AND act.created_at>=$1::timestamptz AND act.created_at<$2::timestamptz
 ) activity
-WHERE d.app_id=$4::uuid AND app.account_id=$5::uuid AND d.id=$6::uuid
+WHERE d.app_id=$3::uuid AND app.account_id=$6::uuid AND d.id=$4::uuid
 `
 
 type IssueReleaseHealthParams struct {
 	WindowStart  pgtype.Timestamptz
 	WindowEnd    pgtype.Timestamptz
-	Environment  string
 	AppID        pgtype.UUID
-	AccountID    pgtype.UUID
 	DeploymentID pgtype.UUID
+	Environment  string
+	AccountID    pgtype.UUID
 }
 
 type IssueReleaseHealthRow struct {
@@ -60,6 +75,7 @@ type IssueReleaseHealthRow struct {
 	ObservedIssueGroups  int64
 	IdentifiedCustomers  int64
 	UnattributedEvents   int64
+	UnknownHttpBatches   int64
 	NewIssueGroups       int64
 	RegressedIssueGroups int64
 }
@@ -69,10 +85,10 @@ func (q *Queries) IssueReleaseHealth(ctx context.Context, db DBTX, arg IssueRele
 	row := db.QueryRow(ctx, issueReleaseHealth,
 		arg.WindowStart,
 		arg.WindowEnd,
-		arg.Environment,
 		arg.AppID,
-		arg.AccountID,
 		arg.DeploymentID,
+		arg.Environment,
+		arg.AccountID,
 	)
 	var i IssueReleaseHealthRow
 	err := row.Scan(
@@ -85,6 +101,7 @@ func (q *Queries) IssueReleaseHealth(ctx context.Context, db DBTX, arg IssueRele
 		&i.ObservedIssueGroups,
 		&i.IdentifiedCustomers,
 		&i.UnattributedEvents,
+		&i.UnknownHttpBatches,
 		&i.NewIssueGroups,
 		&i.RegressedIssueGroups,
 	)

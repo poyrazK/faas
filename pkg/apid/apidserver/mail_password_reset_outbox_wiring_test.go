@@ -69,6 +69,7 @@ func TestPasswordResetOutboxPublicWiringUniformResponseAndRollback(t *testing.T)
 			handler := server.Handler()
 			unknown := resetFormPost(handler, "/login/forgot", url.Values{"email": {"unbound-reset@example.net"}})
 			known := resetFormPost(handler, "/login/forgot", url.Values{"email": {email}})
+			server.WaitPasswordResetMail()
 			if unknown.Code != http.StatusOK || known.Code != unknown.Code || known.Body.String() != unknown.Body.String() {
 				t.Fatal("reset queue outcome exposed account existence", known.Code, unknown.Code)
 			}

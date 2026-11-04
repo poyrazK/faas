@@ -1,0 +1,158 @@
+package receivers
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+const (
+	issueRetryCapacity   = 128
+	issueRetryPerApp     = 8
+	issuePendingCapacity = 1024
+	issuePendingPerApp   = 128
+)
+
+var errHTTPIssueSkipped = errors.New("HTTP issue was not eligible for ingestion")
+
+func retryableHTTPIssueError(err error) bool {
+	var limit *state.IssueLimitError
+	if errors.As(err, &limit) {
+		return limit.Rate || limit.Resource == "events"
+	}
+	return err != nil && !errors.Is(err, errHTTPIssueSkipped) && !errors.Is(err, state.ErrInvalidArgument) && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrIssueEventConflict) && !errors.Is(err, state.ErrIssueQuota)
+}
+
+// enqueueHTTPIssue keeps Issue storage latency off the non-idempotent legacy
+// counting path. Its bounded in-memory queue remains best effort on restart.
+func (a *appErrorsReceiver) enqueueHTTPIssue(req *apidpb.IncrementAppErrorRequest) {
+	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" || req.GetRequestId() == "" {
+		return
+	}
+	// Snapshot before returning to the streaming handler, which may reuse req.
+	snapshot := &apidpb.IncrementAppErrorRequest{
+		AccountId: req.GetAccountId(), AppId: req.GetAppId(), DeploymentId: req.GetDeploymentId(),
+		RequestId: req.GetRequestId(), IssueEventId: req.GetIssueEventId(), ReceivedAtUnixMs: req.GetReceivedAtUnixMs(),
+		HttpStatus: req.GetHttpStatus(), ErrorClass: req.GetErrorClass(), SampleMessage: req.GetSampleMessage(),
+		RouteTemplate: req.GetRouteTemplate(), Fingerprint: req.GetFingerprint(), Count: req.GetCount(),
+		IssueTimeBuckets: append([]uint32(nil), req.GetIssueTimeBuckets()...),
+	}
+	app := snapshot.GetAppId()
+	a.issueRetryMu.Lock()
+	if a.issueAttemptCount >= issueRetryCapacity || a.issueAttemptApps[app] >= issueRetryPerApp {
+		if len(a.issuePending) >= issuePendingCapacity || a.issuePendingApps[app] >= issuePendingPerApp {
+			a.issueRetryMu.Unlock()
+			a.ops.ObserveIssueEvent("retry_dropped")
+			return
+		}
+		a.issuePending = append(a.issuePending, snapshot)
+		a.issuePendingApps[app]++
+		a.issueRetryMu.Unlock()
+		return
+	}
+	a.issueAttemptCount++
+	a.issueAttemptApps[app]++
+	a.issueRetryMu.Unlock()
+	a.startHTTPIssue(snapshot)
+}
+
+// startHTTPIssue owns one initial-attempt slot; completion wakes the oldest
+// eligible queued app, so a busy app cannot occupy the global backlog.
+func (a *appErrorsReceiver) startHTTPIssue(snapshot *apidpb.IncrementAppErrorRequest) {
+	app := snapshot.GetAppId()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		defer cancel()
+		attempts := 0
+		outcome := httpIssueSkipped
+		attempt := func(ctx context.Context) error {
+			attempts++
+			var err error
+			outcome, err = recordHTTPIssue(ctx, a.store, snapshot)
+			if err == nil && outcome == httpIssueSkipped {
+				return errHTTPIssueSkipped
+			}
+			return err
+		}
+		callCtx, callCancel := context.WithTimeout(ctx, 10*time.Second)
+		err := attempt(callCtx)
+		callCancel()
+		a.issueRetryMu.Lock()
+		a.issueAttemptCount--
+		a.issueAttemptApps[app]--
+		if a.issueAttemptApps[app] == 0 {
+			delete(a.issueAttemptApps, app)
+		}
+		var next *apidpb.IncrementAppErrorRequest
+		for i, waiting := range a.issuePending {
+			waitingApp := waiting.GetAppId()
+			if a.issueAttemptApps[waitingApp] >= issueRetryPerApp {
+				continue
+			}
+			next = waiting
+			copy(a.issuePending[i:], a.issuePending[i+1:])
+			a.issuePending[len(a.issuePending)-1] = nil
+			a.issuePending = a.issuePending[:len(a.issuePending)-1]
+			a.issuePendingApps[waitingApp]--
+			if a.issuePendingApps[waitingApp] == 0 {
+				delete(a.issuePendingApps, waitingApp)
+			}
+			a.issueAttemptCount++
+			a.issueAttemptApps[waitingApp]++
+			break
+		}
+		reserved := retryableHTTPIssueError(err) && a.issueRetryCount < issueRetryCapacity && a.issueRetryApps[app] < issueRetryPerApp
+		if reserved {
+			a.issueRetryCount++
+			a.issueRetryApps[app]++
+		}
+		a.issueRetryMu.Unlock()
+		if next != nil {
+			a.startHTTPIssue(next)
+		}
+		if reserved {
+			err = retryHTTPIssueUntil(ctx, attempt, time.Second, time.Minute)
+			a.issueRetryMu.Lock()
+			a.issueRetryCount--
+			a.issueRetryApps[app]--
+			if a.issueRetryApps[app] == 0 {
+				delete(a.issueRetryApps, app)
+			}
+			a.issueRetryMu.Unlock()
+		}
+		switch {
+		case errors.Is(err, errHTTPIssueSkipped):
+			a.ops.ObserveIssueEvent("retry_skipped")
+		case err != nil:
+			a.ops.ObserveIssueEvent("retry_dropped")
+		case attempts > 1:
+			a.ops.ObserveIssueEvent("retry_recovered")
+		case outcome == httpIssueDuplicate:
+			a.ops.ObserveIssueEvent("duplicate")
+		default:
+			a.ops.ObserveIssueEvent("accepted")
+		}
+	}()
+}
+
+func retryHTTPIssueUntil(ctx context.Context, attempt func(context.Context) error, delay, maxDelay time.Duration) error {
+	for {
+		callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := attempt(callCtx)
+		cancel()
+		if err == nil || !retryableHTTPIssueError(err) {
+			return err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		delay = min(maxDelay, delay*2)
+	}
+}

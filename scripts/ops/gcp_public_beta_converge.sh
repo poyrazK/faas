@@ -74,15 +74,15 @@ cloudflare_ranges() {
 }
 
 ensure_origin_firewall_rule() {
-  local name="$1" ranges="$2"
+  local name="$1" ranges="$2" target_tag="${3:-gregale-origin}"
   if exists gcloud compute firewall-rules describe "$name" --project="$project"; then
     run gcloud compute firewall-rules update "$name" --project="$project" \
-      --source-ranges="$ranges" --target-tags=gregale-origin \
+      --source-ranges="$ranges" --target-tags="$target_tag" \
       --allow=tcp:80,tcp:443 --priority=800 --quiet
   else
     run gcloud compute firewall-rules create "$name" --project="$project" --network=default \
       --direction=INGRESS --priority=800 --action=ALLOW --rules=tcp:80,tcp:443 \
-      --source-ranges="$ranges" --target-tags=gregale-origin --quiet
+      --source-ranges="$ranges" --target-tags="$target_tag" --quiet
   fi
 }
 zone_of() {
@@ -326,6 +326,24 @@ access_phase() {
   [[ -n "$control_zone" ]] || { echo "control instance is missing: $control" >&2; return 1; }
   run gcloud compute instances add-tags "$control" --project="$project" --zone="$control_zone" \
     --tags=gregale-origin --quiet
+  # ADR-520: keep the Cloudflare origin rules and add a separately audited
+  # HTTP/HTTPS exception on the control plane alone for customer TLS/ACME.
+  local custom_tag custom_v4 custom_v6
+  read -r custom_tag custom_v4 custom_v6 < <(python3 - "$root/deploy/gcp/public-beta-policy.json" <<'PY'
+import json, sys
+config = json.load(open(sys.argv[1]))["access"].get("custom_domain_tls", {})
+if config.get("enabled"):
+    print(config["target_tag"], config["firewall_rules"]["ipv4"], config["firewall_rules"]["ipv6"])
+else:
+    print("disabled - -")
+PY
+  )
+  if [[ "$custom_tag" != disabled ]]; then
+    run gcloud compute instances add-tags "$control" --project="$project" --zone="$control_zone" \
+      --tags="$custom_tag" --quiet
+    ensure_origin_firewall_rule "$custom_v4" 0.0.0.0/0 "$custom_tag"
+    ensure_origin_firewall_rule "$custom_v6" ::/0 "$custom_tag"
+  fi
   if ! exists gcloud compute firewall-rules describe gregale-iap-ssh --project="$project"; then
     run gcloud compute firewall-rules create gregale-iap-ssh --project="$project" --network=default \
       --direction=INGRESS --priority=900 --action=ALLOW --rules=tcp:22 \

@@ -103,7 +103,7 @@ func (m *MemStore) GetAppPrivateNetworkAttachment(ctx context.Context, accountID
 	return clonePrivateNetworkAttachment(attachment), nil
 }
 
-func (m *MemStore) UpsertAppPrivateNetworkAttachment(ctx context.Context, attachment AppPrivateNetworkAttachment) (AppPrivateNetworkAttachment, error) {
+func (m *MemStore) upsertAppPrivateNetworkAttachment(ctx context.Context, attachment AppPrivateNetworkAttachment) (AppPrivateNetworkAttachment, error) {
 	if err := ctx.Err(); err != nil {
 		return AppPrivateNetworkAttachment{}, err
 	}
@@ -144,7 +144,7 @@ func (m *MemStore) UpsertAppPrivateNetworkAttachment(ctx context.Context, attach
 	return clonePrivateNetworkAttachment(attachment), nil
 }
 
-func (m *MemStore) DeleteAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) error {
+func (m *MemStore) deleteAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -225,7 +225,7 @@ func (s *PgStore) GetAppPrivateNetworkAttachment(ctx context.Context, accountID,
 	return scanAppPrivateNetworkAttachment(row)
 }
 
-func (s *PgStore) UpsertAppPrivateNetworkAttachment(ctx context.Context, attachment AppPrivateNetworkAttachment) (AppPrivateNetworkAttachment, error) {
+func (s *PgStore) upsertAppPrivateNetworkAttachment(ctx context.Context, attachment AppPrivateNetworkAttachment) (AppPrivateNetworkAttachment, error) {
 	if attachment.AccountID == "" || attachment.AppID == "" || attachment.NetworkID == "" || attachment.Region == "" {
 		return AppPrivateNetworkAttachment{}, ErrInvalidArgument
 	}
@@ -273,7 +273,7 @@ func (s *PgStore) UpsertAppPrivateNetworkAttachment(ctx context.Context, attachm
 	return scanAppPrivateNetworkAttachment(row)
 }
 
-func (s *PgStore) DeleteAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) error {
+func (s *PgStore) deleteAppPrivateNetworkAttachment(ctx context.Context, accountID, appID string) error {
 	tag, err := s.pool.Exec(ctx,
 		`delete from app_private_network_attachments where account_id = $1 and app_id = $2`, accountID, appID)
 	if err != nil {

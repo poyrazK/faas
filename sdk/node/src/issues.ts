@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { registerIssueSourceMaps, type IssueSourceMap } from './issue-source-maps.js';
 import { loadIssueSourceMapManifest, type IssueSourceMapManifestOptions } from './issue-source-map-manifest.js';
-import { issueContextLimits, type IssueBreadcrumbEntry } from './issue-context.js';
+import { issueContextLimits, issueTagKeys, type IssueBreadcrumbEntry } from './issue-context.js';
 export type { IssueSourceMap } from './issue-source-maps.js';
 
 export interface IssueContext {
@@ -37,6 +37,29 @@ function bounded(value: string, limit: number): string {
  const bytes=Buffer.from(value,'utf8');let cut=Math.min(bytes.length,limit);
  while(cut<bytes.length && (bytes[cut]!&0xc0)===0x80) cut--;
  return bytes.subarray(0,cut).toString('utf8');
+}
+function correlationID(value: string | undefined, length: number): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.toLowerCase();
+  return normalized.length === length && /^[0-9a-f]+$/.test(normalized) && /[1-9a-f]/.test(normalized) ? normalized : undefined;
+}
+function invocationID(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(value) &&
+    /[1-9a-f]/i.test(value) ? value : undefined;
+}
+function validBreadcrumbTime(value: unknown, occurredAt: number): value is string {
+  if (typeof value !== 'string' || value.length > 64) return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (year === 0 || month < 1 || month > 12 || day < 1 || day > days[month - 1]! ||
+      Number(match[4]) > 23 || Number(match[5]) > 59 || Number(match[6]) > 59) return false;
+  if (match[7] !== 'Z' && (Number(match[7]!.slice(1, 3)) > 23 || Number(match[7]!.slice(4)) > 59)) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp !== Date.parse('0001-01-01T00:00:00Z') && timestamp <= occurredAt + 300000;
 }
 interface FailureEvent extends IssueContext {
   event_id: string;
@@ -80,20 +103,27 @@ export function createIssueReporter(options: IssueReporterOptions) {
   const groupingStrategy = options.groupingStrategy;
   const token = options.token;
   const endpoint = new URL(`/v1/apps/${encodeURIComponent(options.app)}/issue-events`, base);
-  const maxQueue = Math.min(1000, Math.max(1, options.maxQueue ?? 100));
-  const timeout = Math.min(10000, Math.max(100, options.timeoutMs ?? 2000));
+  if (options.maxQueue !== undefined && !Number.isFinite(options.maxQueue)) throw new Error('Invalid issue queue size');
+  if (options.timeoutMs !== undefined && !Number.isFinite(options.timeoutMs)) throw new Error('Invalid issue timeout');
+  const maxQueue = Math.min(1000, Math.max(1, Math.floor(options.maxQueue ?? 100)));
+  const timeout = Math.min(10000, Math.max(100, Math.floor(options.timeoutMs ?? 2000)));
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const queue: FailureEvent[] = [];
   let flushing: Promise<boolean> | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
+  let retryNotBefore = 0;
   let stopped = false;
   let closeDeadline = Number.POSITIVE_INFINITY;
+  let inFlight: AbortController | undefined;
   let dropped = 0;
   let accepted = 0;
   let mappedFrames = 0;
   let unmappedFrames = 0;
 
   function captureException(error: unknown, context: IssueContext = {}): string | undefined {
+    try { return capture(error, context); } catch { dropped++; return undefined; }
+  }
+  function capture(error: unknown, context: IssueContext): string | undefined {
     if (stopped || queue.length >= maxQueue) { dropped++; return undefined; }
     const value = error instanceof Error ? error : new Error(String(error));
     function framesFor(value: Error): FailureEvent['frames'] {
@@ -116,21 +146,35 @@ export function createIssueReporter(options: IssueReporterOptions) {
     }
     const frames = framesFor(value);
     const event: FailureEvent = {
-      event_id: randomUUID(), occurred_at: new Date().toISOString(), exception_type: bounded(value.name,256),
+      event_id: randomUUID(), occurred_at: new Date().toISOString(), exception_type: bounded(typeof value.name === 'string' && value.name.trim() ? value.name : 'Error',256),
       message: bounded(value.message,2048), stack_trace: value.stack ? bounded(value.stack,16384) : undefined, frames,
-      trace_id: context.trace_id, span_id: context.span_id, request_id: context.request_id,
-      invocation_id: context.invocation_id, route: context.route, source_kind: context.source_kind,
+      trace_id: correlationID(context.trace_id, 32), span_id: correlationID(context.span_id, 16),
+      request_id: context.request_id === undefined ? undefined : bounded(context.request_id,256),
+      invocation_id: invocationID(context.invocation_id), route: context.route === undefined ? undefined : bounded(context.route,256), source_kind: context.source_kind,
       error_code: context.error_code === undefined ? undefined : bounded(context.error_code,256),
       fingerprint_override: context.fingerprint_override === undefined ? undefined : bounded(context.fingerprint_override,256),
-      breadcrumbs: context.breadcrumbs?.slice(-issueContextLimits.breadcrumbs).map(entry=>({
-        occurred_at:entry.occurred_at,category:entry.category,level:entry.level,message:bounded(entry.message,issueContextLimits.messageBytes),
-      })),
-      breadcrumbs_dropped: context.breadcrumbs===undefined?context.breadcrumbs_dropped:
-        Math.min(2147483647,Math.max(0,Math.floor(context.breadcrumbs_dropped??0))+Math.max(0,context.breadcrumbs.length-issueContextLimits.breadcrumbs)),
-      tags: context.tags===undefined?undefined:Object.fromEntries(Object.entries(context.tags).slice(0,issueContextLimits.tags)
-        .filter(([key,value])=>key.length<=issueContextLimits.keyBytes&&typeof value==='string')
+      tags: context.tags===undefined?undefined:Object.fromEntries(Object.entries(context.tags)
+        .filter(([key,value])=>issueTagKeys.includes(key)&&typeof value==='string'&&!value.includes('\0'))
+        .slice(0,issueContextLimits.tags)
         .map(([key,value])=>[key,bounded(value,issueContextLimits.valueBytes)])),
     };
+    let crumbsDropped = Number.isFinite(context.breadcrumbs_dropped) ? Math.max(0, Math.floor(context.breadcrumbs_dropped!)) : 0;
+    if (context.breadcrumbs !== undefined) {
+      crumbsDropped += Math.max(0, context.breadcrumbs.length - issueContextLimits.breadcrumbs);
+      const crumbs: IssueBreadcrumbEntry[] = [];
+      for (const entry of context.breadcrumbs.slice(-issueContextLimits.breadcrumbs)) {
+        if (!entry || !validBreadcrumbTime(entry.occurred_at, Date.parse(event.occurred_at)) ||
+            !['http','db','cache','workflow','log','custom'].includes(entry.category) ||
+            !['debug','info','warning','error'].includes(entry.level) || typeof entry.message !== 'string' || entry.message.includes('\0')) {
+          crumbsDropped++;
+          continue;
+        }
+        crumbs.push({occurred_at:entry.occurred_at, category:entry.category, level:entry.level,
+          message:bounded(entry.message,issueContextLimits.messageBytes)});
+      }
+      if (crumbs.length) event.breadcrumbs = crumbs;
+    }
+    if (crumbsDropped) event.breadcrumbs_dropped = Math.min(2147483647, crumbsDropped);
     if (groupingStrategy === 'failure-site-v1' || groupingStrategy === 'cause-chain-v1') {
       event.grouping_strategy = groupingStrategy;
       event.frame_order = 'newest-first';
@@ -154,11 +198,25 @@ export function createIssueReporter(options: IssueReporterOptions) {
         }
       } catch { event.causes_incomplete = true; }
     }
-    if (groupingStrategy === 'cause-chain-v1') {
-      while (event.causes?.length && Buffer.byteLength(JSON.stringify(event),'utf8') > 65536) {
-        event.causes.pop(); event.causes_incomplete = true;
-      }
+    // Bound grouping evidence without looking at optional context, so adding
+    // breadcrumbs, tags or correlation IDs cannot change the fingerprint.
+    const optional = {breadcrumbs:event.breadcrumbs, breadcrumbs_dropped:event.breadcrumbs_dropped, tags:event.tags,
+      request_id:event.request_id, trace_id:event.trace_id, span_id:event.span_id, invocation_id:event.invocation_id, route:event.route};
+    event.breadcrumbs = undefined; event.breadcrumbs_dropped = undefined; event.tags = undefined;
+    event.request_id = undefined; event.trace_id = undefined; event.span_id = undefined; event.invocation_id = undefined; event.route = undefined;
+    const oversized = (limit = 65536) => Buffer.byteLength(JSON.stringify(event),'utf8') > limit;
+    while (event.causes?.length && oversized(61440)) { event.causes.pop(); event.causes_incomplete = true; }
+    if (oversized(61440)) event.stack_trace = undefined;
+    while (event.frames.length > 1 && oversized(61440)) event.frames.pop();
+    if (oversized(61440)) { dropped++; return undefined; }
+    Object.assign(event, optional);
+    event.breadcrumbs = optional.breadcrumbs;
+    while (event.breadcrumbs?.length && oversized()) {
+      event.breadcrumbs = event.breadcrumbs.slice(1);
+      event.breadcrumbs_dropped = Math.min(2147483647,(event.breadcrumbs_dropped ?? 0) + 1);
     }
+    if (oversized()) event.tags = undefined;
+    if (oversized()) { dropped++; return undefined; }
     queue.push(event);
     queueMicrotask(() => { void flush(); });
     return event.event_id;
@@ -166,23 +224,35 @@ export function createIssueReporter(options: IssueReporterOptions) {
   async function deliver(): Promise<boolean> {
     while (queue.length) {
       if (Date.now() >= closeDeadline) return false;
+      if (Date.now() < retryNotBefore) return false;
       const event = queue[0]!;
       let response: Response;
+      const controller = new AbortController();
+      inFlight = controller;
       try {
-        response = await fetchImpl(endpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(timeout),
+        response = await fetchImpl(endpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)]),
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(event) });
-      } catch { return false; }
+      } catch { retryNotBefore = Date.now() + 1000; return false; }
+      finally { if (inFlight === controller) inFlight = undefined; }
       if (response.status === 202) { queue.shift(); accepted++; }
-      else if (response.status === 429 || response.status >= 500) { return false; }
+      else if (response.status === 429 || (response.status === 503 && response.headers.has('Retry-After'))) {
+        const header = response.headers.get('Retry-After');
+        const seconds = header && /^\d+$/.test(header) ? Number(header) : NaN;
+        const date = header ? Date.parse(header) : NaN;
+        const delay = Number.isFinite(seconds) ? seconds * 1000 : Number.isFinite(date) ? date - Date.now() : 60000;
+        retryNotBefore = Date.now() + Math.min(86400000, Math.max(1000, delay));
+        return false;
+      }
+      else if (response.status >= 500) { retryNotBefore = Date.now() + 1000; return false; }
       else { queue.shift(); dropped++; }
     }
-    return true;
+    return dropped === 0;
   }
   function flush(): Promise<boolean> {
     if (!flushing) flushing = deliver().finally(() => {
       flushing = undefined;
       if (queue.length && !stopped && !retry) {
-        retry = setTimeout(() => { retry = undefined; void flush(); }, 1000);
+        retry = setTimeout(() => { retry = undefined; void flush(); }, Math.max(1000, retryNotBefore - Date.now()));
         retry.unref();
       }
     });
@@ -199,6 +269,26 @@ export function createIssueReporter(options: IssueReporterOptions) {
   async function wrap<T>(handler: () => Promise<T>, context: IssueContext = {}): Promise<T> {
     try { return await handler(); } catch (error) { try { captureException(error, context); } catch { dropped++; } throw error; }
   }
-  async function close(timeoutMs = 5000) { closeDeadline = Date.now() + Math.max(0, timeoutMs); stopped = true; if (retry) clearTimeout(retry); return flush(); }
+  async function close(timeoutMs = 5000) {
+    if (!Number.isFinite(timeoutMs)) throw new Error('Invalid issue close timeout');
+    closeDeadline = Math.min(closeDeadline, Date.now() + Math.max(0, timeoutMs));
+    stopped = true;
+    if (retry) { clearTimeout(retry); retry = undefined; }
+    async function drain(): Promise<boolean> {
+      for (;;) {
+        const result = await flush();
+        if (!queue.length || result) return result;
+        const remaining = closeDeadline - Date.now();
+        if (remaining <= 0) return false;
+        await new Promise<void>(resolve => setTimeout(resolve, Math.min(remaining, Math.max(1000, retryNotBefore - Date.now()))));
+      }
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([drain(), new Promise<boolean>(resolve => {
+        timer = setTimeout(() => { inFlight?.abort(); resolve(false); }, Math.min(2147483647, Math.max(0, closeDeadline - Date.now())));
+      })]);
+    } finally { if (timer) clearTimeout(timer); }
+  }
   return { captureException, flush, close, install, wrap, stats: () => ({ queued: queue.length, accepted, dropped, mappedFrames, unmappedFrames }) };
 }

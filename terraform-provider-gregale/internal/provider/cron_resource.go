@@ -105,8 +105,9 @@ func (r *cronResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"schedule_policy": schema.SingleNestedAttribute{
 				Optional:            true,
 				Computed:            true,
-				Description:         "Policy for overlap, first-start deadlines, and recovery of missed schedule times.",
-				MarkdownDescription: "Policy for overlap, first-start deadlines, and recovery of missed schedule times.",
+				Description:         "Policy for overlap, first-start deadlines, and recovery of missed schedule times. Removing it from the configuration removes it from the cron.",
+				MarkdownDescription: "Policy for overlap, first-start deadlines, and recovery of missed schedule times. Removing it from the configuration removes it from the cron.",
+				PlanModifiers:       []planmodifier.Object{clearWhenUnconfigured{}},
 				Attributes: map[string]schema.Attribute{
 					"overlap": schema.StringAttribute{
 						Required:            true,
@@ -128,8 +129,9 @@ func (r *cronResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"failure_rules_json": schema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
-				Description:         "Versioned HTTP Cron outcome-code classification rules as JSON.",
-				MarkdownDescription: "Versioned HTTP Cron outcome-code classification rules as JSON. Matchers use `outcome_codes`; HTTP status and exit-code matchers are not supported for HTTP Crons.",
+				Description:         "Versioned HTTP Cron outcome-code classification rules as JSON. Removing them from the configuration removes them from the cron.",
+				MarkdownDescription: "Versioned HTTP Cron outcome-code classification rules as JSON. Matchers use `outcome_codes`; HTTP status and exit-code matchers are not supported for HTTP Crons. Removing them from the configuration removes them from the cron.",
+				PlanModifiers:       []planmodifier.String{clearWhenUnconfigured{}},
 			},
 			"suspended_reason": schema.StringAttribute{
 				Computed:            true,
@@ -256,6 +258,11 @@ func (r *cronResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	var prior cronModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	out, err := r.client.updateCron(ctx, plan.CronID.ValueString(), cronPatch{
 		Schedule:       stringPointer(plan.Schedule),
 		Path:           stringPointer(plan.Path),
@@ -264,6 +271,10 @@ func (r *cronResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		SkipIfRunning:  boolPointer(plan.SkipIfRunning),
 		SchedulePolicy: schedulePolicy,
 		FailureRules:   failureRules,
+		// A policy or rules removed from the configuration are removed from
+		// the cron; the API keeps an omitted field as it is.
+		ClearSchedulePolicy: plan.SchedulePolicy.IsNull() && !prior.SchedulePolicy.IsNull(),
+		ClearFailureRules:   plan.FailureRulesJSON.IsNull() && !prior.FailureRulesJSON.IsNull(),
 	})
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not update Gregale cron", err)
@@ -379,4 +390,31 @@ func cronSchedulePolicyValue(policy *cronSchedulePolicy) (types.Object, diag.Dia
 		"start_deadline_seconds": types.Int64Value(int64(policy.StartDeadlineSeconds)),
 		"missed_runs":            types.StringValue(policy.MissedRuns),
 	})
+}
+
+// clearWhenUnconfigured plans null for an optional, computed attribute the
+// configuration no longer sets while the state still holds a value. Without
+// it the attribute kept its prior value in the plan, so removing a schedule
+// policy or failure rules from the configuration planned no change and the
+// cron kept them (crons audit 2026-11-03).
+type clearWhenUnconfigured struct{}
+
+func (clearWhenUnconfigured) Description(context.Context) string {
+	return "Plans null when the configuration removes the value."
+}
+
+func (m clearWhenUnconfigured) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (clearWhenUnconfigured) PlanModifyObject(_ context.Context, req planmodifier.ObjectRequest, resp *planmodifier.ObjectResponse) {
+	if req.ConfigValue.IsNull() && !req.State.Raw.IsNull() && !req.StateValue.IsNull() {
+		resp.PlanValue = types.ObjectNull(cronSchedulePolicyAttrTypes)
+	}
+}
+
+func (clearWhenUnconfigured) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if req.ConfigValue.IsNull() && !req.State.Raw.IsNull() && !req.StateValue.IsNull() {
+		resp.PlanValue = types.StringNull()
+	}
 }

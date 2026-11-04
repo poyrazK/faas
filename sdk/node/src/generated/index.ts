@@ -1217,6 +1217,7 @@ export type { KafkaSASLConfig } from './models/KafkaSASLConfig.js';
 export type { KafkaSASLMechanism } from './models/KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './models/KafkaTLSConfig.js';
 export type { KafkaTriggerConfig } from './models/KafkaTriggerConfig.js';
+export type { KeyOrg } from './models/KeyOrg.js';
 export type { LabelChange } from './models/LabelChange.js';
 export type { LabelsResponse } from './models/LabelsResponse.js';
 export type { LatestDeploymentsByAppResponse } from './models/LatestDeploymentsByAppResponse.js';
@@ -2058,8 +2059,12 @@ export type { OperatorRuntimeConfigOperation } from './models/OperatorRuntimeCon
 export type { OperatorRuntimeConfigRevision } from './models/OperatorRuntimeConfigRevision.js';
 export type { OrgAccountID } from './models/OrgAccountID.js';
 export type { OrgActivityResponse } from './models/OrgActivityResponse.js';
+export type { OrgAgentPolicyRequest } from './models/OrgAgentPolicyRequest.js';
+export type { OrgAgentPolicyResponse } from './models/OrgAgentPolicyResponse.js';
 export type { OrgAppListResponse } from './models/OrgAppListResponse.js';
 export type { OrgAppSummary } from './models/OrgAppSummary.js';
+export type { OrgBillingEmailRequest } from './models/OrgBillingEmailRequest.js';
+export type { OrgBillingEmailResponse } from './models/OrgBillingEmailResponse.js';
 export type { OrgInvitationResponse } from './models/OrgInvitationResponse.js';
 export type { OrgListResponse } from './models/OrgListResponse.js';
 export type { OrgMemberResponse } from './models/OrgMemberResponse.js';
@@ -3038,6 +3043,7 @@ export type { TrafficRuntimeFeatureStatus } from './models/TrafficRuntimeFeature
 export type { TrafficRuntimeStatus } from './models/TrafficRuntimeStatus.js';
 export type { TransferOwnershipRequest } from './models/TransferOwnershipRequest.js';
 export type { Trigger } from './models/Trigger.js';
+export type { TriggerConsumerStatus } from './models/TriggerConsumerStatus.js';
 export type { TriggerDeadLetter } from './models/TriggerDeadLetter.js';
 export type { TriggerDeadLetterReason } from './models/TriggerDeadLetterReason.js';
 export type { TriggerKind } from './models/TriggerKind.js';

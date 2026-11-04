@@ -27,12 +27,16 @@ func TestMigrationOIDCEnvironmentPreflightCapability(t *testing.T) {
 		t.Fatalf("OIDC token scope default = %q, want legacy deploy:write", defaultValue)
 	}
 
+	// 20261103161454390 replaces the check under a _v2 name; read whichever
+	// one the migrated schema holds.
 	var oidcConstraint, apiKeyConstraint string
 	if err := pool.QueryRow(t.Context(), `
 		select pg_get_constraintdef(oid)
 		from pg_constraint
 		where conrelid = 'oidc_exchanged_tokens'::regclass
-		  and conname = 'oidc_exchanged_tokens_scopes_check'`).Scan(&oidcConstraint); err != nil {
+		  and conname in ('oidc_exchanged_tokens_scopes_check', 'oidc_exchanged_tokens_scopes_v2_check')
+		order by conname desc
+		limit 1`).Scan(&oidcConstraint); err != nil {
 		t.Fatalf("read OIDC scope constraint: %v", err)
 	}
 	for _, scope := range []string{"deploy:write", "project_environments:read", "project_environments:qualify"} {

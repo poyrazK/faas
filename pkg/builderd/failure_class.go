@@ -11,11 +11,13 @@ package builderd
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/oci"
 )
 
 // classifyBuildFailure resolves the failure class for a non-zero build exit.
@@ -109,6 +111,42 @@ func classifyBuildOutput(logTail string) (code, pkg string) {
 		return api.CodeDepInstallFailed, "go"
 	}
 	return "", ""
+}
+
+// platformBaseNetworkMarkers are transport failures, not registry answers: a
+// registry that answers 401/404 for the customer's own image is still the
+// customer's build failing.
+var platformBaseNetworkMarkers = []string{
+	"i/o timeout", "no such host", "temporary failure in name resolution", "server misbehaving",
+	"connection refused", "connection reset", "tls handshake timeout", "deadlineexceeded",
+	"500 internal server error", "502 bad gateway", "503 service unavailable", "504 gateway timeout",
+}
+
+// platformBaseFetchFailed reports whether a failed build's own output shows the
+// builder VM unable to reach the platform runtime base it was told to build
+// FROM (runtimeBaseRef). guest-init sees only a non-zero exit and reports a
+// user error, but the customer's source never ran: the builder could not
+// fetch Gregale's own image. The repository must appear on the same line as a
+// transport failure, plain or URL-escaped (BuildKit's token request escapes it).
+func platformBaseFetchFailed(logTail, runtimeBaseRef string) bool {
+	parsed, err := oci.ParseReference(runtimeBaseRef)
+	if err != nil || parsed.Repository == "" {
+		return false
+	}
+	repo := strings.ToLower(parsed.Repository)
+	escaped := strings.ToLower(url.QueryEscape(repo))
+	build, _, _ := strings.Cut(logTail, "\n[buildkitd]\n")
+	for _, line := range strings.Split(strings.ToLower(build), "\n") {
+		if !strings.Contains(line, repo) && !strings.Contains(line, escaped) {
+			continue
+		}
+		for _, marker := range platformBaseNetworkMarkers {
+			if strings.Contains(line, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func goModuleFailure(lower string) bool {

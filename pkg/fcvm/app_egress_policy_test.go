@@ -111,8 +111,8 @@ func TestAppEgressPolicyCanonicalRetryAndDefensiveCopies(t *testing.T) {
 	if err := m.UpdateAppEgressPolicy(t.Context(), "app", 3, []netip.Prefix{netip.MustParsePrefix("1.1.1.0/24"), netip.MustParsePrefix("8.8.8.0/24")}, []uint16{5432, 6379}); err != nil {
 		t.Fatalf("canonical retry: %v", err)
 	}
-	if run.inputCount() != 1 {
-		t.Fatalf("canonical retry issued %d port patches", run.inputCount())
+	if run.inputCount() != 2 {
+		t.Fatalf("canonical retry issued %d physical policy writes", run.inputCount())
 	}
 }
 
@@ -120,9 +120,8 @@ func TestAppEgressPolicyPartialFailureRetainsNewIntentAndRetries(t *testing.T) {
 	run := &policyNetworkRunner{failInput: true}
 	m := newTestManager(run, &fakeVMM{})
 	seedPolicyInstance(m, "live", "app", api.PlanPro)
-	// A first allowlist entry changes the chain's shape and applies at the next
-	// start (H10-36); start from an installed allowlist so the CIDR change is a
-	// live in-place patch and only the port write fails.
+	// Start with an installed allowlist so the CIDR write uses the live
+	// handle patch and only the subsequent port transaction fails.
 	m.live["live"].Net.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.1.1.0/24")}
 	m.live["live"].AllowlistHandleV4 = 7
 	prefixes := []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}

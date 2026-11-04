@@ -417,6 +417,31 @@ func TestDatabaseSwitchRefusesWhenAnotherReleaseStartedServing(t *testing.T) {
 	}
 }
 
+// A guard that began after the switch was requested (a pause, a freeze, an
+// approval change) stops the target before it goes live (ADR-20261023181931
+// amendment 2).
+func TestDatabaseSwitchRechecksTheReleaseGuardsBeforeTheTargetGoesLive(t *testing.T) {
+	h := newHarness(t)
+	var checked []string
+	h.worker.ReleaseGuard = func(_ context.Context, sw state.DatabaseSwitch) string {
+		checked = append(checked, sw.TargetDeploymentID)
+		return "Releases are paused."
+	}
+	h.databases.target.State = managedpostgres.StateReady
+	h.runUntil(state.DatabaseSwitchDraining, 12)
+	h.completeDrain()
+	sw := h.runUntil(state.DatabaseSwitchFailed, 6)
+	if sw.FailureCode != "release_switch_failed" || len(h.releases.marked) != 0 || slices.Contains(h.cutovers.calls, "activate") {
+		t.Fatalf("got %+v marked %v calls %v", sw, h.releases.marked, h.cutovers.calls)
+	}
+	if len(checked) == 0 || checked[0] != h.sw.TargetDeploymentID {
+		t.Fatalf("guard checked %v, want the target", checked)
+	}
+	if h.releases.live["default"] != h.sw.FromDeploymentID {
+		t.Fatalf("live release = %s, want the previous one kept", h.releases.live["default"])
+	}
+}
+
 func TestDatabaseSwitchReverifiesStaleEvidenceBeforeActivating(t *testing.T) {
 	h := newHarness(t)
 	h.databases.target.State = managedpostgres.StateReady

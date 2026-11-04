@@ -587,5 +587,6 @@ func dashboardMFANext(raw string) string {
 // dashboardMFARoute is what an mfa_pending session may reach: the TOTP
 // challenge and its form post.
 func dashboardMFARoute(method, path string) bool {
-	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost)
+	return path == dashboardMFAPath && (method == http.MethodGet || method == http.MethodPost) ||
+		path == "/dashboard/account/mfa" && method == http.MethodGet
 }
