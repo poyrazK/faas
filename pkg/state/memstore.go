@@ -386,6 +386,7 @@ type MemStore struct {
 	// (ADR-1451). Revisions are kept in revision order per scope.
 	configRevisions    map[configScopeKey][]ConfigRevision
 	envBatchReceipts   map[string]envBatchRecord
+	scalingReceipts    map[string]scalingRecord
 	configGuards       map[string]ConfigGuard
 	configGuardSecrets map[string]map[string]ConfigGuardSecret
 	// releaseFreezes mirrors release_freezes (ADR-20261019071733).
@@ -4691,6 +4692,10 @@ func (m *MemStore) ApplyProjectPlan(
 // applyProjectReconcileResources mirrors the Postgres rule: each positive
 // declared value replaces the app's (ADR-20261023120000).
 func applyProjectReconcileResources(app *App, declared App) {
+	beforeScaling := scalingSettings(*app)
+	if app.ScalingRevision < 1 {
+		app.ScalingRevision = 1
+	}
 	if declared.RAMMB > 0 {
 		app.RAMMB = declared.RAMMB
 	}
@@ -4699,6 +4704,9 @@ func applyProjectReconcileResources(app *App, declared App) {
 	}
 	if declared.MaxConcurrency > 0 {
 		app.MaxConcurrency = declared.MaxConcurrency
+	}
+	if scalingSettings(*app) != beforeScaling {
+		app.ScalingRevision++
 	}
 }
 
@@ -5103,6 +5111,7 @@ func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 		app.Status = AppActive
 	}
 	app.ScalingPolicyRevision = 1
+	app.ScalingRevision = 1
 	app.Visibility = api.NormalizeAppVisibility(app.Visibility)
 	if app.CPUMillicores == 0 {
 		app.CPUMillicores = api.DefaultAppCPUMillicores
@@ -5299,6 +5308,7 @@ func (m *MemStore) prepareAppIfUnderQuotaLocked(app App, limits api.Limits, apps
 		app.Status = AppActive
 	}
 	app.ScalingPolicyRevision = 1
+	app.ScalingRevision = 1
 	app.Visibility = api.NormalizeAppVisibility(app.Visibility)
 	if app.CPUMillicores == 0 {
 		app.CPUMillicores = api.DefaultAppCPUMillicores
@@ -7126,6 +7136,10 @@ func (m *MemStore) updateAppWithActivity(ctx context.Context, id string, p Updat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.updateAppLocked(ctx, id, p, entry, build, outboxID)
+}
+
+func (m *MemStore) updateAppLocked(ctx context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return App{}, err
 	}
@@ -7359,6 +7373,12 @@ func (m *MemStore) SetAppMinInstances(ctx context.Context, appID string, min int
 	a, ok := m.apps[appID]
 	if !ok {
 		return ErrNotFound
+	}
+	if a.ScalingRevision < 1 {
+		a.ScalingRevision = 1
+	}
+	if a.MinInstances != min {
+		a.ScalingRevision++
 	}
 	a.MinInstances = min
 	m.apps[appID] = a
