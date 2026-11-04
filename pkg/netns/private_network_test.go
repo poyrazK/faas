@@ -112,7 +112,7 @@ func TestNftCommandsPrivatePolicyRestrictsIngressAndEgress(t *testing.T) {
 	if !containsCommand(joined, "iifname tap0 ip daddr { 10.42.8.0/24 } accept") {
 		t.Fatalf("policy egress rule missing: %v", joined)
 	}
-	if !containsCommand(joined, "iifname gpn-p00001 ip saddr { 10.42.8.0/24 } ip daddr 10.0.0.2 tcp dport 8080 accept") {
+	if !containsCommand(joined, "iifname gpn-p00001 ip saddr { 10.42.8.0/24 } ip daddr 10.0.0.2 tcp dport 8080 ct status dnat accept") {
 		t.Fatalf("policy ingress source restriction missing: %v", joined)
 	}
 	if !containsCommand(joined, "iifname gpn-p00001 drop") {
@@ -139,7 +139,7 @@ func TestNftCommandsPrivateFirewallRulesFailClosed(t *testing.T) {
 	if !containsCommand(joined, "iifname tap0 ip daddr { 10.42.8.0/24 } udp dport 53 accept") {
 		t.Fatalf("protocol-aware egress rule missing: %v", joined)
 	}
-	if !containsCommand(joined, "iifname gpn-p00001 ip saddr { 10.42.8.0/24 } ip daddr 10.0.0.2 tcp dport 443 accept") {
+	if !containsCommand(joined, "iifname gpn-p00001 ip saddr { 10.42.8.0/24 } ip daddr 10.0.0.2 meta l4proto tcp ct original proto-dst 443 accept") {
 		t.Fatalf("protocol-aware ingress rule missing: %v", joined)
 	}
 	if !containsCommand(joined, "iifname tap0 ip daddr { 10.42.8.0/24 } drop") || !containsCommand(joined, "iifname gpn-p00001 drop") {

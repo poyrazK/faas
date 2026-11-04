@@ -407,6 +407,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/auth/github":          true, // 302 to GitHub consent (browser-only)
 	"GET /v1/auth/github/callback": true, // 302 to dashboard (browser-only)
 	"GET /v1/auth/verify-email":    true, // HTML email-confirmation landing page (browser-only)
+	"POST /v1/auth/verify-email":   true, // the landing page's confirmation form post (browser-only)
 	"GET /auth/reset":              true, // HTML form render (browser-only)
 	"POST /logout":                 true, // dashboard form post (browser-only); SDK's Logout wraps the same handler as a convenience
 
@@ -685,6 +686,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{slug}/application-standard-publishers":                           "CreateApplicationStandardPublisher",
 	"GET /v1/orgs/{slug}/application-standard-publishers/{resource}":                 "GetApplicationStandardPublisher",
 	"GET /v1/apps/{slug}/release-review":                                             "GetAppReleaseReview",
+	"GET /v1/apps/{slug}/resource-inventory":                                         "GetAppResourceInventory",
+	"GET /v1/apps/{slug}/operation-preview":                                          "GetAppOperationPreview",
+	"GET /v1/apps/{slug}/costs":                                                      "GetAppCosts",
+	"POST /v1/apps/{slug}/env/batch":                                                 "ApplyEnvBatch",
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
 	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
 	"PUT /v1/apps/{slug}/route-budgets":                                              "SetEnvironmentRouteBudgets",
@@ -903,6 +908,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"DELETE /v1/apps/{slug}/issues/{issue_id}":                                 "DeleteIssue",
 	"GET /v1/apps/{slug}/issue-compound-alert-policy":                          "GetIssueCompoundAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-compound-alert-policy":                          "SetIssueCompoundAlertPolicy",
 	"POST /v1/apps/{slug}/issue-compound-alert-policy/preview":                 "PreviewIssueCompoundAlert",

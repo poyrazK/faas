@@ -247,7 +247,7 @@ func (m *MemStore) admitEventWorkflowLocked(work *PublishedEventWork, recipient 
 		}
 		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
 	}
-	if m.automationFailureGuards[app.ID+"/"+run.WorkflowName].PausedAt != nil {
+	if m.automationFailureBlocksAdmissionLocked(app.ID, run.WorkflowName, time.Now().UTC()) {
 		return "", false, ErrWorkflowEventTargetUnavailable
 	}
 	run.AppID = app.ID

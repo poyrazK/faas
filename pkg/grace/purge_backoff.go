@@ -15,6 +15,8 @@ const reasonRetainedResources = "retained_resources"
 
 // purgeBlockReasons is the closed label set of apid_app_grace_blocked_apps.
 var purgeBlockReasons = []string{
+	state.AppPurgeBlockedEnvironmentClone,
+	state.AppPurgeBlockedExclusiveWork,
 	state.AppPurgeBlockedForeignKey,
 	state.AppPurgeBlockedManagedPostgresBinding,
 	state.AppPurgeBlockedMultipartWrite,

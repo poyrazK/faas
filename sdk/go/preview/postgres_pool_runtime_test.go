@@ -248,3 +248,18 @@ func TestPostgresPoolExplicitURI(t *testing.T) {
 		t.Fatal("validation and retirement must be required")
 	}
 }
+
+// The pool size Gregale derives from the instance's concurrency reaches the
+// factory; a value outside 1–1000 is ignored (ADR-20261104141122).
+func TestPostgresPoolMaxConnectionsFromEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		env  string
+		want int
+	}{{"10", 10}, {" 4 ", 4}, {"", 0}, {"0", 0}, {"-3", 0}, {"1001", 0}, {"ten", 0}} {
+		t.Setenv(PostgresPoolMaxEnv, tc.env)
+		config, err := loadPostgresPoolConfig(poolURI("private-secret"))
+		if err != nil || config.MaxConnections != tc.want {
+			t.Fatalf("%s=%q: MaxConnections %d, %v; want %d", PostgresPoolMaxEnv, tc.env, config.MaxConnections, err, tc.want)
+		}
+	}
+}

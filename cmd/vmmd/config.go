@@ -453,7 +453,9 @@ type ComputeNodeConfig struct {
 	// PublicEntryAddrs, when set, are this compute edge's public entry
 	// addresses with no proxy in front, as the nftables role renders for
 	// faas_public_entry_addrs (ADR-20261103163954 §2): 443 from every source
-	// to them only, nothing else to them. Exclusive with PublicIngressCIDRs.
+	// to them only, nothing else to them. Takes precedence over
+	// PublicIngressCIDRs, which the drop-in sends beside it for a vmmd that
+	// predates this field.
 	PublicEntryAddrs []string `toml:"public_entry_addrs"`
 	// OverlayCIDR is the per-host overlay subnet the vmmd overlay
 	// detector prefers when multiple IPv4 candidates come back from
@@ -477,6 +479,7 @@ type ComputeNodeConfig struct {
 	// VXLAN seam. It is disabled by default until the operator has provisioned
 	// a shared encrypted overlay for every node in the region.
 	PrivateNetworkTransportEnabled bool `toml:"private_network_transport_enabled"`
+	PrivateNetworkTransportMTU     int  `toml:"private_network_transport_mtu"`
 	// ServiceTCPEnabled turns on private TCP service addressing (ADR-576):
 	// every new netns admits guest TCP to api.ServiceAddressCIDR, the runtime
 	// host policy DNATs it onto the tenant-bridge service listeners, and the
@@ -886,6 +889,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.DatabaseRouteEnabled = parsed
 	}
+	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_MTU"); v != "" {
+		mtu, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("vmmd: invalid private transport MTU: %w", err)
+		}
+		c.ComputeNode.PrivateNetworkTransportMTU = mtu
+	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE"); v != "" {
 		c.ComputeNode.PrivateNetworkTransportInterface = v
 	}
@@ -1163,6 +1173,9 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.TenantEgressIface = iface
 	}
+	if mtu := c.ComputeNode.PrivateNetworkTransportMTU; mtu != 0 && (mtu < 576 || mtu > 1500) {
+		return nil, fmt.Errorf("vmmd: private_network_transport_mtu must be between 576 and 1500")
+	}
 	if iface := strings.TrimSpace(c.ComputeNode.PrivateNetworkTransportInterface); iface != "" {
 		if err := validatePublicIface(iface); err != nil {
 			return nil, fmt.Errorf("vmmd: [compute_node].private_network_transport_interface %q invalid: %w", iface, err)
@@ -1214,9 +1227,6 @@ func LoadConfig(path string) (*Config, error) {
 // role writes verbatim, so the boot policy and vmmd's runtime policy stay
 // byte-identical.
 func validatePublicEntryAddrs(cfg ComputeNodeConfig) error {
-	if len(cfg.PublicEntryAddrs) > 0 && len(cfg.PublicIngressCIDRs) > 0 {
-		return fmt.Errorf("vmmd: public_entry_addrs and public_ingress_cidrs are exclusive: an edge either has Cloudflare in front or takes 443 from everyone on its entry addresses")
-	}
 	for i, raw := range cfg.PublicEntryAddrs {
 		addr, err := netip.ParseAddr(raw)
 		if err != nil {

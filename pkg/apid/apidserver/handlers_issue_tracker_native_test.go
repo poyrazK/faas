@@ -233,7 +233,8 @@ func TestNativeIssueTicketCreationPersistsRetryEvidenceAndScopesConnection(t *te
 	if w := e.Do(t, "POST", "/v1/apps/"+foreign.Slug+"/issues/"+accepted.IssueID+"/native-tickets", in, nil); w.Code != 404 {
 		t.Fatal("cross-app creation", w.Code)
 	}
-	for i := 0; i < api.IssueTrackerNativeRequestsMax-2; i++ {
+	// The linked receipt is terminal and does not use an unresolved slot.
+	for i := 0; i < api.IssueTrackerNativeRequestsMax-1; i++ {
 		if _, err := receipts.ReserveNativeIssueTicket(t.Context(), state.NativeIssueTicketReceipt{AccountID: acct.ID, AppID: app.ID, IssueID: accepted.IssueID, RequestID: uuid.NewString(), Hash: strings.Repeat("b", 64)}); err != nil {
 			t.Fatal(err)
 		}

@@ -86,10 +86,22 @@ type Worker struct {
 	// ReleaseGuard rechecks, just before the switch makes its rollback
 	// target live, the guards the rollback met when it was requested (the
 	// pause, freezes and approvals a release that never served meets). It
-	// returns why the target may not go live now, or "". nil checks nothing.
-	ReleaseGuard func(ctx context.Context, sw state.DatabaseSwitch) string
-	Log          *slog.Logger
-	Now          func() time.Time
+	// returns a refusal, or an error when the guard cannot be read. Errors
+	// retry without activating the target. nil checks nothing.
+	ReleaseGuard func(ctx context.Context, sw state.DatabaseSwitch) (string, error)
+	// PromoteRelease checks binding policy at each traffic write, including
+	// compensation. The database cutover independently verifies the copy's
+	// staged credentials before publishing them and lifting the app fence.
+	PromoteRelease func(context.Context, state.DatabaseSwitch, string) error
+	Log            *slog.Logger
+	Now            func() time.Time
+}
+
+func (w *Worker) promoteRelease(ctx context.Context, sw state.DatabaseSwitch, id string) error {
+	if w.PromoteRelease != nil {
+		return w.PromoteRelease(ctx, sw, id)
+	}
+	return w.Releases.MarkDeploymentLive(ctx, id)
 }
 
 func (w *Worker) ownership(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error) {

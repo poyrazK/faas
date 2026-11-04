@@ -36,8 +36,32 @@ func (m *MemStore) detachGitSourceLocked(accountID, sourceID string, generation 
 			return ErrConflict
 		}
 	}
-	if len(memory.qualifications) > 0 {
-		return ErrConflict
+	// Report mode fences claims and new admission. Retained requests and
+	// receipts are history; only unfinished physical cleanup blocks retirement.
+	for _, status := range m.qualificationExecutions {
+		if status.Execution.SourceID != sourceID {
+			continue
+		}
+		if status.RetiredAt == nil {
+			return ErrConflict
+		}
+		if instance, exists := m.instances[status.Execution.InstanceID]; exists && !qualificationInstanceRetired(instance) {
+			return ErrConflict
+		}
+	}
+	for _, request := range memory.qualifications {
+		if instance, exists := m.instances[request.ReservedInstanceID]; exists && !qualificationInstanceRetired(instance) {
+			return ErrConflict
+		}
+	}
+	// Attribute legacy links before releasing this exact binding. Keeping the
+	// link preserves history without letting a replacement source inherit it.
+	for _, appID := range memory.resources {
+		intent := m.appEnvironmentWorkloadIntents[environmentWorkloadIntentKey{AppID: appID, EnvironmentID: memory.source.EnvironmentID}]
+		if job, exists := m.jobs[intent.JobID]; exists && job.AccountID == accountID && job.EnvironmentGitSourceID == "" {
+			job.EnvironmentGitSourceID = sourceID
+			m.jobs[job.ID] = job
+		}
 	}
 	memory.source.Detached = true
 	memory.source.Suspended = true
@@ -115,6 +139,9 @@ func detachGitSourceSQL(ctx context.Context, tx pgx.Tx, source EnvironmentGitSou
 	}
 	if n != 1 {
 		return ErrConflict
+	}
+	if err := q.RememberDetachedEnvironmentJobOwners(ctx, tx, mustPgUUID(source.ID)); err != nil {
+		return mapErr(err)
 	}
 	return recordGitOpsEvent(ctx, tx, source.ID, source.AccountID, "detached", map[string]any{"generation": generation, "preserved_values": true})
 }

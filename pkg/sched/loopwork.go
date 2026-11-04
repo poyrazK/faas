@@ -108,6 +108,10 @@ const (
 	workInstanceFailure workKind = "instance_failure"
 	workJobsReaper      workKind = "jobs_reaper"
 	workCronFireNow     workKind = "cron_fire_now"
+	// workInstanceEnforcement runs the stats tick's per-instance actions:
+	// disk-pressure and egress-abuse recycles (app lock plus a destroy) and
+	// CPU saturation captures (ADR 20261104143005).
+	workInstanceEnforcement workKind = "instance_enforcement"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -120,6 +124,7 @@ var workKinds = []workKind{
 	workTargets, workFloor, workPrewarm, workRetention, workWorkflowRetention, workTriggersRetention,
 	workAppPark, workAppDelete,
 	workInstanceFailure, workJobsReaper, workCronFireNow,
+	workInstanceEnforcement,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -223,7 +228,7 @@ var workSpecs = map[workKind]workSpec{
 	// One pass of each retention at a time; a tick while one runs
 	// coalesces, and the next pass carries on where it stopped.
 	workRetention:         {slots: 1, overflow: overflowDrop},
-	workWorkflowRetention: {slots: 1, overflow: overflowDrop},
+	workWorkflowRetention: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	workTriggersRetention: {slots: 1, overflow: overflowDrop},
 	// Whole-app parks and deleted-app cleanups, one per app (the key) and
 	// four apps at once. A dropped park is retried by the next reaper tick; a
@@ -240,6 +245,10 @@ var workSpecs = map[workKind]workSpec{
 	// One fire-now drain at a time. A run-now that arrives during a drain
 	// asks for one more pass; the minute safety tick covers anything else.
 	workCronFireNow: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// Keyed by action and instance. An action is recorded as taken only when
+	// it succeeds, so a dropped one is submitted again by the next 200 ms
+	// tick that still sees the condition.
+	workInstanceEnforcement: {slots: 4, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

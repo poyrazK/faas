@@ -145,3 +145,61 @@
     set, and Free has none.
   - **Billing egress live by default.** Pricing egress is a catalog decision
     for the owner; the ceiling bounds cost until then.
+
+## Amendment 1 (2026-11-04): scheduled changes can be seen and undone
+
+Billing audit round 7 found that a scheduled cancellation or downgrade could
+be neither seen nor undone through Gregale. Polar refuses every product change
+on a subscription whose `cancel_at_period_end` is set (403
+`AlreadyCanceledSubscription`), and apid answered that refusal with 402 "update
+the payment method". A request for the plan already held changed nothing and
+answered 200. The restore notice after a cancelled deletion pointed at a
+checkout that is not offered while a subscription exists. Only Polar's customer
+portal could undo the change, and nothing pointed there. The customer dropped
+to Free at the period end, and decision 3 then parked every app above Free.
+
+Polar also refuses a second cancellation with the same 403. apid treated it as
+a provider failure: `POST /v1/billing/cancel` answered 502, and deleting an
+account whose subscription was already cancelled failed until the period ended.
+
+Decisions:
+
+1. **Asking for the current plan keeps the subscription.** `PATCH
+   /v1/account/plan` (and the organization route) with the plan the subject
+   already pays for undoes a scheduled cancellation (`cancel_at_period_end:
+   false`) and a scheduled plan change (`pending_update: null`). It answers 200
+   with `plan_change_status: scheduled_change_undone` when something was
+   undone. Neither request moves money. The dashboard offers the same thing as
+   Keep subscription, and the account plan selector schedules downgrades
+   through the provider rather than sending the customer to a portal that no
+   longer switches plans.
+2. **Provider refusals have their own answers.** A plan change refused because
+   the subscription is ending answers 409 `billing_subscription_ending`, naming
+   the request that keeps it. An upgrade whose charge the bank asks to confirm
+   (Polar `PaymentActionRequired`) answers 402 `payment_authentication_required`
+   with the portal link, where adding the card again lets the bank confirm it.
+   A declined charge (`PaymentFailed`) keeps the 402 `payment_required` answer,
+   now saying the card was declined. A second cancellation is
+   `ErrAlreadyCancelled`. A downgrade to Free on a subscription already ending
+   returns its end date, and deletion skips a subscription that is already
+   ending.
+3. **Scheduled changes are visible.** `GET /v1/billing/status` reports
+   `subscription_ends_at`, `scheduled_plan` and `scheduled_plan_at`, read from
+   the provider within the webhook path's 5-second bound and left out when the
+   read fails. The dashboard billing and upgrade pages show the same change.
+4. **The portal link and the spend cap take what cancelling takes.**
+   `GET /v1/billing/portal` returns a signed-in provider session that can
+   cancel and replace the card, so it now requires an admin credential, MFA, a
+   verified email and, for a session, a step-up within 5 minutes; a `usage:read`
+   key used to get it. `POST /v1/account/overage-cap` adds the step-up the
+   dashboard and organization cap routes already had. Suspended accounts still
+   reach the portal to pay.
+5. **Prices are shown before tax.** Polar adds sales tax or VAT on top as
+   merchant of record; the plans page, the dashboard pricing, billing and
+   upgrade pages, and the billing docs say so.
+
+Not done: restoring a deleted account does not undo the deletion's
+cancellation by itself, because the customer may have cancelled before asking
+for deletion; the restore notice names Keep subscription instead. Whether a
+re-added card passes a later upgrade depends on the bank; it still needs a
+sandbox run with a 3-D Secure test card.

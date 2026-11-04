@@ -68,7 +68,10 @@ def sync_detailed(
 
      Returns a provider-independent deployment and account billing
     projection. This customer endpoint requires usage:read and never
-    calls an operator catalog surface.
+    calls an operator catalog surface. A scheduled cancellation
+    (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+    `scheduled_plan_at`) is reported before it applies; asking for the
+    current plan with PATCH /v1/account/plan undoes it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -95,7 +98,10 @@ def sync(
 
      Returns a provider-independent deployment and account billing
     projection. This customer endpoint requires usage:read and never
-    calls an operator catalog surface.
+    calls an operator catalog surface. A scheduled cancellation
+    (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+    `scheduled_plan_at`) is reported before it applies; asking for the
+    current plan with PATCH /v1/account/plan undoes it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -118,7 +124,10 @@ async def asyncio_detailed(
 
      Returns a provider-independent deployment and account billing
     projection. This customer endpoint requires usage:read and never
-    calls an operator catalog surface.
+    calls an operator catalog surface. A scheduled cancellation
+    (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+    `scheduled_plan_at`) is reported before it applies; asking for the
+    current plan with PATCH /v1/account/plan undoes it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,7 +152,10 @@ async def asyncio(
 
      Returns a provider-independent deployment and account billing
     projection. This customer endpoint requires usage:read and never
-    calls an operator catalog surface.
+    calls an operator catalog surface. A scheduled cancellation
+    (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+    `scheduled_plan_at`) is reported before it applies; asking for the
+    current plan with PATCH /v1/account/plan undoes it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

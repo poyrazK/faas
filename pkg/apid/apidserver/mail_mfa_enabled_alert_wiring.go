@@ -16,9 +16,19 @@ func (s *server) mfaEnabledAlertRequested() bool {
 
 func (s *server) saveMFAEnrollment(w http.ResponseWriter, r *http.Request, acct state.Account, sealed []byte, hashes [][]byte) bool {
 	if !s.mfaEnabledAlertRequested() {
-		if err := s.store.SetMFASecret(r.Context(), acct.ID, sealed, hashes); err != nil {
+		enrollments, ok := s.store.(state.MFAEnrollmentStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("MFA enrollment store unavailable"))
+			return false
+		}
+		saved, err := enrollments.SavePendingMFASecret(r.Context(), acct.ID, sealed, hashes)
+		if err != nil {
 			s.log.Error("mfa.enroll.persist", "err", err.Error())
 			api.WriteProblem(w, api.ErrCapacity("could not persist TOTP enrollment"))
+			return false
+		}
+		if !saved {
+			s.writeMFAEnabledAlertError(w, r, acct, mailoutbox.ErrMFAEnrollmentAlreadyEnabled)
 			return false
 		}
 		return true

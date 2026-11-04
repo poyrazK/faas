@@ -98,7 +98,7 @@ func (s *Managed) owned(w http.ResponseWriter, r *http.Request, acct state.Accou
 
 func managedReply(w http.ResponseWriter, r *http.Request, op state.Operation, p core.Plan) {
 	base := "/v1/apps/" + r.PathValue("slug") + "/operations/" + op.ID
-	httpkit.WriteJSON(w, http.StatusOK, ManagedResponse{Operation: op.OperationResponse, Plan: p, StatusURL: base, TimelineURL: base + "/timeline", ApprovalURL: base + "/approvals/repair", ReviewURL: "/v1/apps/" + r.PathValue("slug") + "/data-repair/review?operation=" + op.ID})
+	writePlanJSON(w, ManagedResponse{Operation: op.OperationResponse, Plan: p, StatusURL: base, TimelineURL: base + "/timeline", ApprovalURL: base + "/approvals/repair", ReviewURL: "/v1/apps/" + r.PathValue("slug") + "/data-repair/review?operation=" + op.ID})
 }
 
 type managedCreate struct {

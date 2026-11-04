@@ -128,6 +128,15 @@
         </select>
         <p class="fine">In an organization, the agent can do only what your role allows and what the organization's agent policy permits.</p>
         {{end}}
+        {{with index .Data "MCPProjects"}}
+        {{/* ADR-20261104085712: a connection can be limited to projects. */}}
+        <fieldset>
+          <legend class="code-label">Limit the agent to projects (optional)</legend>
+          {{range .}}<label><input type="checkbox" name="project" value="{{.ID}}"> {{.Slug}} <span class="fine">({{.Owner}})</span></label>
+          {{end}}
+          <p class="fine">Leave every box clear to give the agent all projects. Choose only projects of the account or organization the agent acts in; a limited agent can't manage databases.</p>
+        </fieldset>
+        {{end}}
         {{else}}
         {{/* The code is typed, never pre-filled: a link alone cannot
             authorize someone else's terminal (device-code phishing). */}}

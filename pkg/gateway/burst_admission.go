@@ -382,7 +382,7 @@ func (h *Handler) runBurstCapacity(ctx context.Context, app App, maxInstances, p
 			return admitErr
 		}
 		if h.admissionQueue != nil {
-			queued, wait, err = h.admissionQueue.Do(lifecycleCtx, app.ID, string(app.Plan), policy, admit)
+			queued, wait, err = h.admissionQueue.Do(lifecycleCtx, app.ID, app.AccountID, string(app.Plan), policy, admit)
 			if h.metrics != nil {
 				h.metrics.ObserveWakeAdmission(string(app.Plan), err, queued, wait)
 			}

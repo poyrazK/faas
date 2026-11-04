@@ -124,17 +124,8 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 			// Walk the recent ledger for the most-recent export so the
 			// hint matches reality (not just "24h from now").
 			retryAfterS := api.ExportRateLimitWindowSeconds
-			if recents, lerr := s.store.ListGdprRequestsForAccount(r.Context(), acct.ID, n); lerr == nil {
-				for _, rec := range recents {
-					if rec.Action == state.GdprActionExport && !rec.RequestedAt.IsZero() {
-						resetAt := rec.RequestedAt.Add(api.ExportRateLimitWindow)
-						secs := int(time.Until(resetAt).Seconds())
-						if secs > retryAfterS {
-							retryAfterS = secs
-						}
-						break
-					}
-				}
+			if seconds, err := accountexport.RetryAfter(r.Context(), s.store, acct.ID, time.Now().UTC()); err == nil {
+				retryAfterS = seconds
 			}
 			api.WriteProblem(w, api.ErrExportRateLimited(retryAfterS))
 			return
@@ -380,8 +371,10 @@ func (s *server) restoreAccount(w http.ResponseWriter, r *http.Request, acct sta
 
 // restoreSubscriptionNotice tells a restored customer that the deletion
 // ended their subscription and restoring did not resume it
-// (ADR-20261026180850); without it they dropped to Free at period end.
-const restoreSubscriptionNotice = "Requesting deletion cancelled your paid subscription, and restoring the account does not resume it: it ends with the current billing period. Re-subscribe at " + wire.DashboardBillingURL + " to keep your plan."
+// (ADR-20261026180850); without it they dropped to Free at period end. Keeping
+// the subscription is one request (ADR-20261103131742 amendment 1): until the
+// period ends it cannot be replaced by a new one.
+const restoreSubscriptionNotice = "Requesting deletion cancelled your paid subscription, and restoring the account does not resume it: it ends with the current billing period. To keep your plan, choose Keep subscription at " + wire.DashboardBillingURL + " or send PATCH /v1/account/plan with your current plan."
 
 // cancelDeletion is the business-logic core reused by both the REST
 // handler (restoreAccount) and the dashboard form handler. Returns
@@ -816,6 +809,7 @@ func writeAccountExportJSON(ctx context.Context, s *server, acct state.Account, 
 		{"api_keys", func() (any, error) { return listKeysForAccountExport(ctx, s.store, acct.ID) }},
 		{"edge_rules", func() (any, error) { return s.listEdgeRulesForAccountExport(ctx, acct) }},
 		{"edge_rule_lists", func() (any, error) { return listEdgeRuleListsForAccountExport(ctx, s.store, acct.ID) }},
+		{"cors_presets", func() (any, error) { return s.listCorsPresetsForAccountExport(ctx, acct) }},
 	}
 	for _, section := range sections {
 		value, err := section.load()

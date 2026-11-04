@@ -99,6 +99,16 @@ func TestPublicEdgeDNS(t *testing.T) {
 		{name: "no names", edge: PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryBoth, DNS: &PublicEdgeDNS{ZoneID: "zone-1"}}, hosts: fleet, wantErr: "public_edge.dns.names"},
 		{name: "no addressed compute host", edge: direct, hosts: []Host{fleet[0], {Name: "cn-1", Role: "compute-only"}}, wantErr: "needs a compute-only host with public_ipv4"},
 		{name: "not an IPv4 address", edge: direct, hosts: []Host{fleet[0], {Name: "cn-1", Role: "compute-only", PublicIPv4: "2001:db8::1"}}, wantErr: "fleet.hosts[1].public_ipv4"},
+		{name: "a certificate", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, CA: EdgeCertificateCAProduction, Serve: EdgeCertificateCAStaging}), hosts: fleet},
+		{name: "serving an unknown CA", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Serve: "true"}), hosts: fleet, wantErr: "public_edge.dns.certificate.serve"},
+		{name: "a certificate without names", edge: withCertificate(direct, &PublicEdgeCertificate{}), hosts: fleet, wantErr: "public_edge.dns.certificate.names"},
+		{name: "a certificate naming a host twice", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev", "*.Gregale.dev"}}), hosts: fleet, wantErr: "public_edge.dns.certificate.names[1]"},
+		{name: "a certificate for a deep wildcard", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.*.gregale.dev"}}), hosts: fleet, wantErr: "public_edge.dns.certificate.names[0]"},
+		{name: "a certificate from another CA", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, CA: "zerossl"}), hosts: fleet, wantErr: "public_edge.dns.certificate.ca"},
+		{name: "a transparency watch", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{Domain: "gregale.dev", AllowNames: []string{"gregale.dev", "*.gregale.dev"}}}), hosts: fleet},
+		{name: "a watch without a domain", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{}}), hosts: fleet, wantErr: "public_edge.dns.certificate.transparency.domain"},
+		{name: "a watch on a wildcard", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{Domain: "*.gregale.dev"}}), hosts: fleet, wantErr: "public_edge.dns.certificate.transparency.domain"},
+		{name: "a watch allowing a name twice", edge: withCertificate(direct, &PublicEdgeCertificate{Names: []string{"*.gregale.dev"}, Transparency: &PublicEdgeTransparency{Domain: "gregale.dev", AllowNames: []string{"gregale.dev", "Gregale.dev"}}}), hosts: fleet, wantErr: "public_edge.dns.certificate.transparency.allow_names[1]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			errs := tc.edge.validate(tc.hosts)
@@ -179,6 +189,9 @@ func TestPublicEdgeFront(t *testing.T) {
 		{name: "no entry address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "" }), wantErr: "fleet.hosts[1].entry_ipv4"},
 		{name: "the managed address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "10.42.0.2" }), wantErr: "drops SSH"},
 		{name: "the public address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = h.PublicIPv4 }), wantErr: "drops SSH"},
+		{name: "a forwarded public address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4, h.PublicIPv4Forwarded = "", true })},
+		{name: "a forwarded public address named again", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4, h.PublicIPv4Forwarded = h.PublicIPv4, true })},
+		{name: "forwarded without an address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.PublicIPv4, h.PublicIPv4Forwarded = "", true }), wantErr: "public_ipv4_forwarded"},
 		{name: "not canonical", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "198.51.100.02" }), wantErr: "canonical form"},
 		{name: "IPv6", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "2001:db8::2" }), wantErr: "canonical form"},
 		{name: "an entry address behind Cloudflare", edge: direct, hosts: []Host{control, entered}, wantErr: "under public_edge.front: none"},
@@ -199,5 +212,37 @@ func TestPublicEdgeFront(t *testing.T) {
 				t.Fatalf("NoFront = %v, want %v", got, want)
 			}
 		})
+	}
+}
+
+// adr: 20261103163954 — a forwarded public_ipv4 (a GCP forwarding rule) is the
+// entry address unless entry_ipv4 names another.
+func TestHostEntryAddress(t *testing.T) {
+	for _, tc := range []struct {
+		host Host
+		want string
+	}{
+		{Host{PublicIPv4: "203.0.113.2"}, ""},
+		{Host{PublicIPv4: "203.0.113.2", PublicIPv4Forwarded: true}, "203.0.113.2"},
+		{Host{PublicIPv4: "203.0.113.2", PublicIPv4Forwarded: true, EntryIPv4: "198.51.100.2"}, "198.51.100.2"},
+		{Host{PublicIPv4: "203.0.113.2", EntryIPv4: "198.51.100.2"}, "198.51.100.2"},
+	} {
+		if got := tc.host.EntryAddress(); got != tc.want {
+			t.Errorf("%+v.EntryAddress() = %q, want %q", tc.host, got, tc.want)
+		}
+	}
+}
+
+// withCertificate returns edge with its DNS settings copied and cert set.
+func withCertificate(edge PublicEdge, cert *PublicEdgeCertificate) PublicEdge {
+	dns := *edge.DNS
+	dns.Certificate = cert
+	edge.DNS = &dns
+	return edge
+}
+
+func TestPublicEdgeCertificateCADefaultsToStaging(t *testing.T) {
+	if got := (PublicEdgeCertificate{}).CAOrDefault(); got != EdgeCertificateCAStaging {
+		t.Fatalf("CAOrDefault = %q, want %q", got, EdgeCertificateCAStaging)
 	}
 }

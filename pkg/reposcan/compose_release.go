@@ -3,6 +3,7 @@ package reposcan
 import (
 	"fmt"
 	"maps"
+	"path"
 	"reflect"
 	"slices"
 	"strings"
@@ -66,17 +67,28 @@ func foldComposeReleaseServices(workloads []Workload) ([]Workload, []string, err
 		if len(release.Command) == 0 {
 			return nil, nil, fmt.Errorf("reposcan: %s has no command:, but %s waits for it with service_completed_successfully; Gregale runs it as the release command of the service that waits for it, so it needs the command to run", release.Name, first)
 		}
+		// A release task executes argv directly; preserve a prebuilt image's
+		// explicit entrypoint just as the built-service path already does.
+		release.Command, release.CommandShell, _ = builtServiceProcess(release.ImageProcess, release.Command, release.CommandShell)
 		if _, problem := (api.CreateAppTaskRequest{Command: release.Command, CommandShell: release.CommandShell}).Resolve(); problem != nil {
 			return nil, nil, fmt.Errorf("reposcan: %s command cannot run as a release command: %s", release.Name, problem.Detail)
 		}
 		owner := -1
+		var runtimeMismatch string
 		for _, i := range waiting {
 			if sameComposeBuild(release, workloads[i]) && workloadServes(workloads[i]) {
+				if mismatch := composeReleaseRuntimeMismatch(release, workloads[i]); mismatch != "" {
+					runtimeMismatch = mismatch
+					continue
+				}
 				owner = i
 				break
 			}
 		}
 		if owner < 0 {
+			if runtimeMismatch != "" {
+				return nil, nil, fmt.Errorf("reposcan: %s: %s; a folded release command shares its owner's user and working_dir, so make those settings match", release.Name, runtimeMismatch)
+			}
 			names := make([]string, len(waiting))
 			for n, i := range waiting {
 				names[n] = workloads[i].Name
@@ -87,6 +99,11 @@ func foldComposeReleaseServices(workloads []Workload) ([]Workload, []string, err
 			return nil, nil, fmt.Errorf("reposcan: %s already runs %s as its release command and also waits for %s; Gregale runs one release command per service, so merge them into one command", workloads[owner].Name, workloads[owner].ReleaseService, release.Name)
 		}
 		o := &workloads[owner]
+		secretFiles, err := mergeComposeReleaseSecretFiles(o.SecretFiles, release.SecretFiles)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reposcan: %s release command for %s: %w", release.Name, o.Name, err)
+		}
+		o.SecretFiles = secretFiles
 		o.ReleaseCommand = slices.Clone(release.Command)
 		o.ReleaseCommandShell = release.CommandShell
 		o.ReleaseService = release.Name
@@ -122,6 +139,37 @@ func foldComposeReleaseServices(workloads []Workload) ([]Workload, []string, err
 		}
 	}
 	return out, warnings, nil
+}
+
+func composeReleaseRuntimeMismatch(release, owner Workload) string {
+	var step, serving api.ComposeProcess
+	if release.ImageProcess != nil {
+		step = *release.ImageProcess
+	}
+	if owner.ImageProcess != nil {
+		serving = *owner.ImageProcess
+	}
+	if step.User != serving.User {
+		return fmt.Sprintf("user %q differs from %s's user %q", step.User, owner.Name, serving.User)
+	}
+	if path.Clean(step.WorkingDir) != path.Clean(serving.WorkingDir) {
+		return fmt.Sprintf("working_dir %q differs from %s's working_dir %q", step.WorkingDir, owner.Name, serving.WorkingDir)
+	}
+	return ""
+}
+
+func mergeComposeReleaseSecretFiles(owner, release []api.SecretFile) ([]api.SecretFile, error) {
+	out := slices.Clone(owner)
+	for _, file := range release {
+		if i := slices.IndexFunc(out, func(have api.SecretFile) bool { return have.Name == file.Name }); i >= 0 {
+			if out[i].Secret != file.Secret || out[i].EffectiveMode() != file.EffectiveMode() {
+				return nil, fmt.Errorf("secret file %q has conflicting declarations", file.Name)
+			}
+			continue
+		}
+		out = append(out, file)
+	}
+	return out, api.ValidateSecretFiles(out)
 }
 
 // dropDependency removes name from w's dependencies and reports whether w

@@ -67,6 +67,21 @@ func (s *server) scheduleProviderPlanChange(w http.ResponseWriter, r *http.Reque
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
 				api.CodeConflict, "billing subscription unavailable",
 				"the billing subscription is no longer active; refresh billing and try again"))
+		case errors.Is(err, billing.ErrSubscriptionEnding):
+			// A cancelled subscription changes no plan until it is kept
+			// (ADR-20261103131742 amendment 1).
+			api.WriteProblem(w, s.endingSubscriptionProblem(r.Context(), acct, billingAcct))
+		case errors.Is(err, billing.ErrPaymentAuthenticationRequired):
+			prob := api.ErrPaymentAuthenticationRequired(plan)
+			prob.BillingPortalURL = s.billingPortalURLForProvider(r.Context(), billingAcct)
+			api.WriteProblem(w, prob)
+		case upgrade && errors.Is(err, billing.ErrPaymentDeclined):
+			prob := &api.Problem{
+				Status: http.StatusPaymentRequired, Code: api.CodePayment, Title: "Upgrade not charged",
+				Detail: "the card on file was declined for the upgrade to " + string(plan) + "; nothing was charged and the current plan remains active; update the payment method in the billing portal and try again",
+			}
+			prob.BillingPortalURL = s.billingPortalURLForProvider(r.Context(), billingAcct)
+			api.WriteProblem(w, prob)
 		case upgrade:
 			// Polar applies an upgrade only when its prorated charge succeeds.
 			prob := &api.Problem{

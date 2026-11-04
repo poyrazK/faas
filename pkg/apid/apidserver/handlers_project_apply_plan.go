@@ -48,6 +48,14 @@ func (s *server) applyCachedProjectPlan(w http.ResponseWriter, r *http.Request, 
 }
 
 func cachedProjectApplyFields(token planTokenWire, request api.ApplyCachedProjectPlanRequest) (map[string]string, error) {
+	if token.Selection != nil {
+		if request.Only == nil {
+			request.Only = token.Selection.Only
+		}
+		if request.Exclude == nil {
+			request.Exclude = token.Selection.Exclude
+		}
+	}
 	slugs, err := json.Marshal(token.AppSlugs)
 	if err != nil {
 		return nil, err

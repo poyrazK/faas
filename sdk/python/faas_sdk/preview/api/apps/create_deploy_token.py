@@ -90,8 +90,9 @@ def sync_detailed(
 
     Args:
         slug (str):
-        body (CreateDeployTokenRequest | Unset): Create a deploy token scoped to one app. The
-            server always assigns deploy:write.
+        body (CreateDeployTokenRequest | Unset): Create an app-bound credential. Standard tokens
+            receive deploy:write; agent=true permits a narrow MCP permission set while preserving the
+            native app boundary.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -123,8 +124,9 @@ def sync(
 
     Args:
         slug (str):
-        body (CreateDeployTokenRequest | Unset): Create a deploy token scoped to one app. The
-            server always assigns deploy:write.
+        body (CreateDeployTokenRequest | Unset): Create an app-bound credential. Standard tokens
+            receive deploy:write; agent=true permits a narrow MCP permission set while preserving the
+            native app boundary.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,8 +153,9 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
-        body (CreateDeployTokenRequest | Unset): Create a deploy token scoped to one app. The
-            server always assigns deploy:write.
+        body (CreateDeployTokenRequest | Unset): Create an app-bound credential. Standard tokens
+            receive deploy:write; agent=true permits a narrow MCP permission set while preserving the
+            native app boundary.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -182,8 +185,9 @@ async def asyncio(
 
     Args:
         slug (str):
-        body (CreateDeployTokenRequest | Unset): Create a deploy token scoped to one app. The
-            server always assigns deploy:write.
+        body (CreateDeployTokenRequest | Unset): Create an app-bound credential. Standard tokens
+            receive deploy:write; agent=true permits a narrow MCP permission set while preserving the
+            native app boundary.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

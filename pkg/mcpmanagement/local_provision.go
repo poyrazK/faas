@@ -19,9 +19,8 @@ import (
 
 // Provisioning tools attach what an app needs next to its code — a custom
 // domain, a bucket, a managed PostgreSQL database, an HTTP cron — through the
-// same CLI commands a person runs (ADR-20261026174727). Like local deploys,
-// they exist only on local connections, plan before they apply, and keep
-// plans in connection memory.
+// native customer API when a state store is configured (ADR-20261103171917).
+// Ephemeral local connections retain the CLI path (ADR-20261026174727).
 const provisionTimeout = 12 * time.Minute
 
 var (
@@ -34,8 +33,10 @@ var (
 )
 
 type provisionPlan struct {
-	Kind    string   `json:"kind"`
-	Command []string `json:"command"`
+	Resumable bool             `json:"resumable,omitempty"`
+	Native    *nativeProvision `json:"-"`
+	Kind      string           `json:"kind"`
+	Command   []string         `json:"command"`
 	// AlreadyAttached: the domain is on this app; apply only reports it.
 	AlreadyAttached bool `json:"already_attached,omitempty"`
 	// DuplicateOf names an existing cron with the same schedule and path.
@@ -85,7 +86,7 @@ func registerLocalProvisioning(s *mcp.Server, m *management) {
 	// with write consent and each scope its consent added
 	// (ADR-20261026195952). Local app consent stays out.
 	remote := m.remote()
-	if m.opts.LocalCLI == nil || !remote && m.opts.AllowedApps != nil || remote && !m.opts.AllowWrites {
+	if m.opts.LocalCLI == nil && !m.nativeProvisioning() || !remote && m.opts.AllowedApps != nil || remote && !m.opts.AllowWrites {
 		return
 	}
 	consented := func(scope string) bool { return !remote || slices.Contains(m.opts.Capabilities, scope) }
@@ -102,7 +103,9 @@ func registerLocalProvisioning(s *mcp.Server, m *management) {
 		// `domains verify` asks Gregale to re-check DNS now (a POST), so the
 		// check is a write; a read-only connection reads the last result.
 		registerTool(s, m, "gregale_check_domain", checkDomain, false, m.verifyDomain)
-		registerTool(s, m, "gregale_apply_provision", "Apply a reviewed domain, bucket, database or cron plan through the gregale CLI. Retry with the same plan ID after ambiguous errors.", false, m.applyProvision)
+		registerTool(s, m, "gregale_apply_provision", "Apply a reviewed domain, bucket, database or cron plan. Set async=true to return immediately and poll gregale_get_provision. Retry with the same plan ID after ambiguous errors.", false, m.applyProvisionRequest)
+		registerTool(s, m, "gregale_cancel_provision", "Cancel this connection's asynchronous provisioning attempt. Resources already created are not undone; inspect the receipt and resource inventory before replanning.", false, m.cancelProvision)
+		register(s, m, "gregale_get_provision", "Read provisioning phase, resource IDs, recovery instructions or its completed receipt using plan_id. Polling does not resume interrupted work. With a persistent state store, explicitly apply the same plan ID to resume after restart.", m.getProvision)
 	} else {
 		register(s, m, "gregale_check_domain", checkDomain, m.showDomain)
 	}
@@ -118,6 +121,22 @@ func (m *management) planDomain(ctx context.Context, args planDomainArgs) (any, 
 		return nil, err
 	}
 	p.Provision.domain, p.Provision.Command = domain, []string{"domains", "add", domain, "--app", args.App}
+	if m.nativeProvisioning() {
+		p.Provision.Native = &nativeProvision{Version: 1, Kind: "domain", Name: domain, Phase: "planned"}
+		p.Provision.Resumable = true
+		d, err := m.client.GetDomain(ctx, domain)
+		if err == nil {
+			if d.AppID != p.AppID || normalizedScope(d.Environment) != p.Scope {
+				return nil, invalid("domain_elsewhere", "domain is attached outside the selected app and scope")
+			}
+			p.Provision.AlreadyAttached = true
+			p.Provision.Native.ResourceID = d.Domain
+		} else if !notFound(err) {
+			return nil, err
+		}
+		p.TrafficEffect = "Attach " + domain + " to " + args.App + "; serving begins after DNS verification and certificate issuance."
+		return m.savePlan(p)
+	}
 	attached, err := cliNDJSON(ctx, m, "domains", "list", "--app", args.App)
 	if err != nil {
 		return nil, err
@@ -144,6 +163,13 @@ func (m *management) planBucket(ctx context.Context, args planBucketArgs) (any, 
 		return nil, err
 	}
 	p.Provision.Command = []string{"add", "bucket", "--app", args.App, "--env", api.DefaultEnvScope, "--permission", permission, args.Name}
+	if m.nativeProvisioning() {
+		p.Provision.Native = &nativeProvision{Version: 1, Kind: "bucket", Name: args.Name, Permission: permission, Phase: "planned"}
+		p.Provision.Resumable = true
+		if err := m.planNativeBucket(ctx, p); err != nil {
+			return nil, err
+		}
+	}
 	p.TrafficEffect = "Create or reuse the private bucket " + args.Name + " and bind it to " + args.App + "; its credentials arrive as sealed variables on the next start."
 	return m.savePlan(p)
 }
@@ -162,6 +188,13 @@ func (m *management) planPostgres(ctx context.Context, args planPostgresArgs) (a
 	}
 	// Flags precede everything: a bare word after `add postgres` is read as the app.
 	p.Provision.Command = []string{"add", "postgres", "--app", args.App, "--env", api.DefaultEnvScope, "--region", args.Region, "--access", access}
+	if m.nativeProvisioning() {
+		p.Provision.Native = &nativeProvision{Version: 1, Kind: "postgres", Region: args.Region, Access: access, Phase: "planned"}
+		p.Provision.Resumable = true
+		if err := m.planNativePostgres(ctx, p); err != nil {
+			return nil, err
+		}
+	}
 	p.TrafficEffect = "Create or reuse " + args.App + "-postgres in " + args.Region + ", bind it as DATABASE_URL and open egress port 5432. Database usage is billed."
 	return m.savePlan(p)
 }
@@ -179,6 +212,28 @@ func (m *management) planCron(ctx context.Context, args planCronArgs) (any, erro
 	p.Provision.Command = []string{"crons", "add", "--app", args.App, "--schedule", spec.Schedule, "--path", spec.Path}
 	if spec.Timezone != "" {
 		p.Provision.Command = append(p.Provision.Command, "--timezone", spec.Timezone)
+	}
+	if m.nativeProvisioning() {
+		p.Provision.Native = &nativeProvision{Version: 1, Kind: "cron", Cron: spec, Phase: "planned"}
+		p.Provision.Resumable = true
+		crons, err := m.client.ListCrons(ctx, args.App)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range crons {
+			if c.AppID != p.AppID {
+				return nil, invalid("invalid_response", "cron inventory belongs to another app")
+			}
+			if c.Schedule == spec.Schedule && c.Path == spec.Path && (c.Timezone == spec.Timezone || spec.Timezone == "" && (c.Timezone == "" || c.Timezone == "UTC")) {
+				if !provisionCronMatches(p, c) {
+					return nil, invalid("resource_conflict", "the existing cron has different enabled, command or scheduling options")
+				}
+				p.Provision.Native.ResourceID = c.ID
+				p.Provision.DuplicateOf = c.ID
+			}
+		}
+		p.TrafficEffect = "POST " + spec.Path + " on " + args.App + " on schedule " + spec.Schedule + "."
+		return m.savePlan(p)
 	}
 	crons, err := cliNDJSON(ctx, m, "crons", "list", "--app", args.App)
 	if err != nil {
@@ -222,16 +277,28 @@ func (m *management) applyProvision(ctx context.Context, args applyArgs) (any, e
 	}
 	m.mu.Lock()
 	p := m.plans[args.PlanID]
+	var guardErr error
+	if p != nil && strings.HasPrefix(p.Action, "provision_") {
+		_, guardErr = m.checkedPlan(ctx, p.ID, p.Action)
+	}
 	var receipt any
 	if p != nil {
 		receipt = p.localReceipt
 	}
 	m.mu.Unlock()
-	if p == nil || p.Provision == nil {
+	if guardErr != nil {
+		return nil, guardErr
+	}
+	if p == nil || !strings.HasPrefix(p.Action, "provision_") {
 		return nil, invalid("invalid_plan", "plan ID is unknown or belongs to a different action or connection")
 	}
 	if receipt != nil {
-		return receipt, nil
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.completedReceipt(ctx, p)
+	}
+	if p.Provision == nil {
+		return nil, invalid("invalid_plan", "provisioning inputs are no longer available; inspect the resources before planning again")
 	}
 	if time.Now().After(p.ExpiresAt) {
 		return nil, invalid("plan_expired", "plan expired; plan again")
@@ -254,6 +321,13 @@ func (m *management) applyProvision(ctx context.Context, args applyArgs) (any, e
 	}
 	retry := p.attempted
 	p.attempted, p.localInFlight = true, true
+	if p.Provision.Native != nil {
+		if err := m.admitNativeProvisionLocked(p); err != nil {
+			p.localInFlight = false
+			m.mu.Unlock()
+			return nil, err
+		}
+	}
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
@@ -261,13 +335,17 @@ func (m *management) applyProvision(ctx context.Context, args applyArgs) (any, e
 		m.mu.Unlock()
 	}()
 	var result map[string]any
-	switch p.Provision.Kind {
-	case "domain":
-		result, err = m.applyDomain(ctx, p)
-	case "cron":
-		result, err = m.applyCron(ctx, p, retry)
-	default:
-		result, err = cliObject(ctx, m, p.Provision.Command...)
+	if p.Provision.Native != nil {
+		result, err = m.applyNativeProvision(ctx, p)
+	} else {
+		switch p.Provision.Kind {
+		case "domain":
+			result, err = m.applyDomain(ctx, p)
+		case "cron":
+			result, err = m.applyCron(ctx, p, retry)
+		default:
+			result, err = cliObject(ctx, m, p.Provision.Command...)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -281,7 +359,17 @@ func (m *management) applyProvision(ctx context.Context, args applyArgs) (any, e
 	}
 	m.mu.Lock()
 	p.localReceipt = out
+	p.ExpiresAt = time.Now().Add(releasePlanTTL)
+	if p.Provision.Native != nil {
+		p.Provision.Native.Phase = "completed"
+		p.Provision.Native.Problem = nil
+		p.ExpiresAt = time.Now().Add(provisionReceiptTTL)
+	}
+	err = m.persistPlans()
 	m.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -334,6 +422,25 @@ func (m *management) checkDomain(ctx context.Context, args checkDomainArgs, verb
 	app, err := m.client.GetApp(ctx, args.App)
 	if err != nil {
 		return nil, err
+	}
+	if m.nativeProvisioning() {
+		d, err := m.client.GetDomain(ctx, domain)
+		if err != nil {
+			return nil, err
+		}
+		if d.AppID != app.ID || normalizedScope(d.Environment) != api.DefaultEnvScope {
+			return nil, invalid("domain_elsewhere", "domain is attached outside this app's default scope")
+		}
+		if verb == "verify" {
+			d, err = m.client.VerifyDomain(ctx, domain)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if d.AppID != app.ID || d.Domain != domain {
+			return nil, invalid("invalid_response", "domain response identity changed")
+		}
+		return domainProvisionView(d), nil
 	}
 	return m.domainOnApp(ctx, app.ID, domain, verb)
 }

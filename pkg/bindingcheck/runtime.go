@@ -6,7 +6,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func (r *Report) checkRuntime(runtime *api.BindingRuntimeFreshness) {
+func (r *Report) checkRuntime(runtime *api.BindingRuntimeFreshness, allowPrepared bool) {
 	if runtime == nil || runtime.Source != "instance_started_at" || runtime.ObservedAt.IsZero() || runtime.ObservedAt.After(r.CheckedAt) {
 		r.block("runtime_unknown", "Runtime freshness observations are missing or unknown.")
 		return
@@ -19,7 +19,8 @@ func (r *Report) checkRuntime(runtime *api.BindingRuntimeFreshness) {
 		}
 		r.Runtime = append(r.Runtime, deployment)
 		selectedDeployment = selectedDeployment || deployment.DeploymentID == r.DeploymentID
-		if deployment.DeploymentID == "" || seen[deployment.DeploymentID] || deployment.DeploymentID == r.DeploymentID && deployment.DeploymentStatus != "live" {
+		prepared := allowPrepared && deployment.DeploymentStatus == "snapshotting" && deployment.Resident == (api.BindingRuntimeInstanceCounts{}) && deployment.Serving == (api.BindingRuntimeInstanceCounts{}) && deployment.Starting == 0
+		if deployment.DeploymentID == "" || seen[deployment.DeploymentID] || deployment.DeploymentID == r.DeploymentID && deployment.DeploymentStatus != "live" && !prepared {
 			r.runtimeBlock(deployment, "runtime_unknown", "Runtime deployment identity is missing or contradictory.")
 		}
 		seen[deployment.DeploymentID] = true

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var ErrCustomDomainQuotaExceeded = errors.New("state: custom domain quota exceeded")
@@ -99,6 +100,9 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		  and ($2 = '' or (a.project_id = e.project_id and a.account_id = e.account_id))
 		for update of a`, appID, environmentID).Scan(&accountID); err != nil {
 		return CustomDomain{}, 0, mapErr(err)
+	}
+	if err := checkPublicCustomDomainClaim(ctx, tx, domain, appID); err != nil {
+		return CustomDomain{}, 0, err
 	}
 	var n int
 	if err = tx.QueryRow(ctx, `select count(*) from custom_domains where app_id=$1 and verified_at is null and verification_expires_at > now()`, appID).Scan(&n); err != nil {
@@ -212,14 +216,16 @@ func (s *PgStore) CustomDomainVerificationStats(ctx context.Context) (int, time.
 	return n, age, nil
 }
 func (s *PgStore) RetryCustomDomainVerification(ctx context.Context, domain string) error {
-	// Retry accelerates the next probe but never extends ownership. Otherwise
-	// an account could refresh a pending row forever and turn a seven-day
-	// challenge into a permanent global domain reservation.
-	tag, err := s.pool.Exec(ctx, `update custom_domains set verification_next_check_at=now(),verification_attempts=0 where domain=$1 and verified_at is null and verification_expires_at>now()`, domain)
+	// Retry accelerates a probe without extending the claim's ownership lease.
+	claim, bound := CustomDomainProbe(ctx)
+	if bound && probeDomainMatches(claim, domain) != nil {
+		return ErrNotFound
+	}
+	n, err := sqlc.New().RetryCustomDomainVerificationClaim(ctx, s.pool, sqlc.RetryCustomDomainVerificationClaimParams{Domain: domain, ClaimBound: bound, AppID: claim.AppID, Token: claim.ChallengeToken})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -278,6 +284,18 @@ func (m *MemStore) createCustomDomainIfUnderQuotaLocked(ctx context.Context, dom
 	a, ok := m.apps[appID]
 	if !ok {
 		return CustomDomain{}, ErrNotFound
+	}
+	if err := m.checkPublicCustomDomainTenantOverlapLocked(ctx, domain); err != nil {
+		return CustomDomain{}, err
+	}
+	if publicCustomDomainClaim(ctx) {
+		wildcard, err := ForeignVerifiedWildcard(ctx, lockedCustomDomainReader{m}, domain, a)
+		if err != nil {
+			return CustomDomain{}, err
+		}
+		if wildcard != "" {
+			return CustomDomain{}, &CustomDomainWildcardConflictError{Domain: domain, Wildcard: wildcard}
+		}
 	}
 	if environmentID != "" {
 		environment, exists := m.projectEnvironments[environmentID]
@@ -355,11 +373,11 @@ func (m *MemStore) ClaimCustomDomainsForVerification(_ context.Context, limit in
 	}
 	return out, nil
 }
-func (m *MemStore) RetryCustomDomainVerification(_ context.Context, domain string) error {
+func (m *MemStore) RetryCustomDomainVerification(ctx context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
-	if !ok || d.Verified() || d.VerificationExpiresAt.IsZero() || !d.VerificationExpiresAt.After(time.Now()) {
+	if !ok || !customDomainProbeMatches(ctx, d) || d.Verified() || d.VerificationExpiresAt.IsZero() || !d.VerificationExpiresAt.After(time.Now()) {
 		return ErrNotFound
 	}
 	d.VerificationAttempts = 0

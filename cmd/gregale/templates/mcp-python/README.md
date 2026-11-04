@@ -89,6 +89,46 @@ external OAuth tokens; install it with `requirements.txt`. Extend the catalogs
 deliberately, keep schemas aligned with handlers, and add ownership checks to
 resource reads that access application data.
 
+## Task execution limits and retries
+
+Zero values for queue TTL, polling interval, worker concurrency and retry settings
+use their omitted defaults, matching CLI validation. Task UUIDs may use either
+letter case; responses return their canonical database spelling, which also keeps
+payload authentication and input updates consistent.
+
+`tasks.max_running` (default 16) and `tasks.max_running_per_owner` (default 4)
+limit live leases across every worker sharing the namespace. `worker_concurrency`
+limits only this process. Use the same limits on all workers and observers;
+Node, Go and Python serialize claims and lease renewals with the same database
+lock. An expired lease cannot be revived.
+
+Set `tasks.max_attempts` (default 3, range 1–10), `tasks.retry_base_delay_ms`
+(default 1000) and `tasks.retry_max_delay_ms` (default 60000) consistently across
+workers. Retries persist a due time and release their execution slot while
+waiting. Cancellation, exhausted attempts and Task TTL take precedence. Input
+resume does not consume another attempt. Ordinary handler errors are terminal.
+
+Lowering `max_attempts` fails exhausted queued retries on the next worker poll,
+even before their retry due time. Live attempts can finish, and input or drain
+resumptions keep their existing attempt count even above the new budget. A later
+failure cannot grant another attempt above that budget.
+
+Opt into retry only for a failure that is safe to repeat:
+
+```python
+from tasks import RetryableTaskError
+raise RetryableTaskError("provider temporarily unavailable")
+```
+
+Before upgrading existing queues, run the explicit schema apply command with
+the migration credential to add `next_attempt_at`. Upgrade every worker before
+relying on the new capacity and retry checks. Handlers with external effects
+must remain idempotent by Task ID.
+
+New Task owner hashes match the Node starter. Retained Tasks written by older
+Go starters remain accessible to their original caller through compatibility
+reads; those Tasks also count against the caller's outstanding admission limit.
+
 ## Runtime catalog changes
 
 `server.py` exposes process-local `register_tool`, `replace_tool`,
@@ -165,7 +205,9 @@ deploy paths, set that variable to the `/healthz` digest on every serving
 replica. Remove any existing app-wide env or secret with this key before using
 `gregale mcp server deploy`; those runtime layers take precedence over deployment
 overrides. A mismatch makes `/healthz` return 503 and blocks MCP requests.
-The health response includes Gregale's `FAAS_INSTANCE_ID`. In addition,
+The health response includes the serving instance from Gregale's
+`X-Faas-Instance-Id` request header. (`FAAS_INSTANCE_ID` is set at boot, so every
+instance restored from one snapshot would report the same value.) In addition,
 `gregale mcp server status` receives the selected replica identity from Gregale's
 authenticated exact-instance probes. It initializes MCP and lists the
 caller-visible catalogs on every running replica without invoking tools,
@@ -174,6 +216,21 @@ reading resources, or relying on load-balancer sampling. Use `--token-env` or
 digest covers advertised definitions, OAuth per-entry allow-lists, and whether Tasks are
 enabled, not handler implementation; deploy the same reviewed build to all
 replicas.
+
+## Worker upgrades
+
+The automated `gregale mcp server tasks deploy` gate supports Node workers only.
+Python workers require a manual rollout:
+
+1. Run explicit schema migrations with the migration binding. Retain the owner
+   keys, payload keys and handler versions needed by existing Tasks on every writer.
+2. Deploy replacement workers into a separate app with at least one replica and
+   the same namespace, database and execution policy. Verify the replacements
+   start successfully, publish fresh worker-handler registrations and advance work.
+3. Point the observer at the replacement worker app with an app-scoped
+   `metrics:write` token. Verify its fresh heartbeat before enabling scale-to-zero
+   for that app. Gracefully retire previous workers after checking compatibility
+   and replacement readiness. Keep external effects idempotent by Task ID.
 
 ## Graceful shutdown
 
@@ -229,10 +286,10 @@ Set `DATABASE_URL` to a PostgreSQL connection string, provide a stable
 stable namespace. The default config names these environment variables already;
 enable Tasks by setting `tasks.enabled` to `true` in `gregale-mcp.json`.
 
-When the table is absent, startup creates the base `gregale_mcp_tasks` schema; for
-an existing migrated schema it checks the required columns without trying to
-change database objects. A fresh database therefore needs schema-create rights,
-while a migrated runtime role needs table DML rights. Arguments, results and errors
+Run the explicit Task migration command with the schema-owner account before
+starting a fresh or upgraded queue. Runtime startup reads the installed schema;
+it never creates database objects. Runtime roles need the documented data grants.
+Arguments, results and errors
 are encrypted with AES-256-GCM; task ownership is scoped to the
 verified OAuth resource, subject and client ID. Tasks from open-mode requests
 share an `open` owner. The default queue limits are 1,000 outstanding tasks per
@@ -318,16 +375,31 @@ python task_schema.py status
 Both commands require `MCP_TASK_MIGRATION_DATABASE_URL`; they never fall back to
 DATABASE_URL and do not start HTTP serving, workers or observers. Bind the
 migration credential only to this operator process. Server processes use their
-configured `tasks.database_url_env` binding and only validate installed schema
-version, required columns and the enabled notification trigger. Startup fails
-with migration guidance if that schema is missing or incompatible.
+configured `tasks.database_url_env` binding and validate installed schema version,
+required columns and the enabled notification trigger. Startup fails with migration
+guidance if that schema is missing or incompatible.
+
+Web and worker startup also authenticate every unexpired payload in their Task
+namespace before starting writers. The scan streams rows to bound memory and
+must finish within the 10-second startup budget. It checks arguments, results,
+errors and input state, including mixed v1 payloads that have no key ID. Keep
+all retained keys available through Task TTL; a failed or timed-out scan prevents
+startup. Observers remain independent of payload secrets. Queues with large
+retained histories must account for this database read cost during startup.
+
+Claims decrypt their payloads inside the transaction. An unreadable payload
+rolls back the lease and attempt increment, preserving work for key/configuration
+repair. Worker completion, cancellation, retry and input writes require both a
+live lease and unexpired Task TTL. Terminal writes recheck the database clock
+after obtaining the row lock, so waiting on another transaction cannot revive
+an expired worker.
 
 Use a dedicated schema without CREATE privileges for PUBLIC. Configure the same
 search_path (that schema, then pg_catalog) for migration and service accounts.
 For example, after migration, grant the existing runtime role USAGE on that
 schema, SELECT/INSERT/UPDATE/DELETE on gregale_mcp_tasks and
-gregale_mcp_task_worker_handlers, and SELECT on gregale_mcp_task_starter_schema.
-An observer needs SELECT on all three tables and USAGE on the schema; its existing
+gregale_mcp_task_worker_handlers and gregale_mcp_task_owners, and SELECT on
+gregale_mcp_task_starter_schema. An observer needs SELECT on all four tables and USAGE on the schema; its existing
 read-only privilege checks still apply. Do not grant schema CREATE, table
 ownership, TRIGGER or write access to the version table to service accounts.
 
@@ -336,6 +408,26 @@ It retains Task rows and installs the version marker transactionally. Repeat
 apply is supported; a future schema version is rejected rather than downgraded.
 Go and Python share this marker. For a queue also used by Node, retain Node's
 own migration and admission setup; this command does not replace it.
+
+### Retained owner aliases and protocol validation
+
+Run migration apply and refresh these data grants before upgrading. Drain and
+upgrade every worker sharing the namespace before relying on alias-aware
+capacity limits. `gregale_mcp_task_owners` stores only HMAC hashes and associates
+canonical, earlier Go and retained-key aliases after caller authentication.
+These aliases share one running-capacity bucket. Until a retained caller next
+creates, reads, updates or cancels a Task, unregistered owners conservatively
+share one namespace bucket bounded by `max_running_per_owner`; this can reduce
+throughput during migration. Workers prune a complete alias group only after
+its last unexpired Task disappears. Keep previous owner keys through Task TTL.
+
+`legacy: false` removes 2025-11-25 from discovery and rejects its HTTP requests,
+notifications and initialize negotiation. Explicit modern requests require
+`MCP-Method`, and `MCP-Name` for tool calls, prompt gets and resource reads.
+Headers must match the body and any declared protocol metadata. Tool arguments
+annotated with `x-mcp-header` must match their `MCP-Param-*` headers, including
+Base64 sentinel decoding. Invalid headers return HTTP 400 with RPC code -32020
+before a handler runs. Notifications do not require method/name headers.
 
 ## Protocol telemetry
 

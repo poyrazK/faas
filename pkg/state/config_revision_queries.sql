@@ -98,10 +98,42 @@ DELETE FROM app_config_guard_secrets WHERE guard_id = sqlc.arg(guard_id)::uuid;
 
 -- name: ListWatchingAppConfigGuards :many
 SELECT * FROM app_config_guards WHERE status = 'watching'
+AND (sqlc.narg(after_changed_at)::timestamptz IS NULL
+     OR (last_change_at, id) > (sqlc.narg(after_changed_at)::timestamptz, sqlc.narg(after_id)::uuid))
 ORDER BY last_change_at, id LIMIT sqlc.arg(row_limit)::int;
 
 -- name: GetAppConfigGuard :one
 SELECT * FROM app_config_guards WHERE id = sqlc.arg(id)::uuid;
+
+-- name: LockAppConfigGuardForRestore :one
+SELECT * FROM app_config_guards WHERE id = sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: RestoreAppConfigVariable :exec
+INSERT INTO app_envs(account_id, app_id, scope, key, value)
+VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(key)::text, sqlc.arg(value)::text)
+ON CONFLICT(app_id, scope, key) DO UPDATE SET value=excluded.value, updated_at=clock_timestamp();
+
+-- name: DeleteAppConfigVariable :exec
+DELETE FROM app_envs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND scope=sqlc.arg(scope)::text AND key=sqlc.arg(key)::text;
+
+-- name: RestoreAppConfigSecret :execrows
+UPDATE app_secrets SET ciphertext=sqlc.arg(ciphertext)::bytea, kid=sqlc.arg(kid)::text,
+value_hash=nullif(sqlc.arg(value_hash)::text, ''), secret_class=sqlc.arg(secret_class)::text,
+updated_at=clock_timestamp(), secret_version=coalesce(secret_version,0)+1,
+delivery_version=delivery_version+1, delivery_status='pending',
+last_delivery_attempt_at=NULL, last_delivery_error_code=NULL
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND scope=sqlc.arg(scope)::text AND key=sqlc.arg(key)::text
+AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL;
+
+-- name: StampConfigRestoreRuntimeChange :exec
+INSERT INTO app_runtime_config_changes(app_id,changed_at) VALUES(sqlc.arg(app_id)::uuid,clock_timestamp())
+ON CONFLICT(app_id) DO UPDATE SET changed_at=greatest(app_runtime_config_changes.changed_at,excluded.changed_at);
+
+-- name: NotifyConfigRestoreChange :exec
+-- Advisory cache invalidations become visible only with the complete restore.
+SELECT pg_notify(sqlc.arg(channel)::text, sqlc.arg(payload)::text);
 
 -- name: LatestAppConfigGuard :one
 SELECT * FROM app_config_guards

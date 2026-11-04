@@ -97,11 +97,57 @@ const (
 // a botnet guessing one account's password; past this budget every password
 // sign-in for the address answers 429 until failures age out or a password
 // reset succeeds, and a bound account's owner is emailed once. One apid
-// tracks at most LoginFailureEmailsTrackedMax addresses at a time.
+// tracks at most LoginFailureEmailsTrackedMax addresses at a time; when full
+// it forgets the address with the fewest failures among
+// LoginFailureEvictionSample random entries, so filling the table with random
+// addresses does not stop a targeted one from being counted.
 const (
 	LoginFailuresPerEmail        = 20
 	LoginFailureEmailWindow      = time.Hour
 	LoginFailureEmailsTrackedMax = 100_000
+	LoginFailureEvictionSample   = 32
+)
+
+// An app's basic-auth gate (public_auth mode basic) refuses guesses from one
+// client prefix (IPv4 /24, IPv6 /64) for one app with 429 once it has
+// PublicAuthBasicFailuresPerWindow wrong passwords inside
+// PublicAuthBasicFailureWindow (H76). One gateway tracks at most
+// PublicAuthGuessKeysMax app/prefix pairs. A newly set basic-auth password
+// must be at least PublicAuthBasicPassMinBytes long.
+const (
+	PublicAuthBasicFailuresPerWindow = 10
+	PublicAuthBasicFailureWindow     = time.Minute
+	PublicAuthGuessIPv4Prefix        = 24
+	PublicAuthGuessIPv6Prefix        = 64
+	PublicAuthGuessKeysMax           = 100_000
+	PublicAuthGuessEvictionSample    = 32
+	PublicAuthBasicPassMinBytes      = 12
+)
+
+// One client prefix (IPv4 /24, IPv6 /64) may wake at most
+// GatewayColdWakeAppsPerClient different parked apps through one gateway per
+// GatewayColdWakeClientWindow (H75); more answer 429. Loopback and private
+// callers are platform traffic and are not counted. In the gateway's wake
+// admission queue one account may hold at most
+// GatewayWakeAdmissionQueuedPerAccount waiting and
+// GatewayWakeAdmissionRunningPerAccount running admissions, so one account's
+// burst cannot take every slot.
+const (
+	GatewayColdWakeAppsPerClient          = 20
+	GatewayColdWakeClientWindow           = time.Minute
+	GatewayColdWakeClientsTrackedMax      = 100_000
+	GatewayWakeAdmissionQueuedPerAccount  = 8
+	GatewayWakeAdmissionRunningPerAccount = 2
+)
+
+// PasswordResetMailInFlightMax caps the forgot-password requests one apid
+// handles off the request path at once (H86). The account lookup, token and
+// mail run in the background so the response time is the same whether or not
+// the address has an account; past the cap a request is dropped and logged,
+// answering the same 200.
+const (
+	PasswordResetMailInFlightMax = 64
+	PasswordResetMailTimeout     = 30 * time.Second
 )
 
 // Self-service accounts (password, magic-link, Google and GitHub sign-up) one
@@ -686,6 +732,14 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
 
+// ManagedPostgresUsageWaiverPeriod bounds the usage waiver of a scheduled
+// delete (ADR-20261029174950 decision 6, amendment 1): a database's waiver
+// counts only when no earlier one for it began within this period. Deleting
+// and undeleting in a loop used to park a database's storage for free, billed
+// only for the short ready gaps (H106). ManagedPostgresUsageForSubject
+// spells the same 30 days in SQL.
+const ManagedPostgresUsageWaiverPeriod = 30 * 24 * time.Hour
+
 // ManagedPostgresRestoreSlots is how many databases a point-in-time restore
 // may hold past the plan's database limit, and ManagedPostgresRestoreSlotWindow
 // how long such a copy lasts before its delete is scheduled when the account
@@ -1237,6 +1291,7 @@ const (
 	WorkflowScheduleHistoryPageDefault   = 100
 	WorkflowScheduleHistoryPageMax       = 200
 	WorkflowScheduleHistoryPruneBatch    = 1000
+	WorkflowRetentionPruneBatch          = 1000
 	WorkflowScheduleReplayBatchMax       = 20
 	WorkflowQueuedRunCancelBatchMax      = 20
 )
@@ -2699,10 +2754,17 @@ const (
 	ObjectStorageInventorySweepBatch       = 50
 	ObjectStorageInventorySweepConcurrency = 8
 	ObjectStorageInventorySweepBudget      = 40 * time.Second
-	ObjectCapacityReconciliationLease      = 2 * time.Minute
-	ObjectCapacityReconciliationTimeout    = time.Hour
-	ObjectCapacityReconciliationRetry      = 30 * time.Second
-	ObjectCapacityInventoryTimeout         = 45 * time.Second
+	// The inventory sweep runs on its own loop, apart from billing: gateway
+	// reads and writes need an inventory no older than 900 s, so a slow month
+	// close or progress delivery must not delay it. Each billing step stops
+	// after ObjectStorageBillingStepTimeout, and a failed month close is
+	// retried after ObjectStorageFinalizeRetry rather than every minute.
+	ObjectStorageBillingStepTimeout     = 5 * time.Minute
+	ObjectStorageFinalizeRetry          = 15 * time.Minute
+	ObjectCapacityReconciliationLease   = 2 * time.Minute
+	ObjectCapacityReconciliationTimeout = time.Hour
+	ObjectCapacityReconciliationRetry   = 30 * time.Second
+	ObjectCapacityInventoryTimeout      = 45 * time.Second
 	// After claiming a bucket, inventory waits up to
 	// ObjectInventoryDeletionDrain for deletions admitted before the claim to
 	// settle. New deletions in the bucket wait while the claim is younger than
@@ -3628,6 +3690,19 @@ const (
 	// a public object without revalidating, so a delete or overwrite takes
 	// effect within minutes rather than a year (H9-S144).
 	PublicObjectReadMaxAgeSeconds = 300
+	// PublicReadNewHostLookupsPerSecond and PublicReadNewHostLookupBurst are
+	// each edge's budget of public-read host lookups (store reads) for
+	// hostnames it has never seen name an app. The matcher runs in front of
+	// every GET and HEAD, so a flood of random names under the apps wildcard
+	// spends this budget instead of control-plane Postgres reads; past it the
+	// request is answered 503 traffic_policy_unavailable with Retry-After.
+	// Normal traffic spends it only on a host's first request after a
+	// restart, which the burst covers. PublicReadKnownHostsMax bounds the
+	// hostnames that skip the budget; a full set is dropped whole
+	// (ADR-20261103163954 §4).
+	PublicReadNewHostLookupsPerSecond = 25
+	PublicReadNewHostLookupBurst      = 500
+	PublicReadKnownHostsMax           = 100_000
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -5214,6 +5289,13 @@ type Limits struct {
 	// expectations per tier (Free's "first-week demo", Hobby's
 	// "last week", Pro's "this month", Scale's "this quarter").
 	LogArchiveRetentionDaysMax int
+	// LogBytesPerInstanceHour bounds the log line bytes one instance may
+	// write per UTC hour (ADR-20261104085150): Free 16 MiB, Hobby 64 MiB,
+	// Pro 256 MiB, Scale 1 GiB. Past it, vmmd drops the hour's remaining
+	// output after one notice line, so the live view, the archive and every
+	// drain carry a bounded stream. Logs have no separate charge, so this is
+	// what bounds their storage and delivery cost.
+	LogBytesPerInstanceHour int64
 
 	// AppErrorsRetentionDays (ADR-096 / customer-facing automatic
 	// error grouping) is the per-plan retention cap on
@@ -5845,6 +5927,7 @@ var planLimits = map[Plan]Limits{
 		// wake. The wider incident windows remain paid-tier benefits.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 1,
+		LogBytesPerInstanceHour:    16 << 20,
 		// ADR-096 error grouping. Free = 1-day retention, 50
 		// fingerprints, 25 request rows per fingerprint. Retention
 		// MUST be <= the one-day log-archive retention above.
@@ -6290,6 +6373,7 @@ var planLimits = map[Plan]Limits{
 		// S3 within the spec §4.1 latency budget.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 7,
+		LogBytesPerInstanceHour:    64 << 20,
 		// ADR-096 — Hobby = "last week" retention, 200 fingerprints,
 		// 100 request rows per fingerprint. Retention equals the
 		// log-archive retention.
@@ -6704,6 +6788,7 @@ var planLimits = map[Plan]Limits{
 		// rather than being a single shared cap.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 30,
+		LogBytesPerInstanceHour:    256 << 20,
 		// ADR-096 — Pro = "this month" retention, 1000 fingerprints,
 		// 500 request rows per fingerprint.
 		AppErrorsRetentionDays:                30,
@@ -7144,6 +7229,7 @@ var planLimits = map[Plan]Limits{
 		// generous at the top tier.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 90,
+		LogBytesPerInstanceHour:    1 << 30,
 		// ADR-096 — Scale = "this quarter" retention, 5000
 		// fingerprints, 1000 request rows per fingerprint.
 		AppErrorsRetentionDays:                90,
@@ -7531,6 +7617,10 @@ const (
 	// (DeploymentQueuedBuildTimeoutSeconds, anchored on enqueued_at) still
 	// fails a build that never finds capacity.
 	BuildDiskCapacityRetryDelay = 30 * time.Second
+	// BuildDiskCapacityMaxWait is how long after it was enqueued a build may
+	// keep waiting for build disk before it fails with the disk-full error
+	// instead of being requeued (H83).
+	BuildDiskCapacityMaxWait = 15 * time.Minute
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
@@ -9236,38 +9326,28 @@ const (
 	// certificate for a customer hostname.
 	//
 	// OnDemandTLSRegisteredDomainNewHostsPerWeek caps how many distinct
-	// new hostnames below wildcard custom domains may be admitted for
+	// new exact and wildcard hostnames may be admitted for
 	// certificate issuance per registered domain (public suffix + 1) in a
-	// rolling 7-day window, across every wildcard under that domain.
+	// rolling 7-day window, across every claim under that domain.
 	// Hosts admitted before stay admitted, so reloads and renewals never
 	// consume it. 40 stays under Let's Encrypt's 50 certificates per
-	// registered domain per week, which sibling wildcards share.
+	// registered domain per week, shared by exact hosts and wildcard leaves.
 	//
 	// OnDemandTLSOwnerNewHostsPerWeek caps the same admissions per owner
-	// (the wildcard app's organization, else its account) across all of
+	// (the app's organization, else its account) across all of
 	// the owner's registered domains, so one tenant with many domains
 	// cannot draw unbounded orders from the platform's shared ACME
 	// account.
 	//
 	// OnDemandTLSFleetNewHostsPer3h caps new-host admissions across the
 	// deployment in a rolling 3-hour window. Let's Encrypt allows one ACME
-	// account 300 new orders per 3 hours; the other half is left for
-	// exact custom domains, whose admission is their verified row.
+	// account 300 new orders per 3 hours; the remaining capacity is
+	// reserved for renewals and issuance retries. Exact and wildcard hosts
+	// share all three new-host caps (ADR-520 amendment 4).
 	//
 	// The three counts come from a ledger that outlives the wildcard
 	// (custom_domain_tls_admissions), so deleting and re-creating a
 	// wildcard does not reset them (bug hunt 32 M7, ADR-520 amendment 1).
-	//
-	// OnDemandTLSHostRetry* back off a host the edge keeps asking for
-	// right after being allowed: an admitted host costs no budget, so
-	// one whose ACME order keeps failing would otherwise draw an order
-	// on every handshake. OnDemandTLSHostRetryAllows allows, each in its
-	// own OnDemandTLSHostRetryBucketSeconds slice, within
-	// OnDemandTLSHostRetryWindowSeconds start a backoff of
-	// OnDemandTLSHostRetryBackoffSeconds that doubles on each repeat up to
-	// OnDemandTLSHostRetryMaxBackoffSeconds. A host that has not triggered
-	// a backoff for OnDemandTLSHostRetryResetSeconds starts again from the
-	// first step. OnDemandTLSHostRetryEntries bounds the tracked hosts.
 	//
 	// OnDemandTLSIssuanceGraceSeconds is how long after verification a
 	// failed port-443 probe is reported as pending instead of failed: the
@@ -9276,13 +9356,6 @@ const (
 	OnDemandTLSRegisteredDomainNewHostsPerWeek = 40
 	OnDemandTLSOwnerNewHostsPerWeek            = 200
 	OnDemandTLSFleetNewHostsPer3h              = 150
-	OnDemandTLSHostRetryAllows                 = 3
-	OnDemandTLSHostRetryBucketSeconds          = 30
-	OnDemandTLSHostRetryWindowSeconds          = 10 * 60
-	OnDemandTLSHostRetryBackoffSeconds         = 60 * 60
-	OnDemandTLSHostRetryMaxBackoffSeconds      = 24 * 60 * 60
-	OnDemandTLSHostRetryResetSeconds           = 24 * 60 * 60
-	OnDemandTLSHostRetryEntries                = 10000
 	OnDemandTLSIssuanceGraceSeconds            = 900
 	// CustomDomainTLSAllowedHostsMax caps the names in one wildcard custom
 	// domain's optional host allowlist (ADR-520 amendment 2). With an
@@ -9937,6 +10010,8 @@ const (
 	AutomationLiveSuiteUncertainReplayMaxAge       = 24 * time.Hour
 	AutomationLiveSuiteRequestMaxBytes       int64 = 16 << 10
 	AutomationLiveSuiteStartWindow                 = 10 * time.Minute
+	AutomationLiveSuiteFutureClockSkew             = 30 * time.Second
+	AutomationLiveSuiteProtectedWindow             = AutomationLiveSuiteStartWindow + AutomationLiveSuiteFutureClockSkew
 	AutomationLiveSuiteHistoryLimit                = AutomationLiveHistoryLimit
 	AutomationLiveSuiteRetainedLimit               = 100
 	AutomationTestCaseNameMaxBytes                 = 128
@@ -10768,6 +10843,24 @@ func (p Plan) LogArchiveEnabled() bool {
 	}
 	return l.LogArchiveEnabled
 }
+
+// LogBytesPerInstanceHour returns the plan's hourly log byte allowance per
+// instance (ADR-20261104085150); 0 for an unknown plan, which is unbounded.
+func (p Plan) LogBytesPerInstanceHour() int64 {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogBytesPerInstanceHour
+}
+
+// LogDrainBytesPerSecond and LogDrainBurstBytes bound what one log drain
+// delivers (ADR-20261104085150): a line past the budget is dropped and
+// counted, as a full outbox is.
+const (
+	LogDrainBytesPerSecond = 1 << 20
+	LogDrainBurstBytes     = 4 << 20
+)
 
 // LogArchiveRetentionDaysMax (issue #562) returns the
 // per-plan ceiling on FAAS_LOG_ARCHIVE_RETENTION_DAYS. Free's
@@ -12789,6 +12882,31 @@ const (
 	// attempt keeps TrafficPublicHostReadTimeout; a failed attempt is retried
 	// once within this bound (ADR-20261027085556 amendment 2).
 	TrafficPublicHostColdReadTimeout = 2 * time.Second
+	// GatewayRouteMissTTL is how long a gateway answers a hostname the store
+	// said routes nowhere without reading it again. Every route invalidation
+	// (an app created or changed, a domain changed, missed notifications)
+	// forgets all remembered misses first, so a new app is never held behind
+	// one (ADR-20261103163954 §4).
+	GatewayRouteMissTTL = 30 * time.Second
+	// GatewayRouteMissMaxHosts bounds the remembered misses. A full set is
+	// dropped whole: a flood of distinct names is what fills it.
+	GatewayRouteMissMaxHosts = 10_000
+	// GatewayRouteKnownMaxHosts bounds the hostnames a gateway has seen
+	// route, which skip the new-host lookup budget. A full set is dropped
+	// whole.
+	GatewayRouteKnownMaxHosts = 100_000
+	// GatewayNewHostLookupsPerSecond and GatewayNewHostLookupBurst are each
+	// gateway's budget of store reads for hostnames it has never seen route.
+	// Normal traffic spends it only on a new app's first request and, after
+	// a restart, each host's first request, which the burst covers. A flood
+	// of random names under the apps wildcard spends this budget instead of
+	// control-plane Postgres reads. A read waits up to
+	// GatewayNewHostLookupMaxWait for budget; past that the request is
+	// answered 503 traffic_policy_unavailable with Retry-After, never 404
+	// (ADR-20261103163954 §4).
+	GatewayNewHostLookupsPerSecond = 25
+	GatewayNewHostLookupBurst      = 500
+	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
@@ -13240,6 +13358,27 @@ func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Du
 // per worker.
 const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
 
+// PostgresPoolMaxEnv tells an app how many database connections one of its
+// instances can use (ADR-20261104141122). imaged stamps it at build time for
+// accounts the postgres_pool_sizing flag releases; the SDKs'
+// PostgresPoolBinding hands it to the pool factory as the default size.
+const PostgresPoolMaxEnv = "GREGALE_POSTGRES_POOL_MAX"
+
+// PostgresPoolMaxPerInstance caps the stamped pool size at the pg.Pool
+// default, so no instance's pool grows past what most apps run with today.
+const PostgresPoolMaxPerInstance = 10
+
+// PostgresPoolMax is the pool size one instance of an app needs: its
+// per-instance concurrency, at most PostgresPoolMaxPerInstance. Zero for an
+// unknown plan.
+func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
+	return min(l.PerInstanceConcurrency(requestedPerInstanceConcurrency), PostgresPoolMaxPerInstance)
+}
+
+// PostgresPoolMaxAccepted is the largest GREGALE_POSTGRES_POOL_MAX the SDKs
+// and the binding check accept; a larger value is ignored as unset.
+const PostgresPoolMaxAccepted = 1000
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after
@@ -13590,6 +13729,8 @@ const (
 	IssueCursorMaxBytes   = 2048
 	IssueMaxTokenLifetime = 90 * 24 * time.Hour
 	IssueMaxClockSkew     = 5 * time.Minute
+	// IssueHTTPBatchMaxCount bounds the weight of one gateway aggregation.
+	IssueHTTPBatchMaxCount int64 = 1_000_000_000
 )
 
 // Offline grouping evaluation and reviewed partition snapshots (ADR-1744).
@@ -13661,6 +13802,16 @@ func (p Plan) IssueLimits() IssueLimits {
 
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
+const IssueIngestPurgeBatch = 100
+
+// Attribution scans return complete payloads. Bound each page by bytes as
+// well as rows so valid source-mapped events fit within apid's memory budget.
+const IssueAttributionBatch = 50
+const IssueAttributionMaxBatches = 200
+const IssueAttributionRowTimeout = time.Second
+const IssueAttributionReviewBatch = 25
+const IssueAttributionReviewMaxBatches = 40
+const IssueAttributionReviewBudget = 5 * time.Second
 
 // IssueAttributionRetryWindow bounds how long after ingestion the issue
 // maintenance pass retries customer attribution for an occurrence whose
@@ -14071,8 +14222,11 @@ const (
 	RouteHealthProbeChallengeTTL      = 2 * time.Minute
 	RouteHealthProbePollInterval      = 15 * time.Second
 	RouteHealthProbeRoundTimeout      = 55 * time.Second
-	RouteHealthProbePruneInterval     = time.Minute
-	RouteHealthProbeRetention         = 24 * time.Hour
+	// RouteHealthProbeWorkers is how many accounts one apid probes at once;
+	// each account's targets run in turn (H79).
+	RouteHealthProbeWorkers       = 8
+	RouteHealthProbePruneInterval = time.Minute
+	RouteHealthProbeRetention     = 24 * time.Hour
 	// A probe window is unknown when at least this share of responses were
 	// 401/403: customer auth gates stay in force for probes.
 	RouteHealthProbeUnauthenticatedShare = 0.5
@@ -14645,6 +14799,9 @@ const (
 	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
 	// app health counts the guest's reports within it (ADR-20261102124306).
 	AppHealthMemoryPressureWindow = 24 * time.Hour
+	// MemoryRightSizeStepMB rounds app health's suggested ram_mb for an app
+	// under memory pressure (ADR-20261102124306 step 3).
+	MemoryRightSizeStepMB = 64
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
@@ -16166,7 +16323,7 @@ const (
 // references are retained even if merging exceeds the new-reference quota.
 const (
 	IssueTrackerLinksMax          = 20
-	IssueTrackerNativeRequestsMax = 100 // retained recovery receipts per original issue
+	IssueTrackerNativeRequestsMax = 100 // unresolved native requests per original issue
 	IssueTrackerLinkURLMaxBytes   = 512
 	IssueTrackerLinkTitleMaxBytes = 256
 )
@@ -17031,7 +17188,7 @@ const (
 	DataPipelineGenerationsMax             = 1000
 	DataPipelineHistoryMax                 = 100
 	DataPipelineSchemaRefreshAppsMax       = 100
-	DataPipelineSchemaRetriesMax           = 10
+	DataPipelineSchemaRetriesMax           = 10 // Independent budgets for schema attempts and retirement API refreshes.
 	DataPipelineSetupsMax                  = 3
 	DataPipelineSetupsPerConnection        = 1
 	DataPipelineSetupHistoryMax            = 100
@@ -17048,6 +17205,10 @@ const (
 	DataPipelineLease                      = 60 * time.Second
 	DataPipelineOperationTimeout           = 20 * time.Second
 	DataPipelinePollInterval               = 15 * time.Second
+	DataPipelineReconcileConcurrency       = 8
+	DataPipelineCheckConcurrency           = 2
+	DataPipelineSetupConcurrency           = 2
+	DataPipelineWorkerIdleInterval         = time.Second
 	DataPipelineVerificationChunkRows      = 2000
 	DataPipelineVerificationChunkBytes     = 4 << 20
 	DataPipelineVerificationRangesMax      = 4096
@@ -17058,6 +17219,7 @@ const (
 	DataPipelineVerificationQueryTimeout   = 2 * time.Second
 	DataPipelineVerificationPoll           = 25 * time.Millisecond
 	DataPipelineVerificationBytesMax       = 16 << 20
+	DataPipelineVerificationKeyBytesMax    = 1 << 20
 	DataPipelineRetainedWALMaxBytes        = int64(1 << 30)
 	DataPipelineDiscoveryTablesMax         = 128
 	DataPipelineCheckMaxBytes              = 4 << 20
@@ -17228,8 +17390,23 @@ const (
 	EdgeClientRequestsPerSecondPerAddr = 500
 	EdgeClientRequestsBurstPerAddr     = 1000
 	EdgeClientTrackedAddrsMax          = 200_000
-	EdgeTLSHandshakesInFlightPerCPU    = 128
-	EdgeTLSHandshakeTimeout            = 10 * time.Second
+	// EdgeHostRequestsPerSecond and EdgeHostRequestsBurst are a node's
+	// ceiling for one hostname, checked at the edge before the request is
+	// forwarded, routed or wakes anything (ADR-20261103163954 §4): every
+	// node takes every app host, so a flood on one app reaches every edge.
+	// They sit at twice the highest plan's per-app RateLimitRPS and
+	// RateLimitBurst, so the gateway's plan limit answers an app first;
+	// this ceiling bounds what one host costs an edge where no plan limit
+	// applies, such as public bucket reads served before the gateway. At
+	// most EdgeHostTrackedMax hostnames are tracked. The Host header is the
+	// client's to choose, so a hostname the full table cannot track passes
+	// instead of sharing one bucket that a flood of random names would drain
+	// for every tenant (hunt 38); the per-address limit still bounds it.
+	EdgeHostRequestsPerSecond       = 1000
+	EdgeHostRequestsBurst           = 4000
+	EdgeHostTrackedMax              = 100_000
+	EdgeTLSHandshakesInFlightPerCPU = 128
+	EdgeTLSHandshakeTimeout         = 10 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.
@@ -17243,6 +17420,72 @@ const (
 	EdgeControlPlaneForwardsInFlightMax = 256
 )
 
+// The host firewall's backstop for a compute edge's public entry address
+// (ADR-20261103163954 §4). The edge refuses a client past its own
+// per-address limits only after the kernel has accepted the connection; the
+// firewall drops a source's new connections to the entry address's 443 before
+// userspace sees them once it holds PublicEntryConnsPerSourceMax connections
+// or opens them faster than PublicEntryNewConnsPerSecondPerSource (burst
+// PublicEntryNewConnsBurstPerSource). Each is twice the edge's own limit, so
+// a client the edge would serve never meets it. The firewall tracks at most
+// PublicEntryTrackedSourcesMax sources per limit; past that a new source is
+// not limited by the kernel, only by the edge.
+const (
+	PublicEntryConnsPerSourceMax          = 2 * EdgeClientOpenConnsPerAddrMax
+	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
+	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
+	PublicEntryTrackedSourcesMax          = 65536
+	// PublicBlockListRefreshInterval is how often vmmd re-reads the
+	// operator's block list (/etc/faas/public-block-list) and adds its
+	// entries to the firewall's block sets: an edit takes effect within
+	// it, and so does an entry a reload by another hand flushed.
+	PublicBlockListRefreshInterval = 30 * time.Second
+)
+
+// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
+// domains' certificate from Let's Encrypt with DNS-01 and renews it
+// EdgeCertificateRenewBefore its expiry, checking every
+// EdgeCertificateCheckInterval. A failed order is retried after
+// EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
+// Encrypt allows 5 failed validations per account, hostname and hour, and 5
+// certificates for the same names in 7 days, so a fault must not turn into a
+// loop. One order solves at most EdgeCertificateOrderTimeout, which covers
+// DNS propagation, and names at most EdgeCertificateNamesMax names. A
+// certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
+// so the Certificate Transparency watch can tell ours from anyone else's.
+const (
+	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateRetryMin        = time.Hour
+	EdgeCertificateRetryMax        = 12 * time.Hour
+	EdgeCertificateOrderTimeout    = 10 * time.Minute
+	EdgeCertificateNamesMax        = 10
+	EdgeCertificateKeepAfterExpiry = 90 * 24 * time.Hour
+	// A compute edge reloads the certificates on each pg_notify and at
+	// least every EdgeCertificateReloadInterval, which covers a notice
+	// missed while its LISTEN connection was down; it reconnects after
+	// EdgeCertificateListenRetry.
+	EdgeCertificateReloadInterval = 10 * time.Minute
+	EdgeCertificateListenRetry    = 5 * time.Second
+	// edgednsd's Certificate Transparency watch reads the apps domain's
+	// unexpired issuances from Cert Spotter every
+	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter
+	// allows a few subdomain queries a day, and Let's Encrypt logs a
+	// certificate before it issues it, so a few hours is still well ahead of
+	// any use of one. A read takes at most
+	// EdgeCertificateTransparencyPagesMax pages, each within
+	// EdgeCertificateTransparencyTimeout and at most
+	// EdgeCertificateTransparencyPageBytesMax long.
+	EdgeCertificateTransparencyInterval     = 6 * time.Hour
+	EdgeCertificateTransparencyTimeout      = 30 * time.Second
+	EdgeCertificateTransparencyPagesMax     = 20
+	EdgeCertificateTransparencyPageBytesMax = 8 << 20
+	// EdgeCertificateTransparencyAllowNamesMax caps the names the watch
+	// accepts on certificates edgednsd did not issue (the CDN's, a hosted
+	// site's).
+	EdgeCertificateTransparencyAllowNamesMax = 32
+)
+
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
 // surface. A Limits value built without the field (zero) falls back to the
 // verified cap rather than refusing every pending hostname.
@@ -17252,3 +17495,18 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	}
 	return l.TenantHostnamesPerSurface
 }
+
+// App resource metadata pages are filtered by immutable app and scope before
+// counting or pagination. Offsets are bounded request selectors, not quotas.
+const (
+	AppResourceInventoryDefaultPage = 20
+	AppResourceInventoryMaxPage     = 100
+	AppResourceInventoryMaxOffset   = 1000000
+)
+
+// Domain doctor DNS probes are bounded independently of the inventory size.
+// The query ceiling accommodates the maximum DNS label depth plus aliases.
+const (
+	DomainDoctorDNSTimeout    = 5 * time.Second
+	DomainDoctorCAAMaxQueries = 128
+)

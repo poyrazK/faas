@@ -14,6 +14,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/gofrs/flock"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/logdrain"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -342,8 +343,12 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		AuthHeader:   authHeader,
 		Service:      m.drainServiceName(parent, spec),
 		DurableQueue: durableQueue,
-		RetryWindow:  appLogDrainRetryWindow,
-		HTTPClient:   m.httpClient,
+		// ADR-20261104085150: one drain delivers at most this many line
+		// bytes a second; the rest is dropped and counted.
+		BytesPerSecond: api.LogDrainBytesPerSecond,
+		BurstBytes:     api.LogDrainBurstBytes,
+		RetryWindow:    appLogDrainRetryWindow,
+		HTTPClient:     m.httpClient,
 		OnDropped: func(record logdrain.Record) {
 			standardHealth.rejected(record)
 			m.metrics.IncLogDrainDropped(spec.AppID, string(spec.Kind))

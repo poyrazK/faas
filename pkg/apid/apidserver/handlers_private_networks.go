@@ -176,7 +176,13 @@ func (s *server) deletePrivateNetworkPeering(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network peering not found", "the requested peering does not exist"))
 		return
 	}
-	if err := store.DeletePrivateNetworkPeering(r.Context(), acct.ID, peeringID); err != nil {
+	durableStore, atomicDeletion := store.(state.PrivateNetworkPeeringDurableDeletionStore)
+	if atomicDeletion {
+		err = durableStore.DeletePrivateNetworkPeeringDurably(r.Context(), acct.ID, peeringID)
+	} else {
+		err = store.DeletePrivateNetworkPeering(r.Context(), acct.ID, peeringID)
+	}
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Private network peering not found", "the requested peering does not exist"))
 			return
@@ -184,7 +190,9 @@ func (s *server) deletePrivateNetworkPeering(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrCapacity("could not delete private network peering"))
 		return
 	}
-	_ = s.notif.Notify(r.Context(), db.NotifyPrivateNetworkChanged, fmt.Sprintf(`{"kind":"private_network_peering","account_id":"%s","peering_id":"%s","region":"%s","left_network_id":"%s","right_network_id":"%s","status":"deleted"}`, acct.ID, peeringID, peering.Region, peering.LeftNetworkID, peering.RightNetworkID))
+	if !atomicDeletion {
+		_ = s.notif.Notify(r.Context(), db.NotifyPrivateNetworkChanged, fmt.Sprintf(`{"kind":"private_network_peering","account_id":"%s","peering_id":"%s","region":"%s","left_network_id":"%s","right_network_id":"%s","status":"deleted"}`, acct.ID, peeringID, peering.Region, peering.LeftNetworkID, peering.RightNetworkID))
+	}
 	s.audit.Emit(r.Context(), "private_network.peering_deleted", &acct.ID, map[string]any{"peering_id": peeringID, "network_id": networkID})
 	w.WriteHeader(http.StatusNoContent)
 }

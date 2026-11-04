@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/automationchecks"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -720,8 +721,8 @@ func (s *PgStore) CancelUnstartedWorkflowRuns(ctx context.Context, appID, workfl
 }
 
 // RetryWorkflowStep requeues one failed HTTP step in the existing workflow
-// run. The run and step rows are locked before eligibility is checked, then
-// the per-app admission lock serializes the active-run quota transition.
+// run. The admission lock is acquired before the run and step locks, matching
+// resume and live verification and serializing the active-run quota transition.
 func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string, maxActive, maxParked int) (*WorkflowRun, int, error) {
 	if maxActive < 1 {
 		return nil, 0, ErrWorkflowRunQuotaExceeded
@@ -732,12 +733,25 @@ func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string,
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 	queries := sqlc.New()
+	var appID string
+	if err := tx.QueryRow(ctx, `SELECT app_id::text FROM workflow_runs WHERE id = $1`, runID).Scan(&appID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, 0, ErrWorkflowRunNotFound
+		}
+		return nil, 0, fmt.Errorf("pgstore: find workflow app for retry: %w", err)
+	}
+	if err := queries.LockWorkflowRunAdmission(ctx, tx, appID); err != nil {
+		return nil, 0, fmt.Errorf("pgstore: lock workflow retry quota: %w", err)
+	}
 	lockedRun, err := queries.LockWorkflowRunForManualRetry(ctx, tx, runID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, 0, ErrWorkflowRunNotFound
 	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("pgstore: lock workflow run for retry: %w", err)
+	}
+	if pgUUIDString(lockedRun.AppID) != appID {
+		return nil, 0, ErrWorkflowRetryNotAllowed
 	}
 	if _, err := queries.GetCustomerOperationForWorkflow(ctx, tx, mustPgUUID(runID)); err == nil {
 		return nil, 0, ErrWorkflowRetryNotAllowed
@@ -750,16 +764,12 @@ func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string,
 	}
 	stepViews := make([]*WorkflowStep, 0, len(lockedSteps))
 	for _, row := range lockedSteps {
-		stepViews = append(stepViews, &WorkflowStep{StepName: row.StepName, Status: row.Status, Attempt: int(row.Attempt), Error: workflowPGTextPtr(row.Error)})
+		stepViews = append(stepViews, &WorkflowStep{StepName: row.StepName, Status: row.Status, Attempt: int(row.Attempt), RetryBase: int(row.RetryBase), Error: workflowPGTextPtr(row.Error)})
 	}
 	runView := workflowRunFromSQLC(lockedRun)
 	reopen, err := workflowRetryPlan(runView, stepName, stepViews)
 	if err != nil {
 		return nil, 0, err
-	}
-	appID := pgUUIDString(lockedRun.AppID)
-	if err := queries.LockWorkflowRetryAdmission(ctx, tx, appID); err != nil {
-		return nil, 0, fmt.Errorf("pgstore: lock workflow retry quota: %w", err)
 	}
 	activeCount, err := queries.CountActiveWorkflowRunsForRetry(ctx, tx, sqlc.CountActiveWorkflowRunsForRetryParams{AppID: appID, ParkedMax: int64(maxParked)})
 	if err != nil {
@@ -769,7 +779,14 @@ func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string,
 	if active >= maxActive {
 		return nil, active, ErrWorkflowRunQuotaExceeded
 	}
-	changed, err := queries.RequeueFailedWorkflowStepForRetry(ctx, tx, sqlc.RequeueFailedWorkflowStepForRetryParams{RunID: runID, StepName: stepName})
+	var retryBase int
+	for _, step := range stepViews {
+		if step.StepName == stepName {
+			retryBase = workflowManualRetryBase(runView, stepName, step.Attempt, step.RetryBase)
+			break
+		}
+	}
+	changed, err := queries.RequeueFailedWorkflowStepForRetry(ctx, tx, sqlc.RequeueFailedWorkflowStepForRetryParams{RunID: runID, StepName: stepName, RetryBase: int32(retryBase)})
 	if err != nil || changed != 1 {
 		if err != nil {
 			return nil, active, fmt.Errorf("pgstore: requeue failed workflow step: %w", err)
@@ -1710,13 +1727,16 @@ func completeWorkflowCallbackTx(ctx context.Context, tx pgx.Tx, tenantID, runID,
 	query := fmt.Sprintf(`SELECT %s FROM workflow_events WHERE id = $1`, workflowEventSelectCols)
 	existing, err := scanWorkflowEventCols(tx.QueryRow(ctx, query, eventID).Scan)
 	if err == nil {
-		if existing.RunID != runID || existing.EventName != eventName || !equalWorkflowJSON(existing.Payload, payload) {
+		if existing.RunID != runID || existing.EventName != eventName || !automationchecks.EqualJSON(existing.Payload, payload) {
 			return false, fmt.Errorf("%w: workflow callback payload differs", ErrConflict)
 		}
 		return true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return false, fmt.Errorf("pgstore: inspect workflow callback duplicate: %w", err)
+	}
+	if err := validateWorkflowEventPayload(payload); err != nil {
+		return false, err
 	}
 	if runStatus == WorkflowRunStatusSucceeded || runStatus == WorkflowRunStatusFailed || runStatus == WorkflowRunStatusDead {
 		return false, ErrWorkflowCallbackClosed
@@ -1812,24 +1832,39 @@ func insertWorkflowEventTx(ctx context.Context, tx pgx.Tx, tenantID string, e *W
 		if err != nil {
 			return err
 		}
+	}
+	existingQuery := fmt.Sprintf(`SELECT %s FROM workflow_events WHERE id = $1`, workflowEventSelectCols)
+	existing, err := scanWorkflowEventCols(tx.QueryRow(ctx, existingQuery, e.ID).Scan)
+	if err == nil {
+		if !sameMemUUID(existing.RunID, e.RunID) || existing.EventName != e.EventName || !automationchecks.EqualJSON(existing.Payload, e.Payload) {
+			return fmt.Errorf("%w: workflow_events.id", ErrConflict)
+		}
+		e.ReceivedAt = existing.ReceivedAt
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("pgstore: inspect workflow event: %w", err)
+	} else {
 		if runStatus != WorkflowRunStatusPending && runStatus != WorkflowRunStatusRunning && runStatus != WorkflowRunStatusAwaitingEvent {
 			return ErrWorkflowNotRunning
 		}
-	}
-	query := `
+		if err := validateWorkflowEventPayload(e.Payload); err != nil {
+			return err
+		}
+		query := `
 		INSERT INTO workflow_events (id, run_id, event_name, payload, received_at)
 		VALUES ($1, $2, $3, $4, clock_timestamp())
 		ON CONFLICT (id) DO UPDATE SET id = workflow_events.id
 		WHERE workflow_events.run_id = excluded.run_id
 		  AND workflow_events.event_name = excluded.event_name
+		  AND workflow_events.payload = excluded.payload
 		RETURNING received_at
 	`
-	err := tx.QueryRow(ctx, query, e.ID, e.RunID, e.EventName, e.Payload).Scan(&e.ReceivedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("%w: workflow_events.id", ErrConflict)
+		err = tx.QueryRow(ctx, query, e.ID, e.RunID, e.EventName, e.Payload).Scan(&e.ReceivedAt)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("%w: workflow_events.id", ErrConflict)
+			}
+			return fmt.Errorf("pgstore: insert workflow event: %w", err)
 		}
-		return fmt.Errorf("pgstore: insert workflow event: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE workflow_runs
@@ -1842,7 +1877,10 @@ func insertWorkflowEventTx(ctx context.Context, tx pgx.Tx, tenantID string, e *W
 }
 
 func (s *PgStore) GetWorkflowEventsForRun(ctx context.Context, runID string) ([]*WorkflowEvent, error) {
-	query := fmt.Sprintf(`SELECT %s FROM workflow_events WHERE run_id = $1 ORDER BY received_at ASC, id ASC`, workflowEventSelectCols)
+	query := fmt.Sprintf(`SELECT %s FROM (
+		SELECT %s FROM workflow_events WHERE run_id = $1
+		UNION ALL SELECT %s FROM workflow_event_archive WHERE run_id = $1
+	) events ORDER BY received_at ASC, id ASC`, workflowEventSelectCols, workflowEventSelectCols, workflowEventSelectCols)
 	rows, err := s.pool.Query(ctx, query, runID)
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: get workflow events: %w", err)
@@ -1862,11 +1900,13 @@ func (s *PgStore) GetWorkflowEventsForRun(ctx context.Context, runID string) ([]
 
 func (s *PgStore) FindMatchingEvent(ctx context.Context, runID, eventName string) (*WorkflowEvent, error) {
 	query := fmt.Sprintf(`
-		SELECT %s FROM workflow_events
-		WHERE run_id = $1 AND event_name = $2
+		SELECT %s FROM (
+			SELECT %s FROM workflow_events WHERE run_id = $1 AND event_name = $2
+			UNION ALL SELECT %s FROM workflow_event_archive WHERE run_id = $1 AND event_name = $2
+		) events
 		ORDER BY received_at ASC, id ASC
 		LIMIT 1
-	`, workflowEventSelectCols)
+	`, workflowEventSelectCols, workflowEventSelectCols, workflowEventSelectCols)
 
 	row := s.pool.QueryRow(ctx, query, runID, eventName)
 	e, err := scanWorkflowEventCols(row.Scan)
@@ -1884,7 +1924,7 @@ func (s *PgStore) SweepExpiredWorkflowRuns(ctx context.Context, olderThan time.D
 		return 0, ErrWorkflowInvalidRecord
 	}
 	secs := int64(olderThan.Seconds())
-	deleted, err := sqlc.New().PruneUnownedWorkflowRuns(ctx, s.pool, secs)
+	deleted, err := sqlc.New().PruneUnownedWorkflowRuns(ctx, s.pool, sqlc.PruneUnownedWorkflowRunsParams{RetentionSeconds: secs, BatchSize: api.WorkflowRetentionPruneBatch})
 	if err != nil {
 		return 0, fmt.Errorf("pgstore: sweep expired workflow runs: %w", err)
 	}
@@ -1899,17 +1939,30 @@ func (s *PgStore) SweepExpiredWorkflowEvents(ctx context.Context, olderThan time
 	intervalStr := fmt.Sprintf("%d seconds", secs)
 
 	query := `
-		DELETE FROM workflow_events AS e
-		USING workflow_runs AS r
-		WHERE e.run_id = r.id
-		  AND r.finished_at IS NOT NULL
-		  AND e.received_at < now() - $1::interval
+		DELETE FROM workflow_events WHERE id IN (
+			SELECT e.id FROM workflow_events e
+			JOIN workflow_runs r ON e.run_id = r.id
+			WHERE r.finished_at IS NOT NULL
+			  AND e.received_at < now() - $1::interval
+			ORDER BY e.received_at, e.id
+			LIMIT $2 FOR UPDATE OF e SKIP LOCKED
+		)
 	`
-	tag, err := s.pool.Exec(ctx, query, intervalStr)
+	tag, err := s.pool.Exec(ctx, query, intervalStr, api.WorkflowRetentionPruneBatch)
+	var failures []error
+	var liveDeleted, archived int64
 	if err != nil {
-		return 0, fmt.Errorf("pgstore: sweep expired workflow events: %w", err)
+		failures = append(failures, fmt.Errorf("pgstore: sweep expired workflow events: %w", err))
+	} else {
+		liveDeleted = tag.RowsAffected()
 	}
-	return int(tag.RowsAffected()), nil
+	if ctx.Err() == nil {
+		archived, err = sqlc.New().PruneWorkflowEventArchive(ctx, s.pool, sqlc.PruneWorkflowEventArchiveParams{RetentionSeconds: secs, BatchSize: api.WorkflowRetentionPruneBatch})
+		if err != nil {
+			failures = append(failures, fmt.Errorf("pgstore: sweep archived workflow events: %w", err))
+		}
+	}
+	return int(liveDeleted + archived), errors.Join(errors.Join(failures...), ctx.Err())
 }
 
 func (s *PgStore) workflowRunWriteResult(ctx context.Context, id string, rows int64, noop bool) error {

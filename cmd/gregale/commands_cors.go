@@ -81,18 +81,18 @@ func cmdCors(args []string) int {
 	parent, _ := lookupCliCommand("cors")
 	if len(args) == 0 {
 		PrintUsage(os.Stderr,
-			"usage: gregale edge cors <allow|ls|rm|show> [args]",
+			"usage: gregale edge cors <allow|list|delete|get> [args]",
 			"cors")
 		return 1
 	}
 	switch args[0] {
 	case "allow":
 		return cmdCorsAllow(args[1:])
-	case "ls":
+	case "list", "ls":
 		return cmdCorsLs(args[1:])
-	case "rm":
+	case "delete", "rm":
 		return cmdCorsRm(args[1:])
-	case "show":
+	case "get", "show":
 		return cmdCorsShow(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown cors subcommand %q\n", args[0])

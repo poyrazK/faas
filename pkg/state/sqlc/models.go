@@ -809,6 +809,13 @@ type ApiKeyAgentClient struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+// ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.
+type ApiKeyProjectLimit struct {
+	KeyID      pgtype.UUID
+	ProjectIds []pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+}
+
 type App struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -1065,6 +1072,16 @@ type AppEnv struct {
 	UpdatedAt pgtype.Timestamptz
 	OrgID     pgtype.UUID
 	Scope     string
+}
+
+type AppEnvBatchReceipt struct {
+	AppID         pgtype.UUID
+	Scope         string
+	RequestID     pgtype.UUID
+	AccountID     pgtype.UUID
+	RequestSha256 []byte
+	Receipt       []byte
+	CreatedAt     pgtype.Timestamptz
 }
 
 type AppEnvironmentRouteBudget struct {
@@ -2791,6 +2808,7 @@ type CliAuthCode struct {
 	CreatedAt  pgtype.Timestamptz
 	DeviceHash []byte
 	OrgID      pgtype.UUID
+	ProjectIds []pgtype.UUID
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -4590,6 +4608,22 @@ type EdgeRuleSetVersion struct {
 	RulesSha256 string
 	RuleCount   int32
 	CreatedAt   pgtype.Timestamptz
+}
+
+// ADR-20261103163954 the apps domains' certificates; edgednsd is the only writer, the key is sealed to the edge-tls seal domain.
+type EdgeTlsCertificate struct {
+	ID         int64
+	Names      []string
+	Ca         string
+	AccountUri string
+	Serial     string
+	Sha256     string
+	ChainPem   string
+	KeySealed  []byte
+	KeyKid     string
+	NotBefore  pgtype.Timestamptz
+	NotAfter   pgtype.Timestamptz
+	IssuedAt   pgtype.Timestamptz
 }
 
 type EgressFlowLog struct {
@@ -7301,6 +7335,16 @@ type IssueEvent struct {
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
 	OriginalIssueID          pgtype.UUID
+	OccurrenceCount          int64
+	AttributionVersion       int32
+	OccurrenceWeightKnown    bool
+	HttpTimeBuckets          []byte
+}
+
+type IssueEventUsage struct {
+	AppID         pgtype.UUID
+	RetainedCount int64
+	Initialized   bool
 }
 
 type IssueFrequencyAlertReceipt struct {
@@ -7794,6 +7838,7 @@ type Job struct {
 	ImageEntrypoint                   []string
 	ImageCmd                          []string
 	Labels                            []byte
+	EnvironmentGitSourceID            pgtype.UUID
 }
 
 type JobRegistryCredential struct {
@@ -11709,6 +11754,23 @@ type PrivateNetworkPeering struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type PrivateNetworkServiceOwner struct {
+	NetworkID        string
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	InstanceID       string
+	ServiceAddressID pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
+}
+
+type PrivateNetworkTransportIdentity struct {
+	NetworkID string
+	AccountID pgtype.UUID
+	Region    string
+	Vni       int32
+	CreatedAt pgtype.Timestamptz
+}
+
 type ProductControlBillingDocument struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -13791,6 +13853,8 @@ type RequestTelemetry struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202611 struct {
@@ -13831,6 +13895,8 @@ type RequestTelemetry202611 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202612 struct {
@@ -13871,6 +13937,8 @@ type RequestTelemetry202612 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetry202701 struct {
@@ -13911,6 +13979,8 @@ type RequestTelemetry202701 struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type RequestTelemetryAppGap struct {
@@ -13976,6 +14046,8 @@ type RequestTelemetryDefault struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 type ReservedIpInventory struct {
@@ -14951,6 +15023,13 @@ type SourceBuildRootfsCurrent struct {
 	ArtifactID   pgtype.UUID
 }
 
+type StaticEgressProvisioningGrant struct {
+	SourceID   string
+	AccountID  pgtype.UUID
+	CustomerIp netip.Addr
+	CreatedAt  pgtype.Timestamptz
+}
+
 type StatusIncident struct {
 	ID                   int64
 	Component            string
@@ -15475,6 +15554,15 @@ type WorkflowDispatchCursor struct {
 type WorkflowEvent struct {
 	ID         pgtype.UUID
 	RunID      pgtype.UUID
+	EventName  string
+	Payload    []byte
+	ReceivedAt pgtype.Timestamptz
+}
+
+type WorkflowEventArchive struct {
+	ID         pgtype.UUID
+	RunID      pgtype.UUID
+	AppID      pgtype.UUID
 	EventName  string
 	Payload    []byte
 	ReceivedAt pgtype.Timestamptz

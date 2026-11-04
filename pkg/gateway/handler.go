@@ -972,20 +972,26 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
-	publicRoutingPolicy      PublicRoutingPinner
-	publicRoutingStride      publicRoutingStride
-	publicRoutingRefusals    publicRoutingRefusalLog
-	devBridgeAuthorize       func(*http.Request) *api.Problem
-	devBridgeForward         func(http.ResponseWriter, *http.Request, App) bool
-	backend                  Backend
-	declaredRoutes           DeclaredRouteMatcher
-	routeLabelPins           RouteLabelPins
-	limiter                  *Limiter
-	preAuthLimiter           *preAuthSourceLimiter
-	preAuthCentral           CentralBackend
-	bodySpoolBudget          *requestBodyBudget
-	bodyMemoryBudget         *requestBodyBudget
-	keyLookups               *keyLookupLimiter
+	publicRoutingPolicy   PublicRoutingPinner
+	publicRoutingStride   publicRoutingStride
+	publicRoutingRefusals publicRoutingRefusalLog
+	devBridgeAuthorize    func(*http.Request) *api.Problem
+	devBridgeForward      func(http.ResponseWriter, *http.Request, App) bool
+	backend               Backend
+	declaredRoutes        DeclaredRouteMatcher
+	routeLabelPins        RouteLabelPins
+	limiter               *Limiter
+	preAuthLimiter        *preAuthSourceLimiter
+	preAuthCentral        CentralBackend
+	bodySpoolBudget       *requestBodyBudget
+	bodyMemoryBudget      *requestBodyBudget
+	keyLookups            *keyLookupLimiter
+	// publicAuthGuesses limits wrong basic-auth passwords per app and
+	// client prefix (public_auth_guess_limit.go, H76).
+	publicAuthGuesses *publicAuthGuessLimiter
+	// coldWakeClients limits the parked apps one client network may wake
+	// a minute (cold_wake_client_budget.go, H75).
+	coldWakeClients          *coldWakeClientBudget
 	financialBudgetAdmission func(context.Context, App) error
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
@@ -1516,9 +1522,11 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		preAuthLimiter: newPreAuthSourceLimiter(),
 		// The request bodies this gateway holds at once: spooled uploads
 		// on disk, validate-rule bodies in the heap.
-		bodySpoolBudget:  newRequestBodySpoolBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
-		keyLookups:       newKeyLookupLimiter(),
-		bodyMemoryBudget: newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
+		bodySpoolBudget:   newRequestBodySpoolBudget(api.RequestBodySpoolNodeBytes, api.RequestBodySpoolPerClient),
+		keyLookups:        newKeyLookupLimiter(),
+		publicAuthGuesses: newPublicAuthGuessLimiter(),
+		coldWakeClients:   newColdWakeClientBudget(),
+		bodyMemoryBudget:  newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, 0),
 		// routeLimiter is built with NewLimiterWithLRU (#887) so
 		// the per-rule bucket map — keyed by appID+"\x00"+ruleID —
 		// cannot grow unboundedly; full-bucket-only eviction
@@ -5402,6 +5410,16 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
+	// A client prefix out of failed-guess budget for this app gets 429
+	// without its guess being checked (H76), so the answer says nothing
+	// about how close the guess was.
+	guessKey := publicAuthGuessKey(app.ID, publicAuthClientPrefix(r))
+	if wait := h.publicAuthGuesses.retryAfter(guessKey); wait > 0 {
+		rec.status = http.StatusTooManyRequests
+		api.WriteProblem(w, api.ErrAuthRateLimited(int((wait+time.Second-1)/time.Second)))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return false
+	}
 	// (2) Look up the unsealed credential via the cache (60s
 	// TTL + per-key invalidation). A cache miss invokes
 	// PublicAuthUnsealer.UnsealBasicAuth on the
@@ -5436,12 +5454,16 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 	// lengths and || skipped the password compare on a wrong
 	// username, so timing revealed the username and both lengths.
 	if !basicCredentialsMatch(user, pass, expectedUser, expectedPass) {
-		h.emitAuthnAudit(r, app, nil, "instances.public_auth_invalid", map[string]any{
-			"app_id": app.ID,
-			"slug":   r.Host,
-			"mode":   publicAuthModeBasic,
-			"reason": "wrong_credentials",
-		})
+		// One audit row per app and client prefix a minute: a guessing
+		// flood wrote one per guess and filled the bounded audit queue.
+		if h.publicAuthGuesses.fail(guessKey) {
+			h.emitAuthnAudit(r, app, nil, "instances.public_auth_invalid", map[string]any{
+				"app_id": app.ID,
+				"slug":   r.Host,
+				"mode":   publicAuthModeBasic,
+				"reason": "wrong_credentials",
+			})
+		}
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "the presented credentials are not valid for this app").
@@ -7426,6 +7448,13 @@ haveApp:
 	if !deploymentSmoke && exactDeploymentScope != workloadAdmissionScope && !h.workloadAdmissionOpen(w, r, app.ID, exactDeploymentScope) {
 		return
 	}
+	// A deployment preview or alias URL, or a revision pin, names the
+	// deployment itself; an environment URL, a project release and production
+	// routing do not (ADR-20261028110044 amendment 5).
+	if !deploymentSmoke && !routeProbe && projectReleaseDeploymentID == "" &&
+		(clientRevisionID != "" || app.PinnedDeploymentID != "" && app.PublicEnvironmentID == "") {
+		recordTrafficDeploymentPinned(r.Context())
+	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
 	if exactDeployment {
@@ -7551,6 +7580,15 @@ haveApp:
 		return
 	}
 	if !pick.OK {
+		// One client network may wake only so many different parked apps
+		// a minute (H75): a sweep over many public apps filled the wake
+		// admission queue for every other customer.
+		if ok, wait := h.coldWakeClients.allow(coldWakeClientKey(r), app.ID); !ok {
+			rec.status = http.StatusTooManyRequests
+			api.WriteProblem(w, api.ErrColdWakeRateLimited(api.GatewayColdWakeAppsPerClient, int((wait+time.Second-1)/time.Second)))
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
+		}
 		// ADR-977: a cold app starts restoring the services it is measured to
 		// call before its own restore completes. Opt-in; never blocks.
 		h.noteColdWake(r.Context(), app.ID)
@@ -8674,6 +8712,8 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				ImageDigest:                          target.ImageDigest,
 				ContentOutcome:                       contentOutcome(r.Context(), target, time.Now()),
 				PlatformRefusal:                      decision.platformRefusal(status),
+				DeploymentPinned:                     decision.deploymentPinned,
+				LongLived:                            decision.streamDetached,
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {
@@ -9809,7 +9849,7 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			if h.admissionQueue == nil {
 				admitErr = admit(ctx)
 			} else {
-				queued, wait, err := h.admissionQueue.Do(ctx, appID, string(plan), policy, admit)
+				queued, wait, err := h.admissionQueue.Do(ctx, appID, accountID, string(plan), policy, admit)
 				admitErr = err
 				if h.metrics != nil {
 					h.metrics.ObserveWakeAdmission(string(plan), admitErr, queued, wait)
