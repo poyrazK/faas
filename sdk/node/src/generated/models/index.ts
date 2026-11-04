@@ -1553,6 +1553,7 @@ export type { ObjectBucketNotificationsRequest } from './ObjectBucketNotificatio
 export type { ObjectBucketObjectLock } from './ObjectBucketObjectLock.js';
 export type { ObjectBucketObjectLockConfiguration } from './ObjectBucketObjectLockConfiguration.js';
 export type { ObjectBucketObjectLockRequest } from './ObjectBucketObjectLockRequest.js';
+export type { ObjectBucketRetry } from './ObjectBucketRetry.js';
 export type { ObjectBucketVersioning } from './ObjectBucketVersioning.js';
 export type { ObjectBucketVersioningRequest } from './ObjectBucketVersioningRequest.js';
 export type { ObjectCapacityReconciliation } from './ObjectCapacityReconciliation.js';
