@@ -101,9 +101,9 @@ func execLimited(fsize int64, vec execVectors) error {
 		return err
 	}
 	_, _, errno := syscall.RawSyscall(syscall.SYS_EXECVE,
-		uintptr(unsafe.Pointer(vec.path)),
-		uintptr(unsafe.Pointer(&vec.argv[0])),
-		uintptr(unsafe.Pointer(&vec.envv[0])))
+		uintptr(unsafe.Pointer(vec.path)),     //nolint:gosec // G103: raw execve, so nothing allocates under the limits.
+		uintptr(unsafe.Pointer(&vec.argv[0])), //nolint:gosec // G103: see above.
+		uintptr(unsafe.Pointer(&vec.envv[0]))) //nolint:gosec // G103: see above.
 	return fmt.Errorf("exec: %w", errno)
 }
 
