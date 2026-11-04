@@ -40,6 +40,7 @@ class FixtureAPI:
         self.changed_app, self.response, self.rows, self.timeline = None, None, [], {}
         self.configuration = {}
         self.uploads, self.deployment_rows = {}, {}
+        self.environment = False
 
     def request(self, method, path, body=None, headers=None, expected=(200,)):
         self.calls.append((method, path))
@@ -55,6 +56,7 @@ class FixtureAPI:
             self.created = True
             return 201, self.receipt or {"project_id": self.project_id, "apps": [{"slug": name, "id": value} for name, value in self.apps.items()]}
         if method == "POST" and route.endswith("/environments"):
+            self.environment = True
             return 201, {"id": self.environment_id, "project_id": self.project_id, "slug": "staging"}
         if method == "POST" and route.endswith("/response-check"):
             return 200, self.response
@@ -65,7 +67,17 @@ class FixtureAPI:
             if self.foreign_member:
                 members.append("someone-elses-app")
             return 200, {"id": self.project_id, "workloads": [{"slug": name} for name in members]}
+        if route == "/v1/projects/" + self.project + "/environments/staging":
+            if method == "DELETE":
+                self.environment = False
+                return 204, None
+            if not self.environment:
+                return 404, None
+            return 200, {"id": self.environment_id, "project_id": self.project_id, "slug": "staging"}
         if method == "DELETE" and route == "/v1/projects/" + self.project:
+            # Like apid, a project with a named stage refuses deletion.
+            if self.environment:
+                raise native.Failure("DELETE project: 409 project has a named stage")
             self.project_deleted = True
             return 204, None
         if method == "GET" and route == "/v1/instances":
@@ -131,6 +143,7 @@ class RunContracts(unittest.TestCase):
         self.run.cleanup()
         self.assertEqual(self.report["cleanup"]["status"], "passed")
         self.assertEqual(self.api.deleted, set(self.api.apps))
+        self.assertFalse(self.api.environment)
         self.assertTrue(self.api.project_deleted)
         encoded = self.run.path.read_text()
         self.assertNotIn(self.api.token, encoded)
