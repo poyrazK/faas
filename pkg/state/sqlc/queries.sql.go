@@ -778,6 +778,44 @@ func (q *Queries) AddDatabaseEgress(ctx context.Context, db DBTX, arg AddDatabas
 	return err
 }
 
+const admitLegacyProjectEnvironmentCloneSource = `-- name: AdmitLegacyProjectEnvironmentCloneSource :exec
+WITH source AS (
+ SELECT id FROM project_environments WHERE project_id = $1::uuid AND slug = 'production'
+), inserted AS (
+ INSERT INTO project_environment_workload_specs(id, environment_id, app_id, revision, config_hash, settings)
+ SELECT $2::uuid, e.id, $3::uuid,
+   coalesce((SELECT max(s.revision) FROM project_environment_workload_specs s
+     WHERE s.environment_id = e.id AND s.app_id = $3::uuid), 0) + 1,
+   $4::text, $5::json
+ FROM source e WHERE NOT EXISTS (SELECT 1 FROM project_environment_workload_heads h
+   WHERE h.environment_id = e.id AND h.app_id = $3::uuid)
+ RETURNING id, environment_id, app_id
+)
+INSERT INTO project_environment_workload_heads(environment_id, app_id, spec_id)
+SELECT environment_id, app_id, id FROM inserted
+`
+
+type AdmitLegacyProjectEnvironmentCloneSourceParams struct {
+	ProjectID  pgtype.UUID
+	SpecID     pgtype.UUID
+	AppID      pgtype.UUID
+	ConfigHash string
+	Settings   []byte
+}
+
+// Record the source's unchanged legacy settings so creating a stage head
+// cannot reclassify a production identity as a stage-only service.
+func (q *Queries) AdmitLegacyProjectEnvironmentCloneSource(ctx context.Context, db DBTX, arg AdmitLegacyProjectEnvironmentCloneSourceParams) error {
+	_, err := db.Exec(ctx, admitLegacyProjectEnvironmentCloneSource,
+		arg.ProjectID,
+		arg.SpecID,
+		arg.AppID,
+		arg.ConfigHash,
+		arg.Settings,
+	)
+	return err
+}
+
 const admitMigrationContract = `-- name: AdmitMigrationContract :execrows
 UPDATE project_migration_contracts SET task_id=$1::text::uuid,request_id=$2::text,generation=$3::bigint,
 release_id=$4::text::uuid,config_version=$5::bigint,config_hash=$6::text,retired_deployment_ids=$7::text[]::uuid[]
@@ -4149,6 +4187,7 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 
 const checkedRollbackCurrentMatches = `-- name: CheckedRollbackCurrentMatches :one
 SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=$1 AND d.app_id=$2
+ AND d.deleted_at IS NULL
  AND d.scope=$3 AND d.status='live' AND d.traffic_percent=100
  AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps) AND d.rollout_state NOT IN ('pending','rolling_out'))
  AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=$2 AND d.scope=$3
@@ -4218,7 +4257,7 @@ SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d
  'canary_total_steps',d.canary_total_steps,'canary_step',d.canary_step,'rollout_state',d.rollout_state,'rootfs_key',coalesce(d.rootfs_key,''),
  'image_digest',d.image_digest,'environment_workload_runtime',d.environment_workload_runtime,
  'service_rollout_handoff',d.service_rollout_handoff) FROM deployments d
- WHERE d.id=$1 AND d.app_id=$2 FOR UPDATE
+ WHERE d.id=$1 AND d.app_id=$2 AND d.deleted_at IS NULL FOR UPDATE
 `
 
 type CheckedRollbackTargetFactsParams struct {
@@ -8168,6 +8207,40 @@ func (q *Queries) ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const clearProjectPromotionDeployment = `-- name: ClearProjectPromotionDeployment :execrows
+UPDATE deployments d
+SET status = 'failed', error = 'environment promotion rollback', traffic_percent = 0,
+    rollout_state = 'aborted', rollout_completed_at = NULL,
+    rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+    rollout_aborted_reason = 'environment promotion rollback',
+    stage_state = $1
+WHERE d.id = $2::uuid AND d.app_id = $3::uuid
+  AND d.reason = $4::text AND d.status = 'live' AND d.deleted_at IS NULL
+  AND d.traffic_percent IN (0, 100)
+  AND NOT EXISTS (SELECT 1 FROM deployments other
+    WHERE other.app_id = d.app_id AND other.scope = d.scope AND other.id <> d.id AND other.status = 'live')
+`
+
+type ClearProjectPromotionDeploymentParams struct {
+	StageState   []byte
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	Reason       string
+}
+
+func (q *Queries) ClearProjectPromotionDeployment(ctx context.Context, db DBTX, arg ClearProjectPromotionDeploymentParams) (int64, error) {
+	result, err := db.Exec(ctx, clearProjectPromotionDeployment,
+		arg.StageState,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.Reason,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearServiceRolloutPredecessorPin = `-- name: ClearServiceRolloutPredecessorPin :exec
 DELETE FROM deployment_revision_pins WHERE deployment_id=$1::uuid
 `
@@ -10579,16 +10652,18 @@ WITH copied AS (
  JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=$1::text
  WHERE r.account_id=$2::uuid AND r.project_id=$3::uuid
   AND source.slug=$4::text AND a.status<>'deleted'
+  AND ($5::jsonb ? a.id::text)
  RETURNING 1
 )
 SELECT count(*) FROM copied
 `
 
 type CopyProjectEnvironmentSecretReferencesParams struct {
-	TargetSlug string
-	AccountID  pgtype.UUID
-	ProjectID  pgtype.UUID
-	SourceSlug string
+	TargetSlug  string
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	SourceSlug  string
+	ValueScopes []byte
 }
 
 // Values and source versions stay in app_secrets; references receive a new
@@ -10599,6 +10674,7 @@ func (q *Queries) CopyProjectEnvironmentSecretReferences(ctx context.Context, db
 		arg.AccountID,
 		arg.ProjectID,
 		arg.SourceSlug,
+		arg.ValueScopes,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -10613,13 +10689,15 @@ JOIN project_environments source ON source.id=r.environment_id
 JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=$1::text
 WHERE r.account_id=$2::uuid AND r.project_id=$3::uuid
  AND source.slug=$4::text AND a.status<>'deleted'
+ AND ($5::jsonb ? a.id::text)
 `
 
 type CopyProjectEnvironmentSecretSuppressionsParams struct {
-	TargetSlug string
-	AccountID  pgtype.UUID
-	ProjectID  pgtype.UUID
-	SourceSlug string
+	TargetSlug  string
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	SourceSlug  string
+	ValueScopes []byte
 }
 
 func (q *Queries) CopyProjectEnvironmentSecretSuppressions(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretSuppressionsParams) error {
@@ -10628,6 +10706,7 @@ func (q *Queries) CopyProjectEnvironmentSecretSuppressions(ctx context.Context, 
 		arg.AccountID,
 		arg.ProjectID,
 		arg.SourceSlug,
+		arg.ValueScopes,
 	)
 	return err
 }
@@ -15702,6 +15781,17 @@ func (q *Queries) DeploymentAliasByHostLabel(ctx context.Context, db DBTX, hostL
 		return nil, err
 	}
 	return items, nil
+}
+
+const deploymentAppHasProject = `-- name: DeploymentAppHasProject :one
+SELECT (project_id IS NOT NULL)::boolean AS has_project FROM apps WHERE id = $1::uuid
+`
+
+func (q *Queries) DeploymentAppHasProject(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, deploymentAppHasProject, appID)
+	var has_project bool
+	err := row.Scan(&has_project)
+	return has_project, err
 }
 
 const deploymentByID = `-- name: DeploymentByID :one
@@ -41792,6 +41882,7 @@ func (q *Queries) LatestInstanceReadinessForTargets(ctx context.Context, db DBTX
 
 const latestRetainedRollbackDeployment = `-- name: LatestRetainedRollbackDeployment :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid
+AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND ($2::text IS NULL OR d.scope=$2::text)
 AND ($3::uuid IS NULL OR d.id<>$3::uuid)
@@ -59844,6 +59935,25 @@ func (q *Queries) LockProductionQueueTriggerInvocationRow(ctx context.Context, d
 	return id, err
 }
 
+const lockProjectDeploymentEnvironment = `-- name: LockProjectDeploymentEnvironment :one
+SELECT e.id FROM apps a JOIN project_environments e
+ ON e.project_id = a.project_id AND e.account_id = a.account_id
+WHERE a.id = $1::uuid AND e.slug = $2::text
+FOR UPDATE OF e
+`
+
+type LockProjectDeploymentEnvironmentParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+func (q *Queries) LockProjectDeploymentEnvironment(ctx context.Context, db DBTX, arg LockProjectDeploymentEnvironmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockProjectDeploymentEnvironment, arg.AppID, arg.Scope)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockProjectEnvironmentCloneAdmissionSwitches = `-- name: LockProjectEnvironmentCloneAdmissionSwitches :many
 SELECT config_key, desired_value FROM runtime_config_entries
 WHERE scope = 'global' AND scope_id = '' AND config_key = ANY($1::text[])
@@ -60027,7 +60137,7 @@ func (q *Queries) LockProjectEnvironmentCloneGitSources(ctx context.Context, db 
 }
 
 const lockProjectEnvironmentCloneMaterializedEnvironment = `-- name: LockProjectEnvironmentCloneMaterializedEnvironment :one
-SELECT id, account_id, project_id, slug, protected, created_at, updated_at FROM project_environments WHERE id=$1 AND account_id=$2 AND project_id=$3 AND slug=$4 FOR UPDATE
+SELECT id, account_id, project_id, slug, protected, created_at, updated_at, shared_secret_generation FROM project_environments WHERE id=$1 AND account_id=$2 AND project_id=$3 AND slug=$4 FOR UPDATE
 `
 
 type LockProjectEnvironmentCloneMaterializedEnvironmentParams struct {
@@ -60053,6 +60163,7 @@ func (q *Queries) LockProjectEnvironmentCloneMaterializedEnvironment(ctx context
 		&i.Protected,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SharedSecretGeneration,
 	)
 	return i, err
 }
@@ -60653,6 +60764,7 @@ func (q *Queries) LockReadinessSubscriptionLease(ctx context.Context, db DBTX, a
 
 const lockRetainedRollbackDeployment = `-- name: LockRetainedRollbackDeployment :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.scope=$2::text
+AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND d.id<>$3::uuid
 AND NOT d.environment_workload_held
@@ -74924,6 +75036,23 @@ func (q *Queries) ProbeManagedPostgresCredential(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const projectEnvironmentCleanupPending = `-- name: ProjectEnvironmentCleanupPending :one
+SELECT EXISTS (SELECT 1 FROM project_environment_cleanup_jobs
+ WHERE project_id = $1::uuid AND environment_slug = $2::text)
+`
+
+type ProjectEnvironmentCleanupPendingParams struct {
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+}
+
+func (q *Queries) ProjectEnvironmentCleanupPending(ctx context.Context, db DBTX, arg ProjectEnvironmentCleanupPendingParams) (bool, error) {
+	row := db.QueryRow(ctx, projectEnvironmentCleanupPending, arg.ProjectID, arg.EnvironmentSlug)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const projectEnvironmentCloneQuota = `-- name: ProjectEnvironmentCloneQuota :many
 SELECT a.slug,
  (SELECT count(*) FROM app_secrets s WHERE s.app_id=a.id)::bigint AS secret_count,
@@ -75010,6 +75139,24 @@ func (q *Queries) ProjectEnvironmentCloneSecretTargetExists(ctx context.Context,
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const projectEnvironmentHasActiveDeployments = `-- name: ProjectEnvironmentHasActiveDeployments :one
+SELECT EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+ WHERE a.project_id = $1::uuid AND d.scope = $2::text
+ AND d.status NOT IN ('failed', 'superseded', 'cancelled'))
+`
+
+type ProjectEnvironmentHasActiveDeploymentsParams struct {
+	ProjectID pgtype.UUID
+	Scope     string
+}
+
+func (q *Queries) ProjectEnvironmentHasActiveDeployments(ctx context.Context, db DBTX, arg ProjectEnvironmentHasActiveDeploymentsParams) (bool, error) {
+	row := db.QueryRow(ctx, projectEnvironmentHasActiveDeployments, arg.ProjectID, arg.Scope)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const projectMigrationAdmissionAllowed = `-- name: ProjectMigrationAdmissionAllowed :one
@@ -98832,6 +98979,24 @@ func (q *Queries) RetireProjectEnvironmentClonePostgresCopyTargetDatabase(ctx co
 	return i, err
 }
 
+const retireProjectEnvironmentDeployments = `-- name: RetireProjectEnvironmentDeployments :exec
+UPDATE deployments d SET deleted_at = now(), deleted_by_principal = 'system:environment-deletion'
+FROM apps a WHERE a.id = d.app_id AND a.project_id = $1::uuid
+ AND d.scope = $2::text AND d.deleted_at IS NULL
+`
+
+type RetireProjectEnvironmentDeploymentsParams struct {
+	ProjectID pgtype.UUID
+	Scope     string
+}
+
+// Preserve terminal status and audit history, but never execute these releases
+// again after their pinned environment settings have cascaded away.
+func (q *Queries) RetireProjectEnvironmentDeployments(ctx context.Context, db DBTX, arg RetireProjectEnvironmentDeploymentsParams) error {
+	_, err := db.Exec(ctx, retireProjectEnvironmentDeployments, arg.ProjectID, arg.Scope)
+	return err
+}
+
 const retireUndispatchedProjectEnvironmentClonePostgresCopyTarget = `-- name: RetireUndispatchedProjectEnvironmentClonePostgresCopyTarget :one
 UPDATE project_environment_clone_postgres_copy_targets c SET state='retired',retired_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='reserved' AND c.request_started_at IS NULL
@@ -106740,6 +106905,7 @@ func (q *Queries) UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context
 const updateTrafficDeploymentStatus = `-- name: UpdateTrafficDeploymentStatus :execrows
 UPDATE deployments SET status=$1::text, error=$2::text
 WHERE id=$3::uuid
+  AND (deleted_at IS NULL OR $1::text IN ('failed', 'superseded', 'cancelled'))
   AND (status<>'cancelled' OR $1::text='cancelled')
   AND NOT ($1::text='live' AND status<>'live' AND (environment_workload_runtime IS NOT NULL OR EXISTS (
     SELECT 1 FROM deployments managed WHERE managed.app_id=deployments.app_id

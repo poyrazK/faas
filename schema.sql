@@ -37564,8 +37564,18 @@ CREATE TABLE public.project_environments (
     protected boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    shared_secret_generation bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT project_environments_shared_secret_generation_check CHECK ((shared_secret_generation >= 0)),
     CONSTRAINT project_environments_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
 );
+
+CREATE TABLE public.project_app_stage_admissions (
+    app_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_app_stage_admissions_pkey PRIMARY KEY (app_id)
+);
+CREATE INDEX project_app_stage_admissions_project_id_idx ON public.project_app_stage_admissions USING btree (project_id);
 
 
 --
@@ -104034,6 +104044,46 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.project_app_stage_admissions
+    ADD CONSTRAINT project_app_stage_admissions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_app_stage_admissions
+    ADD CONSTRAINT project_app_stage_admissions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+CREATE FUNCTION public.advance_project_shared_secret_generation() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE p uuid; environment text;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        p := OLD.project_id; environment := OLD.environment_slug;
+    ELSE
+        p := NEW.project_id; environment := NEW.environment_slug;
+    END IF;
+    UPDATE project_environments SET shared_secret_generation = shared_secret_generation + 1
+    WHERE project_id = p AND slug = environment;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER project_shared_secret_set_membership
+    AFTER INSERT OR DELETE ON public.project_environment_secrets
+    FOR EACH ROW EXECUTE FUNCTION public.advance_project_shared_secret_generation();
+CREATE TRIGGER project_shared_secret_set_value
+    AFTER UPDATE ON public.project_environment_secrets
+    FOR EACH ROW WHEN (OLD.secret_version IS DISTINCT FROM NEW.secret_version OR OLD.value_hash IS DISTINCT FROM NEW.value_hash)
+    EXECUTE FUNCTION public.advance_project_shared_secret_generation();
+
+CREATE FUNCTION public.remember_project_app_stage_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO project_app_stage_admissions(app_id, project_id)
+    SELECT a.id, e.project_id FROM project_environments e
+    JOIN apps a ON a.id = NEW.app_id AND a.project_id = e.project_id
+    WHERE e.id = NEW.environment_id AND e.slug <> 'production'
+    ON CONFLICT(app_id) DO UPDATE SET project_id = excluded.project_id;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER project_app_stage_admission
+    AFTER INSERT OR UPDATE ON public.project_environment_workload_heads
+    FOR EACH ROW EXECUTE FUNCTION public.remember_project_app_stage_admission();
 
 
 --

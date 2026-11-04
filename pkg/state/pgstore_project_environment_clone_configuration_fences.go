@@ -134,8 +134,7 @@ func validateGuardedCloneConfigurationTx(ctx context.Context, tx pgx.Tx, op Proj
 	if err != nil {
 		return mapErr(err)
 	}
-	ids, err := sqlc.New().ReadProjectEnvironmentCloneSourceAppIDs(ctx, tx, sqlc.ReadProjectEnvironmentCloneSourceAppIDsParams{
-		AccountID: mustPgUUID(op.AccountID), ProjectID: mustPgUUID(op.ProjectID)})
+	ids, err := projectEnvironmentAppIDsDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
 	if err != nil {
 		return mapErr(err)
 	}

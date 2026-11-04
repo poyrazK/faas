@@ -81,6 +81,9 @@ type Querier interface {
 	// the CHECK on latency_hist rejects a flattened array of another width. The
 	// update is additive, so apid replicas flushing the same key add up.
 	AddRequestAnalyticsMinutes(ctx context.Context, db DBTX, arg AddRequestAnalyticsMinutesParams) error
+	// Record the source's unchanged legacy settings so creating a stage head
+	// cannot reclassify a production identity as a stage-only service.
+	AdmitLegacyProjectEnvironmentCloneSource(ctx context.Context, db DBTX, arg AdmitLegacyProjectEnvironmentCloneSourceParams) error
 	AdmitMigrationContract(ctx context.Context, db DBTX, arg AdmitMigrationContractParams) (int64, error)
 	AdmitScenarioRecorderRequest(ctx context.Context, db DBTX, arg AdmitScenarioRecorderRequestParams) (int64, error)
 	AdmitTrafficRetry(ctx context.Context, db DBTX, arg AdmitTrafficRetryParams) (int64, error)
@@ -519,6 +522,7 @@ type Querier interface {
 	ClearManagedPostgresRestoreSlot(ctx context.Context, db DBTX, arg ClearManagedPostgresRestoreSlotParams) (int64, error)
 	ClearObjectStorageCeilingGrant(ctx context.Context, db DBTX, ownerID pgtype.UUID) error
 	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
+	ClearProjectPromotionDeployment(ctx context.Context, db DBTX, arg ClearProjectPromotionDeploymentParams) (int64, error)
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
 	// Records that the spool file has been removed. Terminal status is
 	// required so an out-of-order cleanup call cannot hide the path of
@@ -1088,6 +1092,7 @@ type Querier interface {
 	// across app slug renames. Keep the deployment join app-scoped and hide
 	// soft-deleted owners/targets.
 	DeploymentAliasByHostLabel(ctx context.Context, db DBTX, hostLabel string) ([]DeploymentAliasByHostLabelRow, error)
+	DeploymentAppHasProject(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	DeploymentByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentByIDRow, error)
 	// Called by the recovery arbiter after a successful migrate-or-
 	// recreate sweep has restored the destination's snapshot set, OR by
@@ -4310,6 +4315,7 @@ type Querier interface {
 	LockProfileCaptureApp(ctx context.Context, db DBTX, arg LockProfileCaptureAppParams) (pgtype.UUID, error)
 	LockProfilePeriodicMonitor(ctx context.Context, db DBTX, arg LockProfilePeriodicMonitorParams) ([]byte, error)
 	LockProjectBindingVerificationRun(ctx context.Context, db DBTX, arg LockProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
+	LockProjectDeploymentEnvironment(ctx context.Context, db DBTX, arg LockProjectDeploymentEnvironmentParams) (pgtype.UUID, error)
 	// Admission holds every switch it decides on until it commits, so turning one
 	// off waits for the admissions already reading it.
 	LockProjectEnvironmentCloneAdmissionSwitches(ctx context.Context, db DBTX, configKeys []string) ([]LockProjectEnvironmentCloneAdmissionSwitchesRow, error)
@@ -5352,10 +5358,13 @@ type Querier interface {
 	ProjectBuildDependencyGate(ctx context.Context, db DBTX, arg ProjectBuildDependencyGateParams) error
 	ProjectDeploymentDependencyGateProgress(ctx context.Context, db DBTX, arg ProjectDeploymentDependencyGateProgressParams) error
 	ProjectEnvironmentAppIDs(ctx context.Context, db DBTX, arg ProjectEnvironmentAppIDsParams) ([]string, error)
+	ProjectEnvironmentCleanupPending(ctx context.Context, db DBTX, arg ProjectEnvironmentCleanupPendingParams) (bool, error)
 	// Counts include reference intent in the shared environment-key quota.
 	ProjectEnvironmentCloneQuota(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneQuotaParams) ([]ProjectEnvironmentCloneQuotaRow, error)
 	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
+	ProjectEnvironmentHasActiveDeployments(ctx context.Context, db DBTX, arg ProjectEnvironmentHasActiveDeploymentsParams) (bool, error)
 	ProjectEnvironmentIDForSecrets(ctx context.Context, db DBTX, arg ProjectEnvironmentIDForSecretsParams) (pgtype.UUID, error)
+	ProjectEnvironmentSharedSecretGeneration(ctx context.Context, db DBTX, arg ProjectEnvironmentSharedSecretGenerationParams) (ProjectEnvironmentSharedSecretGenerationRow, error)
 	ProjectHasNamedStages(ctx context.Context, db DBTX, projectID pgtype.UUID) (bool, error)
 	ProjectMigrationAdmissionAllowed(ctx context.Context, db DBTX, arg ProjectMigrationAdmissionAllowedParams) (pgtype.Bool, error)
 	ProjectProductionScalingState(ctx context.Context, db DBTX, arg ProjectProductionScalingStateParams) error
@@ -6748,6 +6757,9 @@ type Querier interface {
 	RetireMigrationRecoveryDeployments(ctx context.Context, db DBTX, arg RetireMigrationRecoveryDeploymentsParams) (int64, error)
 	RetireProjectEnvironmentCloneNativeForkDatabase(ctx context.Context, db DBTX, arg RetireProjectEnvironmentCloneNativeForkDatabaseParams) (ManagedPostgresDatabase, error)
 	RetireProjectEnvironmentClonePostgresCopyTargetDatabase(ctx context.Context, db DBTX, arg RetireProjectEnvironmentClonePostgresCopyTargetDatabaseParams) (ManagedPostgresDatabase, error)
+	// Preserve terminal status and audit history, but never execute these releases
+	// again after their pinned environment settings have cascaded away.
+	RetireProjectEnvironmentDeployments(ctx context.Context, db DBTX, arg RetireProjectEnvironmentDeploymentsParams) error
 	RetireScenarioCommandRecorder(ctx context.Context, db DBTX, arg RetireScenarioCommandRecorderParams) (int64, error)
 	RetireSecretEncryptionKey(ctx context.Context, db DBTX, kid string) error
 	RetireUndispatchedProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)

@@ -1269,6 +1269,62 @@ select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        status, coalesce(error, ''), created_at
 from deployments where id = $1;
 
+-- name: ClearProjectPromotionDeployment :execrows
+UPDATE deployments d
+SET status = 'failed', error = 'environment promotion rollback', traffic_percent = 0,
+    rollout_state = 'aborted', rollout_completed_at = NULL,
+    rollout_aborted_at = coalesce(rollout_aborted_at, now()),
+    rollout_aborted_reason = 'environment promotion rollback',
+    stage_state = sqlc.arg(stage_state)
+WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid
+  AND d.reason = sqlc.arg(reason)::text AND d.status = 'live' AND d.deleted_at IS NULL
+  AND d.traffic_percent IN (0, 100)
+  AND NOT EXISTS (SELECT 1 FROM deployments other
+    WHERE other.app_id = d.app_id AND other.scope = d.scope AND other.id <> d.id AND other.status = 'live');
+
+-- name: ProjectEnvironmentHasActiveDeployments :one
+SELECT EXISTS (SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+ WHERE a.project_id = sqlc.arg(project_id)::uuid AND d.scope = sqlc.arg(scope)::text
+ AND d.status NOT IN ('failed', 'superseded', 'cancelled'));
+
+-- name: ProjectEnvironmentCleanupPending :one
+SELECT EXISTS (SELECT 1 FROM project_environment_cleanup_jobs
+ WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment_slug)::text);
+
+-- name: RetireProjectEnvironmentDeployments :exec
+-- Preserve terminal status and audit history, but never execute these releases
+-- again after their pinned environment settings have cascaded away.
+UPDATE deployments d SET deleted_at = now(), deleted_by_principal = 'system:environment-deletion'
+FROM apps a WHERE a.id = d.app_id AND a.project_id = sqlc.arg(project_id)::uuid
+ AND d.scope = sqlc.arg(scope)::text AND d.deleted_at IS NULL;
+
+-- name: LockProjectDeploymentEnvironment :one
+SELECT e.id FROM apps a JOIN project_environments e
+ ON e.project_id = a.project_id AND e.account_id = a.account_id
+WHERE a.id = sqlc.arg(app_id)::uuid AND e.slug = sqlc.arg(scope)::text
+FOR UPDATE OF e;
+
+-- name: DeploymentAppHasProject :one
+SELECT (project_id IS NOT NULL)::boolean AS has_project FROM apps WHERE id = sqlc.arg(app_id)::uuid;
+
+-- name: AdmitLegacyProjectEnvironmentCloneSource :exec
+-- Record the source's unchanged legacy settings so creating a stage head
+-- cannot reclassify a production identity as a stage-only service.
+WITH source AS (
+ SELECT id FROM project_environments WHERE project_id = sqlc.arg(project_id)::uuid AND slug = 'production'
+), inserted AS (
+ INSERT INTO project_environment_workload_specs(id, environment_id, app_id, revision, config_hash, settings)
+ SELECT sqlc.arg(spec_id)::uuid, e.id, sqlc.arg(app_id)::uuid,
+   coalesce((SELECT max(s.revision) FROM project_environment_workload_specs s
+     WHERE s.environment_id = e.id AND s.app_id = sqlc.arg(app_id)::uuid), 0) + 1,
+   sqlc.arg(config_hash)::text, sqlc.arg(settings)::json
+ FROM source e WHERE NOT EXISTS (SELECT 1 FROM project_environment_workload_heads h
+   WHERE h.environment_id = e.id AND h.app_id = sqlc.arg(app_id)::uuid)
+ RETURNING id, environment_id, app_id
+)
+INSERT INTO project_environment_workload_heads(environment_id, app_id, spec_id)
+SELECT environment_id, app_id, id FROM inserted;
+
 -- name: LatestDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),
@@ -10146,6 +10202,7 @@ WHERE d.id=sqlc.arg(deployment_id)::uuid;
 -- GitOps-managed scopes keep the same guards as UpdateDeploymentStatus.
 UPDATE deployments SET status=sqlc.arg(status)::text, error=sqlc.narg(error)::text
 WHERE id=sqlc.arg(deployment_id)::uuid
+  AND (deleted_at IS NULL OR sqlc.arg(status)::text IN ('failed', 'superseded', 'cancelled'))
   AND (status<>'cancelled' OR sqlc.arg(status)::text='cancelled')
   AND NOT (sqlc.arg(status)::text='live' AND status<>'live' AND (environment_workload_runtime IS NOT NULL OR EXISTS (
     SELECT 1 FROM deployments managed WHERE managed.app_id=deployments.app_id
@@ -16206,6 +16263,7 @@ WITH copied AS (
  JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=sqlc.arg(target_slug)::text
  WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.project_id=sqlc.arg(project_id)::uuid
   AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted'
+  AND (sqlc.arg(value_scopes)::jsonb ? a.id::text)
  RETURNING 1
 )
 SELECT count(*) FROM copied;
@@ -16259,7 +16317,8 @@ FROM app_environment_secret_ref_suppressions r JOIN apps a ON a.id=r.app_id
 JOIN project_environments source ON source.id=r.environment_id
 JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=sqlc.arg(target_slug)::text
 WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.project_id=sqlc.arg(project_id)::uuid
- AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted';
+ AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted'
+ AND (sqlc.arg(value_scopes)::jsonb ? a.id::text);
 
 -- name: EnvironmentWorkloadIntent :one
 SELECT w.account_id,w.app_id,w.environment_id,w.source,w.runtime,w.created_at,w.updated_at,w.source_revision,w.service_bindings,w.schedule,w.variables,w.job_id
@@ -18540,6 +18599,7 @@ WHERE d.id=sqlc.arg(deployment_id)::uuid RETURNING status::text;
 -- ever completed served only its canary steps and failed them, so it is never
 -- an implicit target (H5-62).
 SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid
+AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND (sqlc.narg(scope)::text IS NULL OR d.scope=sqlc.narg(scope)::text)
 AND (sqlc.narg(current_deployment_id)::uuid IS NULL OR d.id<>sqlc.narg(current_deployment_id)::uuid)
@@ -18552,6 +18612,7 @@ ORDER BY coalesce(d.serving_ended_at,d.created_at) DESC,d.created_at DESC,d.id D
 
 -- name: LockRetainedRollbackDeployment :one
 SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND d.deleted_at IS NULL
 AND NOT (d.canary_total_steps > 0 AND d.rollout_state = 'aborted' AND d.rollout_completed_at IS NULL)
 AND d.id<>sqlc.arg(current_deployment_id)::uuid
 AND NOT d.environment_workload_held
@@ -20262,10 +20323,11 @@ SELECT jsonb_build_object('id',d.id,'app_id',d.app_id,'scope',d.scope,'status',d
  'canary_total_steps',d.canary_total_steps,'canary_step',d.canary_step,'rollout_state',d.rollout_state,'rootfs_key',coalesce(d.rootfs_key,''),
  'image_digest',d.image_digest,'environment_workload_runtime',d.environment_workload_runtime,
  'service_rollout_handoff',d.service_rollout_handoff) FROM deployments d
- WHERE d.id=sqlc.arg(deployment_id) AND d.app_id=sqlc.arg(app_id) FOR UPDATE;
+ WHERE d.id=sqlc.arg(deployment_id) AND d.app_id=sqlc.arg(app_id) AND d.deleted_at IS NULL FOR UPDATE;
 
 -- name: CheckedRollbackCurrentMatches :one
 SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(current_id) AND d.app_id=sqlc.arg(app_id)
+ AND d.deleted_at IS NULL
  AND d.scope=sqlc.arg(scope) AND d.status='live' AND d.traffic_percent=100
  AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps) AND d.rollout_state NOT IN ('pending','rolling_out'))
  AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=sqlc.arg(app_id) AND d.scope=sqlc.arg(scope)
