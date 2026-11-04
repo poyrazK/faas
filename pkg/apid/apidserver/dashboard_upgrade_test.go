@@ -110,19 +110,33 @@ func TestDashboardUpgrade_GetWithoutPlanListsOptions(t *testing.T) {
 	}
 }
 
-func TestDashboardUpgrade_GetExistingSubscriptionPointsAtPortal(t *testing.T) {
+// An existing subscription upgrades in place: the customer portal does not
+// switch plans, and the provider charges the prorated difference now.
+// adr: 20261103131742
+func TestDashboardUpgrade_ExistingSubscriptionUpgradesInPlace(t *testing.T) {
 	fake := &fakeBillingProvider{txnID: "co_1", checkoutURL: "https://polar.example/checkout/co_1"}
 	h, sid, store, acct := newUpgradeDashboardServer(t, api.PlanPro, fake)
 	if err := store.UpdateAccountStripeSubscriptionItem(t.Context(), acct.ID, "sub_live"); err != nil {
 		t.Fatalf("seed subscription: %v", err)
 	}
-	rec, _ := getUpgradePage(t, h, sid, "?plan=scale")
-	body := rec.Body.String()
-	if strings.Contains(body, `action="/dashboard/upgrade"`) {
-		t.Errorf("existing subscription must not get a hosted checkout form\nbody = %s", body)
+	page, cookie := getUpgradePage(t, h, sid, "?plan=scale")
+	body := page.Body.String()
+	if !strings.Contains(body, `action="/dashboard/upgrade"`) || !strings.Contains(body, "Upgrade now") {
+		t.Fatalf("existing subscription must get the in-place upgrade form\nbody = %s", body)
 	}
-	if !strings.Contains(body, "already has a subscription") {
-		t.Errorf("page missing portal explanation\nbody = %s", body)
+	tok := extractInputValue(body, middleware.FormFieldName, "/dashboard/upgrade")
+	rec := dashboardPOST(t, h, sid, "/dashboard/upgrade",
+		map[string]string{middleware.FormFieldName: tok, "plan": "scale"},
+		&http.Cookie{Name: middleware.CookieNameAuthenticated, Value: cookie})
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard/billing?upgrade=pending" {
+		t.Fatalf("POST = %d %q, want 303 to ?upgrade=pending", rec.Code, rec.Header().Get("Location"))
+	}
+	if fake.calls != 0 || fake.planChangeCalls != 1 || fake.planChangeTarget != api.PlanScale {
+		t.Fatalf("provider calls: checkout=%d change=%d target=%q; want 0, 1, scale", fake.calls, fake.planChangeCalls, fake.planChangeTarget)
+	}
+	got, err := store.AccountByID(t.Context(), acct.ID)
+	if err != nil || got.Plan != api.PlanPro {
+		t.Fatalf("plan = %q, %v; want pro until the provider confirms", got.Plan, err)
 	}
 }
 

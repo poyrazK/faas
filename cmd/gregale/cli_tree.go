@@ -322,6 +322,7 @@ var cliTreeAliases = []cliTreeAlias{
 	// Account.
 	{"account mfa", "mfa"},
 	{"account", "account"},
+	{"org agent policy", "orgs agent-policy"},
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},
@@ -476,6 +477,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"data-api serve", "data-api dev"},
 	{"data-api fixture export", "data-api fixture build"},
 	{"data-api storage export", "data-api storage sql"},
+	{"data-api hooks export", "data-api hooks sql"},
 	{"data-api release verify", "data-api verify release"},
 
 	// Proposed 2026-10-29 for review (round 9: one-off verbs).
@@ -551,6 +553,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"ai tag-limit set", "ai tag-limits"},
 	{"ai app-limit get", "ai app-limit"},
 	{"ai app-limit set", "ai app-limit"},
+	{"ai request-policy get", "ai request-policy"},
+	{"ai request-policy set", "ai request-policy"},
 	{"api tenant activation get", "platform-tenants activation"},
 	{"api tenant activation wait", "platform-tenants activation"},
 	{"automation recovery-policy get", "automations recovery-policy"},
@@ -560,14 +564,21 @@ var cliTreeAliases = []cliTreeAlias{
 	{"bucket protection event-hold set", "bucket protection event-hold"},
 	{"debug issue impact-alert get", "issues impact-alert"},
 	{"debug issue impact-alert set", "issues impact-alert"},
-	{"debug issue lifecycle-alert get", "issues lifecycle-alerts"},
-	{"debug issue lifecycle-alert set", "issues lifecycle-alerts"},
 	{"debug issue ownership-rule get", "issues ownership-rules"},
 	{"debug issue ownership-rule set", "issues ownership-rules"},
-	{"debug issue compound-alert get", "issues compound-alerts"},
-	{"debug issue compound-alert set", "issues compound-alerts"},
-	{"debug issue source-map get", "issues source-maps"},
-	{"debug issue source-map publish", "issues source-maps"},
+	// These three take their mode as their first word; each tree verb runs
+	// one mode (CLI audit 2026-10-31: `lifecycle-alert get save` saved).
+	{"debug issue lifecycle-alert", "issues lifecycle-alerts"},
+	{"debug issue lifecycle-alert get", "issues lifecycle-alerts get"},
+	{"debug issue lifecycle-alert set", "issues lifecycle-alerts save"},
+	{"debug issue compound-alert", "issues compound-alerts"},
+	{"debug issue compound-alert get", "issues compound-alerts get"},
+	{"debug issue compound-alert set", "issues compound-alerts save"},
+	{"debug issue compound-alert delete", "issues compound-alerts remove"},
+	{"debug issue source-map", "issues source-maps"},
+	{"debug issue source-map get", "issues source-maps status"},
+	{"debug issue source-map publish", "issues source-maps publish"},
+	{"debug issue source-map retire", "issues source-maps retire"},
 	{"edge rule attack-mode get", "edge-rules attack-mode"},
 	// Round 11 (2026-10-31): the last customer paths in the baseline. A
 	// WAF exclusion change updates the rule's WAF beside `waf review`;
@@ -771,26 +782,49 @@ func rewriteTreePath(args []string) ([]string, error) {
 	if used > depth || (used == depth && len(args) > depth && !strings.HasPrefix(args[depth], "-")) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
-	return args, nil
+	return spellTodayVerbs(args), nil
 }
 
-// joinTreeRewrite builds today's argv for alias, mapping a standard verb to
-// the spelling today's command uses.
+// joinTreeRewrite builds today's argv for alias, with each standard verb
+// spelled the way today's command takes it.
 func joinTreeRewrite(alias cliTreeAlias, rest []string) []string {
-	out := strings.Fields(alias.Old)
-	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
-		if node, ok := lookupCliPath(out); ok && len(node.Subs) > 0 && !node.AfterPositionals {
-			if _, known := findCliSubcommand(node.Subs, rest[0]); !known {
-				for _, spelling := range cliTreeVerbSynonyms[rest[0]] {
-					if _, found := findCliSubcommand(node.Subs, spelling); found {
-						rest = append([]string{spelling}, rest[1:]...)
-						break
-					}
-				}
+	return spellTodayVerbs(append(strings.Fields(alias.Old), rest...))
+}
+
+// spellTodayVerbs walks argv through today's manifest and replaces a
+// standard verb today's command does not know with the synonym it takes
+// (`account billing-run get` runs `account billing-run show`). The tree
+// lists verbs in their standard form at every depth (treeSubs), so dispatch
+// maps them back at every depth. It stops at a flag, at a word that is
+// neither a verb nor a synonym of one, and before the data word of a
+// slug-first family.
+func spellTodayVerbs(argv []string) []string {
+	if len(argv) == 0 {
+		return argv
+	}
+	command, ok := lookupCliCommand(argv[0])
+	if !ok {
+		return argv
+	}
+	subs, afterPositionals := command.Subcommands, command.SubcommandsAfterPositionals
+	out := argv
+	for i := 1; i < len(out) && len(subs) > 0 && !afterPositionals && !strings.HasPrefix(out[i], "-"); i++ {
+		sub, known := findCliSubcommand(subs, out[i])
+		for _, spelling := range cliTreeVerbSynonyms[out[i]] {
+			if known {
+				break
+			}
+			if sub, known = findCliSubcommand(subs, spelling); known {
+				out = slices.Clone(out)
+				out[i] = spelling
 			}
 		}
+		if !known {
+			break
+		}
+		subs, afterPositionals = sub.Subcommands, sub.SubcommandsAfterPositionals
 	}
-	return append(out, rest...)
+	return out
 }
 
 var errAppTarget = errors.New("name the app: gregale app <verb> <app>, --app <app>, or run it in a linked checkout")
@@ -891,6 +925,9 @@ func rewriteAppListener(args []string) ([]string, error) {
 	}
 	app, tail, err := takeAppTarget(rest[1:])
 	if err != nil {
+		if hasHelpFlag(args) {
+			return args, nil
+		}
 		return nil, err
 	}
 	return append([]string{appSlugFallback, app, protocol, verb}, tail...), nil
@@ -937,11 +974,12 @@ func rewriteCliTree(args []string) ([]string, error) {
 		return args, nil
 	}
 	if len(args) > 1 && args[0] == "help" {
-		topic, err := rewriteTreePath(args[1:])
-		if err != nil {
-			return nil, err
+		if topic, err := rewriteTreePath(args[1:]); err == nil {
+			return append([]string{"help"}, topic...), nil
 		}
-		return append([]string{"help"}, topic...), nil
+		// Help needs no app (`help app scale`): a path that cannot rewrite
+		// without one is answered by the tree's own help.
+		return args, nil
 	}
 	return rewriteTreePath(args)
 }
@@ -1188,9 +1226,79 @@ func groupCliTreeEntries(entries []cliTreeEntry) []cliTreeEntry {
 	return grouped
 }
 
-// printCliTreeHelp writes help for a tree topic. A topic the tree maps to
-// one of today's commands also lists that command's own flags.
+// treeHelpWords returns the path words of a help request (`<path> --help`,
+// `help <path>`) whose first word is a tree noun or a shortcut.
+func treeHelpWords(typed []string) ([]string, bool) {
+	words := typed
+	switch {
+	case len(words) > 1 && words[0] == "help":
+		words = words[1:]
+	case !hasHelpFlag(words):
+		return nil, false
+	}
+	if len(words) == 0 {
+		return nil, false
+	}
+	// `--help --all` on one of today's commands (`github`, `deploy`, `app`)
+	// asks for that command's full manifest help, every option grouped; a
+	// tree-only noun (`release`) has no such help, so the tree's answers.
+	if path := leadingTreeWords(words); slices.Contains(words, "--all") && (words[0] == appSlugFallback || oldPathDepth(path) == len(path)) {
+		return nil, false
+	}
+	if _, ok := lookupCliTreeNoun(words[0]); ok || slices.Contains(cliTreeShortcutCommands, words[0]) {
+		return words, true
+	}
+	return nil, false
+}
+
+// printTreeManifestHelp prints help for a path under a tree noun or a
+// shortcut from the tree manifest the reference renders (cliTreeManifest),
+// so help lists exactly the verbs, subnouns, folds and flags the reference
+// documents, at every depth. It reports false when words name no path of
+// the tree, or a command that renders its own help (cliHelpRenderedByCommand);
+// run() then prints today's help under the typed name.
+func printTreeManifestHelp(w io.Writer, words []string) bool {
+	d := newCliTreeDiscovery()
+	var command cliCommand
+	if noun, ok := lookupCliTreeNoun(words[0]); ok {
+		// An operator command (postgres) stays out of the tree.
+		if !cliTreeListsNoun(noun.Name) {
+			return false
+		}
+		tree, ok := d.treeCommand(noun)
+		if !ok {
+			return false
+		}
+		command = tree
+	} else {
+		today, ok := d.commands[words[0]]
+		if !ok || today.Audience != cliAudienceCustomer || cliHelpRenderedByCommand(today.Name) {
+			return false
+		}
+		command = d.shortcutCommand(today)
+	}
+	if old, ok := d.runsToday(leadingTreeWords(words)); ok && cliHelpRenderedByCommand(old) {
+		return false
+	}
+	// printLocalHelpFlags spells flags for display (cliTreeFlagsForDisplay).
+	return printManifestHelp(w, command, words[1:])
+}
+
+// cliHelpRenderedByCommand reports today's paths whose help is written by
+// hand because the manifest cannot express their shape (rollback, rollouts,
+// deploys retry; printManifestHelp).
+func cliHelpRenderedByCommand(old string) bool {
+	first := strings.Fields(old)[0]
+	return first == "rollback" || first == "rollouts" || old == "deploys retry"
+}
+
+// printCliTreeHelp writes help for a tree topic from the tree manifest, as
+// `<topic> --help` does. A topic the manifest cannot walk falls back to the
+// verbs the alias table lists under it.
 func printCliTreeHelp(w io.Writer, topic cliTreeTopic) {
+	if printTreeManifestHelp(w, topic.Path) {
+		return
+	}
 	name := strings.Join(topic.Path, " ")
 	discovery := newCliTreeDiscovery()
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  gregale %s <command> [flags]\n\nCommands:\n", topic.Short, name)
@@ -1418,7 +1526,7 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 	}
 	if slices.Equal(typed, args) {
 		// Help reached by an earlier name is spelled in the tree too.
-		words := typed[:oldPathDepth(typed)]
+		words := manifestVerbNames(typed[:oldPathDepth(typed)])
 		spelled, ok := cliTreeSpelling(words)
 		if !ok {
 			return "", "", false
@@ -1439,6 +1547,28 @@ func cliTreeHelpRename(typed, args []string) (from, to string, ok bool) {
 		to += " " + typed[used]
 	}
 	return from, to, true
+}
+
+// manifestVerbNames spells each verb of today's path by its manifest name,
+// as help prints it: `cors ls` reads `cors list` once list takes ls as an
+// alias.
+func manifestVerbNames(path []string) []string {
+	if len(path) == 0 {
+		return path
+	}
+	command, ok := lookupCliCommand(path[0])
+	if !ok {
+		return path
+	}
+	out, subs := slices.Clone(path), command.Subcommands
+	for i := 1; i < len(out); i++ {
+		sub, ok := findCliSubcommand(subs, out[i])
+		if !ok {
+			break
+		}
+		out[i], subs = sub.Name, sub.Subcommands
+	}
+	return out
 }
 
 // renameHelpPath spells `gregale <from>` as `gregale <to>` in help text. Its

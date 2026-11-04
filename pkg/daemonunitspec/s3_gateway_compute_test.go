@@ -4,6 +4,7 @@ package daemonunitspec
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -134,13 +135,64 @@ func TestComputeObjectGatewayConnectorContract(t *testing.T) {
 	removed := false
 	for _, task := range flattenRoleTasks("disable.yml", loadYAMLList(t, filepath.Join(roleDir, "tasks", "disable.yml"))) {
 		if args, ok := task.body["ansible.builtin.file"].(map[string]any); ok && args["state"] == "absent" {
-			for _, item := range task.body["loop"].([]any) {
+			items, _ := task.body["loop"].([]any)
+			for _, item := range items {
 				removed = removed || item == "/etc/systemd/system/faas-cloudflared-s3.service"
 			}
 		}
 	}
 	if !removed {
 		t.Error("disable leaves faas-cloudflared-s3.service behind")
+	}
+}
+
+// adr: 20261031122757 — with object_storage.compute_public_reads the role
+// gives the app edge the node's registry, the gateway-only credential and its
+// part of the port share in one drop-in; without it, and when the gateway
+// goes, the drop-in goes and the edge forwards public reads again.
+func TestComputeObjectGatewayPublicReadsDropIn(t *testing.T) {
+	roleDir := filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "s3_gateway_compute_service")
+	const dropIn = "/etc/systemd/system/faas-gatewayd-public-edge.service.d/50-faas-object-public-reads.conf"
+	const handler = "restart faas-gatewayd-public-edge for public reads"
+	var written, removedWhenOff bool
+	for _, task := range flattenRoleTasks("enable.yml", loadYAMLList(t, filepath.Join(roleDir, "tasks", "enable.yml"))) {
+		when := fmt.Sprint(task.body["when"])
+		if args, ok := task.body["ansible.builtin.copy"].(map[string]any); ok && args["dest"] == dropIn {
+			written = true
+			content := fmt.Sprint(args["content"])
+			for _, want := range []string{
+				"EnvironmentFile=/etc/faas/secrets/object-storage/gateway-provider.env\n",
+				"Environment=FAAS_OBJECT_STORAGE_CONFIG=/etc/faas/object-storage.json\n",
+				"Environment=FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND={{ faas_object_public_read_max_bytes_per_second | int }}\n",
+			} {
+				if !strings.Contains(content, want) {
+					t.Errorf("public read drop-in misses %q:\n%s", want, content)
+				}
+			}
+			if when != "faas_object_public_reads_on_compute_nodes | bool" || task.body["notify"] != handler {
+				t.Errorf("public read drop-in: when %q, notify %v", when, task.body["notify"])
+			}
+		}
+		if args, ok := task.body["ansible.builtin.file"].(map[string]any); ok && args["path"] == dropIn && args["state"] == "absent" {
+			removedWhenOff = when == "not (faas_object_public_reads_on_compute_nodes | bool)" && task.body["notify"] == handler
+		}
+		if args, ok := task.body["ansible.builtin.copy"].(map[string]any); ok && (args["dest"] == "/etc/faas/object-storage.json" || args["dest"] == "/etc/faas/secrets/object-storage/gateway-provider.env") {
+			if notify := fmt.Sprint(task.body["notify"]); !strings.Contains(notify, handler) {
+				t.Errorf("%s changes without restarting an edge that reads it: notify %s", args["dest"], notify)
+			}
+		}
+	}
+	if !written || !removedWhenOff {
+		t.Errorf("enable must write the public read drop-in when on (%v) and remove it when off (%v)", written, removedWhenOff)
+	}
+	removedOnDisable := false
+	for _, task := range flattenRoleTasks("disable.yml", loadYAMLList(t, filepath.Join(roleDir, "tasks", "disable.yml"))) {
+		if args, ok := task.body["ansible.builtin.file"].(map[string]any); ok && args["path"] == dropIn && args["state"] == "absent" {
+			removedOnDisable = task.body["notify"] == handler
+		}
+	}
+	if !removedOnDisable {
+		t.Error("disable leaves the public read drop-in behind, or does not restart the edge")
 	}
 }
 
@@ -168,6 +220,17 @@ func TestComputeObjectGatewayScrapeAndFirewallFollowTheSwitch(t *testing.T) {
 		if at < gate || at > end {
 			t.Errorf("%s is not inside the compute gateway switch", job)
 		}
+	}
+	// FaasComputeObjectGatewayUnavailable pages only on targets the cutover
+	// switch labels s3_endpoint_route="tunnel".
+	gatewayJob := tmpl[strings.Index(tmpl, `job_name: "s3-gatewayd-compute"`):strings.Index(tmpl, `job_name: "cloudflared-s3"`)]
+	if !strings.Contains(gatewayJob, "target_label: s3_endpoint_route") ||
+		!strings.Contains(gatewayJob, `'tunnel' if faas_object_gateway_endpoint_on_tunnel | default(false) | bool else 'control_plane'`) {
+		t.Error(`the s3-gatewayd-compute job does not set s3_endpoint_route from faas_object_gateway_endpoint_on_tunnel`)
+	}
+	rules := read("prometheus", "files", "faas.rules.yml")
+	if !strings.Contains(rules, `count(up{job="s3-gatewayd-compute",s3_endpoint_route="tunnel"})`) {
+		t.Error(`FaasComputeObjectGatewayUnavailable no longer reads the s3_endpoint_route="tunnel" label the scrape job sets`)
 	}
 	defaults := read("prometheus", "defaults", "main.yml")
 	for _, want := range []string{"/v1/internal/metrics/s3-gatewayd-compute-targets", "/v1/internal/metrics/cloudflared-s3-targets"} {

@@ -236,6 +236,35 @@ type leasedRealtimeOwner struct {
 	publishTargetCache        *managedRealtimePublishTargetCache
 	publishTargetCacheOnce    sync.Once
 	publishTargetLookups      singleflight.Group
+	// missing remembers connections a complete discovery did not find, so a
+	// burst of operations on made-up IDs does not list every node's
+	// connections each time.
+	missingMu sync.Mutex
+	missing   map[[2]string]time.Time
+	// endpointSync remembers what each node holds, so the endpoint
+	// reconcile skips registrations that would change nothing.
+	endpointSync endpointRegistrations
+}
+
+const (
+	managedRealtimeOwnerMissTTL = 5 * time.Second
+	managedRealtimeOwnerMissMax = 4096
+)
+
+func (o *leasedRealtimeOwner) recentlyMissing(endpointID, connectionID string, now time.Time) bool {
+	o.missingMu.Lock()
+	defer o.missingMu.Unlock()
+	expires, ok := o.missing[[2]string{endpointID, connectionID}]
+	return ok && now.Before(expires)
+}
+
+func (o *leasedRealtimeOwner) rememberMissing(endpointID, connectionID string, now time.Time) {
+	o.missingMu.Lock()
+	defer o.missingMu.Unlock()
+	if o.missing == nil || len(o.missing) >= managedRealtimeOwnerMissMax {
+		o.missing = make(map[[2]string]time.Time)
+	}
+	o.missing[[2]string{endpointID, connectionID}] = now.Add(managedRealtimeOwnerMissTTL)
 }
 
 func NewLeasedRealtimeOwner(registry state.ManagedRealtimeConnectionOwnerStore, nodes interface {
@@ -373,7 +402,15 @@ func (o *leasedRealtimeOwner) resolve(ctx context.Context, endpointID, connectio
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return state.ManagedRealtimeConnectionOwner{}, nil, fmt.Errorf("%w: read directory: %w", errManagedRealtimeOwnerUnavailable, err)
 	}
-	return o.discover(ctx, endpointID, connectionID)
+	now := time.Now()
+	if o.recentlyMissing(endpointID, connectionID, now) {
+		return state.ManagedRealtimeConnectionOwner{}, nil, realtime.ErrConnectionNotFound
+	}
+	lease, op, err := o.discover(ctx, endpointID, connectionID)
+	if errors.Is(err, realtime.ErrConnectionNotFound) {
+		o.rememberMissing(endpointID, connectionID, now)
+	}
+	return lease, op, err
 }
 
 func (o *leasedRealtimeOwner) connectionOperation(ctx context.Context, endpointID, connectionID string, closeAfter bool, fn func(state.ManagedRealtimeConnectionOwner, RealtimeNodeOperator) error) error {
@@ -1110,6 +1147,7 @@ func (o *leasedRealtimeOwner) ListEndpointInventory(ctx context.Context) (realti
 			var ids []string
 			ids, err = op.Endpoints(ctx)
 			if err == nil {
+				o.endpointSync.recordInventory(node.ID, ids)
 				inventory.NodesQueried++
 				for _, id := range ids {
 					seen[id] = struct{}{}
@@ -1133,24 +1171,32 @@ func (o *leasedRealtimeOwner) ListEndpointInventory(ctx context.Context) (realti
 // active realtime node. The control-plane row remains authoritative; a node
 // restart is repaired by the periodic endpoint reconciler.
 func (o *leasedRealtimeOwner) RegisterEndpoint(ctx context.Context, endpoint realtime.Endpoint) error {
-	return o.broadcastEndpoint(ctx, endpoint.ID, func(op RealtimeNodeOperator) error {
-		return op.RegisterEndpoint(ctx, endpoint)
-	})
+	if err := o.registerEndpointOnNodes(ctx, endpoint); err != nil {
+		return fmt.Errorf("%w: endpoint %s: %w", errManagedRealtimeOwnerUnavailable, endpoint.ID, err)
+	}
+	return nil
 }
 
 func (o *leasedRealtimeOwner) RemoveEndpoint(ctx context.Context, endpointID string) error {
-	return o.broadcastEndpoint(ctx, endpointID, func(op RealtimeNodeOperator) error {
-		return op.RemoveEndpoint(ctx, endpointID)
-	})
+	o.endpointSync.forget(endpointID)
+	if err := o.broadcastEndpointNodes(ctx, func(_ state.ComputeNode, op RealtimeNodeOperator) (bool, error) {
+		return true, op.RemoveEndpoint(ctx, endpointID)
+	}); err != nil {
+		return fmt.Errorf("%w: endpoint %s: %w", errManagedRealtimeOwnerUnavailable, endpointID, err)
+	}
+	return nil
 }
 
-func (o *leasedRealtimeOwner) broadcastEndpoint(ctx context.Context, endpointID string, fn func(RealtimeNodeOperator) error) error {
+// broadcastEndpointNodes runs fn for every active node. It succeeds when one
+// node took the change or no node needed it; fn reports whether it sent
+// anything.
+func (o *leasedRealtimeOwner) broadcastEndpointNodes(ctx context.Context, fn func(state.ComputeNode, RealtimeNodeOperator) (bool, error)) error {
 	if o.nodes == nil {
 		return errManagedRealtimeOwnerUnavailable
 	}
-	nodes, err := o.nodes.ActiveComputeNodes(ctx)
+	nodes, err := o.activeNodes(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: list active nodes: %w", errManagedRealtimeOwnerUnavailable, err)
+		return fmt.Errorf("list active nodes: %w", err)
 	}
 	var firstErr error
 	reached := 0
@@ -1162,7 +1208,7 @@ func (o *leasedRealtimeOwner) broadcastEndpoint(ctx context.Context, endpointID 
 			}
 			continue
 		}
-		if err := fn(op); err != nil {
+		if _, err := fn(node, op); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -1176,7 +1222,7 @@ func (o *leasedRealtimeOwner) broadcastEndpoint(ctx context.Context, endpointID 
 	if firstErr == nil {
 		firstErr = errors.New("no active realtime nodes accepted endpoint")
 	}
-	return fmt.Errorf("%w: endpoint %s: %w", errManagedRealtimeOwnerUnavailable, endpointID, firstErr)
+	return firstErr
 }
 
 func defaultRealtimeNodeOperator(node state.ComputeNode) (RealtimeNodeOperator, error) {

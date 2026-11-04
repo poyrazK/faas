@@ -76,8 +76,10 @@ deploy until you remove one. Omitting `routes` leaves managed routes unchanged,
 In a single-app deploy every route must target the app being deployed. In a
 project deploy (`gregale deploy --project`) a route may name any workload, and
 only selected workloads are reconciled. `match_path` is a glob (`/api/**`),
-not an OpenAPI template. Routes are YAML-only and not yet available for
-organization-owned projects.
+not an OpenAPI template. Routes are YAML-only. On an organization's apps and
+projects, a deploy that adds, changes or removes routes needs the owner or
+admin role, as creating edge rules does; a deploy that leaves them unchanged
+needs only deploy access.
 
 Without a manifest, create the same rules directly:
 

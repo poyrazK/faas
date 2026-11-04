@@ -1,15 +1,19 @@
 # FaasObjectStorage
 
-Alerts: `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
+Alerts: `FaasObjectStorageProviderRefusingCredentials`,
+`FaasObjectStorageBucketOperationsStalled`, `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
 `FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`,
 `FaasPublicObjectReadUsageFlushFailing`, `FaasS3GatewayPortShareSaturated`,
-`FaasComputeObjectGatewayDown`, `FaasComputeObjectGatewayConnectorDisconnected`.
+`FaasComputeObjectGatewayDown`, `FaasComputeObjectGatewayConnectorDisconnected`,
+`FaasComputeObjectGatewayUnavailable`.
 Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 `s3-gatewayd` (`pkg/s3gateway`), apid's provider usage exporter
 (`pkg/apid/object/usage_export.go`), and public bucket reads in `gatewayd-public`
 (`pkg/objectstorage/public_read.go`).
-Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
+Metrics: `faas_object_storage_provider_refusing_credentials`,
+`faas_object_storage_recovery_attempts_total{operation,outcome}`,
+`faas_object_storage_inventory_scans_total{outcome}`,
 `faas_object_storage_inventory_provider_requests_total`,
 `s3_gateway_ops_total{op="s3_request",code}`,
 `faas_object_storage_usage_export_last_success_timestamp_seconds{backend}`,
@@ -25,6 +29,7 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `s3_gateway_transfer_bytes_total{direction}`,
 `s3_gateway_transfer_throttled_seconds_total{direction}`,
 `s3_gateway_transfer_limit_bytes_per_second`,
+`gatewayd_public_object_transfer_{bytes_total,throttled_seconds_total,limit_bytes_per_second}`,
 `up{job="s3-gatewayd-compute"}`, `up{job="cloudflared-s3"}`,
 `cloudflared_tunnel_ha_connections{job="cloudflared-s3"}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
@@ -32,10 +37,17 @@ Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-buck
 [ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),
 [ADR 20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md) (cached read admission),
 [ADR 20261031122757](../adr/20261031122757-s3-gateway-on-compute-nodes.md) (gateway on compute nodes, port share).
-Severity: warn.
+Severity: warn, except `FaasComputeObjectGatewayUnavailable`, which pages.
 
 ## Symptom
 
+- **Provider refusing credentials.** A provider answered 401/403 to a bucket
+  operation. apid withdraws object storage for an hour: capabilities report
+  it off, `gregale feature list` shows it disabled, and bucket creates answer
+  `503 object_storage_unavailable`. On 2026-11-02 the cause was a storage
+  project billed to a closed billing account.
+- **Bucket operations stalled.** Creates or deletes keep retrying and none
+  succeed. Customers see buckets stuck in `provisioning` or `deleting`.
 - **Inventory failing.** Customers see `503 Object storage accounting is
   temporarily unavailable` on one bucket while the account's other buckets
   work. A bucket needs a successful inventory every 900 s, or a listing that
@@ -59,7 +71,11 @@ Severity: warn.
   Existing buckets keep working.
 - **Port share saturated.** A gateway on a compute node paces transfers to
   its share of the node's port (`transfer.max_bytes_per_second`, one budget
-  for uploads and downloads). Transfers get slower; none fail.
+  for uploads and downloads). Transfers get slower; none fail. With
+  `object_storage.compute_public_reads`, the node's app edge serves public
+  bucket reads within its own part of the share
+  (`FAAS_PUBLIC_OBJECT_READ_MAX_BYTES_PER_SECOND`,
+  `gatewayd_public_object_transfer_*`), and s3-gatewayd keeps the rest.
 - **Compute gateway or s3 connector down.** On a cell that runs the gateway
   on its compute nodes, one node's `faas-s3-gatewayd-compute` stopped
   answering its control listener (port 9096), or its s3 tunnel connector
@@ -68,9 +84,21 @@ Severity: warn.
   Cloudflare sends the node's share to the other connectors. A node whose s3
   tunnel token is not staged keeps its connector inactive and stays in this
   alert.
+- **No compute gateway serving (page).** After the cutover (ADR step 6),
+  `s3.<domain>` resolves to the s3 tunnel, and no compute node has both its
+  gateway answering and its connector connected. Every S3 request fails at
+  Cloudflare. Prometheus labels the gateways `s3_endpoint_route="tunnel"`
+  only while the control plane's `faas_object_gateway_endpoint_on_tunnel` is
+  true, so the page stays silent during the load test pilot.
 
 ## Check
 
+0. Provider refusal or stalled operations:
+   `journalctl -u faas-apid | grep "object storage operation deferred"` gives
+   each bucket's backend, operation and `error_code` (`configuration` is a
+   401/403). Then check the provider account itself: credentials, project and
+   billing (on GCP: `gcloud billing projects describe <project>`; a closed
+   billing account returns 403 on every write).
 1. Inventory failures: `journalctl -u faas-apid | grep "object storage inventory failed"`
    lists the bucket and backend IDs and how many pages its listing has. A
    large bucket is listed over several attempts (`outcome="partial"`); its
@@ -102,7 +130,10 @@ Severity: warn.
    `journalctl -u faas-apid | grep "no backend with room"` for refusals.
 6. Port share: `rate(s3_gateway_transfer_bytes_total[5m])` by direction
    against `s3_gateway_transfer_limit_bytes_per_second`, and whether one
-   node or every node in the cell is at its share.
+   node or every node in the cell is at its share. Public reads served by
+   the node's app edge have their own part:
+   `gatewayd_public_object_transfer_bytes_total` against
+   `gatewayd_public_object_transfer_limit_bytes_per_second`.
 7. Compute gateway: on the node, `systemctl status faas-s3-gatewayd-compute
    faas-cloudflared-s3`, `curl -fsS http://127.0.0.1:9096/readyz` and
    `journalctl -u faas-s3-gatewayd-compute -u faas-cloudflared-s3`. A
@@ -111,6 +142,9 @@ Severity: warn.
 
 ## Recover
 
+0. Provider refusal: fix the account (credentials, billing link, project),
+   then restart apid on releases before the one-hour refusal lapse, or wait
+   up to an hour; the next retry clears the mark.
 1. Provider outage: wait for the provider. Do not raise ceilings.
 2. One bucket whose listing does not advance: check the provider for that
    bucket's backend first. A listing that fails every page keeps restarting;
@@ -155,3 +189,12 @@ Severity: warn.
    token: stage the s3 tunnel's token (root, mode 0600) and `systemctl start
    faas-cloudflared-s3`. Never put the app tunnel's token there: that node
    would answer app hosts on the s3 tunnel.
+8. No compute gateway serving: recover one node first, as in step 7; the
+   page clears once any node serves. `up{job="s3-gatewayd-compute"}` and
+   `cloudflared_tunnel_ha_connections{job="cloudflared-s3"}` show which
+   half each node is missing. Every node at once points at what they share:
+   the compute database, the storage seal domain, the s3 tunnel itself (its
+   token, or the tunnel deleted in Cloudflare). While the control-plane
+   gateway is still the fallback (one release after the cutover), point
+   `s3.<domain>`'s record back at the control-plane origin and set
+   `faas_object_gateway_endpoint_on_tunnel` back to false.

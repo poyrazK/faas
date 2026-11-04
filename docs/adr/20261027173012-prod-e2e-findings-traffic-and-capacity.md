@@ -192,3 +192,29 @@ still bounds the request as a whole.
 
 Verification: `pkg/gateway` `TestLeaseOutlastsASlowCommit` (a 400 ms commit
 admits the waiting request) and the existing lease tests.
+
+## Amendment 3 (2026-11-02): a lease wait the counter answered is not unverified
+
+The PulseWatch drill on production-us (2026-10-31 15:11 UTC) sent eight
+parallel requests to a 2 rps, burst 4 throttle rule. One got 503
+`rate_limit_unavailable` within 12 ms, two more were counted in
+`gateway_ratelimit_degraded_total`, and no lease statement failed: the
+burst's statements came back granted, partial and empty. A request waiting
+for a lease gives up after `leaseMaxWaits` (3) statements. The request had
+waited for three whose grants its peers spent, and the cap answered it as if
+the counter had not answered, before reading that the last grant emptied the
+bucket. Past the grace that is the 503 above; inside it the request fell back
+to the gateway's own bucket and could be admitted past the shared limit.
+
+Decision: a request that reaches the cap on lease waits, or the wait
+deadline, after a successful statement is refused with the ordinary 429 when
+the counter's last answer emptied the shared bucket (an empty grant, or a
+remainder of zero). That is how a batched consume answers the requests past
+its grant (amendment 1). Only a statement that failed or did not finish in
+time leaves a request unverified. A request still without a token while the
+counter reports tokens left (only under heavy contention) is unchanged.
+
+Verification: `pkg/gateway`
+`TestLeaseBurstPastTheCounterIsRateLimitedNotUnverified` (eight parallel
+requests on a burst-4 counter: exactly four admitted, none decided without
+the counter, with and without the grace armed) and the existing lease tests.

@@ -12,6 +12,42 @@ Usage is measured in GB-RAM-hours for running app instances. The plan also sets 
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
 
+## Changing plan
+
+`gregale billing plan PLAN` (or `PATCH /v1/account/plan`, or Change plan on the dashboard billing page) changes plan. Your first paid plan starts with a hosted checkout. Prices are before tax: the billing provider adds any sales tax or VAT that applies where you live. The billing portal shows invoices and payment methods but does not switch plans.
+
+If a plan ends without a downgrade, for example when a subscription lapses, its limits still bind: see [after a plan ends or shrinks](plans.md#what-each-limit-means).
+
+### Upgrades
+
+On an existing subscription an upgrade happens in place: the billing provider charges the prorated difference for the rest of the billing period, plus tax, to the card on the subscription, and the new plan applies once that charge succeeds. If the charge is declined nothing changes; update the card in the billing portal and try again. If your bank asks to confirm the charge (3-D Secure), the upgrade answers `402 payment_authentication_required` and nothing is charged: add the card again in the billing portal, where your bank can confirm it, then retry the upgrade.
+
+### Downgrades
+
+A downgrade applies at the end of the billing period, and is refused until your apps, databases and stored objects fit the lower plan. Downgrading to Free cancels the subscription at the end of the period.
+
+### Cancel and resume
+
+A cancelled subscription (`gregale billing cancel`, a downgrade to Free, or a deletion request) keeps its plan until the end of the billing period and then ends. A scheduled downgrade likewise applies at the end of the period. `GET /v1/billing/status` shows what is scheduled (`subscription_ends_at`, `scheduled_plan`, `scheduled_plan_at`), and so does the dashboard billing page.
+
+To keep the subscription instead, ask for the plan you already have: `gregale billing plan pro` on a Pro account, `PATCH /v1/account/plan` with `{"plan": "pro"}`, or Keep subscription on the dashboard. The scheduled cancellation or downgrade is undone and the subscription renews as before. Organizations use `PATCH /v1/orgs/{slug}/plan` the same way.
+
+A subscription that is ending cannot change plans: an upgrade or downgrade answers `409 billing_subscription_ending` until you keep it. Once the period has ended the account is on Free, and a new paid plan starts with a new checkout.
+
+Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap need an admin credential and MFA, and a dashboard session also needs a recent step-up: the portal link is a signed-in session that can cancel the subscription and replace the card.
+
+## Billing email
+
+The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it, so give the organization its own address:
+
+```bash
+curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
+  -H "Authorization: Bearer $GREGALE_TOKEN" -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"billing_email":"billing@acme.example"}'
+```
+
+Only the owner can change it, with MFA and a recent step-up. When the organization already has a subscription, its billing customer moves to the new address first. An address that already pays for another Gregale account or organization is refused with `409 billing_email_in_use`, and so is an upgrade from an organization whose billing email is in use that way. While a member's email is the organization's billing email, that member cannot be removed or delete their account (`409 billing_contact_member`); move the billing email first.
+
 ## Spend cap
 
 A spend cap is a hard ceiling on the overage an account is billed in a UTC
@@ -42,7 +78,14 @@ When the month's overage reaches the cap:
   warm pools are parked within one scheduler tick;
 - new wakes are refused with HTTP 402 `admission_refused`; the problem body
   carries the observed overage and the cap;
-- queued job tasks wait in the queue; they are not failed;
+- queued job tasks wait in the queue; they are not failed. A task already
+  running finishes within the plan's task timeout;
+- new forks are refused;
+- pending invocations (crons, delayed tasks, webhooks, async invokes and event
+  deliveries) wait too, without spending their retry attempts;
+- crons and recurring jobs stay due instead of queueing a run for every
+  scheduled time: each runs once after the cap lifts, and its `missed_runs`
+  policy records the occurrences it missed;
 - object storage, which is billed once the month closes, is billed only up
   to what the cap still allows after the month's compute and egress overage.
   Object storage keeps serving within its plan limits.
@@ -64,11 +107,9 @@ Overage is billed hour by hour against the allowance in force at the time,
 and the spend cap counts exactly that. After a downgrade, usage your larger
 allowance already covered is never billed and does not count toward the cap;
 after an upgrade, overage already billed stays billed and keeps counting.
-
-Overage is billed hour by hour against the allowance in force at the time,
-and the spend cap counts exactly that. After a downgrade, usage your larger
-allowance already covered is never billed and does not count toward the cap;
-after an upgrade, overage already billed stays billed and keeps counting.
+Hours you spent on the Free plan are never billed, also when you subscribe
+again later. When an organization is deleted, the usage it ran before the
+deletion is still billed on its subscription (ADR-20261101143527).
 
 An organization that owns its resources is billed apart from its members and
 has its own cap, with the same defaults. Its owner sets it with
@@ -206,7 +247,10 @@ stop every covered workload.
 Notification-only policies report `enforcement_ready: false`. Monitored
 compute-only preview stopping reports integration readiness separately from
 actual per-target stopping acknowledgements. The strict app compute candidate
-reports conservative commitments and funding separately. Other stopping actions
+reports conservative commitments and funding separately. Commitments fund
+warm, quiet-paused and frozen instances like running ones, while the invoice
+bills only running seconds, so a strict budget can hold before the invoice
+reaches its limit (`commitments_include_paused_time`). Other stopping actions
 and strict scopes remain unavailable. A successful preview does
 not activate a spending limit. Monitored responses can exceed a threshold while
 usage arrives or workloads drain. Full-invoice hard limits are not implied by
@@ -261,6 +305,35 @@ The Node and Python generated Billing clients expose the same operations,
 revision conditions, retry headers and readiness fields. Revision history is
 intent history; `runtime.stops` separately retains threshold decisions and
 current scheduler acknowledgements.
+
+A stored draft written before billing moved to USD keeps its EUR currency and
+reports `legacy_currency_draft`. Update it with `"currency": "USD"` to enable
+it, or delete it.
+
+### Organization budgets
+
+A budget covers what its owner pays for
+([ADR 20261031211500](adr/20261031211500-organization-budgets.md)). An
+organization that owns its resources pays for its apps, projects and
+environments, so it holds their costs and budgets, not the members who created
+them. A member's budget cannot name an app the organization pays for, and its
+account scope does not include that usage.
+
+```bash
+gregale billing costs --org acme
+gregale billing budgets list --org acme
+gregale billing budgets create --org acme --file budget.json --key acme-previews
+gregale billing budget-preview --org acme --file budget.json
+```
+
+`/v1/orgs/{slug}/billing/costs`, `/v1/orgs/{slug}/billing/budgets[/{id}]`,
+`.../{id}/revisions` and `.../budgets/preview` take the same bodies as the
+account routes. Every member can read them; the owner or billing role writes,
+with an `admin`-scoped credential, MFA and an `Idempotency-Key`. Organization
+budgets can notify and stop previews. Alerts go to the organization's billing
+contact; notification channels stay with account budgets. Strict budgets are
+not available to organizations, and an organization that does not own its
+resources cannot have budgets: its usage is billed to its members.
 
 ### Budget alerts on Slack, PagerDuty and email channels
 

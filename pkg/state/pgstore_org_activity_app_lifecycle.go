@@ -69,6 +69,9 @@ func (s *PgStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string
 	if err := tx.QueryRow(ctx, `select status from apps where id = $1 for update`, id).Scan(&priorStatus); err != nil {
 		return App{}, 0, mapErr(err)
 	}
+	if err := cancelDeletedAppPipelineTx(ctx, tx, id, time.Now().UTC()); err != nil {
+		return App{}, 0, fmt.Errorf("state: app activity delete: %w", err)
+	}
 	var app App
 	row := tx.QueryRow(ctx, `
 		with suspended_crons as (

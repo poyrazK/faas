@@ -4,8 +4,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -42,6 +44,14 @@ func TestAppErrorsRecorderPersistsPlatformIdentity(t *testing.T) {
 	}
 	if row.RequestID != "01995a4e-8f20-7d8c-b9e1-2e9d2bd1d4f0" || row.InstanceID != "instance-1" {
 		t.Fatalf("request/instance = (%q, %q)", row.RequestID, row.InstanceID)
+	}
+	if row.IssueEventID == "" {
+		t.Fatal("missing gateway occurrence ID")
+	}
+	r.record(http.StatusInternalServerError, req)
+	next := r.drainBatch(1)
+	if len(next) != 1 || next[0].IssueEventID == "" || next[0].IssueEventID == row.IssueEventID {
+		t.Fatalf("separate request reused occurrence ID: %+v", next)
 	}
 	if row.NodeID != "node-1" || row.Region != "eu-west" || row.CommitSHA != "abc123" ||
 		row.DeploymentTag != "stable" || row.DeploymentCreatedAt != "2026-09-22T15:00:00Z" ||
@@ -152,5 +162,53 @@ func TestAppErrorsRecorderSkipsUnownedResponses(t *testing.T) {
 	unknownHost.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 	if rows := r.drainBatch(10); len(rows) != 0 {
 		t.Fatalf("recorded %d rows for a response no app owns: %+v", len(rows), rows)
+	}
+}
+
+func TestAppErrorsDoNotFoldAcrossDeployments(t *testing.T) {
+	now := time.Now().UTC()
+	r := newAppErrorsRecorder(appErrorsRecorderConfig{Enabled: true}, nil, nil, slog.Default())
+	key := "app\x00" + deriveFingerprint("GET /orders", 500, "unhandled")
+	for i := 0; i < api.AppErrorsRequestSamplesPerFlush; i++ {
+		r.enqueue(key, appErrorRow{AppID: "app", DeploymentID: "old", ReceivedAt: now})
+	}
+	r.enqueue(key, appErrorRow{AppID: "app", DeploymentID: "new", ReceivedAt: now})
+	rows := r.drainBatch(0)
+	if len(rows) != api.AppErrorsRequestSamplesPerFlush+1 || rows[len(rows)-1].DeploymentID != "new" || rows[len(rows)-1].Count != 1 {
+		t.Fatalf("new deployment occurrence was folded into the old release: %+v", rows)
+	}
+}
+
+func TestAppErrorsRecorderBoundsSampleAfterRedaction(t *testing.T) {
+	for _, path := range []string{"/" + strings.Repeat("x", 600), "/" + strings.Repeat("a@b.co/", 65), "/" + strings.Repeat("é", 300)} {
+		r := newAppErrorsRecorder(appErrorsRecorderConfig{Enabled: true}, nil, nil, slog.Default())
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		api.PlatformIdentity{AppID: "app-1", TenantID: "acct-1", DeploymentID: "dep-1"}.ApplyGuestHeaders(req.Header)
+		r.record(http.StatusInternalServerError, req)
+		rows := r.drainBatch(1)
+		if len(rows) != 1 || len(rows[0].SampleMsg) > api.AppErrorsSampleMessageCapBytes-4 || !utf8.ValidString(rows[0].SampleMsg) || strings.Contains(rows[0].SampleMsg, "a@b.co") {
+			t.Fatalf("invalid redacted sample: %+v", rows)
+		}
+		if !strings.Contains(strings.Join(rows[0].Redactions, ","), "truncated") {
+			t.Fatalf("missing truncation evidence: %+v", rows[0].Redactions)
+		}
+	}
+}
+
+func TestHTTPFailureFoldPreservesMillisecondCountsAndSecondBoundaries(t *testing.T) {
+	r := newAppErrorsRecorder(appErrorsRecorderConfig{Enabled: true}, nil, nil, slog.Default())
+	start := time.Unix(1700000000, 0).UTC()
+	key := "app\x00" + deriveFingerprint("GET /orders", 500, "unhandled")
+	for _, ms := range []int{0, 1, 2, 3, 4, 1000} {
+		r.enqueue(key, appErrorRow{AppID: "app", DeploymentID: "dep", HTTPStatus: 500, ReceivedAt: start.Add(time.Duration(ms) * time.Millisecond)})
+	}
+	rows := r.drainBatch(0)
+	if len(rows) != 4 || rows[2].Count != 3 || rows[3].Count != 1 {
+		t.Fatalf("unexpected folded batches: %+v", rows)
+	}
+	for _, ms := range []int{2, 3, 4} {
+		if got := rows[2].IssueTimeBuckets[ms]; got != 1 {
+			t.Fatalf("millisecond %d count=%d", ms, got)
+		}
 	}
 }

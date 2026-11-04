@@ -203,4 +203,8 @@ const (
 	// than the slot's end (ADR-20261031123259).
 	InternalMailManagedPostgresRestoreSlotTTL      = 24 * time.Hour
 	InternalMailManagedPostgresRestoreSlotMaxBytes = 512
+
+	// A plan excess notice is useful for a day (ADR-20261102125208).
+	InternalMailManagedPostgresPlanExcessTTL      = 24 * time.Hour
+	InternalMailManagedPostgresPlanExcessMaxBytes = 512
 )

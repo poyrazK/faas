@@ -18,6 +18,10 @@ var (
 	ErrForkDeploymentUnavailable = errors.New("sched: fork deployment unavailable")
 	ErrForkAccountInactive       = errors.New("sched: fork account is not active")
 	ErrForkNoCapture             = errors.New("sched: fork has no usable capture")
+	// ErrForkSpendCap refuses a fork of an app whose billing subject is at
+	// its monthly spend cap (ADR-1162): a fork is billed like any instance,
+	// and the reaper would park it on its next tick.
+	ErrForkSpendCap = errors.New("sched: fork billing subject is at its spend cap")
 )
 
 // ForkRestore is what a successful restore produced.
@@ -36,6 +40,8 @@ func ForkFailureCode(err error) (code, message string) {
 		return "no_capture", "the deployment has no snapshot to fork yet; send it some traffic and try again"
 	case errors.Is(err, ErrForkAccountInactive):
 		return "account_inactive", "the account is suspended; resolve billing to create forks"
+	case errors.Is(err, ErrForkSpendCap):
+		return "spend_cap_reached", "the monthly spend cap is reached; raise the cap to create forks"
 	case errors.Is(err, ErrForkDeploymentUnavailable):
 		return "deployment_unavailable", "the forked deployment is no longer available"
 	case errors.Is(err, ErrNoCapacity), errors.Is(err, ErrAtCapacity), isCapacityProblem(err):
@@ -65,6 +71,9 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	app, dep, acct, err := e.resolveForkTarget(ctx, fork)
 	if err != nil {
 		return ForkRestore{}, err
+	}
+	if e.spendCapReached(ctx, e.spendCapSubject(ctx, app)) {
+		return ForkRestore{}, ErrForkSpendCap
 	}
 	snap, sealedKey, err := e.forkSnapshot(ctx, fork, dep, string(acct.Plan), app)
 	if err != nil {

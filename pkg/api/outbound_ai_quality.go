@@ -1,8 +1,9 @@
 package api
 
 import (
-	"regexp"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // Quality signals (ADR 20261021171712): every AI call's ID, its quality
@@ -40,7 +41,7 @@ var OutboundAIQualityMetrics = []string{
 	OutboundAIQualityToolError, OutboundAIQualityMetricBadFeedback, OutboundAIQualityMetricEvaluationScore,
 }
 
-var feedbackLabelPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,31}$`)
+var feedbackLabelPattern = lazyregexp.New(`^[a-z][a-z0-9_.-]{0,31}$`)
 
 // ValidOutboundAIFeedback reports a rating, and a label that is empty or
 // up to OutboundAIFeedbackLabelMaxBytes lowercase letters, digits, _, . or

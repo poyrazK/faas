@@ -85,6 +85,11 @@ or a separately qualified migration. An illustrative small qualification policy:
 }
 ```
 
+This small policy is for qualification only. On `FAAS_ENVIRONMENT=production`
+apid refuses new buckets while the policy is below what the plans sell (see
+the operator notes' limits section), so raise it to plan size before customers
+use object storage.
+
 Merge that policy into `accounting` in the existing operator storage config;
 preserve the GCS placement identity and all unrelated configuration. The
 timestamp placeholder is deliberately invalid until replaced. Require

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -24,6 +25,9 @@ class CreateManagedPostgresDatabaseRequest:
 
     name: str
     region: str
+    request_id: UUID | Unset = UNSET
+    """Optional reserved database identity for durable workflows. Identical retries recover the same resource
+    independently of the HTTP response cache. A different reservation cannot adopt an existing name."""
     postgres_major: int | Unset = 16
     service_class: CreateManagedPostgresDatabaseRequestServiceClass | Unset = "development"
     availability: CreateManagedPostgresDatabaseRequestAvailability | Unset = "single_zone"
@@ -35,6 +39,10 @@ class CreateManagedPostgresDatabaseRequest:
         name = self.name
 
         region = self.region
+
+        request_id: str | Unset = UNSET
+        if not isinstance(self.request_id, Unset):
+            request_id = str(self.request_id)
 
         postgres_major = self.postgres_major
 
@@ -60,6 +68,8 @@ class CreateManagedPostgresDatabaseRequest:
                 "region": region,
             }
         )
+        if request_id is not UNSET:
+            field_dict["request_id"] = request_id
         if postgres_major is not UNSET:
             field_dict["postgres_major"] = postgres_major
         if service_class is not UNSET:
@@ -81,6 +91,13 @@ class CreateManagedPostgresDatabaseRequest:
         name = d.pop("name")
 
         region = d.pop("region")
+
+        _request_id = d.pop("request_id", UNSET)
+        request_id: UUID | Unset
+        if isinstance(_request_id, Unset):
+            request_id = UNSET
+        else:
+            request_id = UUID(_request_id)
 
         postgres_major = d.pop("postgres_major", UNSET)
 
@@ -107,6 +124,7 @@ class CreateManagedPostgresDatabaseRequest:
         create_managed_postgres_database_request = cls(
             name=name,
             region=region,
+            request_id=request_id,
             postgres_major=postgres_major,
             service_class=service_class,
             availability=availability,

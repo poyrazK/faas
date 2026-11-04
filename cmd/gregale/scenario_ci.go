@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/wire"
 	"gopkg.in/yaml.v3"
 )
 
@@ -395,7 +397,7 @@ func renderTestCIWorkflow(options generatedTestCIOptions) ([]byte, error) {
 	steps = append(steps,
 		generatedTestCIWorkflowStep{
 			Name:  "Install Gregale CLI",
-			Run:   `curl -fsSL https://get.gregale.dev | sh -s -- --dir "$RUNNER_TEMP/gregale"`,
+			Run:   generatedTestCIInstallCommand(wire.Version),
 			Shell: "bash",
 		},
 		generatedTestCIWorkflowStep{
@@ -496,7 +498,7 @@ func renderTestCIVMWorkflow(options generatedTestCIOptions) ([]byte, error) {
 	steps = append(steps,
 		generatedTestCIWorkflowStep{
 			Name:  "Install Gregale CLI",
-			Run:   `curl -fsSL https://get.gregale.dev | sh -s -- --dir "$RUNNER_TEMP/gregale"`,
+			Run:   generatedTestCIInstallCommand(wire.Version),
 			Shell: "bash",
 		},
 		generatedTestCIWorkflowStep{
@@ -612,6 +614,24 @@ func generatedTestCIVMRunCommand(preflight bool) string {
   --report "$RUNNER_TEMP/gregale-test-results-$GREGALE_CI_PROFILE.json" \
   --junit "$RUNNER_TEMP/gregale-test-results-$GREGALE_CI_PROFILE.xml" \
   --html "$RUNNER_TEMP/gregale-test-results-$GREGALE_CI_PROFILE.html"`
+}
+
+// releaseTagVersion matches the wire.Version of a release build: a release
+// tag such as v0.1.18 or v0.1.18-rc.313. Prerelease identifiers carry no
+// hyphen, which keeps out a development build's `git describe` version
+// (v0.1.18-rc.313-4-gabc1234) whose tag does not exist.
+var releaseTagVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$`)
+
+// generatedTestCIInstallCommand installs the CLI in a generated workflow. A
+// release build pins the installer to its own tag, so CI runs the CLI that
+// wrote the workflow rather than whichever release is newest on the day; a
+// development build has no published tag and installs the newest release.
+func generatedTestCIInstallCommand(version string) string {
+	const install = `curl -fsSL https://get.gregale.dev | sh -s -- `
+	if releaseTagVersion.MatchString(version) && !strings.HasSuffix(version, "-dirty") {
+		return install + "--version " + version + ` --dir "$RUNNER_TEMP/gregale"`
+	}
+	return install + `--dir "$RUNNER_TEMP/gregale"`
 }
 
 func generatedTestCIRunCommand(load bool) string {

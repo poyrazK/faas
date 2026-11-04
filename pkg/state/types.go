@@ -1245,6 +1245,12 @@ type APIKey struct {
 	// account/org API keys leave it empty; authz.LoadApp uses it as an
 	// additional tenant boundary when the principal is app-scoped.
 	AppID string
+	// ProjectLimited and ProjectIDs: an agent or mcp-login key limited to
+	// projects of its organization (ADR-20261104085712). The middleware
+	// stamps them on the principal's copy when it authenticates the key;
+	// stores' key reads leave them unset.
+	ProjectLimited bool
+	ProjectIDs     []string
 	// OrgID is the org the key was minted against (issue #190 / IAM-6,
 	// PR 6). Migration 00127 flips api_keys.org_id from NULL to
 	// NOT NULL after the deterministic personal-org backfill, so every
@@ -1996,6 +2002,12 @@ type AppManifest struct {
 	// /run/secrets in its main workload (ADR-20261023090000). imaged copies
 	// them into the guest manifest; they name app secrets, never values.
 	ProjectSecretFiles []api.SecretFile `json:"project_secret_files,omitempty"`
+	// ProjectReleaseCommand is the command of the Compose service this app
+	// waits for with service_completed_successfully (ADR-20261102192943).
+	// A deploy whose source declares no release command (gregale.yaml
+	// release.command or Procfile release:) runs it as the release command.
+	ProjectReleaseCommand      []string `json:"project_release_command,omitempty"`
+	ProjectReleaseCommandShell bool     `json:"project_release_command_shell,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -2450,6 +2462,14 @@ type GitHubBinding struct {
 	OwnerID          int64
 	RepoID           int64
 	ProductionBranch string
+	// ProductionTrigger chooses the webhook or GitHub Actions for an app
+	// bound without a project (ADR-20261101160300). Empty is the webhook.
+	// A binding upsert keeps it; unbinding clears it.
+	ProductionTrigger ProductionTrigger
+	// PreviewsOff turns off pull-request previews for an app bound without
+	// a project; a project-backed app follows its project's policy. Kept and
+	// cleared like ProductionTrigger.
+	PreviewsOff bool
 }
 
 // GitHubInstall is the durable OAuth handshake state for one account's
@@ -2503,10 +2523,14 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// submissionAttemptID is creation-only metadata, never copied onto the wire.
-	submissionAttemptID  string
-	releaseWorkerAttempt string
-	releaseConfigAttempt string
-	retryDeploymentID    string
+	submissionAttemptID string
+	// eventSubscriptionIntent is creation-only: the event subscriptions a
+	// production manifest deploy declares (ADR-20261101030512). nil records
+	// no intent; an empty slice declares none.
+	eventSubscriptionIntent *[]string
+	releaseWorkerAttempt    string
+	releaseConfigAttempt    string
+	retryDeploymentID       string
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`
@@ -3448,6 +3472,12 @@ type CronOptions struct {
 	CommandMaxOutputBytes int
 	RetryMax              int
 	RetryBackoffSeconds   int
+	// ClearSchedulePolicy and ClearFailureRules remove the cron's policy or
+	// rules on an update; a nil SchedulePolicy or FailureRules leaves them
+	// as they are. Nothing could remove either once set (crons audit
+	// 2026-11-03).
+	ClearSchedulePolicy bool
+	ClearFailureRules   bool
 }
 
 const (
@@ -4312,7 +4342,25 @@ type UpdateAppWebhookParams struct {
 	DeliveryFormat      *AppWebhookDeliveryFormat
 	Enabled             *bool
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
+	// PreviousSecretUntil, set with WebhookSecretSealed, keeps the secret
+	// being replaced as the previous secret until this instant
+	// (ADR-20261101093517): deliveries carry a second signature made with
+	// it. A rotation inside the window replaces the previous secret with
+	// the one it retires. Ignored without WebhookSecretSealed.
+	PreviousSecretUntil *time.Time
 }
+
+// AppWebhookPreviousSecretStore reads the secret a rotation replaced while
+// its overlap window lasts (ADR-20261101093517). nil means none: never
+// rotated, rotated without overlap, or the window has passed.
+type AppWebhookPreviousSecretStore interface {
+	PreviousAppWebhookSecret(ctx context.Context, webhookID string, now time.Time) ([]byte, error)
+}
+
+var (
+	_ AppWebhookPreviousSecretStore = (*MemStore)(nil)
+	_ AppWebhookPreviousSecretStore = (*PgStore)(nil)
+)
 
 // AppWebhookScope is the closed storage vocabulary for outbound subscriptions.
 type AppWebhookScope string
@@ -4485,6 +4533,40 @@ type AppWebhookDelivery struct {
 	DeliveredAt      *time.Time // nil until status=succeeded
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+
+	// AdmissionMaxPending and AdmissionMaxBacklogBytes are the producer's
+	// caps on the account's undelivered deliveries (ADR-20261101093517):
+	// RecordAppWebhookDelivery counts the account's pending and in-flight
+	// rows and their payload bytes under a per-account lock and refuses
+	// with *AppWebhookOutboxFullError at either cap. Zero leaves that cap
+	// off. Admission input only; never stored.
+	AdmissionMaxPending      int   `json:"-"`
+	AdmissionMaxBacklogBytes int64 `json:"-"`
+}
+
+// AppWebhookOutboxFullError reports that an admission-capped
+// RecordAppWebhookDelivery found the account's undelivered deliveries at a
+// cap. It unwraps to ErrQuotaExceeded.
+type AppWebhookOutboxFullError struct {
+	Bytes    bool // the payload-bytes cap refused; otherwise the count cap
+	Limit    int64
+	Observed int64
+}
+
+func (e *AppWebhookOutboxFullError) Error() string { return ErrQuotaExceeded.Error() }
+func (e *AppWebhookOutboxFullError) Unwrap() error { return ErrQuotaExceeded }
+
+// appWebhookOutboxAdmission applies the caps to the account's undelivered
+// count and payload bytes. A delivery admitted just under the bytes cap may
+// pass it by its own size, as queue admission does.
+func appWebhookOutboxAdmission(in AppWebhookDelivery, pending, held int64) error {
+	if in.AdmissionMaxPending > 0 && pending >= int64(in.AdmissionMaxPending) {
+		return &AppWebhookOutboxFullError{Limit: int64(in.AdmissionMaxPending), Observed: pending}
+	}
+	if in.AdmissionMaxBacklogBytes > 0 && held >= in.AdmissionMaxBacklogBytes {
+		return &AppWebhookOutboxFullError{Bytes: true, Limit: in.AdmissionMaxBacklogBytes, Observed: held}
+	}
+	return nil
 }
 
 // AppWebhookAttemptMetadata records the wall-clock interval of a dispatch.
@@ -7145,6 +7227,13 @@ type CliAuthCode struct {
 	AccountID  string // empty until ClaimCliAuthCode
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
+	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
+	// approval; "" is the personal one (ADR-20261101225122).
+	OrgID string
+	// ProjectIDs are the projects the sign-in was limited to at approval;
+	// nil is every project (ADR-20261104085712). MemStore only: the Pg
+	// store reads it through CliAuthCodeProjects.
+	ProjectIDs []string
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row
@@ -8035,8 +8124,11 @@ type Org struct {
 	ProviderCustomerID       string
 	StripeSubscriptionItem   string
 	DeletedPending           bool
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	// DeletionRequestedAt is when DeletedPending turned on (ADR-20261101143527);
+	// meterd delivers the organization's usage from before it.
+	DeletionRequestedAt *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // OrgMembership is the (org, account) join row. The pair is the PK;
@@ -9377,6 +9469,10 @@ type OIDCExchangedToken struct {
 	Audience  []string
 	JTI       string
 	CreatedAt time.Time
+	// AppID binds the bearer to one app (ADR-20261101100000): set for a
+	// deploy bearer minted under a trust policy Gregale created, and
+	// enforced like a per-app deploy token. Empty is account-wide.
+	AppID string
 }
 
 // ToAPIKey projects the OIDC-bearer row into a synthetic state.APIKey
@@ -9407,6 +9503,7 @@ func (e OIDCExchangedToken) ToAPIKey() APIKey {
 		AccountID: e.AccountID,
 		Scopes:    scopes,
 		Status:    string(APIKeyStatusActive),
+		AppID:     e.AppID,
 	}
 }
 

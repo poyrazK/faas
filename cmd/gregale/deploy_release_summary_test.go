@@ -320,8 +320,9 @@ func TestRenderDeploymentReleaseSummary_FallsBackToIDWithoutRevision(t *testing.
 
 // adr: 199
 // production-us hunt #8: mid-canary the previous release still served 90%,
-// and the summary suggested `rollback --to v5`, two releases back. The hint
-// is now the safe exit: promote the still-serving release.
+// and the summary suggested `rollback --to v5`, two releases back. Promoting
+// the still-serving release is refused while the canary owns the weights, so
+// the hint is the exit that works: abort the rollout.
 func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
 	var out bytes.Buffer
 	main.RenderDeploymentReleaseSummary(&out, api.DeploymentSummaryResponse{
@@ -331,8 +332,11 @@ func TestRenderDeploymentReleaseSummary_MidCanaryOffersAbort(t *testing.T) {
 		RollbackTargetRevision: 5,
 	}, "h6-lab")
 	got := out.String()
-	if !strings.Contains(got, "Abort canary: gregale release traffic promote --app h6-lab --release v6") {
+	if !strings.Contains(got, "Abort canary: gregale rollouts recover h6-lab --action abort") {
 		t.Fatalf("mid-canary summary lacks the abort hint:\n%s", got)
+	}
+	if strings.Contains(got, "traffic promote") {
+		t.Fatalf("mid-canary summary offers a traffic promote the canary refuses:\n%s", got)
 	}
 	if strings.Contains(got, "--to v5") {
 		t.Fatalf("mid-canary summary still offers a rollback past the serving release:\n%s", got)

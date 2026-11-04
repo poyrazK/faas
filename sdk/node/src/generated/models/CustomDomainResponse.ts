@@ -16,6 +16,14 @@ export type CustomDomainResponse = {
   challenge_token?: string | null;
   verified: boolean;
   verified_at?: string | null;
+  /**
+   * Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof.
+   */
+  verification_expires_at?: string;
+  /**
+   * True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS instructions are omitted; resume domain setup to recreate the claim.
+   */
+  verification_expired?: boolean;
   txt_record?: string | null;
   /**
    * True when this domain is the app's default. Set via `gregale domains set-default`.

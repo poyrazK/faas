@@ -11,9 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deploymentServedBefore = `-- name: DeploymentServedBefore :one
+SELECT (serving_ended_at IS NOT NULL OR (status = 'live' AND traffic_percent > 0))::boolean AS served
+FROM deployments WHERE id = $1::uuid
+`
+
+// Whether a deployment ever took traffic: it serves now, or the
+// deployment_serving_ended_at trigger stamped when it stopped.
+func (q *Queries) DeploymentServedBefore(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, deploymentServedBefore, id)
+	var served bool
+	err := row.Scan(&served)
+	return served, err
+}
+
 const listTrafficSiblingsInScope = `-- name: ListTrafficSiblingsInScope :many
 SELECT id::text,traffic_percent,
-    (canary_total_steps > 0 AND rollout_state = 'aborted' AND rollout_completed_at IS NULL)::boolean AS aborted_canary
+    (canary_total_steps > 0 AND rollout_state = 'aborted' AND rollout_completed_at IS NULL)::boolean AS aborted_canary,
+    (traffic_percent = 0 AND serving_ended_at IS NULL)::boolean AS never_served
 FROM deployments
 WHERE app_id=$1::uuid AND scope=$2::text AND status='live' AND id<>$3::uuid ORDER BY id
 `
@@ -28,9 +43,13 @@ type ListTrafficSiblingsInScopeRow struct {
 	ID             string
 	TrafficPercent int32
 	AbortedCanary  bool
+	NeverServed    bool
 }
 
 // aborted_canary is the H5-62 candidate: aborted before its rollout completed.
+// never_served is a live 0% release that has not served since it went live
+// (a release staged with no traffic): serving_ended_at is stamped by trigger
+// whenever a serving row stops serving.
 func (q *Queries) ListTrafficSiblingsInScope(ctx context.Context, db DBTX, arg ListTrafficSiblingsInScopeParams) ([]ListTrafficSiblingsInScopeRow, error) {
 	rows, err := db.Query(ctx, listTrafficSiblingsInScope, arg.AppID, arg.Scope, arg.ID)
 	if err != nil {
@@ -40,7 +59,12 @@ func (q *Queries) ListTrafficSiblingsInScope(ctx context.Context, db DBTX, arg L
 	items := []ListTrafficSiblingsInScopeRow{}
 	for rows.Next() {
 		var i ListTrafficSiblingsInScopeRow
-		if err := rows.Scan(&i.ID, &i.TrafficPercent, &i.AbortedCanary); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.TrafficPercent,
+			&i.AbortedCanary,
+			&i.NeverServed,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -86,18 +110,19 @@ func (q *Queries) LockReviewedRoutePolicy(ctx context.Context, db DBTX, arg Lock
 }
 
 const readDeploymentTrafficScope = `-- name: ReadDeploymentTrafficScope :one
-SELECT app_id::text,scope FROM deployments WHERE id=$1::uuid
+SELECT (environment_workload_runtime IS NOT NULL)::boolean AS managed, app_id::text,scope FROM deployments WHERE id=$1::uuid
 `
 
 type ReadDeploymentTrafficScopeRow struct {
-	AppID string
-	Scope string
+	Managed bool
+	AppID   string
+	Scope   string
 }
 
 func (q *Queries) ReadDeploymentTrafficScope(ctx context.Context, db DBTX, id pgtype.UUID) (ReadDeploymentTrafficScopeRow, error) {
 	row := db.QueryRow(ctx, readDeploymentTrafficScope, id)
 	var i ReadDeploymentTrafficScopeRow
-	err := row.Scan(&i.AppID, &i.Scope)
+	err := row.Scan(&i.Managed, &i.AppID, &i.Scope)
 	return i, err
 }
 

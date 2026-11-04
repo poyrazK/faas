@@ -100,6 +100,37 @@ func TestDecodePush_EmptyBeforeIsAccepted(t *testing.T) {
 	}
 }
 
+// An annotated tag's push names the tag object in `after` and the commit
+// the tag points at in head_commit; DecodePush deploys the commit. A
+// lightweight tag, a branch and a deleted tag keep `after` as GitHub sent it.
+func TestDecodePush_AnnotatedTagNamesItsCommit(t *testing.T) {
+	t.Parallel()
+	const (
+		tagObject = "1111111111111111111111111111111111111111"
+		commit    = "2222222222222222222222222222222222222222"
+		zero      = "0000000000000000000000000000000000000000"
+	)
+	cases := []struct {
+		name, body, want string
+	}{
+		{"annotated tag", `{"ref":"refs/tags/v1.2.0","after":"` + tagObject + `","head_commit":{"id":"` + commit + `"},"repository":{"full_name":"octo/api"}}`, commit},
+		{"lightweight tag", `{"ref":"refs/tags/v1.2.0","after":"` + commit + `","head_commit":{"id":"` + commit + `"},"repository":{"full_name":"octo/api"}}`, commit},
+		{"tag without a head commit", `{"ref":"refs/tags/v1.2.0","after":"` + tagObject + `","repository":{"full_name":"octo/api"}}`, tagObject},
+		{"tag with a malformed head commit", `{"ref":"refs/tags/v1.2.0","after":"` + tagObject + `","head_commit":{"id":"abc"},"repository":{"full_name":"octo/api"}}`, tagObject},
+		{"branch", `{"ref":"refs/heads/main","after":"` + tagObject + `","head_commit":{"id":"` + commit + `"},"repository":{"full_name":"octo/api"}}`, tagObject},
+		{"deleted tag", `{"ref":"refs/tags/v1.2.0","after":"` + zero + `","deleted":true,"head_commit":{"id":"` + commit + `"},"repository":{"full_name":"octo/api"}}`, zero},
+	}
+	for _, tc := range cases {
+		ev, err := DecodePush([]byte(tc.body))
+		if err != nil {
+			t.Fatalf("%s: DecodePush() err = %v", tc.name, err)
+		}
+		if ev.After != tc.want {
+			t.Errorf("%s: After = %q, want %q", tc.name, ev.After, tc.want)
+		}
+	}
+}
+
 func TestPushEvent_DeploySkipMarker(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

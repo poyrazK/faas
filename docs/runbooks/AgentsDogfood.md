@@ -124,8 +124,8 @@ apid publishes them only for accounts the agents capability is released to:
 Environment=FAAS_GITHUBD_AUTOMATION_EVENTS=1
 ```
 
-githubd also needs `FAAS_APID_GITHUBD_BRIDGE_SOCK`, which the release sets
-for preview environments. Restart githubd.
+githubd also needs `FAAS_APID_GITHUBD_BRIDGE_SOCK`, which the apid and githubd
+units set to `/run/faas/apid-githubd.sock`. Restart githubd.
 
 ## 5. agentd on the control plane
 

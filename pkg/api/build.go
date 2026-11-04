@@ -1,6 +1,6 @@
 package api
 
-import "regexp"
+import "github.com/onebox-faas/faas/pkg/lazyregexp"
 
 // BuildManifestPath is where builderd writes the manifest onto drive1 at
 // CreateColdBoot time and where guest-init reads it at boot to decide
@@ -68,7 +68,7 @@ const (
 // toolchain directive (TestGoToolchainVersionMatchesRepositoryToolchain).
 const GoBuildToolchain = "1.26.10"
 
-var goCommandNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+var goCommandNameRE = lazyregexp.New(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
 
 // ValidGoCommand reports whether name can select a `cmd/<name>` Go build
 // (ADR-20261025134512): what Railpack's RAILPACK_GO_BIN and a shell word
@@ -138,11 +138,10 @@ type BuildManifest struct {
 	// zstd (builderd's FAAS_BUILD_LAYER_ZSTD, ADR-20261028084018). An older
 	// guest ignores it and keeps gzip.
 	LayerCompression string `json:"layer_compression,omitempty"`
-	// BuildKitSnapshotter is "" (fuse-overlayfs, the default) or
-	// BuildKitSnapshotterAuto, which lets rootless BuildKit pick kernel
-	// overlayfs when the guest kernel allows it (builderd's
-	// FAAS_BUILD_KERNEL_OVERLAY, ADR-20261029105325). An older guest ignores
-	// it.
+	// BuildKitSnapshotter is "" (fuse-overlayfs) or BuildKitSnapshotterAuto,
+	// which lets rootless BuildKit pick kernel overlayfs when the guest kernel
+	// allows it. builderd sends Auto unless FAAS_BUILD_KERNEL_OVERLAY=false
+	// (ADR-20261029105325). An older guest ignores it.
 	BuildKitSnapshotter string `json:"buildkit_snapshotter,omitempty"`
 	// DeferCacheExport moves the dependency-cache export off the deploy's
 	// critical path (builderd's FAAS_BUILD_DEFER_CACHE_EXPORT,

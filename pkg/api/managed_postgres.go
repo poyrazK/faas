@@ -44,6 +44,17 @@ var managedPostgresPlanLimits = map[Plan]ManagedPostgresPlanLimits{
 		RestoreWindowSeconds: managedPostgresRestoreWindowSecond, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true},
 }
 
+// ManagedPostgresPlanDatabasesMax is the most databases any plan allows. A
+// production registry must allow at least this many per account, or a plan
+// would get fewer than it sells (ADR-20261031091607).
+func ManagedPostgresPlanDatabasesMax() int {
+	most := 0
+	for _, limits := range managedPostgresPlanLimits {
+		most = max(most, limits.DatabasesMax)
+	}
+	return most
+}
+
 // ManagedPostgresLimitsFor returns a copy of the closed-set entitlement for p.
 func ManagedPostgresLimitsFor(p Plan) (ManagedPostgresPlanLimits, bool) {
 	limits, ok := managedPostgresPlanLimits[p]
@@ -76,6 +87,12 @@ type ManagedPostgresDatabase struct {
 	// database once the account has room; otherwise its delete is scheduled
 	// at this time.
 	RestoreSlotUntil string `json:"restore_slot_until,omitempty"`
+	// PlanExcess is set while the plan no longer includes the database and
+	// it is suspended (ADR-20261102125208): database_limit when it ranks
+	// past the plan's database limit, oldest first, or service_class when
+	// the plan does not include its class. Upgrading, deleting a database
+	// or resizing to an included class resumes it.
+	PlanExcess string `json:"plan_excess,omitempty"`
 	// RestoreRange is the span a point-in-time restore from this database
 	// can target now; absent while it cannot be restored from.
 	RestoreRange *ManagedPostgresRestoreRange `json:"restore_range,omitempty"`
@@ -207,6 +224,9 @@ type ManagedPostgresUsageOperatorResponse struct {
 }
 
 type CreateManagedPostgresDatabaseRequest struct {
+	// RequestID reserves the database identity for a durable workflow. Reusing
+	// it with another name or configuration is a conflict.
+	RequestID            string `json:"request_id,omitempty"`
 	Name                 string `json:"name"`
 	Region               string `json:"region"`
 	PostgresMajor        int    `json:"postgres_major,omitempty"`

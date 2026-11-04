@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -353,6 +353,10 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 	# kept generous for slow runners. Memory: cmd-e2e-coverage-timeout-edge.md
 	$(GO_TEST) -race -count=1 -timeout=18m $(PKGS)
 
+.PHONY: test-mcp-agent-workflows
+test-mcp-agent-workflows: ## Evaluate MCP discovery and recovery workflows against local native API fixtures
+	$(GO_TEST) -count=1 -run 'Test(AgentWorkflow|RecoveryContracts|VerificationContracts|FocusedCatalog|CoreCatalogStaysSmall)' ./pkg/mcpmanagement
+
 .PHONY: test-apid
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
@@ -438,6 +442,14 @@ adr-number-uniqueness-check: ## Reject a NEWLY duplicated ADR number (ratchet ov
 adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthetic ADR trees in both directions
 	bash scripts/ci/check_adr_number_uniqueness_test.sh
 
+.PHONY: cloudflare-ranges-check
+cloudflare-ranges-check: ## Compare the pinned Cloudflare ranges with Cloudflare's published lists (network; ADR-20261102081618)
+	bash scripts/ci/check_cloudflare_ranges.sh "$(CURDIR)"
+
+.PHONY: cloudflare-ranges-check-test
+cloudflare-ranges-check-test: ## Exercise the Cloudflare range check offline
+	bash scripts/ci/check_cloudflare_ranges_test.sh
+
 .PHONY: migration-version-hygiene-check
 migration-version-hygiene-check: ## Reject hand-typed migration versions and versions already claimed by an open PR
 	bash scripts/ci/check_migration_version_hygiene.sh
@@ -495,6 +507,11 @@ deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip
 .PHONY: verify-action-ref-contents-check
 verify-action-ref-contents-check: ## Verify release.yml's Contents API check accepts a pinned ref that vendors the bare CLI
 	@bash scripts/ci/verify-action-ref-contents_test.sh
+
+.PHONY: release-scripts-check
+release-scripts-check: ## Verify release.yml's moving Action tag (stable tags, forward only) and rendered release notes
+	@bash scripts/ci/advance-action-major-tag_test.sh
+	@bash scripts/ci/render-release-notes_test.sh
 
 .PHONY: environment-preflight-action-check
 environment-preflight-action-check: ## Verify the OIDC capability and promotion gate contract in the environment preflight Action
@@ -783,6 +800,8 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/cloudflare-s3-tunnel_test.sh
 	bash tests/load/s3-gateway/run_test.sh
 	bash deploy/scripts/cloudflare-app-dns_test.sh
+	bash deploy/scripts/cloudflare-origin-pull_test.sh
+	bash deploy/scripts/gcp-compute-edge-address_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check
@@ -1096,6 +1115,7 @@ gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM
 	python3 scripts/ops/gcp_public_beta_iam_test.py
 	python3 deploy/scripts/faas-rclone-backup-identity_test.py
 	bash -n scripts/ops/gcp_public_beta_converge.sh
+	bash scripts/ops/gcp_custom_domain_tls_test.sh
 	bash scripts/ops/gcp_provision_compute_test.sh
 	bash -n scripts/ops/gcp_retire_compute.sh
 
@@ -1983,4 +2003,4 @@ check-binding-runner-sync:
 	python3 scripts/sync_binding_runner.py --check
 .PHONY: test-data-pipeline
 test-data-pipeline: ## Real TLS Postgres replication and signed HTTP acceptance (Docker, Node, Go)
-	@bash scripts/test-data-pipeline.sh
+	@$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) bash scripts/test-data-pipeline.sh

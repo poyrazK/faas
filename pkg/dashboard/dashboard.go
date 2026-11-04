@@ -97,7 +97,7 @@ type DPAView struct {
 // MFAChallengeData is the /dashboard/mfa payload: the TOTP challenge an
 // mfa_pending session must pass before any other dashboard page. Enrolled
 // is false for an account an explicit policy requires to enroll; it has
-// no code to enter yet and is pointed at the CLI enrollment.
+// no code to enter yet and is linked to browser enrollment.
 type MFAChallengeData struct {
 	CSRFToken string
 	Failed    bool
@@ -208,6 +208,23 @@ type AppListItem struct {
 	// IsPreview is false. Pre-formatted at the handler edge so
 	// the template stays a pure renderer.
 	Scope string
+	// Labels are the app's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
+}
+
+// AppsListData backs /dashboard/apps.
+type AppsListData struct {
+	Items []AppListItem
+	// LabelsOn is true while the account has resource labels
+	// (ADR-20261031100025): the list shows each app's labels and takes a
+	// selector.
+	LabelsOn bool
+	// Selector is the label selector the list is filtered by, as typed.
+	Selector string
+	// SelectorError explains a selector the list could not apply; Items
+	// is empty then.
+	SelectorError string
 }
 
 // PreviewListItem is one row on /dashboard/previews (issue #961
@@ -763,10 +780,13 @@ type AppLogDrainsData struct {
 }
 
 type LogDrainPageItem struct {
-	ID                      string
-	Kind                    string
-	TargetURL               string
-	Enabled                 bool
+	ID        string
+	Kind      string
+	TargetURL string
+	Enabled   bool
+	// PlanPaused marks an enabled drain the app owner's plan does not cover,
+	// which delivery leaves out until the plan covers it again.
+	PlanPaused              bool
 	Status                  string
 	Active                  bool
 	QueueDepth              int
@@ -1455,6 +1475,9 @@ type CronItem struct {
 	Occurrences           []ScheduleOccurrencePageItem
 	OccurrencesCount      int
 	HistoryAvailable      bool
+	// Labels are the cron's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
 }
 
 // CronRunRow is one projected row inside CronItem.Runs. Pre-formatted
@@ -1645,6 +1668,7 @@ type AppDetailData struct {
 	// dashboard cron fire-now POST. Values:
 	//   "ok"    — handler redirected with ?fired=1
 	//   "error" — handler redirected with ?fired=error
+	//   "disabled", "busy", "suspended", "plan" — a refusal with its reason
 	// Empty string → no banner. The template's empty-state branch
 	// suppresses the banner entirely so a fresh page load renders
 	// the section without any success/error chrome.
@@ -2432,6 +2456,9 @@ type RequestAnalyticsView struct {
 	ErrorSparklineHTML    template.HTML
 	ColdBootSparkline     []appmetrics.SparklinePoint
 	ColdBootSparklineHTML template.HTML
+	// TelemetryGaps lists why the window may be missing requests; empty
+	// when every gateway delivered it or when it could not be judged.
+	TelemetryGaps []string
 }
 
 type RequestAnalyticsComputeCostView struct {
@@ -3376,6 +3403,10 @@ type BillingData struct {
 	CanCheckout    bool
 	UpgradeOptions []UpgradeOption
 	UpgradeNotice  string
+	// ScheduledChange describes the subscription's scheduled cancellation
+	// or downgrade; the template links to /dashboard/upgrade, which can
+	// undo it (ADR-20261103131742 amendment 1).
+	ScheduledChange string
 }
 
 // UpgradeOption is one paid plan the account can upgrade to. Money is
@@ -3413,8 +3444,16 @@ type UpgradeData struct {
 	Provider      string
 	ProviderLabel string
 	// PortalURL is the fallback for accounts that already have a
-	// subscription (the provider portal owns product changes).
+	// subscription when the provider cannot change it through its API.
 	PortalURL string
+	// SubscriptionChange is true when the account already has a
+	// subscription: the form upgrades it in place and the provider charges
+	// the prorated difference now (ADR-20261103131742).
+	SubscriptionChange bool
+	// ScheduledChange describes the subscription's scheduled cancellation
+	// or downgrade; the page then offers Keep subscription, which posts
+	// CurrentPlan (ADR-20261103131742 amendment 1).
+	ScheduledChange string
 	// ConfirmToken is the (action="upgrade_plan", account_id) CSRF
 	// envelope minted by renderUpgrade.
 	ConfirmToken string
@@ -3623,6 +3662,12 @@ type ManagedPostgresDatabaseItem struct {
 	// RestoreSlotUntil is set while a restored copy is past the plan's
 	// database limit (ADR-20261031123259).
 	RestoreSlotUntil string
+	// PlanExcess is database_limit or service_class while the plan no
+	// longer includes the database and it is suspended (ADR-20261102125208).
+	PlanExcess string
+	// Labels are the database's labels (ADR-20261031100025); nil while the
+	// account does not have resource labels.
+	Labels map[string]string
 }
 
 // ManagedPostgresBindingItem is the safe metadata shown for an app binding.

@@ -151,6 +151,39 @@ func TestLeasedRealtimeOwnerDiscoversAndReusesConnectionLease(t *testing.T) {
 	}
 }
 
+// A connection a complete discovery did not find is not looked for again
+// right away, so operations on made-up IDs do not list every node each time.
+func TestLeasedRealtimeOwnerRemembersMissingConnection(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "node-a", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeRealtimeNode{connections: []realtime.ConnectionInfo{{ID: "conn-1", EndpointID: "endpoint-1"}}}
+	other := &fakeRealtimeNode{}
+	owner := NewLeasedRealtimeOwner(store, store, "", nil, nil)
+	owner.leaseTTL = time.Minute
+	// Every active node answers, so a miss is a complete discovery.
+	owner.clientFor = func(n state.ComputeNode) (RealtimeNodeOperator, error) {
+		if n.ID != node.ID {
+			return other, nil
+		}
+		return fake, nil
+	}
+	for range 3 {
+		if err := owner.Send(ctx, "endpoint-1", "made-up", realtime.Message{Data: []byte("x")}); !errors.Is(err, realtime.ErrConnectionNotFound) {
+			t.Fatalf("send to an unknown connection = %v, want not found", err)
+		}
+	}
+	if fake.connReads != 1 {
+		t.Fatalf("inventory reads = %d, want 1 for three sends to the same unknown connection", fake.connReads)
+	}
+	if err := owner.Send(ctx, "endpoint-1", "conn-1", realtime.Message{Data: []byte("x")}); err != nil {
+		t.Fatalf("send to a real connection: %v", err)
+	}
+}
+
 func TestLeasedRealtimeOwnerBroadcastsPublishAndEndpoint(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

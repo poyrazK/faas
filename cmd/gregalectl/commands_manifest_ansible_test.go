@@ -547,6 +547,69 @@ func TestRenderManifestAnsibleFiles_CustomDomainEdge(t *testing.T) {
 	}
 }
 
+// ADR-20261103172551: dns.origin_pull sets how the control plane's Caddy
+// treats Cloudflare, the zone's client certificate or, knowingly, any zone;
+// unset renders neither, so the public_edge role refuses to deploy.
+func TestRenderManifestAnsibleFiles_DNSOriginPull(t *testing.T) {
+	const (
+		required = "faas_public_edge_authenticated_origin_pulls: true"
+		anyZone  = "faas_public_edge_allow_any_cloudflare_zone: true"
+	)
+	for _, tc := range []struct {
+		originPull string
+		want       []string
+		absent     []string
+	}{
+		{"", nil, []string{required, anyZone}},
+		{manifest.DNSOriginPullRequired, []string{required}, []string{anyZone}},
+		{manifest.DNSOriginPullAnyZone, []string{anyZone}, []string{required}},
+	} {
+		t.Run("origin_pull="+tc.originPull, func(t *testing.T) {
+			yaml := strings.Replace(validManifestYAML,
+				"    - name: fsn-1\n      role: control-plane\n",
+				"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+			if tc.originPull != "" {
+				yaml = strings.Replace(yaml, "  mode: cloudflare\n", "  mode: cloudflare\n  origin_pull: "+tc.originPull+"\n", 1)
+			}
+			m, err := manifest.Parse([]byte(yaml))
+			if err != nil {
+				t.Fatalf("manifest.Parse: %v", err)
+			}
+			if errs := m.Validate(); errs != nil {
+				t.Fatalf("manifest.Validate: %v", errs)
+			}
+			files, err := renderManifestAnsibleFiles(m, t.TempDir())
+			if err != nil {
+				t.Fatalf("renderManifestAnsibleFiles: %v", err)
+			}
+			var controlVars, computeVars string
+			for _, file := range files {
+				switch {
+				case strings.HasSuffix(file.Path, "fsn-1.yml"):
+					controlVars = string(file.Body)
+				case strings.HasSuffix(file.Path, "fsn-2.yml"):
+					computeVars = string(file.Body)
+				}
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(controlVars, want) {
+					t.Errorf("control host vars missing %q:\n%s", want, controlVars)
+				}
+			}
+			for _, absent := range append(tc.absent, tc.want...) {
+				if strings.Contains(computeVars, absent) {
+					t.Errorf("compute host vars carry %q:\n%s", absent, computeVars)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(controlVars, absent) {
+					t.Errorf("control host vars carry %q:\n%s", absent, controlVars)
+				}
+			}
+		})
+	}
+}
+
 // ADR-1343: public_edge.compute_nodes runs the app edge on the compute nodes.
 // The control plane gets a private listener for the edges' forwarded routes,
 // each compute node gets that listener as its target and admits its peers'
@@ -556,12 +619,21 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 		"    - name: fsn-1\n      role: control-plane\n",
 		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
 	for _, tc := range []struct {
-		name    string
-		yaml    string
-		enabled bool
+		name      string
+		yaml      string
+		enabled   bool
+		placement bool
+		direct    bool
+		edgedns   bool
+		spread    bool
 	}{
 		{name: "off", yaml: base},
 		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
+		{name: "placement routing", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n", enabled: true, placement: true},
+		{name: "direct entry", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: both\n", enabled: true, direct: true},
+		{name: "spread and local first", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n  placement_node_set: true\n  local_first: true\n", enabled: true, placement: true, spread: true},
+		{name: "direct entry with edgednsd", yaml: strings.Replace(base, "address: 10.42.0.2:50051\n", "address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n", 1) +
+			"public_edge:\n  compute_nodes: true\n  entry: both\n  dns:\n    zone_id: zone-1\n    names: [pilot.example.dev]\n", enabled: true, direct: true, edgedns: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := manifest.Parse([]byte(tc.yaml))
@@ -603,7 +675,118 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			if strings.Contains(controlVars, "faas_edge_control_plane_target") || strings.Contains(computeVars, "faas_edge_private_listen_addr") {
 				t.Errorf("edge switches rendered on the wrong role:\n%s\n%s", controlVars, computeVars)
 			}
+			// ADR-20261031105055: placement routing is a compute edge switch.
+			if got := strings.Contains(computeVars, "faas_edge_placement_routing: true\n"); got != tc.placement {
+				t.Errorf("compute host placement routing = %v, want %v:\n%s", got, tc.placement, computeVars)
+			}
+			if strings.Contains(controlVars, "faas_edge_placement_routing") {
+				t.Errorf("placement routing rendered on the control plane:\n%s", controlVars)
+			}
+			// ADR-20261102081618: direct entry opens the compute edges' TLS
+			// listener and keeps their 80/443 Cloudflare-only.
+			for _, line := range []string{"faas_edge_entry: \"both\"\n", "faas_cloudflare_origin_only: true\n"} {
+				if got := strings.Contains(computeVars, line); got != tc.direct {
+					t.Errorf("compute host has %q = %v, want %v:\n%s", line, got, tc.direct, computeVars)
+				}
+			}
+			if strings.Contains(controlVars, "faas_edge_entry") {
+				t.Errorf("direct entry rendered on the control plane:\n%s", controlVars)
+			}
+			// ADR-20261102081618 §3: edgednsd runs on the control plane, with
+			// each compute host's address under its registry name.
+			wantDNS := "faas_edgednsd_managed: true\n" +
+				"faas_edgednsd_names: [\"zone-1:pilot.example.dev\"]\n" +
+				"faas_edgednsd_node_addresses: [\"fsn-2.faas=203.0.113.2\"]\n" +
+				"faas_edgednsd_dry_run: true\n"
+			if got := strings.Contains(controlVars, wantDNS); got != tc.edgedns {
+				t.Errorf("control plane edgednsd vars = %v, want %v:\n%s", got, tc.edgedns, controlVars)
+			}
+			if strings.Contains(computeVars, "faas_edgednsd") {
+				t.Errorf("edgednsd rendered on a compute host:\n%s", computeVars)
+			}
+			// ADR-20261102081618 §5: both switches are compute-node settings.
+			for _, line := range []string{"faas_edge_placement_node_set: true\n", "faas_gateway_edge_local_first: true\n"} {
+				if got := strings.Contains(computeVars, line); got != tc.spread {
+					t.Errorf("compute host has %q = %v, want %v:\n%s", line, got, tc.spread, computeVars)
+				}
+				if strings.Contains(controlVars, line) {
+					t.Errorf("%q rendered on the control plane:\n%s", line, controlVars)
+				}
+			}
 		})
+	}
+}
+
+// ADR-20261103163954 §6: front: none puts the compute edges' entry on their
+// entry addresses with the client limits on, and makes edgednsd's names
+// DNS-only at those addresses, apart from the proxied ones.
+func TestRenderManifestAnsibleFiles_EdgeWithNoFront(t *testing.T) {
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n      entry_ipv4: 198.51.100.2\n", 1) +
+		"public_edge:\n  compute_nodes: true\n  entry: both\n  front: none\n  dns:\n    zone_id: zone-1\n    names: [pilot.example.dev, \"*.example.dev\"]\n    proxied: [\"*.example.dev\", attacked.example.dev]\n"
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var controlVars, computeVars string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			controlVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	for _, want := range []string{
+		"faas_edge_entry: \"both\"\n",
+		"faas_edge_public_front: \"none\"\n",
+		"faas_edge_client_limits: true\n",
+		"faas_public_entry_addrs: [\"198.51.100.2\"]\n",
+	} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute host vars missing %q:\n%s", want, computeVars)
+		}
+	}
+	wantDNS := "faas_edgednsd_names: [\"zone-1:pilot.example.dev:dns-only\", \"zone-1:*.example.dev\", \"zone-1:attacked.example.dev\"]\n" +
+		"faas_edgednsd_node_addresses: [\"fsn-2.faas=198.51.100.2\"]\n"
+	if !strings.Contains(controlVars, wantDNS) {
+		t.Errorf("control plane edgednsd vars missing\n%s\nin:\n%s", wantDNS, controlVars)
+	}
+	for _, line := range []string{"faas_edge_public_front", "faas_public_entry_addrs", "faas_edge_client_limits"} {
+		if strings.Contains(controlVars, line) {
+			t.Errorf("%s rendered on the control plane:\n%s", line, controlVars)
+		}
+	}
+
+	// On GCP the forwarding rule's address is the entry address.
+	forwarded := strings.Replace(yaml, "      entry_ipv4: 198.51.100.2\n", "      public_ipv4_forwarded: true\n", 1)
+	m, err = manifest.Parse([]byte(forwarded))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err = renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var rendered strings.Builder
+	for _, file := range files {
+		rendered.Write(file.Body)
+	}
+	for _, want := range []string{"faas_public_entry_addrs: [\"203.0.113.2\"]\n", "faas_edgednsd_node_addresses: [\"fsn-2.faas=203.0.113.2\"]\n"} {
+		if !strings.Contains(rendered.String(), want) {
+			t.Errorf("forwarded public_ipv4 render missing %q:\n%s", want, rendered.String())
+		}
 	}
 }
 
@@ -881,5 +1064,40 @@ func TestRenderManifestAnsibleFiles_ComputeObjectGateway(t *testing.T) {
 	}
 	if strings.Contains(controlVars, "faas_object_gateway_max_bytes_per_second") || strings.Contains(controlVars, "gateway_provider_env_src") {
 		t.Errorf("control host got compute gateway vars:\n%s", controlVars)
+	}
+	if strings.Contains(computeVars, "public_read") {
+		t.Errorf("compute host serves public reads without compute_public_reads:\n%s", computeVars)
+	}
+
+	// With compute_public_reads the edge's public reads take 33% of the
+	// share and s3-gatewayd the rest: 12,375,000 and 25,125,000 bytes/s.
+	m, err = manifest.Parse([]byte(yaml + "  compute_public_reads: true\n"))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	if files, err = renderManifestAnsibleFiles(m, t.TempDir()); err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	for _, file := range files {
+		body := string(file.Body)
+		switch {
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			if strings.Contains(body, "public_read") {
+				t.Errorf("control host got compute public read vars:\n%s", body)
+			}
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			for _, want := range []string{
+				"faas_object_gateway_max_bytes_per_second: 25125000\n",
+				"faas_object_public_reads_on_compute_nodes: true\n",
+				"faas_object_public_read_max_bytes_per_second: 12375000\n",
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("compute host vars missing %q:\n%s", want, body)
+				}
+			}
+		}
 	}
 }

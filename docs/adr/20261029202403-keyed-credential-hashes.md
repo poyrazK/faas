@@ -131,14 +131,19 @@ cannot mint one.
    - MFA recovery codes and secret fingerprints (`value_hash`);
    - passwords, which use Argon2id.
 
-   The inventory also found:
-   - legacy CLI codes have 32 bits of entropy;
-   - Slack link challenges are stored in plaintext;
+   The inventory also found four problems, tracked separately:
+   - Legacy CLI codes had 32 bits of entropy. Fixed: a CLI that
+     exchanges a code by itself gets a 64-bit code, and an 8-character
+     code exchanges only with its device code.
+   - Slack link challenges were stored in plaintext. Fixed: the table
+     stores the token's SHA-256, and a retried click gets a new token.
+   - The audit HMAC key fell back to all zeros. Fixed: apid refuses to
+     boot without a key it can keep.
    - gatewayd-internal holds `FAAS_SESSION_KEY`, which
-     `verify-secrets.sh` says it must not;
-   - the audit HMAC key falls back to all zeros.
-
-   These are tracked separately.
+     `verify-secrets.sh` says it must not. Decided in
+     [ADR 20261102191500](20261102191500-gateways-hold-no-session-key.md):
+     apid opens session cookies for gateways, and a gateway fleet key
+     replaces the session key for deadlines and edge challenges.
 
 ## Consequences
 

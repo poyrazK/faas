@@ -98,6 +98,126 @@ func TestKeyAuthCacheDropsAnswerRacingAnInvalidation(t *testing.T) {
 	}
 }
 
+// ownedKeyAuth answers each key hash with the owner the test registered.
+type ownedKeyAuth struct {
+	calls  atomic.Int32
+	err    error
+	owners map[string]struct{ acct, org string }
+}
+
+func (o *ownedKeyAuth) AuthenticateKey(_ context.Context, hash []byte) (RequireAuthnAccount, RequireAuthnKey, error) {
+	o.calls.Add(1)
+	if o.err != nil {
+		return RequireAuthnAccount{}, RequireAuthnKey{}, o.err
+	}
+	for tok, owner := range o.owners {
+		if string(api.HashAPIKey(tok)) == string(hash) {
+			return RequireAuthnAccount{ID: owner.acct}, RequireAuthnKey{ID: tok, OrgID: owner.org}, nil
+		}
+	}
+	return RequireAuthnAccount{}, RequireAuthnKey{}, ErrAPIKeyUnknown
+}
+
+func TestKeyAuthCacheKeyChangesDropOnlyTheirOwner(t *testing.T) {
+	ctx := context.Background()
+	store := &ownedKeyAuth{owners: map[string]struct{ acct, org string }{
+		"alice":     {acct: "acct-a"},
+		"bob":       {acct: "acct-b"},
+		"alice-org": {acct: "acct-a", org: "org-1"},
+		"carol-org": {acct: "acct-c", org: "org-1"},
+		"dave-org":  {acct: "acct-d", org: "org-2"},
+	}}
+	c := NewKeyAuthCache(store)
+	warm := func() {
+		for tok := range store.owners {
+			if _, _, err := c.AuthenticateKey(ctx, api.HashAPIKey(tok)); err != nil {
+				t.Fatalf("%s: %v", tok, err)
+			}
+		}
+	}
+	lookups := func(toks ...string) int32 {
+		before := store.calls.Load()
+		for _, tok := range toks {
+			if _, _, err := c.AuthenticateKey(ctx, api.HashAPIKey(tok)); err != nil {
+				t.Fatalf("%s: %v", tok, err)
+			}
+		}
+		return store.calls.Load() - before
+	}
+	all := []string{"alice", "bob", "alice-org", "carol-org", "dave-org"}
+	warm()
+
+	for _, payload := range []string{
+		`{"kind":"created","account":"acct-a","key":"k9"}`,
+		`{"kind":"created","org":"org-1"}`,
+	} {
+		ch, ok := ParseKeyChange(payload)
+		if !ok {
+			t.Fatalf("payload %s did not parse", payload)
+		}
+		c.ApplyKeyChange(ch)
+		if n := lookups(all...); n != 0 {
+			t.Fatalf("after %s: %d store lookups, want 0 (a created key changes no cached answer)", payload, n)
+		}
+	}
+
+	ch, _ := ParseKeyChange(`{"kind":"revoked","account":"acct-a"}`)
+	c.ApplyKeyChange(ch)
+	if n := lookups("alice", "alice-org"); n != 2 {
+		t.Fatalf("account revocation: %d lookups of acct-a's keys, want 2", n)
+	}
+	if n := lookups("bob", "carol-org", "dave-org"); n != 0 {
+		t.Fatalf("account revocation re-read %d other owners' keys", n)
+	}
+
+	ch, _ = ParseKeyChange(`{"kind":"rotated","org":"org-1"}`)
+	c.ApplyKeyChange(ch)
+	if n := lookups("alice-org", "carol-org"); n != 2 {
+		t.Fatalf("org rotation: %d lookups of org-1's keys, want 2", n)
+	}
+	if n := lookups("alice", "bob", "dave-org"); n != 0 {
+		t.Fatalf("org rotation re-read %d keys outside org-1", n)
+	}
+
+	if _, ok := ParseKeyChange(`{"key_id":"k1"}`); ok {
+		t.Fatal("a payload naming no owner parsed as scoped")
+	}
+	if _, ok := ParseKeyChange(`not json`); ok {
+		t.Fatal("a malformed payload parsed as scoped")
+	}
+}
+
+func TestKeyAuthCacheExpireRevalidatesButKeepsOutageFallback(t *testing.T) {
+	ctx := context.Background()
+	store := &ownedKeyAuth{owners: map[string]struct{ acct, org string }{"alice": {acct: "acct-a"}}}
+	c := NewKeyAuthCache(store)
+	if _, _, err := c.AuthenticateKey(ctx, api.HashAPIKey("alice")); err != nil {
+		t.Fatal(err)
+	}
+	c.Expire()
+	if _, _, err := c.AuthenticateKey(ctx, api.HashAPIKey("alice")); err != nil || store.calls.Load() != 2 {
+		t.Fatalf("after a resync the key must be revalidated: err=%v lookups=%d", err, store.calls.Load())
+	}
+
+	c.Expire()
+	store.err = errors.New("control plane unavailable")
+	if _, key, err := c.AuthenticateKey(ctx, api.HashAPIKey("alice")); err != nil || key.ID != "alice" {
+		t.Fatalf("a resync while the store fails dropped the outage fallback: %v %v", key, err)
+	}
+}
+
+func TestAuthenticateBearerStoreErrorsDoNotSpendTheBudget(t *testing.T) {
+	store := &countingKeyAuth{err: errors.New("control plane unavailable")}
+	h := &Handler{requireAuthnAuthn: store, keyLookups: newKeyLookupLimiter()}
+	req := httptest.NewRequest("GET", "http://app.example.test/", nil)
+	req.Header.Set("X-Forwarded-For", "198.51.100.9")
+	for i := range api.GatewayFailedKeyLookupsPerSource + 5 {
+		if _, _, err := h.authenticateBearer(req, "gk_real"); errors.Is(err, errKeyLookupThrottled) {
+			t.Fatalf("lookup %d throttled after store errors only", i)
+		}
+	}
+}
+
 func TestAuthenticateBearerThrottlesFailingSource(t *testing.T) {
 	store := &countingKeyAuth{err: ErrAPIKeyUnknown}
 	h := &Handler{requireAuthnAuthn: store, keyLookups: newKeyLookupLimiter()}

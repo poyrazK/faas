@@ -29,6 +29,18 @@ class AcceptanceTests(unittest.TestCase):
             m.run(self.config, call)
         self.assertEqual(calls, ['gregale_plan_workload_rollout'])
 
+    def test_verification_is_read_only_and_references_a_reviewed_plan(self):
+        scenario = copy.deepcopy(self.config)
+        scenario['steps'].append({'id': 'verify', 'tool': 'gregale_verify_plan',
+                                 'arguments': {'plan_id': {'ref': 'plan.plan_id'}},
+                                 'poll': True, 'expect': {'verification.status': 'verified'}})
+        m.validate(scenario)
+        for reference in ('apply.plan_id', 'plan.deployment.id'):
+            invalid = copy.deepcopy(scenario)
+            invalid['steps'][-1]['arguments']['plan_id']['ref'] = reference
+            with self.assertRaises(ValueError):
+                m.validate(invalid)
+
     def test_replay_and_convergence(self):
         plan = dict(self.config['target'], account_id=self.config['account_id'], plan_id='p', rollout_mode='worker')
         calls = []

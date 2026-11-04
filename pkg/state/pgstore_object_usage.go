@@ -57,11 +57,18 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 	out := ObjectUsageSnapshot{}
 	// ADR-1320: checks tighten the operator policy by the plan's ceilings. A
 	// missing account keeps the operator policy, as before.
-	plan, err := q.ObjectUsageAccountPlan(ctx, db, mustPgUUID(account))
+	owner, err := q.ObjectUsageAccountPlanCap(ctx, db, mustPgUUID(account))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
 	}
-	out.PlanLimits = objectStoragePlanLimits(api.Plan(plan))
+	var capCents, grantBytes *int64
+	if owner.OverageCapCents.Valid {
+		capCents = &owner.OverageCapCents.Int64
+	}
+	if owner.CeilingGrantBytes.Valid {
+		grantBytes = &owner.CeilingGrantBytes.Int64
+	}
+	out.PlanLimits = objectStoragePlanLimits(api.Plan(owner.Plan), grantBytes, capCents)
 	rows, err := q.ObjectUsageBuckets(ctx, db, sqlc.ObjectUsageBucketsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(periodStart))})
 	if err != nil {
 		return out, err

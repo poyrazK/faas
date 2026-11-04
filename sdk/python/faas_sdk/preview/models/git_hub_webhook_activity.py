@@ -23,6 +23,11 @@ class GitHubWebhookActivity:
     updated_at: datetime.datetime
     commit_sha: str | Unset = UNSET
     processed_at: datetime.datetime | None | Unset = UNSET
+    skip_reason: str | Unset = UNSET
+    """Why a processed event deployed nothing: actions_trigger (production deploys come from a GitHub Actions
+    workflow), branch_not_deployed, superseded (a newer commit reached the branch first), not_enabled,
+    tag_not_branch_head, no_binding, skip_marker, invalid_release_tag, release_tag_moved or ignored. Absent when the
+    event did its work."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +49,8 @@ class GitHubWebhookActivity:
         else:
             processed_at = self.processed_at
 
+        skip_reason = self.skip_reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,6 +65,8 @@ class GitHubWebhookActivity:
             field_dict["commit_sha"] = commit_sha
         if processed_at is not UNSET:
             field_dict["processed_at"] = processed_at
+        if skip_reason is not UNSET:
+            field_dict["skip_reason"] = skip_reason
 
         return field_dict
 
@@ -91,6 +100,8 @@ class GitHubWebhookActivity:
 
         processed_at = _parse_processed_at(d.pop("processed_at", UNSET))
 
+        skip_reason = d.pop("skip_reason", UNSET)
+
         git_hub_webhook_activity = cls(
             event_type=event_type,
             status=status,
@@ -98,6 +109,7 @@ class GitHubWebhookActivity:
             updated_at=updated_at,
             commit_sha=commit_sha,
             processed_at=processed_at,
+            skip_reason=skip_reason,
         )
 
         git_hub_webhook_activity.additional_properties = d

@@ -191,14 +191,21 @@ func environmentGitOpsScheduledJobUnsupported(app gitOpsIntentApp, intent Enviro
 	return ""
 }
 
-func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot gitOpsIntentSnapshot, desired environmentsync.DesiredState, resource string, app gitOpsIntentApp) {
-	baselineSources := make([]gitOpsSourceBaseline, 0, len(app.Sources))
-	for _, source := range app.Sources {
+// Managed deployments carry scoped intent, rather than an unmanaged source
+// contract that can be adopted. Their activation must not change plan hashes.
+func unmanagedGitOpsSourceBaselines(sources []gitOpsSourceBaseline) []gitOpsSourceBaseline {
+	baselines := make([]gitOpsSourceBaseline, 0, len(sources))
+	for _, source := range sources {
 		if !source.Managed {
-			baselineSources = append(baselineSources, source)
+			baselines = append(baselines, source)
 		}
 	}
-	slices.SortFunc(baselineSources, func(a, b gitOpsSourceBaseline) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(baselines, func(a, b gitOpsSourceBaseline) int { return strings.Compare(a.ID, b.ID) })
+	return baselines
+}
+
+func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot gitOpsIntentSnapshot, desired environmentsync.DesiredState, resource string, app gitOpsIntentApp) {
+	baselineSources := unmanagedGitOpsSourceBaselines(app.Sources)
 	baselineApp := app
 	baselineApp.Sources = baselineSources
 	workload := desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")]

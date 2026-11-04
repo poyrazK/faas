@@ -31,6 +31,8 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, managedpostgres.ErrProvisioningClosed):
 		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_provisioning_not_enabled", "Managed PostgreSQL provisioning is closed", managedpostgres.ProvisioningClosedDetail
+	case errors.Is(err, managedpostgres.ErrFleetFreePaused):
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_new_databases_paused", "New managed PostgreSQL databases are paused", managedpostgres.FleetFreePausedDetail
 	case errors.Is(err, managedpostgres.ErrFleetPaused):
 		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_new_databases_paused", "New managed PostgreSQL databases are paused", managedpostgres.FleetPausedDetail
 	case errors.Is(err, managedpostgres.ErrUnavailable):
@@ -73,6 +75,18 @@ func managedPostgresNotConfiguredProblem(w http.ResponseWriter) {
 		"Managed PostgreSQL unavailable",
 		"Managed PostgreSQL is not configured for this environment. The platform operator must configure a provider before this command can be used.",
 	).WithDocs("https://gregale.dev/docs/managed-postgres"))
+}
+
+// managedPostgresFreeClosed reports whether a Free-plan owner is refused a
+// new database. Free has no overage to pay for compute past its allowance,
+// and only enforced caps (FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on) suspend
+// it there. Under shadow or off a Free database with steady traffic ran its
+// provider compute all month (~730 compute-unit hours against 5) at
+// Gregale's cost, and Free sign-ups are unlimited. Every create path checks
+// it: the create route, Compose and dev databases here, and the service's
+// admission for the rest (bug hunt 33 H1).
+func managedPostgresFreeClosed(plan api.Plan, mode managedpostgres.CapEnforcementMode) bool {
+	return plan == api.PlanFree && mode != managedpostgres.CapEnforcementOn
 }
 
 func managedPostgresPlanDenied(w http.ResponseWriter, plan api.Plan, detail string) {
@@ -206,11 +220,13 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, problem)
 		return
 	}
+	excess := s.managedPostgresPlanExcess(databases, acct.Plan)
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
 		if filter.keep(database.ID) {
 			view := managedPostgresView(database)
 			view.Labels = filter.labelsOf(database.ID)
+			view.PlanExcess = excess[database.ID]
 			items = append(items, view)
 		}
 	}
@@ -405,12 +421,7 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
 		return
 	}
-	// Free has no overage to pay for compute past its allowance, and only
-	// enforced caps (FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on) suspend it
-	// there. Under shadow or off a Free database with steady traffic ran
-	// its provider compute all month (~730 compute-unit hours against 5) at
-	// Gregale's cost, and Free sign-ups are unlimited.
-	if acct.Plan == api.PlanFree && s.managedPostgresCapMode != managedpostgres.CapEnforcementOn {
+	if managedPostgresFreeClosed(acct.Plan, s.managedPostgresCapMode) {
 		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL opens to the Free plan once compute caps are enforced; upgrade to a paid plan to create a database")
 		return
 	}
@@ -428,7 +439,18 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		}
 		return
 	}
-	database, err := s.managedPostgres.Create(r.Context(), managedpostgres.CreateRequest{AccountID: acct.ID, Name: req.Name, Spec: spec})
+	request := managedpostgres.CreateRequest{AccountID: acct.ID, Name: req.Name, Spec: spec}
+	var database managedpostgres.Database
+	if req.RequestID != "" {
+		id, parseErr := uuid.Parse(req.RequestID)
+		if parseErr != nil || id == uuid.Nil {
+			managedPostgresProblem(w, managedpostgres.ErrInvalid)
+			return
+		}
+		database, err = s.managedPostgres.CreateWithID(r.Context(), request, id.String())
+	} else {
+		database, err = s.managedPostgres.Create(r.Context(), request)
+	}
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
@@ -452,6 +474,7 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 	}
 	view := managedPostgresView(database)
 	view.Labels = s.resourceLabels(r, acct, state.LabelKindDatabase, database.ID)
+	view.PlanExcess = s.managedPostgresPlanExcessOf(r.Context(), acct, database.ID)
 	writeJSON(w, http.StatusOK, view)
 }
 

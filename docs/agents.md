@@ -1,15 +1,68 @@
 # Use Gregale from coding agents
 
 Coding agents such as Claude Code, Codex and Cursor can deploy and operate
-apps on Gregale with the same CLI and API you use. This page covers the
-credential to give an agent, the CLI's automation contract, the management
-MCP server, the Claude Code plugin, project instructions, and documentation
-an agent can read directly.
+apps on Gregale with the same CLI and API you use. This page covers
+Gregale's hosted MCP server, the credential to give an agent that runs the
+CLI, the CLI's automation contract, running the MCP server locally, the
+Claude Code plugin, project instructions, and documentation an agent can read
+directly.
+
+## Connect an agent to Gregale
+
+Connect any MCP client to Gregale's hosted MCP server at
+`https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
+
+Claude Code:
+
+```sh
+claude mcp add --transport http gregale https://api.gregale.dev/mcp
+```
+
+Codex (`~/.codex/config.toml`), then `codex mcp login gregale`:
+
+```toml
+[mcp_servers.gregale]
+url = "https://api.gregale.dev/mcp"
+```
+
+Other clients that use an `mcpServers` JSON file:
+
+```json
+{
+  "mcpServers": {
+    "gregale": {
+      "url": "https://api.gregale.dev/mcp"
+    }
+  }
+}
+```
+
+Agents that run in the cloud, such as claude.ai and ChatGPT, add the same URL
+as a connector.
+
+When the agent first connects, your browser opens:
+1. Sign in to Gregale. No account yet? Sign up with GitHub or Google on the
+   same page.
+2. Choose what the agent may do: inspect apps, deploy and roll back, ask you
+   for secrets, add buckets and databases.
+3. Choose which apps it may use, and connect.
+
+The agent can then inspect and deploy apps, promote and roll back. It
+deploys code it wrote by uploading the project or passing small projects as
+files, and can ask you for secrets without ever seeing them. The connection
+stays valid while the agent uses it: a week unused, or 30 days after you
+connect, ends it. See which agents are connected, and revoke any of them,
+with `gregale mcp connection list` and `revoke`.
+
+An agent with no person at a browser, such as one in CI, connects with an
+agent key instead; see
+[Headless agents](mcp.md#headless-agents-with-an-agent-key).
 
 ## Give the agent its own key
 
-Create a dedicated key instead of sharing your own login. Scope it to what the
-agent needs:
+An agent that runs the `gregale` CLI, or the MCP server locally, needs a
+credential. Create a dedicated key instead of sharing your own login. Scope
+it to what the agent needs:
 
 ```sh
 gregale key create coding-agent --scopes apps:read,deploy:write
@@ -17,8 +70,8 @@ gregale key create coding-agent --scopes apps:read,deploy:write
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
 `deploy:write` lets it create apps, deploy, roll back, and add custom domains
-and crons. Add `secrets:write` only if the agent should set environment
-variables or ask you for secrets: `gregale env push` stores them through the
+and crons. Add `env:write` for the MCP non-secret configuration tools. Add
+`secrets:write` only for the CLI secrets workflow or secret entry: `gregale env push` stores them through the
 secrets API. Add `storage:manage` for buckets, and `postgres:manage` with
 `postgres:read` for databases. A key without `--scopes` is a full-access
 `admin` key.
@@ -27,6 +80,31 @@ Put the key in the agent's environment as `FAAS_TOKEN`. It overrides the
 saved login for every `gregale` command and for the MCP server. Don't paste
 it into a prompt, a command argument or a committed file. Remove it with
 `gregale key delete <id>` when the agent no longer needs it.
+
+For an agent restricted to one existing app, create an app-bound credential:
+
+```sh
+gregale app deploy-token create --app my-api --agent \
+  --label app-inspector --scopes usage:read
+```
+
+This adds `agent` and `apps:read` automatically. Explicit `usage:read` enables
+native app-cost inspection through MCP without a local CLI. It grants no
+account billing or other-app access. Cost results report retained attributed
+usage, with coverage limitations; they are not invoice estimates.
+
+`gregale_preflight` in the release tool group accepts `operation` (`deploy`,
+`restart`, `scale`, `env_change`). It reports native operation authorization
+separately from the connection's write consent. Quota and exact request admission
+remain unknown until the native mutation validates them again.
+
+An app-bound `--scopes apps:read` token can also inspect domains, crons, buckets,
+storage bindings and bound database metadata through the MCP `provision` tool
+group. These reads use native app/scope pagination and require no management
+scope. Use `gregale mcp serve --tools core,provision` with the token in
+`FAAS_TOKEN`; the connection stays read-only unless write access is enabled.
+Metadata grants no object data, SQL connections or credential access. Resource
+capability flags remain enforced.
 
 ## Run the CLI non-interactively
 
@@ -68,29 +146,13 @@ approval exits `1`; `--non-interactive` never approves on the agent's behalf.
 See [CLI configuration](cli-config.md) for the full contract, including
 pagination and profiles.
 
-## Connect a cloud agent
+## Run the MCP server locally
 
-Agents that run in the cloud, such as claude.ai, ChatGPT and hosted coding
-agents, connect to Gregale's hosted MCP server at
-`https://api.gregale.dev/mcp`. There's nothing to install:
-1. Add the URL as a connector.
-2. When the agent connects, sign in to Gregale and choose what it may do and
-   which apps it may use.
-
-The agent can then:
-- inspect and deploy apps, promote and roll back;
-- upload a project it wrote, or pass small projects as files;
-- ask you for secrets, and add domains, crons, buckets and databases, if you
-  allowed those.
-
-See
-[Connect a cloud agent to Gregale](mcp.md#connect-a-cloud-agent-to-gregale).
-
-## Connect the management MCP server
-
-`gregale mcp serve` gives an agent Gregale's management tools over MCP. The
-agent starts it as a subprocess, and it uses `FAAS_TOKEN` or the selected
-profile's login.
+The hosted server is the default. Run the server on your own machine instead
+when the agent can't reach `api.gregale.dev`, or when it should deploy a
+directory straight from your disk. `gregale mcp serve` gives an agent
+Gregale's management tools over MCP. The agent starts it as a subprocess, and
+it uses `FAAS_TOKEN` or the selected profile's login.
 
 Claude Code:
 
@@ -124,13 +186,16 @@ so list only the toolsets it needs:
 
 | Toolset | Tools |
 |---|---|
-| `core` | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back. About a fifth of the full catalog. |
+| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness. About a quarter of the full catalog. |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets |
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons |
-| `all` | Everything (the default) |
+| `operate` | Configuration, restart, scaling, plan receipts and costs |
+| `all` | Everything allowed by the server operator (explicit opt-in) |
 
 Combine them with commas, for example `--tools core,diagnose`.
+Use `--tools all` for the full catalog. Hosted connections select additional
+toolsets during onboarding, within the operator's configured selection.
 
 The tools are read-only by default. They list apps and deployments, read logs,
 metrics and health, explain a failed deployment and group recurring errors;
@@ -149,12 +214,21 @@ from a directory to a live app:
    `gregale_apply_local_deploy` uploads it, creating the app on its first
    deploy.
 2. `gregale_plan_env_change` and `gregale_apply_env_change` set non-secret
-   variables; the key also needs `secrets:write` for these.
+   variables; the key also needs `env:write` for these.
 3. Later deploys of a serving app are staged at 0% traffic until
    `gregale_promote_deployment`.
 
-These tools run the `gregale` CLI on your machine, so they do exactly what the
-matching commands do.
+Directory deployments run the `gregale` CLI on your machine. Configuration
+changes use the native non-secret variable API and also work on hosted
+connections with `env:write` consent. Add `operate` for configuration history,
+reviewed rollback, restart/scaling and completed-plan receipt recovery.
+
+After applying, follow `verification.next` when present. A completed mutation
+receipt records the change or accepted request; `gregale_verify_plan` separately
+checks restart processing and fresh app health, or the exact deployment's
+readiness. Honor its polling delay and report its goal and observation time.
+Staged deployments require explicit promotion. Worker verification confirms
+resident generation convergence; queue processing needs separate evidence.
 
 The agent never handles a secret value. With `--allow-writes`,
 `gregale_request_secret` opens a one-time Gregale page where you type the
@@ -172,7 +246,8 @@ your DNS provider; `gregale_check_domain` reports when they verify. See
 
 ## Install the Claude Code plugin
 
-The `gregale` plugin bundles the MCP server with two skills:
+The `gregale` plugin connects Claude Code to the hosted MCP server and adds
+two skills:
 
 ```sh
 claude plugin marketplace add poyrazK/faas-web
@@ -184,8 +259,9 @@ claude plugin install gregale@gregale
 - `/gregale:diagnose` finds why an app is failing from its deployments,
   health, errors and logs.
 
-The plugin runs the `gregale` CLI, so install it and log in or set
-`FAAS_TOKEN` first.
+The first time Claude Code connects, you sign in to Gregale in the browser as
+above. The skills deploy with the `gregale` CLI, so install it and log in or
+set `FAAS_TOKEN` first.
 
 ## Project instructions for agents
 

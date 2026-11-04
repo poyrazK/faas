@@ -40,6 +40,12 @@ type Retention struct {
 // sustained wake rate above one batch per hour cannot make retention diverge.
 const parkedInstanceRetentionBatch = 1000
 
+// retentionMaxBatchesPerPass bounds one hourly pass to 200,000 terminal and
+// 200,000 parked rows (ADR 20261103131546); what is left waits an hour. Every
+// wake writes a row kept 30 days, so a node at about a thousand apps adds far
+// fewer than that an hour.
+const retentionMaxBatchesPerPass = 200
+
 // NewRetention returns a Retention ready for the Loop ticker. Defaults:
 // retention api.DefaultInstanceRetention (30d), interval owner of the
 // Loop ticker (api.DefaultRetentionInterval = 1h), Now time.Now, Log
@@ -91,23 +97,41 @@ func (r *Retention) WithRetention(d time.Duration) *Retention {
 // tick after the first sweep is a no-op).
 func (r *Retention) SweepOnce(ctx context.Context) (int, error) {
 	cutoff := r.now().Add(-r.retention)
-	rows, err := r.store.ListInstancesInTerminalStatesOlderThan(ctx,
-		[]state.State{state.StateStopped, state.StateFailed}, cutoff)
-	if err != nil {
-		return 0, err
-	}
+	terminal := []state.State{state.StateStopped, state.StateFailed}
 	deleted := 0
-	for _, row := range rows {
-		if err := r.store.DeleteInstance(ctx, row.ID); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
+	if batch, ok := r.store.(state.TerminalInstanceBatchDeleter); ok {
+		// ADR 20261103131546: bounded batches, skipping rows another
+		// scheduler's sweep holds, instead of one DELETE per listed row.
+		for range retentionMaxBatchesPerPass {
+			n, err := batch.DeleteTerminalInstancesOlderThan(ctx, terminal, cutoff, parkedInstanceRetentionBatch)
+			if err != nil {
+				return deleted, err
+			}
+			deleted += int(n)
+			if n < parkedInstanceRetentionBatch {
+				break
+			}
+		}
+	} else {
+		rows, err := r.store.ListInstancesInTerminalStatesOlderThan(ctx, terminal, cutoff)
+		if err != nil {
+			return 0, err
+		}
+		for _, row := range rows {
+			if err := r.store.DeleteInstance(ctx, row.ID); err != nil {
+				if errors.Is(err, state.ErrNotFound) {
+					continue
+				}
+				r.log.Warn("retention: delete failed", "instance", row.ID, "state", row.State, "err", err)
 				continue
 			}
-			r.log.Warn("retention: delete failed", "instance", row.ID, "state", row.State, "err", err)
-			continue
+			deleted++
 		}
-		deleted++
 	}
-	for {
+	// A pass stops after retentionMaxBatchesPerPass full batches; the next
+	// hourly pass carries on, so one large backlog cannot hold a pool slot
+	// indefinitely.
+	for range retentionMaxBatchesPerPass {
 		parkedDeleted, err := r.store.DeleteParkedInstancesOlderThan(ctx, cutoff, parkedInstanceRetentionBatch)
 		if err != nil {
 			return deleted, err

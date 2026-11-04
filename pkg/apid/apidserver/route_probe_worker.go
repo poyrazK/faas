@@ -77,21 +77,71 @@ func (s *server) drainRouteProbes(ctx context.Context) error {
 	targets := release.MergeProbeTargets(gated, s.defaultRouteProbeTargets(ctx))
 	targets = release.AddSyntheticGates(targets, s.syntheticGateProbeTargets(ctx))
 	minute := now.Truncate(time.Minute)
-	for _, target := range targets {
-		if ctx.Err() != nil {
+	// Accounts are probed side by side and each account's targets in turn
+	// (bug hunt H79). One goroutine probed every target in order, so one
+	// canary that never answered, which is what probes exist to catch,
+	// held every other app's canary for the whole round timeout, always
+	// the same apps first.
+	sem := make(chan struct{}, api.RouteHealthProbeWorkers)
+	var wg sync.WaitGroup
+	for _, queue := range routeProbeAccountQueues(targets, minute) {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
 			return ctx.Err()
 		}
-		claimed, err := store.ClaimRouteProbeRound(ctx, target.AppID, minute)
-		if err != nil || !claimed {
-			continue
-		}
-		roundCtx, cancel := context.WithTimeout(ctx, api.RouteHealthProbeRoundTimeout)
-		if err := s.probeRouteHealthTarget(roundCtx, store, target, minute); err != nil {
-			s.log.Warn("route probe round skipped", "app_id", target.AppID, "err", err)
-		}
-		cancel()
+		wg.Add(1)
+		go func(queue []release.ProbeTarget) {
+			defer func() {
+				<-sem
+				wg.Done()
+			}()
+			for _, target := range queue {
+				if ctx.Err() != nil {
+					return
+				}
+				s.probeRouteTargetRound(ctx, store, target, minute)
+			}
+		}(queue)
 	}
-	return nil
+	wg.Wait()
+	return ctx.Err()
+}
+
+// probeRouteTargetRound claims and runs one target's round for minute.
+func (s *server) probeRouteTargetRound(ctx context.Context, store state.RouteProbeStore, target release.ProbeTarget, minute time.Time) {
+	claimed, err := store.ClaimRouteProbeRound(ctx, target.AppID, minute)
+	if err != nil || !claimed {
+		return
+	}
+	roundCtx, cancel := context.WithTimeout(ctx, api.RouteHealthProbeRoundTimeout)
+	defer cancel()
+	if err := s.probeRouteHealthTarget(roundCtx, store, target, minute); err != nil {
+		s.log.Warn("route probe round skipped", "app_id", target.AppID, "err", err)
+	}
+}
+
+// routeProbeAccountQueues groups targets by account, keeping each account's
+// order, and rotates which account goes first each minute so no account is
+// always probed last.
+func routeProbeAccountQueues(targets []release.ProbeTarget, minute time.Time) [][]release.ProbeTarget {
+	index := map[string]int{}
+	var queues [][]release.ProbeTarget
+	for _, target := range targets {
+		i, ok := index[target.AccountID]
+		if !ok {
+			i = len(queues)
+			index[target.AccountID] = i
+			queues = append(queues, nil)
+		}
+		queues[i] = append(queues[i], target)
+	}
+	if len(queues) > 1 {
+		shift := int((minute.Unix() / 60) % int64(len(queues)))
+		queues = append(queues[shift:], queues[:shift]...)
+	}
+	return queues
 }
 
 // defaultRouteProbeTargets lists safe-policy canaries for the ADR-1446

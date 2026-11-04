@@ -207,7 +207,7 @@ func pgRouteMonitorReportScope(ctx context.Context, db sqlc.DBTX, owner RoutePol
 				candidateBaseline = routeMonitorDeploymentBaseline(d)
 				r.DeploymentID, r.CommitSHA = d.ID, d.CommitSha.String
 				anchor := d.CreatedAt.Time
-				anchors := []time.Time{d.CanaryStepStartedAt.Time, d.RolloutCompletedAt.Time}
+				anchors := []time.Time{d.CanaryStepStartedAt.Time, d.RolloutCompletedAt.Time, d.PromotedAt.Time}
 				if c.UpdatedAt != nil {
 					anchors = append(anchors, c.UpdatedAt.UTC())
 				}
@@ -233,7 +233,7 @@ func pgRouteMonitorReportScope(ctx context.Context, db sqlc.DBTX, owner RoutePol
 					health.Routes = append(health.Routes, api.RouteHealthFinding{Method: f.Route.Method, Path: f.Route.Path, Windows: routehealth.Windows(now)})
 				}
 				// Passing the same ID reads one population. Only the candidate counts are used.
-				if err := pgRouteHealthObservations(ctx, db, owner.Account.ID, gate, &health); err != nil {
+				if err := pgRouteHealthObservations(ctx, db, owner.Account.ID, gate, &health, false); err != nil {
 					return r, recovery, nil, err
 				}
 				for i := range r.Routes {
@@ -537,7 +537,7 @@ func pgPooledRouteMonitor(ctx context.Context, db sqlc.DBTX, accountID string, r
 		return nil
 	}
 	// Passing the same ID reads one population. Only the candidate counts are used.
-	if err := pgRouteHealthObservationsInWindows(ctx, db, accountID, gate, &health, api.RouteHealthInvestigationSelection{}, healthWindows); err != nil {
+	if err := pgRouteHealthObservationsInWindows(ctx, db, accountID, gate, &health, api.RouteHealthInvestigationSelection{}, healthWindows, false); err != nil {
 		return err
 	}
 	for k, i := range targets {

@@ -76,7 +76,7 @@ func (h *Handler) wakeDeployment(ctx context.Context, app App, deployment, scope
 				} else {
 					var queued bool
 					var wait time.Duration
-					queued, wait, err = h.admissionQueue.Do(wakeCtx, app.ID, string(app.Plan), policy, admit)
+					queued, wait, err = h.admissionQueue.Do(wakeCtx, app.ID, app.AccountID, string(app.Plan), policy, admit)
 					if h.metrics != nil {
 						h.metrics.ObserveWakeAdmission(string(app.Plan), err, queued, wait)
 					}

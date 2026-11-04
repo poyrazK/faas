@@ -13,6 +13,7 @@ import (
 // test compile peak at 5.1 GB of heap instead of 2.9 GB (ADR-982).
 type contractTestStore interface {
 	Store // teststorecheck:allow the one Store-sized interface the contracts alias
+	RollbackTrafficStore
 	AccountAbuseHoldStore
 	AdoptionReportInstanceStore
 	ApplicationStandardAssignmentInventoryStore

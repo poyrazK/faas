@@ -100,8 +100,23 @@ def sync_detailed(
      Switch the account between `free`, `hobby`, `pro`, and `scale`. The
     local account moves to a paid tier only after the configured billing
     provider confirms payment. If a new subscription is required, the
-    `payment_required` response includes `checkout_url`; if an existing
-    subscription must be changed, it includes `billing_portal_url`.
+    `payment_required` response includes `checkout_url`. An existing
+    subscription changes in place: an upgrade is charged the prorated
+    difference now and answers 202 until the provider confirms it; a
+    declined charge answers 402 with `billing_portal_url` to update the
+    payment method, and the plan stays. A downgrade answers 202 and takes
+    effect at the end of the billing period. A billing email that already
+    pays for another account or organization answers 409
+    `billing_email_in_use`.
+
+    Asking for the plan the account already pays for keeps its
+    subscription: a scheduled cancellation or downgrade is undone and the
+    200 carries `plan_change_status: scheduled_change_undone`. A
+    subscription scheduled to end changes no plan, so an upgrade or
+    downgrade then answers 409 `billing_subscription_ending` until it is
+    kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+    answers 402 `payment_authentication_required` with
+    `billing_portal_url`; nothing is charged and the plan stays.
 
     Args:
         body (ChangePlanRequest): Target plan for the change.
@@ -135,8 +150,23 @@ def sync(
      Switch the account between `free`, `hobby`, `pro`, and `scale`. The
     local account moves to a paid tier only after the configured billing
     provider confirms payment. If a new subscription is required, the
-    `payment_required` response includes `checkout_url`; if an existing
-    subscription must be changed, it includes `billing_portal_url`.
+    `payment_required` response includes `checkout_url`. An existing
+    subscription changes in place: an upgrade is charged the prorated
+    difference now and answers 202 until the provider confirms it; a
+    declined charge answers 402 with `billing_portal_url` to update the
+    payment method, and the plan stays. A downgrade answers 202 and takes
+    effect at the end of the billing period. A billing email that already
+    pays for another account or organization answers 409
+    `billing_email_in_use`.
+
+    Asking for the plan the account already pays for keeps its
+    subscription: a scheduled cancellation or downgrade is undone and the
+    200 carries `plan_change_status: scheduled_change_undone`. A
+    subscription scheduled to end changes no plan, so an upgrade or
+    downgrade then answers 409 `billing_subscription_ending` until it is
+    kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+    answers 402 `payment_authentication_required` with
+    `billing_portal_url`; nothing is charged and the plan stays.
 
     Args:
         body (ChangePlanRequest): Target plan for the change.
@@ -165,8 +195,23 @@ async def asyncio_detailed(
      Switch the account between `free`, `hobby`, `pro`, and `scale`. The
     local account moves to a paid tier only after the configured billing
     provider confirms payment. If a new subscription is required, the
-    `payment_required` response includes `checkout_url`; if an existing
-    subscription must be changed, it includes `billing_portal_url`.
+    `payment_required` response includes `checkout_url`. An existing
+    subscription changes in place: an upgrade is charged the prorated
+    difference now and answers 202 until the provider confirms it; a
+    declined charge answers 402 with `billing_portal_url` to update the
+    payment method, and the plan stays. A downgrade answers 202 and takes
+    effect at the end of the billing period. A billing email that already
+    pays for another account or organization answers 409
+    `billing_email_in_use`.
+
+    Asking for the plan the account already pays for keeps its
+    subscription: a scheduled cancellation or downgrade is undone and the
+    200 carries `plan_change_status: scheduled_change_undone`. A
+    subscription scheduled to end changes no plan, so an upgrade or
+    downgrade then answers 409 `billing_subscription_ending` until it is
+    kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+    answers 402 `payment_authentication_required` with
+    `billing_portal_url`; nothing is charged and the plan stays.
 
     Args:
         body (ChangePlanRequest): Target plan for the change.
@@ -198,8 +243,23 @@ async def asyncio(
      Switch the account between `free`, `hobby`, `pro`, and `scale`. The
     local account moves to a paid tier only after the configured billing
     provider confirms payment. If a new subscription is required, the
-    `payment_required` response includes `checkout_url`; if an existing
-    subscription must be changed, it includes `billing_portal_url`.
+    `payment_required` response includes `checkout_url`. An existing
+    subscription changes in place: an upgrade is charged the prorated
+    difference now and answers 202 until the provider confirms it; a
+    declined charge answers 402 with `billing_portal_url` to update the
+    payment method, and the plan stays. A downgrade answers 202 and takes
+    effect at the end of the billing period. A billing email that already
+    pays for another account or organization answers 409
+    `billing_email_in_use`.
+
+    Asking for the plan the account already pays for keeps its
+    subscription: a scheduled cancellation or downgrade is undone and the
+    200 carries `plan_change_status: scheduled_change_undone`. A
+    subscription scheduled to end changes no plan, so an upgrade or
+    downgrade then answers 409 `billing_subscription_ending` until it is
+    kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+    answers 402 `payment_authentication_required` with
+    `billing_portal_url`; nothing is charged and the plan stays.
 
     Args:
         body (ChangePlanRequest): Target plan for the change.

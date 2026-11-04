@@ -122,7 +122,7 @@ class DataRepairPostgresTest(unittest.TestCase):
             "CREATE TABLE public.gregale_customer_operation_inbox(LIKE public.gregale_operation_inbox INCLUDING ALL);ALTER TABLE public.gregale_customer_operation_inbox ALTER COLUMN platform_tenant_id SET NOT NULL"
         )
         self.connection.execute(
-            "CREATE TABLE products(id bigint PRIMARY KEY,category text);SELECT gregale_repair.enroll('products',ARRAY['category']);INSERT INTO products(id,category) VALUES(1,'old'),(2,'old')"
+            "CREATE TABLE products(id bigint PRIMARY KEY,category text,stamp timestamptz DEFAULT '2026-11-03T10:00:00Z'::timestamptz);SELECT gregale_repair.enroll('products',ARRAY['category']);INSERT INTO products(id,category) VALUES(1,'old'),(2,'old')"
         )
         fixture = json.loads((Path(__file__).resolve().parents[2] / "operation-tests/request-fixture.json").read_text())
         self.request = operation_request_from_headers(
@@ -207,7 +207,7 @@ class DataRepairPostgresTest(unittest.TestCase):
         role = "writer_python_" + uuid4().hex
         name = self.sql.Identifier(role)
         self.connection.execute(self.sql.SQL("CREATE ROLE {} NOLOGIN").format(name))
-        writer = self.psycopg.connect(os.environ["DATABASE_URL"], dbname=self.database, autocommit=True)
+        writer = self.psycopg.connect(os.environ["DATABASE_URL"], dbname=self.database, autocommit=True, options="-c timezone=Europe/Istanbul")
         try:
             grants = (Path(__file__).resolve().parents[2] / "data-repair-tests/writer-grants.sql").read_text()
             self.connection.execute(grants.replace("__WRITER_ROLE__", name.as_string(self.connection)))

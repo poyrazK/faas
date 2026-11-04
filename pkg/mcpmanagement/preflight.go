@@ -13,9 +13,31 @@ type preflightCheck struct {
 	Reason string `json:"reason"`
 }
 
+type preflightArgs struct {
+	App         string `json:"app"`
+	Project     string `json:"project,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	Operation   string `json:"operation,omitempty" jsonschema:"Operation to preview: deploy (default), restart, scale or env_change"`
+}
+
+func (m *management) preflightOperation(ctx context.Context, args preflightArgs) (any, error) {
+	operation := args.Operation
+	if operation == "" {
+		operation = "deploy"
+	}
+	if !api.ValidAppOperation(operation) {
+		return nil, invalid("invalid_argument", "operation must be deploy, restart, scale or env_change")
+	}
+	return m.preflightForOperation(ctx, appArgs{App: args.App, Project: args.Project, Environment: args.Environment}, operation)
+}
+
 // preflight deliberately probes only reads. Successful reads cannot establish
 // mutation authorization, native qualification, source access or approval.
 func (m *management) preflight(ctx context.Context, args appArgs) (any, error) {
+	return m.preflightForOperation(ctx, args, "deploy")
+}
+
+func (m *management) preflightForOperation(ctx context.Context, args appArgs, operation string) (any, error) {
 	app, env, err := m.appEnvironment(ctx, args.App, args.Project, args.Environment, false)
 	if err != nil {
 		return nil, err
@@ -76,11 +98,90 @@ func (m *management) preflight(ctx context.Context, args appArgs) (any, error) {
 	checks["scoped_operations"] = readPreflightCheck(err)
 	_, err = m.getRouteBudgets(ctx, args)
 	checks["environment_route_budgets"] = readPreflightCheck(err)
+	native, nativeErr := m.client.GetAppOperationPreview(ctx, args.App, operation, args.Environment)
+	if nativeErr == nil && !validOperationPreview(native, app.ID, env.ProjectID, env.ID, normalizedScope(args.Environment), operation) {
+		nativeErr = invalid("invalid_response", "native authorization preview has incompatible identity or status")
+	}
+	var preview *api.AppOperationPreview
+	if nativeErr == nil {
+		preview = &native
+		status := "unknown"
+		switch native.Authorization {
+		case "allowed":
+			status = "passed"
+		case "blocked":
+			status = "blocked"
+		}
+		checks["api_write_authorization"] = preflightCheck{status, "native_operation_authorization"}
+		checks["native_admission"] = preflightCheck{"unknown", "exact_request_and_apply_recheck_required"}
+		if native.Admission == "blocked" {
+			checks["native_admission"] = preflightCheck{"blocked", "native_operation_blocked"}
+		}
+	} else {
+		checks["native_admission"] = readPreflightCheck(nativeErr)
+		checks["api_write_authorization"] = readPreflightCheck(nativeErr)
+	}
 	return map[string]any{
 		"app_id": app.ID, "scope": normalizedScope(args.Environment), "project_id": env.ProjectID, "environment_id": env.ID,
 		"checked_at": time.Now().UTC(), "basis": "sequential_read_probes", "checks": checks,
-		"limitations": "Passed reads establish response compatibility only. No plans, source reviews, approvals, probes, or writes were performed. Admission rechecks authorization, entitlements, protection and current state. Durable status does not verify future disk writes or restart recovery.",
+		"operation": operation, "authorization_preview": preview,
+		"limitations": "Native authorization is an operation-specific snapshot, not an admission reservation. Other passed reads establish response compatibility. No plans, source reviews, approvals, probes, or writes were performed. Apply rechecks authorization, quotas, protection and current state. Durable status does not verify future disk writes or restart recovery.",
 	}, nil
+}
+
+func validOperationPreview(p api.AppOperationPreview, appID, projectID, envID, scope, operation string) bool {
+	if p.SchemaVersion != 1 || p.AppID != appID || p.ProjectID != projectID || p.EnvironmentID != envID || p.Scope != scope || p.Operation != operation || p.CheckedAt.IsZero() || p.CheckedAt.After(time.Now().Add(time.Minute)) || time.Since(p.CheckedAt) > time.Minute {
+		return false
+	}
+	valid := func(status string) bool { return status == "allowed" || status == "blocked" || status == "unknown" }
+	if !valid(p.Authorization) || !valid(p.Admission) || len(p.Checks) == 0 {
+		return false
+	}
+	for _, check := range p.Checks {
+		if !valid(check.Status) || check.Reason == "" {
+			return false
+		}
+	}
+	requiredScope := api.ScopeDeployWrite
+	if operation == "env_change" {
+		requiredScope = api.ScopeEnvWrite
+	}
+	if len(p.RequiredScopes) != 1 || p.RequiredScopes[0] != requiredScope {
+		return false
+	}
+	decision := func(keys []string) string {
+		result := "allowed"
+		for _, key := range keys {
+			check, ok := p.Checks[key]
+			if !ok {
+				return "unknown"
+			}
+			if check.Status == "blocked" {
+				return "blocked"
+			}
+			if check.Status != "allowed" {
+				result = "unknown"
+			}
+		}
+		return result
+	}
+	if _, ok := p.Checks["scope"]; !ok {
+		return false
+	}
+	if _, ok := p.Checks["role"]; !ok {
+		return false
+	}
+	if _, ok := p.Checks["email"]; !ok {
+		return false
+	}
+	keys := make([]string, 0, len(p.Checks))
+	for key := range p.Checks {
+		keys = append(keys, key)
+	}
+	if p.Authorization != decision([]string{"scope", "role", "email"}) || p.Admission != decision(keys) {
+		return false
+	}
+	return true
 }
 
 func readPreflightCheck(err error) preflightCheck {

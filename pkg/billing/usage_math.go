@@ -79,6 +79,56 @@ func OverageMBSecondsForRange(ctx context.Context, store UsageRangeStore, acct s
 	return total, nil
 }
 
+// MonthComputeOverage is a month's compute allowance and the compute it is
+// billed beyond that allowance, both in mb_seconds.
+type MonthComputeOverage struct {
+	IncludedMBSeconds int64
+	BilledMBSeconds   int64
+}
+
+// ComputeOverageForMonth returns what acct's month containing month is billed
+// for compute, given usage, the month's usage so far (the whole month once it
+// has ended). The month in progress reads the figure the spend cap and the
+// billing page read (state.CurrentMonthBilledComputeMBSeconds); an ended month
+// is billed through its end. The allowance follows the month's recorded plan
+// history; a month without one falls back to acct.Plan. The usage pages show
+// this instead of usage above today's plan allowance, so they agree with the
+// bill (ADR-20261101113742).
+func ComputeOverageForMonth(ctx context.Context, store UsageRangeStore, acct state.Account, month, now time.Time, usage int64) (MonthComputeOverage, error) {
+	if store == nil {
+		return MonthComputeOverage{}, fmt.Errorf("billing: usage range store is nil")
+	}
+	monthStart := utcMonthStart(month)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+	now = now.UTC()
+	if !now.After(monthStart) {
+		return MonthComputeOverage{}, nil
+	}
+	var snapshots []state.FinancialPriceSnapshot
+	if record, ok := store.(state.FinancialStore); ok {
+		var err error
+		snapshots, err = record.ListFinancialPriceSnapshots(ctx, acct.ID, monthStart)
+		if err != nil {
+			return MonthComputeOverage{}, fmt.Errorf("billing: plan history for %s: %w", monthStart.Format("2006-01"), err)
+		}
+	}
+	usageBefore := func(at time.Time) (int64, error) {
+		return sumUsage(ctx, store, acct.ID, monthStart, at)
+	}
+	if now.Before(monthEnd) {
+		billed, err := state.CurrentMonthBilledComputeMBSeconds(acct.Plan, snapshots, now, usage, usageBefore)
+		if err != nil {
+			return MonthComputeOverage{}, fmt.Errorf("billing: billed compute for %s: %w", monthStart.Format("2006-01"), err)
+		}
+		return MonthComputeOverage{IncludedMBSeconds: state.CurrentMonthComputeIncludedMBSeconds(acct.Plan, snapshots, now), BilledMBSeconds: billed}, nil
+	}
+	billed, err := state.MonthBilledComputeMBSeconds(acct.Plan, snapshots, monthEnd, usage, usageBefore)
+	if err != nil {
+		return MonthComputeOverage{}, fmt.Errorf("billing: billed compute for %s: %w", monthStart.Format("2006-01"), err)
+	}
+	return MonthComputeOverage{IncludedMBSeconds: state.MonthComputeIncludedMBSeconds(acct.Plan, snapshots, monthEnd), BilledMBSeconds: billed}, nil
+}
+
 // UsageRangeStore reads an account's hourly usage over a UTC range. A store
 // that also implements state.FinancialStore supplies the plan history.
 type UsageRangeStore interface {

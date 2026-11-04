@@ -59,7 +59,7 @@ func TestRestoreSaysTheSubscriptionWasNotResumed(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("restore = %d %s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Warning"); !strings.Contains(got, "Re-subscribe") {
-		t.Fatalf("restore Warning = %q, want the re-subscribe notice", got)
+	if got := rec.Header().Get("Warning"); !strings.Contains(got, "Keep subscription") || !strings.Contains(got, "PATCH /v1/account/plan") {
+		t.Fatalf("restore Warning = %q, want the notice naming how to keep the subscription", got)
 	}
 }

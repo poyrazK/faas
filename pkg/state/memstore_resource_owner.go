@@ -15,6 +15,7 @@ func (m *MemStore) orgResourceAccountLocked(org Org) Account {
 	out.AbuseHoldAt = org.AbuseHoldAt
 	out.AbuseHoldReason = org.AbuseHoldReason
 	out.ProviderCustomerID, out.StripeSubscriptionItem, out.CreatedAt = base.ProviderCustomerID, base.StripeSubscriptionItem, base.CreatedAt
+	out.DeletionRequestedAt = base.DeletionRequestedAt
 	return out
 }
 
@@ -221,6 +222,7 @@ func (m *MemStore) updateOrgResourcePlanLocked(org Org, plan api.Plan) error {
 		}
 	}
 	from := org.Plan
+	m.notePlanChangeLocked(org.ID, from, plan)
 	org.Plan = plan
 	if err := m.validateObjectBillingAdoptionLocked(org); err != nil {
 		return err

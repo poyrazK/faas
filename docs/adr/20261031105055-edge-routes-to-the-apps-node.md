@@ -86,6 +86,23 @@ Units release independently. An N-1 gatewayd-internal ignores the request
 header and never answers, so the edge keeps routing locally. An N-1 edge never
 asks, so an N gatewayd-internal never stamps.
 
+## Measured (2026-11-02, rc.314)
+
+Turned on by hand on both compute edges, then compared at 300 req/s for
+40 s across three apps:
+
+| | Off | On |
+|---|---|---|
+| fsn-3 gatewayd-internal | 0.62 cores | 0.28 |
+| fsn-2 gatewayd-internal | 0.02 | 0.35 |
+| vmmd (fsn-3 / fsn-2) | 0.30 / 0.18 | 0.29 / 0.18 |
+| fsn-3 edge + cloudflared | 0.27 + 0.26 | 0.29 + 0.25 |
+| Routed to another node / to the edge's own node | — | 8,001 / 4,001 |
+| Responses | 12,003 × 200 | 12,002 × 200 |
+
+The manifest's `public_edge.placement_routing` now sets the switch through
+the edge role.
+
 ## Consequences
 
 - **The routing work moves to the instance's node.** That covers

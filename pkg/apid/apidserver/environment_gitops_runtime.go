@@ -16,6 +16,7 @@ import (
 )
 
 var _ environmentgitops.RuntimeVerifier = (*environmentGitOpsBackend)(nil)
+var _ environmentgitops.RuntimeEffectObserver = (*environmentGitOpsBackend)(nil)
 
 func (b *environmentGitOpsBackend) runtimeStore() (state.EnvironmentGitOpsRuntimeStore, error) {
 	store, ok := b.intent.(state.EnvironmentGitOpsRuntimeStore)
@@ -23,6 +24,15 @@ func (b *environmentGitOpsBackend) runtimeStore() (state.EnvironmentGitOpsRuntim
 		return nil, state.ErrConflict
 	}
 	return store, nil
+}
+
+// ObserveRuntimeEffects can retire already-fresh bookkeeping in report mode.
+// The store observes the original effect scope without invalidation or refresh.
+func (b *environmentGitOpsBackend) ObserveRuntimeEffects(ctx context.Context, lease state.EnvironmentGitOpsLease) error {
+	if lease.Source.Spec.Mode != "report" {
+		return state.ErrConflict
+	}
+	return b.recoverRuntime(ctx, lease)
 }
 
 func (b *environmentGitOpsBackend) recoverRuntime(ctx context.Context, lease state.EnvironmentGitOpsLease) error {
@@ -39,7 +49,7 @@ func (b *environmentGitOpsBackend) recoverRuntime(ctx context.Context, lease sta
 		if err != nil {
 			return err
 		}
-		if progress.Request != nil {
+		if progress.Request != nil && lease.Source.Spec.Mode == "enforce" {
 			raw, _ := json.Marshal(progress.Request)
 			if err := b.server.notif.Notify(ctx, db.NotifyRuntimeConfigRestart, string(raw)); err != nil {
 				return err
@@ -73,33 +83,21 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		if definition.Workloads == nil {
 			return false, state.ErrInvalidArgument
 		}
-		if len(definition.Workloads) == 0 {
-			if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
-				if _, err := retirement.ActivateEnvironmentGitOpsEmptyRetirement(ctx, lease, plan); err != nil {
-					return false, err
-				}
-			}
-
-			// Empty membership is a valid environment configuration, but a
-			// previously activated Git-managed member must not disappear from
-			// serving evidence just because the new definition omits it.
-			guard, ok := b.intent.(state.EnvironmentGitOpsEmptyGraphGuard)
-			if !ok {
-				workloadReady = false
-			} else {
-				var managed bool
-				managed, workloadErr = guard.EnvironmentGitOpsHasServingManagedWorkload(ctx, lease)
-				workloadReady = !managed
-			}
+		// Both a candidate graph and an empty retirement publish a release.
+		// Keep their first cutover held while allowing existing cleanup below.
+		if b.server.platformReleasePaused() {
+			workloadReady = false
+		} else if len(definition.Workloads) == 0 {
+			workloadReady, workloadErr = b.activateEmptyWorkloadRetirement(ctx, lease, plan)
 		} else {
 			workloadReady, workloadErr = b.prepareWorkloadCandidates(ctx, lease, plan)
-		}
-		if err := b.recoverRuntime(ctx, lease); err != nil {
-			return false, err
 		}
 		if workloadErr != nil {
 			return false, workloadErr
 		}
+	}
+	if err := b.recoverRuntime(ctx, lease); err != nil {
+		return false, err
 	}
 	targets, err := store.ObserveEnvironmentGitOpsRuntime(ctx, lease)
 	if err != nil {
@@ -120,6 +118,24 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 	}
 	effects, err := b.effects.PendingEnvironmentGitOpsEffects(ctx, lease)
 	return workloadReady && retired && len(effects) == 0, err
+}
+
+func (b *environmentGitOpsBackend) activateEmptyWorkloadRetirement(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
+	if hold, err := b.gitOpsReleaseHold(ctx, lease, state.EnvironmentWorkloadGraph{}); err != nil || hold != "" {
+		return false, err
+	}
+	if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
+		if _, err := retirement.ActivateEnvironmentGitOpsEmptyRetirement(ctx, lease, plan); err != nil {
+			return false, err
+		}
+	}
+	// Empty desired membership cannot discard an existing serving member.
+	guard, ok := b.intent.(state.EnvironmentGitOpsEmptyGraphGuard)
+	if !ok {
+		return false, nil
+	}
+	managed, err := guard.EnvironmentGitOpsHasServingManagedWorkload(ctx, lease)
+	return !managed, err
 }
 
 func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {

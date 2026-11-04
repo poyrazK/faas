@@ -11,6 +11,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -25,9 +26,11 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capflags"
+	core "github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -87,6 +90,7 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const DueWalkHeadPages = dueWalkHeadPages
 const WorkAppReconcile = workAppReconcile
 const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
@@ -98,6 +102,7 @@ var RouterCloseGrace = &routerCloseGrace
 
 // Package-level funcs
 var AppTaskFailureStage = appTaskFailureStage
+var DeploymentStaticEgressIP = deploymentStaticEgressIP
 var AppTaskGRPCCode = appTaskGRPCCode
 var AppTaskResultFromResponse = appTaskResultFromResponse
 var AppendEnvironmentGitOpsJobServiceBindings = appendEnvironmentGitOpsJobServiceBindings
@@ -114,7 +119,6 @@ var DecodeKafkaConfig = decodeKafkaConfig
 var DecodeNATSConfig = decodeNATSConfig
 var DecodeOperationResult = decodeOperationResult
 var DecodeRedisConfig = decodeRedisConfig
-var DecodeSQSConfig = decodeSQSConfig
 var EnableWarmSnapshot = enableWarmSnapshot
 var EnqueueScopedDemand = enqueueScopedDemand
 var EnvironmentGitOpsJobBindingIntentMatches = environmentGitOpsJobBindingIntentMatches
@@ -182,10 +186,14 @@ type NATSBroker = natsBroker
 // NewNATSBrokerPool is a broker pool that dials with dial instead of
 // connecting to NATS.
 func NewNATSBrokerPool(dial func(rawURL string) (*NATSBroker, error)) *natsBrokerPool {
-	return &natsBrokerPool{dial: dial, brokers: map[string]*natsBroker{}}
+	return newNATSBrokerPool(dial, time.Hour)
 }
 
-func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) { return p.forURL(rawURL) }
+// ForURL acquires rawURL's broker and keeps the reference.
+func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) {
+	broker, _, err := p.acquire(rawURL)
+	return broker, err
+}
 
 // NewRedisStreamPoller wraps an already connected client, as newRedisPoller
 // does after its ping and group creation; the egress dialer refuses the
@@ -223,7 +231,11 @@ var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
 var ReaperAbortedCanary = reaperAbortedCanary
 var RequireWorkerBlocker = requireWorkerBlocker
-var ResolvePriority = resolvePriority
+
+func ResolvePriority(snapshot []InstanceInfo, instanceID string) (string, bool) {
+	return resolvePriority(indexInstanceInfos(snapshot), instanceID)
+}
+
 var RowState = rowState
 var RunningInstance = runningInstance
 var RunningTransitions = runningTransitions
@@ -273,6 +285,12 @@ func (o *WorkflowOrchestrator) ChildDBPhaseForTest(ctx context.Context) (context
 }
 func OutsideDBPhaseForTest(ctx context.Context, wait func()) { outsideDBPhase(ctx, wait) }
 
+// SetPlatformRetryDelayForTest shortens the wait before retrying a step
+// attempt Gregale refused before delivery (ADR-081 amendment 2026-11-02).
+func (o *WorkflowOrchestrator) SetPlatformRetryDelayForTest(d time.Duration) {
+	o.platformRetryDelay = d
+}
+
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot
@@ -295,6 +313,7 @@ var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+var SeedForkTarget = seedForkTarget
 var ReadWakeRPC = readWakeRPC
 
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
@@ -315,6 +334,26 @@ func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep
 // XRunTriggerTick runs one trigger tick as the loop's trigger work does.
 // adr: 20261027162741 — broker triggers run on lanes of their own.
 func (l *Loop) XRunTriggerTick(ctx context.Context) { l.runTriggerTick(ctx) }
+
+// XRunReaper runs one reaper tick.
+func (l *Loop) XRunReaper(ctx context.Context) { l.runReaper(ctx) }
+
+// XBrokerLanesHeld is how many broker trigger lanes the account holds.
+// adr: 20261101093015 — the lanes are shared between accounts.
+func (l *Loop) XBrokerLanesHeld(accountID string) int {
+	l.brokerLanes.mu.Lock()
+	defer l.brokerLanes.mu.Unlock()
+	return l.brokerLanes.held[accountID]
+}
+
+// XBrokerTriggerLaneSlots is the node's broker trigger lanes.
+const XBrokerTriggerLaneSlots = api.BrokerTriggerDispatchSlotsPerNode
+
+// XNewTriggerRecordRateLimiter returns a record rate limiter on a fake clock.
+// adr: 20261101093015 — the per-plan record rate defers, never drops.
+func XNewTriggerRecordRateLimiter(now func() time.Time) *TriggerRecordRateLimiter {
+	return newTriggerRecordRateLimiter(now)
+}
 
 // XWaitDispatches waits for every dispatch the drain started, including those
 // that outlived their tick.
@@ -413,7 +452,6 @@ func (r *Engine) AdmitAndDispatchWithOptions(p0 context.Context, p1 string, p2 s
 func (r *Engine) AppMustPark(p0 context.Context, p1 state.App, p2 state.Account) bool {
 	return r.appMustPark(p0, p1, p2)
 }
-func (r *Engine) AppMutex(p0 string) *sync.Mutex { return r.appMutex(p0) }
 func (r *Engine) ApplyLiveCapacityMB(p0 context.Context, p1 string) int64 {
 	return r.applyLiveCapacityMB(p0, p1)
 }
@@ -550,10 +588,14 @@ func (r *Loop) ProcessFireNowRequest(p0 context.Context, p1 state.FireNowRequest
 func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time) error {
 	return r.recoverPrimeCandidate(p0, p1, p2)
 }
-func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
-func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
-func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
-func (r *Loop) RunCronTick(p0 context.Context)      { r.runCronTick(p0) }
+func (r *Loop) RunInstanceStats(p0 context.Context)     { r.runInstanceStats(p0) }
+func (r *Loop) RunPrimeRecovery(p0 context.Context)     { r.runPrimeRecovery(p0) }
+func (r *Loop) RunReaper(p0 context.Context)            { r.runReaper(p0) }
+func (r *Loop) RunCronTick(p0 context.Context)          { r.runCronTick(p0) }
+func (r *Loop) RunScheduledJobsTick(p0 context.Context) { r.runScheduledJobsTick(p0) }
+
+// DrainEngine is the engine a drain wakes apps through.
+func DrainEngine(d *Drain) *Engine { return d.engine }
 func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
 	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
 }
@@ -564,6 +606,7 @@ func (r *Loop) RunRetention(p0 context.Context)                                 
 func (r *Loop) RunScaleUp(p0 context.Context)                                   { r.runScaleUp(p0) }
 func (r *Loop) RunServiceRecovery(p0 context.Context)                           { r.runServiceRecovery(p0) }
 func (r *Loop) RunWorkflowRetention(p0 context.Context)                         { r.runWorkflowRetention(p0) }
+func (r *Loop) DispatchWorkflowRetention(p0 context.Context)                    { r.dispatchWorkflowRetention(p0) }
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }
@@ -638,6 +681,13 @@ func XHTTPGatewaySynth(client *http.Client, base string) interface {
 	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)
 } {
 	return &httpGatewaySynth{client: client, basePrefix: base}
+}
+
+// XWorkflowGatewaySynth is the gateway transport workflow steps use, with a
+// test token minter: workflow dispatches always carry an internal token.
+func XWorkflowGatewaySynth(client *http.Client, base string) WorkflowStepExecutor {
+	return &httpGatewaySynth{client: client, basePrefix: base,
+		mintInternalSvcToken: func(string) (string, error) { return "test-token", nil }}
 }
 
 // Members of fakeNotifier
@@ -1014,6 +1064,9 @@ func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocati
 	return d.invocationAttemptBudget(ctx, inv)
 }
 
+// XCronDueOccurrences is the catch-up walk for schedule-policy and command crons.
+var XCronDueOccurrences = cronDueOccurrences
+
 // XHoldFinancialAdmission makes the drain's budget admission refuse every
 // app with err, as a held strict compute budget does.
 func (d *Drain) XHoldFinancialAdmission(err error) {
@@ -1035,3 +1088,195 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 
 // GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
 func (e *Engine) GuestVCPUs(app state.App, planVCPUs int) int { return e.guestVCPUs(app, planVCPUs) }
+// ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
+// memory report (ADR 20261101091815).
+func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {
+	r.reportNodeMemory(ctx, r.store.(state.NodeMemoryReportStore), now)
+}
+func (r *Engine) NodeFrozenCount(nodeID string) int { return r.nodeFrozenCount(nodeID) }
+func (r *Engine) UnreportedNodeUsedMB(node state.ComputeNode, bookedMB int64) int64 {
+	return r.unreportedNodeUsedMB(node, bookedMB)
+}
+
+// MarkRestartInFlight records appID as restarting, as restartApp does, until
+// the returned func runs.
+func (e *Engine) MarkRestartInFlight(appID string) func() {
+	e.restartMu.Lock()
+	defer e.restartMu.Unlock()
+	if e.restartInFlight == nil {
+		e.restartInFlight = make(map[string]*restartCall)
+	}
+	call := &restartCall{done: make(chan struct{})}
+	e.restartInFlight[appID] = call
+	return func() {
+		e.restartMu.Lock()
+		defer e.restartMu.Unlock()
+		delete(e.restartInFlight, appID)
+		close(call.done)
+	}
+}
+
+// Broker trigger delivery (ADR-20261101093512).
+func (r *Loop) TriggerClaimRenewInterval() *time.Duration { return &r.triggerClaimRenewInterval }
+
+var WriteTriggerClaimOutcome = writeTriggerClaimOutcome
+var NATSConsumerConfig = natsConsumerConfig
+var NATSRecordID = natsRecordID
+
+type NATSConfig = natsConfig
+type NATSMsg = natsMsg
+
+const TriggerReasonPayloadTooLarge = triggerReasonPayloadTooLarge
+const TriggerReasonRateLimited = triggerReasonRateLimited
+
+// NewNATSPollerWithMessages is a NATS poller holding msgs in flight, keyed
+// by record ID, without a JetStream consumer.
+func NewNATSPollerWithMessages(msgs map[string]NATSMsg) TriggerSource {
+	return &natsPoller{stream: "events", inFlight: msgs}
+}
+
+// RedeliverNATS puts msg back in flight under id, as a Poll would.
+func RedeliverNATS(src TriggerSource, id string, msg NATSMsg) {
+	p := src.(*natsPoller)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inFlight[id] = msg
+}
+
+// WithCronSweepSlice sets how long one pass of the cron sweep may dispatch.
+func (r *Loop) WithCronSweepSlice(d time.Duration) *Loop { r.cronSweepSlice = d; return r }
+
+// RunCronSweep runs one continuation pass of the minute's cron sweep.
+func (r *Loop) RunCronSweep(ctx context.Context) { r.runCronSweep(ctx) }
+
+// TakeCronSweepResume reports, and consumes, a pending request to continue
+// the cron sweep.
+func (r *Loop) TakeCronSweepResume() bool {
+	select {
+	case <-r.cronResume:
+		return true
+	default:
+		return false
+	}
+}
+
+// XFireNowRefusal is the requester-facing reason for a refused manual run.
+var XFireNowRefusal = fireNowRefusal
+
+// CoalesceInvocationDue exposes the drain's notification burst collapse.
+var CoalesceInvocationDue = coalesceInvocationDue
+
+// DrainLeaseRecoveryDue replays nows through one drain lease recovery clock.
+func DrainLeaseRecoveryDue(every time.Duration, nows ...time.Time) []bool {
+	r := drainLeaseRecovery{every: every}
+	due := make([]bool, len(nows))
+	for i, now := range nows {
+		due[i] = r.due(now)
+	}
+	return due
+}
+
+// ReconcileFinancialBudgetStopsForTick runs the reaper tick's strict compute
+// sweep over apps: one bulk read, then each app (ADR 20261102160622).
+func (r *Engine) ReconcileFinancialBudgetStopsForTick(ctx context.Context, apps []state.App) error {
+	pre := r.loadStrictComputePreload(ctx, apps)
+	if pre == nil {
+		return errors.New("the store cannot preload the strict compute sweep")
+	}
+	var errs []error
+	for _, app := range apps {
+		errs = append(errs, r.reconcileFinancialBudgetStops(ctx, app.ID, pre))
+	}
+	return errors.Join(errs...)
+}
+
+// ReconcileFinancialBudgetStopsWithPreload runs one app's sweep with a given
+// tick preload.
+func (r *Engine) ReconcileFinancialBudgetStopsWithPreload(ctx context.Context, appID string, rows []state.Instance, leases map[string]financial.ComputeLease) error {
+	return r.reconcileFinancialBudgetStops(ctx, appID, &strictComputePreload{rows: map[string][]state.Instance{appID: rows}, leases: leases})
+}
+
+// RecordRunningReasonObservations runs the reaper's "why is it running"
+// recorder (ADR 20261102205122).
+func (l *Loop) RecordRunningReasonObservations(ctx context.Context, apps []state.App, snapshot []InstanceInfo, now time.Time) {
+	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
+}
+
+// StrictComputeSweepIdle reports whether the reaper tick's strict compute
+// sweep skips app (ADR 20261102205122).
+func (r *Engine) StrictComputeSweepIdle(ctx context.Context, apps []state.App, app state.App) bool {
+	return r.loadStrictComputePreload(ctx, apps).idle(app, r.financialBudgetNow())
+}
+
+// LockApp, TryLockApp and AppLocks reach the per-app serialisation locks
+// (ADR 20261102160622).
+func (r *Engine) LockApp(appID string) func() { return r.lockApp(appID) }
+func (r *Engine) TryLockApp(appID string) (func(), bool) {
+	return r.tryLockApp(appID)
+}
+func (r *Engine) AppLocks() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.appMu)
+}
+
+// OpenWorkflowDueGate is one dispatch tick's workflow due gate over read.
+func OpenWorkflowDueGate(read state.WorkflowRunDueReader) func(context.Context) bool {
+	g := &workflowDueGate{read: read}
+	return g.open
+}
+
+// DataRepairRecoveryDue replays nows through one rehearsal coordinator's
+// recovery spacing; pending keeps a claim pending throughout.
+func DataRepairRecoveryDue(pending bool, nows ...time.Time) []bool {
+	c := &DataRepairRehearsalCoordinator{pendingClaims: map[string]core.RehearsalFrame{}}
+	if pending {
+		c.pendingClaims["claim"] = core.RehearsalFrame{}
+	}
+	due := make([]bool, len(nows))
+	for i, now := range nows {
+		due[i] = c.recoveryDue(now)
+	}
+	return due
+}
+
+// NextLogFollowPoll exposes the follow stream's discovery backoff (O20).
+var NextLogFollowPoll = nextLogFollowPoll
+
+// Bounds of the follow stream's discovery poll.
+const (
+	LogFollowPollMin = logFollowPollMin
+	LogFollowPollMax = logFollowPollMax
+)
+
+// FailInterruptedFireNowRequests runs the interrupted manual-run sweep once.
+func (r *Loop) FailInterruptedFireNowRequests(ctx context.Context) {
+	r.failInterruptedFireNowRequests(ctx)
+}
+
+func ProjectPrivateNetworkForTest(store state.Store, app state.App) AppSpec {
+	p := (&Engine{store: store}).privateNetworkProjection(context.Background(), app)
+	return AppSpec{PrivateNetworkCIDRs: p.CIDRs, PrivateNetworkAllowedCIDRs: p.AllowedCIDRs, PrivateNetworkFirewallRules: p.FirewallRules, PrivateNetworkID: p.NetworkID, PrivateNetworkAddress: p.Address}
+}
+
+func StaticEgressWirePolicyForTest(spec AppSpec) (string, bool) {
+	p := spec.toProto()
+	return p.GetStaticEgressIp(), p.GetStaticEgressExcluded()
+}
+
+// RealtimeIdleDelays observes claims of the given sizes on a fresh realtime
+// poller and returns the idle delay after each.
+func RealtimeIdleDelays(sizes []int) []time.Duration {
+	p := &realtimePoller{}
+	now := time.Unix(1_000, 0)
+	out := make([]time.Duration, 0, len(sizes))
+	for _, n := range sizes {
+		batch := state.RealtimeConsumerGroupBatch{Claims: make([]state.RealtimeConsumerGroupClaim, n)}
+		p.observeClaim(batch, now)
+		if p.idle(now) != (p.idleDelay > 0) || p.idle(now.Add(p.idleDelay)) {
+			panic("idle window does not match the delay")
+		}
+		out = append(out, p.idleDelay)
+	}
+	return out
+}

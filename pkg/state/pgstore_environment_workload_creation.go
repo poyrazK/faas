@@ -50,16 +50,13 @@ func (s *PgStore) prepareEnvironmentGitOpsWorkloadsOnce(ctx context.Context, lea
 		return nil, err
 	}
 	limits, _ := api.LimitsFor(snapshot.Plan)
-	org, err := q.OrgByPersonalAccount(ctx, tx, mustPgUUID(source.AccountID))
-	if err != nil {
-		return nil, mapErr(err)
-	}
 	if _, err := q.SetEnvironmentGitOpsLeaseContext(ctx, tx, lease.LeaseToken); err != nil {
 		return nil, err
 	}
 	for _, resource := range environmentWorkloadCreationNames(apps) {
 		app := apps[resource]
-		app.OrgID = pgUUIDString(org.ID)
+		// App admission resolves the persisted project owner under lock.
+		// A creator's personal organization need not own this project.
 		app, err = createAppIfUnderQuotaTx(ctx, tx, app, limits)
 		if err != nil {
 			return nil, err
@@ -87,7 +84,7 @@ func (s *PgStore) prepareEnvironmentGitOpsWorkloadsOnce(ctx context.Context, lea
 			app := gitOpsIntentApp{ID: appModel.ID, Slug: appModel.Slug, Type: appModel.Type,
 				WorkloadClass: appModel.WorkloadClass, Manifest: appModel.Manifest, StartCommand: appModel.StartCommand}
 			name := strings.TrimPrefix(resource, "workload/")
-			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, source, app, row, desired.Definition.Workloads[name], snapshot.Plan)
+			row, err = syncEnvironmentGitOpsJobTx(ctx, tx, source, app, row, desired.Definition.Workloads[name], snapshot.Plan, true)
 			if err != nil {
 				return nil, err
 			}

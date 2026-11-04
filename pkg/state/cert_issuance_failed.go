@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // CountFailedCertIssuancesSince counts legacy custom domains whose current
@@ -43,10 +44,40 @@ type CustomDomainCertFailureEmailCooldownStore interface {
 	ClaimCustomDomainCertFailureEmail(ctx context.Context, domain string, at time.Time) (bool, error)
 }
 
+// CustomDomainCertFailureEmailAttemptStore releases only the failed delivery
+// attempt for its captured claim. It cannot clear another worker's cooldown.
+type CustomDomainCertFailureEmailAttemptStore interface {
+	CustomDomainCertFailureEmailCooldownStore
+	ReleaseCustomDomainCertFailureEmail(context.Context, CustomDomain, time.Time) error
+}
+
+func (s *PgStore) ReleaseCustomDomainCertFailureEmail(ctx context.Context, claim CustomDomain, at time.Time) error {
+	return sqlc.New().ReleaseCustomDomainProbeFailureEmail(ctx, s.pool, sqlc.ReleaseCustomDomainProbeFailureEmailParams{Domain: claim.Domain, AppID: claim.AppID, Token: claim.ChallengeToken, At: pgtypeFromTime(at.UTC())})
+}
+
+func (m *MemStore) ReleaseCustomDomainCertFailureEmail(_ context.Context, claim CustomDomain, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.domains[claim.Domain]
+	if ok && SameCustomDomainClaim(claim, d) && d.CertFailureEmailAt.Equal(at) {
+		d.CertFailureEmailAt = time.Time{}
+		m.domains[claim.Domain] = d
+	}
+	return nil
+}
+
 // ClaimCustomDomainCertFailureEmail is the cross-replica serialization
 // primitive for the F2 cooldown. The status and failure-age predicates live
 // in the UPDATE so concurrent doctor passes cannot both win.
 func (s *PgStore) ClaimCustomDomainCertFailureEmail(ctx context.Context, domain string, at time.Time) (bool, error) {
+	if claim, bound := CustomDomainProbe(ctx); bound {
+		if err := probeDomainMatches(claim, domain); err != nil {
+			return false, err
+		}
+		n, err := sqlc.New().ClaimCustomDomainProbeFailureEmail(ctx, s.pool, sqlc.ClaimCustomDomainProbeFailureEmailParams{Domain: domain, AppID: claim.AppID, Token: claim.ChallengeToken, At: pgtypeFromTime(at.UTC())})
+		return n > 0, err
+	}
+
 	if domain == "" {
 		return false, ErrNotFound
 	}
@@ -76,7 +107,7 @@ func (s *PgStore) ClaimCustomDomainCertFailureEmail(ctx context.Context, domain 
 // ClaimCustomDomainCertFailureEmail mirrors the Postgres atomic gate under
 // the MemStore mutex. The timestamp is kept in the domain row so tests and
 // the in-memory daemon observe the same lifecycle as production.
-func (m *MemStore) ClaimCustomDomainCertFailureEmail(_ context.Context, domain string, at time.Time) (bool, error) {
+func (m *MemStore) ClaimCustomDomainCertFailureEmail(ctx context.Context, domain string, at time.Time) (bool, error) {
 	if domain == "" {
 		return false, ErrNotFound
 	}
@@ -85,6 +116,9 @@ func (m *MemStore) ClaimCustomDomainCertFailureEmail(_ context.Context, domain s
 	d, ok := m.domains[domain]
 	if !ok {
 		return false, ErrNotFound
+	}
+	if !customDomainProbeMatches(ctx, d) {
+		return false, ErrStaleCustomDomainProbe
 	}
 	if d.CertStatus != CustomDomainCertFailed || d.CertFailedAt.IsZero() || d.CertFailedAt.After(at.UTC().Add(-15*time.Minute)) {
 		return false, nil

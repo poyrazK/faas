@@ -42,6 +42,8 @@ func TestSchemaBackfillCopiesTypedSourceValuesAndFencesConstraints(t *testing.T)
  ALTER TABLE public.backfill_case ADD COLUMN status text NOT NULL DEFAULT 'pending',
  ADD COLUMN payload bytea DEFAULT decode('00ff','hex'), ADD COLUMN document json DEFAULT '{"k":[1,null,"v"]}',
  ADD COLUMN issued timestamptz DEFAULT '2020-02-01T03:04:05+03',
+ ADD COLUMN json_null jsonb NOT NULL DEFAULT 'null'::jsonb,
+ ADD COLUMN document_null json DEFAULT 'null'::json,
  ADD COLUMN token bigint NOT NULL DEFAULT nextval('public.backfill_values');
  UPDATE public.backfill_case SET status='custom',payload=NULL WHERE a='b'`); err != nil {
 		t.Fatal(err)
@@ -64,7 +66,7 @@ func TestSchemaBackfillCopiesTypedSourceValuesAndFencesConstraints(t *testing.T)
 	if _, err = target.Exec(ctx, `INSERT INTO gregale_pipeline.mirrors(pipeline_id,generation,schema_hash,schema_spec) VALUES($1,$2,$3,$4)`, p.ID, p.Generation, plan.BeforeHash, encoded); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = target.Exec(ctx, `ALTER TABLE public.backfill_case ADD COLUMN status text,ADD COLUMN payload bytea,ADD COLUMN document json,ADD COLUMN issued timestamptz,ADD COLUMN token bigint`); err != nil {
+	if _, err = target.Exec(ctx, `ALTER TABLE public.backfill_case ADD COLUMN status text,ADD COLUMN payload bytea,ADD COLUMN document json,ADD COLUMN issued timestamptz,ADD COLUMN json_null jsonb,ADD COLUMN document_null json,ADD COLUMN token bigint`); err != nil {
 		t.Fatal(err)
 	}
 	current := func(context.Context) error { return nil }
@@ -131,6 +133,7 @@ func TestSchemaBackfillCopiesTypedSourceValuesAndFencesConstraints(t *testing.T)
 	var valid bool
 	if err = target.QueryRow(ctx, `SELECT (SELECT bool_and(attnotnull) FROM pg_attribute WHERE attrelid='public.backfill_case'::regclass AND attname IN ('status','token'))
  AND NOT EXISTS(SELECT 1 FROM pg_attrdef WHERE adrelid='public.backfill_case'::regclass)
+ AND (SELECT bool_and(json_null IS NOT NULL AND json_null='null'::jsonb AND document_null IS NOT NULL AND document_null::text='null') FROM public.backfill_case)
  AND (SELECT status='custom' AND token=101 AND payload IS NULL AND original='keep b' FROM public.backfill_case WHERE a='b')`).Scan(&valid); err != nil || !valid {
 		t.Fatal("source values, required constraints or default isolation lost", err)
 	}
@@ -187,7 +190,7 @@ func assertBackfillPreservesExistingColumns(t *testing.T, ctx context.Context, p
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = backfillVerificationRows(ctx, p, dst, r, columns, []json.RawMessage{json.RawMessage(`{"a":"a","b":"2020-01-01T00:00Z","status":"not approved"}`)})
+	_, err = backfillVerificationRows(ctx, p, dst, r, columns, []json.RawMessage{json.RawMessage(`["a","2020-01-01T00:00Z","keep a","not approved"]`)})
 	if !errors.Is(err, ErrConflict) {
 		t.Fatal("backfill wrote through an open read gate", err)
 	}

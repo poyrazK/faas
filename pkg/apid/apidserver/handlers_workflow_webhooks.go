@@ -135,6 +135,8 @@ func writeWebhookAutomationError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "webhook endpoint, published automation, binding or receipt not found"))
 	case errors.Is(err, state.ErrWebhookAutomationConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeWebhookAutomationConflict, "Webhook automation conflict", "binding revision, endpoint routing mode or provider event content changed"))
+	case errors.Is(err, state.ErrWorkflowEventInputTooLarge):
+		api.WriteProblem(w, api.ErrWorkflowEventEnvelopeTooLarge())
 	case errors.Is(err, state.ErrAutomationInvalid), errors.Is(err, state.ErrWorkflowEventDefinitionInvalid):
 		api.WriteProblem(w, api.ErrValidation("invalid automation definition, event type, filter or workflow input size"))
 	case errors.Is(err, state.ErrWebhookAutomationUnavailable):

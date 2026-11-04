@@ -473,14 +473,17 @@ func (s *PgStore) createTenantHostname(ctx context.Context, in CreateTenantHostn
 		return TenantHostname{}, fmt.Errorf("state: begin create tenant hostname tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	fresh, err := sqlc.New().ReadTenantSurfaceTrafficAccount(ctx, tx, uuidToPgtype(in.SurfaceID))
-	if err != nil || fresh != account {
+	fresh, err := sqlc.New().ReadTenantSurfaceTrafficOwner(ctx, tx, uuidToPgtype(in.SurfaceID))
+	if err != nil || fresh.AccountID != account {
 		if err == nil {
 			err = ErrNotFound
 		}
 		return TenantHostname{}, mapErr(err)
 	}
 
+	if err := checkPublicTenantHostnameClaim(ctx, tx, in.Hostname, fresh.AppID); err != nil {
+		return TenantHostname{}, err
+	}
 	var accountID string
 	if err := tx.QueryRow(ctx,
 		`select account_id::text from tenant_surfaces where id = $1 and status <> 'deleted' for update`,

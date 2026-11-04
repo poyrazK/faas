@@ -87,6 +87,7 @@ const (
 	Vmmd_UpdateEgressCircuit_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
 	Vmmd_UpdatePrivateNetwork_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
 	Vmmd_ReconcilePrivateNetworkFabric_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkFabric"
+	Vmmd_ReconcilePrivateNetworkPeerings_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/ReconcilePrivateNetworkPeerings"
 	Vmmd_RemovePrivateNetworkFabric_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RemovePrivateNetworkFabric"
 	Vmmd_SeccompStatus_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/SeccompStatus"
 	Vmmd_Logs_FullMethodName                                    = "/onebox.faas.vmmd.v1.Vmmd/Logs"
@@ -370,8 +371,11 @@ type VmmdClient interface {
 	// request (ADR-1138). The caller is resolved from the same host-owned live
 	// identity as ResolveServiceCaller. It answers only when exactly one
 	// forward of any kind is in flight and it is an HTTP request that carried a
-	// valid traceparent; otherwise traceparent is empty. Older vmmds answer
-	// Unimplemented, which callers treat as empty.
+	// valid traceparent; otherwise traceparent is empty. Under the same
+	// one-forward rule it also answers that request's deadline
+	// (ADR-20261102082606), whether or not it carried trace context. Older
+	// vmmds answer Unimplemented or leave the deadline 0, which callers treat
+	// as unknown.
 	InflightRequestTrace(ctx context.Context, in *InflightRequestTraceRequest, opts ...grpc.CallOption) (*InflightRequestTraceResponse, error)
 	// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
 	// PR #114). Returns the vmmd process's Firecracker version + the
@@ -480,6 +484,9 @@ type VmmdClient interface {
 	// provider. When transport_peers_managed is true, the peer list is also
 	// reconciled as the authoritative regional VXLAN topology.
 	ReconcilePrivateNetworkFabric(ctx context.Context, in *ReconcilePrivateNetworkFabricRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkFabricAck, error)
+	// Atomically replaces the complete account/region L3 peering policy.
+	// Callers must prepare every listed fabric before publishing app routes.
+	ReconcilePrivateNetworkPeerings(ctx context.Context, in *ReconcilePrivateNetworkPeeringsRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkPeeringsAck, error)
 	// RemovePrivateNetworkFabric tears down the node-local bridge and optional
 	// regional VXLAN link for a deleted Gregale-owned network. The operation is
 	// idempotent so durable delete notifications may be replayed safely.
@@ -1419,6 +1426,16 @@ func (c *vmmdClient) ReconcilePrivateNetworkFabric(ctx context.Context, in *Reco
 	return out, nil
 }
 
+func (c *vmmdClient) ReconcilePrivateNetworkPeerings(ctx context.Context, in *ReconcilePrivateNetworkPeeringsRequest, opts ...grpc.CallOption) (*ReconcilePrivateNetworkPeeringsAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReconcilePrivateNetworkPeeringsAck)
+	err := c.cc.Invoke(ctx, Vmmd_ReconcilePrivateNetworkPeerings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) RemovePrivateNetworkFabric(ctx context.Context, in *RemovePrivateNetworkFabricRequest, opts ...grpc.CallOption) (*RemovePrivateNetworkFabricAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RemovePrivateNetworkFabricAck)
@@ -2072,8 +2089,11 @@ type VmmdServer interface {
 	// request (ADR-1138). The caller is resolved from the same host-owned live
 	// identity as ResolveServiceCaller. It answers only when exactly one
 	// forward of any kind is in flight and it is an HTTP request that carried a
-	// valid traceparent; otherwise traceparent is empty. Older vmmds answer
-	// Unimplemented, which callers treat as empty.
+	// valid traceparent; otherwise traceparent is empty. Under the same
+	// one-forward rule it also answers that request's deadline
+	// (ADR-20261102082606), whether or not it carried trace context. Older
+	// vmmds answer Unimplemented or leave the deadline 0, which callers treat
+	// as unknown.
 	InflightRequestTrace(context.Context, *InflightRequestTraceRequest) (*InflightRequestTraceResponse, error)
 	// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
 	// PR #114). Returns the vmmd process's Firecracker version + the
@@ -2182,6 +2202,9 @@ type VmmdServer interface {
 	// provider. When transport_peers_managed is true, the peer list is also
 	// reconciled as the authoritative regional VXLAN topology.
 	ReconcilePrivateNetworkFabric(context.Context, *ReconcilePrivateNetworkFabricRequest) (*ReconcilePrivateNetworkFabricAck, error)
+	// Atomically replaces the complete account/region L3 peering policy.
+	// Callers must prepare every listed fabric before publishing app routes.
+	ReconcilePrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error)
 	// RemovePrivateNetworkFabric tears down the node-local bridge and optional
 	// regional VXLAN link for a deleted Gregale-owned network. The operation is
 	// idempotent so durable delete notifications may be replayed safely.
@@ -2649,6 +2672,9 @@ func (UnimplementedVmmdServer) UpdatePrivateNetwork(context.Context, *UpdatePriv
 }
 func (UnimplementedVmmdServer) ReconcilePrivateNetworkFabric(context.Context, *ReconcilePrivateNetworkFabricRequest) (*ReconcilePrivateNetworkFabricAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReconcilePrivateNetworkFabric not implemented")
+}
+func (UnimplementedVmmdServer) ReconcilePrivateNetworkPeerings(context.Context, *ReconcilePrivateNetworkPeeringsRequest) (*ReconcilePrivateNetworkPeeringsAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReconcilePrivateNetworkPeerings not implemented")
 }
 func (UnimplementedVmmdServer) RemovePrivateNetworkFabric(context.Context, *RemovePrivateNetworkFabricRequest) (*RemovePrivateNetworkFabricAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method RemovePrivateNetworkFabric not implemented")
@@ -3858,6 +3884,24 @@ func _Vmmd_ReconcilePrivateNetworkFabric_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_ReconcilePrivateNetworkPeerings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReconcilePrivateNetworkPeeringsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ReconcilePrivateNetworkPeerings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ReconcilePrivateNetworkPeerings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ReconcilePrivateNetworkPeerings(ctx, req.(*ReconcilePrivateNetworkPeeringsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_RemovePrivateNetworkFabric_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RemovePrivateNetworkFabricRequest)
 	if err := dec(in); err != nil {
@@ -4667,6 +4711,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReconcilePrivateNetworkFabric",
 			Handler:    _Vmmd_ReconcilePrivateNetworkFabric_Handler,
+		},
+		{
+			MethodName: "ReconcilePrivateNetworkPeerings",
+			Handler:    _Vmmd_ReconcilePrivateNetworkPeerings_Handler,
 		},
 		{
 			MethodName: "RemovePrivateNetworkFabric",

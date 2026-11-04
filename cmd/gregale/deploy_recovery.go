@@ -119,6 +119,17 @@ func printDeploySubmissionError(title string, err error, slug, key, stage, deplo
 	return printErr(title, &deployRecoveryError{err: err, recovery: recovery})
 }
 
+// deploymentWaitDeadlineError is the error for a wait that reached its
+// --timeout. The API answered and the server continues processing, so it
+// must not read as context.DeadlineExceeded: isTransportError would report
+// a network failure (CLI audit 2026-10-31).
+func deploymentWaitDeadlineError(timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = defaultDeployWaitTimeout
+	}
+	return fmt.Errorf("deployment wait timed out after %s; the server continues processing", timeout)
+}
+
 func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 	p := api.Problem{Status: 400, Code: "invalid_request", Title: title, Detail: e.err.Error()}
 	code := 1
@@ -133,6 +144,10 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 		if code == 2 {
 			p.Status, p.Code, p.Hint = 401, "unauthorized", authenticationHint()
 		}
+	case e.exit == 3 && errors.Is(e.err, context.DeadlineExceeded):
+		// A wait that ran out its deadline stopped waiting; the
+		// deployment_wait_stopped override below names it. Reporting it
+		// as transport_error told the customer to check the network.
 	case isTransportError(e.err):
 		p = transportProblem(e.err)
 		code = 3

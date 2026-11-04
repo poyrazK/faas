@@ -27,6 +27,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -242,8 +244,13 @@ func TestErrorBudgetRemainingPct(t *testing.T) {
 }
 
 func TestAppMetrics_FetchUsesClosedClassPopulation(t *testing.T) {
-	var queries []string
+	var (
+		mu      sync.Mutex
+		queries []string
+	)
 	stub := &stubPromQL{fn: func(query string) (float64, error) {
+		mu.Lock() // Fetch queries concurrently.
+		defer mu.Unlock()
 		queries = append(queries, query)
 		return 1, nil
 	}}
@@ -342,12 +349,12 @@ func TestAppMetrics_Fetch_NaNGuard_Float(t *testing.T) {
 // so every histogram query must turn an idle window into vector(0) before the
 // response reaches Go.
 func TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback(t *testing.T) {
-	var histogramQueries int
+	var histogramQueries atomic.Int32 // Fetch queries concurrently.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
 		value := "0"
 		if strings.Contains(query, "histogram_quantile") {
-			histogramQueries++
+			histogramQueries.Add(1)
 			if !strings.Contains(query, "_count") || !strings.Contains(query, "or vector(0)") {
 				value = "NaN"
 			}
@@ -362,8 +369,8 @@ func TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback(t *testing.T) {
 	if src != appmetrics.SourcePrometheus {
 		t.Fatalf("src = %q, want %q", src, appmetrics.SourcePrometheus)
 	}
-	if histogramQueries != 4 {
-		t.Fatalf("histogram queries = %d, want 4", histogramQueries)
+	if n := histogramQueries.Load(); n != 4 {
+		t.Fatalf("histogram queries = %d, want 4", n)
 	}
 	if resp.LatencyP50MS != 0 || resp.LatencyP95MS != 0 || resp.LatencyP99MS != 0 || resp.WakeP95MS != 0 {
 		t.Fatalf("idle histogram values must be zero: %+v", resp)

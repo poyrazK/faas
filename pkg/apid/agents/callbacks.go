@@ -6,7 +6,8 @@ package agents
 // thread's lane of the endpoint's agent-inbox channel, which the app's
 // realtime trigger delivers as the thread's next slice. The URL's token is
 // the only credential, and it cannot address another thread, endpoint or
-// account. A repeated message_id lands once.
+// account. A repeated message_id lands once. A tool may also post RAP's own
+// callback messages (rap_callback.go).
 
 import (
 	"bytes"
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -31,10 +33,13 @@ type CallbackInbox interface {
 }
 
 // CallbackRevocations records a thread's latest revocation (ADR-20261030125501
-// §3); *agentstore.Store implements it.
+// §3); *agentstore.Store implements it. CallbackClock reads the clock a
+// revocation is recorded on: a token's issue time comes from it, so the two
+// compare on one clock, not apid's against the database's.
 type CallbackRevocations interface {
 	RevokeCallbacks(ctx context.Context, accountID, endpointID, threadID string) (time.Time, error)
 	CallbacksRevokedAt(ctx context.Context, endpointID, threadID string) (time.Time, bool, error)
+	CallbackClock(ctx context.Context) (time.Time, error)
 }
 
 // callbackRequestMaxBytes bounds an issue request; a post is bounded by its
@@ -87,14 +92,28 @@ func (h *Handler) callbackGrant(ctx context.Context, caller CallbackCaller, req 
 	case ttl < 1 || ttl > api.AgentCallbackTokenTTLSec:
 		return CallbackToken{}, api.ErrValidation(fmt.Sprintf("ttl_seconds must be 1-%d; got %d", api.AgentCallbackTokenTTLSec, ttl))
 	}
-	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(ctx, req.EndpointID)
-	if err != nil || !caller.owns(endpoint) {
-		return CallbackToken{}, errRealtimeEndpointNotFound()
+	endpoint, problem := caller.endpoint(ctx, h.Inbox, req.EndpointID)
+	if problem != nil {
+		return CallbackToken{}, problem
 	}
-	// Not truncated: a token issued just after a revocation must compare later.
-	now := h.now().UTC()
+	var issuer CallbackIssuer
+	if caller.Issuer != nil {
+		if issuer, problem = caller.Issuer(endpoint); problem != nil {
+			return CallbackToken{}, problem
+		}
+	}
+	// The revocation clock, not apid's: with apid behind the database a URL
+	// issued after a revocation compared earlier and never worked, and ahead
+	// of it a URL issued before one compared later and outlived it. Not
+	// truncated: a token issued just after a revocation must compare later.
+	now, err := h.Revocations.CallbackClock(ctx)
+	if err != nil {
+		return CallbackToken{}, h.problem(caller.Account, "read callback clock", err)
+	}
+	now = now.UTC()
 	return CallbackToken{AccountID: caller.Account.ID, EndpointID: endpoint.ID, ThreadID: req.ThreadID, Kinds: kinds, IssuedAt: now,
-		ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, nil
+		ExpiresAt: now.Add(time.Duration(ttl) * time.Second), IssuerOrgID: issuer.OrgID, IssuerAccountID: issuer.AccountID,
+		IssuerOrgVersion: issuer.Revision}, nil
 }
 
 // ReceiveCallback handles POST /v1/agent-callbacks/{token}. A token that is
@@ -105,47 +124,125 @@ func (h *Handler) ReceiveCallback(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("agent callbacks are unavailable on this control-plane host"))
 		return
 	}
-	grant, ok := h.callbackGranted(w, r)
+	grant, ok := h.grantFor(w, r, r.PathValue("token"))
 	if !ok {
 		return
 	}
-	var post api.AgentCallbackPost
-	if err := httpkit.DecodeJSONSized(r, &post, api.AgentCallbackPayloadMaxBytes+callbackEnvelopeMaxBytes); err != nil {
-		api.WriteProblem(w, api.ErrValidation("the body must be a JSON callback of at most the payload limit"))
+	post, publish, problem := decodeCallbackPost(r, grant)
+	if problem == nil && !publish {
+		httpkit.WriteJSON(w, http.StatusAccepted, api.AgentCallbackReceipt{ThreadID: grant.ThreadID})
 		return
 	}
-	if problem := checkCallbackPost(grant, post); problem != nil {
-		api.WriteProblem(w, problem)
-		return
+	if problem == nil {
+		problem = checkCallbackPost(grant, post)
 	}
-	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(r.Context(), grant.EndpointID)
-	if err != nil || endpoint.AccountID != grant.AccountID {
-		http.NotFound(w, r)
-		return
+	if problem == nil {
+		problem = h.admit(r.Context(), grant)
 	}
-	if count, ok := h.callbackLimits.allow(grant.EndpointID+"\x00"+grant.ThreadID, h.now()); !ok {
-		api.WriteProblem(w, api.ErrAgentCallbackRateLimited(api.AgentCallbacksPerMinutePerThread, count))
-		return
+	var message state.ManagedRealtimeChannelMessage
+	if problem == nil {
+		message, problem = h.publish(r.Context(), grant, post)
 	}
-	message, err := h.Inbox.AppendManagedRealtimeChannelMetadata(r.Context(), grant.EndpointID, api.AgentInboxChannel, post.Data, false,
-		callbackIdempotencyKey(grant.ThreadID, post.MessageID), callbackMetadata(grant.ThreadID, post))
-	if err != nil {
-		api.WriteProblem(w, h.callbackPublishProblem(grant, err))
+	if problem != nil {
+		writeCallbackProblem(w, r, problem)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusAccepted, api.AgentCallbackReceipt{Sequence: strconv.FormatInt(message.Sequence, 10), ThreadID: grant.ThreadID})
+}
+
+// admit checks that the token's endpoint still belongs to its account and
+// that the thread is under its rate limit.
+func (h *Handler) admit(ctx context.Context, grant CallbackToken) *api.Problem {
+	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(ctx, grant.EndpointID)
+	if err != nil || endpoint.AccountID != grant.AccountID {
+		return errCallbackGone
+	}
+	if problem := h.admitIssuer(ctx, grant, endpoint); problem != nil {
+		return problem
+	}
+	if count, ok := h.callbackLimits.allow(grant.EndpointID+"\x00"+grant.ThreadID, h.now()); !ok {
+		return api.ErrAgentCallbackRateLimited(api.AgentCallbacksPerMinutePerThread, count)
+	}
+	return nil
+}
+
+// CallbackAccess is the state a callback re-checks when it is used: the
+// issuer's organization membership and the app owner's standing.
+// *state.PgStore implements it.
+type CallbackAccess interface {
+	state.AppOwnerReader
+	AppByID(ctx context.Context, id string) (state.App, error)
+	OrgAccessSnapshot(ctx context.Context, orgID, accountID string) (state.OrgAccessSnapshot, error)
+}
+
+// The production store must keep satisfying CallbackAccess: wiring uses a
+// type assertion, and a missing method would skip the checks silently.
+var _ CallbackAccess = (*state.PgStore)(nil)
+
+// admitIssuer re-checks, each time a URL is used, what issuing it required:
+// the issuer's membership in the company app's organization at the version
+// it had then, and an app owner in good standing. Without it a URL kept
+// publishing into a company agent's inbox for its whole lifetime after its
+// issuer was removed or demoted, or the organization was suspended (bug
+// hunt 34). Each refusal answers like an unknown route.
+func (h *Handler) admitIssuer(ctx context.Context, grant CallbackToken, endpoint state.ManagedRealtimeEndpoint) *api.Problem {
+	if h.Access == nil {
+		return nil
+	}
+	if grant.IssuerOrgID != "" {
+		snapshot, err := h.Access.OrgAccessSnapshot(ctx, grant.IssuerOrgID, grant.IssuerAccountID)
+		if errors.Is(err, state.ErrNotFound) || err == nil && snapshot.Revision != grant.IssuerOrgVersion {
+			return errCallbackGone
+		}
+		if err != nil {
+			return h.problem(state.Account{ID: grant.AccountID}, "check callback issuer", err)
+		}
+	}
+	app, err := h.Access.AppByID(ctx, endpoint.AppID)
+	if errors.Is(err, state.ErrNotFound) {
+		return errCallbackGone
+	}
+	if err != nil {
+		return h.problem(state.Account{ID: grant.AccountID}, "load callback app", err)
+	}
+	owner, err := state.AppResourceAccount(ctx, h.Access, app)
+	if err != nil {
+		return h.problem(state.Account{ID: grant.AccountID}, "load callback app owner", err)
+	}
+	if app.Status == state.AppDeleted || !owner.Active() {
+		return errCallbackGone
+	}
+	return nil
+}
+
+// publish puts one message into the thread's lane of the inbox.
+func (h *Handler) publish(ctx context.Context, grant CallbackToken, post api.AgentCallbackPost) (state.ManagedRealtimeChannelMessage, *api.Problem) {
+	message, err := h.Inbox.AppendManagedRealtimeChannelMetadata(ctx, grant.EndpointID, api.AgentInboxChannel, post.Data, false,
+		callbackIdempotencyKey(grant.ThreadID, post.MessageID), callbackMetadata(grant.ThreadID, post))
+	if err != nil {
+		return message, h.callbackPublishProblem(grant, err)
+	}
+	return message, nil
+}
+
+func writeCallbackProblem(w http.ResponseWriter, r *http.Request, problem *api.Problem) {
+	if problem == errCallbackGone {
+		http.NotFound(w, r)
+		return
+	}
+	api.WriteProblem(w, problem)
 }
 
 func (h *Handler) callbacksConfigured() bool {
 	return h.Callbacks != nil && h.Inbox != nil && h.Revocations != nil
 }
 
-// callbackGranted verifies the post's token at the moment the tool posts:
-// its signature and expiry, the account's agents capability, and that its
+// grantFor verifies a callback token at the moment it is used: its
+// signature and expiry, the account's agents capability, and that its
 // thread was not revoked after the token was issued. Each failure answers
 // like an unknown route.
-func (h *Handler) callbackGranted(w http.ResponseWriter, r *http.Request) (CallbackToken, bool) {
-	grant, err := h.Callbacks.Verify(r.PathValue("token"), h.now())
+func (h *Handler) grantFor(w http.ResponseWriter, r *http.Request, token string) (CallbackToken, bool) {
+	grant, err := h.Callbacks.Verify(token, h.now())
 	if err != nil || h.AgentsEnabled == nil || !h.AgentsEnabled(r.Context(), grant.AccountID) {
 		http.NotFound(w, r)
 		return CallbackToken{}, false
@@ -163,8 +260,9 @@ func (h *Handler) callbackGranted(w http.ResponseWriter, r *http.Request) (Callb
 }
 
 // RevokeCallbacks handles POST /v1/agent-callbacks/revocations: every
-// callback URL issued for the thread until now stops working. A URL issued
-// later works, so a thread can reopen.
+// callback URL issued for the thread until now stops working, and the
+// thread's pending sleeps are cancelled (tools.go). A URL issued later
+// works, so a thread can reopen.
 func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, caller CallbackCaller) {
 	if !h.callbacksConfigured() {
 		api.WriteProblem(w, api.ErrCapacity("agent callbacks are unavailable on this control-plane host"))
@@ -175,12 +273,15 @@ func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, caller
 		api.WriteProblem(w, api.ErrValidation("the body must name an endpoint_id and a valid thread_id"))
 		return
 	}
-	endpoint, err := h.Inbox.ManagedRealtimeEndpointByID(r.Context(), req.EndpointID)
-	if err != nil || !caller.owns(endpoint) {
-		api.WriteProblem(w, errRealtimeEndpointNotFound())
+	endpoint, problem := caller.endpoint(r.Context(), h.Inbox, req.EndpointID)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	at, err := h.Revocations.RevokeCallbacks(r.Context(), caller.Account.ID, endpoint.ID, req.ThreadID)
+	if err == nil {
+		err = h.cancelSleeps(r.Context(), endpoint.ID, req.ThreadID)
+	}
 	if err != nil {
 		api.WriteProblem(w, h.problem(caller.Account, "revoke callbacks", err))
 		return
@@ -205,9 +306,13 @@ func checkCallbackPost(grant CallbackToken, post api.AgentCallbackPost) *api.Pro
 }
 
 // callbackIdempotencyKey makes a repeated post of one message land once in
-// the thread; the realtime limit on keys is 128 bytes.
+// the thread; the realtime limit on keys is 128 bytes. Both IDs may carry
+// ':', so the thread's ':' become '~', which no ID carries: the first ':'
+// after the prefix then ends the thread, and thread "a:b" with message "c"
+// never shares a key with thread "a" and message "b:c". A thread without
+// ':' keeps the key it always had, so a retry across the upgrade lands once.
 func callbackIdempotencyKey(threadID, messageID string) string {
-	return "callback:" + threadID + ":" + messageID
+	return "callback:" + strings.ReplaceAll(threadID, ":", "~") + ":" + messageID
 }
 
 // callbackMetadata is the inbox message's metadata: the thread, which the

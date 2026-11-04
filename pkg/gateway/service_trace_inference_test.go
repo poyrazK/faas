@@ -37,12 +37,12 @@ func TestWithInferredCallerTrace(t *testing.T) {
 			asked := false
 			p := &ServiceProxy{}
 			if !tc.nilInfer {
-				p.inferCallerTrace = func(_ context.Context, remoteAddr string) string {
+				p.inferCallerRequest = func(_ context.Context, remoteAddr string) InferredCallerRequest {
 					asked = true
 					if remoteAddr != "10.100.0.7:41000" {
 						t.Fatalf("remoteAddr = %q", remoteAddr)
 					}
-					return tc.inferred
+					return InferredCallerRequest{Traceparent: tc.inferred}
 				}
 			}
 			req := httptest.NewRequest("GET", "/v1/internal/services/worker/", nil)
@@ -51,7 +51,7 @@ func TestWithInferredCallerTrace(t *testing.T) {
 			if tc.sent != "" {
 				req.Header.Set("Traceparent", tc.sent)
 			}
-			got := p.withInferredCallerTrace(req)
+			got, _ := p.withInferredCaller(req)
 			wantHeader := tc.wantHeader
 			if wantHeader == "" {
 				wantHeader = tc.sent
@@ -82,8 +82,10 @@ func TestServiceCallJoinsInferredTrace(t *testing.T) {
 		Authorize: func(context.Context, string, string) (ServiceCaller, error) {
 			return ServiceCaller{AppID: "caller", AccountID: accountID}, nil
 		},
-		InferCallerTrace: func(context.Context, string) string { return inferredTraceparent },
-		ObserveRequest:   handler.RecordServiceRequest,
+		InferCallerRequest: func(context.Context, string) InferredCallerRequest {
+			return InferredCallerRequest{Traceparent: inferredTraceparent}
+		},
+		ObserveRequest: handler.RecordServiceRequest,
 		Forward: func(Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				forwarded = append(forwarded, r.Header.Get("Traceparent"))

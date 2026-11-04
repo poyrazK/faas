@@ -11,12 +11,12 @@
 # firecracker / prometheus roles). FAAS_GEOIP_AUTO_REFRESH stays 0 in code
 # so the daemon never fetches on its own: refresh = re-run bootstrap.
 faas_geoip_enabled: true
-faas_geoip_release: "2026-09"
+faas_geoip_release: "2026-11"
 faas_geoip_url: "https://download.db-ip.com/free/dbip-country-lite-{{ faas_geoip_release }}.mmdb.gz"
 # sha256 of the .mmdb.gz as downloaded
-faas_geoip_gz_sha256: "cb0578ce59f569f2c933bb40feb820804a334855a60739011b0a89cab1d6e4ed"
+faas_geoip_gz_sha256: "75fe430010f6d38a8c4331c202bf0df6ce3221a6e6d823b9e5a6d951e4cf9758"
 # sha256 of the decompressed .mmdb (what the daemon opens)
-faas_geoip_sha256: "d284ae2e7427fe33d83465e1506b2b21aae47eb8a9b099f8f4dac6a98c99f041"
+faas_geoip_sha256: "145ce5dfb812d8de28547e6289bb5c5f8b3df2f1dea21d324d5b575e0431311f"
 # Must equal the cmd/gatewayd-internal default for FAAS_GEOIP_DB_PATH.
 faas_geoip_dir: /var/lib/faas/geoip
 faas_geoip_db_path: "{{ faas_geoip_dir }}/dbip-country-lite.mmdb"
@@ -25,8 +25,8 @@ faas_geoip_db_path: "{{ faas_geoip_dir }}/dbip-country-lite.mmdb"
 # the edge-rule `asn` match field. Must equal the cmd/gatewayd-internal
 # default for FAAS_GEOIP_ASN_DB_PATH.
 faas_geoip_asn_enabled: true
-faas_geoip_asn_release: "2026-09"
+faas_geoip_asn_release: "2026-11"
 faas_geoip_asn_url: "https://download.db-ip.com/free/dbip-asn-lite-{{ faas_geoip_asn_release }}.mmdb.gz"
-faas_geoip_asn_gz_sha256: "25f5c2e9b98d1a479567e654927c6b34867aaadc96a01ee25d5790c478685ab5"
-faas_geoip_asn_sha256: "ab07c764a10c4f8c2f3539377fa86e5c928243084aafd359d1be4cb8543d7406"
+faas_geoip_asn_gz_sha256: "36a8c45136877d8df48ad371de6c9c97c861dedd356277f30de730c16fc0f928"
+faas_geoip_asn_sha256: "81565a450281c949fc83745f5ec9cfea70b035163b1152b055645884765d153d"
 faas_geoip_asn_db_path: "{{ faas_geoip_dir }}/dbip-asn-lite.mmdb"

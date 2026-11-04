@@ -287,15 +287,15 @@ func TestRequestTelemetryReceiverRecordsDurableConsumerUsageBeforeTelemetryGate(
 		ConsumerId: consumerID, Count: 2, EventId: eventID,
 	}
 	first := r.HandleOne(context.Background(), req)
-	if first.GetOutcome() != rtOutcomeRateLimited {
-		t.Fatalf("first outcome = %q, want %q for Free debug telemetry", first.GetOutcome(), rtOutcomeRateLimited)
+	if first.GetOutcome() != rtOutcomeNotRetained {
+		t.Fatalf("first outcome = %q, want %q for Free debug telemetry", first.GetOutcome(), rtOutcomeNotRetained)
 	}
 	if len(store.usage) != 1 || store.usage[0].RequestCount != 2 || store.usage[0].ErrorCount != 2 || store.usage[0].ConsumerKey != consumerID {
 		t.Fatalf("usage = %#v, want one consumer event with 2 requests and 2 errors", store.usage)
 	}
 	second := r.HandleOne(context.Background(), req)
-	if second.GetOutcome() != rtOutcomeRateLimited || len(store.usage) != 1 {
-		t.Fatalf("retry outcome/usage = %q/%d, want rate_limited/1", second.GetOutcome(), len(store.usage))
+	if second.GetOutcome() != rtOutcomeNotRetained || len(store.usage) != 1 {
+		t.Fatalf("retry outcome/usage = %q/%d, want not_retained/1", second.GetOutcome(), len(store.usage))
 	}
 }
 
@@ -309,8 +309,8 @@ func TestRequestTelemetryReceiverPreservesPlatformTenantSnapshot(t *testing.T) {
 		RouteTemplate: "GET /", Method: "GET", HttpStatus: 200,
 		LatencyMs: 1, ReceivedAtUnixMs: time.Now().UnixMilli(),
 	}
-	if got := r.HandleOne(context.Background(), req).GetOutcome(); got != rtOutcomeRateLimited {
-		t.Fatalf("outcome = %q, want rate_limited after durable usage", got)
+	if got := r.HandleOne(context.Background(), req).GetOutcome(); got != rtOutcomeNotRetained {
+		t.Fatalf("outcome = %q, want not_retained after durable usage", got)
 	}
 	if len(store.usage) != 1 || store.usage[0].PlatformTenantID != tenantID {
 		t.Fatalf("usage lost immutable tenant snapshot: %+v", store.usage)

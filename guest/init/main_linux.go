@@ -372,7 +372,11 @@ func boot() error {
 	if err != nil {
 		return err
 	}
-	if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
+	if manifest.EffectivePort() == api.ProfileBridgePort() {
+		// The bridge would take the app's own port; an older imaged may
+		// still have stamped collectors for it (ADR-1155).
+		slog.Default().Warn("profile bridge skipped: the app listens on its port", "port", manifest.EffectivePort())
+	} else if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
 		slog.Default().Warn("profile bridge unavailable", "err", err)
 	}
 	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
@@ -619,7 +623,10 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
-	env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	if m.EffectivePort() != api.ProfileBridgePort() {
+		// Collectors would poll the app's own port where the bridge belongs.
+		env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
+	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
@@ -779,14 +786,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 		sup.markHealthy()
 	}
-	// ADR-1155: report memory pressure so the control plane can capture the
-	// heap before an OOM kill. Only deployments with on-demand profiling
-	// have collectors to capture from.
-	if m.ProfilingOnDemand {
-		pressureCtx, pressureCancel := context.WithCancel(context.Background())
-		go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
-		defer pressureCancel()
-	}
+	// Report memory pressure on every app so app health can warn before an
+	// OOM kill (ADR-20261102124306); a report made while a profile collector
+	// is active also lets the control plane capture the heap (ADR-1155).
+	pressureCtx, pressureCancel := context.WithCancel(context.Background())
+	go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
+	defer pressureCancel()
 	// ADR-1155: a Go application serving net/http/pprof is profiled through
 	// that endpoint, labelled with this run's process, when the deployment
 	// names its port and the profile bridge is running.
@@ -1443,6 +1448,11 @@ func runBuildOnce(m api.BuildManifest) error {
 		err = context.DeadlineExceeded
 	}
 	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
+	// A failure to reach the registry for a platform-owned image is the
+	// platform's, not the customer's (H105).
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && platformPullFailure(buf.Bytes(), m.RuntimeBaseRef) {
+		err = builderNetworkError{fmt.Errorf("pull platform image: %w", err)}
+	}
 	// A deferred stop runs after writeAndPoweroff, which never returns on a
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
@@ -2046,8 +2056,9 @@ func buildArgv(m api.BuildManifest) []string {
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
 
-// buildkitSnapshotter returns BuildKit's worker snapshotter. fuse-overlayfs
-// is the default. With BuildKitSnapshotterAuto (ADR-20261029105325) rootless
+// buildkitSnapshotter returns BuildKit's worker snapshotter: fuse-overlayfs
+// when the manifest names none. With BuildKitSnapshotterAuto, which builderd
+// sends by default (ADR-20261029105325), rootless
 // BuildKit prefers kernel overlayfs, whose layer diffs read only the overlay
 // upper directory, and falls back to fuse-overlayfs, then native, when the
 // kernel refuses an unprivileged overlay mount. A FUSE snapshotter sends every

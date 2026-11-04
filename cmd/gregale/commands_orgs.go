@@ -53,7 +53,7 @@ var orgSlugRe = regexp.MustCompile(api.OrgSlugPattern)
 func cmdOrgs(args []string) int {
 	parent, _ := lookupCliCommand("orgs")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|transfer-ownership|seat-usage> [args]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs <list|create|info|activity|update|rm|members|invitations|keys|agent-policy|transfer-ownership|seat-usage> [args]", "orgs")
 		return 1
 	}
 	switch args[0] {
@@ -82,6 +82,8 @@ func cmdOrgs(args []string) int {
 		// leaf to --org <slug>; the org-scoped route is the
 		// canonical one post-ADR-061.
 		return cmdOrgsKeys(args[1:])
+	case "agent-policy":
+		return cmdOrgsAgentPolicy(args[1:])
 	case "transfer-ownership":
 		return cmdOrgsTransferOwnership(args[1:])
 	case "seat-usage":
@@ -117,7 +119,7 @@ func cmdOrgsMembers(args []string) int {
 	case subRm:
 		return cmdOrgsMembersRm(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale org members: unknown subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "gregale org members: unknown subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -143,7 +145,7 @@ func cmdOrgsInvitations(args []string) int {
 	case "revoke":
 		return cmdOrgsInvitationsRevoke(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale org invitation: unknown subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "gregale org invitation: unknown subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -352,29 +354,26 @@ func activityDisplayTime(raw string) string {
 	return at.Local().Format("2006-01-02 15:04")
 }
 
+// cmdOrgsRm takes its flags before or after the slug: `org delete acme -q`
+// was a usage error although help shows `org delete <slug> [flags]` (CLI
+// audit 2026-10-31). --yes and --quiet are the shared spellings of -q.
 func cmdOrgsRm(args []string) int {
 	fs := newFlagSet("orgs rm", flag.ContinueOnError)
-	quiet := fs.Bool("q", false, "suppress confirmation prompt")
-	if err := fs.Parse(args); err != nil {
+	quiet := fs.Bool("yes", false, "delete without the confirmation prompt")
+	fs.BoolVar(quiet, "q", false, "alias of --yes")
+	fs.BoolVar(quiet, "quiet", false, "alias of --yes")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale org delete <slug> [-q]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org delete <slug> [--yes]", "orgs")
 		return 1
 	}
 	slug := fs.Arg(0)
-	if code := requireAutomationConfirmation(*quiet, "-q"); code != 0 {
-		return code
-	}
 	if !*quiet {
-		fmt.Fprintf(os.Stderr,
-			"This will soft-delete the org %q (apps + members retained; restore via dashboard).\n"+
-				"Continue? [y/N] ", slug)
-		var ans string
-		_, _ = fmt.Scanln(&ans)
-		if ans != "y" {
-			fmt.Println("aborted")
-			return 1
+		question := fmt.Sprintf("This will soft-delete the org %q (apps + members retained; restore via dashboard). Continue?", slug)
+		if code := confirmYesNo(question, "--yes", "org delete"); code != 0 {
+			return code
 		}
 	}
 	client, err := authedClient()
@@ -757,7 +756,7 @@ func cmdOrgsKeys(args []string) int {
 	case "rotate":
 		return cmdOrgsKeysRotate(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale org keys: unknown subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "gregale org keys: unknown subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -811,14 +810,16 @@ func cmdOrgsKeysAdd(args []string) int {
 	slug := fs.String("org", "", "org slug (required)")
 	label := fs.String("label", "", "key label (required)")
 	scopesCSV := fs.String("scopes", "", "comma-separated scopes (default: [admin])")
+	projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	if *slug == "" || *label == "" {
-		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...]", "orgs")
+	projects := splitList(*projectsCSV)
+	if *slug == "" || *label == "" || flagWasSet(fs, "projects") && len(projects) == 0 {
+		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...] [--projects slug,...]", "orgs")
 		return 1
 	}
 	var scopes []string
@@ -834,7 +835,7 @@ func cmdOrgsKeysAdd(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	k, err := client.CreateOrgAPIKey(context.Background(), *slug, *label, scopes)
+	k, err := client.CreateOrgAPIKey(context.Background(), *slug, *label, scopes, projects...)
 	if err != nil {
 		return printErr("Could not create org API key", err)
 	}

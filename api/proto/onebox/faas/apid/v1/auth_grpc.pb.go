@@ -39,6 +39,7 @@ const (
 	Auth_AuthenticateKey_FullMethodName        = "/onebox.faas.apid.v1.Auth/AuthenticateKey"
 	Auth_AuthenticateCredential_FullMethodName = "/onebox.faas.apid.v1.Auth/AuthenticateCredential"
 	Auth_MatchCredential_FullMethodName        = "/onebox.faas.apid.v1.Auth/MatchCredential"
+	Auth_VerifySession_FullMethodName          = "/onebox.faas.apid.v1.Auth/VerifySession"
 )
 
 // AuthClient is the client API for Auth service.
@@ -61,6 +62,12 @@ type AuthClient interface {
 	// gRPC codes:
 	//   - InvalidArgument when token is empty
 	//   - Unauthenticated when no api_keys row matches the hash
+	//   - PermissionDenied when the key cannot write traces: none of
+	//     admin, deploy:write or metrics:write, or a key bound to a
+	//     company whose holder may no longer deploy there
+	//   - NotFound when the tracing capability is not released to the
+	//     key's account (ADR-20261023115741); the endpoint answers as a
+	//     route that does not exist
 	//   - Internal on Postgres errors
 	AuthenticateKey(ctx context.Context, in *AuthenticateKeyRequest, opts ...grpc.CallOption) (*AuthenticateKeyResponse, error)
 	// AuthenticateCredential resolves a bearer credential for a gateway
@@ -78,6 +85,13 @@ type AuthClient interface {
 	// digest. Only columns gateways check are accepted (InvalidArgument
 	// otherwise).
 	MatchCredential(ctx context.Context, in *MatchCredentialRequest, opts ...grpc.CallOption) (*MatchCredentialResponse, error)
+	// VerifySession opens a dashboard session cookie for a gateway that must
+	// not hold the session key: a process that can open a cookie can also
+	// seal one (ADR-20261102191500). apid answers with the envelope it sealed,
+	// or valid=false for a cookie that is malformed, forged or expired. The
+	// caller still checks the session row itself. Errors are InvalidArgument
+	// (empty cookie) and Unavailable (apid has no session manager).
+	VerifySession(ctx context.Context, in *VerifySessionRequest, opts ...grpc.CallOption) (*VerifySessionResponse, error)
 }
 
 type authClient struct {
@@ -118,6 +132,16 @@ func (c *authClient) MatchCredential(ctx context.Context, in *MatchCredentialReq
 	return out, nil
 }
 
+func (c *authClient) VerifySession(ctx context.Context, in *VerifySessionRequest, opts ...grpc.CallOption) (*VerifySessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VerifySessionResponse)
+	err := c.cc.Invoke(ctx, Auth_VerifySession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AuthServer is the server API for Auth service.
 // All implementations must embed UnimplementedAuthServer
 // for forward compatibility.
@@ -138,6 +162,12 @@ type AuthServer interface {
 	// gRPC codes:
 	//   - InvalidArgument when token is empty
 	//   - Unauthenticated when no api_keys row matches the hash
+	//   - PermissionDenied when the key cannot write traces: none of
+	//     admin, deploy:write or metrics:write, or a key bound to a
+	//     company whose holder may no longer deploy there
+	//   - NotFound when the tracing capability is not released to the
+	//     key's account (ADR-20261023115741); the endpoint answers as a
+	//     route that does not exist
 	//   - Internal on Postgres errors
 	AuthenticateKey(context.Context, *AuthenticateKeyRequest) (*AuthenticateKeyResponse, error)
 	// AuthenticateCredential resolves a bearer credential for a gateway
@@ -155,6 +185,13 @@ type AuthServer interface {
 	// digest. Only columns gateways check are accepted (InvalidArgument
 	// otherwise).
 	MatchCredential(context.Context, *MatchCredentialRequest) (*MatchCredentialResponse, error)
+	// VerifySession opens a dashboard session cookie for a gateway that must
+	// not hold the session key: a process that can open a cookie can also
+	// seal one (ADR-20261102191500). apid answers with the envelope it sealed,
+	// or valid=false for a cookie that is malformed, forged or expired. The
+	// caller still checks the session row itself. Errors are InvalidArgument
+	// (empty cookie) and Unavailable (apid has no session manager).
+	VerifySession(context.Context, *VerifySessionRequest) (*VerifySessionResponse, error)
 	mustEmbedUnimplementedAuthServer()
 }
 
@@ -173,6 +210,9 @@ func (UnimplementedAuthServer) AuthenticateCredential(context.Context, *Authenti
 }
 func (UnimplementedAuthServer) MatchCredential(context.Context, *MatchCredentialRequest) (*MatchCredentialResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MatchCredential not implemented")
+}
+func (UnimplementedAuthServer) VerifySession(context.Context, *VerifySessionRequest) (*VerifySessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifySession not implemented")
 }
 func (UnimplementedAuthServer) mustEmbedUnimplementedAuthServer() {}
 func (UnimplementedAuthServer) testEmbeddedByValue()              {}
@@ -249,6 +289,24 @@ func _Auth_MatchCredential_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Auth_VerifySession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifySessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).VerifySession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_VerifySession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).VerifySession(ctx, req.(*VerifySessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Auth_ServiceDesc is the grpc.ServiceDesc for Auth service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -267,6 +325,10 @@ var Auth_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MatchCredential",
 			Handler:    _Auth_MatchCredential_Handler,
+		},
+		{
+			MethodName: "VerifySession",
+			Handler:    _Auth_VerifySession_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

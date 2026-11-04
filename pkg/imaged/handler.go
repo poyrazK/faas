@@ -579,10 +579,13 @@ func (h *Handler) WithProfileCapturesRelease(released func(platformflags.Subject
 func (h *Handler) stampProfiling(manifest api.AppManifest, app state.App, acct state.Account) api.AppManifest {
 	limits, ok := api.LimitsFor(acct.Plan)
 	released := h.profileCapturesReleased == nil || h.profileCapturesReleased(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: app.OrgID})
-	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled && released
-	if manifest.Profiling != nil && (manifest.Profiling.Enabled && !h.continuousProfiling || manifest.Profiling.AutomaticCaptures != nil) {
+	// guest-init's profile bridge binds its port before the app starts: an
+	// app listening there keeps its port and runs without collectors.
+	bridgeFree := manifest.EffectivePort() != api.ProfileBridgePort()
+	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled && released && bridgeFree
+	if manifest.Profiling != nil && (manifest.Profiling.Enabled && (!h.continuousProfiling || !bridgeFree) || manifest.Profiling.AutomaticCaptures != nil) {
 		cfg := *manifest.Profiling
-		cfg.Enabled = cfg.Enabled && h.continuousProfiling
+		cfg.Enabled = cfg.Enabled && h.continuousProfiling && bridgeFree
 		// Automatic captures are the control plane's decision; the guest
 		// manifest stays what guests of every release understand.
 		cfg.AutomaticCaptures = nil
@@ -2121,6 +2124,11 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 	if len(dep.ReleaseCommand) > 0 {
 		if !h.releasePhaseEnabled {
 			return h.failReleasePhaseUnavailable(ctx, dep)
+		}
+		// ADR-20261020085706 amendment 12: a release its app's approvals
+		// gate runs its release command only once approved.
+		if held, err := h.holdReleaseCommandForApproval(ctx, app, dep); err != nil || held {
+			return err
 		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
 		if errors.Is(err, errReleaseDeploymentClosed) {

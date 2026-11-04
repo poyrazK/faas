@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -28,7 +28,7 @@ var (
 	ErrOperationWebhookBindingChanged = errors.New("state: operation webhook binding changed during admission")
 )
 
-var operationWebhookName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+var operationWebhookName = lazyregexp.New(`^[a-z][a-z0-9-]{0,63}$`)
 
 // OperationWebhookBinding routes one inbound webhook endpoint to a customer
 // operation. The owner is fixed here, never derived from provider payload.

@@ -186,7 +186,7 @@ func financialBudgetFromRow(row sqlc.FinancialBudgetPolicy) (FinancialBudget, er
 	if err := json.Unmarshal(row.Spec, &out.Spec); err != nil {
 		return out, fmt.Errorf("financial budget decode: %w", err)
 	}
-	if err := ValidateFinancialBudgetSpec(out.Spec); err != nil {
+	if err := validateStoredFinancialBudgetSpec(out.Spec); err != nil {
 		return out, fmt.Errorf("financial budget contract: %w", err)
 	}
 	if row.DeletedAt.Valid {
@@ -239,6 +239,18 @@ func (s *PgStore) ListFinancialBudgets(ctx context.Context, account string) ([]F
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (s *PgStore) ListFinancialBudgetMonitoredSubjects(ctx context.Context) ([]string, error) {
+	rows, err := sqlc.New().FinancialBudgetMonitoredSubjects(ctx, s.pool)
+	if err != nil {
+		return nil, fmt.Errorf("financial budget subjects: %w", err)
+	}
+	out := make([]string, 0, len(rows))
+	for _, id := range rows {
+		out = append(out, pgUUIDString(id))
 	}
 	return out, nil
 }

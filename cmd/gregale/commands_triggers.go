@@ -170,6 +170,11 @@ func triggerStateValid(state string) bool {
 }
 
 func triggerUsageError(usage string, format string, args ...any) int {
+	if jsonOutput {
+		// One Problem, not a prose line followed by one (CLI audit 2026-10-31).
+		PrintUsage(os.Stderr, usage+"\n"+fmt.Sprintf(format, args...), "triggers")
+		return 1
+	}
 	PrintFail(os.Stderr, format, args...)
 	PrintUsage(os.Stderr, usage, "triggers")
 	return 1
@@ -269,7 +274,7 @@ func cmdTriggersCreate(args []string) int {
 	enabled := fs.Bool("enabled", false, "enable the trigger")
 	disabled := fs.Bool("disabled", false, "disable the trigger")
 	batchSize := fs.Int("batch-size", 0, "maximum records per dispatch batch")
-	batchWindow := fs.Int("batch-window-ms", 0, "maximum batch dwell time in milliseconds")
+	batchWindow := fs.Int("batch-window-ms", 0, "accepted but not applied: a batch is what one poll returns")
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
 	payloadMaxBytes := fs.Int("payload-max-bytes", 0, "maximum broker payload size in bytes")
 	poisonStrategy := fs.String("broker-poison-strategy", "", "kafka poison strategy (commit|seek-to-offset)")
@@ -376,7 +381,7 @@ func cmdTriggersUpdate(args []string) int {
 	disabled := fs.Bool("disabled", false, "disable the trigger")
 	config := fs.String("config", "", "replace JSON config (inline | @file | - for stdin)")
 	batchSize := fs.Int("batch-size", 0, "maximum records per dispatch batch")
-	batchWindow := fs.Int("batch-window-ms", 0, "maximum batch dwell time in milliseconds")
+	batchWindow := fs.Int("batch-window-ms", 0, "accepted but not applied: a batch is what one poll returns")
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
 	payloadMaxBytes := fs.Int("payload-max-bytes", 0, "maximum broker payload size in bytes")
 	poisonStrategy := fs.String("broker-poison-strategy", "", "kafka poison strategy (commit|seek-to-offset)")
@@ -444,7 +449,7 @@ func cmdTriggersUpdate(args []string) int {
 }
 
 func cmdTriggersDelete(args []string) int {
-	usage := "usage: gregale trigger delete <id> [--quiet]"
+	usage := "usage: gregale trigger delete <id> [--yes]"
 	fs := triggerFlagSet("triggers-delete", usage)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
@@ -455,7 +460,7 @@ func cmdTriggersDelete(args []string) int {
 	if len(pos) != 1 {
 		return triggerUsageError(usage, "expected one trigger ID")
 	}
-	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+	if code := requireConfirmationFlag(*quiet, "--yes", "trigger deletion"); code != 0 {
 		return code
 	}
 	if !*quiet {
@@ -648,6 +653,15 @@ func cmdTriggersMetrics(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "succeeded:  %d\n", metrics.SucceededCount)
 	_, _ = fmt.Fprintf(osStdout, "retry:      %d\n", metrics.RetryCount)
 	_, _ = fmt.Fprintf(osStdout, "dead-letter: %d\n", metrics.DeadLetterCount)
+	if c := metrics.Consumer; c != nil {
+		_, _ = fmt.Fprintf(osStdout, "consumer:   %s\n", c.Liveness)
+		if c.LagMessages != nil {
+			_, _ = fmt.Fprintf(osStdout, "lag:        %d messages\n", *c.LagMessages)
+		}
+		if c.LastError != "" && c.Liveness == "degraded" {
+			_, _ = fmt.Fprintf(osStdout, "last error: %s\n", oneLine(c.LastError))
+		}
+	}
 	return 0
 }
 

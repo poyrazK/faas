@@ -141,8 +141,15 @@ type Unit struct {
 	PrivateDevices          bool
 	ProtectKernelTunables   bool
 	ProtectKernelModules    bool
+	ProtectKernelLogs       bool
 	ProtectControlGroups    bool
 	SystemCallArchitectures string // "native" for the two gatewayd-internal daemons
+	// SystemCallFilter is rendered one directive per entry, in order: an
+	// allow list first, then "~" deny lists, which systemd applies in turn.
+	SystemCallFilter []string
+	// SystemCallErrorNumber makes a filtered call fail with this errno
+	// (e.g. "EPERM") instead of killing the process. Empty omits it.
+	SystemCallErrorNumber   string
 	LockPersonality         bool
 	RestrictNamespaces      bool
 	RestrictRealtime        bool
@@ -180,8 +187,9 @@ func BoolPtr(b bool) *bool { return &b }
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
-// ProtectKernelTunables → ProtectKernelModules → ProtectControlGroups →\n →
-// SystemCallArchitectures → LockPersonality → RestrictNamespaces →\n →
+// ProtectKernelTunables → ProtectKernelModules → ProtectKernelLogs →
+// ProtectControlGroups →\n → SystemCallArchitectures → SystemCallFilter
+// entries → SystemCallErrorNumber → LockPersonality → RestrictNamespaces →\n →
 // RestrictRealtime → RestrictSUIDSGID → RestrictAddressFamilies →\n →
 // ProtectHostname → ProtectClock → ProtectProc →\n → ReadOnlyPaths →\n →
 // ReadWritePaths →\n → RuntimeDirectory → RuntimeDirectoryMode →
@@ -311,12 +319,25 @@ func (u Unit) Render() []byte {
 	if u.ProtectKernelModules {
 		buf.WriteString("ProtectKernelModules=yes\n")
 	}
+	if u.ProtectKernelLogs {
+		buf.WriteString("ProtectKernelLogs=yes\n")
+	}
 	if u.ProtectControlGroups {
 		buf.WriteString("ProtectControlGroups=yes\n")
 	}
 	if u.SystemCallArchitectures != "" {
 		buf.WriteString("SystemCallArchitectures=")
 		buf.WriteString(u.SystemCallArchitectures)
+		buf.WriteByte('\n')
+	}
+	for _, filter := range u.SystemCallFilter {
+		buf.WriteString("SystemCallFilter=")
+		buf.WriteString(filter)
+		buf.WriteByte('\n')
+	}
+	if u.SystemCallErrorNumber != "" {
+		buf.WriteString("SystemCallErrorNumber=")
+		buf.WriteString(u.SystemCallErrorNumber)
 		buf.WriteByte('\n')
 	}
 	if u.LockPersonality {
@@ -599,10 +620,16 @@ func apply(u *Unit, section, key, val string) error {
 		u.ProtectKernelTunables = parseYes(val)
 	case "[Service]/ProtectKernelModules":
 		u.ProtectKernelModules = parseYes(val)
+	case "[Service]/ProtectKernelLogs":
+		u.ProtectKernelLogs = parseYes(val)
 	case "[Service]/ProtectControlGroups":
 		u.ProtectControlGroups = parseYes(val)
 	case "[Service]/SystemCallArchitectures":
 		u.SystemCallArchitectures = val
+	case "[Service]/SystemCallFilter":
+		u.SystemCallFilter = append(u.SystemCallFilter, val)
+	case "[Service]/SystemCallErrorNumber":
+		u.SystemCallErrorNumber = val
 	case "[Service]/LockPersonality":
 		u.LockPersonality = parseYes(val)
 	case "[Service]/RestrictNamespaces":
@@ -756,8 +783,12 @@ func Diff(a, b Unit) []string {
 	add("[Service]", "PrivateDevices", boolStr(a.PrivateDevices), boolStr(b.PrivateDevices))
 	add("[Service]", "ProtectKernelTunables", boolStr(a.ProtectKernelTunables), boolStr(b.ProtectKernelTunables))
 	add("[Service]", "ProtectKernelModules", boolStr(a.ProtectKernelModules), boolStr(b.ProtectKernelModules))
+	add("[Service]", "ProtectKernelLogs", boolStr(a.ProtectKernelLogs), boolStr(b.ProtectKernelLogs))
 	add("[Service]", "ProtectControlGroups", boolStr(a.ProtectControlGroups), boolStr(b.ProtectControlGroups))
 	add("[Service]", "SystemCallArchitectures", a.SystemCallArchitectures, b.SystemCallArchitectures)
+	// Order matters: systemd applies the entries in turn.
+	add("[Service]", "SystemCallFilter", strings.Join(a.SystemCallFilter, " | "), strings.Join(b.SystemCallFilter, " | "))
+	add("[Service]", "SystemCallErrorNumber", a.SystemCallErrorNumber, b.SystemCallErrorNumber)
 	add("[Service]", "LockPersonality", boolStr(a.LockPersonality), boolStr(b.LockPersonality))
 	add("[Service]", "RestrictNamespaces", boolStr(a.RestrictNamespaces), boolStr(b.RestrictNamespaces))
 	add("[Service]", "RestrictRealtime", boolStr(a.RestrictRealtime), boolStr(b.RestrictRealtime))
