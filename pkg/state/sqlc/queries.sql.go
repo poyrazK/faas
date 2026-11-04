@@ -18233,7 +18233,7 @@ SELECT NOT EXISTS (
     JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
       AND sibling.status = 'live' AND sibling.id <> route.deployment_id
     WHERE route.graph_id = $1::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
-) AND public.environment_workload_serving_ready($1::uuid) AS serving_weights_match
+) AND environment_workload_serving_ready($1::uuid) AS serving_weights_match
 `
 
 func (q *Queries) EnvironmentWorkloadServingWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error) {
@@ -29891,6 +29891,9 @@ SELECT EXISTS (
     SELECT 1 FROM deployments
     WHERE app_id = $1::uuid AND scope = $2::text
       AND revision > $3::bigint
+      -- A newer revision that failed or was cancelled ships nothing, so it
+      -- does not outpace an older release (ADR-20261020085706 amendment 14).
+      AND status NOT IN ('failed', 'cancelled')
 )
 `
 

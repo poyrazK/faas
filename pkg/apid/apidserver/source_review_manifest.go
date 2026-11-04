@@ -48,9 +48,9 @@ func (s *server) reviewedSourceDeclarations(ctx context.Context, acct state.Acco
 	return workflows, specs, nil
 }
 
-func reviewedSourceReleaseCommand(path string, app state.App, manifest *gregalemanifest.Manifest, reviewed bool) (deploymentReleaseCommand, *api.Problem) {
+func reviewedSourceReleaseCommand(path string, app state.App, manifest *gregalemanifest.Manifest, reviewed, releasePhaseOff bool) (deploymentReleaseCommand, *api.Problem) {
 	if reviewed {
 		return deploymentReleaseCommand{}, nil
 	}
-	return resolveSourceReleaseCommand(path, app, manifest)
+	return resolveSourceReleaseCommand(path, app, manifest, releasePhaseOff)
 }

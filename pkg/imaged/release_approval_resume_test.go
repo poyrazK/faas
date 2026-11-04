@@ -99,6 +99,64 @@ func TestApprovedReleaseStopsAtAFreezeStartedSinceItWasDeployed(t *testing.T) {
 	}
 }
 
+// amendment 14: a scheduled release whose schedule ended while it waited for
+// approval does not run its release command at some later, unplanned time.
+func TestHeldReleaseClosesWhenItsScheduleEnded(t *testing.T) {
+	fx := seedReleaseGate(t, true)
+	fx.requireApprovals(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	sr, _, err := fx.store.ScheduleRelease(ctx, state.ScheduledRelease{
+		AccountID: fx.account.ID, AppID: fx.app.ID, DeploymentID: fx.candidate.ID,
+		ReleaseAt: now.Add(time.Hour), ScheduledBy: "release@example.com",
+	}, "", "", now)
+	if err != nil {
+		t.Fatalf("ScheduleRelease: %v", err)
+	}
+	if err := fx.handler.handoffSnapshotPrime(ctx, fx.app, fx.candidate); err != nil {
+		t.Fatalf("handoffSnapshotPrime: %v", err)
+	}
+	fx.requireNoReleaseTask(t)
+	if dep := fx.status(t); dep.Status != state.DeploySnapshotting {
+		t.Fatalf("release with a pending schedule = %s, want waiting", dep.Status)
+	}
+	if _, err := fx.store.FinishScheduledRelease(ctx, sr.ID, state.ScheduledReleaseExpired, "not_ready", "expired", now); err != nil {
+		t.Fatalf("FinishScheduledRelease: %v", err)
+	}
+	fx.decide(t, state.ReleaseApprovalApprove)
+	fx.decide(t, state.ReleaseApprovalApprove)
+	if err := fx.handler.resumeReleaseApprovalHold(ctx, fx.candidate); err != nil {
+		t.Fatalf("resumeReleaseApprovalHold: %v", err)
+	}
+	fx.requireNoReleaseTask(t)
+	if dep := fx.status(t); dep.Status != state.DeployFailed {
+		t.Fatalf("release whose schedule ended = %s, want failed", dep.Status)
+	}
+}
+
+// amendment 14: a newer release that failed ships nothing, so it does not
+// outpace one that waited for approval.
+func TestFailedNewerReleaseDoesNotOutpaceAWaitingOne(t *testing.T) {
+	fx := seedReleaseGate(t, true)
+	fx.approved(t)
+	ctx := context.Background()
+	newer, err := fx.store.CreateDeployment(ctx, state.Deployment{
+		AppID: fx.app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:broken", Status: state.DeployPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment(newer): %v", err)
+	}
+	if _, err := fx.store.SetDeploymentFailed(ctx, newer.ID, "build_failed", "the build failed"); err != nil {
+		t.Fatalf("SetDeploymentFailed(newer): %v", err)
+	}
+	if err := fx.handler.resumeReleaseApprovalHold(ctx, fx.candidate); err != nil {
+		t.Fatalf("resumeReleaseApprovalHold: %v", err)
+	}
+	if _, err := fx.store.ReleaseAppTaskByDeployment(ctx, fx.candidate.ID); err != nil {
+		t.Fatalf("release task: %v; a failed newer release must not supersede it", err)
+	}
+}
+
 // A freeze in force when the release was deployed was overridden then; it
 // does not stop the release now.
 func TestApprovedReleaseKeepsTheFreezeItOverrode(t *testing.T) {

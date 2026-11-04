@@ -38,6 +38,15 @@ func (h *Handler) holdReleaseCommandForApproval(ctx context.Context, app state.A
 	if !wait.Waits {
 		return false, nil
 	}
+	if ended, err := h.releaseScheduleEnded(ctx, dep); err != nil {
+		return true, err
+	} else if ended != "" {
+		// The schedule said when this release should ship; it ended while
+		// the release waited, so its release command must not run at some
+		// later, unplanned time (ADR-20261020085706 amendment 14).
+		return true, h.failReleaseApproval(ctx, app, dep, wait, api.CodeReleaseApprovalRequired,
+			"the release's schedule ended ("+ended+") while it waited for approval; the release command did not run. Deploy and schedule it again")
+	}
 	switch wait.Status.State {
 	case api.ReleaseApprovalStateApproved:
 		return h.holdApprovedRelease(ctx, app, dep, wait)
@@ -88,6 +97,29 @@ func (h *Handler) holdApprovedRelease(ctx context.Context, app state.App, dep st
 	return true, h.failReleaseApproval(ctx, app, dep, wait, api.CodeReleaseFrozen,
 		"a deploy freeze started while the release waited for approval ("+freeze.Summary(app.Slug, blocking)+
 			"); the release command did not run. Deploy again when the freeze ends, or with --override-freeze REASON")
+}
+
+// releaseScheduleEnded names the outcome of dep's schedule when it ended
+// without starting the release, or "" when dep has no schedule or it is
+// still pending.
+func (h *Handler) releaseScheduleEnded(ctx context.Context, dep state.Deployment) (string, error) {
+	schedules, ok := h.store.(interface {
+		LatestScheduledRelease(ctx context.Context, deploymentID string) (state.ScheduledRelease, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	sr, err := schedules.LatestScheduledRelease(ctx, dep.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("imaged: read release schedule: %w", err)
+	}
+	if sr.State == state.ScheduledReleasePending || sr.State == state.ScheduledReleaseStarted {
+		return "", nil
+	}
+	return sr.State, nil
 }
 
 // newFreezes are the active freezes that were not in force when the release

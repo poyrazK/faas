@@ -27,6 +27,15 @@ var (
 	_ OutpacedReleaseStore = (*MemStore)(nil)
 )
 
+// outpaces reports whether other is a newer revision of d's app and scope
+// that can still ship, mirroring HasNewerDeploymentRevision. A newer revision
+// that failed or was cancelled ships nothing, so it does not outpace d
+// (ADR-20261020085706 amendment 14).
+func outpaces(other, d Deployment) bool {
+	return other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) &&
+		other.Revision > d.Revision && other.Status != DeployFailed && other.Status != DeployCancelled
+}
+
 // releaseOutpaceEligible reports whether d is a latest-revision release in
 // its release phase that the promotion fence would supersede. A prepared
 // rollback deliberately targets an older revision and is never outpaced.
@@ -87,7 +96,7 @@ func (m *MemStore) SupersedeOutpacedRelease(_ context.Context, deploymentID stri
 	}
 	newer := false
 	for _, other := range m.deployments {
-		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
+		if outpaces(other, d) {
 			newer = true
 			break
 		}

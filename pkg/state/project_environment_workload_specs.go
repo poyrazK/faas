@@ -432,7 +432,11 @@ func ResolveAppForDeployment(ctx context.Context, store any, app App, deployment
 			if hashErr != nil || hash != spec.Hash {
 				return App{}, ErrConflict
 			}
-			return spec.Settings.ApplyTo(app)
+			resolved, err := spec.Settings.ApplyTo(app)
+			if err != nil {
+				return App{}, err
+			}
+			return AppForDeploymentRuntime(resolved, deployment)
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return App{}, err
@@ -440,8 +444,10 @@ func ResolveAppForDeployment(ctx context.Context, store any, app App, deployment
 	}
 	// Deployments created before environment settings existed used App directly.
 	// Adopting a newly created desired head here would change a running release
-	// before a deployment was built and tested with those settings.
-	return app, nil
+	// before a deployment was built and tested with those settings. A reviewed
+	// GitOps candidate boots from its frozen runtime, which its runtime value
+	// snapshot also applies; a deployment without one is unchanged.
+	return AppForDeploymentRuntime(app, deployment)
 }
 
 func AppForInstance(ctx context.Context, store interface {
