@@ -59,7 +59,16 @@ func (p *orgAccessPool) Begin(ctx context.Context) (pgx.Tx, error) {
 }
 
 func (p *orgAccessPool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
-	tx, err := p.route(ctx).BeginTx(ctx, options)
+	conn, err := privateNetworkScopeConnection(ctx, p.Pool)
+	if err != nil {
+		return nil, err
+	}
+	var tx pgx.Tx
+	if conn != nil {
+		tx, err = conn.BeginTx(ctx, options)
+	} else {
+		tx, err = p.route(ctx).BeginTx(ctx, options)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +135,13 @@ func lockOrgAccess(ctx context.Context, tx pgx.Tx, f OrgAccessFence) error {
 
 func (p *orgAccessPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	if _, ok := orgAccessFrom(ctx); !ok {
+		conn, err := privateNetworkScopeConnection(ctx, p.Pool)
+		if err != nil {
+			return pgconn.CommandTag{}, err
+		}
+		if conn != nil {
+			return conn.Exec(ctx, sql, args...)
+		}
 		return p.route(ctx).Exec(ctx, sql, args...)
 	}
 	tx, err := p.Begin(ctx)
@@ -142,6 +158,13 @@ func (p *orgAccessPool) Exec(ctx context.Context, sql string, args ...any) (pgco
 
 func (p *orgAccessPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	if _, ok := orgAccessFrom(ctx); !ok {
+		conn, err := privateNetworkScopeConnection(ctx, p.Pool)
+		if err != nil {
+			return orgAccessRow{err: err}
+		}
+		if conn != nil {
+			return conn.QueryRow(ctx, sql, args...)
+		}
 		return p.route(ctx).QueryRow(ctx, sql, args...)
 	}
 	tx, err := p.Begin(ctx)
@@ -171,6 +194,13 @@ func (r orgAccessRow) Scan(dest ...any) error {
 
 func (p *orgAccessPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	if _, ok := orgAccessFrom(ctx); !ok {
+		conn, err := privateNetworkScopeConnection(ctx, p.Pool)
+		if err != nil {
+			return nil, err
+		}
+		if conn != nil {
+			return conn.Query(ctx, sql, args...)
+		}
 		return p.route(ctx).Query(ctx, sql, args...)
 	}
 	tx, err := p.Begin(ctx)
