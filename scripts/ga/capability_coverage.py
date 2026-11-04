@@ -351,6 +351,10 @@ RULES = [
 # Checked before everything else, for every source: names a broad rule or the
 # infra list would misfile.
 PRIORITY_RULES = [
+    # Sales qualification and message templates are real staff surfaces, not test/tooling names.
+    (r"^/v1/referrals(?:/|$)|^/dashboard/referrals$|^referrals?$|^referral-", "Referral codes and conversion estimates"),
+    (r"^/v1/sales/inquiries(?:/|$)|^sales-(?:inquiries|intake)(?:-|$)", "Website sales inquiries"),
+    (r"^/v1/sales(?:/|$)|^/dashboard/sales$|^sales(?:-|$)", "Sales workspace and lead management"),
     (r"^docs-and-trust$", "Docs site and trust pages"),
     (r"^ai-(content-policy|request-replay)$", "AI gateway"),
     (r"^security-headers$", "Edge rules (incl"),

@@ -154,3 +154,23 @@ faas_credential_dev_bridge_plain_lookup: true
 faas_credential_data_api_keys_src: ""
 faas_credential_data_api_writes: plain
 faas_credential_data_api_plain_lookup: true
+
+# Gregale staff sales workspace and customer referrals. Monetary values are
+# estimates; there is deliberately no payout switch.
+faas_sales_enabled: false
+faas_sales_emails: []
+faas_sales_manager_emails: []
+faas_referral_currency: usd
+faas_referral_reward_cents: 0
+faas_referral_new_customer_reward_cents: 0
+faas_sales_commission_bps: 0
+faas_referral_hold_days: 30
+faas_referral_conversion_days: 90
+
+# Anonymous website intake is a separate, opt-in rollout.
+faas_sales_intake_enabled: false
+faas_sales_intake_followup_days: 1
+faas_sales_intake_timezone: UTC
+
+# Open leads become stalled after this many days without recorded contact.
+faas_sales_stale_days: 14

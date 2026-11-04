@@ -12,7 +12,7 @@ var reservedAppSlugs = map[string]struct{}{
 	"account": {}, "admin": {}, "api": {}, "assets": {}, "billing": {},
 	"cdn": {}, "console": {}, "dashboard": {}, "docs": {}, "help": {},
 	"login": {}, "logout": {}, "mail": {}, "ns": {}, "operations": {},
-	"security": {}, "signup": {}, "static": {}, "status": {}, "support": {},
+	"sales": {}, "security": {}, "signup": {}, "static": {}, "status": {}, "support": {},
 	"www": {},
 	// Hosts the platform zone serves (ADR-20261026100000): object storage,
 	// the AI gateway, the edge, the installer, identity, the registry and the

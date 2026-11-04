@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/referrals"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -8204,8 +8205,10 @@ func PersonalOrgSlug(accountID string) string {
 // is derived deterministically from the account id (PersonalOrgSlug),
 // name defaults to "Personal", status defaults to OrgStatusActive.
 type CreateAccountWithPersonalOrgParams struct {
-	Email string
-	Plan  api.Plan
+	// Referral is accepted only by the shared self-service signup path.
+	Referral *referrals.Attribution
+	Email    string
+	Plan     api.Plan
 	// RequireEmailVerification leaves email_verified_at NULL. The zero value
 	// preserves the historical trusted-creation behavior used by OAuth,
 	// operator, migration, and test call sites.

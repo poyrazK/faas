@@ -82,6 +82,11 @@ func (s *server) createSignupAccount(r *http.Request, method, source string, par
 		s.audit.Emit(r.Context(), "auth.signup_network_cap", nil, map[string]any{"ip": ip})
 		return state.CreateAccountWithPersonalOrgResult{}, errSignupNetworkCap
 	}
+	var err error
+	params.Referral, err = s.sales.SignupAttribution(r)
+	if err != nil {
+		return state.CreateAccountWithPersonalOrgResult{}, err
+	}
 	res, err := s.store.CreateAccountWithPersonalOrg(r.Context(), params)
 	if err == nil {
 		s.signups.record(ip)

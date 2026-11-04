@@ -20079,5 +20079,179 @@
       "volume_bytes"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "referral_links",
+    "columns": [
+      "active",
+      "code",
+      "created_at",
+      "kind",
+      "owner_id",
+      "share_code"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "referral_attributions",
+    "columns": [
+      "account_id",
+      "code",
+      "commission_bps",
+      "conversion_days",
+      "created_at",
+      "currency",
+      "customer_reward_cents",
+      "first_paid_at",
+      "first_paid_invoice_id",
+      "follow_up",
+      "hold_days",
+      "note",
+      "referred_reward_cents",
+      "stage",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_leads",
+    "columns": [
+      "company",
+      "created_at",
+      "created_by",
+      "email",
+      "id",
+      "name",
+      "note",
+      "owner_id",
+      "stage",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_tasks",
+    "columns": [
+      "completed_at",
+      "created_at",
+      "created_by",
+      "due_on",
+      "id",
+      "lead_id",
+      "title",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_intake_routing",
+    "columns": [
+      "id",
+      "last_owner_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_inquiries",
+    "columns": [
+      "company",
+      "created_at",
+      "email",
+      "id",
+      "intent",
+      "last_received_at",
+      "latest_message",
+      "lead_id",
+      "message",
+      "name",
+      "reason",
+      "repeat_count",
+      "requested_code",
+      "status",
+      "task_id",
+      "updated_at",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_intake_receipts",
+    "columns": [
+      "expires_at",
+      "nonce"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_activities",
+    "columns": [
+      "actor_id",
+      "follow_up_on",
+      "follow_up_title",
+      "id",
+      "kind",
+      "lead_id",
+      "next_step",
+      "occurred_at",
+      "outcome",
+      "recorded_at",
+      "summary",
+      "task_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_qualifications",
+    "columns": [
+      "blocker",
+      "buying_timeline",
+      "decision_maker",
+      "decision_on",
+      "lead_id",
+      "priority",
+      "product_fit",
+      "updated_at",
+      "updated_by",
+      "use_case",
+      "version",
+      "workload"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_outcomes",
+    "columns": [
+      "actor_id",
+      "id",
+      "lead_id",
+      "lead_version",
+      "note",
+      "owner_id",
+      "reason",
+      "recorded_at",
+      "stage"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_message_templates",
+    "columns": [
+      "body",
+      "category",
+      "id",
+      "stage",
+      "status",
+      "subject",
+      "title",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
   }
 ]

@@ -13613,6 +13613,34 @@ type RecentBuildClaim struct {
 	OrgID     pgtype.UUID
 }
 
+type ReferralAttribution struct {
+	AccountID           pgtype.UUID
+	Code                string
+	Currency            string
+	CustomerRewardCents int64
+	ReferredRewardCents int64
+	CommissionBps       int32
+	HoldDays            int32
+	ConversionDays      int32
+	FirstPaidInvoiceID  pgtype.UUID
+	FirstPaidAt         pgtype.Timestamptz
+	Stage               string
+	Note                string
+	FollowUp            pgtype.Date
+	UpdatedBy           pgtype.UUID
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type ReferralLink struct {
+	Code      string
+	OwnerID   pgtype.UUID
+	Kind      string
+	Active    bool
+	CreatedAt pgtype.Timestamptz
+	ShareCode pgtype.Text
+}
+
 type ReleaseApprovalEvent struct {
 	ID            pgtype.UUID
 	AccountID     pgtype.UUID
@@ -14548,6 +14576,140 @@ type SafeReleaseWorkerLease struct {
 	Singleton bool
 	HealthyAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
+}
+
+type SalesActivity struct {
+	ID            pgtype.UUID
+	LeadID        pgtype.UUID
+	ActorID       pgtype.UUID
+	Kind          string
+	Summary       string
+	Outcome       string
+	NextStep      string
+	OccurredAt    pgtype.Timestamptz
+	RecordedAt    pgtype.Timestamptz
+	FollowUpTitle string
+	FollowUpOn    pgtype.Date
+	TaskID        pgtype.UUID
+}
+
+type SalesInquiry struct {
+	ID             pgtype.UUID
+	Name           string
+	Email          string
+	Company        string
+	Intent         string
+	Message        string
+	LatestMessage  string
+	RequestedCode  string
+	Status         string
+	Reason         string
+	LeadID         pgtype.UUID
+	TaskID         pgtype.UUID
+	RepeatCount    int64
+	Version        int64
+	CreatedAt      pgtype.Timestamptz
+	LastReceivedAt pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SalesIntakeReceipt struct {
+	Nonce     pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+}
+
+type SalesIntakeRouting struct {
+	ID          int16
+	LastOwnerID pgtype.UUID
+}
+
+type SalesLead struct {
+	ID        pgtype.UUID
+	OwnerID   pgtype.UUID
+	Name      string
+	Email     string
+	Company   string
+	Stage     string
+	Note      string
+	Version   int64
+	CreatedBy pgtype.UUID
+	UpdatedBy pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type SalesMessageTemplate struct {
+	ID        pgtype.UUID
+	Title     string
+	Category  string
+	Stage     string
+	Status    string
+	Subject   string
+	Body      string
+	Version   int64
+	UpdatedBy pgtype.UUID
+	UpdatedAt pgtype.Timestamptz
+}
+
+type SalesOutcome struct {
+	ID          pgtype.UUID
+	LeadID      pgtype.UUID
+	LeadVersion int64
+	Stage       string
+	Reason      string
+	Note        string
+	ActorID     pgtype.UUID
+	OwnerID     pgtype.UUID
+	RecordedAt  pgtype.Timestamptz
+}
+
+type SalesQualification struct {
+	LeadID         pgtype.UUID
+	UseCase        string
+	Workload       string
+	DecisionMaker  string
+	BuyingTimeline string
+	DecisionOn     pgtype.Date
+	Priority       string
+	ProductFit     string
+	Blocker        string
+	Version        int64
+	UpdatedBy      pgtype.UUID
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SalesReferralOverview struct {
+	AccountID           pgtype.UUID
+	OwnerID             pgtype.UUID
+	Kind                string
+	Email               interface{}
+	Plan                string
+	AccountStatus       string
+	CreatedAt           pgtype.Timestamptz
+	Stage               string
+	Note                string
+	FollowUp            pgtype.Date
+	Currency            string
+	Apps                int64
+	Paid                interface{}
+	PaidCents           int64
+	EligibleAt          int32
+	RewardStatus        string
+	RewardCents         interface{}
+	ReferredRewardCents int64
+}
+
+type SalesTask struct {
+	ID          pgtype.UUID
+	LeadID      pgtype.UUID
+	Title       string
+	DueOn       pgtype.Date
+	CompletedAt pgtype.Timestamptz
+	Version     int64
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }
 
 type SavedRouteRequirement struct {

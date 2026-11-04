@@ -53736,6 +53736,62 @@ CREATE TABLE public.recent_build_claims (
 
 
 --
+-- Name: referral_attributions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.referral_attributions (
+    account_id uuid NOT NULL,
+    code text NOT NULL,
+    currency text NOT NULL,
+    customer_reward_cents bigint NOT NULL,
+    referred_reward_cents bigint NOT NULL,
+    commission_bps integer NOT NULL,
+    hold_days integer NOT NULL,
+    conversion_days integer NOT NULL,
+    first_paid_invoice_id uuid,
+    first_paid_at timestamp with time zone,
+    stage text DEFAULT 'new'::text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    follow_up date,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT referral_attributions_check CHECK (((first_paid_invoice_id IS NULL) = (first_paid_at IS NULL))),
+    CONSTRAINT referral_attributions_commission_bps_check CHECK (((commission_bps >= 0) AND (commission_bps <= 10000))),
+    CONSTRAINT referral_attributions_conversion_days_check CHECK (((conversion_days >= 1) AND (conversion_days <= 365))),
+    CONSTRAINT referral_attributions_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT referral_attributions_currency_check CHECK ((currency = ANY (ARRAY['usd'::text, 'eur'::text]))),
+    CONSTRAINT referral_attributions_customer_reward_cents_check CHECK (((customer_reward_cents >= 0) AND (customer_reward_cents <= 100000000))),
+    CONSTRAINT referral_attributions_first_paid_at_check CHECK (((first_paid_at IS NULL) OR isfinite(first_paid_at))),
+    CONSTRAINT referral_attributions_first_paid_invoice_id_check CHECK (((first_paid_invoice_id IS NULL) OR (first_paid_invoice_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT referral_attributions_follow_up_check CHECK (((follow_up IS NULL) OR isfinite(follow_up))),
+    CONSTRAINT referral_attributions_hold_days_check CHECK (((hold_days >= 0) AND (hold_days <= 365))),
+    CONSTRAINT referral_attributions_note_check CHECK ((octet_length(note) <= 2000)),
+    CONSTRAINT referral_attributions_referred_reward_cents_check CHECK (((referred_reward_cents >= 0) AND (referred_reward_cents <= 100000000))),
+    CONSTRAINT referral_attributions_stage_check CHECK ((stage = ANY (ARRAY['new'::text, 'contacted'::text, 'qualified'::text, 'lost'::text]))),
+    CONSTRAINT referral_attributions_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: referral_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.referral_links (
+    code text NOT NULL,
+    owner_id uuid NOT NULL,
+    kind text NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    share_code text,
+    CONSTRAINT referral_links_code_check CHECK ((code ~ '^[A-Za-z0-9_-]{22}$'::text)),
+    CONSTRAINT referral_links_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT referral_links_kind_check CHECK ((kind = ANY (ARRAY['customer'::text, 'sales'::text]))),
+    CONSTRAINT referral_links_share_code_check CHECK (((share_code IS NULL) OR (share_code ~ '^[A-Z0-9]{6}$'::text)))
+);
+
+
+--
 -- Name: release_approval_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55505,6 +55561,283 @@ CREATE TABLE public.safe_release_worker_lease (
     expires_at timestamp with time zone NOT NULL,
     CONSTRAINT safe_release_worker_lease_expiry CHECK ((expires_at > healthy_at)),
     CONSTRAINT safe_release_worker_lease_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: sales_activities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_activities (
+    id uuid NOT NULL,
+    lead_id uuid NOT NULL,
+    actor_id uuid,
+    kind text NOT NULL,
+    summary text NOT NULL,
+    outcome text DEFAULT ''::text NOT NULL,
+    next_step text DEFAULT ''::text NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    follow_up_title text DEFAULT ''::text NOT NULL,
+    follow_up_on date,
+    task_id uuid,
+    CONSTRAINT sales_activities_check CHECK ((occurred_at <= recorded_at)),
+    CONSTRAINT sales_activities_check1 CHECK (((follow_up_title = ''::text) = (follow_up_on IS NULL))),
+    CONSTRAINT sales_activities_follow_up_on_check CHECK (((follow_up_on IS NULL) OR (isfinite(follow_up_on) AND ((follow_up_on >= '2000-01-01'::date) AND (follow_up_on <= '2100-12-31'::date))))),
+    CONSTRAINT sales_activities_follow_up_title_check CHECK ((octet_length(follow_up_title) <= 200)),
+    CONSTRAINT sales_activities_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_activities_kind_check CHECK ((kind = ANY (ARRAY['call'::text, 'email'::text, 'demo'::text, 'note'::text]))),
+    CONSTRAINT sales_activities_next_step_check CHECK ((octet_length(next_step) <= 500)),
+    CONSTRAINT sales_activities_occurred_at_check CHECK ((isfinite(occurred_at) AND (occurred_at >= '2000-01-01 00:00:00+00'::timestamp with time zone))),
+    CONSTRAINT sales_activities_outcome_check CHECK ((octet_length(outcome) <= 500)),
+    CONSTRAINT sales_activities_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT sales_activities_summary_check CHECK (((summary = btrim(summary)) AND ((octet_length(summary) >= 1) AND (octet_length(summary) <= 1000))))
+);
+
+
+--
+-- Name: sales_inquiries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_inquiries (
+    id uuid NOT NULL,
+    name text NOT NULL,
+    email text NOT NULL,
+    company text DEFAULT ''::text NOT NULL,
+    intent text NOT NULL,
+    message text NOT NULL,
+    latest_message text DEFAULT ''::text NOT NULL,
+    requested_code text DEFAULT ''::text NOT NULL,
+    status text NOT NULL,
+    reason text NOT NULL,
+    lead_id uuid,
+    task_id uuid,
+    repeat_count bigint DEFAULT 0 NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_received_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_inquiries_company_check CHECK ((octet_length(company) <= 200)),
+    CONSTRAINT sales_inquiries_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_inquiries_email_check CHECK (((email = lower(btrim(email))) AND ((octet_length(email) >= 3) AND (octet_length(email) <= 254)))),
+    CONSTRAINT sales_inquiries_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_inquiries_intent_check CHECK ((intent = ANY (ARRAY['contact'::text, 'demo'::text]))),
+    CONSTRAINT sales_inquiries_last_received_at_check CHECK (isfinite(last_received_at)),
+    CONSTRAINT sales_inquiries_latest_message_check CHECK ((octet_length(latest_message) <= 1500)),
+    CONSTRAINT sales_inquiries_message_check CHECK (((octet_length(message) >= 1) AND (octet_length(message) <= 1500))),
+    CONSTRAINT sales_inquiries_name_check CHECK (((name = btrim(name)) AND ((octet_length(name) >= 1) AND (octet_length(name) <= 120)))),
+    CONSTRAINT sales_inquiries_reason_check CHECK ((reason = ANY (ARRAY[''::text, 'no_reps'::text, 'code_unavailable'::text, 'owner_conflict'::text, 'multiple_leads'::text, 'owner_unavailable'::text, 'lead_unavailable'::text]))),
+    CONSTRAINT sales_inquiries_repeat_count_check CHECK ((repeat_count >= 0)),
+    CONSTRAINT sales_inquiries_requested_code_check CHECK (((requested_code = ''::text) OR (requested_code ~ '^[A-Z0-9]{6}$'::text))),
+    CONSTRAINT sales_inquiries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'assigned'::text, 'closed'::text]))),
+    CONSTRAINT sales_inquiries_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_inquiries_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: sales_intake_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_intake_receipts (
+    nonce uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT sales_intake_receipts_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT sales_intake_receipts_nonce_check CHECK ((nonce <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: sales_intake_routing; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_intake_routing (
+    id smallint NOT NULL,
+    last_owner_id uuid,
+    CONSTRAINT sales_intake_routing_id_check CHECK ((id = 1))
+);
+
+
+--
+-- Name: sales_leads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_leads (
+    id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    name text NOT NULL,
+    email text NOT NULL,
+    company text DEFAULT ''::text NOT NULL,
+    stage text DEFAULT 'new'::text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_leads_company_check CHECK ((octet_length(company) <= 200)),
+    CONSTRAINT sales_leads_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_leads_email_check CHECK (((email = lower(btrim(email))) AND ((octet_length(email) >= 3) AND (octet_length(email) <= 254)))),
+    CONSTRAINT sales_leads_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_leads_name_check CHECK (((name = btrim(name)) AND ((octet_length(name) >= 1) AND (octet_length(name) <= 120)))),
+    CONSTRAINT sales_leads_note_check CHECK ((octet_length(note) <= 2000)),
+    CONSTRAINT sales_leads_stage_check CHECK ((stage = ANY (ARRAY['new'::text, 'contacted'::text, 'qualified'::text, 'demo'::text, 'won'::text, 'lost'::text]))),
+    CONSTRAINT sales_leads_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_leads_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: sales_message_templates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_message_templates (
+    id uuid NOT NULL,
+    title text NOT NULL,
+    category text NOT NULL,
+    stage text DEFAULT ''::text NOT NULL,
+    status text DEFAULT 'draft'::text NOT NULL,
+    subject text DEFAULT ''::text NOT NULL,
+    body text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    updated_by uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_message_templates_body_check CHECK ((((octet_length(body) >= 1) AND (octet_length(body) <= 4000)) AND (btrim(body) <> ''::text))),
+    CONSTRAINT sales_message_templates_category_check CHECK ((category = ANY (ARRAY['intro'::text, 'demo'::text, 'follow_up'::text, 'stalled'::text]))),
+    CONSTRAINT sales_message_templates_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_message_templates_stage_check CHECK ((stage = ANY (ARRAY[''::text, 'new'::text, 'contacted'::text, 'qualified'::text, 'demo'::text, 'won'::text, 'lost'::text]))),
+    CONSTRAINT sales_message_templates_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text]))),
+    CONSTRAINT sales_message_templates_subject_check CHECK ((octet_length(subject) <= 200)),
+    CONSTRAINT sales_message_templates_title_check CHECK ((((octet_length(title) >= 1) AND (octet_length(title) <= 120)) AND (btrim(title) <> ''::text))),
+    CONSTRAINT sales_message_templates_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_message_templates_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: sales_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_outcomes (
+    id uuid NOT NULL,
+    lead_id uuid NOT NULL,
+    lead_version bigint NOT NULL,
+    stage text NOT NULL,
+    reason text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    actor_id uuid,
+    owner_id uuid,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_outcomes_check CHECK ((((stage = 'won'::text) AND (reason = ANY (ARRAY['product_fit'::text, 'capabilities'::text, 'value'::text, 'experience'::text, 'referral'::text, 'other'::text]))) OR ((stage = 'lost'::text) AND (reason = ANY (ARRAY['product_gap'::text, 'budget'::text, 'timing'::text, 'competitor'::text, 'no_response'::text, 'no_need'::text, 'other'::text]))))),
+    CONSTRAINT sales_outcomes_check1 CHECK (((reason <> 'other'::text) OR (btrim(note) <> ''::text))),
+    CONSTRAINT sales_outcomes_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_outcomes_lead_version_check CHECK ((lead_version > 0)),
+    CONSTRAINT sales_outcomes_note_check CHECK ((octet_length(note) <= 1000)),
+    CONSTRAINT sales_outcomes_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT sales_outcomes_stage_check CHECK ((stage = ANY (ARRAY['won'::text, 'lost'::text])))
+);
+
+
+--
+-- Name: sales_qualifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_qualifications (
+    lead_id uuid NOT NULL,
+    use_case text DEFAULT ''::text NOT NULL,
+    workload text DEFAULT ''::text NOT NULL,
+    decision_maker text DEFAULT ''::text NOT NULL,
+    buying_timeline text DEFAULT 'unknown'::text NOT NULL,
+    decision_on date,
+    priority text DEFAULT 'unknown'::text NOT NULL,
+    product_fit text DEFAULT 'unknown'::text NOT NULL,
+    blocker text DEFAULT ''::text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    updated_by uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_qualifications_blocker_check CHECK ((octet_length(blocker) <= 1000)),
+    CONSTRAINT sales_qualifications_buying_timeline_check CHECK ((buying_timeline = ANY (ARRAY['unknown'::text, 'exploring'::text, '30_days'::text, '90_days'::text, 'later'::text, 'date'::text]))),
+    CONSTRAINT sales_qualifications_check CHECK (((buying_timeline = 'date'::text) = (decision_on IS NOT NULL))),
+    CONSTRAINT sales_qualifications_decision_maker_check CHECK ((octet_length(decision_maker) <= 200)),
+    CONSTRAINT sales_qualifications_decision_on_check CHECK (((decision_on IS NULL) OR (isfinite(decision_on) AND ((decision_on >= '2000-01-01'::date) AND (decision_on <= '2100-12-31'::date))))),
+    CONSTRAINT sales_qualifications_priority_check CHECK ((priority = ANY (ARRAY['unknown'::text, 'low'::text, 'medium'::text, 'high'::text]))),
+    CONSTRAINT sales_qualifications_product_fit_check CHECK ((product_fit = ANY (ARRAY['unknown'::text, 'strong'::text, 'partial'::text, 'poor'::text]))),
+    CONSTRAINT sales_qualifications_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_qualifications_use_case_check CHECK ((octet_length(use_case) <= 1000)),
+    CONSTRAINT sales_qualifications_version_check CHECK ((version > 0)),
+    CONSTRAINT sales_qualifications_workload_check CHECK ((octet_length(workload) <= 1000))
+);
+
+
+--
+-- Name: sales_referral_overview; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.sales_referral_overview AS
+ SELECT r.account_id,
+    l.owner_id,
+    l.kind,
+    a.email,
+    a.plan,
+    a.status AS account_status,
+    r.created_at,
+    r.stage,
+    r.note,
+    r.follow_up,
+    r.currency,
+    ( SELECT count(*) AS count
+           FROM public.apps ap
+          WHERE (ap.account_id = a.id)) AS apps,
+    COALESCE((i.status = 'paid'::text), false) AS paid,
+    COALESCE(i.amount_paid_cents, (0)::bigint) AS paid_cents,
+    (r.first_paid_at + make_interval(days => r.hold_days)) AS eligible_at,
+        CASE
+            WHEN (r.first_paid_at IS NULL) THEN 'registered'::text
+            WHEN (i.id IS NULL) THEN 'review'::text
+            WHEN ((i.status <> 'paid'::text) OR (i.amount_refunded_cents > 0) OR (i.amount_refund_pending_cents > 0)) THEN 'reversed'::text
+            WHEN (i.currency <> r.currency) THEN 'currency_mismatch'::text
+            WHEN ((a.status <> 'active'::text) OR (a.email_verified_at IS NULL) OR (owner.status <> 'active'::text)) THEN 'review'::text
+            WHEN (((l.kind = 'customer'::text) AND (r.customer_reward_cents = 0) AND (r.referred_reward_cents = 0)) OR ((l.kind = 'sales'::text) AND (r.commission_bps = 0))) THEN 'unconfigured'::text
+            WHEN (now() < (r.first_paid_at + make_interval(days => r.hold_days))) THEN 'holding'::text
+            ELSE 'eligible'::text
+        END AS reward_status,
+        CASE
+            WHEN (l.kind = 'customer'::text) THEN r.customer_reward_cents
+            ELSE COALESCE((trunc((((LEAST(i.subtotal_cents, GREATEST((i.amount_paid_cents - i.tax_cents), (0)::bigint)))::numeric * (r.commission_bps)::numeric) / (10000)::numeric)))::bigint, (0)::bigint)
+        END AS reward_cents,
+        CASE
+            WHEN (l.kind = 'customer'::text) THEN r.referred_reward_cents
+            ELSE (0)::bigint
+        END AS referred_reward_cents
+   FROM ((((public.referral_attributions r
+     JOIN public.referral_links l ON ((l.code = r.code)))
+     JOIN public.accounts a ON ((a.id = r.account_id)))
+     JOIN public.accounts owner ON ((owner.id = l.owner_id)))
+     LEFT JOIN public.invoices i ON (((i.id = r.first_paid_invoice_id) AND (i.account_id = r.account_id))));
+
+
+--
+-- Name: sales_tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_tasks (
+    id uuid NOT NULL,
+    lead_id uuid NOT NULL,
+    title text NOT NULL,
+    due_on date NOT NULL,
+    completed_at timestamp with time zone,
+    version bigint DEFAULT 1 NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_tasks_completed_at_check CHECK (((completed_at IS NULL) OR isfinite(completed_at))),
+    CONSTRAINT sales_tasks_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_tasks_due_on_check CHECK ((isfinite(due_on) AND ((due_on >= '2000-01-01'::date) AND (due_on <= '2100-12-31'::date)))),
+    CONSTRAINT sales_tasks_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_tasks_title_check CHECK (((title = btrim(title)) AND ((octet_length(title) >= 1) AND (octet_length(title) <= 200)))),
+    CONSTRAINT sales_tasks_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_tasks_version_check CHECK ((version > 0))
 );
 
 
@@ -68799,6 +69132,30 @@ ALTER TABLE ONLY public.realtime_usage_hours
 
 
 --
+-- Name: referral_attributions referral_attributions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: referral_links referral_links_owner_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_links
+    ADD CONSTRAINT referral_links_owner_id_kind_key UNIQUE (owner_id, kind);
+
+
+--
+-- Name: referral_links referral_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_links
+    ADD CONSTRAINT referral_links_pkey PRIMARY KEY (code);
+
+
+--
 -- Name: release_approval_events release_approval_events_deployment_id_event_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69444,6 +69801,94 @@ ALTER TABLE ONLY public.runtime_upgrade_verifications
 
 ALTER TABLE ONLY public.safe_release_worker_lease
     ADD CONSTRAINT safe_release_worker_lease_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: sales_activities sales_activities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_activities
+    ADD CONSTRAINT sales_activities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_inquiries sales_inquiries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_inquiries
+    ADD CONSTRAINT sales_inquiries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_intake_receipts sales_intake_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_intake_receipts
+    ADD CONSTRAINT sales_intake_receipts_pkey PRIMARY KEY (nonce);
+
+
+--
+-- Name: sales_intake_routing sales_intake_routing_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_intake_routing
+    ADD CONSTRAINT sales_intake_routing_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_leads sales_leads_owner_id_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_owner_id_email_key UNIQUE (owner_id, email);
+
+
+--
+-- Name: sales_leads sales_leads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_message_templates sales_message_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_message_templates
+    ADD CONSTRAINT sales_message_templates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_outcomes sales_outcomes_lead_id_lead_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_lead_id_lead_version_key UNIQUE (lead_id, lead_version);
+
+
+--
+-- Name: sales_outcomes sales_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_qualifications sales_qualifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_qualifications
+    ADD CONSTRAINT sales_qualifications_pkey PRIMARY KEY (lead_id);
+
+
+--
+-- Name: sales_tasks sales_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_tasks
+    ADD CONSTRAINT sales_tasks_pkey PRIMARY KEY (id);
 
 
 --
@@ -79379,6 +79824,20 @@ CREATE INDEX recent_build_claims_org_id_idx ON public.recent_build_claims USING 
 
 
 --
+-- Name: referral_attributions_link; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX referral_attributions_link ON public.referral_attributions USING btree (code, account_id);
+
+
+--
+-- Name: referral_links_share_code_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX referral_links_share_code_unique ON public.referral_links USING btree (share_code) WHERE (share_code IS NOT NULL);
+
+
+--
 -- Name: release_approval_events_due; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -79929,6 +80388,83 @@ CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations
 --
 
 CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verifications USING btree (next_attempt_at, created_at, operation_id) WHERE (phase = 'pending'::text);
+
+
+--
+-- Name: sales_activities_contact; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_activities_contact ON public.sales_activities USING btree (lead_id, occurred_at DESC) WHERE (kind = ANY (ARRAY['call'::text, 'email'::text, 'demo'::text]));
+
+
+--
+-- Name: sales_activities_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_activities_page ON public.sales_activities USING btree (lead_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: sales_inquiries_active_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX sales_inquiries_active_email ON public.sales_inquiries USING btree (email) WHERE (status <> 'closed'::text);
+
+
+--
+-- Name: sales_inquiries_lead; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_inquiries_lead ON public.sales_inquiries USING btree (lead_id);
+
+
+--
+-- Name: sales_inquiries_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_inquiries_page ON public.sales_inquiries USING btree (status, id);
+
+
+--
+-- Name: sales_intake_receipts_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_intake_receipts_expiry ON public.sales_intake_receipts USING btree (expires_at);
+
+
+--
+-- Name: sales_leads_owner_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_leads_owner_page ON public.sales_leads USING btree (owner_id, id);
+
+
+--
+-- Name: sales_message_templates_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_message_templates_page ON public.sales_message_templates USING btree (status, id);
+
+
+--
+-- Name: sales_outcomes_latest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_outcomes_latest ON public.sales_outcomes USING btree (lead_id, lead_version DESC);
+
+
+--
+-- Name: sales_tasks_due_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_tasks_due_page ON public.sales_tasks USING btree (due_on, id);
+
+
+--
+-- Name: sales_tasks_lead; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_tasks_lead ON public.sales_tasks USING btree (lead_id);
 
 
 --
@@ -101956,6 +102492,38 @@ ALTER TABLE ONLY public.recent_build_claims
 
 
 --
+-- Name: referral_attributions referral_attributions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: referral_attributions referral_attributions_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_code_fkey FOREIGN KEY (code) REFERENCES public.referral_links(code) ON DELETE CASCADE;
+
+
+--
+-- Name: referral_attributions referral_attributions_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: referral_links referral_links_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_links
+    ADD CONSTRAINT referral_links_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: release_approval_events release_approval_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -102745,6 +103313,150 @@ ALTER TABLE ONLY public.runtime_upgrade_verifications
 
 ALTER TABLE ONLY public.runtime_upgrade_verifications
     ADD CONSTRAINT runtime_upgrade_verifications_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.runtime_upgrade_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_activities sales_activities_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_activities
+    ADD CONSTRAINT sales_activities_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_activities sales_activities_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_activities
+    ADD CONSTRAINT sales_activities_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.sales_leads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_activities sales_activities_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_activities
+    ADD CONSTRAINT sales_activities_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.sales_tasks(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_inquiries sales_inquiries_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_inquiries
+    ADD CONSTRAINT sales_inquiries_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.sales_leads(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_inquiries sales_inquiries_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_inquiries
+    ADD CONSTRAINT sales_inquiries_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.sales_tasks(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_intake_routing sales_intake_routing_last_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_intake_routing
+    ADD CONSTRAINT sales_intake_routing_last_owner_id_fkey FOREIGN KEY (last_owner_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_leads sales_leads_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_leads sales_leads_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_leads sales_leads_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_leads
+    ADD CONSTRAINT sales_leads_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_message_templates sales_message_templates_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_message_templates
+    ADD CONSTRAINT sales_message_templates_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_outcomes sales_outcomes_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_outcomes sales_outcomes_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.sales_leads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_outcomes sales_outcomes_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_outcomes
+    ADD CONSTRAINT sales_outcomes_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_qualifications sales_qualifications_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_qualifications
+    ADD CONSTRAINT sales_qualifications_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.sales_leads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_qualifications sales_qualifications_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_qualifications
+    ADD CONSTRAINT sales_qualifications_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_tasks sales_tasks_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_tasks
+    ADD CONSTRAINT sales_tasks_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_tasks sales_tasks_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_tasks
+    ADD CONSTRAINT sales_tasks_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.sales_leads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_tasks sales_tasks_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_tasks
+    ADD CONSTRAINT sales_tasks_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

@@ -3544,7 +3544,9 @@ type APIKeyItem struct {
 
 // AccountData is the /dashboard/account page payload.
 type AccountData struct {
-	Keys []APIKeyItem
+	ReferralsEnabled bool
+	SalesEnabled     bool
+	Keys             []APIKeyItem
 	// KeyDeleteConfirmToken is shared by the account page's key-revoke
 	// forms. Its sidecar uses a dedicated cookie name so it can coexist
 	// with the account-delete and GitHub-connect CSRF tokens rendered on

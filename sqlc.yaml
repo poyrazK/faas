@@ -7,6 +7,16 @@
 # Verify:    make sqlc-check
 version: "2"
 sql:
+  - engine: "postgresql"
+    queries: "pkg/referrals/queries.sql"
+    schema: "pkg/referrals/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/referrals/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   # Read-only connection-capacity observations on the exact customer endpoint.
   - engine: "postgresql"
     queries: "pkg/managedpostgres/connectioncapacity/queries.sql"

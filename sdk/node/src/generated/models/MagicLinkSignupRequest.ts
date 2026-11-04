@@ -10,6 +10,7 @@
  *
  */
 export type MagicLinkSignupRequest = {
+  referral_code?: string;
   email?: string;
 };
 
