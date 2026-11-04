@@ -1378,6 +1378,14 @@ jobs:
       GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The PostgreSQL phase needs 10 GiB of build storage; after the unit
+      # phase a runner had 7.6 GB (run 41784916894). Neither phase uses the
+      # preinstalled Android, .NET, GHC or CodeQL toolchains.
+      - name: free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
