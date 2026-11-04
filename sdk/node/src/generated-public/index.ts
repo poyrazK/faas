@@ -54,6 +54,7 @@ export type { AppLogDrainAnalyticsResponse } from './models/AppLogDrainAnalytics
 export type { AppLogDrainAnalyticsSummary } from './models/AppLogDrainAnalyticsSummary.js';
 export type { AppLogDrainHealthResponse } from './models/AppLogDrainHealthResponse.js';
 export type { AppLogDrainResponse } from './models/AppLogDrainResponse.js';
+export type { ApplyAppScalingRequest } from './models/ApplyAppScalingRequest.js';
 export type { ApplyCachedProjectPlanRequest } from './models/ApplyCachedProjectPlanRequest.js';
 export type { ApplyResponse } from './models/ApplyResponse.js';
 export type { AppManifest } from './models/AppManifest.js';
@@ -69,6 +70,9 @@ export type { AppResourceInventoryItem } from './models/AppResourceInventoryItem
 export type { AppResourceInventoryResponse } from './models/AppResourceInventoryResponse.js';
 export type { AppResponse } from './models/AppResponse.js';
 export type { AppRestartResponse } from './models/AppRestartResponse.js';
+export type { AppScalingReceipt } from './models/AppScalingReceipt.js';
+export type { AppScalingSettings } from './models/AppScalingSettings.js';
+export type { AppScalingSnapshot } from './models/AppScalingSnapshot.js';
 export type { AppSecretExportResponse } from './models/AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './models/AppSecretListResponse.js';
 export type { AppSecretReferenceListResponse } from './models/AppSecretReferenceListResponse.js';
@@ -916,6 +920,12 @@ export type { ProjectDeploymentCheck } from './models/ProjectDeploymentCheck.js'
 export type { ProjectDeploymentCheckRequest } from './models/ProjectDeploymentCheckRequest.js';
 export type { ProjectDeploymentCheckWorkload } from './models/ProjectDeploymentCheckWorkload.js';
 export type { ProjectDeploymentReadiness } from './models/ProjectDeploymentReadiness.js';
+export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironmentConfigChange.js';
+export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';
+export type { ProjectEnvironmentConfigResponse } from './models/ProjectEnvironmentConfigResponse.js';
+export type { ProjectEnvironmentSharedSecret } from './models/ProjectEnvironmentSharedSecret.js';
+export type { ProjectEnvironmentSharedSecretResponse } from './models/ProjectEnvironmentSharedSecretResponse.js';
+export type { ProjectEnvironmentSharedSecretsResponse } from './models/ProjectEnvironmentSharedSecretsResponse.js';
 export type { ProjectInitialSecrets } from './models/ProjectInitialSecrets.js';
 export type { ProjectMigrationBaselineVerification } from './models/ProjectMigrationBaselineVerification.js';
 export type { ProjectMigrationContract } from './models/ProjectMigrationContract.js';
@@ -1095,6 +1105,7 @@ export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasReque
 export type { SetFinancialBudgetChannelsRequest } from './models/SetFinancialBudgetChannelsRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
 export type { SetPasswordRequest } from './models/SetPasswordRequest.js';
+export type { SetProjectEnvironmentSharedSecretRequest } from './models/SetProjectEnvironmentSharedSecretRequest.js';
 export type { SetServiceWakeAheadRequest } from './models/SetServiceWakeAheadRequest.js';
 export type { SetWorkflowRecoveryPolicyRequest } from './models/SetWorkflowRecoveryPolicyRequest.js';
 export type { SeverityCounts } from './models/SeverityCounts.js';
@@ -1138,6 +1149,7 @@ export type { UpdateEdgeRuleRequest } from './models/UpdateEdgeRuleRequest.js';
 export type { UpdateFinancialBudgetRequest } from './models/UpdateFinancialBudgetRequest.js';
 export type { UpdateInboundWebhookEndpointRequest } from './models/UpdateInboundWebhookEndpointRequest.js';
 export type { UpdateJobRequest } from './models/UpdateJobRequest.js';
+export type { UpdateProjectEnvironmentConfigRequest } from './models/UpdateProjectEnvironmentConfigRequest.js';
 export type { UpdateProjectRequest } from './models/UpdateProjectRequest.js';
 export type { UploadDeployOptions } from './models/UploadDeployOptions.js';
 export type { UploadSessionResponse } from './models/UploadSessionResponse.js';

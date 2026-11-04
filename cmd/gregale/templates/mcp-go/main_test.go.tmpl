@@ -50,6 +50,27 @@ func TestStarterToolAndOriginWireContract(t *testing.T) {
 	}
 }
 
+// Instances restored from one snapshot share their boot env, so /healthz
+// names the serving instance from the platform's request header.
+func TestStarterHealthNamesServingInstance(t *testing.T) {
+	t.Setenv("FAAS_INSTANCE_ID", "inst-at-boot")
+	config, err := loadMCPConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := newAuthenticator(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("X-Faas-Instance-Id", "inst-restored")
+	response := httptest.NewRecorder()
+	handleHTTP(config, auth, nil, response, req)
+	if !strings.Contains(response.Body.String(), `"instance_id":"inst-restored"`) {
+		t.Fatalf("healthz = %d %s, want instance_id inst-restored", response.Code, response.Body.String())
+	}
+}
+
 // adr: 426 — reject ambiguous configuration and route/origin collisions.
 func TestStarterConfigFailsClosed(t *testing.T) {
 	base := `{"version":1,"endpoint":"/mcp","transport":"streamable-http","mode":"stateless","allowed_origins":[],"auth":{"mode":"open"}}`

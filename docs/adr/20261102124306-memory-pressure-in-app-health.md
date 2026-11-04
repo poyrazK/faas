@@ -87,3 +87,45 @@ Off, the response is unchanged.
 2. Release the flag to the owner's account; compare the warnings with real
    OOM kills.
 3. A plan right-sizing hint in `app health` and `gregale debug status`.
+
+## Amendment 1 (2026-11-04): how much RAM the app needs
+
+Step 3, as a RAM suggestion in the `memory` check. The check's warning (reason
+`memory_pressure`) now adds how much RAM would have left
+`api.ProfileMemoryPressureRearmAvailablePercent` (30%) of the guest's memory
+available at the rollup's low point, `api.RightSizeMemory`:
+
+```
+need = (ram_mb − guest MemTotal) + ⌈(MemTotal − lowest available) / 0.7⌉
+```
+
+The result is rounded up to `api.MemoryRightSizeStepMB` (64 MB) and is always
+above the current `ram_mb`. The guest kernel's share (`ram_mb` − MemTotal)
+stays the same whatever the app's size. The suggestion then reads one of three
+ways:
+
+- It fits the account's plan: "Raise ram_mb from 512 MB: about 704 MB would
+  have kept 30% free, and the pro plan allows up to 1024 MB." The action is
+  `configuration`.
+- It needs a larger plan: the check names the smallest plan whose RAM allows
+  it.
+- No plan allows it: the check says so and points at in-memory state.
+
+The check gives no suggestion when the plan is unknown; the background history
+collector, for example, passes none.
+
+The rollup only records episodes at or below 15% available, so it cannot show
+that an app is too large. A suggestion to shrink would need sampled guest
+memory, which the rollup does not hold, so this step does not suggest one.
+`gregale debug status` gains the suggestion in a later change; it needs a new
+response field.
+
+### Fix: the check codes are in the API enum
+
+The worker and memory checks (ADR-20261102091500 and this ADR) emit check
+codes `replicas`, `queue`, `backlog`, `dead_letters` and `memory`. The OpenAPI
+`AppHealthCheck.code` field is a closed enum that did not list them, and the
+generated Python SDK raises on a value outside the enum, so releasing either
+flag would have broken Python clients that read app health. The enum now lists
+them, the `reason` enum lists `memory_pressure`, and the generated Node and
+Python models match. Both flags were still off everywhere.

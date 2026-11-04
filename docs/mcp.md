@@ -189,6 +189,27 @@ The API is `GET`/`PUT /v1/orgs/{slug}/agent-policy` and
 `/v1/orgs/{slug}/agent-connections`, with `DELETE .../{id}` and
 `POST .../revoke_all`.
 
+### Limit an agent to projects
+
+A connection can reach only some projects of the account or organization it
+acts in. On the approval page, tick the projects under **Limit the agent to
+projects**; leave every box clear to give it all of them. A headless agent
+key takes the same limit:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --projects api,web
+gregale org keys add --org acme --label ci-agent --scopes agent --projects api
+```
+
+A limited agent reaches the apps of those projects, including apps added to
+them later, and the projects themselves. Every other app and project answers
+as if it did not exist, account-wide routes answer 403, and the app and
+project lists show only what the limit allows. Databases belong to the
+account or organization rather than a project, so a limited agent cannot
+manage them. The limit is fixed when the agent connects; to change it,
+connect again. `gregale mcp connection list` and `GET /v1/account`
+(`key_projects`) name a connection's projects.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes
@@ -2068,6 +2089,32 @@ This establishes processing and app health, not variable values loaded by a
 particular replacement instance or public reachability. Deployment verification
 uses exact rollout and health attribution; zero traffic is blocked until explicit
 promotion. Worker verification covers resident generation convergence only.
+
+Scaling plans pin a native scaling revision. Applying a plan commits RAM, CPU,
+concurrency and instance-floor changes with one durable request receipt. Retry
+`gregale_apply_operation` with the same plan ID after an interruption; it recovers
+the original request or safely resubmits it against the reviewed revision.
+A revision conflict requires a new review. Named environments also pin their
+immutable UUID and require an existing workload revision. Their settings take
+effect on a subsequent deployment.
+
+Scaling verification uses the `scaling_configuration` goal. It confirms the exact
+request receipt and checks that its revision and settings remain current. A later
+write reports `blocked` as superseded. `verified` establishes desired configuration;
+it does not establish running guest readiness or replica convergence.
+
+Writes pin `--expected-app-id` from the reviewed snapshot, so reusing a deleted
+app name cannot retarget an earlier request. The same native recovery is available through `gregale app scaling APP`:
+
+```sh
+gregale app scaling my-api
+gregale app scaling my-api --expected-app-id 612e5aba-cd70-49e7-b29a-e5f73c29dcf2 --expected-revision 3 --request-id 4ed5f921-9eae-4bd0-a7ab-f851d38f745b --ram 512
+gregale app scaling my-api --receipt 4ed5f921-9eae-4bd0-a7ab-f851d38f745b
+```
+
+For a named target, pass `--environment ENV` on every call and
+`--expected-environment-id UUID` from its snapshot on writes. Reuse the original
+request UUID, revision and body for retries. Receipt reads require current access.
 
 Targets are reconstructed from journaled receipts across reconnects and bridge
 restarts. Each verification reads again and reports its own observation time;

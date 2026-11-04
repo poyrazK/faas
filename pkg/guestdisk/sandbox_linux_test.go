@@ -8,15 +8,37 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // TestMain lets the test binary stand in for vmmd-guestdisk: a sandboxed
-// run re-executes it with the helper's arguments.
+// run re-executes it with the helper's arguments. The helper first maps more
+// address space than the tool's cap, as a -race helper already has: the cap
+// must still be settable and the tool must still start.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "--uid" {
+		_, _ = unix.Mmap(-1, 0, sandboxAddressSize+(1<<30), unix.PROT_NONE, unix.MAP_PRIVATE|unix.MAP_ANONYMOUS|unix.MAP_NORESERVE)
 		os.Exit(SandboxMain(os.Args[1:]))
 	}
 	os.Exit(m.Run())
+}
+
+// TestSandboxToolRunsUnderLimits checks the tool starts, from a helper whose
+// address space is already past the cap, and still carries the limits.
+func TestSandboxToolRunsUnderLimits(t *testing.T) {
+	sh := "/bin/sh"
+	if !fileExists(sh) {
+		t.Skip("no /bin/sh")
+	}
+	s := sandboxedSession(t, mkImage(t, nil))
+	res, err := s.run(context.Background(), sh, []string{"-c", "ulimit -v; ulimit -n; ulimit -c"}, nil, runLimits{output: 4096})
+	if err != nil || res.exit != 0 {
+		t.Fatalf("sandboxed sh: exit %d %v %s", res.exit, err, res.stderr)
+	}
+	if want := "2097152\n64\n0\n"; string(res.stdout) != want {
+		t.Fatalf("tool limits = %q, want %q", res.stdout, want)
+	}
 }
 
 func sandboxedSession(t *testing.T, img string) *Session {

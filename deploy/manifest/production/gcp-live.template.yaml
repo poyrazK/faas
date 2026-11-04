@@ -41,10 +41,18 @@ fleet:
       role: compute-only
       address: fsn-2.gregale.dev:50051
       tags: ["gcp-vpc"]
+      # ADR-20261102081618: gregale-compute-1's forwarding rule
+      # gregale-compute-1-edge-https, which carries TCP 443 alone
+      # (deploy/scripts/gcp-compute-edge-address.sh).
+      public_ipv4: 34.148.143.180
+      public_ipv4_forwarded: true
     - name: fsn-3
       role: compute-only
       address: fsn-3.gregale.dev:50051
       tags: ["gcp-vpc"]
+      # gregale-compute-2's forwarding rule gregale-compute-2-edge-https.
+      public_ipv4: 34.26.249.95
+      public_ipv4_forwarded: true
 
 daemons:
   schedd:
@@ -167,6 +175,32 @@ public_edge:
   # ADR-20261031105055: Cloudflare sends almost every request to one
   # connector; each edge hands a host to the node that last served it.
   placement_routing: true
+  # ADR-20261102081618: the edges also take TLS on 443 at their forwarded
+  # address, from Cloudflare's ranges only, beside the tunnel. Both nodes
+  # already listen there through a hand-placed drop-in
+  # (60-faas-edge-direct.conf); the role now writes the same settings.
+  entry: both
+  # ADR-20261103163954, cutover step 1: edgednsd on the control plane, in
+  # dry run. It only logs the records it would write for the pilot host;
+  # nothing moves off the tunnel until live is true.
+  dns:
+    zone_id: c0baeb8d33b48ec1704766edcb695394
+    names: ["direct-pilot.gregale.dev"]
+    live: false
+    # §3: edgednsd orders the apps domains' certificate with DNS-01 and
+    # stores it with its key sealed to the edge-tls seal domain. Staging
+    # first; no edge serves it until `serve` names a CA.
+    certificate:
+      names: ["*.gregale.dev"]
+      ca: letsencrypt-staging
+      # Pages on a publicly trusted certificate under gregale.dev that
+      # edgednsd did not issue. Allowed, as Certificate Transparency listed
+      # them on 2026-11-04: Cloudflare's Universal SSL certificate
+      # (gregale.dev, *.gregale.dev), which the proxied platform hosts use, a
+      # certificate for the apex alone, and operations.gregale.dev's (Vercel).
+      transparency:
+        domain: gregale.dev
+        allow_names: ["gregale.dev", "*.gregale.dev", "operations.gregale.dev"]
 
 # Customer log archive (pkg/logarchive). Keyless: every node's attached
 # service account holds roles/storage.objectUser on the bucket, whose
@@ -179,6 +213,13 @@ log_archive:
 dns:
   apps_domain: gregale.dev
   mode: cloudflare
+  # ADR-20261103172551: the control plane's platform site admits Cloudflare's
+  # address ranges, which every Cloudflare zone uses. any_zone keeps admitting
+  # them all, knowingly, as before; the control plane has no origin-pull CA
+  # yet, so `required` would stop its deploy. Switch to `required` once the
+  # zone's own origin-pull certificate is in place
+  # (docs/runbooks/EdgeDirectEntry.md, "The control plane's Caddy").
+  origin_pull: any_zone
 
 # Private transport names are managed from gathered host facts by the
 # provider-neutral Ansible adapter. GCP Cloud DNS may still provide a local

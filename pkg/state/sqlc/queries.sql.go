@@ -18233,7 +18233,7 @@ SELECT NOT EXISTS (
     JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
       AND sibling.status = 'live' AND sibling.id <> route.deployment_id
     WHERE route.graph_id = $1::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
-) AND public.environment_workload_serving_ready($1::uuid) AS serving_weights_match
+) AND environment_workload_serving_ready($1::uuid) AS serving_weights_match
 `
 
 func (q *Queries) EnvironmentWorkloadServingWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error) {
@@ -24896,7 +24896,7 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
 WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  app_scope AS MATERIALIZED (
- SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
  FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
  ), live AS MATERIALIZED (
@@ -28736,6 +28736,104 @@ func (q *Queries) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db 
 	return i, err
 }
 
+const getRequestTelemetryByAppTraceNearest = `-- name: GetRequestTelemetryByAppTraceNearest :one
+SELECT id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest, trace_inferred
+FROM request_telemetry
+WHERE app_id = $1
+  AND trace_id = $2::text
+  AND received_at >= $3
+  AND received_at <  $4
+ORDER BY abs(extract(epoch FROM (received_at - make_interval(secs => latency_ms / 1000.0)))
+             - extract(epoch FROM $5::timestamptz)),
+         received_at DESC
+LIMIT 1
+`
+
+type GetRequestTelemetryByAppTraceNearestParams struct {
+	AppID         pgtype.UUID
+	TraceID       string
+	ReceivedFrom  pgtype.Timestamptz
+	ReceivedUntil pgtype.Timestamptz
+	StartedAt     pgtype.Timestamptz
+}
+
+type GetRequestTelemetryByAppTraceNearestRow struct {
+	ID                  pgtype.UUID
+	DeploymentID        pgtype.UUID
+	Route               string
+	Method              string
+	Status              int32
+	LatencyMs           int32
+	Count               int32
+	ColdBoot            bool
+	TraceID             pgtype.Text
+	ReceivedAt          pgtype.Timestamptz
+	SpansSummary        []byte
+	WakeID              pgtype.Text
+	InstanceID          pgtype.Text
+	GuestDurationMs     int32
+	GuestRuntime        string
+	GuestOutcome        string
+	GuestErrorClass     string
+	ConsumerID          pgtype.UUID
+	NodeID              string
+	Region              string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	ImageDigest         string
+	TraceInferred       bool
+}
+
+// Resolves a public x-faas-request-id after the request-ID journal mapped it
+// to its trace and start time. Several requests can share one trace (a
+// propagated traceparent, retries), so the newest row of the trace may be
+// another request: take the row whose start (received_at minus latency) is
+// nearest the journaled start instead. Same columns as
+// GetRequestTelemetryByAppAndIdentifier, so callers convert the row.
+func (q *Queries) GetRequestTelemetryByAppTraceNearest(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppTraceNearestParams) (GetRequestTelemetryByAppTraceNearestRow, error) {
+	row := db.QueryRow(ctx, getRequestTelemetryByAppTraceNearest,
+		arg.AppID,
+		arg.TraceID,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.StartedAt,
+	)
+	var i GetRequestTelemetryByAppTraceNearestRow
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.Route,
+		&i.Method,
+		&i.Status,
+		&i.LatencyMs,
+		&i.Count,
+		&i.ColdBoot,
+		&i.TraceID,
+		&i.ReceivedAt,
+		&i.SpansSummary,
+		&i.WakeID,
+		&i.InstanceID,
+		&i.GuestDurationMs,
+		&i.GuestRuntime,
+		&i.GuestOutcome,
+		&i.GuestErrorClass,
+		&i.ConsumerID,
+		&i.NodeID,
+		&i.Region,
+		&i.CommitSha,
+		&i.DeploymentTag,
+		&i.DeploymentCreatedAt,
+		&i.ImageDigest,
+		&i.TraceInferred,
+	)
+	return i, err
+}
+
 const getRuntimeRelease = `-- name: GetRuntimeRelease :one
 SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE id=$1
 `
@@ -29793,6 +29891,9 @@ SELECT EXISTS (
     SELECT 1 FROM deployments
     WHERE app_id = $1::uuid AND scope = $2::text
       AND revision > $3::bigint
+      -- A newer revision that failed or was cancelled ships nothing, so it
+      -- does not outpace an older release (ADR-20261020085706 amendment 14).
+      AND status NOT IN ('failed', 'cancelled')
 )
 `
 
@@ -37123,7 +37224,7 @@ INSERT INTO request_telemetry (
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
     guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
-    content_outcome, trace_inferred, platform_refusal
+    content_outcome, trace_inferred, platform_refusal, deployment_pinned, long_lived
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -37145,7 +37246,9 @@ INSERT INTO request_telemetry (
     COALESCE(NULLIF($32::text, '')::jsonb, '[]'::jsonb),
     $33::text,
     $34::bool,
-    $35::bool
+    $35::bool,
+    $36::bool,
+    $37::bool
 )
 `
 
@@ -37185,6 +37288,8 @@ type InsertRequestTelemetryParams struct {
 	ContentOutcome              string
 	TraceInferred               bool
 	PlatformRefusal             bool
+	DeploymentPinned            bool
+	LongLived                   bool
 }
 
 // ---------------------------------------------------------------------------
@@ -37258,6 +37363,8 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.ContentOutcome,
 		arg.TraceInferred,
 		arg.PlatformRefusal,
+		arg.DeploymentPinned,
+		arg.LongLived,
 	)
 	return err
 }
@@ -53419,7 +53526,10 @@ WHERE app_id = $1
   AND ($4::timestamptz IS NULL
        OR (received_at, id) < ($4::timestamptz,
                                $5::uuid))
-  AND ($6::text = '' OR route = $6::text)
+  -- Route labels carry their method ("GET /checkout"). A filter that is a
+  -- bare path ("/checkout") matches the path under every method.
+  AND ($6::text = '' OR route = $6::text
+       OR (left($6::text, 1) = '/' AND split_part(route, ' ', 2) = $6::text))
   -- Filters are explicit query parameters so sqlc keeps the generated
   -- params stable. The cursor stores the same values and the handler
   -- rejects a page walk when they change.
@@ -67780,6 +67890,29 @@ func (q *Queries) ObjectLifecycleScanSave(ctx context.Context, db DBTX, arg Obje
 	return err
 }
 
+const objectMultipartAbandonedPartWritersSettle = `-- name: ObjectMultipartAbandonedPartWritersSettle :execrows
+UPDATE object_multipart_part_writers d SET settled=true
+FROM object_storage_multipart_part_grants g, object_storage_multipart_uploads u
+WHERE d.upload_id=$1 AND u.id=d.upload_id AND u.state='aborting' AND u.lease_token=$2::text
+AND d.managed AND d.dispatched AND NOT d.settled
+AND g.upload_id=d.upload_id AND g.part_number=d.part_number AND g.transfer_token=d.transfer_token
+AND g.unsafe_until IS NOT NULL AND g.unsafe_until<=clock_timestamp()
+`
+
+type ObjectMultipartAbandonedPartWritersSettleParams struct {
+	ID         pgtype.UUID
+	LeaseToken string
+}
+
+// The caller verified the native abort; see ObjectMultipartAbandonedPartSettler.
+func (q *Queries) ObjectMultipartAbandonedPartWritersSettle(ctx context.Context, db DBTX, arg ObjectMultipartAbandonedPartWritersSettleParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartAbandonedPartWritersSettle, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectMultipartAbortOwner = `-- name: ObjectMultipartAbortOwner :one
 SELECT account_id,bucket_id,(part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())::boolean AS part_urls_drained
 FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting'
@@ -69630,6 +69763,24 @@ func (q *Queries) ObjectNotificationTargetApp(ctx context.Context, db DBTX, arg 
 	return id, err
 }
 
+const objectNotificationTargetInReach = `-- name: ObjectNotificationTargetInReach :one
+SELECT event_app_in_producer_reach($1::uuid, $2::text, $3::text)::boolean AS in_reach
+`
+
+type ObjectNotificationTargetInReachParams struct {
+	AccountID   pgtype.UUID
+	Producer    string
+	TargetAppID string
+}
+
+// Whether a bucket app's events may reach the target app (ADR-20261025211616).
+func (q *Queries) ObjectNotificationTargetInReach(ctx context.Context, db DBTX, arg ObjectNotificationTargetInReachParams) (bool, error) {
+	row := db.QueryRow(ctx, objectNotificationTargetInReach, arg.AccountID, arg.Producer, arg.TargetAppID)
+	var in_reach bool
+	err := row.Scan(&in_reach)
+	return in_reach, err
+}
+
 const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :one
 SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled
 `
@@ -69653,7 +69804,8 @@ func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, ar
 }
 
 const objectNotificationsCapture = `-- name: ObjectNotificationsCapture :execrows
-UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot || $1::jsonb
+UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot ||
+ event_recipients_in_producer_reach(account_id, payload->>'producer', $1::jsonb)
 WHERE account_id=$2::uuid AND source='gregale.storage' AND event_id=$3::text
 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification')
 `
@@ -69664,6 +69816,8 @@ type ObjectNotificationsCaptureParams struct {
 	EventID    string
 }
 
+// Notification recipients meet the same company reach as subscriptions
+// (ADR-20261025211616): a rule cannot route a company bucket's events past it.
 func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg ObjectNotificationsCaptureParams) (int64, error) {
 	result, err := db.Exec(ctx, objectNotificationsCapture, arg.Recipients, arg.AccountID, arg.EventID)
 	if err != nil {
@@ -72256,7 +72410,9 @@ COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
 COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes,
 COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
 s.accrued_through AS gateway_storage_through,
-i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete
+i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete,
+(EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready')
+ OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = $1
@@ -72314,6 +72470,7 @@ type ObjectUsageBucketsRow struct {
 	ScanKeys                       pgtype.Int8
 	ScanPages                      pgtype.Int4
 	ScanComplete                   pgtype.Bool
+	InventoryHeld                  bool
 }
 
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
@@ -72370,6 +72527,7 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsa
 			&i.ScanKeys,
 			&i.ScanPages,
 			&i.ScanComplete,
+			&i.InventoryHeld,
 		); err != nil {
 			return nil, err
 		}
@@ -99579,7 +99737,7 @@ WITH selected AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
  FROM jsonb_array_elements($3::jsonb)
 ), observed AS MATERIALIZED (
- SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status, rt.cold_boot,
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status, (rt.cold_boot OR rt.long_lived) AS latency_excluded,
   CASE WHEN $4::text = 'tenant' THEN pt.id ELSE c.id END AS customer_id,
   CASE WHEN $4::text = 'tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed
  FROM selected s CROSS JOIN windows w JOIN request_telemetry rt
@@ -99588,7 +99746,7 @@ WITH selected AS (
  AND rt.method = s.method AND rt.route = s.method || ' ' || s.path
  AND rt.received_at >= w.start AND rt.received_at < w."end"
  AND rt.received_at >= $9::timestamptz AND rt.received_at < $10::timestamptz
- AND NOT rt.platform_refusal
+ AND NOT rt.platform_refusal AND NOT rt.deployment_pinned
  LEFT JOIN api_consumers c ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id = rt.platform_tenant_id AND pt.account_id = rt.account_id
 ), totals AS (
@@ -99622,10 +99780,10 @@ WITH selected AS (
  SELECT b.method, b.path, b.customer_id, b.position, w.start, w."end",
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid), 0)::bigint AS candidate_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
- coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid AND NOT o.cold_boot), 0)::bigint AS candidate_latency_requests,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $7::text::uuid AND NOT o.latency_excluded), 0)::bigint AS candidate_latency_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid), 0)::bigint AS stable_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS stable_errors,
- coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid AND NOT o.cold_boot), 0)::bigint AS stable_latency_requests
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = $8::text::uuid AND NOT o.latency_excluded), 0)::bigint AS stable_latency_requests
  FROM bounded b CROSS JOIN windows w LEFT JOIN observed o
  ON o.method = b.method AND o.path = b.path AND o.customer_id = b.customer_id AND o.start = w.start
  GROUP BY b.method, b.path, b.customer_id, b.position, w.start, w."end"
@@ -99648,7 +99806,7 @@ WITH selected AS (
  FROM status_windows GROUP BY method,path,customer_id
 ), weighted AS (
  SELECT o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms, sum(o.requests) AS weight
- FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled AND NOT o.cold_boot
+ FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled AND NOT o.latency_excluded
  GROUP BY o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms
 ), ranked AS (
  SELECT method, path, customer_id, start, deployment_id, latency_ms, weight, sum(weight) OVER (PARTITION BY method, path, customer_id, start, deployment_id ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
@@ -99704,7 +99862,8 @@ type RouteCustomerHealthObservationParams struct {
 // Advisory identity cohorts use the same exact routes, deployment pair and
 // closed windows as aggregate health. Rank before bounding output and sorting
 // weighted latency. Request-time attribution never follows today's tenant link.
-// Like the guard, skip platform refusals and rank only warm latency.
+// Like the guard, skip platform refusals and requests that named their
+// deployment, and rank only warm, bounded latency.
 func (q *Queries) RouteCustomerHealthObservation(ctx context.Context, db DBTX, arg RouteCustomerHealthObservationParams) ([]byte, error) {
 	row := db.QueryRow(ctx, routeCustomerHealthObservation,
 		arg.CustomerLimit,
@@ -99745,7 +99904,7 @@ WITH selected AS (
  AND t.method=s.method AND t.route=s.method || ' ' || s.path
  AND t.received_at>=w.start AND t.received_at<w."end"
  AND t.received_at>=$7::timestamptz AND t.received_at<$8::timestamptz
- AND NOT t.platform_refusal
+ AND NOT t.platform_refusal AND NOT t.deployment_pinned
  AND ($9::text = ''
   OR ($10::text = 'tenant' AND t.platform_tenant_id = NULLIF($9::text, '')::uuid)
   OR ($10::text = 'consumer' AND t.consumer_id = NULLIF($9::text, '')::uuid))
@@ -99844,7 +100003,8 @@ WITH windows AS (
  AND t.deployment_id IN ($6::text::uuid,$7::text::uuid)
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND ($8::boolean OR t.status BETWEEN $9::integer AND $10::integer)
- AND NOT t.platform_refusal AND NOT ($8::boolean AND $11::boolean AND t.cold_boot)
+ AND NOT t.platform_refusal AND NOT t.deployment_pinned
+ AND NOT ($8::boolean AND ($11::boolean AND t.cold_boot OR t.long_lived))
  AND ($12::text = ''
   OR ($13::text = 'tenant' AND t.platform_tenant_id = NULLIF($12::text, '')::uuid)
   OR ($13::text = 'consumer' AND t.consumer_id = NULLIF($12::text, '')::uuid))
@@ -99927,7 +100087,7 @@ WITH windows AS (
  AND t.method=$4::text AND t.route=$4::text || ' ' || $5::text
  AND t.deployment_id IN ($6::text::uuid,$7::text::uuid)
  AND t.received_at>=w.start AND t.received_at<w."end"
- AND NOT t.platform_refusal AND NOT ($8::boolean AND t.cold_boot)
+ AND NOT t.platform_refusal AND NOT t.deployment_pinned AND NOT ($8::boolean AND t.cold_boot OR t.long_lived)
  AND ($9::text=''
   OR ($10::text='tenant' AND t.platform_tenant_id=NULLIF($9::text,'')::uuid)
   OR ($10::text='consumer' AND t.consumer_id=NULLIF($9::text,'')::uuid))
@@ -100041,14 +100201,14 @@ WITH selected AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements($5::jsonb)
 ), observed AS MATERIALIZED (
  SELECT s.method, s.path, s.latency_enabled, w.start, w."end", t.deployment_id, t.latency_ms, t.status, t.count,
-  ($1::boolean AND t.cold_boot) AS latency_excluded
+  ($1::boolean AND t.cold_boot OR t.long_lived) AS latency_excluded
  FROM selected s CROSS JOIN windows w LEFT JOIN request_telemetry t
  ON t.app_id = $6::text::uuid AND t.account_id = $7::text::uuid
  AND t.deployment_id IN ($2::text::uuid, $3::text::uuid)
  AND t.method = s.method AND t.route = s.method || ' ' || s.path
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND t.received_at >= $8::timestamptz AND t.received_at < $9::timestamptz
- AND NOT t.platform_refusal
+ AND NOT t.platform_refusal AND NOT t.deployment_pinned
  AND ($10::text = ''
   OR ($11::text = 'tenant' AND t.platform_tenant_id = NULLIF($10::text, '')::uuid)
   OR ($11::text = 'consumer' AND t.consumer_id = NULLIF($10::text, '')::uuid))
@@ -100086,9 +100246,9 @@ WITH selected AS (
 )
 SELECT coalesce(jsonb_agg(jsonb_build_object('method', c.method, 'path', c.path, 'start', c.start, 'end', c."end",
  'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', candidate.p95_ms,
-  'latency_requests', CASE WHEN $1::boolean AND c.latency_enabled THEN c.candidate_latency_requests END),
+  'latency_requests', CASE WHEN c.latency_enabled AND ($1::boolean OR c.candidate_latency_requests <> c.candidate_requests) THEN c.candidate_latency_requests END),
  'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', stable.p95_ms,
-  'latency_requests', CASE WHEN $1::boolean AND c.latency_enabled THEN c.stable_latency_requests END)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
+  'latency_requests', CASE WHEN c.latency_enabled AND ($1::boolean OR c.stable_latency_requests <> c.stable_requests) THEN c.stable_latency_requests END)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
 FROM counts c
 LEFT JOIN percentiles candidate ON candidate.method = c.method AND candidate.path = c.path AND candidate.start = c.start AND candidate.deployment_id = $2::text::uuid
 LEFT JOIN percentiles stable ON stable.method = c.method AND stable.path = c.path AND stable.start = c.start AND stable.deployment_id = $3::text::uuid
@@ -100112,9 +100272,11 @@ type RouteHealthObservationParams struct {
 // Exact selected labels and shared windows. Aggregate publisher weights without
 // expanding requests. Percentile ranks interpolate bucket representatives, like
 // RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
-// Platform refusals never count. warm_latency (the canary guard) ranks only
-// requests that did not cold boot and reports how many it ranked
-// (ADR-20261028110044 amendment 3); the production monitor stays end to end.
+// Platform refusals and requests that named their deployment never count.
+// warm_latency (the canary guard) ranks only requests that did not cold boot;
+// no reader ranks a long-lived response's duration. A side reports how many
+// requests it ranked when that differs from its requests, and always for the
+// guard (ADR-20261028110044 amendments 3 and 5).
 func (q *Queries) RouteHealthObservation(ctx context.Context, db DBTX, arg RouteHealthObservationParams) ([]byte, error) {
 	row := db.QueryRow(ctx, routeHealthObservation,
 		arg.WarmLatency,
@@ -100178,14 +100340,14 @@ WITH selected AS (
  FROM jsonb_array_elements($4::jsonb)
 ), raw AS MATERIALIZED (
  SELECT s.method,s.path,s.error_budget,s.latency_budget,w.start,w."end",rt.status,
-  rt.latency_ms,rt.count::bigint AS requests,
+  rt.latency_ms,rt.count::bigint AS requests,rt.long_lived,
   CASE WHEN $1::text='tenant' THEN pt.id ELSE c.id END AS customer_id,
   CASE WHEN $1::text='tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed,
   CASE WHEN $1::text='tenant' THEN rt.platform_tenant_id IS NOT NULL AND pt.id IS NULL ELSE rt.consumer_id IS NOT NULL AND c.id IS NULL END AS unresolved
  FROM selected s CROSS JOIN windows w
  JOIN request_telemetry rt ON rt.account_id=$5::text::uuid AND rt.app_id=$6::text::uuid
   AND rt.deployment_id=$7::text::uuid AND rt.method=s.method AND rt.route=s.method||' '||s.path
-  AND rt.received_at>=w.start AND rt.received_at<w."end" AND NOT rt.platform_refusal
+  AND rt.received_at>=w.start AND rt.received_at<w."end" AND NOT rt.platform_refusal AND NOT rt.deployment_pinned
  LEFT JOIN api_consumers c ON c.id=rt.consumer_id AND c.account_id=rt.account_id AND c.app_id=rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id=rt.platform_tenant_id AND pt.account_id=rt.account_id
 ), required AS (
@@ -100199,14 +100361,15 @@ WITH selected AS (
 ), cohort_counts AS (
  SELECT i.method,i.path,i.customer_id,i.required,w.start,w."end",
   coalesce(sum(o.requests),0)::bigint AS requests,
-  coalesce(sum(o.requests) FILTER(WHERE o.status BETWEEN 500 AND 599),0)::bigint AS errors
+  coalesce(sum(o.requests) FILTER(WHERE o.status BETWEEN 500 AND 599),0)::bigint AS errors,
+  coalesce(sum(o.requests) FILTER(WHERE NOT o.long_lived),0)::bigint AS latency_requests
  FROM identities i CROSS JOIN windows w LEFT JOIN raw o
   ON o.method=i.method AND o.path=i.path AND o.customer_id=i.customer_id AND o.start=w.start
  GROUP BY i.method,i.path,i.customer_id,i.required,w.start,w."end"
 ), weighted AS (
  SELECT o.method,o.path,o.customer_id,o.start,o.latency_ms,sum(o.requests)::bigint AS weight
  FROM raw o JOIN identities i USING(method,path,customer_id)
- WHERE o.latency_budget>0 GROUP BY o.method,o.path,o.customer_id,o.start,o.latency_ms
+ WHERE o.latency_budget>0 AND NOT o.long_lived GROUP BY o.method,o.path,o.customer_id,o.start,o.latency_ms
 ), ranked_latency AS (
  SELECT method, path, customer_id, start, latency_ms, weight,sum(weight) OVER(PARTITION BY method,path,customer_id,start ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
   sum(weight) OVER(PARTITION BY method,path,customer_id,start) AS total FROM weighted
@@ -100221,13 +100384,13 @@ WITH selected AS (
  SELECT method,path,customer_id,start,
   (low+(rank-floor(rank))*(high-low))::double precision AS p95_ms FROM latency_bounds
 ), evaluated_windows AS (
- SELECT c.method, c.path, c.customer_id, c.required, c.start, c."end", c.requests, c.errors,
+ SELECT c.method, c.path, c.customer_id, c.required, c.start, c."end", c.requests, c.errors, c.latency_requests,
   CASE WHEN s.error_budget IS NULL THEN 'disabled'
    WHEN c.start<$10::timestamptz OR c.requests<$11::bigint THEN 'unknown'
    WHEN c.errors::numeric*$12::bigint>s.error_budget::numeric*c.requests THEN CASE WHEN c.errors<$13::bigint THEN 'unknown' ELSE 'violated' END
    ELSE 'healthy' END AS error_status,
   CASE WHEN s.latency_budget=0 THEN 'disabled'
-   WHEN c.start<$10::timestamptz OR c.requests<$14::bigint OR p.p95_ms IS NULL THEN 'unknown'
+   WHEN c.start<$10::timestamptz OR c.latency_requests<$14::bigint OR p.p95_ms IS NULL THEN 'unknown'
    WHEN p.p95_ms>s.latency_budget THEN 'violated' ELSE 'healthy' END AS latency_status,
   p.p95_ms
  FROM cohort_counts c JOIN selected s USING(method,path)
@@ -100241,7 +100404,7 @@ WITH selected AS (
   bool_and(latency_status='healthy') AS latency_healthy,
   bool_and(latency_status='disabled') AS latency_disabled,
   bool_or(requests>0) AS observed,
-  jsonb_agg(jsonb_build_object('start',start,'end',"end",'observed',jsonb_build_object('requests',requests,'server_errors',errors,'p95_latency_ms',p95_ms)) ORDER BY start) AS windows
+  jsonb_agg(jsonb_build_object('start',start,'end',"end",'observed',jsonb_build_object('requests',requests,'server_errors',errors,'p95_latency_ms',p95_ms,'latency_requests',CASE WHEN latency_requests<>requests THEN latency_requests END)) ORDER BY start) AS windows
  FROM evaluated_windows GROUP BY method,path,customer_id,required
 ), classified AS (
  SELECT method, path, customer_id, required, error_violated, error_healthy, error_disabled, latency_violated, latency_healthy, latency_disabled, observed, windows,CASE WHEN error_violated OR latency_violated THEN 'violated'

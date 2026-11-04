@@ -869,6 +869,7 @@ from .idempotency import (
 )
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
+    GREGALE_DEADLINE_MS_HEADER,
     GREGALE_RELEASE_HEADER,
     GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
@@ -877,6 +878,7 @@ from .release_context import (
     GregaleReleaseTransport,
     current_gregale_release,
     current_gregale_request_deadline,
+    gregale_request_time_remaining_ms,
     with_gregale_release,
     with_gregale_request_context,
 )
@@ -938,9 +940,11 @@ __all__ = (
     "with_idempotency_key",
     "mint_idempotency_key",
     "current_idempotency_key",
+    "GREGALE_DEADLINE_MS_HEADER",
     "GREGALE_RELEASE_HEADER",
     "GREGALE_REQUEST_DEADLINE_HEADER",
     "current_gregale_request_deadline",
+    "gregale_request_time_remaining_ms",
     "with_gregale_request_context",
     "GREGALE_REVISION_HEADER",
     "GregaleReleaseMiddleware",
@@ -1011,6 +1015,7 @@ from .. import (
     with_idempotency_key,
     mint_idempotency_key,
     current_idempotency_key,
+    GREGALE_DEADLINE_MS_HEADER,
     GREGALE_RELEASE_HEADER,
     GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
@@ -1019,6 +1024,7 @@ from .. import (
     AsyncGregaleReleaseTransport,
     current_gregale_release,
     current_gregale_request_deadline,
+    gregale_request_time_remaining_ms,
     with_gregale_release,
     with_gregale_request_context,
     verify_webhook,
