@@ -44,6 +44,7 @@ const (
 	adoptionRefusedPrivateNetwork  = "private_network"
 	adoptionRefusedPrepared        = "prepared_network"
 	adoptionRefusedRehearsal       = "rehearsal"
+	adoptionRefusedBranchContained = "environment_branch_contained"
 	adoptionRefusedEgressCircuit   = "egress_circuit"
 	adoptionRefusedProductionFork  = "production_fork"
 	adoptionRefusedFunction        = "function_resources"
@@ -177,6 +178,8 @@ func adoptionScope(chrootRoot func(string) string, adoptAdmitted bool, r resourc
 		return adoptionRefusedStaticEgress, "static egress SNAT is not rebuilt yet"
 	case a.Network.RehearsalRunID != "":
 		return adoptionRefusedRehearsal, "rehearsal containment and recorder are not rebuilt"
+	case a.Network.EnvironmentBranchContained:
+		return adoptionRefusedBranchContained, "environment branch containment is not rebuilt"
 	case a.Network.EgressCircuits:
 		return adoptionRefusedEgressCircuit, "egress circuit registration is not rebuilt"
 	case r.Lease.Quarantine:

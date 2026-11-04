@@ -308,8 +308,14 @@ type AppSpec struct {
 	// the digest vmmd served; any mismatch is after_restore_failed and the
 	// branch cold-boots. Ignored on cold boot.
 	IdentityReload bool `protobuf:"varint,36,opt,name=identity_reload,json=identityReload,proto3" json:"identity_reload,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// environment_branch_contained asks for the contained environment branch
+	// profile (ADR-20261031193635 section 7). vmmd reads the deployment's
+	// durable branch egress on every wake regardless; the field can only add
+	// containment, and a mismatch refuses the wake. An older vmmd ignores it
+	// and returns no acknowledgement, which the scheduler treats as refusal.
+	EnvironmentBranchContained bool `protobuf:"varint,37,opt,name=environment_branch_contained,json=environmentBranchContained,proto3" json:"environment_branch_contained,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *AppSpec) Reset() {
@@ -590,6 +596,13 @@ func (x *AppSpec) GetQuarantine() bool {
 func (x *AppSpec) GetIdentityReload() bool {
 	if x != nil {
 		return x.IdentityReload
+	}
+	return false
+}
+
+func (x *AppSpec) GetEnvironmentBranchContained() bool {
+	if x != nil {
+		return x.EnvironmentBranchContained
 	}
 	return false
 }
@@ -1398,8 +1411,11 @@ type WakeResponse struct {
 	ImageHealthcheckVerified           bool `protobuf:"varint,16,opt,name=image_healthcheck_verified,json=imageHealthcheckVerified,proto3" json:"image_healthcheck_verified,omitempty"`
 	SupportsImageHealthcheck           bool `protobuf:"varint,17,opt,name=supports_image_healthcheck,json=supportsImageHealthcheck,proto3" json:"supports_image_healthcheck,omitempty"`
 	SupportsImageHealthcheckMonitoring bool `protobuf:"varint,18,opt,name=supports_image_healthcheck_monitoring,json=supportsImageHealthcheckMonitoring,proto3" json:"supports_image_healthcheck_monitoring,omitempty"`
-	unknownFields                      protoimpl.UnknownFields
-	sizeCache                          protoimpl.SizeCache
+	// The contained environment branch profile was installed before guest
+	// execution (ADR-20261031193635).
+	EnvironmentBranchContained bool `protobuf:"varint,20,opt,name=environment_branch_contained,json=environmentBranchContained,proto3" json:"environment_branch_contained,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *WakeResponse) Reset() {
@@ -1561,6 +1577,13 @@ func (x *WakeResponse) GetSupportsImageHealthcheck() bool {
 func (x *WakeResponse) GetSupportsImageHealthcheckMonitoring() bool {
 	if x != nil {
 		return x.SupportsImageHealthcheckMonitoring
+	}
+	return false
+}
+
+func (x *WakeResponse) GetEnvironmentBranchContained() bool {
+	if x != nil {
+		return x.EnvironmentBranchContained
 	}
 	return false
 }
@@ -13992,7 +14015,11 @@ type AllowResolvedEgressRequest struct {
 	// database_port is non-zero when the answered name is one of the caller
 	// app's bound managed databases (ADR 20261026150000): vmmd also opens that
 	// TCP port to the addresses. An older resolver leaves it zero.
-	DatabasePort  uint32 `protobuf:"varint,4,opt,name=database_port,json=databasePort,proto3" json:"database_port,omitempty"`
+	DatabasePort uint32 `protobuf:"varint,4,opt,name=database_port,json=databasePort,proto3" json:"database_port,omitempty"`
+	// name is the answered name, sent with a database_port. A contained
+	// environment branch instance reaches only its branch's own databases,
+	// which vmmd matches by name (ADR-20261031193635).
+	Name          string `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -14053,6 +14080,13 @@ func (x *AllowResolvedEgressRequest) GetDatabasePort() uint32 {
 		return x.DatabasePort
 	}
 	return 0
+}
+
+func (x *AllowResolvedEgressRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 type AllowResolvedEgressAck struct {
@@ -17426,7 +17460,7 @@ var File_onebox_faas_vmmd_v1_vmmd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
-	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\x9f\r\n" +
+	"\x1eonebox/faas/vmmd/v1/vmmd.proto\x12\x13onebox.faas.vmmd.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xe1\r\n" +
 	"\aAppSpec\x12(\n" +
 	"\x10rehearsal_run_id\x18! \x01(\tR\x0erehearsalRunId\x12\x19\n" +
 	"\bbase_key\x18\x01 \x01(\tR\abaseKey\x12\x1b\n" +
@@ -17470,7 +17504,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\n" +
 	"quarantine\x18# \x01(\bR\n" +
 	"quarantine\x12'\n" +
-	"\x0fidentity_reload\x18$ \x01(\bR\x0eidentityReload\"\x92\b\n" +
+	"\x0fidentity_reload\x18$ \x01(\bR\x0eidentityReload\x12@\n" +
+	"\x1cenvironment_branch_contained\x18% \x01(\bR\x1aenvironmentBranchContained\"\x92\b\n" +
 	"\vSidecarSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
@@ -17545,7 +17580,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"capture_id\x18\t \x01(\tR\tcaptureId\x12\x1d\n" +
 	"\n" +
 	"sealed_key\x18\n" +
-	" \x01(\fR\tsealedKeyJ\x04\b\x02\x10\x03\"\xfd\x06\n" +
+	" \x01(\fR\tsealedKeyJ\x04\b\x02\x10\x03\"\xbf\a\n" +
 	"\fWakeResponse\x12(\n" +
 	"\x10rehearsal_run_id\x18\x13 \x01(\tR\x0erehearsalRunId\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
@@ -17568,7 +17603,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x17supports_secret_aliases\x18\x0f \x01(\bR\x15supportsSecretAliases\x12<\n" +
 	"\x1aimage_healthcheck_verified\x18\x10 \x01(\bR\x18imageHealthcheckVerified\x12<\n" +
 	"\x1asupports_image_healthcheck\x18\x11 \x01(\bR\x18supportsImageHealthcheck\x12Q\n" +
-	"%supports_image_healthcheck_monitoring\x18\x12 \x01(\bR\"supportsImageHealthcheckMonitoring\"\xc8\x02\n" +
+	"%supports_image_healthcheck_monitoring\x18\x12 \x01(\bR\"supportsImageHealthcheckMonitoring\x12@\n" +
+	"\x1cenvironment_branch_contained\x18\x14 \x01(\bR\x1aenvironmentBranchContained\"\xc8\x02\n" +
 	"\x19CreateFromSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12<\n" +
@@ -18535,13 +18571,14 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x06output\x18\x02 \x01(\v2..onebox.faas.vmmd.v1.ExecuteAppTaskOutputChunkH\x00R\x06output\x12I\n" +
 	"\bterminal\x18\x03 \x01(\v2+.onebox.faas.vmmd.v1.ExecuteAppTaskResponseH\x00R\bterminalB\a\n" +
 	"\x05frame\"\x17\n" +
-	"\x15AttachAppTaskAttached\"\x9d\x01\n" +
+	"\x15AttachAppTaskAttached\"\xb1\x01\n" +
 	"\x1aAllowResolvedEgressRequest\x12\x1b\n" +
 	"\tsource_ip\x18\x01 \x01(\tR\bsourceIp\x12\x1c\n" +
 	"\taddresses\x18\x02 \x03(\tR\taddresses\x12\x1f\n" +
 	"\vttl_seconds\x18\x03 \x01(\rR\n" +
 	"ttlSeconds\x12#\n" +
-	"\rdatabase_port\x18\x04 \x01(\rR\fdatabasePort\"2\n" +
+	"\rdatabase_port\x18\x04 \x01(\rR\fdatabasePort\x12\x12\n" +
+	"\x04name\x18\x05 \x01(\tR\x04name\"2\n" +
 	"\x16AllowResolvedEgressAck\x12\x18\n" +
 	"\amatched\x18\x01 \x01(\bR\amatched\"\x9f\x01\n" +
 	"\x1cUpdateAppEgressPolicyRequest\x12\x15\n" +

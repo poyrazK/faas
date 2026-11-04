@@ -22,6 +22,13 @@ type resolvedEgressAllower interface {
 	AllowResolvedEgress(ctx context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error
 }
 
+// namedResolvedEgressAllower also takes the answered name, which a contained
+// environment branch instance needs to match its own databases
+// (ADR-20261031193635).
+type namedResolvedEgressAllower interface {
+	AllowResolvedEgressForName(ctx context.Context, source netip.Addr, name string, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error
+}
+
 // AllowResolvedEgress implements the ADR-373 DNS-gated egress hook: the
 // node's bridge resolver reports a guest's answer and vmmd adds the
 // addresses to that instance's egress_resolved set. A database_port names a
@@ -55,7 +62,13 @@ func (s *Server) AllowResolvedEgress(ctx context.Context, req *vmmdpb.AllowResol
 	if _, forbidden := api.TenantEgressForbiddenPort(int(databasePort)); databasePort != 0 && forbidden {
 		return nil, status.Errorf(codes.InvalidArgument, "vmmd: AllowResolvedEgress: database_port %d is never opened", databasePort)
 	}
-	if err := allower.AllowResolvedEgress(ctx, source, addrs, ttl, uint16(databasePort)); err != nil {
+	allow := func() error { return allower.AllowResolvedEgress(ctx, source, addrs, ttl, uint16(databasePort)) }
+	if named, ok := allower.(namedResolvedEgressAllower); ok {
+		allow = func() error {
+			return named.AllowResolvedEgressForName(ctx, source, req.GetName(), addrs, ttl, uint16(databasePort))
+		}
+	}
+	if err := allow(); err != nil {
 		if errors.Is(err, fcvm.ErrResolvedEgressNoInstance) {
 			return &vmmdpb.AllowResolvedEgressAck{Matched: false}, nil
 		}

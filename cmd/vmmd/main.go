@@ -1077,6 +1077,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			mgr.WithRehearsalNetworkPolicies(policies)
 		}
+		// Contained environment branches (ADR-20261031193635): every app
+		// wake reads its deployment's branch egress, so a contained branch
+		// never boots with live egress on this node.
+		branches, ok := store.(state.EnvironmentBranchEgressStore)
+		if !ok {
+			return errors.New("vmmd: environment branch egress storage is unavailable")
+		}
+		mgr.WithEnvironmentBranchEgress(branches)
 		// Revoke unconditionally: identities left by an earlier enabled
 		// incarnation must not survive a restart with containment disabled.
 		if fencer, ok := store.(interface {

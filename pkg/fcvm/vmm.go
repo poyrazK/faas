@@ -3130,7 +3130,7 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		// through after_restore and echo its digest in the timing frame.
 		IdentityReload bool `json:"identityReload,omitempty"`
 	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent, EventPublishVerdict: true,
-		IdentityReload: l.RestoreIdentity.pending()})
+		IdentityReload: l.restoreIdentity.pending()})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}
@@ -3183,7 +3183,7 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if guest != nil {
 		guestIdentity = guest.IdentityDigest
 	}
-	if err := checkRestoreIdentityAck(l.RestoreIdentity, guestIdentity); err != nil {
+	if err := checkRestoreIdentityAck(l.restoreIdentity, guestIdentity); err != nil {
 		return err
 	}
 	if validatePeer != nil {

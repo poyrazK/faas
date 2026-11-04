@@ -165,10 +165,12 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressNewDstPerMin":              "reset",
 	"EgressFanoutValid":               "reset",
 	"EgressFloodDropsPerMin":          "reset",
-	"resolvedEgress":                  "reset", // cache; the nft entries keep their own timeouts
-	"databaseEgress":                  "reset", // same for egress_db pairs (ADR-20261026150000)
-	"TailCount":                       "reset", // the host only ever sees decrements
-	"tailSecondsAccum":                "reset", // informational, not billed
+	"resolvedEgress":                  "reset",   // cache; the nft entries keep their own timeouts
+	"databaseEgress":                  "reset",   // same for egress_db pairs (ADR-20261026150000)
+	"environmentBranch":               "refused", // a contained branch guest is not adopted (ADR-20261031193635)
+	"branchDatabaseEgress":            "refused", // its branch_db pairs go with it
+	"TailCount":                       "reset",   // the host only ever sees decrements
+	"tailSecondsAccum":                "reset",   // informational, not billed
 	"adoptionVCPUs":                   "rebuilt",
 	"adoptionMemSizeMiB":              "rebuilt",
 	"adoptionOp":                      "reset", // resolved before adoption (slice 3)

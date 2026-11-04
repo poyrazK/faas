@@ -698,6 +698,11 @@ type Instance struct {
 	// databaseEgress is when each address . port pair in this instance's
 	// egress_db set expires (ADR 20261026150000), on the same rule.
 	databaseEgress map[databaseEgressKey]time.Time
+	// environmentBranch names the branch databases a contained branch
+	// instance may reach; branchDatabaseEgress is when each pair in its
+	// branch_db set expires (ADR-20261031193635).
+	environmentBranch    *environmentBranchContainment
+	branchDatabaseEgress map[databaseEgressKey]time.Time
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -843,7 +848,12 @@ type Manager struct {
 	computeBypassGuard              func(context.Context, string) error
 	dataRepair                      *dataRepairRuntime
 	rehearsalNetworkPolicies        RehearsalNetworkPolicyStore
-	rehearsalRecorders              map[string]*rehearsalrecorder.Session
+	// environmentBranchEgress is the durable contained-branch authority
+	// (ADR-20261031193635); environmentBranchPolicies caches deployments
+	// read as uncontained.
+	environmentBranchEgress   EnvironmentBranchEgressAuthority
+	environmentBranchPolicies environmentBranchPolicyCache
+	rehearsalRecorders        map[string]*rehearsalrecorder.Session
 	// outboundRelayEnabled advertises vmmd's streaming relay to
 	// outbound-enabled Runs (ADR-990).
 	outboundRelayEnabled      atomic.Bool
@@ -3060,6 +3070,8 @@ type wakingInstance struct {
 	appID        string
 	accountID    string
 	contained    bool // a rehearsal run contains it (ADR-20261017201005)
+	// branchContained: a contained environment branch (ADR-20261031193635).
+	branchContained bool
 	// qualification marks a held GitOps qualification candidate (ADR-568):
 	// it boots with its app's identity but takes no external action.
 	qualification bool
@@ -3792,7 +3804,14 @@ type WakeRequest struct {
 	// only with agentRunOnly (ADR-20261027090012).
 	agentRunWaitPauseAfter time.Duration
 	RehearsalRunID         string // exact durable containment run; ordinary legacy callers may omit it
-	Instance               string
+	// EnvironmentBranchContained asks for the contained branch profile
+	// (ADR-20261031193635). It can only add containment: vmmd reads the
+	// deployment's policy either way, and refuses a mismatch.
+	EnvironmentBranchContained bool
+	// environmentBranch is set by applyEnvironmentBranchEgress for a
+	// contained branch wake.
+	environmentBranch *environmentBranchContainment
+	Instance          string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -4659,6 +4678,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := m.applyRehearsalNetwork(ctx, &req); err != nil {
 		return nil, err
 	}
+	if err := m.applyEnvironmentBranchEgress(ctx, &req); err != nil {
+		return nil, err
+	}
 	qualificationOnly := false
 	if permit, authorized := ctx.Value(nativeQualificationContextKey{}).(nativeQualificationRecord); authorized {
 		if req.RehearsalRunID != "" {
@@ -4807,7 +4829,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.Networkless = req.ExecutionOnly
 	lease.Quarantine = req.Quarantine && !req.ExecutionOnly
 	if req.IdentityReload && !req.ExecutionOnly {
-		lease.RestoreIdentity = newRestoreIdentityExpectation()
+		lease.restoreIdentity = newRestoreIdentityExpectation()
 	}
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
@@ -4823,7 +4845,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.waking = make(map[string]wakingInstance)
 	}
 	m.waking[req.Instance] = wakingInstance{deploymentID: req.DeploymentID, appID: req.AppID, accountID: req.AccountID,
-		contained: req.RehearsalRunID != "", qualification: qualificationOnly, restoreIdentity: lease.RestoreIdentity}
+		contained: req.RehearsalRunID != "", branchContained: req.environmentBranch != nil, qualification: qualificationOnly, restoreIdentity: lease.restoreIdentity}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	m.beginFunctionExecutionBoot(lease, req)
@@ -4932,6 +4954,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// netns.Config omits the rule when ConntrackCap <= 0 so a vmmd that
 	// hasn't been rebuilt still wakes cleanly.
 	nc.RehearsalRunID = req.RehearsalRunID
+	nc.EnvironmentBranchContained = req.environmentBranch != nil
 	nc.ConntrackCap = m.conntrackCap
 	// ADR-361: default-deny guest egress (base ports + per-plan rate).
 	if !req.ExecutionOnly {
@@ -5443,7 +5466,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
-		WakeID: wakeID, NodeID: fields.NodeID,
+		environmentBranch: req.environmentBranch,
+		WakeID:            wakeID, NodeID: fields.NodeID,
 		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),

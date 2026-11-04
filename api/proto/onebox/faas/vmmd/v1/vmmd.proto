@@ -869,6 +869,12 @@ message AppSpec {
   // the digest vmmd served; any mismatch is after_restore_failed and the
   // branch cold-boots. Ignored on cold boot.
   bool identity_reload = 36;
+  // environment_branch_contained asks for the contained environment branch
+  // profile (ADR-20261031193635 section 7). vmmd reads the deployment's
+  // durable branch egress on every wake regardless; the field can only add
+  // containment, and a mismatch refuses the wake. An older vmmd ignores it
+  // and returns no acknowledgement, which the scheduler treats as refusal.
+  bool environment_branch_contained = 37;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1113,6 +1119,9 @@ message WakeResponse {
   bool image_healthcheck_verified = 16;
   bool supports_image_healthcheck = 17;
   bool supports_image_healthcheck_monitoring = 18;
+  // The contained environment branch profile was installed before guest
+  // execution (ADR-20261031193635).
+  bool environment_branch_contained = 20;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
@@ -3184,6 +3193,10 @@ message AllowResolvedEgressRequest {
   // app's bound managed databases (ADR 20261026150000): vmmd also opens that
   // TCP port to the addresses. An older resolver leaves it zero.
   uint32 database_port = 4;
+  // name is the answered name, sent with a database_port. A contained
+  // environment branch instance reaches only its branch's own databases,
+  // which vmmd matches by name (ADR-20261031193635).
+  string name = 5;
 }
 
 message AllowResolvedEgressAck {
