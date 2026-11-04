@@ -34260,7 +34260,7 @@ CREATE TABLE public.custom_domain_tls_admissions (
     registered_domain public.citext NOT NULL,
     owner_id uuid NOT NULL,
     admitted_at timestamp with time zone NOT NULL,
-    CONSTRAINT custom_domain_tls_admissions_host_chk CHECK (((host OPERATOR(public.!~~) '%*%'::public.citext) AND (host OPERATOR(public.~~) ('%.'::text || (registered_domain)::text))))
+    CONSTRAINT custom_domain_tls_admissions_registered_host_chk CHECK (((host OPERATOR(public.!~~) '%*%'::public.citext) AND ((host OPERATOR(public.=) registered_domain) OR (host OPERATOR(public.~~) ('%.'::text || (registered_domain)::text)))))
 );
 
 
@@ -34285,8 +34285,8 @@ CREATE TABLE public.custom_domain_tls_hosts (
     host public.citext NOT NULL,
     wildcard_domain public.citext NOT NULL,
     admitted_at timestamp with time zone NOT NULL,
-    CONSTRAINT custom_domain_tls_hosts_host_chk CHECK (((host OPERATOR(public.!~~) '%*%'::public.citext) AND (host OPERATOR(public.~~) ('%'::text || substr((wildcard_domain)::text, 2))))),
-    CONSTRAINT custom_domain_tls_hosts_wildcard_chk CHECK ((wildcard_domain OPERATOR(public.~~) '*.%'::public.citext))
+    CONSTRAINT custom_domain_tls_hosts_binding_chk CHECK (((wildcard_domain OPERATOR(public.~~) '*.%'::public.citext) OR (wildcard_domain OPERATOR(public.=) host))),
+    CONSTRAINT custom_domain_tls_hosts_name_chk CHECK (((host OPERATOR(public.!~~) '%*%'::public.citext) AND ((host OPERATOR(public.=) wildcard_domain) OR (host OPERATOR(public.~~) ('%'::text || substr((wildcard_domain)::text, 2))))))
 );
 
 

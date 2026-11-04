@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // CustomDomainTLSAllowedHostReader is the public edge's read of a wildcard
@@ -29,12 +30,16 @@ type CustomDomainTLSAllowedHostReader interface {
 type CustomDomainTLSAllowedHostStore interface {
 	// CustomDomainTLSAllowedHosts returns the wildcard's allowlisted names,
 	// sorted; empty means every name below it is allowed. A missing
-	// wildcard returns ErrNotFound.
+	// wildcard returns ErrNotFound. WithCustomDomainProbe also requires
+	// the same app and challenge in the read's database snapshot.
 	CustomDomainTLSAllowedHosts(ctx context.Context, wildcardDomain string) ([]string, error)
 	// SetCustomDomainTLSAllowedHosts replaces the allowlist with names,
 	// which it normalizes (NormalizeWildcardHostNames); an empty list
 	// clears it. A missing wildcard returns ErrNotFound.
 	SetCustomDomainTLSAllowedHosts(ctx context.Context, wildcardDomain string, names []string) error
+	// SetCustomDomainTLSAllowedHostsForClaim rejects a stale authorization if
+	// the app or challenge changed before the mutation acquired the row lock.
+	SetCustomDomainTLSAllowedHostsForClaim(ctx context.Context, claim CustomDomain, names []string) error
 }
 
 var wildcardHostNameRE = lazyregexp.New(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
@@ -105,6 +110,16 @@ func (s *pgCore) CustomDomainTLSHostAllowed(ctx context.Context, wildcardDomain,
 // CustomDomainTLSAllowedHosts implements CustomDomainTLSAllowedHostStore.
 func (s *pgCore) CustomDomainTLSAllowedHosts(ctx context.Context, wildcardDomain string) ([]string, error) {
 	wildcardDomain = strings.ToLower(wildcardDomain)
+	if claim, bound := CustomDomainProbe(ctx); bound {
+		if err := probeDomainMatches(claim, wildcardDomain); err != nil {
+			return nil, err
+		}
+		names, err := sqlc.New().ReadCustomDomainProbeAllowedHosts(ctx, s.pool, sqlc.ReadCustomDomainProbeAllowedHostsParams{Domain: wildcardDomain, AppID: claim.AppID, Token: claim.ChallengeToken})
+		if err != nil {
+			return nil, fmt.Errorf("custom-domain tls allowlist: %w", mapErr(err))
+		}
+		return names, nil
+	}
 	var names []string
 	if err := s.pool.QueryRow(ctx,
 		`select coalesce(array_agg(h.name::text order by h.name) filter (where h.name is not null), '{}')
@@ -121,6 +136,14 @@ func (s *pgCore) CustomDomainTLSAllowedHosts(ctx context.Context, wildcardDomain
 // SetCustomDomainTLSAllowedHosts implements CustomDomainTLSAllowedHostStore.
 // It is on PgStore, not pgCore, so the edge's EdgeStore cannot write it.
 func (s *PgStore) SetCustomDomainTLSAllowedHosts(ctx context.Context, wildcardDomain string, names []string) error {
+	return s.setCustomDomainTLSAllowedHosts(ctx, wildcardDomain, names, nil)
+}
+
+func (s *PgStore) SetCustomDomainTLSAllowedHostsForClaim(ctx context.Context, claim CustomDomain, names []string) error {
+	return s.setCustomDomainTLSAllowedHosts(ctx, claim.Domain, names, &claim)
+}
+
+func (s *PgStore) setCustomDomainTLSAllowedHosts(ctx context.Context, wildcardDomain string, names []string, claim *CustomDomain) error {
 	wildcardDomain = strings.ToLower(wildcardDomain)
 	names, err := NormalizeWildcardHostNames(wildcardDomain, names)
 	if err != nil {
@@ -131,10 +154,13 @@ func (s *PgStore) SetCustomDomainTLSAllowedHosts(ctx context.Context, wildcardDo
 		return fmt.Errorf("set custom-domain tls allowlist: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var locked string
+	var appID, challenge string
 	if err := tx.QueryRow(ctx,
-		`select domain::text from custom_domains where domain = $1 for no key update`, wildcardDomain).Scan(&locked); err != nil {
+		`select app_id::text, challenge_token from custom_domains where domain = $1 for no key update`, wildcardDomain).Scan(&appID, &challenge); err != nil {
 		return fmt.Errorf("set custom-domain tls allowlist: lock wildcard: %w", mapErr(err))
+	}
+	if claim != nil && (appID != claim.AppID || challenge != claim.ChallengeToken) {
+		return ErrNotFound
 	}
 	if _, err := tx.Exec(ctx,
 		`delete from custom_domain_tls_allowed_hosts where wildcard_domain = $1`, wildcardDomain); err != nil {
@@ -170,11 +196,12 @@ func (m *MemStore) CustomDomainTLSHostAllowed(_ context.Context, wildcardDomain,
 }
 
 // CustomDomainTLSAllowedHosts implements CustomDomainTLSAllowedHostStore.
-func (m *MemStore) CustomDomainTLSAllowedHosts(_ context.Context, wildcardDomain string) ([]string, error) {
+func (m *MemStore) CustomDomainTLSAllowedHosts(ctx context.Context, wildcardDomain string) ([]string, error) {
 	wildcardDomain = strings.ToLower(wildcardDomain)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.domains[wildcardDomain]; !ok {
+	d, ok := m.domains[wildcardDomain]
+	if !ok || !customDomainProbeMatches(ctx, d) {
 		return nil, ErrNotFound
 	}
 	return append([]string{}, m.customDomainTLSAllowedHosts[wildcardDomain]...), nil
@@ -182,6 +209,14 @@ func (m *MemStore) CustomDomainTLSAllowedHosts(_ context.Context, wildcardDomain
 
 // SetCustomDomainTLSAllowedHosts implements CustomDomainTLSAllowedHostStore.
 func (m *MemStore) SetCustomDomainTLSAllowedHosts(_ context.Context, wildcardDomain string, names []string) error {
+	return m.setCustomDomainTLSAllowedHosts(wildcardDomain, names, nil)
+}
+
+func (m *MemStore) SetCustomDomainTLSAllowedHostsForClaim(_ context.Context, claim CustomDomain, names []string) error {
+	return m.setCustomDomainTLSAllowedHosts(claim.Domain, names, &claim)
+}
+
+func (m *MemStore) setCustomDomainTLSAllowedHosts(wildcardDomain string, names []string, claim *CustomDomain) error {
 	wildcardDomain = strings.ToLower(wildcardDomain)
 	names, err := NormalizeWildcardHostNames(wildcardDomain, names)
 	if err != nil {
@@ -189,7 +224,8 @@ func (m *MemStore) SetCustomDomainTLSAllowedHosts(_ context.Context, wildcardDom
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.domains[wildcardDomain]; !ok {
+	d, ok := m.domains[wildcardDomain]
+	if !ok || claim != nil && (d.AppID != claim.AppID || d.ChallengeToken != claim.ChallengeToken) {
 		return ErrNotFound
 	}
 	if m.customDomainTLSAllowedHosts == nil {

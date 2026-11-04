@@ -28,6 +28,14 @@
       "ipv4": "gregale-cloudflare-origin-v4",
       "ipv6": "gregale-cloudflare-origin-v6"
     },
+    "custom_domain_tls": {
+      "enabled": true,
+      "target_tag": "gregale-custom-domain-edge",
+      "firewall_rules": {
+        "ipv4": "gregale-custom-domains-v4",
+        "ipv6": "gregale-custom-domains-v6"
+      }
+    },
     "direct_entry": {
       "target_tag": "gregale-entry",
       "firewall_rule": "gregale-direct-entry-v4",

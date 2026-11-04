@@ -1,9 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
 	"net/url"
 	"reflect"
 	"slices"
@@ -64,21 +61,8 @@ func auditMCPGatewayRules(appID string, cfg mcphosting.Config, options mcpAccess
 		}
 	}
 	checks = append(checks, mcphosting.Check{Name: "gateway_shadowing", Status: state, Detail: "No overlapping JWT rule may have earlier or equal priority; conditional rules can shadow a subset of client requests."})
-	var actual api.EdgeRuleJWTAction
-	action := selected.Action
-	// The API listing uses the state action's kind-tagged union; accept the
-	// flat action used in create/update requests as well.
-	var tagged map[string]json.RawMessage
-	if json.Unmarshal(action, &tagged) == nil && tagged["jwt"] != nil {
-		kindOK := len(tagged) == 1 || (len(tagged) == 2 && string(tagged["kind"]) == `"jwt"`)
-		if !kindOK {
-			return selected.ID, append(checks, mcphosting.Check{Name: "gateway_policy_shape", Status: "failed", Detail: "JWT policy contains unexpected action kinds."})
-		}
-		action = tagged["jwt"]
-	}
-	decoder := json.NewDecoder(bytes.NewReader(action))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&actual) != nil || decoder.Decode(new(any)) != io.EOF || actual.Validate() != nil || actual.MCP == nil {
+	actual, decodeErr := decodeMCPGatewayAction(selected.Action)
+	if decodeErr != nil || actual.Validate() != nil || actual.MCP == nil {
 		return selected.ID, append(checks, mcphosting.Check{Name: "gateway_policy_shape", Status: "failed", Detail: "Managed JWT action is invalid, unsupported, or missing the MCP resource policy."})
 	}
 	expected := mcpExpectedGatewayAction(cfg, options.Algorithms)

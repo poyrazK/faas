@@ -13193,11 +13193,11 @@ func (m *MemStore) DomainByName(_ context.Context, domain string) (CustomDomain,
 // SetDefaultCustomDomain atomically replaces the app's default domain in the
 // in-memory store. The handler performs ownership and verification checks;
 // keeping the same checks here makes direct test callers safe as well.
-func (m *MemStore) SetDefaultCustomDomain(_ context.Context, appID, domain string) error {
+func (m *MemStore) SetDefaultCustomDomain(ctx context.Context, appID, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
-	if !ok || d.AppID != appID || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
+	if !ok || d.AppID != appID || !customDomainProbeMatches(ctx, d) || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return ErrNotFound
 	}
 	if m.defaultDomains == nil {
@@ -13225,7 +13225,7 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 		return "", ErrNotFound
 	}
 	d, ok := m.domains[domain]
-	if !ok || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
+	if !ok || d.AppID != appID || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return "", ErrNotFound
 	}
 	return domain, nil
@@ -13314,6 +13314,11 @@ func (m *MemStore) MarkDomainVerifiedIfChallenge(ctx context.Context, domain, to
 		return false, nil
 	}
 	d.VerifiedAt = time.Now()
+	d.CertStatus = CustomDomainCertPending
+	d.CertExpiresAt = time.Time{}
+	d.CertLastError = ""
+	d.CertFailedAt = time.Time{}
+	d.DNSLastCheckedAt = d.VerifiedAt
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
 		return false, err
 	}
@@ -13321,12 +13326,18 @@ func (m *MemStore) MarkDomainVerifiedIfChallenge(ctx context.Context, domain, to
 	return true, nil
 }
 
-func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {
+func (m *MemStore) UpdateCustomDomainCertStatus(ctx context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
 	if !ok {
 		return ErrNotFound
+	}
+	if !customDomainProbeMatches(ctx, d) {
+		return ErrStaleCustomDomainProbe
+	}
+	if _, bound := CustomDomainProbe(ctx); bound && !dnsCheckedAt.IsZero() && d.DNSLastCheckedAt.After(dnsCheckedAt) {
+		return nil
 	}
 	previous := d.CertStatus
 	d.CertStatus = status
@@ -13382,9 +13393,12 @@ func (m *MemStore) deleteCustomDomainLocked(domain string) error {
 
 // --- domain_doctor_observations (ADR-120) ------------------------------------
 
-func (m *MemStore) UpsertDoctorObservation(_ context.Context, obs DomainDoctorObservation) error {
+func (m *MemStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctorObservation) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !customDomainProbeMatches(ctx, m.domains[obs.Domain]) {
+		return ErrStaleCustomDomainProbe
+	}
 	if existing, ok := m.doctorObs[obs.Domain]; ok && obs.SurfaceID == "" {
 		obs.SurfaceID = existing.SurfaceID
 	}
@@ -13392,9 +13406,12 @@ func (m *MemStore) UpsertDoctorObservation(_ context.Context, obs DomainDoctorOb
 	return nil
 }
 
-func (m *MemStore) GetDoctorObservation(_ context.Context, domain string) (DomainDoctorObservation, error) {
+func (m *MemStore) GetDoctorObservation(ctx context.Context, domain string) (DomainDoctorObservation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !customDomainProbeMatches(ctx, m.domains[domain]) {
+		return DomainDoctorObservation{}, ErrStaleCustomDomainProbe
+	}
 	obs, ok := m.doctorObs[domain]
 	if !ok {
 		return DomainDoctorObservation{}, ErrNotFound
