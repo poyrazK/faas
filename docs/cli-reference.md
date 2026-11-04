@@ -8319,9 +8319,9 @@ Create or inspect durable object deletions
 
 #### bucket deletion create
 
-Delete current data or an owned version with a retry identity
+Delete current data or an owned version; reuse the request UUID to retry
 
-`gregale bucket deletion create <app> <bucket-id> <key> <request-id> [version-id|null]`
+`gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
 
 #### bucket deletion get
 

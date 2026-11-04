@@ -553,7 +553,10 @@ concurrent writes to the same part return 409. Different parts remain concurrent
 Successful verified transfers settle their token. Failed or uncertain transfers
 block finalization for a conservative 36-minute window (30-minute transfer
 context, 60-second internal URL, five-minute grace). Expiry alone releases no
-capacity. Completion checks the part revision and absence of in-flight writes,
+capacity. An abort settles an uncertain attempt once its window has ended and
+the native abort is verified (no parts or `NoSuchUpload`), so an upload a
+client abandoned mid-part finishes aborting instead of retrying forever
+(ADR-20261104151650); completion still waits for proof. Completion checks the part revision and absence of in-flight writes,
 then atomically persists its size, exact part list, and final-object grant.
 
 Conditional completion also persists its immutable condition in a distinct

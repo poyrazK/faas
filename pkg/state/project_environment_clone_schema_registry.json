@@ -5709,6 +5709,24 @@
     }
   },
   {
+    "table": "edge_tls_certificates",
+    "columns": [
+      "account_uri",
+      "ca",
+      "chain_pem",
+      "id",
+      "issued_at",
+      "key_kid",
+      "key_sealed",
+      "names",
+      "not_after",
+      "not_before",
+      "serial",
+      "sha256"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "edge_crawler_ip_ranges",
     "columns": [
       "crawler",
@@ -17303,6 +17321,7 @@
       "country",
       "deployment_created_at",
       "deployment_id",
+      "deployment_pinned",
       "deployment_tag",
       "flag_evidence",
       "guest_cpu_time_ms",
@@ -17316,6 +17335,7 @@
       "image_digest",
       "instance_id",
       "latency_ms",
+      "long_lived",
       "method",
       "node_id",
       "platform_refusal",

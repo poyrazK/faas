@@ -117,6 +117,10 @@ const (
 	workRecentLoad      workKind = "recent_load"
 	workOperatorIntents workKind = "operator_intents"
 	workHeartbeat       workKind = "heartbeat"
+	// workInstanceEnforcement runs the stats tick's per-instance actions:
+	// disk-pressure and egress-abuse recycles (app lock plus a destroy) and
+	// CPU saturation captures (ADR 20261104143005).
+	workInstanceEnforcement workKind = "instance_enforcement"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -130,6 +134,7 @@ var workKinds = []workKind{
 	workAppPark, workAppDelete,
 	workInstanceFailure, workJobsReaper, workCronFireNow,
 	workCronSweep, workRecentLoad, workOperatorIntents, workHeartbeat,
+	workInstanceEnforcement,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -261,6 +266,10 @@ var workSpecs = map[workKind]workSpec{
 	workOperatorIntents: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	// One probe pass at a time; the next 30 s tick probes again.
 	workHeartbeat: {slots: 1, overflow: overflowDrop},
+	// Keyed by action and instance. An action is recorded as taken only when
+	// it succeeds, so a dropped one is submitted again by the next 200 ms
+	// tick that still sees the condition.
+	workInstanceEnforcement: {slots: 4, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

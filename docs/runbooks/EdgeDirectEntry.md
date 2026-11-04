@@ -36,6 +36,42 @@ through systemd `LoadCredential`:
 
 Never put them in the repository or in inventory.
 
+**Or the certificate edgednsd keeps** (ADR-20261103163954 §3). With nothing
+in front, the edge needs a publicly trusted certificate for the apps domain.
+edgednsd orders it from Let's Encrypt and stores its key sealed to the
+`edge-tls` seal domain; each edge loads it with
+`faas_edge_public_tls_cert_source: database` and opens the key in memory
+with the domain's identity, so no certificate or key file sits on the node.
+Order first, then switch the edges:
+
+1. `gregalectl seal-domain init --domain edge-tls`, then the seal_domains
+   role: the recipient on the control plane, the identity on compute nodes.
+   CD stages them from the `SEAL_DOMAIN_EDGE_TLS_AGE_KEY` and
+   `SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT` environment secrets.
+2. In the manifest, `public_edge.dns.certificate.names` (for example
+   `["*.gregale.dev"]`); `ca` stays `letsencrypt-staging` until the path is
+   proven. Converge the control plane and wait for
+   `edge_certificate_orders_total{result="issued"}`.
+3. `public_edge.dns.certificate.serve` set to that CA, then converge the
+   compute nodes: each edge serves the certificate stored from it. An edge
+   is not ready until it has loaded one, so edgednsd keeps it out of DNS
+   until then.
+4. To move to production, set `ca: letsencrypt` and converge the control
+   plane; only once `edge_certificate_orders_total{ca="letsencrypt",
+   result="issued"}` counts it, set `serve: letsencrypt` and converge the
+   compute nodes. Changing both at once would restart every edge on a CA it
+   has no certificate from yet.
+5. `public_edge.dns.certificate.transparency` turns on the Certificate
+   Transparency watch: `domain` (the apps domain) and `allow_names`, the
+   names other parties' certificates may carry without a page. For
+   gregale.dev today: `gregale.dev` and `*.gregale.dev` (Cloudflare's own
+   edge certificate, which platform hosts still use) and
+   `operations.gregale.dev` (hosted elsewhere). Turn it on with step 2, before
+   the edges serve the certificate.
+
+Only `origin-pull-ca.pem` is still staged by hand. Alerts and failures:
+[FaasEdgeCertificate](FaasEdgeCertificate.md).
+
 ## 3. Turn on zone-level Authenticated Origin Pulls
 
 ```bash
@@ -169,7 +205,9 @@ injected failure as soon as it is measured.
   request is forwarded or wakes anything (`EdgeHostRequests*`): twice the
   highest plan's per-app limit, so the gateway's plan limit answers an app
   first. A refusal is `429 rate_limited` with
-  `x-faas-rate-limit-scope: host`.
+  `x-faas-rate-limit-scope: host`. At most `EdgeHostTrackedMax` hostnames
+  are tracked; while the table is full, an untracked hostname passes, so a
+  flood of random `Host` values cannot refuse every tenant's host.
 - **Open connections, new connections a second and TLS handshakes in
   progress**, only with `faas_edge_public_front: none`. A refused connection
   is reset before TLS; a handshake slot is held at most
