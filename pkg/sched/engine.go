@@ -3633,7 +3633,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", logsanitize.Field(appID), "err", rerr)
 		}
 	}
-	configuredCPU := e.appCPUMillicores(app, limits)
+	configuredCPU := e.appCPUBookingMillicores(app, limits)
 	startupCPU := configuredCPU
 	if !dep.DisableStartupCPUBoost {
 		startupCPU = startupCPUBoostQuota(acct.Plan, configuredCPU)
@@ -3644,6 +3644,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		RAMMB:                      app.RAMMB,
 		VCPU:                       e.guestVCPUs(app, limits),
 		CPUMillicores:              startupCPU,
+		BookedCPUMillicores:        e.appCPUBookingStamp(app, limits),
 		MaxConcurrency:             app.MaxConcurrency,
 		PreferredNodeID:            warmHint,
 		PreferredNodeIDs:           snapshotNodes,
@@ -5518,7 +5519,7 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 			AppID:          appID,
 			RAMMB:          app.RAMMB,
 			VCPU:           e.guestVCPUs(app, limits),
-			CPUMillicores:  e.appCPUMillicores(app, limits),
+			CPUMillicores:  e.appCPUBookingMillicores(app, limits),
 			MaxConcurrency: app.MaxConcurrency,
 		})
 		if err != nil {
@@ -6817,7 +6818,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// ceiling and there's no other active node.
 	// Keep the initial snapshot near the app's assigned node when it fits.
 	// The chooser still enforces liveness and CPU/RAM admission.
-	primeConfiguredCPU := e.appCPUMillicores(app, limits)
+	primeConfiguredCPU := e.appCPUBookingMillicores(app, limits)
 	primeStartupCPU := primeConfiguredCPU
 	if !dep.DisableStartupCPUBoost {
 		primeStartupCPU = startupCPUBoostQuota(acct.Plan, primeConfiguredCPU)
@@ -6825,7 +6826,8 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	primePlacementRequest := Request{
 		AppID: appID, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
-		PreferredNodeID: app.NodeID,
+		BookedCPUMillicores: e.appCPUBookingStamp(app, limits),
+		PreferredNodeID:     app.NodeID,
 	}
 	// Prime is a wake-shape event (gaps analysis 2026-07-23): the
 	// instance is being created for the first time as part of a fresh
@@ -8280,7 +8282,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
 				ProductionEnvironment: policy.production,
-				RAMMB:                 ins.RAMMB, VCPU: e.guestVCPUs(policy.app, limits), CPUMillicores: e.appCPUMillicores(policy.app, limits), MaxConcurrency: policy.app.MaxConcurrency,
+				RAMMB:                 ins.RAMMB, VCPU: e.guestVCPUs(policy.app, limits), CPUMillicores: e.appCPUBookingMillicores(policy.app, limits), MaxConcurrency: policy.app.MaxConcurrency,
 				// Recovery must account for all already-resident serving rows,
 				// including overlap and capacity above a subsequently lowered cap.
 				// This does not authorize new capacity: the rows are already

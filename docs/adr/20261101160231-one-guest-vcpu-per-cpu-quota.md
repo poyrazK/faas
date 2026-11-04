@@ -165,11 +165,23 @@
        books and is policed with its plan's ceiling, and its vCPUs follow
        it; the live CPU-policy push maps the configured value the same way,
        so it does not pull a running instance back to one core. Bookings
-       already floor at 1,000 m, so Scale books its 2,000 m baseline here.
-     - **5b, the baseline.** Bookings in `pkg/state` and the admission SQL
-       functions stop flooring at 1,000 m for listed apps, so Free books
-       250 m and Hobby 500 m. The startup boost keeps booking one core while
-       it lasts.
+       still follow the app's configured 1,000 m until 5b.
+     - **5b, the baseline.** A listed app books `min(ceiling, baseline)`:
+       250 m on Free, 500 m on Hobby, 1,000 m on Pro, 2,000 m on Scale.
+       schedd sends it with the placement binding (`NodeAdmission.
+       BookedCPUMillicores`); the store sets `faas.instance_booked_cpu_millicores`
+       in the admitting transaction and `capture_instance_capacity` stores it
+       in the new `instances.booked_cpu_millicores` column. The node guard
+       (`admission_reserve_node`), placement's sums, capacity capture and
+       migration usage read it before the app's `cpu_millicores`. NULL
+       (every row an older schedd writes) books as before. The startup boost
+       still books one core while it lasts. Only wakes, prime boots and warm
+       fills stamp the booking; app tasks and forks of a listed app keep
+       booking the app's value in the database until they go through the
+       same placement binding. During a mixed release, a reader that predates
+       the column counts a listed instance at its app's value: more than its
+       booking on Free and Hobby, less on Scale, so Scale apps are listed
+       only once every schedd runs 5b.
   6. Production A/B on one node: two identical apps each for Go and Node, one
      of each listed, plus one CPU-bound app and one Scale app. Run the
      300 → 600 req/s step test. Compare cgroup CPU per request, p50/p99

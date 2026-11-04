@@ -88,3 +88,40 @@ func TestListedAppsGetThePlansBurstCeiling(t *testing.T) {
 		}
 	}
 }
+
+// A listed app books its plan's baseline, 1,000 m per GB of plan RAM, or its
+// smaller choice; an unlisted app books and stamps as before (step 5b).
+func TestListedAppsBookThePlansBaseline(t *testing.T) {
+	engine, err := sched.NewEngine(context.Background(), state.NewMemStore(), sched.NewNodeLedger(), nil, nil, "", nil)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	app := state.App{ID: "0b6f8c1e-2f6a-4c55-9d38-3c1f0c5e7a11", CPUMillicores: api.DefaultAppCPUMillicores}
+	small := state.App{ID: app.ID, CPUMillicores: 250}
+	free := api.MustLimitsFor(api.PlanFree)
+	if got, stamp := engine.AppCPUBookingMillicores(app, free), engine.AppCPUBookingStamp(app, free); got != 1000 || stamp != 0 {
+		t.Fatalf("unlisted Free app books %d m, stamps %d; want 1000 and no stamp", got, stamp)
+	}
+	if err := engine.SetGuestVCPUFromCPUApps([]string{app.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		plan    api.Plan
+		app     state.App
+		booking int
+	}{
+		{api.PlanFree, app, 250}, {api.PlanHobby, app, 500}, {api.PlanPro, app, 1000},
+		{api.PlanScale, app, 2000}, {api.PlanScale, small, 250}, {api.PlanHobby, small, 250},
+	} {
+		limits := api.MustLimitsFor(tc.plan)
+		if got := engine.AppCPUBookingMillicores(tc.app, limits); got != tc.booking {
+			t.Errorf("%s app at %d m books %d m, want %d", tc.plan, tc.app.CPUMillicores, got, tc.booking)
+		}
+		if got := engine.AppCPUBookingStamp(tc.app, limits); got != tc.booking {
+			t.Errorf("%s app at %d m stamps %d m, want %d", tc.plan, tc.app.CPUMillicores, got, tc.booking)
+		}
+		if got := engine.AppCPUBookingMillicores(tc.app, limits); got > engine.AppCPUMillicores(tc.app, limits) {
+			t.Errorf("%s: booking %d m exceeds the ceiling", tc.plan, got)
+		}
+	}
+}

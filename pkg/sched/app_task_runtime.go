@@ -83,7 +83,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	limits := api.MustLimitsFor(acct.Plan)
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits),
-		CPUMillicores: e.appCPUMillicores(app, limits), MaxConcurrency: app.MaxConcurrency,
+		CPUMillicores: e.appCPUBookingMillicores(app, limits), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID,
 	})
 	if err != nil {
@@ -187,7 +187,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	if err := e.ledger.Admit(Request{
 		Instance: runtimeID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: e.appCPUMillicores(app, limits),
+		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: e.appCPUBookingMillicores(app, limits),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindAppTask, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,
@@ -219,7 +219,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		}
 		if err := commands.RegisterFinancialPreviewCommand(ctx, state.FinancialPreviewCommandRuntime{TaskID: request.ID, LeaseToken: request.LeaseToken,
 			AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID, NodeID: placement.NodeID, EnvironmentID: runtimeValues.Snapshot.EnvironmentID,
-			RAMMB: app.RAMMB, CPUMillicores: e.appCPUMillicores(app, limits), RecordedAt: e.financialBudgetNow(), PrepareUntil: deadline.UTC()}); err != nil {
+			RAMMB: app.RAMMB, CPUMillicores: e.appCPUBookingMillicores(app, limits), RecordedAt: e.financialBudgetNow(), PrepareUntil: deadline.UTC()}); err != nil {
 			e.ledger.Release(runtimeID)
 			return ResolvedAppTaskRuntime{}, err
 		}

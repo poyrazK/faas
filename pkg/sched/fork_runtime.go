@@ -88,7 +88,7 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	restoreSnap := snap
 	placement, err := e.choosePlacementLocked(ctx, Request{
 		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits),
-		CPUMillicores: e.appCPUMillicores(app, limits), MaxConcurrency: app.MaxConcurrency,
+		CPUMillicores: e.appCPUBookingMillicores(app, limits), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID, restoreSnapshot: &restoreSnap,
 	})
 	if err != nil {
@@ -101,7 +101,7 @@ func (e *Engine) RestoreFork(ctx context.Context, fork state.AppFork) (ForkResto
 	}
 	if err := e.ledger.Admit(Request{
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
-		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: e.appCPUMillicores(app, limits),
+		RAMMB: app.RAMMB, VCPU: e.guestVCPUs(app, limits), CPUMillicores: e.appCPUBookingMillicores(app, limits),
 		MaxConcurrency: app.MaxConcurrency, Kind: KindFork, NodeID: placement.NodeID,
 		NodeCeilingMB: placement.CeilingMB, VCPUBudget: placement.VCPUBudget,
 		CPUBudgetMillicores: placement.CPUBudgetMillicores,

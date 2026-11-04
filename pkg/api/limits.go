@@ -3276,6 +3276,10 @@ func GuestVCPUsForCPUMillicores(millicores int) int {
 // on Scale (ADR-20261101160231).
 const AppCPUBaselineMillicoresPerGB = 1000
 
+// AppCPUBookingMaxMillicores bounds an instance's stored CPU booking
+// (instances.booked_cpu_millicores): the largest plan baseline.
+const AppCPUBookingMaxMillicores = 2000
+
 // AppCPUCeilingFloorMillicores is the lowest burst ceiling (cpu.max) a plan
 // gets, so no plan bursts below today's one core (ADR-20261101160231).
 const AppCPUCeilingFloorMillicores = DefaultAppCPUMillicores

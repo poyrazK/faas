@@ -274,7 +274,12 @@ type Request struct {
 	// the reservation and is durable so SeedLedger can reconstruct it.
 	CPUStartupBoostMillicores int
 	CPUStartupBoostUntil      time.Time
-	MaxConcurrency            int // the selected environment's deployed max (validated ≤ plan cap)
+	// BookedCPUMillicores, when positive, is stamped on the admitted
+	// instance's row as what it books once its startup boost ends, in place
+	// of its app's configured CPU (ADR-20261101160231 step 5b). Only apps on
+	// the guest_vcpu_from_cpu_apps list set it.
+	BookedCPUMillicores int
+	MaxConcurrency      int // the selected environment's deployed max (validated ≤ plan cap)
 	// AllowConcurrencyOverlap permits exactly one counted serving instance
 	// above the environment and shared plan ceilings. A candidate must overlap
 	// a serving revision of that same environment; node RAM/vCPU limits and
