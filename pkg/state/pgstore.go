@@ -1897,6 +1897,9 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
+	if err := copyKeyProjectLimitTx(ctx, tx, oldKeyID, newKey.ID); err != nil {
+		return APIKey{}, APIKey{}, err
+	}
 
 	// Step 4: update the old key. expires_at is overwritten to
 	// the grace deadline regardless of its prior value (the
@@ -2199,6 +2202,9 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
+	if err := copyKeyProjectLimitTx(ctx, tx, oldKeyID, newKey.ID); err != nil {
+		return APIKey{}, APIKey{}, err
+	}
 
 	// Step 4: update the old key. expires_at is overwritten to
 	// the grace deadline (same graceWindow semantics as the
@@ -2303,6 +2309,9 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID,
 		nullString(createdIP), nullString(createdUA), parent, old.ExpiresAt)
 	if err != nil {
+		return APIKey{}, APIKey{}, err
+	}
+	if err := copyKeyProjectLimitTx(ctx, tx, oldKeyID, newKey.ID); err != nil {
 		return APIKey{}, APIKey{}, err
 	}
 

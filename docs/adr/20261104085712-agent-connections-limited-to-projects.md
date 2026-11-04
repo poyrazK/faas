@@ -89,3 +89,23 @@ return `projects`.
 - Limiting by environment within a project.
 - Changing a connection's projects without reconnecting.
 - Limits for keys other than agent and `mcp-login` keys.
+
+## Amendment 1 (2026-11-04): every key path honours the limit
+
+The limit was enforced only by apid's API middleware. Three other paths
+authenticate the same keys and now refuse what the API refuses:
+
+- **The gateway's private-app unlock** (`require_authn` and public auth with
+  a bearer key). gatewayd-internal reads the limit of an agent or
+  `mcp-login` key with the key and keeps it in its key cache; a limited key
+  opens only its projects' apps (403 `insufficient_scope`, audited as
+  `instances.authn_scope`). An app-bound credential opens only its app; the
+  gateway had dropped the binding.
+- **Policy-controlled object uploads** on gatewayd-public refuse a limited
+  key outside its projects (403). The edge store reads the limit
+  (`APIKeyProjectLimit` moved to the shared query core).
+- **Key rotation** copies the predecessor's limit to the successor in the
+  rotation's transaction, on the account and organization paths, so
+  rotating never turns a limited key into an account-wide one.
+
+A gateway reads one primary-key row per agent key on a cache miss.

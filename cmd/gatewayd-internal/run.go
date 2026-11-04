@@ -2364,7 +2364,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// without code changes — for now production always wires
 	// them when deps.authMw is non-nil (which it always is
 	// outside unit tests).
-	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
+	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw, pgStore)
 	if deps.requireAuthnAdapter != nil {
 		deps.keyAuthCache = gateway.NewKeyAuthCache(deps.requireAuthnAdapter)
 		go watchKeyChanges(ctx, pool, deps.keyAuthCache, log)

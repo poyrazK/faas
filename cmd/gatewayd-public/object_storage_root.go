@@ -27,7 +27,7 @@ func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.U
 		return nil, err
 	}
 	upload, err := objectstorage.NewUploadHandler(objectstorage.UploadConfig{
-		Store: store, Routes: store, Buckets: store, Authenticator: credentials,
+		Store: store, Routes: store, Buckets: store, Authenticator: credentials, KeyProjects: store,
 		Registry: registry, Accounting: store, RequestMetrics: store, Enabled: enabled,
 		AppsDomain: domains.Apps, Next: publicHandler, Log: log,
 	})
