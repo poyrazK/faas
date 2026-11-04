@@ -3518,6 +3518,18 @@ type DataApiAccessConfig struct {
 	ReportedAt pgtype.Timestamptz
 }
 
+// ADR-20261022121642 amendment 1: change hook delivery last reported by each Data API runtime (counts and codes only).
+type DataApiChangeHookReport struct {
+	AppID           pgtype.UUID
+	ReportedAt      pgtype.Timestamptz
+	Pending         int64
+	Failed          int64
+	OldestPendingAt pgtype.Timestamptz
+	LastPublishedAt pgtype.Timestamptz
+	LastFailureCode pgtype.Text
+	Publishing      string
+}
+
 type DataApiRuntimeConnectionObservation struct {
 	BindingID            pgtype.UUID
 	InstanceID           pgtype.UUID
