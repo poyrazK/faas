@@ -1229,8 +1229,20 @@ func TestForwardChainPolicyHelper(t *testing.T) {
 // actually delivers deny-by-default behaviour. Both chains (v4 + v6)
 // must switch in lock-step.
 func TestNftCommandsChainPolicySwitchesWithAllowlist(t *testing.T) {
+	// Auxiliary base chains continue to the normal forward policy. Count
+	// only the two chains whose default controls tenant public egress.
+	forwardChains := func(c Config) string {
+		var chains [][]string
+		for _, cmd := range c.NftCommands() {
+			line := strings.Join(cmd, " ")
+			if strings.Contains(line, "add chain ip faas forward") || strings.Contains(line, "add chain ip6 faas forward") {
+				chains = append(chains, cmd)
+			}
+		}
+		return flatten(chains)
+	}
 	// Empty case: BOTH chains use policy accept.
-	empty := flatten(testConfig().NftCommands())
+	empty := forwardChains(testConfig())
 	if got := strings.Count(empty, "policy accept"); got != 2 {
 		t.Errorf("empty allowlist: expected 2 `policy accept` occurrences (v4 + v6), found %d:\n%s", got, empty)
 	}
@@ -1245,7 +1257,7 @@ func TestNftCommandsChainPolicySwitchesWithAllowlist(t *testing.T) {
 	// produces one v4 rule and zero v6 rules).
 	pop := testConfig()
 	pop.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
-	ruleset := flatten(pop.NftCommands())
+	ruleset := forwardChains(pop)
 	// Both chains `policy drop`: the literal appears in the chain-create argv.
 	if !strings.Contains(ruleset, "add chain ip faas forward") || !strings.Contains(ruleset, "policy drop ;") {
 		t.Errorf("populated allowlist: v4 chain must be `policy drop`:\n%s", ruleset)

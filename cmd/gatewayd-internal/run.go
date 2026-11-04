@@ -4595,8 +4595,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// ADR-20261026150000: a bound managed database's answer also
 				// opens its port for the calling app.
 				if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
-					dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName),
-						newDatabaseEgressIndex(deps.pgStore), guestServiceCallerResolver))
+					dnsHandler.WithResolvedEgressPreparation(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName),
+						newDatabaseEgressIndex(deps.pgStore)))
 				}
 				// ADR-576: answer service names with service addresses only once
 				// the TCP proxy behind them is configured.
