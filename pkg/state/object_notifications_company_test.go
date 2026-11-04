@@ -76,7 +76,7 @@ func objectNotificationsKeepCompanyBoundary(t *testing.T, st accountingStore) {
 		if _, err = st.FinishTrackedObjectUpload(ctx, c); err != nil {
 			t.Fatal(err)
 		}
-		_, _, work := takeObjectEvent(t, st, creator.ID, "write:"+c.ID, api.ObjectEventCreated)
+		_, _, work := takeObjectEvent(t, st, creator.ID, "write:"+c.ID, api.ObjectEventCreated) //nolint:contextcheck // the shared helper claims with t.Context(), the same test context
 		return work.RecipientSnapshot
 	}
 	notified := func(recipients []state.PublishedEventRecipient, appID string) bool {
