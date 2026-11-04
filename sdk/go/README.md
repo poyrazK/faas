@@ -412,7 +412,8 @@ check these fields against Node, Python and OpenAPI in CI.
 ## Project release context
 
 For app-to-app calls, capture the inbound release once and let the SDK
-transport forward it to managed `*.svc.gregale` hosts. The transport strips
+transport forward it to managed `*.svc.gregale` hosts and declared
+`*.internal` aliases. The transport strips
 `X-Gregale-Revision` on those hops because a revision pin is scoped to the
 caller app:
 
@@ -440,6 +441,15 @@ Wrap only the app handlers that receive Gregale ingress. The platform still
 validates that the caller deployment belongs to the selected release; these
 helpers preserve request context and do not grant deployment-selection
 authority to the guest.
+
+For ordinary HTTP requests (not WebSocket upgrades), the middleware also
+captures Gregale's signed `X-Gregale-Request-Deadline` for participating
+chains (ADR-570). Managed calls carry the current request's token even if a
+downstream header tries to override it; the gateway verifies it before wake.
+The transport removes the token from external calls, including each external
+redirect hop, since `http.Client` calls the transport again for every hop.
+`faas.GregaleRequestDeadlineFromContext(ctx)` returns it; never edit its bytes.
+See [the deadline contract](../../docs/ops/traffic-total-deadline.md).
 
 The middleware also captures `X-Faas-Deadline-Ms`, the time Gregale gives the
 request to run, and the transport sends the time still left on each managed
