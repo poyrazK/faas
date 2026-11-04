@@ -397,6 +397,33 @@ func (q *Queries) GetLink(ctx context.Context, db DBTX, shareCode pgtype.Text) (
 	return i, err
 }
 
+const getMessageTemplate = `-- name: GetMessageTemplate :one
+SELECT id, title, category, stage, status, subject, body, version, updated_by, updated_at FROM sales_message_templates WHERE id=$1 AND (status='active' OR $2::boolean)
+`
+
+type GetMessageTemplateParams struct {
+	ID      pgtype.UUID
+	Manager bool
+}
+
+func (q *Queries) GetMessageTemplate(ctx context.Context, db DBTX, arg GetMessageTemplateParams) (SalesMessageTemplate, error) {
+	row := db.QueryRow(ctx, getMessageTemplate, arg.ID, arg.Manager)
+	var i SalesMessageTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Category,
+		&i.Stage,
+		&i.Status,
+		&i.Subject,
+		&i.Body,
+		&i.Version,
+		&i.UpdatedBy,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getQualification = `-- name: GetQualification :one
 SELECT lead_id, use_case, workload, decision_maker, buying_timeline, decision_on, priority, product_fit, blocker, version, updated_by, updated_at FROM sales_qualifications WHERE lead_id=$1
 `
@@ -419,6 +446,41 @@ func (q *Queries) GetQualification(ctx context.Context, db DBTX, leadID pgtype.U
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const insertMessageTemplate = `-- name: InsertMessageTemplate :one
+INSERT INTO sales_message_templates(id,title,category,stage,status,subject,body,updated_by)
+SELECT $1,$2,$3,$4,$5,$6,$7,$8::uuid
+WHERE $9::boolean RETURNING id
+`
+
+type InsertMessageTemplateParams struct {
+	ID       pgtype.UUID
+	Title    string
+	Category string
+	Stage    string
+	Status   string
+	Subject  string
+	Body     string
+	ActorID  pgtype.UUID
+	Manager  bool
+}
+
+func (q *Queries) InsertMessageTemplate(ctx context.Context, db DBTX, arg InsertMessageTemplateParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, insertMessageTemplate,
+		arg.ID,
+		arg.Title,
+		arg.Category,
+		arg.Stage,
+		arg.Status,
+		arg.Subject,
+		arg.Body,
+		arg.ActorID,
+		arg.Manager,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertQualification = `-- name: InsertQualification :exec
@@ -734,6 +796,49 @@ func (q *Queries) ListLeadAlerts(ctx context.Context, db DBTX, arg ListLeadAlert
 			&i.Stale,
 			&i.OverdueTasks,
 			&i.EarliestDueOn,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMessageTemplates = `-- name: ListMessageTemplates :many
+SELECT id, title, category, stage, status, subject, body, version, updated_by, updated_at FROM sales_message_templates
+WHERE (status='active' OR $1::boolean) AND id>$2::uuid
+ORDER BY id LIMIT $3::integer
+`
+
+type ListMessageTemplatesParams struct {
+	Manager  bool
+	AfterID  pgtype.UUID
+	RowLimit int32
+}
+
+func (q *Queries) ListMessageTemplates(ctx context.Context, db DBTX, arg ListMessageTemplatesParams) ([]SalesMessageTemplate, error) {
+	rows, err := db.Query(ctx, listMessageTemplates, arg.Manager, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SalesMessageTemplate{}
+	for rows.Next() {
+		var i SalesMessageTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Category,
+			&i.Stage,
+			&i.Status,
+			&i.Subject,
+			&i.Body,
+			&i.Version,
+			&i.UpdatedBy,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1889,6 +1994,47 @@ func (q *Queries) SetLinkActive(ctx context.Context, db DBTX, arg SetLinkActiveP
 	return result.RowsAffected(), nil
 }
 
+const templateLead = `-- name: TemplateLead :one
+SELECT l.id,l.name,l.email,l.company,l.stage,l.version,a.email AS owner_email,
+ COALESCE((SELECT r.share_code FROM referral_links r WHERE r.owner_id=l.owner_id AND r.kind='sales' AND r.active
+ AND a.status='active' AND a.email_verified_at IS NOT NULL AND a.mfa_enrolled_at IS NOT NULL),'')::text AS referral_code
+FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
+WHERE l.id=$1::uuid AND (l.owner_id=$2::uuid OR $3::boolean)
+`
+
+type TemplateLeadParams struct {
+	LeadID    pgtype.UUID
+	ActorID   pgtype.UUID
+	AllOwners bool
+}
+
+type TemplateLeadRow struct {
+	ID           pgtype.UUID
+	Name         string
+	Email        string
+	Company      string
+	Stage        string
+	Version      int64
+	OwnerEmail   string
+	ReferralCode string
+}
+
+func (q *Queries) TemplateLead(ctx context.Context, db DBTX, arg TemplateLeadParams) (TemplateLeadRow, error) {
+	row := db.QueryRow(ctx, templateLead, arg.LeadID, arg.ActorID, arg.AllOwners)
+	var i TemplateLeadRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.Company,
+		&i.Stage,
+		&i.Version,
+		&i.OwnerEmail,
+		&i.ReferralCode,
+	)
+	return i, err
+}
+
 const updateLead = `-- name: UpdateLead :execrows
 UPDATE referral_attributions r SET stage=$1,note=$2,follow_up=$3,updated_by=$4,updated_at=now()
 FROM referral_links l
@@ -1920,6 +2066,42 @@ func (q *Queries) UpdateLead(ctx context.Context, db DBTX, arg UpdateLeadParams)
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateMessageTemplate = `-- name: UpdateMessageTemplate :one
+UPDATE sales_message_templates SET title=$1,category=$2,stage=$3,status=$4,subject=$5,body=$6,updated_by=$7::uuid,updated_at=now(),version=version+1
+WHERE id=$8 AND version=$9::bigint AND $10::boolean RETURNING id
+`
+
+type UpdateMessageTemplateParams struct {
+	Title    string
+	Category string
+	Stage    string
+	Status   string
+	Subject  string
+	Body     string
+	ActorID  pgtype.UUID
+	ID       pgtype.UUID
+	Version  int64
+	Manager  bool
+}
+
+func (q *Queries) UpdateMessageTemplate(ctx context.Context, db DBTX, arg UpdateMessageTemplateParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, updateMessageTemplate,
+		arg.Title,
+		arg.Category,
+		arg.Stage,
+		arg.Status,
+		arg.Subject,
+		arg.Body,
+		arg.ActorID,
+		arg.ID,
+		arg.Version,
+		arg.Manager,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const updateProspect = `-- name: UpdateProspect :one

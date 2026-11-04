@@ -365,3 +365,36 @@ independent referral records. A salesperson's won/lost assessment does not creat
 an invoice, payment, referral conversion, reward or commission. Payouts remain
 disabled. Qualification and closing notes stay inside the existing restricted
 staff data and backup controls, outside application clones.
+
+## Sales message templates
+
+Apply `20261103233000000_sales_templates.sql` before apid. The existing sales
+flag and staff/session restrictions cover these routes. Templates start empty.
+In **Message templates**, managers create introductions, demo invitations,
+follow-ups and stalled-deal messages. A template has a suggested stage, optional
+subject and message. Save as Draft for manager review, Active for team use or
+Archived to remove it from rep access. Archiving preserves the editable record.
+Titles allow 120 UTF-8 bytes, subjects 200 and message bodies 4000. Template
+updates use optimistic versions; conflicts retain the draft and offer the
+latest saved record for review before an explicit replacement.
+
+Use only `{{lead_name}}`, `{{lead_email}}`, `{{company}}`,
+`{{salesperson_email}}` and `{{referral_code}}` in subjects and messages. Insert
+buttons add fields to the message. The salesperson field uses the lead owner's
+email. Referral code means that owner's existing active sales code, provided
+the account is active, verified, MFA enrolled and still configured as sales
+staff. Previewing never generates a code. To resolve missing values, update
+the lead, have the assigned rep activate/create their code in Customers &
+referrals, or choose wording that does not require the missing field.
+
+Reps choose **Templates** on a lead, select a message, review the personalized
+subject/body and click **Copy message**. Only active templates are visible to
+reps. Managers can preview drafts and archives for review. Suggested stage is
+advisory. Copy is disabled while required values are missing. Copy rechecks the
+lead, permissions, code and template version; changed details require review
+again. Refresh preview after a template revision. The resulting clipboard text
+contains the optional `Subject: ...` line, a blank line and the message body.
+No email is sent and no activity is recorded; log a customer interaction through
+the existing Activity action after it happens. Template content and previews
+are plain text, with no automatic product claims or payout promises. Audit data
+contains IDs/status/version only; sales records stay outside app clones.

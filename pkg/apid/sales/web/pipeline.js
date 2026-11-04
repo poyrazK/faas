@@ -31,7 +31,7 @@
       const row=node('tr');const name=node('td');name.append(node('strong',lead.name));if(lead.company)name.append(node('small',lead.company));
       const stage=node('td');stage.append(node('span',label(lead.stage),'status'));
       const match=node('td');match.append(node('span',lead.paid?'Paid invoice recorded':lead.registered?'Signed up via owner’s code':'Awaiting matching signup','status'));
-      const actions=node('td');const group=node('div',undefined,'row-actions');group.append(button('Qualify',()=>document.dispatchEvent(new CustomEvent('sales-open-qualification',{detail:{leadId:lead.id}}))),button('Activity',()=>document.dispatchEvent(new CustomEvent('sales-open-activity',{detail:{leadId:lead.id}}))),button('Edit lead',()=>openLead(lead)),button('Add task',()=>openTask(null,lead)));actions.append(group);
+      const actions=node('td');const group=node('div',undefined,'row-actions');group.append(button('Templates',()=>document.dispatchEvent(new CustomEvent('sales-open-template',{detail:{leadId:lead.id}}))),button('Qualify',()=>document.dispatchEvent(new CustomEvent('sales-open-qualification',{detail:{leadId:lead.id}}))),button('Activity',()=>document.dispatchEvent(new CustomEvent('sales-open-activity',{detail:{leadId:lead.id}}))),button('Edit lead',()=>openLead(lead)),button('Add task',()=>openTask(null,lead)));actions.append(group);
       row.append(name,node('td',lead.email),node('td',lead.owner_email),stage,match,actions);$('prospect-rows').append(row);
     }
     if(!leads.length)empty('prospect-rows','No leads match these filters. Add a lead to start the next conversation.',6);

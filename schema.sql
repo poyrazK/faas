@@ -55274,6 +55274,33 @@ CREATE TABLE public.sales_leads (
 
 
 --
+-- Name: sales_message_templates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_message_templates (
+    id uuid NOT NULL,
+    title text NOT NULL,
+    category text NOT NULL,
+    stage text DEFAULT ''::text NOT NULL,
+    status text DEFAULT 'draft'::text NOT NULL,
+    subject text DEFAULT ''::text NOT NULL,
+    body text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    updated_by uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_message_templates_body_check CHECK ((((octet_length(body) >= 1) AND (octet_length(body) <= 4000)) AND (btrim(body) <> ''::text))),
+    CONSTRAINT sales_message_templates_category_check CHECK ((category = ANY (ARRAY['intro'::text, 'demo'::text, 'follow_up'::text, 'stalled'::text]))),
+    CONSTRAINT sales_message_templates_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT sales_message_templates_stage_check CHECK ((stage = ANY (ARRAY[''::text, 'new'::text, 'contacted'::text, 'qualified'::text, 'demo'::text, 'won'::text, 'lost'::text]))),
+    CONSTRAINT sales_message_templates_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text]))),
+    CONSTRAINT sales_message_templates_subject_check CHECK ((octet_length(subject) <= 200)),
+    CONSTRAINT sales_message_templates_title_check CHECK ((((octet_length(title) >= 1) AND (octet_length(title) <= 120)) AND (btrim(title) <> ''::text))),
+    CONSTRAINT sales_message_templates_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_message_templates_version_check CHECK ((version > 0))
+);
+
+
+--
 -- Name: sales_outcomes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69319,6 +69346,14 @@ ALTER TABLE ONLY public.sales_leads
 
 
 --
+-- Name: sales_message_templates sales_message_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_message_templates
+    ADD CONSTRAINT sales_message_templates_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: sales_outcomes sales_outcomes_lead_id_lead_version_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79810,6 +79845,13 @@ CREATE INDEX sales_intake_receipts_expiry ON public.sales_intake_receipts USING 
 --
 
 CREATE INDEX sales_leads_owner_page ON public.sales_leads USING btree (owner_id, id);
+
+
+--
+-- Name: sales_message_templates_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_message_templates_page ON public.sales_message_templates USING btree (status, id);
 
 
 --
@@ -102595,6 +102637,14 @@ ALTER TABLE ONLY public.sales_leads
 
 ALTER TABLE ONLY public.sales_leads
     ADD CONSTRAINT sales_leads_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_message_templates sales_message_templates_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_message_templates
+    ADD CONSTRAINT sales_message_templates_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

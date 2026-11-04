@@ -17078,3 +17078,6 @@ const (
 	SalesQualificationTextMaxBytes = 1000
 	SalesOutcomeNoteMaxBytes       = 1000
 )
+
+// SalesTemplateBodyMaxBytes bounds editable plain-text sales messages.
+const SalesTemplateBodyMaxBytes = 4000

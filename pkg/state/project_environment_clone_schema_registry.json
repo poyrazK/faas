@@ -20117,5 +20117,21 @@
       "stage"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "sales_message_templates",
+    "columns": [
+      "body",
+      "category",
+      "id",
+      "stage",
+      "status",
+      "subject",
+      "title",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
   }
 ]

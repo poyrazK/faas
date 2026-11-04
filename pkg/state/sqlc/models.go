@@ -14567,6 +14567,19 @@ type SalesLead struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type SalesMessageTemplate struct {
+	ID        pgtype.UUID
+	Title     string
+	Category  string
+	Stage     string
+	Status    string
+	Subject   string
+	Body      string
+	Version   int64
+	UpdatedBy pgtype.UUID
+	UpdatedAt pgtype.Timestamptz
+}
+
 type SalesOutcome struct {
 	ID          pgtype.UUID
 	LeadID      pgtype.UUID

@@ -355,3 +355,23 @@ WITH pipeline AS (
 SELECT stage,close_reason::text AS reason,count(*)::bigint AS count FROM pipeline
 WHERE stage IN ('won','lost') AND close_stage=stage AND close_reason IS NOT NULL
 GROUP BY stage,close_reason ORDER BY stage,count(*) DESC,close_reason;
+
+-- name: ListMessageTemplates :many
+SELECT * FROM sales_message_templates
+WHERE (status='active' OR sqlc.arg(manager)::boolean) AND id>sqlc.arg(after_id)::uuid
+ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
+-- name: GetMessageTemplate :one
+SELECT * FROM sales_message_templates WHERE id=$1 AND (status='active' OR sqlc.arg(manager)::boolean);
+-- name: InsertMessageTemplate :one
+INSERT INTO sales_message_templates(id,title,category,stage,status,subject,body,updated_by)
+SELECT sqlc.arg(id),sqlc.arg(title),sqlc.arg(category),sqlc.arg(stage),sqlc.arg(status),sqlc.arg(subject),sqlc.arg(body),sqlc.arg(actor_id)::uuid
+WHERE sqlc.arg(manager)::boolean RETURNING id;
+-- name: UpdateMessageTemplate :one
+UPDATE sales_message_templates SET title=sqlc.arg(title),category=sqlc.arg(category),stage=sqlc.arg(stage),status=sqlc.arg(status),subject=sqlc.arg(subject),body=sqlc.arg(body),updated_by=sqlc.arg(actor_id)::uuid,updated_at=now(),version=version+1
+WHERE id=sqlc.arg(id) AND version=sqlc.arg(version)::bigint AND sqlc.arg(manager)::boolean RETURNING id;
+-- name: TemplateLead :one
+SELECT l.id,l.name,l.email,l.company,l.stage,l.version,a.email AS owner_email,
+ COALESCE((SELECT r.share_code FROM referral_links r WHERE r.owner_id=l.owner_id AND r.kind='sales' AND r.active
+ AND a.status='active' AND a.email_verified_at IS NOT NULL AND a.mfa_enrolled_at IS NOT NULL),'')::text AS referral_code
+FROM sales_leads l JOIN accounts a ON a.id=l.owner_id
+WHERE l.id=sqlc.arg(lead_id)::uuid AND (l.owner_id=sqlc.arg(actor_id)::uuid OR sqlc.arg(all_owners)::boolean);
