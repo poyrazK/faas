@@ -26,6 +26,7 @@ type contractTestStore interface {
 	state.AppWorkPolicyStore
 	state.ObjectStorageCeilingGrantStore
 	state.EgressOverageStore
+	state.CreditDiscountStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
 	state.ComputeNodeReadinessStore

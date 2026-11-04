@@ -242,6 +242,7 @@ sql:
       - "pkg/state/source_spool_queries.sql"
       - "pkg/state/dev_source_patch_queries.sql"
       - "pkg/state/edge_rule_replay_retention_queries.sql"
+      - "pkg/state/credit_discount_queries.sql"
       - "pkg/state/egress_overage_queries.sql"
       - "pkg/state/email_verification_queries.sql"
       - "pkg/state/entity_outbox_delivery_queries.sql"

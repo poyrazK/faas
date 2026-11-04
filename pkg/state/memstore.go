@@ -159,6 +159,9 @@ type MemStore struct {
 	// egressOverage is each billing subject's egress overage choices, oldest
 	// first (EgressOverageStore), created on first use.
 	egressOverage map[string][]EgressOverageChoice
+	// creditDiscounts are the provider discounts that carry account credit
+	// (CreditDiscountStore), keyed by row id, created on first use.
+	creditDiscounts map[string]CreditDiscount
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                              map[string]int64

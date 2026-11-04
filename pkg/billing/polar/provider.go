@@ -1472,6 +1472,11 @@ type polarSubscription struct {
 		AppliesAt time.Time `json:"applies_at"`
 		ProductID string    `json:"product_id"`
 	} `json:"pending_update"`
+	Currency   string `json:"currency"`
+	DiscountID string `json:"discount_id"`
+	Discount   *struct {
+		ID string `json:"id"`
+	} `json:"discount"`
 }
 
 func (p *Provider) readSubscription(ctx context.Context, subscriptionID string) (polarSubscription, error) {
