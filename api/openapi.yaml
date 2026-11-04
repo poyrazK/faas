@@ -33642,7 +33642,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: The domain is not verified and cannot be selected.
+          description: The domain is unverified, routes to another app, or belongs to a suspended tenant and cannot be selected.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }

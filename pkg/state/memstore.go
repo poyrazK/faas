@@ -656,7 +656,8 @@ type MemStore struct {
 	defaultDomains       map[string]string
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
-	customDomainTLSHosts map[string]customDomainTLSHost
+	customDomainTLSHosts    map[string]customDomainTLSHost
+	customDomainCertRetries map[string]customDomainCertRetryLease
 	// customDomainTLSAdmissions mirrors custom_domain_tls_admissions
 	// (ADR-520 amendment 1), oldest first.
 	customDomainTLSAdmissions []customDomainTLSAdmission
@@ -13209,6 +13210,9 @@ func (m *MemStore) SetDefaultCustomDomain(ctx context.Context, appID, domain str
 	if !ok || d.AppID != appID || !customDomainProbeMatches(ctx, d) || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
 		return ErrNotFound
 	}
+	if !m.customDomainDefaultRoutesToAppLocked(ctx, d) {
+		return ErrCustomDomainNotRoutable
+	}
 	if m.defaultDomains == nil {
 		m.defaultDomains = make(map[string]string)
 	}
@@ -13216,17 +13220,17 @@ func (m *MemStore) SetDefaultCustomDomain(ctx context.Context, appID, domain str
 	return nil
 }
 
-func (m *MemStore) IsDefaultCustomDomain(_ context.Context, appID, domain string) (bool, error) {
+func (m *MemStore) IsDefaultCustomDomain(ctx context.Context, appID, domain string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
-	return m.defaultDomains[appID] == domain && ok && d.AppID == appID && d.EnvironmentID == "" && d.Verified() && !IsWildcardCustomDomain(domain), nil
+	return m.defaultDomains[appID] == domain && ok && d.AppID == appID && d.EnvironmentID == "" && d.Verified() && !IsWildcardCustomDomain(domain) && m.customDomainDefaultRoutesToAppLocked(ctx, d), nil
 }
 
 // DefaultCustomDomain returns the selected verified custom domain for an app.
 // A deleted or unverified target is treated as unset so URL consumers can
 // safely fall back to the platform hostname.
-func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string, error) {
+func (m *MemStore) DefaultCustomDomain(ctx context.Context, appID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	domain := m.defaultDomains[appID]
@@ -13235,6 +13239,9 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 	}
 	d, ok := m.domains[domain]
 	if !ok || d.AppID != appID || d.EnvironmentID != "" || !d.Verified() || IsWildcardCustomDomain(domain) {
+		return "", ErrNotFound
+	}
+	if !m.customDomainDefaultRoutesToAppLocked(ctx, d) {
 		return "", ErrNotFound
 	}
 	return domain, nil
@@ -13322,6 +13329,17 @@ func (m *MemStore) MarkDomainVerifiedIfChallenge(ctx context.Context, domain, to
 	if d.Verified() || d.ChallengeToken != token || d.VerificationExpiresAt.IsZero() || !d.VerificationExpiresAt.After(time.Now()) {
 		return false, nil
 	}
+	if probe, bound := CustomDomainProbe(ctx); bound {
+		if !SameCustomDomainClaim(probe, d) {
+			return false, ErrStaleCustomDomainProbe
+		}
+		if probe.CertStatus == CustomDomainCertDNSDrifted && !probe.DNSLastCheckedAt.Equal(d.DNSLastCheckedAt) {
+			return false, nil
+		}
+		if probe.CertStatus != CustomDomainCertDNSDrifted && d.CertStatus == CustomDomainCertDNSDrifted {
+			return false, nil
+		}
+	}
 	d.VerifiedAt = time.Now()
 	d.CertStatus = CustomDomainCertPending
 	d.CertExpiresAt = time.Time{}
@@ -13345,12 +13363,14 @@ func (m *MemStore) UpdateCustomDomainCertStatus(ctx context.Context, domain stri
 	if !customDomainProbeMatches(ctx, d) {
 		return ErrStaleCustomDomainProbe
 	}
-	if _, bound := CustomDomainProbe(ctx); bound && !dnsCheckedAt.IsZero() && d.DNSLastCheckedAt.After(dnsCheckedAt) {
-		return nil
+	if _, bound := CustomDomainProbe(ctx); bound && !d.DNSLastCheckedAt.IsZero() && (dnsCheckedAt.IsZero() || d.DNSLastCheckedAt.After(dnsCheckedAt)) {
+		return ErrStaleCustomDomainObservation
 	}
 	previous := d.CertStatus
 	d.CertStatus = status
-	d.CertExpiresAt = expiresAt
+	if !expiresAt.IsZero() {
+		d.CertExpiresAt = expiresAt
+	}
 	d.CertLastError = lastError
 	d.DNSLastCheckedAt = dnsCheckedAt
 	if status == CustomDomainCertFailed {
@@ -13408,8 +13428,13 @@ func (m *MemStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctor
 	if !customDomainProbeMatches(ctx, m.domains[obs.Domain]) {
 		return ErrStaleCustomDomainProbe
 	}
-	if existing, ok := m.doctorObs[obs.Domain]; ok && obs.SurfaceID == "" {
-		obs.SurfaceID = existing.SurfaceID
+	if existing, ok := m.doctorObs[obs.Domain]; ok {
+		if staleDoctorObservation(existing, obs) {
+			return ErrStaleCustomDomainObservation
+		}
+		if _, bound := CustomDomainProbe(ctx); obs.SurfaceID == "" && !bound {
+			obs.SurfaceID = existing.SurfaceID
+		}
 	}
 	m.doctorObs[obs.Domain] = obs
 	return nil
@@ -13441,6 +13466,9 @@ func (m *MemStore) ListAllCustomDomainsForDoctor(_ context.Context) ([]string, e
 		out = append(out, d)
 	}
 	for _, h := range m.tenantHostnames {
+		if surface, ok := m.tenantSurfaces[h.SurfaceID]; !ok || surface.Status == SurfaceStatusDeleted {
+			continue
+		}
 		if _, ok := seen[h.Hostname]; !ok {
 			seen[h.Hostname] = struct{}{}
 			out = append(out, h.Hostname)
@@ -13474,14 +13502,14 @@ func (m *MemStore) ListCustomDomainsForDoctorBatch(_ context.Context, limit int)
 		seen[domain] = struct{}{}
 	}
 	for domain, hostname := range m.tenantHostnames {
+		surface, ok := m.tenantSurfaces[hostname.SurfaceID]
+		if !ok || surface.Status == SurfaceStatusDeleted {
+			continue
+		}
 		if _, ok := seen[domain]; ok {
 			continue
 		}
-		account := ""
-		if surface, ok := m.tenantSurfaces[hostname.SurfaceID]; ok {
-			account = surface.AccountID
-		}
-		items = append(items, candidate{domain: domain, account: account, observed: m.doctorObs[domain].ObservedAt})
+		items = append(items, candidate{domain: domain, account: surface.AccountID, observed: m.doctorObs[domain].ObservedAt})
 	}
 	// Rank oldest work within each account, then interleave equal ranks. This
 	// mirrors PgStore's row_number partition and prevents one tenant's large
