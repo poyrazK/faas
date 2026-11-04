@@ -20,7 +20,8 @@
     "api_keys": "array (APIKeyExportResponse)",
     "app_secrets": "array (AppSecretExportResponse)",
     "edge_rules": "array (EdgeRuleResponse) — edge rules on the exported apps",
-    "edge_rule_lists": "array (EdgeRuleListResponse) — the account's rule lists, with items",
+    "edge_rule_lists": "array (EdgeRuleListResponse) — the account's personal rule lists, with items",
+    "cors_presets": "array (CorsPresetResponse) — account-wide presets and those of exported apps",
     "audit_trail": "array (GdprAuditExportResponse) — customer's own GDPR ledger slice (omitempty)"
   }
 }
