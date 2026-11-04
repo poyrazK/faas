@@ -2434,7 +2434,7 @@ func TestUpdateEgressAllowlist_AppliesV4Patch(t *testing.T) {
 	// delete-then-add appended it after them. Each argv is per-netns:
 	// `ip netns exec fc-i-1 nft …`. The tap name is "tap0" verbatim in
 	// argv (no quotes); nft's printer adds quotes when listing rules.
-	wantReplace := `ip netns exec fc-i-1 nft insert rule ip faas forward handle 7 iifname tap0 ip daddr { 8.8.8.0/24 } tcp dport != 25 accept ; delete rule ip faas forward handle 7`
+	wantReplace := `ip netns exec fc-i-1 nft insert rule ip faas forward handle 7 iifname tap0 ip daddr { 8.8.8.0/24 } tcp dport != { ` + netns.AllowlistBlockedPortsSet() + ` } accept ; delete rule ip faas forward handle 7`
 	if !run.ran(wantReplace) {
 		t.Errorf("missing %q in command stream", wantReplace)
 	}

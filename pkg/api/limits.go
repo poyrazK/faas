@@ -13648,6 +13648,23 @@ var tenantEgressForbiddenPorts = map[int]string{
 	53: "DNS is pinned to the platform resolver", 853: "DNS is pinned to the platform resolver",
 }
 
+// TenantEgressAllowlistBlockedPorts are the TCP ports that stay closed to an
+// app's allowlisted destinations, in ascending order: every forbidden port
+// but the SMTP submission ports 465 and 587, which ADR-031 opens to
+// explicitly listed mail providers. Allowlisted destinations used to skip
+// the ADR-361 port policy entirely, so a wide allowlist reopened SSH, SMB,
+// IRC and mining ports (bug hunt H69).
+func TenantEgressAllowlistBlockedPorts() []int {
+	ports := make([]int, 0, len(tenantEgressForbiddenPorts))
+	for port := range tenantEgressForbiddenPorts {
+		if port != 465 && port != 587 {
+			ports = append(ports, port)
+		}
+	}
+	slices.Sort(ports)
+	return ports
+}
+
 // TenantEgressForbiddenPort reports whether an app may not declare port as
 // extra egress (ADR-361), and why.
 func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {

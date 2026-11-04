@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Inner-world constants (ADR-009, spec §7). Every guest sees the IDENTICAL
@@ -858,9 +860,9 @@ func (c Config) NftCommands() [][]string {
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "counter", "name", EgressDenyCounterSMTP)
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
 	// ADR-361 port policy: everything not accepted above must be TCP to an
-	// egress_ports port. Allowlisted destinations were accepted above and
-	// keep ADR-031's any-port-but-25 semantics; bound managed databases are
-	// accepted just before it on their own port.
+	// egress_ports port. Allowlisted destinations were accepted above on any
+	// TCP port but the forbidden ones (465/587 stay open, bug hunt H69);
+	// bound managed databases are accepted just before it on their own port.
 	if !c.QualificationOnly {
 		cmds = append(cmds, c.egressDatabaseRule(nft, "ip")...)
 		cmds = append(cmds, c.egressPortRule(nft, "ip"))
@@ -1439,7 +1441,10 @@ func (c Config) forwardChainPolicy() string {
 // Shape:
 //
 //	nft add rule ip faas forward
-//	  iifname "tap0" ip daddr { CIDR1,CIDR2,… } tcp dport != 25 accept
+//	  iifname "tap0" ip daddr { CIDR1,CIDR2,… } tcp dport != { 22,23,25,… } accept
+//
+// The excluded ports are api.TenantEgressAllowlistBlockedPorts: the ADR-361
+// forbidden ports but 465 and 587 (bug hunt H69).
 //
 // The CIDR set uses comma-joined values inside `{ … }` with NO
 // trailing whitespace, matching the modern-nft syntax gate at
@@ -1469,7 +1474,20 @@ func (c Config) ForwardAllowlistRule(nft func(...string) []string) []string {
 		return nil
 	}
 	return nft("add", "rule", "ip", "faas", "forward",
-		"iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "tcp", "dport", "!=", "25", "accept")
+		"iifname", c.Tap, "ip", "daddr", "{", strings.Join(v4, ","), "}", "tcp", "dport", "!=", "{", AllowlistBlockedPortsSet(), "}", "accept")
+}
+
+// AllowlistBlockedPortsSet renders api.TenantEgressAllowlistBlockedPorts as
+// an nft set body: allowlisted destinations get every TCP port except these
+// (port 25 included; 465 and 587 stay open), so an allowlist narrows egress
+// without reopening the ADR-361 abuse ports (bug hunt H69).
+func AllowlistBlockedPortsSet() string {
+	ports := api.TenantEgressAllowlistBlockedPorts()
+	parts := make([]string, len(ports))
+	for i, port := range ports {
+		parts[i] = strconv.Itoa(port)
+	}
+	return strings.Join(parts, ",")
 }
 
 // ForwardAllowlistRule6 (ADR-032 — v6 mirror of ForwardAllowlistRule;
@@ -1498,7 +1516,7 @@ func (c Config) ForwardAllowlistRule6(nft func(...string) []string) []string {
 		return nil
 	}
 	return nft("add", "rule", "ip6", "faas", "forward",
-		"iifname", c.Tap, "ip6", "daddr", "{", strings.Join(v6, ","), "}", "accept")
+		"iifname", c.Tap, "ip6", "daddr", "{", strings.Join(v6, ","), "}", "tcp", "dport", "!=", "{", AllowlistBlockedPortsSet(), "}", "accept")
 }
 
 // ForwardPrivateNetworkRule emits the v4 accept rule for provider-verified
