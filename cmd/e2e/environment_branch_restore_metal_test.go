@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -105,7 +106,7 @@ func TestEnvironmentBranchIdentityReloadMetal(t *testing.T) {
 	// the parent's credential-free capture.
 	first := createEnvironmentBranch(t, h, key, project.Slug, "pr-1", appID)
 	waitDeploymentLive(t, pool, first)
-	body, wakeID, status := doGetWithHostCapturingWakeID(t, client, url, environmentBranchHost(t, store, account.ID, project.ID, "pr-1", appID), 60*time.Second)
+	body, wakeID, status := branchGet(t, client, url, environmentBranchHost(t, store, account.ID, project.ID, "pr-1", appID), key)
 	if status != http.StatusOK || !strings.HasSuffix(strings.TrimSpace(string(body)), " reloads=0") {
 		t.Fatalf("first branch wake: status=%d body=%q, want a cold boot without a reload", status, body)
 	}
@@ -129,7 +130,7 @@ func TestEnvironmentBranchIdentityReloadMetal(t *testing.T) {
 	if err := store.UpsertAppEnvInScope(ctx, account.ID, appID, scope, "APP_COLOR", "branch-two"); err != nil {
 		t.Fatalf("branch env: %v", err)
 	}
-	body, wakeID, status = doGetWithHostCapturingWakeID(t, client, url, environmentBranchHost(t, store, account.ID, project.ID, "pr-2", appID), 60*time.Second)
+	body, wakeID, status = branchGet(t, client, url, environmentBranchHost(t, store, account.ID, project.ID, "pr-2", appID), key)
 	if status != http.StatusOK || strings.TrimSpace(string(body)) != "color=branch-two reloads=1" {
 		t.Fatalf("second branch wake: status=%d body=%q, want the branch's reloaded identity", status, body)
 	}
@@ -185,6 +186,27 @@ func createEnvironmentBranch(t *testing.T, h *e2etest.Harness, key, projectSlug,
 	}
 	t.Fatalf("branch %s published no workload for app %s: %s", branch, appID, raw)
 	return ""
+}
+
+// branchGet requests a branch host with the account's API key: a branch
+// environment's workloads require authentication.
+func branchGet(t *testing.T, client *http.Client, url, host, key string) ([]byte, string, int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Host = host
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s (Host=%s): %v", url, host, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	return body, resp.Header.Get("x-faas-wake-id"), resp.StatusCode
 }
 
 // waitDeploymentLive waits for a branch deployment to activate: the gateway
