@@ -57,7 +57,13 @@ func (r *WorkflowRetention) sweepOnce(ctx context.Context) (bool, error) {
 	}
 	eventsDeleted := 0
 	if ctx.Err() == nil {
-		eventsDeleted, err = r.store.SweepExpiredWorkflowEvents(ctx, 90*24*time.Hour)
+		if progress, ok := r.store.(state.WorkflowEventRetentionProgressStore); ok {
+			var eventMore bool
+			eventsDeleted, eventMore, err = progress.SweepExpiredWorkflowEventsWithProgress(ctx, 90*24*time.Hour)
+			more = more || eventMore
+		} else {
+			eventsDeleted, err = r.store.SweepExpiredWorkflowEvents(ctx, 90*24*time.Hour)
+		}
 		if err != nil {
 			failures = append(failures, fmt.Errorf("sweep events: %w", err))
 		}

@@ -177,6 +177,9 @@ type Querier interface {
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
 	ArchiveDeploymentCronOutcome(ctx context.Context, db DBTX, appID string) error
+	// Lock a bounded owner page and examine at most a bounded event page. A
+	// conflicting archive ID remains live while the keyset advances past it.
+	ArchiveRetainedWorkflowEvents(ctx context.Context, db DBTX, arg ArchiveRetainedWorkflowEventsParams) (ArchiveRetainedWorkflowEventsRow, error)
 	ArmScenarioWorkerFault(ctx context.Context, db DBTX, arg ArmScenarioWorkerFaultParams) error
 	ArtifactEvidenceStorageTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	AssociateEventExecutionRoot(ctx context.Context, db DBTX, arg AssociateEventExecutionRootParams) (AssociateEventExecutionRootRow, error)
@@ -1494,8 +1497,8 @@ type Querier interface {
 	EventReplayBackfillSettleReceipts(ctx context.Context, db DBTX, ids []int64) error
 	EventReplayBackfillTargetSnapshot(ctx context.Context, db DBTX, arg EventReplayBackfillTargetSnapshotParams) (EventReplayBackfillTargetSnapshotRow, error)
 	EventReplayBackfillTryLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
-	EventReplayBackfillWorkflowExpireRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowExpireRetryParams) (int64, error)
 	EventReplayBackfillWorkflowFinishRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowFinishRetryParams) (int64, error)
+	// A retry that remains unavailable moves behind less-attempted items.
 	EventReplayBackfillWorkflowRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowRetryCandidatesParams) ([]EventReplayBackfillWorkflowRetryCandidatesRow, error)
 	EventReplayBackfillWorkflowRetryableCount(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowRetryableCountParams) (int64, error)
 	EventReplayBackfillWorkflowTarget(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowTargetParams) ([]EventReplayBackfillWorkflowTargetRow, error)
@@ -5338,6 +5341,7 @@ type Querier interface {
 	// ADR-570: the replay floor is each serving gateway's fresh, boot-scoped
 	// observation; a stale or missing gateway keeps the history it may replay.
 	PruneEdgeRuleReplayHistory(ctx context.Context, db DBTX, arg PruneEdgeRuleReplayHistoryParams) (int64, error)
+	PruneEmptyWorkflowEventOwners(ctx context.Context, db DBTX, ownerIds []pgtype.UUID) (int64, error)
 	PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error
 	PruneEventExecutionLineageCases(ctx context.Context, db DBTX, arg PruneEventExecutionLineageCasesParams) (int64, error)
 	PruneEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PruneEventExecutionLineageRetriesParams) (int64, error)
@@ -7135,6 +7139,7 @@ type Querier interface {
 	StampScheduledCanaryStart(ctx context.Context, db DBTX, arg StampScheduledCanaryStartParams) error
 	// Completes the rollout of a parked release that just took all traffic.
 	StampScheduledCutoverStart(ctx context.Context, db DBTX, arg StampScheduledCutoverStartParams) error
+	StartAutomationFailureMonitoring(ctx context.Context, db DBTX, arg StartAutomationFailureMonitoringParams) error
 	StartCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowRunParams) error
 	StartCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowStepParams) ([]byte, error)
 	// ADR-1027 restore drills (pkg/dbsched drill.go). schedd is the only writer.
@@ -7408,6 +7413,8 @@ type Querier interface {
 	//      developer, as event publishing requires), so a creator who left
 	//      the company cannot write its evidence.
 	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error)
+	// A manual replay changes fairness, not the evaluated schedule. Preserve the
+	// evaluation timestamp so it cannot hide a pending owner change or resume.
 	UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateTenantWorkflowScheduleLastAdmittedAtParams) (int64, error)
 	// Keep cancelled terminal while allowing an eligible target to revive an alias.
 	// GitOps-managed scopes keep the same guards as UpdateDeploymentStatus.

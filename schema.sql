@@ -5467,19 +5467,39 @@ CREATE FUNCTION public.archive_workflow_events() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    -- Never wait for the parent while holding a run lock: an app purge can
-    -- already hold that parent and be waiting for this run's cascade.
     PERFORM 1 FROM apps WHERE id = OLD.app_id FOR KEY SHARE SKIP LOCKED;
     IF NOT FOUND THEN
         IF EXISTS (SELECT 1 FROM apps WHERE id = OLD.app_id) THEN
-            RETURN NULL; -- A concurrent app mutation owns the parent; retry later.
+            RETURN NULL;
         END IF;
-        RETURN OLD; -- The parent is being deleted by this transaction's cascade.
+        -- The app itself is being deleted. Historical events without an owner
+        -- predate this migration and must also be removed with the app.
+        -- A competing insert can be waiting for this run row while holding
+        -- its ID lock. Abort app deletion for retry rather than deadlocking.
+        IF NOT pg_try_advisory_xact_lock(hashtextextended('workflow-event-owner/' || OLD.id::text, 0)) THEN
+            RAISE EXCEPTION 'workflow run id is busy' USING ERRCODE = '40001';
+        END IF;
+        DELETE FROM workflow_events WHERE run_id = OLD.id;
+        RETURN OLD;
     END IF;
-    INSERT INTO workflow_event_archive (id, run_id, app_id, event_name, payload, received_at)
-    SELECT id, run_id, OLD.app_id, event_name, payload, received_at
-    FROM workflow_events WHERE run_id = OLD.id
-    ON CONFLICT (id) DO NOTHING;
+    -- A concurrent insertion of this same run id must not wait on the run
+    -- while we wait on its advisory lock. Skip and let retention retry.
+    IF NOT pg_try_advisory_xact_lock(hashtextextended('workflow-event-owner/' || OLD.id::text, 0)) THEN
+        RETURN NULL;
+    END IF;
+    IF EXISTS (SELECT 1 FROM workflow_events WHERE run_id = OLD.id) THEN
+        INSERT INTO workflow_event_owners (run_id, app_id, deleted_at)
+        VALUES (OLD.id, OLD.app_id, clock_timestamp())
+        ON CONFLICT (run_id) DO UPDATE SET deleted_at = EXCLUDED.deleted_at
+            WHERE workflow_event_owners.app_id = EXCLUDED.app_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'workflow event owner conflicts with run' USING ERRCODE = '23503';
+        END IF;
+    ELSE
+        -- A run whose last event expired while it was still present has no
+        -- retained work and must not leave a permanent owner behind.
+        DELETE FROM workflow_event_owners WHERE run_id = OLD.id;
+    END IF;
     RETURN OLD;
 END;
 $$;
@@ -22762,6 +22782,32 @@ $$;
 
 
 --
+-- Name: preserve_automation_live_idempotency(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_automation_live_idempotency() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        INSERT INTO workflow_automation_live_retired_keys(app_id,name,key_hash,request_fingerprint)
+        VALUES (NEW.app_id,NEW.name,sha256(convert_to(NEW.idempotency_key,'UTF8')),NEW.request_fingerprint)
+        ON CONFLICT (app_id,name,key_hash) DO NOTHING;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'live verification idempotency key is already reserved' USING ERRCODE='23505';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF EXISTS (SELECT 1 FROM apps WHERE id=OLD.app_id AND status<>'deleted') THEN
+        INSERT INTO workflow_automation_live_retired_keys(app_id,name,key_hash,request_fingerprint)
+        VALUES (OLD.app_id,OLD.name,sha256(convert_to(OLD.idempotency_key,'UTF8')),OLD.request_fingerprint)
+        ON CONFLICT (app_id,name,key_hash) DO NOTHING;
+    END IF;
+    RETURN OLD;
+END $$;
+
+
+--
 -- Name: preserve_fixed_multipart_capacity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -28648,6 +28694,51 @@ $$;
 
 
 --
+-- Name: workflow_event_ensure_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.workflow_event_ensure_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owner_app uuid;
+BEGIN
+    -- Also serialize a direct app-id change with this ownership check.
+    SELECT app_id INTO owner_app FROM workflow_runs WHERE id = NEW.run_id FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'workflow event run does not exist' USING ERRCODE = '23503';
+    END IF;
+    -- A writer may already hold the run while an app purge holds its parent.
+    -- Never wait for that parent and create a lock cycle with the purge.
+    PERFORM 1 FROM apps WHERE id = owner_app FOR KEY SHARE SKIP LOCKED;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'workflow event app is being changed' USING ERRCODE = '40001';
+    END IF;
+    INSERT INTO workflow_event_owners (run_id, app_id) VALUES (NEW.run_id, owner_app)
+    ON CONFLICT (run_id) DO UPDATE SET run_id = EXCLUDED.run_id
+        WHERE workflow_event_owners.app_id = EXCLUDED.app_id AND workflow_event_owners.deleted_at IS NULL;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'workflow event owner conflicts with retained events' USING ERRCODE = '23503';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: workflow_event_owner_delete(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.workflow_event_owner_delete() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DELETE FROM workflow_events WHERE run_id = OLD.run_id;
+    RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: workflow_event_recipients(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -28687,6 +28778,42 @@ CREATE FUNCTION public.workflow_foreach_item_name(parent text, item_index intege
     LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
     AS $$
  SELECT '_foreach.' || rtrim(translate(replace(encode(convert_to(parent,'UTF8'),'base64'), E'\n',''), '+/', '-_'),'=') || '.' || item_index::text;
+$$;
+
+
+--
+-- Name: workflow_run_retained_id_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.workflow_run_retained_id_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.id IS NOT DISTINCT FROM OLD.id AND NEW.app_id IS NOT DISTINCT FROM OLD.app_id THEN
+            RETURN NEW;
+        END IF;
+        -- Preserve the old foreign key's protection against changing the run
+        -- id, and prevent moving retained evidence to another app.
+        IF EXISTS (SELECT 1 FROM workflow_events WHERE run_id = OLD.id) THEN
+            RAISE EXCEPTION 'workflow run has events' USING ERRCODE = '23503';
+        END IF;
+        DELETE FROM workflow_event_owners WHERE run_id = OLD.id;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        -- An insert can hold this ID lock while waiting for our run row.
+        IF NOT pg_try_advisory_xact_lock(hashtextextended('workflow-event-owner/' || NEW.id::text, 0)) THEN
+            RAISE EXCEPTION 'workflow run id is busy' USING ERRCODE = '40001';
+        END IF;
+    ELSE
+        PERFORM pg_advisory_xact_lock(hashtextextended('workflow-event-owner/' || NEW.id::text, 0));
+    END IF;
+    IF EXISTS (SELECT 1 FROM workflow_event_owners WHERE run_id = NEW.id)
+       OR EXISTS (SELECT 1 FROM workflow_event_archive WHERE run_id = NEW.id) THEN
+        RAISE EXCEPTION 'workflow run id has retained events' USING ERRCODE = '23505';
+    END IF;
+    RETURN NEW;
+END;
 $$;
 
 
@@ -56830,6 +56957,31 @@ CREATE TABLE public.workflow_automation_live_baseline_retirements (
 
 
 --
+-- Name: workflow_automation_schedule_invalidations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_schedule_invalidations (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    invalidated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: workflow_automation_live_retired_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_automation_live_retired_keys (
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    key_hash bytea NOT NULL,
+    request_fingerprint bytea NOT NULL,
+    CONSTRAINT workflow_automation_live_retired_keys_key_hash_check CHECK ((octet_length(key_hash) = 32)),
+    CONSTRAINT workflow_automation_live_retired_keys_request_fingerprint_check CHECK ((octet_length(request_fingerprint) = 32))
+);
+
+
+--
 -- Name: workflow_automation_live_suites; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56956,6 +57108,23 @@ CREATE TABLE public.workflow_callback_webhook_bindings (
 
 
 --
+-- Name: workflow_callback_webhook_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_callback_webhook_receipts (
+    endpoint_id uuid NOT NULL,
+    provider_event_id text NOT NULL,
+    body_hash bytea NOT NULL,
+    callback_id uuid NOT NULL,
+    status text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT workflow_callback_webhook_receipts_body_hash_check CHECK ((octet_length(body_hash) = 32)),
+    CONSTRAINT workflow_callback_webhook_receipts_provider_event_id_check CHECK (((octet_length(provider_event_id) >= 1) AND (octet_length(provider_event_id) <= 256))),
+    CONSTRAINT workflow_callback_webhook_receipts_status_check CHECK ((status = ANY (ARRAY['received'::text, 'ignored'::text])))
+);
+
+
+--
 -- Name: workflow_code_admission_guard; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56993,6 +57162,17 @@ CREATE TABLE public.workflow_event_archive (
     event_name text NOT NULL,
     payload jsonb NOT NULL,
     received_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: workflow_event_owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_event_owners (
+    run_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deleted_at timestamp with time zone
 );
 
 
@@ -69924,6 +70104,22 @@ ALTER TABLE ONLY public.workflow_automation_live_baseline_retirements
 
 
 --
+-- Name: workflow_automation_schedule_invalidations workflow_automation_schedule_invalidations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_schedule_invalidations
+    ADD CONSTRAINT workflow_automation_schedule_invalidations_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: workflow_automation_live_retired_keys workflow_automation_live_retired_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_retired_keys
+    ADD CONSTRAINT workflow_automation_live_retired_keys_pkey PRIMARY KEY (app_id, name, key_hash);
+
+
+--
 -- Name: workflow_automation_live_suites workflow_automation_live_suites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69980,6 +70176,14 @@ ALTER TABLE ONLY public.workflow_callback_webhook_bindings
 
 
 --
+-- Name: workflow_callback_webhook_receipts workflow_callback_webhook_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_callback_webhook_receipts
+    ADD CONSTRAINT workflow_callback_webhook_receipts_pkey PRIMARY KEY (endpoint_id, provider_event_id);
+
+
+--
 -- Name: workflow_callback_webhook_bindings workflow_callback_webhook_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -70033,6 +70237,14 @@ ALTER TABLE ONLY public.workflow_event_archive
 
 ALTER TABLE ONLY public.workflow_event_code_refs
     ADD CONSTRAINT workflow_event_code_refs_pkey PRIMARY KEY (outbox_id, deployment_id);
+
+
+--
+-- Name: workflow_event_owners workflow_event_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_owners
+    ADD CONSTRAINT workflow_event_owners_pkey PRIMARY KEY (run_id);
 
 
 --
@@ -74130,6 +74342,13 @@ CREATE INDEX event_replay_job_items_due_idx ON public.event_replay_job_items USI
 --
 
 CREATE INDEX event_replay_job_items_page_idx ON public.event_replay_job_items USING btree (job_id, accepted_at, outbox_id);
+
+
+--
+-- Name: event_replay_job_items_retry_fair_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_replay_job_items_retry_fair_idx ON public.event_replay_job_items USING btree (job_id, attempts, accepted_at, outbox_id) WHERE ((state = 'failed'::text) AND retryable);
 
 
 --
@@ -80269,6 +80488,13 @@ CREATE INDEX workflow_automation_live_suite_history ON public.workflow_automatio
 
 
 --
+-- Name: workflow_callback_webhook_receipts_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_callback_webhook_receipts_retention_idx ON public.workflow_callback_webhook_receipts USING btree (accepted_at, endpoint_id, provider_event_id);
+
+
+--
 -- Name: workflow_callback_webhook_bindings_endpoint_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -80304,6 +80530,13 @@ CREATE INDEX workflow_event_code_refs_deployment_idx ON public.workflow_event_co
 
 
 --
+-- Name: workflow_event_owners_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_event_owners_pending_idx ON public.workflow_event_owners USING btree (deleted_at, run_id) WHERE (deleted_at IS NOT NULL);
+
+
+--
 -- Name: workflow_event_receipts_run_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -80322,6 +80555,13 @@ CREATE INDEX workflow_events_retention_received_idx ON public.workflow_events US
 --
 
 CREATE INDEX workflow_events_run_event_idx ON public.workflow_events USING btree (run_id, event_name);
+
+
+--
+-- Name: workflow_events_run_id_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_events_run_id_id_idx ON public.workflow_events USING btree (run_id, id);
 
 
 --
@@ -81022,6 +81262,13 @@ ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_t
 --
 
 CREATE STATISTICS public.event_delivery_slots_account_live (dependencies, mcv) ON account_id, live FROM public.event_delivery_slots;
+
+
+--
+-- Name: workflow_automation_live_verifications automation_live_idempotency_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER automation_live_idempotency_guard BEFORE INSERT OR DELETE ON public.workflow_automation_live_verifications FOR EACH ROW EXECUTE FUNCTION public.preserve_automation_live_idempotency();
 
 
 --
@@ -87888,10 +88135,31 @@ CREATE TRIGGER workflow_event_due_trg AFTER INSERT ON public.workflow_events FOR
 
 
 --
+-- Name: workflow_events workflow_event_ensure_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_event_ensure_owner BEFORE INSERT OR UPDATE OF run_id ON public.workflow_events FOR EACH ROW EXECUTE FUNCTION public.workflow_event_ensure_owner();
+
+
+--
+-- Name: workflow_event_owners workflow_event_owner_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_event_owner_delete BEFORE DELETE ON public.workflow_event_owners FOR EACH ROW EXECUTE FUNCTION public.workflow_event_owner_delete();
+
+
+--
 -- Name: workflow_runs workflow_recovery_failure_evidence_capture; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER workflow_recovery_failure_evidence_capture AFTER INSERT OR UPDATE OF status, resume_count ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.record_workflow_recovery_failure();
+
+
+--
+-- Name: workflow_runs workflow_run_retained_id_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_run_retained_id_guard BEFORE INSERT OR UPDATE OF id, app_id ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.workflow_run_retained_id_guard();
 
 
 --
@@ -103087,6 +103355,22 @@ ALTER TABLE ONLY public.workflow_automation_live_baseline_retirements
 
 
 --
+-- Name: workflow_automation_schedule_invalidations workflow_automation_schedule_invalidations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_schedule_invalidations
+    ADD CONSTRAINT workflow_automation_schedule_invalidations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_automation_live_retired_keys workflow_automation_live_retired_keys_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_automation_live_retired_keys
+    ADD CONSTRAINT workflow_automation_live_retired_keys_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_automation_live_suites workflow_automation_live_suites_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -103156,6 +103440,14 @@ ALTER TABLE ONLY public.workflow_automation_publish_receipts
 
 ALTER TABLE ONLY public.workflow_automation_revisions
     ADD CONSTRAINT workflow_automation_revisions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_callback_webhook_receipts workflow_callback_webhook_receipts_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_callback_webhook_receipts
+    ADD CONSTRAINT workflow_callback_webhook_receipts_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.inbound_webhook_endpoints(id) ON DELETE CASCADE;
 
 
 --
@@ -103247,6 +103539,14 @@ ALTER TABLE ONLY public.workflow_event_code_refs
 
 
 --
+-- Name: workflow_event_owners workflow_event_owners_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_event_owners
+    ADD CONSTRAINT workflow_event_owners_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_event_receipts workflow_event_receipts_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -103260,14 +103560,6 @@ ALTER TABLE ONLY public.workflow_event_receipts
 
 ALTER TABLE ONLY public.workflow_event_receipts
     ADD CONSTRAINT workflow_event_receipts_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE SET NULL;
-
-
---
--- Name: workflow_events workflow_events_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.workflow_events
-    ADD CONSTRAINT workflow_events_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
 
 
 --

@@ -64,9 +64,13 @@ func newPgCore(pool *pgxpool.Pool) pgCore {
 // is safe for concurrent use.
 type PgStore struct {
 	pgCore
-	trafficAppsSuffix    string
-	trafficScopedBinding bool
-	realtimeEventSchemas *realtimeEventSchemaCache
+	workflowArchiveMu         sync.Mutex
+	workflowArchiveAfterTime  pgtype.Timestamptz
+	workflowArchiveAfterRun   pgtype.UUID
+	workflowArchiveAfterEvent pgtype.UUID
+	trafficAppsSuffix         string
+	trafficScopedBinding      bool
+	realtimeEventSchemas      *realtimeEventSchemaCache
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not

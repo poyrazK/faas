@@ -42,9 +42,43 @@ type WorkflowScheduleCursor struct {
 	TriggerSnapshot  json.RawMessage
 	LastAdmittedAt   *time.Time
 	LastEvaluatedAt  time.Time
+	UpdatedAt        time.Time
 	ScheduledFor     *time.Time
 	Status           string
 	LastRunID        string
+}
+
+func rearmTenantScheduleAfterOwnerChange(cursor *WorkflowScheduleCursor, invalidatedAt time.Time) {
+	if cursor == nil || invalidatedAt.IsZero() {
+		return
+	}
+	updated := cursor.UpdatedAt
+	if updated.IsZero() {
+		updated = cursor.LastEvaluatedAt
+	}
+	// PostgreSQL timestamps have microsecond precision; equal timestamps do
+	// not prove that evaluation happened after the owner change.
+	if !updated.After(invalidatedAt) {
+		cursor.DeploymentID, cursor.Status, cursor.LastRunID = "", WorkflowScheduleArmed, ""
+		cursor.ScheduledFor = nil
+	}
+}
+
+// Rearm on first evaluation after a failure resume, preserving tenant intent
+// and fairness while skipping the paused interval.
+func rearmTenantScheduleAfterFailureResume(cursor *WorkflowScheduleCursor, resumedAt time.Time) {
+	if cursor == nil || resumedAt.IsZero() {
+		return
+	}
+	updated := cursor.UpdatedAt
+	if updated.IsZero() {
+		updated = cursor.LastEvaluatedAt
+	}
+	if updated.After(resumedAt) {
+		return
+	}
+	cursor.DeploymentID, cursor.Status, cursor.LastRunID = "", WorkflowScheduleArmed, ""
+	cursor.ScheduledFor = nil
 }
 
 type TenantWorkflowSchedule struct {
@@ -201,6 +235,15 @@ func tenantWorkflowScheduleFromDefinition(appID, tenantID, deploymentID string, 
 		DeploymentID: deploymentID, Schedule: trigger.Schedule, Timezone: trigger.Timezone,
 		Overlap: trigger.Overlap, CatchUp: trigger.ScheduleCatchUpPolicy(), CatchUpWindow: windowText,
 		Enabled: enabled, Customized: customized, Version: version, EffectiveTrigger: effectiveTrigger}
+}
+
+// Keep the tenant's enabled intent while exposing the runtime pause to
+// schedule previews through the effective trigger.
+func applyTenantFailurePause(schedule *TenantWorkflowSchedule, paused bool) {
+	if paused {
+		enabled := false
+		schedule.EffectiveTrigger.Enabled = &enabled
+	}
 }
 
 // WorkflowScheduleCursorMatches reports whether a durable cursor belongs to

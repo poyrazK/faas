@@ -66,9 +66,8 @@ func (s *PgStore) AdmitEventWorkflowRecipient(ctx context.Context, claim Publish
 	if matched {
 		runID, created, err = admitEventWorkflowTx(ctx, q, tx, receipt.ID, recipient, receipt.Payload)
 		if errors.Is(err, errWorkflowFailurePolicyLatched) {
-			if err := validateEventRoutingClaim(ctx, q, tx, claim); err != nil {
-				return result, err
-			}
+			// No recipient outcome or run was written. The newly observed
+			// pause must survive independently of this claim's lease.
 			if err := tx.Commit(ctx); err != nil {
 				return result, err
 			}

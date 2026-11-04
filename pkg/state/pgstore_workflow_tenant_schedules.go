@@ -39,7 +39,7 @@ func (s *PgStore) ListTenantWorkflowScheduleCandidates(ctx context.Context, owne
 func tenantWorkflowScheduleCursorFromSQL(row sqlc.PlatformTenantWorkflowScheduleCursor) WorkflowScheduleCursor {
 	result := WorkflowScheduleCursor{AppID: pgUUIDString(row.AppID), PlatformTenantID: pgUUIDString(row.PlatformTenantID),
 		WorkflowName: row.WorkflowName, TriggerSnapshot: cloneWorkflowJSON(row.TriggerSnapshot),
-		LastAdmittedAt: timestamptzToTimePtr(row.LastAdmittedAt), LastEvaluatedAt: timeFromPgtype(row.LastEvaluatedAt), ScheduledFor: timestamptzToTimePtr(row.ScheduledFor), Status: row.Status}
+		LastAdmittedAt: timestamptzToTimePtr(row.LastAdmittedAt), LastEvaluatedAt: timeFromPgtype(row.LastEvaluatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), ScheduledFor: timestamptzToTimePtr(row.ScheduledFor), Status: row.Status}
 	if row.DeploymentID.Valid {
 		result.DeploymentID = pgUUIDString(row.DeploymentID)
 	}
@@ -47,6 +47,50 @@ func tenantWorkflowScheduleCursorFromSQL(row sqlc.PlatformTenantWorkflowSchedule
 		result.LastRunID = pgUUIDString(row.LastRunID)
 	}
 	return result
+}
+
+func rearmTenantAfterOwnerChangePG(ctx context.Context, db sqlc.DBTX, cursor *WorkflowScheduleCursor, appID, name string) error {
+	var invalidatedAt time.Time
+	err := db.QueryRow(ctx, `SELECT invalidated_at FROM workflow_automation_schedule_invalidations WHERE app_id=$1 AND name=$2`, mustPgUUID(appID), name).Scan(&invalidatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	rearmTenantScheduleAfterOwnerChange(cursor, invalidatedAt)
+	return nil
+}
+
+func rearmTenantAfterFailureResumePG(ctx context.Context, db sqlc.DBTX, cursor *WorkflowScheduleCursor, appID, name string) error {
+	var resumedAt time.Time
+	err := db.QueryRow(ctx, `SELECT recorded_at FROM workflow_automation_failure_history WHERE app_id=$1 AND name=$2 AND state='resumed' ORDER BY generation DESC LIMIT 1`, mustPgUUID(appID), name).Scan(&resumedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	rearmTenantScheduleAfterFailureResume(cursor, resumedAt)
+	return nil
+}
+
+// Configuration views must use published intent, not the runtime projection
+// that temporarily disables a failure-paused trigger.
+func tenantWorkflowConfigurationPG(ctx context.Context, tx pgx.Tx, appID string, deploymentID pgtype.UUID) (json.RawMessage, error) {
+	var manifest json.RawMessage
+	if err := tx.QueryRow(ctx, `SELECT workflows FROM deployments WHERE id=$1 AND app_id=$2`, deploymentID, mustPgUUID(appID)).Scan(&manifest); err != nil {
+		return nil, err
+	}
+	rows, err := sqlc.New().ListAutomations(ctx, tx, mustPgUUID(appID))
+	if err != nil {
+		return nil, err
+	}
+	records := make([]Automation, 0, len(rows))
+	for _, row := range rows {
+		records = append(records, automationFromSQL(row))
+	}
+	return mergeAutomationDefinitions(manifest, records)
 }
 
 func (s *PgStore) AdmitTenantScheduledWorkflow(ctx context.Context, appID, tenantID, deploymentID, name string, now time.Time) (WorkflowScheduleCursor, bool, error) {
@@ -102,6 +146,12 @@ func (s *PgStore) AdmitTenantScheduledWorkflow(ctx context.Context, appID, tenan
 	var previous *WorkflowScheduleCursor
 	if err == nil {
 		value := tenantWorkflowScheduleCursorFromSQL(storedCursor)
+		if err := rearmTenantAfterFailureResumePG(ctx, tx, &value, appID, name); err != nil {
+			return WorkflowScheduleCursor{}, false, err
+		}
+		if err := rearmTenantAfterOwnerChangePG(ctx, tx, &value, appID, name); err != nil {
+			return WorkflowScheduleCursor{}, false, err
+		}
 		previous = &value
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return WorkflowScheduleCursor{}, false, fmt.Errorf("state: get tenant workflow schedule cursor: %w", err)
@@ -148,6 +198,18 @@ func (s *PgStore) AdmitTenantScheduledWorkflow(ctx context.Context, appID, tenan
 		}
 	}
 	if run != nil {
+		blocked, latched, err := automationFailureBlocksAdmissionPG(ctx, tx, appID, name, time.Now().UTC())
+		if err != nil {
+			return WorkflowScheduleCursor{}, false, err
+		}
+		if blocked {
+			if latched {
+				if err := tx.Commit(ctx); err != nil {
+					return WorkflowScheduleCursor{}, false, err
+				}
+			}
+			return WorkflowScheduleCursor{}, false, nil
+		}
 		_, err = queries.InsertTenantScheduledWorkflowRun(ctx, tx, sqlc.InsertTenantScheduledWorkflowRunParams{
 			DeploymentID: mustPgUUID(run.DeploymentID), ID: mustPgUUID(run.ID), AppID: mustPgUUID(appID), TenantID: mustPgUUID(tenantID), WorkflowName: name,
 			Input: run.Input, DefinitionSnapshot: run.DefinitionSnapshot,
@@ -224,8 +286,20 @@ func (s *PgStore) ListTenantWorkflowSchedules(ctx context.Context, accountID, te
 	if !plan.WorkflowsAllowed() {
 		return nil, ErrNotFound
 	}
+	configuration, err := tenantWorkflowConfigurationPG(ctx, tx, appID, target.DeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	pausedNames, err := queries.ListAutomationFailurePauses(ctx, tx, mustPgUUID(appID))
+	if err != nil {
+		return nil, err
+	}
+	paused := make(map[string]bool, len(pausedNames))
+	for _, name := range pausedNames {
+		paused[name] = true
+	}
 	var definitions []api.WorkflowSpec
-	if err := json.Unmarshal(target.Workflows, &definitions); err != nil {
+	if err := json.Unmarshal(configuration, &definitions); err != nil {
 		return nil, fmt.Errorf("state: decode tenant workflow schedules: %w", err)
 	}
 	rows, err := queries.ListTenantWorkflowScheduleCursors(ctx, tx, sqlc.ListTenantWorkflowScheduleCursorsParams{
@@ -249,6 +323,14 @@ func (s *PgStore) ListTenantWorkflowSchedules(ctx context.Context, accountID, te
 			return nil, err
 		}
 		cursor, exists := configured[definition.Name]
+		if exists {
+			if err := rearmTenantAfterFailureResumePG(ctx, tx, &cursor, appID, definition.Name); err != nil {
+				return nil, err
+			}
+			if err := rearmTenantAfterOwnerChangePG(ctx, tx, &cursor, appID, definition.Name); err != nil {
+				return nil, err
+			}
+		}
 		var trigger api.WorkflowTriggerSpec
 		var version int64
 		customized := false
@@ -257,6 +339,7 @@ func (s *PgStore) ListTenantWorkflowSchedules(ctx context.Context, accountID, te
 		}
 		schedule := tenantWorkflowScheduleFromDefinition(appID, tenantID, pgUUIDString(target.DeploymentID),
 			definition, trigger, version, customized)
+		applyTenantFailurePause(&schedule, paused[definition.Name])
 		if exists {
 			schedule.Cursor = &cursor
 		}
@@ -294,7 +377,11 @@ func (s *PgStore) UpdateTenantWorkflowSchedule(ctx context.Context, accountID, t
 	if !plan.WorkflowsAllowed() {
 		return TenantWorkflowSchedule{}, ErrNotFound
 	}
-	definition, err := tenantConfigurableWorkflowDefinition(target.Workflows, name, plan)
+	configuration, err := tenantWorkflowConfigurationPG(ctx, tx, appID, target.DeploymentID)
+	if err != nil {
+		return TenantWorkflowSchedule{}, err
+	}
+	definition, err := tenantConfigurableWorkflowDefinition(configuration, name, plan)
 	if err != nil {
 		return TenantWorkflowSchedule{}, err
 	}
@@ -346,10 +433,16 @@ func (s *PgStore) UpdateTenantWorkflowSchedule(ctx context.Context, accountID, t
 	if err != nil {
 		return TenantWorkflowSchedule{}, fmt.Errorf("state: save tenant workflow schedule: %w", err)
 	}
+	paused, err := queries.AutomationFailurePaused(ctx, tx, sqlc.AutomationFailurePausedParams{AppID: mustPgUUID(appID), Name: name})
+	if err != nil {
+		return TenantWorkflowSchedule{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return TenantWorkflowSchedule{}, fmt.Errorf("state: commit tenant workflow schedule update: %w", err)
 	}
-	return tenantWorkflowScheduleFromDefinition(appID, tenantID, next.DeploymentID, *definition, trigger, version, true), nil
+	result := tenantWorkflowScheduleFromDefinition(appID, tenantID, next.DeploymentID, *definition, trigger, version, true)
+	applyTenantFailurePause(&result, paused)
+	return result, nil
 }
 
 var _ TenantWorkflowScheduleStore = (*PgStore)(nil)

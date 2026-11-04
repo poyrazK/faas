@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -46,6 +47,63 @@ func finishLiveRun(t *testing.T, store state.Store, runID string, output json.Ra
 	}
 	if err := store.MarkWorkflowRunStatus(t.Context(), runID, state.WorkflowRunStatusSucceeded, json.RawMessage(`"PRIVATE-RUN-OUTPUT"`), nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAutomationLiveVerificationRetainsIdempotencyAfterRunPruning(t *testing.T) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		app, dep, draft, _ := seedLiveVerification(t, store)
+		live := store.(state.AutomationLiveStore)
+		req, key := liveStartRequest(draft, dep), uuid.NewString()
+		view, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, key, req, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finishLiveRun(t, store, view.RunID, json.RawMessage(`null`), 1)
+		if n, err := store.SweepExpiredWorkflowRuns(t.Context(), 0); err != nil || n != 1 {
+			t.Fatalf("prune: %d %v", n, err)
+		}
+		if _, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, key, req, true); !errors.Is(err, state.ErrAutomationLiveVerificationExpired) {
+			t.Fatalf("old key did not remain fenced: %v", err)
+		}
+		changed := req
+		changed.CaseName = "different"
+		if _, _, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, key, changed, true); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) {
+			t.Fatalf("changed request reused retired key: %v", err)
+		}
+		if _, replayed, err := live.StartAutomationLiveVerification(t.Context(), app.ID, draft.Name, uuid.NewString(), req, true); err != nil || replayed {
+			t.Fatalf("explicit new start: replayed=%t err=%v", replayed, err)
+		}
+	})
+}
+
+func TestAutomationLiveVerificationLegacyDeletePreservesKey(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	app, dep, draft, _ := seedLiveVerification(t, store)
+	live := state.AutomationLiveStore(store)
+	req, key := liveStartRequest(draft, dep), uuid.NewString()
+	view, _, err := live.StartAutomationLiveVerification(ctx, app.ID, draft.Name, key, req, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oldRow []byte
+	if err := pool.QueryRow(ctx, `SELECT row_to_json(v) FROM workflow_automation_live_verifications v WHERE run_id=$1`, view.RunID).Scan(&oldRow); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a row created before this migration, then an old scheduler's delete.
+	if _, err := pool.Exec(ctx, `DELETE FROM workflow_automation_live_retired_keys WHERE app_id=$1 AND name=$2`, app.ID, draft.Name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM workflow_automation_live_verifications WHERE run_id=$1`, view.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := live.StartAutomationLiveVerification(ctx, app.ID, draft.Name, key, req, true); !errors.Is(err, state.ErrAutomationLiveVerificationExpired) {
+		t.Fatalf("legacy delete did not retain key: %v", err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO workflow_automation_live_verifications SELECT (jsonb_populate_record(NULL::workflow_automation_live_verifications,$1::jsonb)).*`, oldRow)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || !strings.Contains(pgErr.Message, "already reserved") {
+		t.Fatalf("legacy insert was not fenced: %v", err)
 	}
 }
 

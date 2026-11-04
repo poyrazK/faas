@@ -337,12 +337,6 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body []byte) {
-	if s.receiveWebhookAutomation(w, r, endpoint, providerEventID, eventType, body) {
-		return
-	}
-	if s.receiveBoundWorkflowCallback(w, r, endpoint, body) {
-		return
-	}
 	app, err := s.store.AppByID(r.Context(), endpoint.AppID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not resolve inbound webhook app"))
@@ -363,6 +357,11 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 		http.NotFound(w, r)
 		return
 	}
+	// Existing callback completions remain durable even if new starts are
+	// rate-limited or the account has temporarily stopped admitting work.
+	if s.receiveBoundWorkflowCallback(w, r, endpoint, providerEventID, body, acct) {
+		return
+	}
 	if !acct.Active() {
 		api.WriteProblem(w, acct.InactiveProblem())
 		return
@@ -372,6 +371,9 @@ func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Re
 	// budget never applied; a valid signature admitted any rate.
 	if wait, allowed := s.inboundWebhookAccepts.take(acct.ID, limits.InboundWebhookAcceptsPerMinute); !allowed {
 		api.WriteProblem(w, api.ErrInboundWebhookRateLimited(limits.InboundWebhookAcceptsPerMinute, int(math.Ceil(wait.Seconds()))))
+		return
+	}
+	if s.receiveWebhookAutomation(w, r, endpoint, providerEventID, eventType, body) {
 		return
 	}
 	// ADR-1193: an operation binding takes over delivery for this endpoint.

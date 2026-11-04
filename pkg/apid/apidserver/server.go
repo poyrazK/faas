@@ -488,6 +488,10 @@ type server struct {
 	// inboundWebhookAccepts is each account's budget of verified inbound
 	// webhook deliveries a minute (ADR-20261101093517). Nil is unlimited.
 	inboundWebhookAccepts *apiRequestBudget
+	// Callback completions have their own bounded budget so new starts cannot
+	// exhaust the capacity needed by already-running workflows.
+	inboundWebhookCallbacks      *apiRequestBudget
+	inboundWebhookCallbackChecks *apiRequestBudget
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
@@ -1532,36 +1536,38 @@ func newServerWithDeps(
 	// resulting reconcile rows carry actor="apid" in events.actor.
 	aud := newAuditor(store, log, nil)
 	s := &server{
-		devBridgeObserver:      devbridge.NewObserver(api.DevBridgeObservedSessions, api.DevBridgeInspectionRecords, api.DevBridgeInspectionPathBytes),
-		store:                  store,
-		log:                    log,
-		domain:                 domain,
-		cliAuthURLBase:         defaultCLIAuthURLBase,
-		notif:                  notif,
-		stripeWebhookSecret:    stripeSecret,
-		mailer:                 mailer,
-		githubd:                githubd,
-		githubDeploysAvailable: func(context.Context) bool { return false },
-		cloneDataPointSettle:   projectEnvironmentCloneDataPointSettle,
-		events:                 bcaster,
-		bindingKeyFn:           func() []byte { return sessions.BindingKey() },
-		sessions:               sessions,
-		loginTTL:               loginTTL,
-		dpaPath:                dpaPath,
-		apiAuthLimiter:         apiAuthLimiter,
-		dashboardAuthLimiter:   dashboardAuthLimiter,
-		cliAuthLimiter:         cliAuthLimiter,
-		cliAuthSubmitLimiter:   cliAuthSubmitLimiter,
-		dashboardExportLimiter: dashboardExportLimiter,
-		securityMail:           newSecurityMailLimiter(),
-		signups:                newSignupNetworkLimiter(),
-		loginFailures:          newLoginFailureLimiter(),
-		resetMail:              newBackgroundWork(api.PasswordResetMailInFlightMax),
-		apiRequests:            newAPIRequestBudget(),
-		inboundWebhookAccepts:  newAPIRequestBudget(),
-		domainCreateLimiter:    domainCreateLimiter,
-		audit:                  aud,
-		runtimeConfig:          newRuntimeConfigManager(nil),
+		devBridgeObserver:            devbridge.NewObserver(api.DevBridgeObservedSessions, api.DevBridgeInspectionRecords, api.DevBridgeInspectionPathBytes),
+		store:                        store,
+		log:                          log,
+		domain:                       domain,
+		cliAuthURLBase:               defaultCLIAuthURLBase,
+		notif:                        notif,
+		stripeWebhookSecret:          stripeSecret,
+		mailer:                       mailer,
+		githubd:                      githubd,
+		githubDeploysAvailable:       func(context.Context) bool { return false },
+		cloneDataPointSettle:         projectEnvironmentCloneDataPointSettle,
+		events:                       bcaster,
+		bindingKeyFn:                 func() []byte { return sessions.BindingKey() },
+		sessions:                     sessions,
+		loginTTL:                     loginTTL,
+		dpaPath:                      dpaPath,
+		apiAuthLimiter:               apiAuthLimiter,
+		dashboardAuthLimiter:         dashboardAuthLimiter,
+		cliAuthLimiter:               cliAuthLimiter,
+		cliAuthSubmitLimiter:         cliAuthSubmitLimiter,
+		dashboardExportLimiter:       dashboardExportLimiter,
+		securityMail:                 newSecurityMailLimiter(),
+		signups:                      newSignupNetworkLimiter(),
+		loginFailures:                newLoginFailureLimiter(),
+		resetMail:                    newBackgroundWork(api.PasswordResetMailInFlightMax),
+		apiRequests:                  newAPIRequestBudget(),
+		inboundWebhookAccepts:        newAPIRequestBudget(),
+		inboundWebhookCallbacks:      newAPIRequestBudget(),
+		inboundWebhookCallbackChecks: newAPIRequestBudget(),
+		domainCreateLimiter:          domainCreateLimiter,
+		audit:                        aud,
+		runtimeConfig:                newRuntimeConfigManager(nil),
 		// Unit tests exercise the workflow engine by default. Production
 		// overwrites this from FAAS_WORKFLOWS_ENABLED before serving.
 		workflowRuntimeEnabled: true,

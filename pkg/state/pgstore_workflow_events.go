@@ -57,6 +57,14 @@ func (s *PgStore) AdmitEventWorkflow(ctx context.Context, outboxID int64, token,
 	if err != nil && !latched {
 		return "", err
 	}
+	// The pause is independent of the delivery lease. No run or receipt was
+	// written on this path, so preserve it even if the claim has expired.
+	if latched {
+		if err := tx.Commit(ctx); err != nil {
+			return "", err
+		}
+		return "", ErrWorkflowEventTargetUnavailable
+	}
 	if err := validateEventRoutingClaim(ctx, queries, tx, PublishedEventRoutingClaim{
 		OutboxID: outboxID, SubscriptionID: recipientID, ClaimToken: token,
 	}); err != nil {
@@ -64,9 +72,6 @@ func (s *PgStore) AdmitEventWorkflow(ctx context.Context, outboxID int64, token,
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
-	}
-	if latched {
-		return "", ErrWorkflowEventTargetUnavailable
 	}
 	return runID, nil
 }

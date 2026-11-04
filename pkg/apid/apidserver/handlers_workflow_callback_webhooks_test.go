@@ -73,6 +73,8 @@ func TestWorkflowCallbackWebhookBindingCompletesOnlyVerifiedMatch(t *testing.T) 
 	if ordinary.Code != http.StatusAccepted {
 		t.Fatalf("unmatched event: %d %s", ordinary.Code, ordinary.Body.String())
 	}
+	// Existing completions have a separate budget from newly accepted starts.
+	apidserver.ExhaustInboundWebhookBudgetForTest(e, app.AccountID, api.MustLimitsFor(api.PlanPro).InboundWebhookAcceptsPerMinute)
 	first := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
 	if first.Code != http.StatusAccepted {
 		t.Fatalf("matching event: %d %s", first.Code, first.Body.String())
@@ -85,10 +87,29 @@ func TestWorkflowCallbackWebhookBindingCompletesOnlyVerifiedMatch(t *testing.T) 
 	if err != nil || len(events) != 1 || events[0].ID != callbackID {
 		t.Fatalf("durable callback events = %#v err=%v", events, err)
 	}
+	// Repeated delivery must not spend the last token reserved for another completion.
+	apidserver.SetCallbackCompletionBudgetForTest(e, app.AccountID, api.MustLimitsFor(api.PlanPro).InboundWebhookAcceptsPerMinute, 1)
 	second := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
 	if err := json.Unmarshal(second.Body.Bytes(), &receipt); err != nil || second.Code != http.StatusAccepted || !receipt.Duplicate {
 		t.Fatalf("duplicate receipt = %d %#v err=%v", second.Code, receipt, err)
 	}
+	other := e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/workflows/callback/runs", map[string]any{"request_id": "bound-2"}, nil)
+	var otherRun api.WorkflowRunResponse
+	if other.Code != http.StatusCreated || json.Unmarshal(other.Body.Bytes(), &otherRun) != nil {
+		t.Fatalf("create second callback: %d %s", other.Code, other.Body.String())
+	}
+	otherID := api.WorkflowCallbackID(otherRun.ID, "await")
+	otherPath := fmt.Sprintf("/v1/workflows/runs/%s/callbacks/%s/webhook-binding", otherRun.ID, otherID)
+	otherBinding := request
+	otherBinding.ObjectID = "pi_bound_2"
+	if rec := e.Do(t, http.MethodPut, otherPath, otherBinding, nil); rec.Code != http.StatusOK {
+		t.Fatalf("bind second callback: %d %s", rec.Code, rec.Body.String())
+	}
+	otherBody := []byte(`{"id":"evt_bound_2","object":"event","type":"payment_intent.succeeded","data":{"object":{"id":"pi_bound_2"}}}`)
+	if rec := postStripeInboundWebhook(t, e, endpoint.EndpointURL, otherBody, inboundWebhookTestSecret); rec.Code != http.StatusAccepted {
+		t.Fatalf("duplicate exhausted another callback's capacity: %d %s", rec.Code, rec.Body.String())
+	}
+	apidserver.SetCallbackCompletionBudgetForTest(e, app.AccountID, api.MustLimitsFor(api.PlanPro).InboundWebhookAcceptsPerMinute, float64(api.MustLimitsFor(api.PlanPro).InboundWebhookAcceptsPerMinute))
 	changedBody := []byte(`{"id":"evt_bound_2","object":"event","type":"payment_intent.succeeded","data":{"object":{"id":"pi_bound_1","object":"payment_intent"}}, "extra":"changed"}`)
 	ignored := postStripeInboundWebhook(t, e, endpoint.EndpointURL, changedBody, inboundWebhookTestSecret)
 	if err := json.Unmarshal(ignored.Body.Bytes(), &receipt); err != nil || ignored.Code != http.StatusAccepted || receipt.Status != "ignored" {
@@ -133,5 +154,36 @@ func TestWorkflowCallbackWebhookBindingCompletesOnlyVerifiedMatch(t *testing.T) 
 	closedReceipt := postStripeInboundWebhook(t, e, endpoint.EndpointURL, closedBody, inboundWebhookTestSecret)
 	if err := json.Unmarshal(closedReceipt.Body.Bytes(), &receipt); err != nil || closedReceipt.Code != http.StatusAccepted || receipt.Status != "ignored" {
 		t.Fatalf("closed callback receipt = %d %#v err=%v", closedReceipt.Code, receipt, err)
+	}
+}
+
+func TestCallbackBindingPreservesEarlierInboundDelivery(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	app := seedWorkflowApp(t, e, "callback-legacy-receipt")
+	endpoint := mustCreateInboundWebhook(t, e, app.Slug)
+	body := []byte(`{"id":"evt_legacy_callback","object":"event","type":"payment_intent.succeeded","data":{"object":{"id":"pi_legacy_callback"}}}`)
+	first := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	var original api.InboundWebhookReceiptResponse
+	if first.Code != http.StatusAccepted || json.Unmarshal(first.Body.Bytes(), &original) != nil {
+		t.Fatalf("first delivery: %d %s", first.Code, first.Body.String())
+	}
+	created := e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/workflows/callback/runs", map[string]any{"request_id": "legacy-callback"}, nil)
+	var run api.WorkflowRunResponse
+	if created.Code != http.StatusCreated || json.Unmarshal(created.Body.Bytes(), &run) != nil {
+		t.Fatalf("create run: %d %s", created.Code, created.Body.String())
+	}
+	callbackID := api.WorkflowCallbackID(run.ID, "await")
+	path := fmt.Sprintf("/v1/workflows/runs/%s/callbacks/%s/webhook-binding", run.ID, callbackID)
+	request := api.CreateWorkflowCallbackWebhookBindingRequest{EndpointID: endpoint.ID, EventType: "payment_intent.succeeded", ObjectID: "pi_legacy_callback"}
+	if rec := e.Do(t, http.MethodPut, path, request, nil); rec.Code != http.StatusOK {
+		t.Fatalf("bind callback: %d %s", rec.Code, rec.Body.String())
+	}
+	retry := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	var replay api.InboundWebhookReceiptResponse
+	if retry.Code != http.StatusAccepted || json.Unmarshal(retry.Body.Bytes(), &replay) != nil || !replay.Duplicate || replay.ReceiptID != original.ReceiptID {
+		t.Fatalf("retry: %d %s", retry.Code, retry.Body.String())
+	}
+	if events, err := (*e.Store()).GetWorkflowEventsForRun(t.Context(), run.ID); err != nil || len(events) != 0 {
+		t.Fatalf("legacy delivery completed callback: %v %v", events, err)
 	}
 }

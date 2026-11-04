@@ -555,6 +555,10 @@ func writeAutomationError(w http.ResponseWriter, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such automation"))
 	case errors.Is(err, state.ErrAutomationPublishCheckRequired):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "automation_publish_check_required", "Publishing checks required", err.Error()))
+	case errors.Is(err, state.ErrAutomationCodePublishChecksUnsupported):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "automation_code_publish_checks_unsupported", "Code-first publishing checks unavailable", err.Error()))
+	case errors.Is(err, state.ErrAutomationLiveVerificationExpired):
+		api.WriteProblem(w, api.NewProblem(http.StatusGone, api.CodeConflict, "Live verification expired", err.Error()))
 	case errors.Is(err, state.ErrAutomationVersionConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAutomationVersionConflict, "Automation changed", err.Error()))
 	case errors.Is(err, state.ErrAutomationRevisionNotFound):

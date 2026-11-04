@@ -27,6 +27,7 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"CheckAutomationFailureAdmission":        true,
 	"EvaluateAutomationFailurePolicies":      true,
 	"GetAutomationFailurePolicy":             true,
 	"DefaultCustomDomain":                    true,
@@ -310,6 +311,15 @@ func (s *Mem) GetAutomationFailurePolicy(ctx context.Context, appID, name string
 		return o.GetAutomationFailurePolicy(ctx, appID, name)
 	}
 	return s.MemStore.GetAutomationFailurePolicy(ctx, appID, name)
+}
+
+func (s *Mem) CheckAutomationFailureAdmission(ctx context.Context, appID, name string, now time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		CheckAutomationFailureAdmission(context.Context, string, string, time.Time) (bool, error)
+	}); ok {
+		return o.CheckAutomationFailureAdmission(ctx, appID, name, now)
+	}
+	return s.MemStore.CheckAutomationFailureAdmission(ctx, appID, name, now)
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {

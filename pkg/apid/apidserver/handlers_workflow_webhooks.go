@@ -121,6 +121,11 @@ func (s *server) receiveWebhookAutomation(w http.ResponseWriter, r *http.Request
 	if !handled {
 		return false
 	}
+	var priorCallback *state.WebhookCallbackAlreadyHandled
+	if errors.As(err, &priorCallback) {
+		writeJSON(w, http.StatusAccepted, api.WorkflowCallbackWebhookReceiptResponse{CallbackID: priorCallback.CallbackID, Status: priorCallback.Status, Duplicate: true})
+		return true
+	}
 	if err != nil {
 		writeWebhookAutomationError(w, err)
 		return true

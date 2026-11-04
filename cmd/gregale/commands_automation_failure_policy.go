@@ -73,7 +73,11 @@ func cmdAutomationsFailureResume(args []string) int {
 		return printErr("Failure pause changed", errors.New("reload failure-policy and use its current generation"))
 	}
 	if !jsonOutput {
-		if _, err = fmt.Fprintf(osStdout, "Resume preview: %d pending runs, %d running runs, %d waiting runs, %d retained events. Existing runs continue; retained events remain subject to routing retention.\n", preview.PendingRuns, preview.RunningRuns, preview.WaitingRuns, preview.RetainedEvents); err != nil {
+		retained := fmt.Sprintf("%d retained events", preview.RetainedEvents)
+		if preview.RetainedEventsIncomplete {
+			retained = "retained events unknown"
+		}
+		if _, err = fmt.Fprintf(osStdout, "Resume preview: %d pending runs, %d running runs, %d waiting runs, %s. Existing runs continue; retained events remain subject to routing retention.\n", preview.PendingRuns, preview.RunningRuns, preview.WaitingRuns, retained); err != nil {
 			return printErr("Could not write resume preview", err)
 		}
 	}
@@ -87,9 +91,16 @@ func printAutomationFailurePolicy(out api.AutomationFailurePolicyResponse) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
-	_, err := fmt.Fprintf(osStdout, "Failure policy: enabled=%t, version=%d; pause after %d failures and at least %d completed runs in %ds.\nFailure pause: paused=%t, generation=%d; observed failures=%d, completed=%d.\nResume preview: pending=%d, running=%d, waiting=%d, retained events=%d.\n", out.Policy.Enabled, out.Policy.Version, out.Policy.FailureThreshold, out.Policy.MinCompletedRuns, out.Policy.WindowSeconds, out.Paused, out.Generation, out.ObservedFailures, out.ObservedCompletedRuns, out.PendingRuns, out.RunningRuns, out.WaitingRuns, out.RetainedEvents)
+	_, err := fmt.Fprintf(osStdout, "Failure policy: enabled=%t, version=%d; pause after %d failures and at least %d completed runs in %ds.\nFailure pause: paused=%t, generation=%d; observed failures=%d, completed=%d.\nResume preview: pending=%d, running=%d, waiting=%d, retained events=%s.\n", out.Policy.Enabled, out.Policy.Version, out.Policy.FailureThreshold, out.Policy.MinCompletedRuns, out.Policy.WindowSeconds, out.Paused, out.Generation, out.ObservedFailures, out.ObservedCompletedRuns, out.PendingRuns, out.RunningRuns, out.WaitingRuns, automationRetainedEventCount(out.RetainedEvents, out.RetainedEventsIncomplete))
 	if err != nil {
 		return printErr("Could not write failure policy", err)
 	}
 	return 0
+}
+
+func automationRetainedEventCount(count int64, incomplete bool) string {
+	if incomplete {
+		return "unknown"
+	}
+	return fmt.Sprint(count)
 }

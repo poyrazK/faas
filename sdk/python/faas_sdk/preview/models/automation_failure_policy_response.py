@@ -44,6 +44,8 @@ class AutomationFailurePolicyResponse:
     """Start of the fresh monitoring epoch; absent before configuration."""
     paused_at: datetime.datetime | Unset = UNSET
     """Time the current failure pause was latched; absent while unpaused."""
+    retained_events_incomplete: bool | Unset = UNSET
+    """True when the advisory count was unavailable within its time budget; retained_events is then not an exact count."""
 
     def to_dict(self) -> dict[str, Any]:
         policy = self.policy.to_dict()
@@ -63,6 +65,8 @@ class AutomationFailurePolicyResponse:
         waiting_runs = self.waiting_runs
 
         retained_events = self.retained_events
+
+        retained_events_incomplete = self.retained_events_incomplete
 
         history = []
         for history_item_data in self.history:
@@ -97,6 +101,8 @@ class AutomationFailurePolicyResponse:
             field_dict["monitoring_since"] = monitoring_since
         if paused_at is not UNSET:
             field_dict["paused_at"] = paused_at
+        if retained_events_incomplete is not UNSET:
+            field_dict["retained_events_incomplete"] = retained_events_incomplete
 
         return field_dict
 
@@ -123,6 +129,8 @@ class AutomationFailurePolicyResponse:
         waiting_runs = d.pop("waiting_runs")
 
         retained_events = d.pop("retained_events")
+
+        retained_events_incomplete = d.pop("retained_events_incomplete", UNSET)
 
         history = []
         _history = d.pop("history")
@@ -158,6 +166,7 @@ class AutomationFailurePolicyResponse:
             history=history,
             monitoring_since=monitoring_since,
             paused_at=paused_at,
+            retained_events_incomplete=retained_events_incomplete,
         )
 
         return automation_failure_policy_response

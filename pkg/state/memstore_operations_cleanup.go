@@ -86,6 +86,7 @@ func (m *MemStore) forgetOwnedOperationsLocked(account, app string) {
 // result expiry only releases the association for the workflow retention sweep.
 func (m *MemStore) forgetOwnedOperationWorkflowLocked(runID string) {
 	delete(m.workflowRuns, runID)
+	delete(m.operationWorkflowRuns, runID)
 	delete(m.workflowSteps, runID)
 	delete(m.workflowEvents, runID)
 	delete(m.workflowEventApps, runID)

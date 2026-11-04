@@ -102,6 +102,28 @@ func TestWebhookAutomationAPIReceiptsAndRouting(t *testing.T) {
 	}
 }
 
+func TestWebhookAutomationHonorsInboundAcceptanceBudget(t *testing.T) {
+	e, app, endpoint := seedWebhookAutomationAPI(t)
+	path := "/v1/apps/" + app.Slug + "/inbound-webhooks/" + endpoint.ID
+	zero := int64(0)
+	bound := e.Do(t, http.MethodPut, path+"/automation-binding", api.PutWebhookAutomationBindingRequest{
+		ExpectedVersion: &zero, WorkflowName: "paid", EventType: "invoice.*", TakeOverDelivery: true,
+	}, nil)
+	if bound.Code != http.StatusOK {
+		t.Fatalf("bind=%d %s", bound.Code, bound.Body.String())
+	}
+	capacity := api.MustLimitsFor(api.PlanHobby).InboundWebhookAcceptsPerMinute
+	apidserver.ExhaustInboundWebhookBudgetForTest(e, app.AccountID, capacity)
+	body := []byte(`{"id":"evt_limited","type":"invoice.paid"}`)
+	response := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("automation webhook exceeded budget: %d %s", response.Code, response.Body.String())
+	}
+	if _, err := (*e.Store()).GetWebhookAutomationReceipt(t.Context(), endpoint.ID, "evt_limited"); err == nil {
+		t.Fatal("rate-limited delivery wrote a receipt")
+	}
+}
+
 func TestGenericWebhookAutomationAPIUsesSignedHeadersAndDurableFanout(t *testing.T) {
 	e, app, _ := seedWebhookAutomationAPI(t)
 	endpoint := mustCreateGenericInboundWebhook(t, e, app.Slug)

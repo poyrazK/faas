@@ -138,6 +138,9 @@ func ValidateWorkflowTrigger(trigger *WorkflowTriggerSpec) error {
 		if len(trigger.Filter) > int(WorkflowRunInputMaxBytes) {
 			return fmt.Errorf("%w: event filter exceeds the workflow input limit", ErrWorkflowInvalidTrigger)
 		}
+		if len(bytes.TrimSpace(trigger.Filter)) > 0 && !WorkflowJSONBFits(trigger.Filter, WorkflowRunInputMaxBytes) {
+			return fmt.Errorf("%w: event filter is not compatible with jsonb or exceeds the workflow input limit", ErrWorkflowInvalidTrigger)
+		}
 		if err := eventfilter.ValidateFilter(trigger.Filter); err != nil {
 			return fmt.Errorf("%w: %w", ErrWorkflowInvalidTrigger, err)
 		}

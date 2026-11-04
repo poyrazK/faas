@@ -75,6 +75,20 @@ ordinary delivery; older schedulers cannot interpret webhook recipients.
 The workflow runtime gate remains unchanged. No production flag or migration is
 applied by this change.
 
+For the callback-receipt rollout, quiesce inbound webhook delivery and drain
+in-flight requests before applying the new migration. Keep delivery quiesced
+until every API replica understands callback receipts, then resume it. Older
+API replicas cannot write or honor these receipts, so a mixed-version ingress
+window must not accept provider traffic. Existing callback deliveries whose
+bindings and payloads were already removed cannot be reconstructed.
+
+Ordinary inbound invocation admission and exclusive-operation admission do not
+yet share the callback endpoint lock. When changing an endpoint between those
+routes and callbacks, also stop ingress and drain in-flight requests before
+changing the binding. Exclusive-operation receipts are not yet consulted by
+the callback path; avoid reusing a provider event across those routes until
+that receipt is fenced as well.
+
 Before downgrade, stop new ingress for bound endpoints, drain/replay accepted
 fanout work and complete or cancel admitted runs. Export bindings and receipts,
 remove bindings to restore intended app delivery, and stop updated binaries
@@ -90,3 +104,29 @@ rotation, routing-mode conflicts, retention and revocation. Signed API ingress
 tests exercise invalid signatures, ownership, request bounds, revisions and
 idempotent retries without duplicate app delivery. Go/Node/Python clients and
 OpenAPI contracts cover the binding and receipt resources.
+
+## Amendment: webhook size and failure-pause handling
+
+The 32 KiB filter limit applies to a normalized JSONB-compatible filter,
+including numeric expansion. The binding request limit is 200704 bytes, which
+allows a supported filter to round-trip through JSON encoders that escape HTML
+characters. This replaces the original 64 KiB binding-request limit.
+
+All newly accepted webhook envelopes, including ignored deliveries, must fit
+the workflow event envelope limit after JSONB numeric expansion. Previously
+retained receipts remain available for duplicate retries. When a webhook
+preparation error follows a newly detected failure threshold, PostgreSQL
+commits the failure pause before returning the validation error.
+
+Verified workflow callbacks use a separate per-account acceptance budget from
+new webhook starts, so a burst of starts cannot consume completion capacity.
+Callbacks remain available to settle existing runs during account suspension.
+Previously accepted automation receipts retain precedence after rebinding.
+Each callback also has a bounded check budget. Once its durable completion is
+visible, provider redeliveries use that callback's budget rather than consuming
+the account-wide capacity reserved for other completions.
+Callback acceptance holds the endpoint and binding while checking prior
+automation receipts and completing the run. A compact callback receipt stores
+the provider event identity and body hash for 30 days, so a provider retry
+after rebinding recovers the callback outcome instead of starting an automation
+or an ordinary invocation. The receipt does not retain the webhook payload.

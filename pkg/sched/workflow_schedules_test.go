@@ -212,6 +212,11 @@ func TestWorkflowScheduleRetriesWithoutStarvingLaterPages(t *testing.T) {
 	if len(store.seen) != len(store.candidates) {
 		t.Fatal("failed admission starved the later page")
 	}
+	queries := store.queries
+	if err := loop.runWorkflowSchedulesTick(ctx); err != nil || store.queries != queries {
+		t.Fatalf("failed pass retried without backoff: queries=%d err=%v", store.queries, err)
+	}
+	now = now.Add(workflowScheduleRetryBackoff)
 	for range 2 {
 		if err := loop.runWorkflowSchedulesTick(ctx); err != nil {
 			t.Fatal(err)

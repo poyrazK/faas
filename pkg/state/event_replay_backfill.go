@@ -26,6 +26,12 @@ type EventReplayBackfillStore interface {
 	PruneEventReplayBackfills(context.Context, time.Time, int) (int64, error)
 }
 
+// FairEventReplayBackfillStore advances through runnable jobs before wrapping
+// to the oldest one. The cursor is advisory and can be reset after a restart.
+type FairEventReplayBackfillStore interface {
+	ProcessNextEventReplayBackfillAfter(context.Context, time.Time, string) (string, bool, error)
+}
+
 type EventReplayBackfillQuery struct {
 	AppID          string
 	SubscriptionID string
@@ -223,21 +229,34 @@ func getEventReplayBackfill(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, 
 // *EventJobError, so the caller can go on to the next job
 // (ADR-20261028095548).
 func (s *PgStore) ProcessNextEventReplayBackfill(ctx context.Context, now time.Time) (bool, error) {
-	jobID, worked, err := s.processNextEventReplayBackfill(ctx, now)
-	if err == nil || !jobID.Valid || ctx.Err() != nil {
-		return worked, err
-	}
-	return s.recordEventReplayBackfillFailure(ctx, jobID, now, err)
+	_, worked, err := s.ProcessNextEventReplayBackfillAfter(ctx, now, "")
+	return worked, err
 }
 
-func (s *PgStore) processNextEventReplayBackfill(ctx context.Context, now time.Time) (pgtype.UUID, bool, error) {
+func (s *PgStore) ProcessNextEventReplayBackfillAfter(ctx context.Context, now time.Time, after string) (string, bool, error) {
+	pageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	jobID, worked, err := s.processNextEventReplayBackfill(pageCtx, now, after)
+	cancel()
+	if err == nil || !jobID.Valid || ctx.Err() != nil {
+		return pgUUIDString(jobID), worked, err
+	}
+	worked, err = s.recordEventReplayBackfillFailure(ctx, jobID, now, err)
+	return pgUUIDString(jobID), worked, err
+}
+
+func (s *PgStore) processNextEventReplayBackfill(ctx context.Context, now time.Time, after string) (pgtype.UUID, bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return pgtype.UUID{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 	q := sqlc.New()
-	job, err := q.EventReplayBackfillNextJob(ctx, tx, sqlc.EventReplayBackfillNextJobParams{NowAt: pgtypeFromTime(now), InFlightMax: api.EventReplayBackfillInFlightMax})
+	params := sqlc.EventReplayBackfillNextJobParams{NowAt: pgtypeFromTime(now), InFlightMax: api.EventReplayBackfillInFlightMax, AfterJobID: mustPgUUID(after)}
+	job, err := q.EventReplayBackfillNextJob(ctx, tx, params)
+	if errors.Is(err, pgx.ErrNoRows) && after != "" {
+		params.AfterJobID = pgtype.UUID{}
+		job, err = q.EventReplayBackfillNextJob(ctx, tx, params)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pgtype.UUID{}, false, nil
 	}
@@ -246,6 +265,11 @@ func (s *PgStore) processNextEventReplayBackfill(ctx context.Context, now time.T
 	}
 	worked, err := scanEventReplayBackfillPage(ctx, q, tx, job, now)
 	if err != nil {
+		if errors.Is(err, errWorkflowFailurePolicyLatched) {
+			// Workflow scans process one event, and a latched admission writes
+			// no replay item or cursor. Persist the pause on its own.
+			return job.ID, true, tx.Commit(ctx)
+		}
 		return job.ID, false, err
 	}
 	if job.FailureCount > 0 {
@@ -276,6 +300,11 @@ func scanEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries, tx pgx.Tx
 	if limit > api.EventReplayBackfillPageSize {
 		limit = api.EventReplayBackfillPageSize
 	}
+	// Workflow pages stop after one admission attempt. Avoid fetching the
+	// same unexamined payloads again on every subsequent transaction.
+	if job.ConsumerKind == "workflow" && limit > 1 {
+		limit = 1
+	}
 	rows, err := q.EventReplayBackfillCandidates(ctx, tx, sqlc.EventReplayBackfillCandidatesParams{
 		SubscriptionID: target.ID, AppID: target.AppID, AccountID: job.AccountID,
 		FromAt: job.FromAt, CutoffAt: job.CutoffAt, CursorAt: job.CursorAt,
@@ -301,6 +330,11 @@ func scanEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries, tx pgx.Tx
 	}
 	if err != nil {
 		return false, err
+	}
+	if job.ConsumerKind == "workflow" {
+		// The workflow page stops after its first admission attempt so the app
+		// lock is not held across later events. Advance only over visited rows.
+		rows = rows[:progress.examined]
 	}
 	last := rows[len(rows)-1]
 	if err := q.EventReplayBackfillAdvance(ctx, tx, sqlc.EventReplayBackfillAdvanceParams{
@@ -329,6 +363,7 @@ func validateEventReplayBackfillTarget(job sqlc.EventReplayJob, target Published
 
 type eventReplayBackfillPageProgress struct {
 	matched, filtered, captured, unknown, existing, unsettled int64
+	examined                                                  int
 }
 
 func processEventReplayBackfillPage(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job sqlc.EventReplayJob, target PublishedEventRecipient, rows []sqlc.EventReplayBackfillCandidatesRow, now time.Time) (eventReplayBackfillPageProgress, error) {

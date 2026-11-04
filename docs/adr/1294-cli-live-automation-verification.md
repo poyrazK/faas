@@ -12,6 +12,14 @@
     deployment UUID, stable idempotency key and real-action confirmation. It sends
     the original fenced request without refreshing versions or generating keys.
     An unconfirmed admission is retried only with its original flags and key.
+    Once run retention removes the original, a compact retained identity
+    rejects that key rather than allowing a second real-action run. These key
+    hashes and request fingerprints remain for the app's lifetime. Storage
+    therefore grows with distinct starts and must be included in capacity
+    monitoring; keys are never silently expired or made reusable.
+    The database reserves keys on verification insertion and preserves older
+    keys when their rows are deleted, including when older binaries perform the
+    deletion. A duplicate insert fails closed during mixed-version rollout.
   - Start alone confirms admission. `start --wait`, `wait` and `check` require a
     terminal, passing report with both `report_current=true` and `outdated=false`
     for success. A deliberately expected failed/dead run may pass its assertions.

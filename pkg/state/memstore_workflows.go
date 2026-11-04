@@ -258,7 +258,9 @@ func (m *MemStore) MarkWorkflowRunStatus(ctx context.Context, id, status string,
 		r.StartedAt = &now
 	}
 	if status == WorkflowRunStatusSucceeded || status == WorkflowRunStatusFailed || status == WorkflowRunStatusDead {
-		r.FinishedAt = &now
+		if previousStatus != status || r.FinishedAt == nil {
+			r.FinishedAt = &now
+		}
 		if previousStatus != status {
 			m.enqueueWorkflowFinishedWebhookLocked(r, now)
 		}
@@ -1523,7 +1525,17 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 		_, retainedByOperation := m.operationForWorkflowLocked(id)
 		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) && !retainedByOperation {
 			m.captureWorkflowRecoveryResultLocked(r, time.Now().UTC())
+			if live, ok := m.automationLiveVerifications[id]; ok {
+				if m.automationLiveRetiredKeys == nil {
+					m.automationLiveRetiredKeys = make(map[workflowRunCreateKey][]byte)
+				}
+				key := workflowRunCreateKey{appID: live.AppID, workflowName: live.Name, key: automationReceiptHash(live.Key)}
+				if _, exists := m.automationLiveRetiredKeys[key]; !exists {
+					m.automationLiveRetiredKeys[key] = append([]byte(nil), live.Fingerprint...)
+				}
+			}
 			delete(m.workflowRuns, id)
+			delete(m.operationWorkflowRuns, id)
 			delete(m.automationLiveVerifications, id)
 			delete(m.workflowSteps, id)
 			for key := range m.workflowStepAttempts {

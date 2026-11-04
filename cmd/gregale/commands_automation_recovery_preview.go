@@ -30,23 +30,24 @@ type automationRecoveryEventDecision struct {
 	Reason  string `json:"reason"`
 }
 type automationRecoveryPreview struct {
-	EventDecisions    []automationRecoveryEventDecision       `json:"event_decisions,omitempty"`
-	App               string                                  `json:"app"`
-	Name              string                                  `json:"name"`
-	StartedAt         time.Time                               `json:"started_at"`
-	CompletedAt       time.Time                               `json:"completed_at"`
-	From              time.Time                               `json:"from"`
-	Until             time.Time                               `json:"until"`
-	Limit             int                                     `json:"limit"`
-	AutomationVersion int64                                   `json:"automation_version"`
-	Enabled           bool                                    `json:"enabled"`
-	FailurePaused     bool                                    `json:"failure_paused"`
-	FailureGeneration int64                                   `json:"failure_generation"`
-	RetainedEvents    int64                                   `json:"retained_events"`
-	Runs              []automationRecoveryRunPage             `json:"runs"`
-	Events            *api.WorkflowEventReplayPreviewResponse `json:"events,omitempty"`
-	Schedule          *api.WorkflowSchedulePreviewResponse    `json:"schedule,omitempty"`
-	TriggerReason     string                                  `json:"trigger_reason"`
+	EventDecisions           []automationRecoveryEventDecision       `json:"event_decisions,omitempty"`
+	App                      string                                  `json:"app"`
+	Name                     string                                  `json:"name"`
+	StartedAt                time.Time                               `json:"started_at"`
+	CompletedAt              time.Time                               `json:"completed_at"`
+	From                     time.Time                               `json:"from"`
+	Until                    time.Time                               `json:"until"`
+	Limit                    int                                     `json:"limit"`
+	AutomationVersion        int64                                   `json:"automation_version"`
+	Enabled                  bool                                    `json:"enabled"`
+	FailurePaused            bool                                    `json:"failure_paused"`
+	FailureGeneration        int64                                   `json:"failure_generation"`
+	RetainedEvents           int64                                   `json:"retained_events"`
+	RetainedEventsIncomplete bool                                    `json:"retained_events_incomplete,omitempty"`
+	Runs                     []automationRecoveryRunPage             `json:"runs"`
+	Events                   *api.WorkflowEventReplayPreviewResponse `json:"events,omitempty"`
+	Schedule                 *api.WorkflowSchedulePreviewResponse    `json:"schedule,omitempty"`
+	TriggerReason            string                                  `json:"trigger_reason"`
 }
 
 func cmdAutomationsRecoveryPreview(args []string) int {
@@ -116,6 +117,7 @@ func loadAutomationRecoveryPreview(ctx context.Context, c *api.Client, app, name
 		return out, err
 	}
 	out.AutomationVersion, out.Enabled, out.FailurePaused, out.FailureGeneration, out.RetainedEvents = automation.Version, automation.Enabled, policy.Paused, policy.Generation, policy.RetainedEvents
+	out.RetainedEventsIncomplete = policy.RetainedEventsIncomplete
 	for _, status := range []string{"failed", "dead"} {
 		page, err := loadAutomationRecoveryRuns(ctx, c, app, application.ID, name, status, offset, options.Limit)
 		if err != nil {
@@ -217,7 +219,7 @@ func automationRecoveryEventReason(out automationRecoveryPreview, match api.Work
 }
 
 func renderAutomationRecoveryPreview(w io.Writer, out automationRecoveryPreview) error {
-	if _, err := fmt.Fprintf(w, "Recovery preview: %s / %s (version %d)\nRead-only observations; execution rechecks eligibility.\nAdmissions: enabled=%t, failure-paused=%t, generation=%d; retained events=%d.\n", out.App, out.Name, out.AutomationVersion, out.Enabled, out.FailurePaused, out.FailureGeneration, out.RetainedEvents); err != nil {
+	if _, err := fmt.Fprintf(w, "Recovery preview: %s / %s (version %d)\nRead-only observations; execution rechecks eligibility.\nAdmissions: enabled=%t, failure-paused=%t, generation=%d; retained events=%s.\n", out.App, out.Name, out.AutomationVersion, out.Enabled, out.FailurePaused, out.FailureGeneration, automationRetainedEventCount(out.RetainedEvents, out.RetainedEventsIncomplete)); err != nil {
 		return err
 	}
 	for _, page := range out.Runs {

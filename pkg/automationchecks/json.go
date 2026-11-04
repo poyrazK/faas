@@ -3,10 +3,55 @@ package automationchecks
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"reflect"
 	"strings"
 )
+
+type canonicalJSONNumber struct {
+	Negative         bool
+	Digits, Exponent string
+}
+
+// CanonicalJSON normalizes numeric spellings without expanding exponents.
+// It retains JSON types, so numbers cannot collide with strings or objects.
+func CanonicalJSON(raw json.RawMessage) ([]byte, error) {
+	if !json.Valid(raw) {
+		return nil, fmt.Errorf("invalid JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	var normalize func(any) any
+	normalize = func(v any) any {
+		switch v := v.(type) {
+		case json.Number:
+			n := canonicalNumber(string(v))
+			if n.Digits == "0" {
+				return json.Number("0")
+			}
+			sign := ""
+			if n.Negative {
+				sign = "-"
+			}
+			return json.Number(sign + n.Digits + "e" + n.Exponent)
+		case []any:
+			for i := range v {
+				v[i] = normalize(v[i])
+			}
+		case map[string]any:
+			for k := range v {
+				v[k] = normalize(v[k])
+			}
+		}
+		return v
+	}
+	return json.Marshal(normalize(value))
+}
 
 // Compare JSON numbers exactly without losing integers above 2^53.
 func EqualJSON(a, b json.RawMessage) bool {
@@ -46,7 +91,7 @@ func EqualJSON(a, b json.RawMessage) bool {
 }
 
 // Store a decimal's significant digits and exponent without expanding large powers.
-func canonicalNumber(value string) any {
+func canonicalNumber(value string) canonicalJSONNumber {
 	negative := strings.HasPrefix(value, "-")
 	value = strings.TrimPrefix(value, "-")
 	exponent := new(big.Int)
@@ -68,8 +113,5 @@ func canonicalNumber(value string) any {
 		exponent.Add(exponent, big.NewInt(int64(len(value)-len(digits))))
 		value = digits
 	}
-	return struct {
-		Negative         bool
-		Digits, Exponent string
-	}{negative, value, exponent.String()}
+	return canonicalJSONNumber{negative, value, exponent.String()}
 }

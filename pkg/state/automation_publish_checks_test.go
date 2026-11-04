@@ -127,3 +127,23 @@ func TestAutomationReceiptExpiry(t *testing.T) {
 		t.Fatalf("expired receipt: %v", err)
 	}
 }
+
+func TestCodeFirstPublicationChecksFailExplicitlyWithoutBypassingPolicy(t *testing.T) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
+		app, _ := state.SeedWorkflowSchedule(t, store, "allow")
+		author := store.(state.AutomationStore)
+		checks := store.(state.AutomationPublishCheckStore)
+		ctx := t.Context()
+		draft := state.MutateForTest(t, author, app.ID, "codecheck", "save", 0, json.RawMessage(`{"name":"codecheck","code":{"path":"/code"}}`), false)
+		if _, err := checks.SetAutomationPublishPolicy(ctx, app.ID, api.SetAutomationPublishPolicyRequest{Mode: "scenarios"}); err != nil {
+			t.Fatal(err)
+		}
+		request := api.CheckAutomationPublicationRequest{ExpectedVersion: draft.Version, Scenarios: []api.AutomationPublishCheckScenario{{Name: "case"}}}
+		if _, err := checks.CheckAutomationPublication(ctx, app.ID, "codecheck", app.AccountID, "", request, api.PlanHobby); !errors.Is(err, state.ErrAutomationCodePublishChecksUnsupported) {
+			t.Fatalf("code-first check: %v", err)
+		}
+		if _, err := author.MutateAutomation(ctx, app.ID, "codecheck", state.AutomationMutation{Action: "publish", ExpectedVersion: draft.Version, ActorAccountID: app.AccountID}); !errors.Is(err, state.ErrAutomationCodePublishChecksUnsupported) {
+			t.Fatalf("code-first policy bypass: %v", err)
+		}
+	})
+}

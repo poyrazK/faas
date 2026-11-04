@@ -208,6 +208,38 @@ type partialEventRetention struct {
 	count int
 }
 
+type archivingWorkflowRetention struct {
+	state.WorkflowStore
+	calls int
+	done  chan struct{}
+}
+
+func (s *archivingWorkflowRetention) SweepExpiredWorkflowRuns(context.Context, time.Duration) (int, error) {
+	return 0, nil
+}
+func (s *archivingWorkflowRetention) SweepExpiredWorkflowEventsWithProgress(context.Context, time.Duration) (int, bool, error) {
+	s.calls++
+	if s.calls == 1 {
+		return 0, true, nil
+	}
+	close(s.done)
+	return 0, false, nil
+}
+
+func TestWorkflowRetentionContinuesArchivingWithoutExpirations(t *testing.T) {
+	store := &archivingWorkflowRetention{WorkflowStore: state.NewMemStore(), done: make(chan struct{})}
+	loop := sched.NewLoop(nil, nil, nil).WithWorkflowRetention(sched.NewWorkflowRetention(store, nil))
+	loop.DispatchWorkflowRetention(context.Background())
+	select {
+	case <-store.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("bounded archive work did not continue")
+	}
+	if store.calls != 2 {
+		t.Fatalf("archive passes = %d", store.calls)
+	}
+}
+
 func (s *partialEventRetention) SweepExpiredWorkflowRuns(context.Context, time.Duration) (int, error) {
 	return 0, nil
 }

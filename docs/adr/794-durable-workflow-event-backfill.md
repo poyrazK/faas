@@ -16,7 +16,16 @@ the workflow definition and trigger, uses a half-open range of platform
 acceptance time, caps its exclusive cutoff at creation time, and limits the
 range to 30 days.
 
-The worker scans at most 100 retained envelopes per page. It admits only an
+The workflow worker scans one retained envelope per transaction, avoiding
+repeated reads of unused payloads and keeping the app admission lock from
+spanning later events. Replay jobs take turns so a large job cannot monopolize
+the worker. Workflow failure retry likewise stops after
+one admission attempt and reports the remaining retryable count; callers can
+repeat the request. Failed items are selected by attempt count, then acceptance
+order, so an unavailable event does not indefinitely hide later failures.
+The replay sweep uses a separate bounded worker from ordinary event fanout;
+its time slice applies between pages, while each PostgreSQL page has its own
+longer timeout and records a failure if it cannot complete. It admits only an
 event that matches the captured trigger, has an immutable non-null recipient
 snapshot, is in delivered state, and does not include the stable app-workflow
 recipient ID. Unknown legacy snapshots, captured membership, unsettled

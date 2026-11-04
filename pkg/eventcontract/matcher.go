@@ -303,6 +303,31 @@ func equalJSONValue(actual, expected any) bool {
 	if actualIsNumber || expectedIsNumber {
 		return actualIsNumber && expectedIsNumber && actualNumber.Cmp(expectedNumber) == 0
 	}
+	if actualObject, ok := actual.(map[string]any); ok {
+		expectedObject, ok := expected.(map[string]any)
+		if !ok || len(actualObject) != len(expectedObject) {
+			return false
+		}
+		for key, value := range actualObject {
+			other, exists := expectedObject[key]
+			if !exists || !equalJSONValue(value, other) {
+				return false
+			}
+		}
+		return true
+	}
+	if actualArray, ok := actual.([]any); ok {
+		expectedArray, ok := expected.([]any)
+		if !ok || len(actualArray) != len(expectedArray) {
+			return false
+		}
+		for i, value := range actualArray {
+			if !equalJSONValue(value, expectedArray[i]) {
+				return false
+			}
+		}
+		return true
+	}
 	return jsonValueEqual(actual, expected)
 }
 

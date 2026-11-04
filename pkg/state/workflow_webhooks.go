@@ -57,19 +57,35 @@ func validateWebhookAutomationBinding(opts WebhookAutomationBindingOptions) erro
 	if opts.EventType != "*" && !api.ValidInboundWebhookEventType(base) {
 		return ErrAutomationInvalid
 	}
-	if len(opts.Filter) > api.WorkflowWebhookFilterMaxBytes {
+	filter, err := canonicalWebhookFilter(opts.Filter)
+	if err != nil || !api.WorkflowJSONBFits(filter, api.WorkflowWebhookFilterMaxBytes) {
 		return ErrAutomationInvalid
 	}
-	if err := eventfilter.ValidateFilter(opts.Filter); err != nil {
+	if err := eventfilter.ValidateFilter(filter); err != nil {
 		return fmt.Errorf("%w: %w", ErrAutomationInvalid, err)
 	}
 	return nil
 }
-func normalizedWebhookFilter(raw json.RawMessage) json.RawMessage {
+func canonicalWebhookFilter(raw json.RawMessage) (json.RawMessage, error) {
 	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return json.RawMessage(`{}`)
+		return json.RawMessage(`{}`), nil
 	}
-	return cloneWorkflowJSON(raw)
+	if int64(len(raw)) > api.WorkflowWebhookBindingMaxBytes || !api.WorkflowJSONBCompatible(raw) {
+		return nil, ErrAutomationInvalid
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSpace(out.Bytes()), nil
 }
 func webhookAutomationSource(provider InboundWebhookProvider, endpointID string) string {
 	if provider == "" {
@@ -139,7 +155,12 @@ func prepareWebhookAutomation(endpoint InboundWebhookEndpoint, binding WebhookAu
 	if reason == "" && !eventSubscriptionPatternMatches(binding.EventType, envelope.Type) {
 		reason = "event_filtered"
 	}
-	if reason == "" && !api.WorkflowEventEnvelopeFits(encoded) {
+	// Every delivery writes the body and envelope to jsonb. Distinguish an
+	// unsupported value from an otherwise valid envelope that exceeds the limit.
+	if !api.WorkflowJSONBCompatible(encoded) {
+		return WebhookAutomationReceipt{}, envelope, nil, ErrAutomationInvalid
+	}
+	if !api.WorkflowEventEnvelopeFits(encoded) {
 		return WebhookAutomationReceipt{}, envelope, nil, ErrWorkflowEventInputTooLarge
 	}
 	receipt := WebhookAutomationReceipt{ReceiptID: uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:inbound-webhook:"+endpoint.ID+"\x00"+eventID)).String(), EndpointID: endpoint.ID, ProviderEventID: eventID, WorkflowName: binding.WorkflowName, Status: "ignored", IgnoredReason: reason, AcceptedAt: now, EventSource: envelope.Source, RoutingStatus: "ignored"}

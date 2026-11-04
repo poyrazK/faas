@@ -95,6 +95,24 @@ func scanDeliveryBackfill(t *testing.T, f backfillDeliveryFixture) {
 	}
 }
 
+func TestEventReplayBackfillFairSelectionAdvancesBetweenJobs(t *testing.T) {
+	f := seedBackfillDeliveries(t, "evt-fair-1", "evt-fair-2")
+	ctx := t.Context()
+	secondSubscription, _, err := f.store.UpsertEventSubscription(ctx, f.account, f.app, "orders", "invoice.*", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := createDeliveryBackfill(t, f, secondSubscription.ID)
+	firstID, worked, err := f.store.ProcessNextEventReplayBackfillAfter(ctx, time.Now(), "")
+	if err != nil || !worked || (firstID != f.job.ID && firstID != second.ID) {
+		t.Fatalf("first job=%q worked=%t err=%v", firstID, worked, err)
+	}
+	nextID, worked, err := f.store.ProcessNextEventReplayBackfillAfter(ctx, time.Now(), firstID)
+	if err != nil || !worked || nextID == firstID || (nextID != f.job.ID && nextID != second.ID) {
+		t.Fatalf("next job=%q worked=%t err=%v", nextID, worked, err)
+	}
+}
+
 func admitDeliveryBackfill(t *testing.T, f backfillDeliveryFixture) string {
 	t.Helper()
 	ctx := context.Background()

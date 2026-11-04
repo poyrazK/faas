@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -151,13 +152,10 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 	}
 	if mutation.Action != "save" && mutation.Action != "tests" {
 		delete(m.workflowSchedules, key)
-		for key, cursor := range m.workflowTenantSchedules {
-			if cursor.AppID == appID && cursor.WorkflowName == name {
-				cursor.DeploymentID, cursor.Status, cursor.LastRunID = "", WorkflowScheduleArmed, ""
-				cursor.ScheduledFor = nil
-				m.workflowTenantSchedules[key] = cursor
-			}
+		if m.automationScheduleInvalidations == nil {
+			m.automationScheduleInvalidations = make(map[string]time.Time)
 		}
+		m.automationScheduleInvalidations[key] = time.Now().UTC()
 	}
 	return next, nil
 }
@@ -348,7 +346,7 @@ func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, 
 	if mutation.Action != "save" && mutation.Action != "tests" {
 		err = q.DeleteAutomationScheduleCursor(ctx, tx, sqlc.DeleteAutomationScheduleCursorParams{AppID: mustPgUUID(appID), WorkflowName: name})
 		if err == nil {
-			err = q.RearmTenantAutomationSchedules(ctx, tx, sqlc.RearmTenantAutomationSchedulesParams{AppID: mustPgUUID(appID), WorkflowName: name})
+			_, err = tx.Exec(ctx, `INSERT INTO workflow_automation_schedule_invalidations(app_id,name,invalidated_at) VALUES($1,$2,clock_timestamp()) ON CONFLICT(app_id,name) DO UPDATE SET invalidated_at=EXCLUDED.invalidated_at`, mustPgUUID(appID), name)
 		}
 	}
 	return next, err

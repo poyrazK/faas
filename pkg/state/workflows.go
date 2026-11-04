@@ -458,6 +458,12 @@ type WorkflowEvent struct {
 	ReceivedAt time.Time       `json:"received_at"`
 }
 
+// WorkflowEventRetentionProgressStore reports bounded archival work that can
+// remain even when no events have yet reached their expiration age.
+type WorkflowEventRetentionProgressStore interface {
+	SweepExpiredWorkflowEventsWithProgress(context.Context, time.Duration) (deleted int, more bool, err error)
+}
+
 // ListWorkflowRunsOpts controls pagination and filtering for workflow runs.
 type ListWorkflowRunsOpts struct {
 	Status           string

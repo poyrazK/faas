@@ -34,18 +34,19 @@ type AutomationFailureTransition struct {
 	ActorAccountID string    `json:"actor_account_id,omitempty"`
 }
 type AutomationFailurePolicyResponse struct {
-	Policy                AutomationFailurePolicy       `json:"policy"`
-	Paused                bool                          `json:"paused"`
-	Generation            int64                         `json:"generation"`
-	MonitoringSince       *time.Time                    `json:"monitoring_since,omitempty"`
-	PausedAt              *time.Time                    `json:"paused_at,omitempty"`
-	ObservedFailures      int64                         `json:"observed_failures"`
-	ObservedCompletedRuns int64                         `json:"observed_completed_runs"`
-	PendingRuns           int64                         `json:"pending_runs"`
-	RunningRuns           int64                         `json:"running_runs"`
-	WaitingRuns           int64                         `json:"waiting_runs"`
-	RetainedEvents        int64                         `json:"retained_events"`
-	History               []AutomationFailureTransition `json:"history"`
+	Policy                   AutomationFailurePolicy       `json:"policy"`
+	Paused                   bool                          `json:"paused"`
+	Generation               int64                         `json:"generation"`
+	MonitoringSince          *time.Time                    `json:"monitoring_since,omitempty"`
+	PausedAt                 *time.Time                    `json:"paused_at,omitempty"`
+	ObservedFailures         int64                         `json:"observed_failures"`
+	ObservedCompletedRuns    int64                         `json:"observed_completed_runs"`
+	PendingRuns              int64                         `json:"pending_runs"`
+	RunningRuns              int64                         `json:"running_runs"`
+	WaitingRuns              int64                         `json:"waiting_runs"`
+	RetainedEvents           int64                         `json:"retained_events"`
+	RetainedEventsIncomplete bool                          `json:"retained_events_incomplete,omitempty"`
+	History                  []AutomationFailureTransition `json:"history"`
 }
 
 func failurePolicyPath(slug, name string) string {
