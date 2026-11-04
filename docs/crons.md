@@ -245,6 +245,28 @@ need more control:
 `clear_failure_rules` in the API). In Terraform, removing `schedule_policy` or
 `failure_rules_json` from a `gregale_cron` removes them from the cron.
 
+## Environments
+
+A cron belongs to one environment of its app. Without `--environment` it runs
+in production, which is where every existing cron runs. For an app in a
+project, `--environment` names one of the project's environments:
+
+```bash
+gregale cron create --app APP_ID --environment staging \
+  --schedule "0 2 * * *" --command bin/rebuild-index
+```
+
+A staging cron runs against the staging deployment and never against
+production. It can repeat a production cron's schedule and command. When the
+environment has no live deployment, only that environment's crons are
+suspended; the app's other environments keep firing. Deleting the
+environment deletes its crons. A cron's environment cannot be changed: create
+it again in the other environment.
+
+For now, environments other than production take command crons only. An HTTP
+cron with `--environment staging` returns `400 cron_invalid`. A
+`gregale deploy --environment` leaves production's manifest crons alone.
+
 ## Command crons (preview)
 
 A command cron runs a command from the app's live deployment instead of

@@ -104987,6 +104987,7 @@ components:
         skip_if_running: { type: boolean, description: "When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active." }
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
+        environment: { type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging" }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
@@ -105108,6 +105109,7 @@ components:
         skip_if_running: { type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running." }
         retry_max: { type: integer, minimum: 0, maximum: 5, description: "Additional command attempts after failure or timeout; command crons only." }
         retry_backoff_seconds: { type: integer, minimum: 1, maximum: 3600, description: "Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only." }
+        environment: { type: string, description: "Project environment the cron runs in; omitted or production is the app's production environment. Other environments take command crons only. Immutable once created.", example: "staging" }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 

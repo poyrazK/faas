@@ -14582,6 +14582,37 @@ END $$;
 
 
 --
+-- Name: guard_cron_environment_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_cron_environment_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE environment uuid;
+BEGIN
+  IF TG_OP='UPDATE' THEN
+    IF NEW.environment_id IS DISTINCT FROM OLD.environment_id OR NEW.deployment_scope IS DISTINCT FROM OLD.deployment_scope
+      OR (OLD.deployment_scope<>'' AND NEW.app_id IS DISTINCT FROM OLD.app_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='cron_scope_identity',
+        MESSAGE='cron environment identity is immutable';
+    END IF;
+  ELSIF NEW.deployment_scope<>'' THEN
+    SELECT e.id INTO environment FROM apps a JOIN project_environments e ON e.project_id=a.project_id
+      AND e.account_id=a.account_id AND e.slug=NEW.deployment_scope
+      WHERE a.id=NEW.app_id AND a.status<>'deleted'
+      FOR SHARE OF a,e;
+    IF NOT FOUND OR (NEW.environment_id IS NOT NULL AND NEW.environment_id IS DISTINCT FROM environment) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='cron_environment_membership',
+        MESSAGE='an environment cron requires a project environment of its app';
+    END IF;
+    NEW.environment_id=environment;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_customer_operation_webhook_routing(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -34441,6 +34472,8 @@ CREATE TABLE public.crons (
     schedule_revision bigint DEFAULT 1 NOT NULL,
     schedule_anchor_at timestamp with time zone,
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
+    deployment_scope text DEFAULT ''::text NOT NULL,
+    environment_id uuid,
     CONSTRAINT crons_command_output_check CHECK (((command_max_output_bytes >= 1024) AND (command_max_output_bytes <= 16777216))),
     CONSTRAINT crons_command_shape_check CHECK ((((cardinality(command) = 0) AND (NOT command_shell)) OR (((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1))))),
     CONSTRAINT crons_command_timeout_check CHECK (((command_timeout_seconds >= 1) AND (command_timeout_seconds <= 3600))),
@@ -60455,11 +60488,11 @@ ALTER TABLE ONLY public.cron_fire_now_requests
 
 
 --
--- Name: crons crons_app_schedule_path_command_unique; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: crons cron_scope_shape; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.crons
-    ADD CONSTRAINT crons_app_schedule_path_command_unique UNIQUE (app_id, schedule, path, command);
+ALTER TABLE public.crons
+    ADD CONSTRAINT cron_scope_shape CHECK ((((deployment_scope = ''::text) AND (environment_id IS NULL)) OR ((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (environment_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -72823,6 +72856,20 @@ CREATE INDEX crons_app_idx ON public.crons USING btree (app_id) WHERE enabled;
 
 
 --
+-- Name: crons_app_scope_schedule_path_command_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX crons_app_scope_schedule_path_command_unique ON public.crons USING btree (app_id, deployment_scope, schedule, path, command);
+
+
+--
+-- Name: crons_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX crons_environment_idx ON public.crons USING btree (environment_id) WHERE (environment_id IS NOT NULL);
+
+
+--
 -- Name: crons_org_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -84804,6 +84851,13 @@ CREATE TRIGGER github_deployment_status_changed_trg AFTER INSERT OR UPDATE OF st
 --
 
 CREATE TRIGGER github_webhook_secrets_notify_trg AFTER INSERT OR UPDATE ON public.github_webhook_secrets FOR EACH ROW EXECUTE FUNCTION public.github_webhook_secrets_notify();
+
+
+--
+-- Name: crons guard_cron_environment_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_cron_environment_scope BEFORE INSERT OR UPDATE OF deployment_scope, environment_id, app_id ON public.crons FOR EACH ROW EXECUTE FUNCTION public.guard_cron_environment_scope();
 
 
 --
