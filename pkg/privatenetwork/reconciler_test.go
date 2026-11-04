@@ -103,8 +103,8 @@ func TestReconcilerKeepsUnreadyAttachmentPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied := false
-	reconciler, err := NewReconciler(store, connector, FuncRouteApplier(func(context.Context, string, []netip.Prefix) error {
-		applied = true
+	reconciler, err := NewReconciler(store, connector, FuncRouteApplier(func(_ context.Context, _ string, cidrs []netip.Prefix) error {
+		applied = len(cidrs) > 0
 		return nil
 	}), ReconcilerOptions{Interval: time.Second})
 	if err != nil {
@@ -153,7 +153,7 @@ func TestReconcilerFailsClosedWhenRouteActivationFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != api.PrivateNetworkAttachmentStatusError || got.StatusDetail != "route activation failed: ip route: permission denied" {
+	if got.Status != api.PrivateNetworkAttachmentStatusError || got.StatusDetail != "private network route withdrawal failed: ip route: permission denied" {
 		t.Fatalf("attachment after failed sweep = %+v", got)
 	}
 }
@@ -243,8 +243,8 @@ func TestReconcilerRequiresFabricBeforeRouteActivation(t *testing.T) {
 	fabricErr := errors.New("bridge creation failed")
 	fabric := &recordingFabricApplier{err: fabricErr}
 	routesCalled := false
-	reconciler, err := NewReconciler(store, connector, FuncRouteApplier(func(context.Context, string, []netip.Prefix) error {
-		routesCalled = true
+	reconciler, err := NewReconciler(store, connector, FuncRouteApplier(func(_ context.Context, _ string, cidrs []netip.Prefix) error {
+		routesCalled = len(cidrs) > 0
 		return nil
 	}), ReconcilerOptions{Interval: time.Second, Fabric: fabric})
 	if err != nil {
@@ -269,11 +269,11 @@ func TestMergePrivateNetworkPolicyOnlyAllowsAttachmentNarrowing(t *testing.T) {
 	destination := netip.MustParsePrefix("10.42.0.0/16")
 	network := []netip.Prefix{netip.MustParsePrefix("10.42.8.0/24")}
 	app := []netip.Prefix{netip.MustParsePrefix("10.42.8.0/25")}
-	effective, err := mergePrivateNetworkPolicy(network, app, []netip.Prefix{destination})
+	effective, err := MergePolicyCIDRs(network, app, []netip.Prefix{destination})
 	if err != nil || len(effective) != 1 || effective[0].String() != "10.42.8.0/25" {
 		t.Fatalf("effective policy = %v, err=%v", effective, err)
 	}
-	if _, err := mergePrivateNetworkPolicy(network, []netip.Prefix{netip.MustParsePrefix("10.42.9.0/24")}, []netip.Prefix{destination}); err == nil {
+	if _, err := MergePolicyCIDRs(network, []netip.Prefix{netip.MustParsePrefix("10.42.9.0/24")}, []netip.Prefix{destination}); err == nil {
 		t.Fatal("broader/outside app policy unexpectedly accepted")
 	}
 }

@@ -36,7 +36,7 @@ SELECT 1 FROM project_environment_route_policies
 WHERE app_id=sqlc.arg(app_id)::uuid AND environment_slug=sqlc.arg(scope)::text FOR UPDATE;
 
 -- name: ReadDeploymentTrafficScope :one
-SELECT app_id::text,scope FROM deployments WHERE id=sqlc.arg(id)::uuid;
+SELECT (environment_workload_runtime IS NOT NULL)::boolean AS managed, app_id::text,scope FROM deployments WHERE id=sqlc.arg(id)::uuid;
 
 -- name: ListTrafficSiblingsInScope :many
 -- aborted_canary is the H5-62 candidate: aborted before its rollout completed.

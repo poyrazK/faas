@@ -2,8 +2,11 @@ package issuetrackers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -232,5 +235,46 @@ func TestNativeCreationConnectionHashPreservesGitHubAndOmitsLinearRotation(t *te
 	after, _ := json.Marshal(host.p.Connection)
 	if string(before) != string(after) || strings.Contains(string(after), "Revision") {
 		t.Fatal("credential rotation changes durable receipt hash")
+	}
+}
+
+func TestNativeCreationRecoversAcrossAppRename(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
+			service, host, store, provider, in := creationFixture()
+			if legacy {
+				request, err := issuetracker.ValidateRequest(issuetracker.Request{RequestID: in.RequestID, APIBase: "https://gregale.dev", AppID: host.p.Issue.AppID, AppSlug: service.AppSlug, IssueID: service.IssueID, Provider: "github", Target: in.Repository, Title: in.Title, Description: in.Description})
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded, _ := json.Marshal(struct {
+					Request    issuetracker.Request
+					Connection Connection
+				}{request, host.p.Connection})
+				sum := sha256.Sum256(encoded)
+				store.r = state.NativeIssueTicketReceipt{AccountID: host.p.Connection.AccountID, AppID: host.p.Issue.AppID, IssueID: service.IssueID, RequestID: in.RequestID, Hash: hex.EncodeToString(sum[:]), State: "created", TicketURL: provider.ticket.URL, ProviderID: provider.ticket.ProviderID}
+			} else {
+				host.attachErr = errors.New("unavailable")
+				if out, err := service.Run(t.Context(), in); err != nil || out.State != "created" {
+					t.Fatalf("prepare: %+v %v", out, err)
+				}
+				host.attachErr = nil
+			}
+			service.AppSlug = "renamed"
+			if legacy {
+				if _, err := service.Run(t.Context(), in); err == nil {
+					t.Fatal("legacy receipt accepted without its original slug")
+				}
+				in.OriginalAppSlug = "example"
+			}
+			out, err := service.Run(t.Context(), in)
+			if err != nil || out.State != "linked" || (legacy && provider.creates != 0) || (!legacy && provider.creates != 1) {
+				t.Fatalf("recovery: %+v %v creates=%d", out, err, provider.creates)
+			}
+			in.Title = "changed"
+			if _, err := service.Run(t.Context(), in); err == nil {
+				t.Fatal("changed ticket content reused receipt")
+			}
+		})
 	}
 }

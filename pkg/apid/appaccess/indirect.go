@@ -25,6 +25,11 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 		var domain state.CustomDomain
 		domain, err = store.DomainByName(r.Context(), strings.ToLower(r.PathValue("domain")))
 		appID = domain.AppID
+		if err == nil {
+			// Keep the claim that supplied the authorized app. A later handler
+			// reload must not widen this grant after a hostname is reassigned.
+			*r = *r.WithContext(state.WithCustomDomainProbe(r.Context(), domain))
+		}
 	case strings.HasPrefix(path, "/v1/crons/") && id != "":
 		var cron state.Cron
 		cron, err = store.CronByID(r.Context(), id)
@@ -35,6 +40,12 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 		var rule state.EdgeRule
 		rule, err = store.GetEdgeRuleByID(r.Context(), id)
 		appID = rule.AppID
+	case companyListPath(path) && r.URL.Query().Get("app") != "":
+		// Edge-rule lists and CORS presets are account objects; ?app=<slug>
+		// manages a company app's own (ADR-091 amendment 2026-11-03,
+		// review round 9) with the member's organization role on it.
+		app, err := store.AppBySlug(r.Context(), r.URL.Query().Get("app"))
+		return app, true, err
 	case strings.HasPrefix(path, "/v1/invocations/") && id != "":
 		var invocation state.Invocation
 		invocation, err = store.InvocationByID(r.Context(), id)
@@ -187,4 +198,15 @@ func missing(err error) error {
 		return nil
 	}
 	return err
+}
+
+// companyListPath is an edge-rule list or CORS preset URL, which addresses a
+// company app by its ?app= query.
+func companyListPath(path string) bool {
+	for _, prefix := range []string{"/v1/edge-rule-lists", "/v1/cors-presets"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }

@@ -108,7 +108,7 @@ func TestIssueTicketNativeCLIUsesServerReceiptWithoutProviderCredential(t *testi
 			t.Error("wrong native create route")
 		}
 		var in api.CreateNativeIssueTicketRequest
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.RequestID != requestID || in.Repository != "owner/repo" || in.Title != "Fix" {
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.RequestID != requestID || in.Repository != "owner/repo" || in.Title != "Fix" || in.OriginalAppSlug != "old-payments" || !strings.Contains(in.Description, "Gregale app: old-payments") {
 			t.Error("native inputs lost", in, err)
 		}
 		state := "created"
@@ -128,7 +128,7 @@ func TestIssueTicketNativeCLIUsesServerReceiptWithoutProviderCredential(t *testi
 	(*main.OsStdout), (*main.JsonOutput) = &out, true
 	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	provider := &ticketCLIProvider{}
-	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "github", "--target", "OWNER/Repo", "--title", "Fix", "--request-id", requestID, "--native"}
+	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "github", "--target", "OWNER/Repo", "--title", "Fix", "--request-id", requestID, "--native", "--original-app-slug", "old-payments"}
 	if main.RunIssueTickets(args, provider) == 0 {
 		t.Fatal("incomplete attachment reported success")
 	}
@@ -277,7 +277,7 @@ func TestIssueTicketNativeLinearUsesServerRecoveryWithoutLocalCredentials(t *tes
 			t.Error("wrong native Linear path")
 		}
 		var in api.CreateNativeLinearIssueTicketRequest
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.RequestID != requestID || in.TeamID != teamID || !in.Recover || in.RecoveryURL != "" {
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.RequestID != requestID || in.TeamID != teamID || !in.Recover || in.RecoveryURL != "" || in.OriginalAppSlug != "old-payments" || !strings.Contains(in.Description, "Gregale app: old-payments") {
 			t.Error("UUID recovery inputs lost", err)
 		}
 		_ = json.NewEncoder(w).Encode(api.NativeIssueTicketResult{RequestID: requestID, State: "linked", TicketURL: "https://linear.app/acme/issue/PAY-42", LinkID: "55555555-5555-4555-8555-555555555555"})
@@ -291,7 +291,7 @@ func TestIssueTicketNativeLinearUsesServerRecoveryWithoutLocalCredentials(t *tes
 	(*main.OsStdout), (*main.JsonOutput) = &out, true
 	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 	provider := &ticketCLIProvider{}
-	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "linear", "--target", teamID, "--title", "Fix", "--request-id", requestID, "--native", "--recover"}
+	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "linear", "--target", teamID, "--title", "Fix", "--request-id", requestID, "--native", "--recover", "--original-app-slug", "old-payments"}
 	if code := main.RunIssueTickets(args, provider); code != 0 || calls != 1 || provider.creates != 0 {
 		t.Fatal("native Linear used a local credential/provider", code)
 	}

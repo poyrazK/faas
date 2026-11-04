@@ -261,6 +261,9 @@
       "routes": [
         "/dashboard/apps/{}/alert-rollbacks",
         "/v1/apps/{}/alert-rollbacks"
+      ],
+      "cli": [
+        "alerts actions"
       ]
     },
     {
@@ -340,6 +343,8 @@
         "/v1/account/keys",
         "/v1/agent-connections",
         "/v1/keys",
+        "/v1/orgs/{}/agent-connections",
+        "/v1/orgs/{}/agent-policy",
         "/v1/orgs/{}/keys"
       ],
       "cli": [
@@ -458,6 +463,11 @@
       "routes": [
         "/dashboard/apps/{}/tasks",
         "/v1/apps/{}/tasks"
+      ],
+      "cli": [
+        "app cp",
+        "app exec",
+        "app port-forward"
       ]
     },
     {
@@ -4360,7 +4370,7 @@
       "id": "projects",
       "name": "Projects",
       "category": "delivery",
-      "description": "Deploy a Compose file or a repository of several services as one project: each service is an app, and they call each other by name.",
+      "description": "Deploy a Compose file or repository as one project: each service counts toward the plan's app limit. Free supports one service; multi-service projects require Hobby or higher, and services call each other by name.",
       "maturity": "ga",
       "plans": [
         "free",

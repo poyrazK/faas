@@ -100,7 +100,8 @@ type WorkflowRetryStore interface {
 // workflowRetryPlan validates an in-place retry and returns skipped dependency
 // descendants that must be reopened so the DAG can continue after the retry.
 func workflowRetryPlan(run *WorkflowRun, stepName string, steps []*WorkflowStep) ([]string, error) {
-	if run == nil || (run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead) {
+	if run == nil || run.CancelledAt != nil || (run.LastError != nil && *run.LastError == "cancelled by operator") ||
+		(run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead) {
 		return nil, ErrWorkflowRetryNotAllowed
 	}
 	var spec api.WorkflowSpec
@@ -195,6 +196,28 @@ func workflowRetryPlan(run *WorkflowRun, stepName string, steps []*WorkflowStep)
 	return reopen, nil
 }
 
+// workflowManualRetryBase grants one dispatch after an exhausted resumed
+// generation without resetting the automatic retry budget or attempt history.
+func workflowManualRetryBase(run *WorkflowRun, stepName string, attempt, base int) int {
+	if run.ResumeCount == 0 {
+		return base
+	}
+	var spec api.WorkflowSpec
+	if json.Unmarshal(run.DefinitionSnapshot, &spec) != nil {
+		return base
+	}
+	for _, step := range spec.Steps {
+		if step.Name == stepName {
+			limit := api.WorkflowStepMaxAttempts(step)
+			if attempt-base >= limit {
+				return attempt - limit + 1
+			}
+			break
+		}
+	}
+	return base
+}
+
 func validateWorkflowRunStatus(status string) error {
 	switch status {
 	case WorkflowRunStatusPending, WorkflowRunStatusRunning,
@@ -233,6 +256,16 @@ func validateWorkflowJSON(raw json.RawMessage, required bool) error {
 	}
 	if !json.Valid(raw) {
 		return fmt.Errorf("%w: malformed JSON", ErrWorkflowInvalidInput)
+	}
+	return nil
+}
+
+func validateWorkflowEventPayload(raw json.RawMessage) error {
+	if err := validateWorkflowJSON(raw, false); err != nil {
+		return err
+	}
+	if len(raw) != 0 && !api.WorkflowEventEnvelopeFits(raw) {
+		return fmt.Errorf("%w: workflow event payload exceeds supported size or numeric range", ErrWorkflowInvalidInput)
 	}
 	return nil
 }

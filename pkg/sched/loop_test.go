@@ -321,6 +321,8 @@ func TestHandleParkedAppNotification(t *testing.T) {
 		Channel: db.NotifyAppChanged,
 		Payload: `{"kind":"parked","app_id":"` + app.ID + `"}`,
 	})
+	// ADR 20261103164725: the park runs on the work pool.
+	loop.workPool().drain()
 
 	row, err := store.InstanceByID(context.Background(), res.InstanceID)
 	if err != nil {

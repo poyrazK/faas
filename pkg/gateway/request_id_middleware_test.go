@@ -5,6 +5,7 @@ package gateway
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -21,6 +22,27 @@ func TestRequestIDMiddlewareGeneratesAndPropagatesID(t *testing.T) {
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
 	if got := rr.Header().Get(api.RequestIDHeader); got == "" {
 		t.Fatal("generated request id header is empty")
+	}
+}
+
+func TestRequestIDMiddlewareReplacesOversizedID(t *testing.T) {
+	for _, size := range []int{128, 129, 256} {
+		t.Run(strings.Repeat("x", size), func(t *testing.T) {
+			original := strings.Repeat("x", size)
+			h := RequestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				id := requestIDFrom(r)
+				if len(id) > 128 || (size == 128 && id != original) || (size > 128 && id == original) || r.Header.Get(api.RequestIDHeader) != id {
+					t.Errorf("inconsistent request ID: %q", id)
+				}
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set(api.RequestIDHeader, original)
+			recorder := httptest.NewRecorder()
+			h.ServeHTTP(recorder, req)
+			if id := recorder.Header().Get(api.RequestIDHeader); len(id) > 128 || (size > 128 && id == original) {
+				t.Fatalf("response request ID: %q", id)
+			}
+		})
 	}
 }
 

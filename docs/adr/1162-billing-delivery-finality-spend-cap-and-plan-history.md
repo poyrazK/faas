@@ -171,3 +171,20 @@ Consequences:
 - An `overlap: allow` job whose runs queue for longer than its schedule
   interval now has occurrences recorded as missed instead of runs queued
   behind each other.
+
+## Amendment 2026-11-03 (2): forks and running job tasks
+
+Status: accepted (cost-control audit 2026-11-03, round 3).
+
+- **A fork is refused at the cap.** `RestoreFork` deliberately skips the wake
+  path, so it skipped the cap too: a capped subject could boot a billed fork
+  that the reaper parked a tick later. It now fails with failure code
+  `spend_cap_reached` before it boots.
+- **An inactive account's running job runs stop.** Dispatch starts no task
+  for a suspended, abuse-held or pending-deletion account, but tasks already
+  running ran on to their timeout while the account's apps were parked. The
+  job reaper now cancels those runs and stops their VMs. Queued runs stay
+  queued, so reactivation resumes them.
+- **A running job task finishes at the cap.** Stopping it would discard its
+  work and bill the retry again; it ends within the plan's task timeout
+  (5, 30 or 60 minutes), and new tasks wait as decision 2 says.

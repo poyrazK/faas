@@ -56,42 +56,18 @@ type blocked struct {
 func (e *blocked) Error() string { return e.code }
 
 func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current func(context.Context) error) Observation {
-	ob := Observation{VerificationProgress: p.VerificationProgress, State: "blocked", Reason: "database_unavailable", Verification: p.Verification, Initialized: p.Initialized}
-	if p.VerifiedAt != "" {
-		ob.VerifiedAt, _ = time.Parse(time.RFC3339Nano, p.VerifiedAt)
-	}
-	if e.Target == nil {
-		return ob
-	}
-	err := e.Target(ctx, p.AccountID, p.DatabaseID, func(target *pgx.Conn, owner string) error {
-		// Session locks serialize remote commands even when a worker's catalog
-		// lease expires. Recheck the catalog intent *after* obtaining the lock.
-		if _, err := target.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended($1,51732))`, p.ID); err != nil {
-			return err
-		}
-		defer func() {
-			unlock, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-			defer cancel()
-			_, _ = target.Exec(unlock, `SELECT pg_advisory_unlock(hashtextextended($1,51732))`, p.ID)
-		}()
-		if err := current(ctx); err != nil {
-			return err
-		}
-		if p.DesiredState == "paused" {
-			if err := setSubscriptionEnabled(ctx, p, target, false); err != nil {
-				return err
-			}
-		}
-		if p.DesiredState == "deleted" {
-			if err := setSubscriptionEnabled(ctx, p, target, false); err != nil {
-				return err
-			}
-		}
+	ob := pipelineObservation(p)
+	err := e.withTarget(ctx, p, current, func(target *pgx.Conn, owner string) error {
 		applied, err := applyReaders(ctx, p, target, current)
 		if err != nil {
 			return err
 		}
 		if applied != nil {
+			if p.DesiredState == "paused" {
+				if err := pausePipelineSubscriptions(ctx, p, target, current); err != nil {
+					return err
+				}
+			}
 			ob.ReaderChange, ob.ReaderOnly = applied, true
 			// Acknowledge the policy receipt before ordinary reconciliation can
 			// retire this generation and delete it. A lost acknowledgement must
@@ -102,8 +78,21 @@ func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current 
 			}
 			return nil
 		}
+		if p.DesiredState == "running" {
+			if err := cleanupCancelledVerification(ctx, p, target, current); err != nil {
+				return err
+			}
+		}
 		source, err := e.connectSource(ctx, raw)
 		if err != nil {
+			if p.DesiredState == "paused" || p.DesiredState == "deleted" {
+				if pauseErr := pausePipelineSubscriptions(ctx, p, target, current); pauseErr != nil {
+					return pauseErr
+				}
+				if cleanupErr := cleanupCancelledVerification(ctx, p, target, current); cleanupErr != nil {
+					return cleanupErr
+				}
+			}
 			var authentication *pgconn.PgError
 			if (errors.Is(err, commit.ErrConnectionAuthentication) || (errors.As(err, &authentication) && (authentication.Code == "28P01" || authentication.Code == "28000"))) && p.DesiredState == "running" {
 				return &blocked{"source_authentication_failed", false}
@@ -132,23 +121,85 @@ func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current 
 		}
 		return e.reconcile(ctx, p, raw, source, target, owner, &ob, current)
 	})
+	return observeReconcileError(p, ob, err)
+}
+
+func pipelineObservation(p Pipeline) Observation {
+	ob := Observation{VerificationProgress: p.VerificationProgress, State: "blocked", Reason: "database_unavailable", Verification: p.Verification, Initialized: p.Initialized}
+	if p.VerifiedAt != "" {
+		ob.VerifiedAt, _ = time.Parse(time.RFC3339Nano, p.VerifiedAt)
+	}
+	return ob
+}
+
+func observeReconcileError(p Pipeline, ob Observation, err error) Observation {
 	if err != nil {
 		var b *blocked
 		if errors.As(err, &b) {
-			ob.Reason = b.code
-			ob.State = "blocked"
+			ob.Reason, ob.State = b.code, "blocked"
 			if b.resync {
 				ob.State = "resync_required"
 			}
 		} else {
-			ob.State = "blocked"
+			ob.State, ob.Reason = "blocked", "database_unavailable"
 			if p.DesiredState == "deleted" {
 				ob.State = "deleting"
 			}
-			ob.Reason = "database_unavailable"
 		}
 	}
 	return ob
+}
+
+// withTarget serializes every remote mutation, including source-independent
+// safety controls, then rechecks the current catalog lease and intent.
+func (e *Engine) withTarget(ctx context.Context, p Pipeline, current func(context.Context) error, run func(*pgx.Conn, string) error) error {
+	if e.Target == nil {
+		return ErrUnavailable
+	}
+	return e.Target(ctx, p.AccountID, p.DatabaseID, func(target *pgx.Conn, owner string) error {
+		if _, err := target.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended($1,51732))`, p.ID); err != nil {
+			return err
+		}
+		defer func() {
+			unlock, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer cancel()
+			_, _ = target.Exec(unlock, `SELECT pg_advisory_unlock(hashtextextended($1,51732))`, p.ID)
+		}()
+		if err := current(ctx); err != nil {
+			return err
+		}
+		return run(target, owner)
+	})
+}
+
+// Source secrets are unnecessary for target safety controls. Publisher cleanup
+// must still finish before deletion is acknowledged.
+func (e *Engine) reconcileUnavailable(ctx context.Context, p Pipeline, current func(context.Context) error) Observation {
+	ob := pipelineObservation(p)
+	ob.Reason = "credential_unavailable"
+	err := e.withTarget(ctx, p, current, func(target *pgx.Conn, _ string) error {
+		if p.DesiredState == "paused" || p.DesiredState == "deleted" {
+			if err := pausePipelineSubscriptions(ctx, p, target, current); err != nil {
+				return err
+			}
+			ob.State = "paused"
+			if p.State == "resync_required" {
+				ob.State, ob.Reason = p.State, p.Reason
+			}
+			if p.DesiredState == "deleted" {
+				ob.State, ob.Reason = "deleting", "credential_unavailable"
+			}
+		}
+		applied, err := applyReaders(ctx, p, target, current)
+		if err != nil {
+			return err
+		}
+		if applied != nil {
+			ob.ReaderChange, ob.ReaderOnly = applied, true
+		}
+		return cleanupCancelledVerification(ctx, p, target, current)
+	})
+	return observeReconcileError(p, ob, err)
 }
 
 func pipelineName(p Pipeline) string {
@@ -176,18 +227,15 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 			_ = allowMirrorReads(ctx, p, target, false)
 			retained := p
 			retained.DesiredState = "deleted"
-			_ = cleanupGeneration(ctx, retained, source, target)
+			_ = e.cleanupGeneration(ctx, retained, raw, source, target)
 		}
 	}()
-	if !activeTableCancellation(p) && p.VerificationProgress != nil && p.VerificationProgress.State == "cancelled" {
-		c, err := loadVerification(ctx, target, p)
-		if err != nil {
+	if p.DesiredState == "paused" || p.DesiredState == "deleted" {
+		if _, err := pipelineSubscriptions(ctx, p, source, target); err != nil {
 			return err
 		}
-		if c != nil && (c.Progress.ID == p.VerificationProgress.ID || p.VerificationProgress.IntentID != "" && c.Progress.IntentID == p.VerificationProgress.IntentID) {
-			if err = cleanupVerification(ctx, p, target); err != nil {
-				return err
-			}
+		if err := cleanupCancelledVerification(ctx, p, target, current); err != nil {
+			return err
 		}
 	}
 	if !activeTableCancellation(p) && p.VerificationProgress != nil && p.VerificationProgress.State == "limited" {
@@ -206,15 +254,13 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 			ob.VerificationProgress = &c.Progress
 		}
 	}
-	if p.DesiredState == "deleted" {
-		if p.Generation > 1 {
-			previous := p
-			previous.Generation--
-			if err := cleanupGeneration(ctx, previous, source, target); err != nil {
-				return err
-			}
+	if p.Generation > 1 {
+		if err := e.cleanupRetiredGenerations(ctx, p, raw, source, target, current); err != nil {
+			return err
 		}
-		if err := cleanupGeneration(ctx, p, source, target); err != nil {
+	}
+	if p.DesiredState == "deleted" {
+		if err := e.cleanupGeneration(ctx, p, raw, source, target); err != nil {
 			ob.State = "deleting"
 			return err
 		}
@@ -223,13 +269,6 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 			ob.Verification = "unknown"
 		}
 		return nil
-	}
-	if p.Generation > 1 {
-		previous := p
-		previous.Generation--
-		if err := cleanupGeneration(ctx, previous, source, target); err != nil {
-			return err
-		}
 	}
 	if p.State == "resync_required" {
 		return &blocked{p.Reason, true}
@@ -520,19 +559,23 @@ func ensurePublication(ctx context.Context, p Pipeline, source *pgxpool.Pool) er
 		if p.Initialized {
 			return &blocked{"replication_state_lost", true}
 		}
-		conn, err := source.Acquire(ctx)
-		if err != nil {
-			return err
-		}
-		defer conn.Release()
-		tx, err := conn.Begin(ctx)
+		// Hold off source DDL while checking replica identity and publishing.
+		// A primary key can change after discovery but before this transaction.
+		tx, err := lockSchemaSource(ctx, p, source)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 		tables := make([]string, 0, len(p.Tables))
 		for _, table := range p.Tables {
-			tables = append(tables, tableIdent(table))
+			_, inspected, err := inspectSourceTable(ctx, tx, table)
+			if err != nil {
+				return err
+			}
+			if !inspected.Supported {
+				return &blocked{inspected.Issues[0].Code, false}
+			}
+			tables = append(tables, "ONLY "+tableIdent(table))
 		}
 		if _, err = tx.Exec(ctx, "CREATE PUBLICATION "+ident(name)+" FOR TABLE "+strings.Join(tables, ",")); err != nil {
 			return err
@@ -556,8 +599,8 @@ func ensurePublication(ctx context.Context, p Pipeline, source *pgxpool.Pool) er
 		return &blocked{"source_publication_changed", true}
 	}
 	var matches bool
-	err = source.QueryRow(ctx, `SELECT count(*)=$2 AND bool_and(schemaname='public' AND tablename=ANY($3::text[]) AND rowfilter IS NULL
- AND attnames=(SELECT array_agg(a.attname ORDER BY a.attnum) FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=schemaname AND c.relname=tablename AND a.attnum>0 AND NOT a.attisdropped)) FROM pg_publication_tables WHERE pubname=$1`, name, len(p.Tables), p.Tables).Scan(&matches)
+	err = source.QueryRow(ctx, `SELECT count(*)=$2 AND coalesce(bool_and(schemaname='public' AND tablename=ANY($3::text[]) AND rowfilter IS NULL
+ AND attnames=(SELECT array_agg(a.attname ORDER BY a.attnum) FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=schemaname AND c.relname=tablename AND a.attnum>0 AND NOT a.attisdropped)),true) FROM pg_publication_tables WHERE pubname=$1`, name, len(p.Tables), p.Tables).Scan(&matches)
 	if err != nil {
 		return err
 	}
@@ -573,8 +616,8 @@ func ensureSubscription(ctx context.Context, p Pipeline, source *pgxpool.Pool, t
 	if err := target.QueryRow(ctx, `SELECT initialized FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation).Scan(&initialized); err != nil {
 		return err
 	}
-	var exists bool
-	if err := target.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_subscription WHERE subname=$1 AND subdbid=(SELECT oid FROM pg_database WHERE datname=current_database()))`, name).Scan(&exists); err != nil {
+	exists, err := checkSubscriptionOwnership(ctx, p, target, true)
+	if err != nil {
 		return err
 	}
 	var slot bool
@@ -607,8 +650,23 @@ func ensureSubscription(ctx context.Context, p Pipeline, source *pgxpool.Pool, t
 			return err
 		}
 	}
+	if err := refreshSubscriptionConnection(ctx, p, target, conninfo, true); err != nil {
+		return err
+	}
+	if err := setSubscriptionEnabled(ctx, p, target, true); err != nil {
+		return err
+	}
+	_, err = target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET initialized=true WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation)
+	return err
+}
+
+func refreshSubscriptionConnection(ctx context.Context, p Pipeline, target *pgx.Conn, conninfo string, backed bool) error {
 	// CREATE SUBSCRIPTION cannot be transactional. Validate the immutable
-	// remote identity before recovering a lost creation acknowledgement.
+	// remote identity before recovering a lost creation or refreshing teardown.
+	name := pipelineName(p)
+	if _, err := checkSubscriptionOwnership(ctx, p, target, backed); err != nil {
+		return err
+	}
 	var slotName, actualConnection string
 	var publications []string
 	if err := target.QueryRow(ctx, `SELECT subslotname,subpublications,subconninfo FROM pg_subscription WHERE subname=$1 AND subdbid=(SELECT oid FROM pg_database WHERE datname=current_database())`, name).Scan(&slotName, &publications, &actualConnection); err != nil {
@@ -622,14 +680,22 @@ func ensureSubscription(ctx context.Context, p Pipeline, source *pgxpool.Pool, t
 			return err
 		}
 	}
-	if err := setSubscriptionEnabled(ctx, p, target, true); err != nil {
-		return err
-	}
-	_, err := target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET initialized=true WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation)
-	return err
+	return nil
 }
 
 func setSubscriptionEnabled(ctx context.Context, p Pipeline, target *pgx.Conn, enabled bool) error {
+	generation, err := mirrorGeneration(ctx, p, target)
+	if err != nil {
+		return err
+	}
+	if _, err = checkSubscriptionOwnership(ctx, p, target, generation == p.Generation); err != nil {
+		return err
+	}
+	return alterSubscriptionEnabled(ctx, p, target, enabled)
+}
+
+// Call only after validating this subscription's ownership and immutable identity.
+func alterSubscriptionEnabled(ctx context.Context, p Pipeline, target *pgx.Conn, enabled bool) error {
 	var current bool
 	err := target.QueryRow(ctx, `SELECT subenabled FROM pg_subscription WHERE subname=$1 AND subdbid=(SELECT oid FROM pg_database WHERE datname=current_database())`, pipelineName(p)).Scan(&current)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -724,19 +790,7 @@ func checkRetention(ctx context.Context, p Pipeline, source *pgxpool.Pool, targe
 	return nil
 }
 
-func cleanupGeneration(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn) error {
-	if err := cleanupVerification(ctx, p, target); err != nil {
-		return err
-	}
-	var ledger bool
-	if err := target.QueryRow(ctx, `SELECT to_regclass('gregale_pipeline.mirrors') IS NOT NULL`).Scan(&ledger); err != nil {
-		return err
-	}
-	if ledger {
-		if _, err := target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET retiring=true WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation); err != nil {
-			return err
-		}
-	}
+func (e *Engine) cleanupGeneration(ctx context.Context, p Pipeline, raw string, source *pgxpool.Pool, target *pgx.Conn) error {
 	var comment string
 	publicationErr := source.QueryRow(ctx, `SELECT coalesce(obj_description(oid,'pg_publication'),'') FROM pg_publication WHERE pubname=$1`, pipelineName(p)).Scan(&comment)
 	if publicationErr != nil && !errors.Is(publicationErr, pgx.ErrNoRows) {
@@ -745,12 +799,35 @@ func cleanupGeneration(ctx context.Context, p Pipeline, source *pgxpool.Pool, ta
 	if publicationErr == nil && comment != marker(p) {
 		return &blocked{"source_publication_conflict", false}
 	}
-	var subscription bool
-	if err := target.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_subscription WHERE subname=$1 AND subdbid=(SELECT oid FROM pg_database WHERE datname=current_database()))`, pipelineName(p)).Scan(&subscription); err != nil {
+	generation, err := mirrorGeneration(ctx, p, target)
+	if err != nil {
 		return err
 	}
+	backed := publicationErr == nil || generation == p.Generation
+	subscription, err := checkSubscriptionOwnership(ctx, p, target, backed)
+	if err != nil {
+		return err
+	}
+	if err = cleanupVerification(ctx, p, target); err != nil {
+		return err
+	}
+	if generation != 0 {
+		if _, err = target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET retiring=true WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation); err != nil {
+			return err
+		}
+	}
 	if subscription {
-		if err := setSubscriptionEnabled(ctx, p, target, false); err != nil {
+		if err := alterSubscriptionEnabled(ctx, p, target, false); err != nil {
+			return err
+		}
+		// DROP SUBSCRIPTION contacts the publisher itself. It must use the
+		// current sealed credential and the same reviewed/pinned network policy
+		// as normal replication, including when retiring an older generation.
+		conninfo, err := e.sourceConninfo(ctx, raw)
+		if err != nil {
+			return err
+		}
+		if err = refreshSubscriptionConnection(ctx, p, target, conninfo, backed); err != nil {
 			return err
 		}
 		var slot bool

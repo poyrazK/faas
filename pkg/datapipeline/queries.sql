@@ -41,14 +41,15 @@ SELECT * FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid A
 
 -- name: PipelineControl :one
 UPDATE data_pipelines SET
- verification_progress=CASE WHEN sqlc.arg(generation_delta)::bigint>0 OR sqlc.arg(verify_requested)::boolean THEN '{}'::jsonb ELSE verification_progress END,
+ verification_progress=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '{}'::jsonb
+ WHEN sqlc.arg(start_verification)::boolean THEN jsonb_build_object('ManualAttempt',revision+1) ELSE verification_progress END,
  schema_change=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '{}'::jsonb ELSE schema_change END,
  schema_approval=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '' ELSE schema_approval END,
  desired_state=sqlc.arg(desired_state),state=sqlc.arg(state),generation=generation+sqlc.arg(generation_delta)::bigint,
  applied_through_at=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN NULL ELSE applied_through_at END,
  initialized=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN false ELSE initialized END,
- revision=revision+1,verify_requested=sqlc.arg(verify_requested),verification=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN 'unknown' WHEN sqlc.arg(verify_requested) THEN 'pending' ELSE verification END,
- verified_at=CASE WHEN sqlc.arg(verify_requested) OR sqlc.arg(generation_delta)::bigint>0 THEN NULL ELSE verified_at END,
+ revision=revision+1,verify_requested=sqlc.arg(verify_requested),verification=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN 'unknown' WHEN sqlc.arg(start_verification) THEN 'pending' ELSE verification END,
+ verified_at=CASE WHEN sqlc.arg(start_verification) OR sqlc.arg(generation_delta)::bigint>0 THEN NULL ELSE verified_at END,
  retry_at=clock_timestamp()
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision) AND state<>'deleted'
  AND (coalesce(reader_change->>'State','')<>'approved' OR sqlc.arg(generation_delta)::bigint=0)
@@ -343,6 +344,19 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
  AND schema_change->'Cancellation'->>'Kind'='live' AND schema_change->'Cancellation'->>'State'='pending'
  AND schema_change->'Cancellation'->>'ID'=sqlc.arg(cancellation_id)::text AND schema_change->'Cancellation'->>'Retention'='retain_private'
  AND jsonb_array_length(tables)>1 AND tables=schema_change->'RequestedTables' AND tables ? (schema_change->'Cancellation'->>'Table')
+ AND observed_revision=revision AND observed_at>clock_timestamp()-(sqlc.arg(max_age_seconds)::bigint*interval '1 second');
+
+-- name: PipelineRetryTableRetirement :execrows
+UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),
+ schema_change=jsonb_set(schema_change,'{Cancellation,RefreshRetry}',to_jsonb(coalesce((schema_change->'Cancellation'->>'RefreshRetry')::integer,0)+1))
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
+ AND desired_state='running' AND state='blocked' AND reason='schema_api_refresh_failed'
+ AND schema_approval=schema_change->>'ID'
+ AND schema_change->'Cancellation'->>'ID'=sqlc.arg(cancellation_id)::text
+ AND schema_change->'Cancellation'->>'State'='approved' AND schema_change->'Cancellation'->>'Stage'='archived'
+ AND schema_change->'Cancellation'->>'Retention'='retain_private'
+ AND coalesce((schema_change->'Cancellation'->>'RefreshRetry')::integer,0)<sqlc.arg(max_retries)::integer
+ AND coalesce(reader_change->>'State','')<>'approved'
  AND observed_revision=revision AND observed_at>clock_timestamp()-(sqlc.arg(max_age_seconds)::bigint*interval '1 second');
 
 -- name: PipelineReaders :execrows

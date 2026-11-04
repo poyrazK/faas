@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,9 +27,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -70,15 +73,22 @@ type AppErrorsStore interface {
 // false; PR-B flips it to true.
 type appErrorsReceiver struct {
 	apidpb.UnimplementedAppErrorsServer
-	store   AppErrorsStore
-	ops     *wire.OpsMetrics
-	enabled bool
-	gate    IngestGate
+	store             AppErrorsStore
+	ops               *wire.OpsMetrics
+	enabled           bool
+	gate              IngestGate
+	issueRetryMu      sync.Mutex
+	issueRetryCount   int
+	issueRetryApps    map[string]int
+	issueAttemptCount int
+	issueAttemptApps  map[string]int
+	issuePending      []*apidpb.IncrementAppErrorRequest
+	issuePendingApps  map[string]int
 }
 
 // NewAppErrorsReceiver wires a production receiver.
 func NewAppErrorsReceiver(store AppErrorsStore, ops *wire.OpsMetrics, enabled bool) *appErrorsReceiver {
-	return &appErrorsReceiver{store: store, ops: ops, enabled: enabled}
+	return &appErrorsReceiver{store: store, ops: ops, enabled: enabled, issueRetryApps: make(map[string]int), issueAttemptApps: make(map[string]int), issuePendingApps: make(map[string]int)}
 }
 
 // IncrementAppError streams per-record error records from the
@@ -127,6 +137,22 @@ func (a *appErrorsReceiver) IncrementAppError(stream apidpb.AppErrors_IncrementA
 // Returns a non-nil IncrementAppErrorResponse for every record;
 // callers must Send() unconditionally.
 func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.IncrementAppErrorRequest) *apidpb.IncrementAppErrorResponse {
+	// Older gateways can send a redacted sample larger than the wire cap.
+	// Preserve those bounded records and reserve the PostgreSQL text header.
+	if req != nil && len(req.GetSampleMessage()) > api.AppErrorsSampleMessageCapBytes-4 && len(req.GetSampleMessage()) <= 8*1024 {
+		req = proto.Clone(req).(*apidpb.IncrementAppErrorRequest)
+		req.SampleMessage = safetext.Truncate(req.SampleMessage, api.AppErrorsSampleMessageCapBytes-4)
+		found := false
+		for _, name := range req.RedactionsApplied {
+			if name == "truncated" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			req.RedactionsApplied = append(req.RedactionsApplied, "truncated")
+		}
+	}
 	out := &apidpb.IncrementAppErrorResponse{Fingerprint: req.GetFingerprint()}
 
 	// ---- 1. Validate ----
@@ -170,6 +196,10 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 	if parsed, parseErr := uuid.Parse(req.GetRequestId()); parseErr == nil {
 		requestID = parsed
 	}
+
+	// Issues have their own retention and quotas. Do not gate them on the
+	// legacy aggregate or its optional per-request detail row.
+	a.enqueueHTTPIssue(req) //nolint:contextcheck // Bounded issue delivery must outlive the request stream.
 
 	// ---- 4. IncrementAppError (dedupe-merge INSERT) ----
 	//
@@ -280,10 +310,6 @@ func (a *appErrorsReceiver) HandleOne(ctx context.Context, req *apidpb.Increment
 		return out
 	}
 
-	if err := RecordHTTPIssue(ctx, a.store, req); err != nil {
-		// Preserve legacy publication and record a separate issue-ingest failure.
-		a.ops.ObserveIssueEvent("db_error")
-	}
 	return a.finish(out, inserted)
 }
 
@@ -380,6 +406,9 @@ func validateIncrementRequest(req *apidpb.IncrementAppErrorRequest) error {
 	}
 	if len(req.GetFingerprint()) != 64 {
 		return status.Errorf(codes.InvalidArgument, "fingerprint must be 64 hex chars, got %d", len(req.GetFingerprint()))
+	}
+	if n := len(req.GetIssueTimeBuckets()); n != 0 && n != 1000 {
+		return status.Error(codes.InvalidArgument, "HTTP time buckets must contain exactly 1,000 millisecond counters")
 	}
 	// sample_message cap matches limits.AppErrorsSampleMessageCapBytes.
 	if len(req.GetSampleMessage()) > api.AppErrorsSampleMessageCapBytes {

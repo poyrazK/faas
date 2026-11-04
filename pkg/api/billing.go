@@ -58,6 +58,14 @@ type BillingStatusResponse struct {
 	CustomerConfigured         bool   `json:"customer_configured"`
 	SubscriptionConfigured     bool   `json:"subscription_configured"`
 	UsageReconciliationEnabled bool   `json:"usage_reconciliation_enabled"`
+	// SubscriptionEndsAt is when a scheduled cancellation ends the
+	// subscription instead of renewing it; the plan then returns to Free.
+	// ScheduledPlan is the plan a scheduled downgrade moves to at
+	// ScheduledPlanAt. Both are absent when nothing is scheduled or the
+	// provider could not be read (ADR-20261103131742 amendment 1).
+	SubscriptionEndsAt *time.Time `json:"subscription_ends_at,omitempty"`
+	ScheduledPlan      Plan       `json:"scheduled_plan,omitempty"`
+	ScheduledPlanAt    *time.Time `json:"scheduled_plan_at,omitempty"`
 }
 
 // BillingReconcileResponse is the JSON shape POST

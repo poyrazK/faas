@@ -90,6 +90,31 @@ account during the preview; contact support to have it turned on for yours.
 
 ## Set up
 
+One command sets up an app:
+
+```sh
+OPENAI_API_KEY=sk-... gregale add ai --app my-api --provider openai
+```
+
+It creates an AI integration for the provider (or reuses the one of the same
+name), stores the key, binds the integration to the app and sets the app's
+`OPENAI_BASE_URL` and a placeholder `OPENAI_API_KEY`, so the official SDK
+calls the gateway with no code change. Anthropic gets `ANTHROPIC_BASE_URL`
+and `ANTHROPIC_API_KEY` the same way; every provider gets
+`GREGALE_AI_BASE_URL`. The app sees the settings on its next deploy or
+restart.
+
+- The key is read from the provider's usual variable (`OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AZURE_OPENAI_API_KEY`, the `AWS_`
+  variables for Bedrock), `--key-env`, `--key-stdin` or `--key-file`; never a
+  flag value.
+- Azure OpenAI takes `--origin https://<resource>.openai.azure.com`; Bedrock
+  and Vertex take `--region`; Vertex takes its service-account key with
+  `--key-file`.
+- `--no-env` leaves the app's settings alone.
+
+To do the same through the API:
+
 1. Create an integration for the provider, with the AI provider set
    (`POST /v1/outbound/integrations`):
 
@@ -116,6 +141,20 @@ account during the preview; contact support to have it turned on for yours.
    OPENAI_BASE_URL="$GREGALE_OUTBOUND_URL/i/$INTEGRATION_ID/v1"   OPENAI_API_KEY=unused
    ANTHROPIC_BASE_URL="$GREGALE_OUTBOUND_URL/i/$INTEGRATION_ID"   ANTHROPIC_API_KEY=unused
    ```
+
+### Timeouts
+
+The integration's request timeout bounds the wait for a response's headers,
+and it is the plan's ceiling for a new AI integration: 60 s on Hobby, 120 s
+on Pro and 300 s on Scale. Once a streamed answer starts, it may run for up
+to 30 minutes, as long as the provider sends something at least every 10
+minutes. A non-streamed answer has to arrive within the timeout, so stream
+long answers. `gregale ai request-policy <id>` shows and sets the timeout,
+rate and concurrency.
+
+A call the provider received but never answered, because the timeout ran out
+or your app went away, counts toward your caps at its reservation: the
+provider may still bill it.
 
 Then set limits and policies with the `gregale ai` commands:
 
@@ -161,7 +200,7 @@ your app can rate the call through the gateway, the same way it calls the
 model:
 
 ```sh
-curl -X POST "$GATEWAY/i/$INTEGRATION_ID/_gregale/feedback" \
+curl -X POST "$GREGALE_OUTBOUND_URL/i/$INTEGRATION_ID/_gregale/feedback" \
   -H 'Content-Type: application/json' \
   -d '{"call_id": "<call-id>", "rating": "bad", "label": "wrong_answer"}'
 ```
@@ -175,6 +214,33 @@ gregale ai policy <id> --request-log-content on --online-eval-percent 5 \
 gregale ai usage <id>            # QUALITY and SCORE columns
 gregale ai quality-alerts <id>
 ```
+
+### SDK helpers
+
+Gregale's SDKs build the gateway URL and headers for you, and send
+feedback:
+
+```ts
+import OpenAI from 'openai';
+import { aiGatewayURL, aiGatewayHeaders, aiGatewayFeedback } from '@gregale/sdk-node/preview';
+
+const openai = new OpenAI({ baseURL: `${aiGatewayURL({ integration: id })}/v1`, apiKey: 'unused' });
+const { data, response } = await openai.chat.completions
+  .create({ model: 'gpt-5-mini', messages }, { headers: aiGatewayHeaders({ user, tags: { feature: 'search' }, trace: taskId }) })
+  .withResponse();
+await aiGatewayFeedback({ integration: id, callId: response.headers.get('x-gregale-ai-call')!, rating: 'good' });
+```
+
+```python
+from faas_sdk.preview import ai_gateway_url, ai_gateway_headers, ai_gateway_feedback
+
+client = OpenAI(base_url=ai_gateway_url(integration=id) + "/v1", api_key="unused")
+headers = ai_gateway_headers(user=user, tags={"feature": "search"}, trace=task_id)
+ai_gateway_feedback(integration=id, call_id=call_id, rating="bad", label="wrong_answer")
+```
+
+`opaqueAIUserId` / `opaque_ai_user_id` turns an e-mail address into an
+end-user ID that is not personal data.
 
 ### Outside Gregale
 
@@ -239,12 +305,23 @@ Latency and the trace timeline come from the request log, so turn it on with
 
 | Response | Meaning |
 | --- | --- |
+| `403 outbound_ai_model_unpriced` | A cost cap applies to the call and its model has no price, so the cap could not count it. Add the model to the integration's price list (`gregale ai prices`), or let such calls through outside the cost caps with `--allow-unmetered on`. |
 | `429` with `X-Gregale-Outbound-Rejection` | A cap or rate limit was reached; `Retry-After` says when it resets. Trace limits (`trace_call_limit`, `trace_cost_limit`, `trace_tool_loop`) never reset: start a new trace. |
 | `404 outbound_ai_call_not_found` | Feedback named a call that is not in the integration's request log, or that another app made. |
 | `400 outbound_ai_trace_invalid` | `X-Gregale-AI-Trace` is empty, longer than 64 characters or has a character outside `A-Z a-z 0-9 . _ : @ + = / \| -`. |
 | `400 outbound_ai_content_blocked` | The content policy blocked the request. The problem names the detector, never the content. |
-| `402 plan_feature_gated` | Your plan does not include the AI gateway. |
-| `403 outbound_ai_gateway_unavailable` | The AI gateway is not enabled for your account yet. |
+| `402 plan_feature_gated` | From the API: your plan does not include the AI gateway. |
+| `403 outbound_ai_gateway_unavailable` | From the gateway: the AI gateway is not enabled for your account yet, or your plan does not include it. |
+| `503 outbound_ai_gateway_disabled` | The AI gateway is turned off on the platform. |
+| `403 outbound_account_suspended` | The account is suspended or being deleted. |
+| `403 outbound_ai_model_not_allowed` | The app's guardrails do not allow this model. |
+| `400 outbound_ai_max_tokens_exceeded` | The request asks for more output tokens than the app's guardrails allow. |
+| `413 outbound_ai_request_too_large` | The body is larger than the gateway can check or sign (4 MiB), for a guarded app or a Bedrock integration. |
+| `400 outbound_ai_user_invalid`, `400 outbound_ai_tags_invalid` | `X-Gregale-AI-User`, `X-Gregale-AI-Session` or `X-Gregale-AI-Tags` is malformed. |
+| `422 outbound_ai_response_blocked` | A response guardrail blocked the answer. The problem names the detector, never the content. |
+| `422 outbound_ai_response_flagged` | The response moderation check found a blocked category. |
+| `502 outbound_ai_response_unchecked` | A response guardrail could not check the answer. |
+| `400 outbound_ai_feedback_invalid`, `403 outbound_ai_feedback_not_authorized` | Feedback was malformed, or did not come from an app. |
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
 | `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. |
@@ -255,6 +332,8 @@ Latency and the trace timeline come from the request log, so turn it on with
 | `403 outbound_ai_realtime_policy_unenforceable` | The integration's content policy checks requests or responses, which a realtime session's audio cannot be checked against. |
 | Realtime `error` event, then close code `1008` | A cap refused the session's next response (`outbound_budget_exhausted`), the session reached its one-hour limit, or the provider sent a message the gateway could not read. |
 
+A model with no price in the integration's list or the built-in catalog
+costs nothing in usage reports; under a cost cap it is refused (above).
 Request bodies a content policy must inspect are limited to 4 MiB. Usage,
 alerts, the request log and captures each have their own retention; see the
 [operator guide](ops/outbound-integrations.md) for the full reference.
@@ -272,7 +351,9 @@ catalog, used for budgets and reports.
 - Calls for one integration share its admission state, so very high call rates
   are better spread across integrations.
 - Captured content is redacted and kept for 3 days; turn capture on only for
-  traffic you may store.
+  traffic you may store. Reading it needs an API key with `secrets:read`.
+- The response cache keys a call by its body and headers, leaving out
+  per-call telemetry such as `traceparent`, `baggage` and `user-agent`.
 - A moderation check costs one call of the check integration before each
   checked call; the provider bills it to that integration's key.
 - Evaluation calls (the new model and the judge) are billed by your providers

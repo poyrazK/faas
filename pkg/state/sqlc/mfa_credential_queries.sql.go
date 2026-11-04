@@ -26,6 +26,35 @@ func (q *Queries) ClearMFA(ctx context.Context, db DBTX, id pgtype.UUID) (int64,
 	return result.RowsAffected(), nil
 }
 
+const confirmPendingMFA = `-- name: ConfirmPendingMFA :one
+WITH changed AS (
+    UPDATE accounts SET mfa_enrolled_at=clock_timestamp(),mfa_required=false,
+        mfa_totp_last_step=$3::bigint,mfa_revision=mfa_revision+1
+    WHERE id=$1 AND mfa_enrolled_at IS NULL AND mfa_secret_encrypted=$2
+      AND (mfa_totp_last_step IS NULL OR mfa_totp_last_step<$3::bigint)
+    RETURNING id
+), legacy AS (
+    UPDATE mfa_disable_requests SET consumed_at=clock_timestamp()
+    WHERE account_id IN (SELECT id FROM changed) AND consumed_at IS NULL
+)
+SELECT id FROM changed
+`
+
+type ConfirmPendingMFAParams struct {
+	ID                 pgtype.UUID
+	MfaSecretEncrypted []byte
+	Step               int64
+}
+
+// Enrollment and spending its proof commit together against the exact factor
+// verified by the caller. A stale or repeated confirmation changes nothing.
+func (q *Queries) ConfirmPendingMFA(ctx context.Context, db DBTX, arg ConfirmPendingMFAParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, confirmPendingMFA, arg.ID, arg.MfaSecretEncrypted, arg.Step)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const issueMFADisableRequest = `-- name: IssueMFADisableRequest :execrows
 WITH account AS MATERIALIZED (
     SELECT id FROM accounts WHERE id=$2 FOR UPDATE
@@ -69,6 +98,32 @@ func (q *Queries) MarkMFAEnrolled(ctx context.Context, db DBTX, id pgtype.UUID) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const savePendingMFASecret = `-- name: SavePendingMFASecret :one
+WITH changed AS (
+    UPDATE accounts SET mfa_secret_encrypted=$2,mfa_recovery_codes_hash=$3,
+        mfa_totp_last_step=NULL,mfa_revision=mfa_revision+1
+    WHERE id=$1 AND mfa_enrolled_at IS NULL RETURNING id
+), legacy AS (
+    UPDATE mfa_disable_requests SET consumed_at=clock_timestamp()
+    WHERE account_id IN (SELECT id FROM changed) AND consumed_at IS NULL
+)
+SELECT id FROM changed
+`
+
+type SavePendingMFASecretParams struct {
+	ID                   pgtype.UUID
+	MfaSecretEncrypted   []byte
+	MfaRecoveryCodesHash [][]byte
+}
+
+// A setup request cannot replace a factor confirmed while it was in flight.
+func (q *Queries) SavePendingMFASecret(ctx context.Context, db DBTX, arg SavePendingMFASecretParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, savePendingMFASecret, arg.ID, arg.MfaSecretEncrypted, arg.MfaRecoveryCodesHash)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const setMFARequired = `-- name: SetMFARequired :execrows

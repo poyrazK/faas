@@ -304,3 +304,30 @@ func TestCmdAlertsPreset_DispatchTable(t *testing.T) {
 		}
 	}
 }
+
+// rc.318 field report: `alert preset enable error_rate_2pct --app demo ...`
+// answered a bare usage line because parsing stopped at the preset name.
+func TestCmdAlertPresetEnable_NameBeforeFlags(t *testing.T) {
+	main.ResetJSONOut(t)
+	respBody := `{"id":"0123456789abcdef0123456789abcdef","name":"Error rate exceeds 2% (demo)","metric":"error_rate_pct","comparison":"gt","threshold":2,"window_spec":"15m","enabled":false,"cooldown_minutes":15}`
+	f := main.AuthedFakeAPI(t, respBody, 201)
+	if code := main.CmdAlertPresetEnable([]string{
+		"error_rate_2pct",
+		"--app", "demo",
+		"--webhook-url", "https://hooks.example.com/x",
+		"--webhook-secret", "shh",
+		"--enabled=false",
+	}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if (*f.SawPath()) != "/v1/apps/demo/alert-presets/error_rate_2pct/enable" {
+		t.Errorf("path = %s, want /v1/apps/demo/alert-presets/error_rate_2pct/enable", (*f.SawPath()))
+	}
+	var got map[string]any
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
+		t.Fatalf("body unmarshal: %v", err)
+	}
+	if enabled, _ := got["enabled"].(bool); enabled || got["webhook_url"] != "https://hooks.example.com/x" {
+		t.Errorf("body = %v; flags after the preset name were dropped", got)
+	}
+}

@@ -49,26 +49,29 @@ import (
 // All UUID columns are exposed as string to match the Cron precedent
 // (Cron.ID is string; the pgx conversion lives inside PgStore).
 type Job struct {
-	SchedulePolicy   *workpolicy.SchedulePolicy
-	FailureRules     *workpolicy.FailureRules
-	ScheduleRevision int64
-	ID               string
-	AccountID        string
-	Kind             string // 'batch' | 'recurring' | 'image_run' (ADR-1161)
-	Name             string
-	ImageRef         string
-	RAMMB            int
-	TaskTimeoutS     int
-	MaxParallelism   int
-	RetryMax         int
-	EnvOverrides     json.RawMessage
-	Status           string // 'active' | 'paused' | 'deleted'
-	CronSchedule     string
-	CronTimezone     string
-	LastScheduledAt  *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	Command          []string // migrations/00572
+	// EnvironmentGitSourceID retains the exact owning binding after detach.
+	// It is internal authority, separate from the historical workload intent.
+	EnvironmentGitSourceID string `json:"-"`
+	SchedulePolicy         *workpolicy.SchedulePolicy
+	FailureRules           *workpolicy.FailureRules
+	ScheduleRevision       int64
+	ID                     string
+	AccountID              string
+	Kind                   string // 'batch' | 'recurring' | 'image_run' (ADR-1161)
+	Name                   string
+	ImageRef               string
+	RAMMB                  int
+	TaskTimeoutS           int
+	MaxParallelism         int
+	RetryMax               int
+	EnvOverrides           json.RawMessage
+	Status                 string // 'active' | 'paused' | 'deleted'
+	CronSchedule           string
+	CronTimezone           string
+	LastScheduledAt        *time.Time
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	Command                []string // migrations/00572
 	// ImageResolvedDigest is the immutable OCI manifest digest selected from
 	// ImageRef by imaged. Source-backed GitOps Jobs instead record an explicit
 	// gregale-deployment:<UUID> identity, never an invented OCI digest. Empty

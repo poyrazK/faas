@@ -57,8 +57,23 @@ func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Accou
 	// key's tools from them (ADR-20261029085359). Sessions have none.
 	if p, ok := principalFrom(r); ok && p.Key != nil {
 		resp.KeyScopes = p.Key.Scopes
+		resp.KeyOrg = s.keyOrg(r.Context(), p.Key.OrgID)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// keyOrg names the shared organization a key acts in, or nil for a personal
+// one; a connected agent lists that organization's apps
+// (ADR-20261101225122).
+func (s *server) keyOrg(ctx context.Context, orgID string) *api.KeyOrg {
+	if orgID == "" {
+		return nil
+	}
+	org, err := s.store.OrgByID(ctx, orgID)
+	if err != nil || org.Personal {
+		return nil
+	}
+	return &api.KeyOrg{ID: org.ID, Slug: org.Slug, Name: org.Name}
 }
 
 // nilStringPtr returns a *string pointing at the given value, or

@@ -288,3 +288,27 @@ Each step is its own PR, in this order:
 - A per-database cap, or per-database priority within an account's pool.
 - Native (non-Neon) providers. A provider without a compute quota is skipped
   and counted as `unsupported`; its databases are capped only by admission.
+
+## Amendment 2026-11-03: an inactive subject's databases are suspended
+
+Status: accepted (cost-control audit 2026-11-03).
+
+The cap sweep gave every subject its plan's ceiling whatever its status. A
+suspended (unpaid or Free hard stop), abuse-held or pending-deletion subject
+had its apps parked and its buckets refused within seconds, but its
+databases kept their compute: its own code elsewhere, or anyone holding a
+connection string, ran them up to the ceiling at the provider's price, and
+with overage on they kept accruing charges for a subject that was not
+paying. `postgresaccess` refused only management changes.
+
+Decision: the sweep suspends every compute of a subject that may not run
+workloads (`state.Account.Active()` is false; a past-due subject in its grace
+period stays active).
+
+- `CapLimits.Inactive` holds the subject to one compute-unit second, so its
+  quotas drop to what it used, through the same reversible quota write as a
+  reached ceiling. An uncapped subject is suspended too.
+- Data, branches and credentials are untouched; the first sweep after
+  reactivation restores the plan's headroom.
+- No cap threshold is recorded or mailed: the account's suspension notice is
+  the customer's explanation.

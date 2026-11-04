@@ -143,3 +143,82 @@ func TestPublicEdgeSpreadSwitches(t *testing.T) {
 		})
 	}
 }
+
+// adr: 20261103163954 — public_edge.front: none needs direct entry and an
+// entry address on every compute host, apart from the addresses it is
+// managed on; dns.proxied only means something under it.
+func TestPublicEdgeFront(t *testing.T) {
+	control := Host{Name: "cp-1", Role: "control-plane"}
+	entered := Host{Name: "cn-1", Role: "compute-only", Address: "10.42.0.2:50051", PublicIPv4: "203.0.113.2", EntryIPv4: "198.51.100.2"}
+	direct := PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryBoth}
+	with := func(edit func(*PublicEdge)) PublicEdge {
+		e := direct
+		e.Front = PublicEdgeFrontNone
+		edit(&e)
+		return e
+	}
+	host := func(edit func(*Host)) []Host {
+		h := entered
+		edit(&h)
+		return []Host{control, h}
+	}
+	dns := func(proxied ...string) *PublicEdgeDNS {
+		return &PublicEdgeDNS{ZoneID: "zone-1", Names: []string{"pilot.gregale.dev"}, Proxied: proxied}
+	}
+	for _, tc := range []struct {
+		name    string
+		edge    PublicEdge
+		hosts   []Host
+		wantErr string
+	}{
+		{name: "none", edge: with(func(*PublicEdge) {}), hosts: []Host{control, entered}},
+		{name: "none with a proxied name", edge: with(func(e *PublicEdge) { e.DNS = dns("*.gregale.dev") }), hosts: []Host{control, entered}},
+		{name: "cloudflare", edge: PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryBoth, Front: PublicEdgeFrontCloudflare}, hosts: host(func(h *Host) { h.EntryIPv4 = "" })},
+		{name: "unknown", edge: with(func(e *PublicEdge) { e.Front = "fastly" }), hosts: []Host{control, entered}, wantErr: `"fastly" is not cloudflare or none`},
+		{name: "on the tunnel", edge: PublicEdge{ComputeNodes: true, Front: PublicEdgeFrontNone}, hosts: []Host{control, entered}, wantErr: "none needs public_edge.compute_nodes and entry: both"},
+		{name: "no entry address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "" }), wantErr: "fleet.hosts[1].entry_ipv4"},
+		{name: "the managed address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "10.42.0.2" }), wantErr: "drops SSH"},
+		{name: "the public address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = h.PublicIPv4 }), wantErr: "drops SSH"},
+		{name: "a forwarded public address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4, h.PublicIPv4Forwarded = "", true })},
+		{name: "a forwarded public address named again", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4, h.PublicIPv4Forwarded = h.PublicIPv4, true })},
+		{name: "forwarded without an address", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.PublicIPv4, h.PublicIPv4Forwarded = "", true }), wantErr: "public_ipv4_forwarded"},
+		{name: "not canonical", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "198.51.100.02" }), wantErr: "canonical form"},
+		{name: "IPv6", edge: with(func(*PublicEdge) {}), hosts: host(func(h *Host) { h.EntryIPv4 = "2001:db8::2" }), wantErr: "canonical form"},
+		{name: "an entry address behind Cloudflare", edge: direct, hosts: []Host{control, entered}, wantErr: "under public_edge.front: none"},
+		{name: "proxied names behind Cloudflare", edge: PublicEdge{ComputeNodes: true, Entry: PublicEdgeEntryBoth, DNS: dns("*.gregale.dev")}, hosts: host(func(h *Host) { h.EntryIPv4 = "" }), wantErr: "public_edge.dns.proxied"},
+		{name: "a proxied name twice", edge: with(func(e *PublicEdge) { e.DNS = dns("a.gregale.dev", "a.gregale.dev") }), hosts: []Host{control, entered}, wantErr: "public_edge.dns.proxied[1]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := tc.edge.validate(tc.hosts)
+			if tc.wantErr == "" {
+				if len(errs) != 0 {
+					t.Fatalf("validate = %v, want no errors", errs)
+				}
+			} else if !strings.Contains(errs.Error(), tc.wantErr) {
+				t.Fatalf("validate = %v, want %q", errs, tc.wantErr)
+			}
+			want := tc.edge.Front == PublicEdgeFrontNone && tc.edge.DirectEntry()
+			if got := tc.edge.NoFront(); got != want {
+				t.Fatalf("NoFront = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// adr: 20261103163954 — a forwarded public_ipv4 (a GCP forwarding rule) is the
+// entry address unless entry_ipv4 names another.
+func TestHostEntryAddress(t *testing.T) {
+	for _, tc := range []struct {
+		host Host
+		want string
+	}{
+		{Host{PublicIPv4: "203.0.113.2"}, ""},
+		{Host{PublicIPv4: "203.0.113.2", PublicIPv4Forwarded: true}, "203.0.113.2"},
+		{Host{PublicIPv4: "203.0.113.2", PublicIPv4Forwarded: true, EntryIPv4: "198.51.100.2"}, "198.51.100.2"},
+		{Host{PublicIPv4: "203.0.113.2", EntryIPv4: "198.51.100.2"}, "198.51.100.2"},
+	} {
+		if got := tc.host.EntryAddress(); got != tc.want {
+			t.Errorf("%+v.EntryAddress() = %q, want %q", tc.host, got, tc.want)
+		}
+	}
+}

@@ -345,6 +345,10 @@ func (m *MemStore) FinishConfigChange(_ context.Context, f ConfigChangeFinish) (
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.finishConfigChangeLocked(f)
+}
+
+func (m *MemStore) finishConfigChangeLocked(f ConfigChangeFinish) (ConfigRevision, error) {
 	now := f.Now.UTC()
 	variables, secrets := m.configStateLocked(f.AccountID, f.AppID, f.Scope)
 	latest, _ := m.latestConfigRevisionLocked(f.AppID, f.Scope)
@@ -415,12 +419,14 @@ func (m *MemStore) GetConfigRevision(_ context.Context, appID, scope string, rev
 	return ConfigRevision{}, ErrNotFound
 }
 
-func (m *MemStore) ListWatchingConfigGuards(_ context.Context, limit int) ([]ConfigGuard, error) {
+func (m *MemStore) ListWatchingConfigGuards(ctx context.Context, limit int) ([]ConfigGuard, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := []ConfigGuard{}
+	cursor := configGuardCursor(ctx)
 	for _, g := range m.configGuards {
-		if g.Status == ConfigGuardWatching {
+		after := cursor.ID == "" || g.LastChangeAt.After(cursor.ChangedAt) || g.LastChangeAt.Equal(cursor.ChangedAt) && g.ID > cursor.ID
+		if g.Status == ConfigGuardWatching && after {
 			out = append(out, cloneConfigGuard(g))
 		}
 	}

@@ -65,16 +65,19 @@ type ProjectEnvironmentClonePostgresBinding struct {
 }
 
 type ProjectEnvironmentCloneObjectBucket struct {
-	ID                 string                                     `json:"id"`
-	Name               string                                     `json:"name"`
-	Region             string                                     `json:"region"`
-	BackendID          string                                     `json:"backend_id"`
-	BackendFingerprint string                                     `json:"backend_fingerprint"`
-	PhysicalName       string                                     `json:"physical_name"`
-	PublicRead         bool                                       `json:"public_read"`
-	ServeAt            string                                     `json:"serve_at"`
-	Credentials        []ProjectEnvironmentCloneObjectCredential  `json:"credentials"`
-	AccessGrants       []ProjectEnvironmentCloneObjectAccessGrant `json:"access_grants"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Region             string `json:"region"`
+	BackendID          string `json:"backend_id"`
+	BackendFingerprint string `json:"backend_fingerprint"`
+	PhysicalName       string `json:"physical_name"`
+	PublicRead         bool   `json:"public_read"`
+	ServeAt            string `json:"serve_at"`
+	// VersioningEnabled is true once versioning is on and propagated: the
+	// bucket's history can be read as of a clone's data point.
+	VersioningEnabled bool                                       `json:"versioning_enabled"`
+	Credentials       []ProjectEnvironmentCloneObjectCredential  `json:"credentials"`
+	AccessGrants      []ProjectEnvironmentCloneObjectAccessGrant `json:"access_grants"`
 }
 
 type ProjectEnvironmentCloneObjectCredential struct {

@@ -84,6 +84,14 @@ func (l *Loop) recordFinancialPricing(ctx context.Context, now time.Time) error 
 			if terms == p.Price && latest.Plan == p.Plan && latest.DeliveryMode == p.DeliveryMode {
 				continue
 			}
+			if latest.Price.Version != "" && latest.Plan != p.Plan {
+				at, err := planChangeEffectiveFrom(ctx, l.store, account.ID, latest.EffectiveFrom, p.EffectiveFrom)
+				if err != nil {
+					failures = append(failures, err)
+					continue
+				}
+				p.EffectiveFrom = at
+			}
 			encoded, err := json.Marshal(struct {
 				Plan          api.Plan
 				Mode          string
@@ -130,6 +138,35 @@ func (l *Loop) recordFinancialPricing(ctx context.Context, now time.Time) error 
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// planChangeEffectiveFrom dates a newly observed plan (ADR-20261103121407).
+// meterd notices a plan change on its next pricing pass, which is late when
+// meterd was down or catching up, and the hours between would get the old
+// plan's allowance, Free status and cap. The subject's recorded change time is
+// used instead, at minute precision, but never before the previous terms took
+// effect (snapshots stay ordered) nor after observed. A store without the
+// change time, or a subject whose change time is unknown, keeps observed.
+func planChangeEffectiveFrom(ctx context.Context, store state.Store, subjectID string, previous, observed time.Time) (time.Time, error) {
+	reader, ok := store.(state.PlanChangeReader)
+	if !ok {
+		return observed, nil
+	}
+	changed, known, err := reader.PlanChangedAt(ctx, subjectID)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("financial pricing plan change time: %w", err)
+	}
+	if !known {
+		return observed, nil
+	}
+	at := changed.UTC().Truncate(time.Minute)
+	if at.Before(previous) {
+		at = previous
+	}
+	if at.After(observed) {
+		at = observed
+	}
+	return at, nil
 }
 
 func (l *Loop) recordFinancialSample(ctx context.Context, sampler *Sampler, now time.Time, sampleErr, pricingErr error) error {

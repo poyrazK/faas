@@ -523,6 +523,12 @@ email, like a database restore), then
 `GET /v1/apps/{slug}/database-switches/{id}` and
 `POST /v1/apps/{slug}/database-switches/{id}/cancel` (also `postgres:manage`).
 
+An enforced binding release policy also applies to a database-restoring
+rollback. The switch checks the currently published bindings before changing
+the serving code and again before restoring the previous code if it aborts.
+The cutover separately verifies the restored database's staged credentials.
+Missing binding evidence blocks the code change; the policy remains enforced.
+
 ## Release gates
 
 Gregale already stops a release whose 5xx rate, latency, crashes or memory
@@ -690,6 +696,17 @@ The release starts its canary as usual. At the stage the policy names
 canary still judges the waiting stage, so a regression aborts the release
 even while it waits. Once enough people approve, the rollout continues on its
 next step.
+
+A release with a release command (a migration) waits earlier: after its
+build, before the command runs, because a migration changes production data
+the moment it runs and aborting a canary does not undo it. It is listed in
+`gregale release approval pending` like any waiting release, for the same
+timeout. Once approved, the command runs and the release rolls out without
+waiting again. If it is rejected or times out, the deployment fails without
+running the command and production keeps the current release. The app's
+first production release has no canary to wait in, so its command runs at
+once
+([amendment 12](adr/20261020085706-release-approvals.md#amendment-12-2026-11-04-a-release-waits-for-approval-before-its-release-command)).
 
 A person approves on the release's approval page in the dashboard
 (`/dashboard/releases/<deployment>/approval`, linked from the notification),
@@ -908,9 +925,9 @@ had: the same canary (`--rollout safe` or `fast`, or the app's release
 policy), or all traffic at once for `--rollout immediate`.
 
 Because the build and any release command (a migration) run as soon as you
-deploy, a freeze active right now refuses a scheduled release just as it
-refuses an immediate one, even when the scheduled time falls after the
-freeze. Wait for it to end, or deploy with `--override-freeze REASON`.
+deploy (once approved, when the app requires approvals), a freeze active
+right now refuses a scheduled release just as it refuses an immediate one,
+even when the scheduled time falls after the freeze. Wait for it to end, or deploy with `--override-freeze REASON`.
 
 Just before it starts, Gregale checks again:
 - **Freezes.** A freeze active at that moment stops the release, including a

@@ -518,7 +518,7 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 	if bound && (binding.SurfaceID != surface.ID || binding.AppID != surface.AppID || binding.AccountID != surface.AccountID) {
 		return gateway.App{}, false, errors.New("platform tenant hostname binding changed during resolution")
 	}
-	if bound && binding.Suspended {
+	if bound && binding.Verified && binding.Suspended {
 		return gateway.App{}, false, errPlatformTenantSuspended
 	}
 	if !bound {

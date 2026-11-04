@@ -31,6 +31,15 @@ type ProjectEnvironmentCloneCaptureRequest struct {
 	// a replica whose cache is stale cannot admit after a switch went off, and
 	// turning one off waits for the admissions already deciding on it.
 	AdmissionSwitches []string
+	// QualifiedObjectBackends names the storage backends whose buckets a
+	// clone may copy. With RequireCompleteInventory, a source bucket on any
+	// other backend, or without versioning, refuses the capture.
+	QualifiedObjectBackends []string
+	// CheckObjectCapacity, with RequireCompleteInventory, is given the IDs of
+	// the source's buckets once the capture holds them; an error refuses the
+	// capture. Admission uses it to refuse a clone whose copy would take the
+	// account past its object storage limits.
+	CheckObjectCapacity func(ctx context.Context, bucketIDs []string) error
 }
 
 // ErrProjectEnvironmentCloneAdmissionClosed refuses a capture whose admission

@@ -199,3 +199,19 @@ func TestAutomationLiveSuiteExecutionMissingRunsAndProtectedHistory(t *testing.T
 		}
 	})
 }
+
+func TestAutomationLiveSuiteAllowsBoundedFutureClockSkew(t *testing.T) {
+	sharedSuiteStores(t, func(t *testing.T, store state.Store, _ func() state.AutomationLiveSuiteStore) {
+		app, _, draft, plan := seedLiveSuite(t, store)
+		executor := store.(state.AutomationLiveSuiteExecutionStore)
+		request := managedSuiteRequest(plan)
+		id := managedSuiteID(time.Now().Add(5 * time.Second))
+		if _, err := executor.StartAutomationLiveSuite(t.Context(), app.ID, draft.Name, id, request, true); err != nil {
+			t.Fatalf("small future clock skew rejected: %v", err)
+		}
+		id = managedSuiteID(time.Now().Add(api.AutomationLiveSuiteFutureClockSkew + 30*time.Second))
+		if _, err := executor.StartAutomationLiveSuite(t.Context(), app.ID, draft.Name, id, request, true); err == nil {
+			t.Fatal("suite outside future clock skew was accepted")
+		}
+	})
+}

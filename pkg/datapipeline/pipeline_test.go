@@ -78,6 +78,35 @@ func TestConnectionCustodyRotationAndTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestConnectionRotationBindsCanonicalStoredUUIDs(t *testing.T) {
+	s, store, key, account := testService(t)
+	ctx := t.Context()
+	raw := "postgres://reader:before@db.example/db?sslmode=verify-full"
+	c, err := s.CreateConnection(ctx, account, api.CreateDataConnectionRequest{Name: "source", ConnectionURL: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, form := range []func(string) string{
+		strings.ToUpper,
+		func(id string) string { return "{" + strings.ToUpper(id) + "}" },
+		func(id string) string { return strings.ReplaceAll(id, "-", "") },
+	} {
+		raw = strings.Replace(raw, "before", "after", 1)
+		c, err = s.RotateConnection(ctx, form(account), form(c.ID), api.RotateDataConnectionRequest{ExpectedRevision: c.Revision, ConnectionURL: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved, err := store.Connection(ctx, account, c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		opened, err := openConnection([]*age.X25519Identity{key}, saved)
+		if err != nil || opened != raw {
+			t.Fatal("equivalent UUID spelling broke the committed credential", err)
+		}
+	}
+}
+
 func TestPipelineAdmissionAndStaleWorkerRecovery(t *testing.T) {
 	s, store, _, account := testService(t)
 	ctx := context.Background()

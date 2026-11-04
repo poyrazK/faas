@@ -422,6 +422,10 @@ service Vmmd {
   // reconciled as the authoritative regional VXLAN topology.
   rpc ReconcilePrivateNetworkFabric(ReconcilePrivateNetworkFabricRequest) returns (ReconcilePrivateNetworkFabricAck);
 
+  // Atomically replaces the complete account/region L3 peering policy.
+  // Callers must prepare every listed fabric before publishing app routes.
+  rpc ReconcilePrivateNetworkPeerings(ReconcilePrivateNetworkPeeringsRequest) returns (ReconcilePrivateNetworkPeeringsAck);
+
   // RemovePrivateNetworkFabric tears down the node-local bridge and optional
   // regional VXLAN link for a deleted Gregale-owned network. The operation is
   // idempotent so durable delete notifications may be replayed safely.
@@ -927,6 +931,9 @@ message AppSpec {
   // platform veth) and ignores the allowlist, private network, static
   // egress IP and operator bundle. Only schedd's fork coordinator sets it.
   bool quarantine = 35;
+  // Non-production deployments keep shared egress even when their app has a pin.
+  // False preserves production eligibility for older callers.
+  bool static_egress_excluded = 36;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -3008,6 +3015,27 @@ message ReconcilePrivateNetworkFabricAck {
   repeated string expected_peer_addresses = 4;
   repeated string observed_peer_addresses = 5;
 }
+
+message PrivateNetworkRouterNetwork {
+  string network_id = 1;
+  string cidr = 2;
+}
+
+message PrivateNetworkRouterRoute {
+  string from_network_id = 1;
+  string destination_network_id = 2;
+  string destination_cidr = 3;
+}
+
+message ReconcilePrivateNetworkPeeringsRequest {
+  string account_id = 1;
+  string region = 2;
+  repeated PrivateNetworkRouterNetwork networks = 3;
+  // Authoritative full set. Empty revokes all peerings in this router.
+  repeated PrivateNetworkRouterRoute routes = 4;
+}
+
+message ReconcilePrivateNetworkPeeringsAck {}
 
 // RemovePrivateNetworkFabricRequest carries the identity needed to remove a
 // node-local Gregale-owned network fabric after its durable control-plane row

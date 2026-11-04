@@ -210,6 +210,16 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	environmentApps, err := projectEnvironmentAppIDsDB(ctx, tx, accountID, projectID, environment)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	appRows = slices.DeleteFunc(appRows, func(app struct {
+		id       string
+		manifest []byte
+	}) bool {
+		return !slices.Contains(environmentApps, app.id)
+	})
 	if allowGitOpsReplacement {
 		excluded, err := workloadReleaseExclusionsTx(ctx, tx, EnvironmentGitSource{ID: "", AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment})
 		if err != nil {
@@ -396,6 +406,11 @@ func (s *PgStore) deactivateProjectReleaseSet(ctx context.Context, accountID, pr
 	if err := rows.Err(); err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	environmentApps, err := projectEnvironmentAppIDsDB(ctx, tx, accountID, projectID, environment)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	appIDs = slices.DeleteFunc(appIDs, func(id string) bool { return !slices.Contains(environmentApps, id) })
 	managed, err := gitOpsReleaseSetHasManagedMembersTx(ctx, tx, activeID)
 	if err != nil {
 		return ProjectReleaseSet{}, err
@@ -712,6 +727,16 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 			return ProjectReleaseSet{}, err
 		}
 	}
+	environmentApps, err := projectEnvironmentAppIDsDB(ctx, tx, accountID, projectID, environment)
+	if err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	appRows = slices.DeleteFunc(appRows, func(app struct {
+		id       string
+		manifest []byte
+	}) bool {
+		return !slices.Contains(environmentApps, app.id)
+	})
 	if len(appRows) != len(byApp) {
 		return ProjectReleaseSet{}, ErrConflict
 	}
@@ -1030,7 +1055,7 @@ func validateGitOpsReleaseMembersTx(ctx context.Context, tx pgx.Tx, releaseID st
 	rows, err := tx.Query(ctx, `select rm.app_id::text, rm.deployment_id::text
 		from project_release_members rm
 		join deployments d on d.id = rm.deployment_id
-		where rm.release_id = $1::uuid and d.environment_workload_runtime is not null
+		where rm.release_id = $1::uuid and environment_workload_ownership_active(d)
 		order by rm.app_id for update of d`, releaseID)
 	if err != nil {
 		return fmt.Errorf("state: lock managed release members: %w", err)
@@ -1053,7 +1078,7 @@ func gitOpsReleaseSetHasManagedMembersTx(ctx context.Context, tx pgx.Tx, release
 	err := tx.QueryRow(ctx, `select exists (
 		select 1 from project_release_members rm
 		join deployments d on d.id = rm.deployment_id
-		where rm.release_id = $1::uuid and d.environment_workload_runtime is not null
+		where rm.release_id = $1::uuid and environment_workload_ownership_active(d)
 	)`, releaseID).Scan(&managed)
 	return managed, err
 }

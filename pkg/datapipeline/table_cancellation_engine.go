@@ -179,7 +179,7 @@ func (e *Engine) finishTableCancellation(ctx context.Context, p Pipeline, source
 	if e.RefreshSchema == nil {
 		return &blocked{"schema_api_refresh_unavailable", false}
 	}
-	refresh := SchemaChange{ID: p.SchemaChange.Cancellation.ID}
+	refresh := SchemaChange{ID: p.SchemaChange.Cancellation.ID, Retry: p.SchemaChange.Cancellation.RefreshRetry}
 	refreshes, refreshed, err := e.RefreshSchema(ctx, p, refresh)
 	ob.SchemaChange.Refreshes = refreshes
 	if err != nil {

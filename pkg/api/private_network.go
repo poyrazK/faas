@@ -26,6 +26,8 @@ const (
 	PrivateNetworkPeeringStatusError      = "error"
 	PrivateNetworkMinPrefixBits           = 16
 	PrivateNetworkMaxPrefixBits           = 28
+	// The VXLAN wire identifier reserves zero and the all-ones value.
+	PrivateNetworkMaxTransportVNI = 16_777_214
 )
 
 var privateNetworkIdentifierPattern = lazyregexp.New(`^[a-z][a-z0-9-]{0,62}$`)

@@ -26,7 +26,7 @@ func TestIssueDeploymentArtifactSymbolicationRESTAndOTLP(t *testing.T) {
 	event.Breadcrumbs = []api.IssueBreadcrumb{{OccurredAt: event.OccurredAt.Add(-time.Second), Category: "workflow", Level: "info", Message: "starting charge"}}
 	headers := map[string]string{"Authorization": "Bearer " + token.Token}
 	w := e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events", event, headers)
-	if w.Code != 409 || !strings.Contains(w.Body.String(), "issue_source_maps_unavailable") {
+	if w.Code != 503 || w.Header().Get("Retry-After") != "60" || !strings.Contains(w.Body.String(), "issue_source_maps_unavailable") {
 		t.Fatalf("missing map capture accepted: %d %s", w.Code, w.Body.String())
 	}
 	w = e.Do(t, "PUT", path, request, nil)
@@ -101,7 +101,7 @@ func TestIssueDeploymentArtifactSymbolicationRESTAndOTLP(t *testing.T) {
 		t.Fatal("retry changed provenance")
 	}
 	event.EventID = uuid.NewString()
-	if w = e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events", event, headers); w.Code != 409 {
+	if w = e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events", event, headers); w.Code != 503 || w.Header().Get("Retry-After") != "60" {
 		t.Fatal("retired artifacts accepted new mapping")
 	}
 	changed := request
@@ -112,6 +112,9 @@ func TestIssueDeploymentArtifactSymbolicationRESTAndOTLP(t *testing.T) {
 	}
 	if w = e.Do(t, "PUT", path, request, nil); w.Code != 200 {
 		t.Fatal("identical manifest did not restore")
+	}
+	if w = e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events", event, headers); w.Code != 202 {
+		t.Fatalf("deferred event did not recover after restoration: %d %s", w.Code, w.Body.String())
 	}
 	foreign := apidserver.SeedPGApp(t, e, "foreign-artifacts")
 	foreignDep := apidserver.IssueSeedDeployment(t, e, foreign, 1)

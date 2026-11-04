@@ -43,10 +43,14 @@ func firewallPortTokens(protocol string, ports []PrivateNetworkFirewallPortRange
 func (c Config) privateFirewallPrefixes(rule PrivateNetworkFirewallRule) []netip.Prefix {
 	base := c.PrivateNetworkAllowedCIDRs
 	if len(rule.CIDRs) == 0 {
-		if len(base) > 0 {
-			return base
+		// For a Gregale member, peer routes do not change the owning
+		// network's default firewall scope. Legacy provider attachments
+		// without a member address retain their multi-CIDR contract.
+		if c.PrivateNetworkAddress.IsValid() && len(c.PrivateNetworkCIDRs) > 0 {
+			rule.CIDRs = c.PrivateNetworkCIDRs[:1]
+		} else {
+			rule.CIDRs = c.PrivateNetworkCIDRs
 		}
-		return c.PrivateNetworkCIDRs
 	}
 	if len(base) == 0 {
 		return rule.CIDRs
@@ -126,7 +130,14 @@ func (c Config) privateFirewallIngressRules(nft func(...string) []string) [][]st
 		if rule.Protocol == "icmp" {
 			args = append(args, "ip", "protocol", "icmp")
 		} else {
-			args = append(args, firewallPortTokens(rule.Protocol, rule.Ports)...)
+			ports := firewallPortTokens(rule.Protocol, rule.Ports)
+			if len(ports) < 3 {
+				continue
+			}
+			// Ingress filtering runs after DNAT. Match the published port,
+			// which may differ from the deployment's guest port.
+			args = append(args, "meta", "l4proto", rule.Protocol, "ct", "original", "proto-dst")
+			args = append(args, ports[2:]...)
 		}
 		args = append(args, "accept")
 		out = append(out, nft(args...))

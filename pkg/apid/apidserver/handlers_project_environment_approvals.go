@@ -145,11 +145,28 @@ func (s *server) validateProjectEnvironmentPromotionApproval(ctx context.Context
 
 func (s *server) issueProjectEnvironmentApproval(ctx context.Context, acct state.Account, projectSlug, environment, planToken string) (string, state.ProjectEnvironmentApproval, *api.Problem) {
 	pt, err := decodePlanToken(planToken)
-	if err != nil || pt.AccountID != acct.ID || pt.Slug != projectSlug || pt.Environment != environment {
+	if err != nil || pt.AccountID != acct.ID || pt.Slug != projectSlug || pt.Environment != environment || pt.Selection == nil {
 		return "", state.ProjectEnvironmentApproval{}, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Plan token does not match", "approve the exact plan generated for this project and environment")
 	}
 	return s.createProjectEnvironmentApproval(ctx, acct, projectSlug, environment, planToken, "plan")
+}
+
+func (s *server) consumeProjectPlanApproval(ctx context.Context, acct state.Account, req *scanPlanRequest, planToken string) *api.Problem {
+	approval, err := s.store.ConsumeProjectEnvironmentApproval(ctx, acct.ID, req.ProjectSlug, req.Environment,
+		hashProjectEnvironmentApprovalMaterial(planToken), hashProjectEnvironmentApprovalMaterial(req.ApprovalToken), time.Now().UTC())
+	if err != nil {
+		return api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+			"Invalid environment approval", "the approval is expired or does not match this exact plan and environment")
+	}
+	s.audit.Emit(ctx, "project.environment.approval.consumed", &acct.ID, map[string]any{
+		"project_slug": req.ProjectSlug,
+		"environment":  req.Environment,
+		"approval_id":  approval.ID,
+		"token_kind":   approval.TokenKind,
+		"consumed_at":  approval.ConsumedAt.UTC().Format(time.RFC3339),
+	})
+	return nil
 }
 
 func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct state.Account, projectSlug, environment, token, tokenKind string) (string, state.ProjectEnvironmentApproval, *api.Problem) {

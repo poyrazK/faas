@@ -219,6 +219,9 @@ type cronPatch struct {
 	SkipIfRunning  *bool               `json:"skip_if_running,omitempty"`
 	SchedulePolicy *cronSchedulePolicy `json:"schedule_policy,omitempty"`
 	FailureRules   json.RawMessage     `json:"failure_rules,omitempty"`
+	// ClearSchedulePolicy and ClearFailureRules remove them from the cron.
+	ClearSchedulePolicy bool `json:"clear_schedule_policy,omitempty"`
+	ClearFailureRules   bool `json:"clear_failure_rules,omitempty"`
 }
 
 type cronResponse struct {

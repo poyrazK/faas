@@ -123,6 +123,12 @@ message IncrementAppErrorRequest {
   // request_row_omitted marks a record that only counts requests: the
   // gateway already sent its sample of them, so apid stores no request row.
   bool request_row_omitted = 21;
+  // Stable identity for this gateway record, independent of the public
+  // request ID. Empty on older gateways.
+  string issue_event_id = 22;
+  // Counts for each millisecond in the sampled request's UTC second. Empty
+  // means an older gateway did not preserve the times of a folded batch.
+  repeated uint32 issue_time_buckets = 23;
 }
 
 // IncrementAppErrorResponse is the per-record outcome the server

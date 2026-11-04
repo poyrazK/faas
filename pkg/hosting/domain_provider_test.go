@@ -1,6 +1,7 @@
 package hosting
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,6 +21,11 @@ func TestCloudflareDomainProvisioningRequiresExplicitRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	domain := api.HostingDomain{ID: uuid.NewString(), Hostname: "portal.customer.example", Details: api.HostingDomainDetails{TLSStatus: "pending"}}
+	beginCreate := func(context.Context) (api.HostingDomainDetails, error) {
+		at := time.Now().UTC()
+		domain.Details.CreateStartedAt = &at
+		return domain.Details, nil
+	}
 	var host *cfDomainHostname
 	var app *cfDomainApp
 	creates := 0
@@ -120,16 +126,16 @@ func TestCloudflareDomainProvisioningRequiresExplicitRecovery(t *testing.T) {
 	provider.base = server.URL
 	provider.client = server.Client()
 	zoneMismatch = true
-	if _, _, err := provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); !errors.Is(err, ErrDomainProviderConflict) || creates != 0 {
+	if _, _, err := provider.Ensure(t.Context(), domain, beginCreate); !errors.Is(err, ErrDomainProviderConflict) || creates != 0 {
 		t.Fatalf("wrote outside isolated zone: %v", err)
 	}
 	zoneMismatch = false
 	rejectResponse = true
-	if _, _, err := provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); !errors.Is(err, ErrDomainProviderUnavailable) {
+	if _, _, err := provider.Ensure(t.Context(), domain, beginCreate); !errors.Is(err, ErrDomainProviderUnavailable) {
 		t.Fatalf("lost response: %v", err)
 	}
 	rejectResponse = false
-	if _, _, err := provider.Ensure(t.Context(), domain, true); !errors.Is(err, ErrDomainProviderConflict) || creates != 1 {
+	if _, _, err := provider.Ensure(t.Context(), domain, beginCreate); !errors.Is(err, ErrDomainProviderConflict) || creates != 1 {
 		t.Fatalf("adopted matching unbound hostname: %v", err)
 	}
 	if err := provider.ValidateRecovery(t.Context(), domain, uuid.NewString()); !errors.Is(err, ErrDomainProviderConflict) {
@@ -143,7 +149,7 @@ func TestCloudflareDomainProvisioningRequiresExplicitRecovery(t *testing.T) {
 	host.Hostname = originalHostname
 	at := time.Now().UTC()
 	domain.Details.CreateStartedAt = &at
-	if _, _, err := provider.Ensure(t.Context(), domain, false); !errors.Is(err, ErrDomainProviderConflict) || creates != 1 {
+	if _, _, err := provider.Ensure(t.Context(), domain, nil); !errors.Is(err, ErrDomainProviderConflict) || creates != 1 {
 		t.Fatalf("repeated ambiguous create: %v", err)
 	}
 	if err := provider.Remove(t.Context(), domain); !errors.Is(err, ErrDomainProviderConflict) || deletes != 0 {
@@ -153,33 +159,33 @@ func TestCloudflareDomainProvisioningRequiresExplicitRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	domain.Details.ProviderID = host.ID
-	details, ready, err := provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil)
+	details, ready, err := provider.Ensure(t.Context(), domain, beginCreate)
 	if err != nil || ready || creates != 1 || len(details.Records) != 1 || details.Records[0].Type != "TXT" || appCreates != 0 {
 		t.Fatalf("pending recovery: %+v %v %v", details, ready, err)
 	}
 	domain.Details = details
 	host.SSL.Status = "validation_timed_out"
-	details, ready, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil)
+	details, ready, err = provider.Ensure(t.Context(), domain, beginCreate)
 	if err != nil || ready || patches != 1 || details.ValidationRetriedAt == nil {
 		t.Fatalf("validation retry: %+v %v", details, err)
 	}
 	domain.Details = details
 	host.SSL.Status = "validation_timed_out"
-	if _, _, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); err != nil || patches != 1 {
+	if _, _, err = provider.Ensure(t.Context(), domain, beginCreate); err != nil || patches != 1 {
 		t.Fatalf("validation retry storm: %d %v", patches, err)
 	}
 	host.Status = "active"
 	host.SSL.Status = "active"
-	details, ready, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil)
+	details, ready, err = provider.Ensure(t.Context(), domain, beginCreate)
 	if err != nil || !ready || details.AccessAUD == "" || appCreates != 1 {
 		t.Fatalf("ready: %+v %v %v", details, ready, err)
 	}
 	// Simulate loss of the API/SQL receipt for Access creation too.
-	if _, ready, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); err != nil || !ready || appCreates != 1 {
+	if _, ready, err = provider.Ensure(t.Context(), domain, beginCreate); err != nil || !ready || appCreates != 1 {
 		t.Fatalf("Access recovery: %v %v", ready, err)
 	}
 	host.Metadata = map[string]string{"gregale_domain_id": "foreign"}
-	if _, _, err = provider.Ensure(t.Context(), domain, domain.Details.CreateStartedAt == nil); !errors.Is(err, ErrDomainProviderConflict) {
+	if _, _, err = provider.Ensure(t.Context(), domain, beginCreate); !errors.Is(err, ErrDomainProviderConflict) {
 		t.Fatalf("adopted foreign hostname: %v", err)
 	}
 	if err = provider.Remove(t.Context(), domain); !errors.Is(err, ErrDomainProviderConflict) || deletes != 0 {
@@ -192,5 +198,74 @@ func TestCloudflareDomainProvisioningRequiresExplicitRecovery(t *testing.T) {
 	}
 	if err = provider.Remove(t.Context(), domain); err != nil || deletes != 2 {
 		t.Fatalf("cleanup retry: %v", err)
+	}
+}
+
+func TestCloudflareDomainPreflightFailuresDoNotStartCreate(t *testing.T) {
+	for _, stage := range []string{"zone", "fallback", "hostname list", "fence"} {
+		t.Run(stage, func(t *testing.T) {
+			provider, err := NewCloudflareDomains(strings.Repeat("a", 32), strings.Repeat("b", 32), uuid.NewString(), "test-secret", "customers.hosting.example")
+			if err != nil {
+				t.Fatal(err)
+			}
+			domain := api.HostingDomain{ID: uuid.NewString(), Hostname: "portal.customer.example", Details: api.HostingDomainDetails{TLSStatus: "pending"}}
+			failed, creates, fences := true, 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				response := func(result any) { _ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": result}) }
+				if r.Method == http.MethodPost {
+					creates++
+					if domain.Details.CreateStartedAt == nil {
+						t.Error("POST preceded durable fence")
+					}
+					response(map[string]any{"id": uuid.NewString(), "hostname": domain.Hostname, "status": "pending", "ssl": map[string]string{"method": "txt", "type": "dv", "status": "pending_validation"}})
+					return
+				}
+				switch r.URL.Path {
+				case "/zones/" + provider.zone:
+					if failed && stage == "zone" {
+						w.WriteHeader(503)
+						return
+					}
+					response(map[string]any{"name": "hosting.example", "account": map[string]string{"id": provider.account}})
+				case provider.hostPath() + "/fallback_origin":
+					if failed && stage == "fallback" {
+						w.WriteHeader(503)
+						return
+					}
+					response(map[string]string{"origin": provider.target, "status": "active"})
+				case provider.hostPath():
+					if failed && stage == "hostname list" {
+						w.WriteHeader(503)
+						return
+					}
+					response([]any{})
+				default:
+					t.Error("unexpected provider read", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer server.Close()
+			provider.base, provider.client = server.URL, server.Client()
+			begin := func(context.Context) (api.HostingDomainDetails, error) {
+				if failed && stage == "fence" {
+					return domain.Details, errors.New("lease changed")
+				}
+				fences++
+				at := time.Now().UTC()
+				domain.Details.CreateStartedAt = &at
+				return domain.Details, nil
+			}
+			if _, _, err := provider.Ensure(t.Context(), domain, begin); err == nil {
+				t.Fatal("missing preflight/fence failure")
+			}
+			if creates != 0 || fences != 0 {
+				t.Fatalf("failed preflight created/fenced: %d/%d", creates, fences)
+			}
+			failed = false
+			details, ready, err := provider.Ensure(t.Context(), domain, begin)
+			if err != nil || ready || details.ProviderID == "" || creates != 1 || fences != 1 {
+				t.Fatalf("retry: %+v ready=%v err=%v creates=%d fences=%d", details, ready, err, creates, fences)
+			}
+		})
 	}
 }
