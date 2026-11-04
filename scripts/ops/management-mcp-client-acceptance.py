@@ -98,7 +98,16 @@ def preflight_call(rpc, thread_id):
     if not isinstance(value, dict):
         value = json.loads(next(item["text"] for item in result["content"] if item["type"]=="text"))
     checks = value.get("checks", {})
-    if value.get("scope") != "default" or checks.get("api_write_authorization", {}).get("status") != "unknown" or checks.get("write_consent", {}).get("status") != "blocked":
+    authorization, admission = "unknown", "unknown"
+    preview = value.get("authorization_preview")
+    if preview is not None:
+        if not isinstance(preview, dict) or preview.get("schema_version") != 1 or preview.get("app_id") != value.get("app_id") or preview.get("scope") != "default" or preview.get("operation") != "deploy":
+            raise RuntimeError("Codex preflight lost the native authorization identity")
+        authorization = {"allowed": "passed", "blocked": "blocked", "unknown": "unknown"}.get(preview.get("authorization"))
+        admission = {"unknown": "unknown", "blocked": "blocked"}.get(preview.get("admission"))
+        if authorization is None or admission is None or preview.get("checks", {}).get("quota", {}).get("status") != "unknown":
+            raise RuntimeError("Codex preflight inferred request admission from native authorization")
+    if value.get("scope") != "default" or checks.get("api_write_authorization", {}).get("status") != authorization or checks.get("native_admission", {}).get("status") != admission or checks.get("write_consent", {}).get("status") != "blocked":
         raise RuntimeError("Codex preflight confused read access with write admission")
 
 

@@ -157,6 +157,25 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: account + "-app", Slug: "alpha", Type: "app"})
 		case "/v1/apps/alpha/release-review":
 			_ = json.NewEncoder(w).Encode(api.AppReleaseReview{AppID: account + "-app", ConfigurationHash: strings.Repeat("a", 64), LatestDeploymentID: "release-base", ServingDeploymentIDs: []string{"release-base"}})
+		case "/v1/apps/alpha/operation-preview":
+			operation := req.URL.Query().Get("operation")
+			if req.Method != http.MethodGet || !api.ValidAppOperation(operation) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			preview := nativePreviewFixture(operation)
+			preview.AppID = account + "-app"
+			preview.Checks["account"] = api.AppOperationCheck{Status: "allowed", Reason: "active_account"}
+			preview.Checks["capability"] = api.AppOperationCheck{Status: "allowed", Reason: "fixture_capability_available"}
+			preview.Checks["environment"] = api.AppOperationCheck{Status: "allowed", Reason: "direct_writes_allowed"}
+			if scope := req.URL.Query().Get("environment"); scope != "" {
+				preview.Scope, preview.ProjectID, preview.EnvironmentID = scope, account+"-project", account+"-"+scope
+				if scope == "production" {
+					preview.Admission = "blocked"
+					preview.Checks["environment"] = api.AppOperationCheck{Status: "blocked", Reason: "protected_environment_requires_promotion"}
+				}
+			}
+			_ = json.NewEncoder(w).Encode(preview)
 		case "/v1/apps/alpha/health":
 			_ = json.NewEncoder(w).Encode(api.AppHealthResponse{AppID: account + "-app", Scope: "default", ServingDeploymentIDs: []string{"release-base"}, LatestDeploymentID: "release-base"})
 		default:
