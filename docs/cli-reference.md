@@ -4798,7 +4798,7 @@ Read, guard or recover scaling configuration; prints JSON
 | `--expected-environment-id <UUID>` | immutable environment UUID required for named writes |  |
 | `--ram <MB>` | RAM in MB |  |
 | `--cpu-millicores <MILLICORES>` | CPU allowance |  |
-| `--max-concurrency <COUNT>` | maximum instance count |  |
+| `--max-concurrency <COUNT>` | maximum running instances (instance cap) |  |
 | `--min <COUNT>` | minimum warm instance count, including zero |  |
 
 Examples:
@@ -8346,7 +8346,7 @@ Create or inspect durable object deletions
 
 #### bucket deletion create
 
-Delete current data or an owned version; reuse the request UUID to retry
+Delete current data or an owned version; reuse the request UUID
 
 `gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
 
