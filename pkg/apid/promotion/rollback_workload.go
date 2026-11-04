@@ -2,6 +2,7 @@ package promotion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/apid/durable"
