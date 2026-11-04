@@ -18,3 +18,8 @@ func TestPgEnvironmentBranchCaptures(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	environmentBranchCaptures(t, s)
 }
+
+func TestPgEnvironmentBranchEgress(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	environmentBranchEgress(t, s)
+}
