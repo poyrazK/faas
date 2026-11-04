@@ -1,7 +1,6 @@
 package state_test
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -30,7 +29,7 @@ func TestObjectNotificationsKeepCompanyBoundaryPG(t *testing.T) {
 }
 
 func objectNotificationsKeepCompanyBoundary(t *testing.T, st accountingStore) {
-	ctx := context.Background()
+	ctx := t.Context()
 	owner, err := st.CreateAccount(ctx, "notify-owner-"+uuid.NewString()+"@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +61,7 @@ func objectNotificationsKeepCompanyBoundary(t *testing.T, st accountingStore) {
 	b := readyCompanyBucket(t, st, creator.ID, company.ID)
 
 	rule := func(id, appID string) api.ObjectNotificationRule {
-		return api.ObjectNotificationRule{ID: id, Destination: "arn:gregale:lambda:" + b.Region + ":" + creator.ID + ":function:" + appID, Events: []string{"s3:ObjectCreated:Put"}}
+		return api.ObjectNotificationRule{ID: id, Destination: "arn:gregale:lambda:" + b.Region + ":" + uuid.MustParse(creator.ID).String() + ":function:" + appID, Events: []string{"s3:ObjectCreated:Put"}}
 	}
 	upload := func(key string) []state.PublishedEventRecipient {
 		t.Helper()
@@ -118,7 +117,7 @@ func objectNotificationsKeepCompanyBoundary(t *testing.T, st accountingStore) {
 // readyCompanyBucket is seedAccounting for a bucket on the given app.
 func readyCompanyBucket(t *testing.T, st accountingStore, accountID, appID string) state.ObjectBucket {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	b, err := st.ReserveObjectBucket(ctx, state.ObjectBucket{ID: uuid.NewString(), AccountID: accountID, AppID: appID, Name: "assets", Scope: "default", Region: "us-east-1", BackendID: "external", BackendFingerprint: strings.Repeat("a", 64), PhysicalName: "gregale-" + uuid.NewString()}, 10)
 	if err != nil {
 		t.Fatal(err)
