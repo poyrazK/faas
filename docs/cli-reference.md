@@ -15695,7 +15695,7 @@ List recent request telemetry
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--release <UUID>` | deployment filter (also --deployment-id) |  |
 | `--status <N>` | exact HTTP status (100..599) |  |
 | `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
@@ -15714,7 +15714,7 @@ Export metadata-only request telemetry
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--format <FORMAT>` | export format (default ndjson) | one of `ndjson` · `csv` |
 | `--limit <N>` | maximum exported rows (1..10000) |  |
 | `--output <PATH>` | destination file; - writes stdout |  |
@@ -15728,7 +15728,7 @@ Watch new or changed telemetry rows
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--release <UUID>` | deployment filter (also --deployment-id) |  |
 | `--status <N>` | exact HTTP status (100..599) |  |
 | `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
@@ -15777,7 +15777,7 @@ Inspect one retained request, or the latest one
 | Flag | Meaning | |
 |---|---|---|
 | `--since <DURATION>` | lookback window |  |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--release <UUID>` | deployment filter (also --deployment-id) |  |
 | `--status <N>` | exact HTTP status (100..599) |  |
 | `--cold-boot <BOOL>` | cold-start filter | one of `true` · `false` |
@@ -15965,7 +15965,7 @@ Per-route deployment-vs-deployment compare
 |---|---|---|
 | `--source <ID>` | source deployment ID | required |
 | `--mirror <ID>` | comparison deployment ID | required |
-| `--route <PATH>` | exact route filter |  |
+| `--route <PATH>` | route filter: /path matches every method |  |
 | `--since <DURATION>` | lookback window |  |
 | `--until <RFC3339>` | end of comparison window (RFC3339) |  |
 
