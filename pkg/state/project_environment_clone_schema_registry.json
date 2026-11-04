@@ -3155,6 +3155,7 @@
       "id",
       "kind",
       "log_path",
+      "not_before",
       "source_bytes",
       "started_at",
       "status"

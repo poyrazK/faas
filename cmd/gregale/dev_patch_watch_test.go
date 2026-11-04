@@ -74,3 +74,58 @@ func TestDevPatchPhaseInSummaryAndHistory(t *testing.T) {
 		t.Fatalf("failed history note = %q", note)
 	}
 }
+
+// adr: 20261021221906 — a sync whose build waits behind its live patch is live when
+// the patch applies, hands over to the build when it fails, stays done when
+// no instance acknowledged it in time, and yields to a newer sync.
+func TestFinishDeferredDevSync(t *testing.T) {
+	deferred := time.Now().Add(time.Minute)
+	dep := api.DeploymentResponse{ID: "d-deferred", DevPatch: &api.DevPatchPreview{Eligible: true, ChangedPaths: 1, Generation: 7, BuildDeferredUntil: &deferred}}
+	applied := time.Now()
+	statusOf := func(state, code string) func(context.Context, int64) (api.DevPatchStatusResponse, error) {
+		return func(context.Context, int64) (api.DevPatchStatusResponse, error) {
+			status := api.DevPatchStatusResponse{Generation: 7, State: state, ErrorCode: code}
+			if state != api.DevPatchStatePending {
+				status.AppliedAt = &applied
+			}
+			return status, nil
+		}
+	}
+	delivered := 0
+	record := func(api.DevPatchStatusResponse, time.Time) time.Duration { delivered++; return 40 * time.Millisecond }
+	var out bytes.Buffer
+	prevOut, prevErr := *main.OsStdout, *main.OsStderr
+	*main.OsStdout, *main.OsStderr = &out, &out
+	t.Cleanup(func() { *main.OsStdout, *main.OsStderr = prevOut, prevErr })
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name        string
+		status      func(context.Context, int64) (api.DevPatchStatusResponse, error)
+		ctx         func() context.Context
+		wantCode    int
+		wantHandled bool
+		wantOutput  string
+	}{
+		{name: "applied", status: statusOf(api.DevPatchStateApplied, ""), wantHandled: true, wantOutput: "full build runs after you stop saving"},
+		{name: "failed", status: statusOf(api.DevPatchStateFailed, "apply_failed"), wantOutput: "did not apply"},
+		{name: "no instance yet", status: statusOf(api.DevPatchStatePending, ""), wantHandled: true, wantOutput: "applies when the environment next starts"},
+		{name: "superseded", status: statusOf(api.DevPatchStatePending, ""), wantCode: 1, wantHandled: true, ctx: func() context.Context {
+			cancelled, cancel := context.WithCancel(ctx)
+			cancel()
+			return cancelled
+		}},
+	} {
+		out.Reset()
+		runCtx := ctx
+		if tc.ctx != nil {
+			runCtx = tc.ctx()
+		}
+		code, handled := main.FinishDeferredDevSync(runCtx, dep, tc.status, time.Millisecond, 20*time.Millisecond, record)
+		if code != tc.wantCode || handled != tc.wantHandled || !strings.Contains(out.String(), tc.wantOutput) {
+			t.Fatalf("%s: code=%d handled=%t output %q", tc.name, code, handled, out.String())
+		}
+	}
+	if delivered != 2 {
+		t.Fatalf("patch delivery recorded %d times, want 2 (applied and failed)", delivered)
+	}
+}

@@ -142,7 +142,9 @@ func TestDevLoopMetal(t *testing.T) {
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.All, "FAAS_DEV_PATCH_DELIVERY=1")
+	// ADR-20261021221906 defers a live-patched sync's build; a short window keeps the
+	// second build inside the test's timeouts.
+	h := e2etest.Start(t, pool, e2etest.All, "FAAS_DEV_PATCH_DELIVERY=1", "FAAS_DEV_BUILD_COALESCE_SECONDS=20")
 	defer h.DumpLogs(t)
 	ctx := context.Background()
 	key := h.SeedAccount(ctx, api.PlanPro)

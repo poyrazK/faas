@@ -109,6 +109,20 @@ type ApplyResult struct {
 // are written; each one is staged beside its target and renamed into place.
 // Deleting a path that is missing or is a directory is a no-op.
 func Apply(dir string, archive []byte, deleted []string, maxBytes int64) (ApplyResult, error) {
+	return apply(dir, archive, deleted, maxBytes, false)
+}
+
+// ApplyInPlace is Apply for a development server that reloads edits itself
+// (ADR-1170 watch mode). It rewrites an existing regular file through its own
+// inode instead of renaming a staged copy over it: `node --watch` watches the
+// inode it first saw, so after one rename it never reports a later edit. New
+// files, and targets that are not single-link regular files, are still staged
+// and renamed into place.
+func ApplyInPlace(dir string, archive []byte, deleted []string, maxBytes int64) (ApplyResult, error) {
+	return apply(dir, archive, deleted, maxBytes, true)
+}
+
+func apply(dir string, archive []byte, deleted []string, maxBytes int64, inPlace bool) (ApplyResult, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return ApplyResult{}, fmt.Errorf("devpatch: open %s: %w", dir, err)
@@ -136,8 +150,17 @@ func Apply(dir string, archive []byte, deleted []string, maxBytes int64) (ApplyR
 		if result.Bytes+hdr.Size > maxBytes {
 			return result, fmt.Errorf("devpatch: patch exceeds %d bytes", maxBytes)
 		}
-		if err := writeFile(root, name, tr, hdr.Size, fs.FileMode(maskMode(hdr.Mode))); err != nil {
-			return result, err
+		mode := fs.FileMode(maskMode(hdr.Mode))
+		written := false
+		if inPlace {
+			if written, err = overwriteFile(root, name, tr, hdr.Size, mode); err != nil {
+				return result, err
+			}
+		}
+		if !written {
+			if err := writeFile(root, name, tr, hdr.Size, mode); err != nil {
+				return result, err
+			}
 		}
 		result.Written++
 		result.Bytes += hdr.Size
@@ -188,6 +211,42 @@ func writeFile(root *os.Root, name string, content io.Reader, size int64, mode f
 		return fmt.Errorf("devpatch: replace %s: %w", name, err)
 	}
 	return nil
+}
+
+// overwriteFile truncates and rewrites name through its existing inode. It
+// reports false without touching anything when name is missing or is not a
+// regular file with a single link (a symlink would redirect the write, and a
+// hard link would change another path too); the caller then stages a copy.
+func overwriteFile(root *os.Root, name string, content io.Reader, size int64, mode fs.FileMode) (bool, error) {
+	info, err := root.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("devpatch: inspect %s: %w", name, err)
+	}
+	if !info.Mode().IsRegular() || !singleLink(info) {
+		return false, nil
+	}
+	// Read the whole entry before truncating, so a short archive cannot leave
+	// the target half written. Apply has already bounded size by maxBytes.
+	body := make([]byte, size)
+	if _, err := io.ReadFull(content, body); err != nil {
+		return false, fmt.Errorf("devpatch: read %s: %w", name, err)
+	}
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return false, fmt.Errorf("devpatch: open %s: %w", name, err)
+	}
+	_, writeErr := f.Write(body)
+	closeErr := f.Close()
+	if writeErr != nil || closeErr != nil {
+		return false, fmt.Errorf("devpatch: write %s: %w", name, errors.Join(writeErr, closeErr))
+	}
+	if err := root.Chmod(name, mode); err != nil {
+		return false, fmt.Errorf("devpatch: chmod %s: %w", name, err)
+	}
+	return true, nil
 }
 
 // safeRelative accepts only clean, relative, non-empty paths that stay

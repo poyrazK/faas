@@ -7,19 +7,14 @@ import (
 	"encoding/json"
 	"log/slog"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/devpatch"
 )
 
 // startDevPatchLoop polls vmmd for developer live patches for the main
 // workload (ADR-740). Sidecar workloads are never patched.
 func startDevPatchLoop(ctx context.Context, sup *Supervisor, log *slog.Logger) {
 	go runDevPatchLoop(ctx, log, devPatchIO{
-		fetch: fetchDevPatch,
-		apply: func(dir string, archive []byte, deleted []string) (devpatch.ApplyResult, error) {
-			return devpatch.Apply(dir, archive, deleted, api.DevPatchMaxBytes)
-		},
+		fetch:   fetchDevPatch,
+		apply:   devPatchApply,
 		restart: devPatchRestart(sup.RequestRestart),
 		sleep:   sleepContext,
 		ack: func(generation, applyMS int64, errorCode string) {

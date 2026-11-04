@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/devpatch"
 )
 
 // Developer watch mode (ADR-1170), builder side. A watch-mode developer build
@@ -146,4 +147,14 @@ func devPatchRestart(restart func() error) func() error {
 		}
 		return restart()
 	}
+}
+
+// devPatchApply writes a live patch. In watch mode it rewrites files in place,
+// because the development server's watcher (node --watch) loses a file once a
+// patch has renamed a new inode over it.
+func devPatchApply(dir string, archive []byte, deleted []string) (devpatch.ApplyResult, error) {
+	if devWatchActive.Load() {
+		return devpatch.ApplyInPlace(dir, archive, deleted, api.DevPatchMaxBytes)
+	}
+	return devpatch.Apply(dir, archive, deleted, api.DevPatchMaxBytes)
 }

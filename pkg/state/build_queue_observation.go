@@ -11,7 +11,9 @@ import (
 
 // BuildQueueSnapshot describes queued rows from one database snapshot (or one
 // MemStore lock). An empty queue has a zero OldestEnqueuedAt. Running and
-// terminal builds are excluded; requeue preserves the original enqueue time.
+// terminal builds are excluded, and so are deferred builds that are not due
+// yet (ADR-20261021221906); a due one waits from its not_before. Requeue preserves the
+// original enqueue time.
 type BuildQueueSnapshot struct {
 	Queued           int64
 	OldestEnqueuedAt time.Time
@@ -51,13 +53,19 @@ func (m *MemStore) QueuedBuildsSnapshot(ctx context.Context) (BuildQueueSnapshot
 		return BuildQueueSnapshot{}, err
 	}
 	var out BuildQueueSnapshot
-	for _, b := range m.builds {
-		if b.Status != BuildQueued {
+	now := time.Now()
+	for id, b := range m.builds {
+		if b.Status != BuildQueued || !m.buildDueLocked(id, now) {
 			continue
 		}
+		// A deferred build has been waiting only since it became due.
+		waitingSince := b.EnqueuedAt
+		if notBefore, deferred := m.buildNotBefore[id]; deferred {
+			waitingSince = notBefore
+		}
 		out.Queued++
-		if out.Queued == 1 || b.EnqueuedAt.Before(out.OldestEnqueuedAt) {
-			out.OldestEnqueuedAt = b.EnqueuedAt
+		if out.Queued == 1 || waitingSince.Before(out.OldestEnqueuedAt) {
+			out.OldestEnqueuedAt = waitingSince
 		}
 	}
 	return out, nil

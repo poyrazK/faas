@@ -102,7 +102,9 @@ One difference: for a `watch: true` build, guest-init does **not** restart
 the workload after applying a patch. The development server's own file watcher
 picks up the change. guest-init acknowledges the generation once the files are
 written. The CLI's `patch` phase then measures save-to-written, and the
-framework's reload follows within its own compile time.
+framework's reload follows within its own compile time. A watch-mode patch
+also rewrites an existing file in place rather than renaming a staged copy
+over it (amendment 1).
 
 A change to a rebuild input (dependencies, lockfile, `railpack.json`,
 `gregale.yaml`) still goes through the developer build, which reinstalls in
@@ -265,3 +267,29 @@ the builder VM. That is the only case that waits for a build.
    (FastAPI) and `flask --app <module>:<app> run --debug` (Flask), found the
    way production inference finds the app object; all three listen on
    localhost and reach the host through the bridge.
+
+## Amendment 1 (2026-10-26): watch-mode patches write files in place
+
+ADR-740 stages each patched file beside its target and renames it into place.
+That suits the restart path: the restarted process reads the new inode, and a
+half-written file is never visible. It breaks watch mode. `node --watch`
+watches the inode it first saw, so after one renamed patch it never reports a
+later edit to the same file. Measured on the test node with Node 22.23.3 (the
+version the builder installs): three renames over `index.js` gave one restart
+(v1 to v2 only); three in-place writes gave three (v2, v3, v4). The metal test
+`TestDevWatchMetal/saves-coalesce-into-one-build` hit it: the second patch was
+acknowledged as applied, and the server kept serving the first patch's body.
+
+Decision: in watch mode guest-init applies patches with
+`devpatch.ApplyInPlace`. It reads each entry fully, then truncates and
+rewrites an existing regular file through its own inode and restores the
+masked mode. New files, symlinks and files with more than one hard link still
+take the staged rename, so a write never follows a link and never changes a
+second path. `os.Root` confinement is unchanged. Apps not in watch mode keep
+ADR-740's staged rename.
+
+Consequence: a write that fails part way (for example a full disk) can leave
+that one file truncated, where the staged rename left it untouched. The
+generation is acknowledged as `apply_failed`, and the next sync republishes
+the whole cumulative patch. Editors that save in place (VS Code's default)
+already expose development servers to the same window.

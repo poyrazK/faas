@@ -1207,6 +1207,16 @@ func TestDeployDevSource_EmitsDeltaMetadataOnDistinctRoute(t *testing.T) {
 	if fields["source_root"] != "apps/api" {
 		t.Fatalf("source_root = %q", fields["source_root"])
 	}
+	if _, ok := fields["dev_source_build_now"]; ok {
+		t.Fatal("dev_source_build_now sent without DevBuildNow")
+	}
+	// ADR-20261021221906: DevBuildNow opts the sync out of build coalescing.
+	if _, err := c.DeployDevSource(context.Background(), "x", bytes.NewReader([]byte("delta")), "delta.tar.gz", "node22", "index.handler", false, "apps/api", DeployAnnotations{DevBuildNow: true}, base, target, nil); err != nil {
+		t.Fatalf("DeployDevSource build now: %v", err)
+	}
+	if fields["dev_source_build_now"] != "true" {
+		t.Fatalf("dev_source_build_now = %q, want true", fields["dev_source_build_now"])
+	}
 }
 
 // TestDeployMultipart_ProblemError: tarball deploy with a too-large

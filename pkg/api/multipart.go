@@ -134,6 +134,9 @@ func newDevSourceMultipartWriter(dst *bytes.Buffer, slug string, dockerfile bool
 			_ = w.WriteField("dev_source_deleted", string(raw))
 		}
 	}
+	if a.DevBuildNow {
+		_ = w.WriteField("dev_source_build_now", "true")
+	}
 	return w
 }
 
@@ -186,6 +189,10 @@ type DeployAnnotations struct {
 	// app-secret surface for credentials.
 	OverrideEnv map[string]string
 	NoTriggers  bool // skip manifest trigger reconciliation
+	// DevBuildNow asks a developer-source sync to build at once instead of
+	// holding its build back behind a live patch (ADR-20261021221906). Ignored by
+	// every other transport.
+	DevBuildNow bool
 }
 
 func normalizeMultipartSourceRoot(raw string) (string, error) {
