@@ -1245,6 +1245,12 @@ type APIKey struct {
 	// account/org API keys leave it empty; authz.LoadApp uses it as an
 	// additional tenant boundary when the principal is app-scoped.
 	AppID string
+	// ProjectLimited and ProjectIDs: an agent or mcp-login key limited to
+	// projects of its organization (ADR-20261104085712). The middleware
+	// stamps them on the principal's copy when it authenticates the key;
+	// stores' key reads leave them unset.
+	ProjectLimited bool
+	ProjectIDs     []string
 	// OrgID is the org the key was minted against (issue #190 / IAM-6,
 	// PR 6). Migration 00127 flips api_keys.org_id from NULL to
 	// NOT NULL after the deterministic personal-org backfill, so every
@@ -7224,6 +7230,10 @@ type CliAuthCode struct {
 	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
 	// approval; "" is the personal one (ADR-20261101225122).
 	OrgID string
+	// ProjectIDs are the projects the sign-in was limited to at approval;
+	// nil is every project (ADR-20261104085712). MemStore only: the Pg
+	// store reads it through CliAuthCodeProjects.
+	ProjectIDs []string
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row

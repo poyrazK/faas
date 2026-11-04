@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -27,6 +27,9 @@ class CreateOrgAPIKeyRequest:
     """Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls
     customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant.
     The legacy and org-scoped key vocabularies remain identical."""
+    projects: list[str] | Unset = UNSET
+    """Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then
+    reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +42,10 @@ class CreateOrgAPIKeyRequest:
                 scopes_item: str = scopes_item_data
                 scopes.append(scopes_item)
 
+        projects: list[str] | Unset = UNSET
+        if not isinstance(self.projects, Unset):
+            projects = self.projects
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -46,6 +53,8 @@ class CreateOrgAPIKeyRequest:
             field_dict["label"] = label
         if scopes is not UNSET:
             field_dict["scopes"] = scopes
+        if projects is not UNSET:
+            field_dict["projects"] = projects
 
         return field_dict
 
@@ -63,9 +72,12 @@ class CreateOrgAPIKeyRequest:
 
                 scopes.append(scopes_item)
 
+        projects = cast(list[str], d.pop("projects", UNSET))
+
         create_org_api_key_request = cls(
             label=label,
             scopes=scopes,
+            projects=projects,
         )
 
         create_org_api_key_request.additional_properties = d

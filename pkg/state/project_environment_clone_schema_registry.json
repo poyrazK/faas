@@ -55,6 +55,15 @@
     "kind": "operational"
   },
   {
+    "table": "api_key_project_limits",
+    "columns": [
+      "created_at",
+      "key_id",
+      "project_ids"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "financial_budget_alert_channel_deliveries",
     "columns": [
       "account_id",
@@ -3571,6 +3580,7 @@
       "device_hash",
       "expires_at",
       "org_id",
+      "project_ids",
       "status",
       "token_hash"
     ],

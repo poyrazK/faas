@@ -17396,6 +17396,11 @@ const (
 	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
 	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
 	PublicEntryTrackedSourcesMax          = 65536
+	// PublicBlockListRefreshInterval is how often vmmd re-reads the
+	// operator's block list (/etc/faas/public-block-list) and adds its
+	// entries to the firewall's block sets: an edit takes effect within
+	// it, and so does an entry a reload by another hand flushed.
+	PublicBlockListRefreshInterval = 30 * time.Second
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one

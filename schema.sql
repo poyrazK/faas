@@ -30459,6 +30459,25 @@ COMMENT ON TABLE public.api_key_agent_clients IS 'ADR-20261030133644 agent clien
 
 
 --
+-- Name: api_key_project_limits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_key_project_limits (
+    key_id uuid NOT NULL,
+    project_ids uuid[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_key_project_limits_project_ids_check CHECK (((cardinality(project_ids) >= 1) AND (cardinality(project_ids) <= 100)))
+);
+
+
+--
+-- Name: TABLE api_key_project_limits; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_key_project_limits IS 'ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.';
+
+
+--
 -- Name: api_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33825,6 +33844,7 @@ CREATE TABLE public.cli_auth_codes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     device_hash bytea,
     org_id uuid,
+    project_ids uuid[],
     CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
 );
 
@@ -58434,6 +58454,14 @@ ALTER TABLE ONLY public.api_consumers
 
 ALTER TABLE ONLY public.api_key_agent_clients
     ADD CONSTRAINT api_key_agent_clients_pkey PRIMARY KEY (key_id);
+
+
+--
+-- Name: api_key_project_limits api_key_project_limits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_project_limits
+    ADD CONSTRAINT api_key_project_limits_pkey PRIMARY KEY (key_id);
 
 
 --
@@ -89212,6 +89240,14 @@ ALTER TABLE ONLY public.api_consumers
 
 ALTER TABLE ONLY public.api_key_agent_clients
     ADD CONSTRAINT api_key_agent_clients_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_key_project_limits api_key_project_limits_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_project_limits
+    ADD CONSTRAINT api_key_project_limits_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
@@ -50,6 +51,10 @@ func ValidateScan(r *http.Request, store Store, account state.Account, slug stri
 // Visible filters creator-scoped inventories, including dashboard lists, after
 // offboarding. Membership and key binding are re-read on each request.
 func Visible(ctx context.Context, store Store, actor state.Account, key *state.APIKey, project state.Project) (bool, error) {
+	// A key limited to projects sees only those (ADR-20261104085712).
+	if key != nil && key.ProjectLimited && !slices.Contains(key.ProjectIDs, project.ID) {
+		return false, nil
+	}
 	if project.OrgID == "" {
 		if project.AccountID != actor.ID || key != nil && key.AppID != "" {
 			return false, nil
