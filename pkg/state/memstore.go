@@ -25888,6 +25888,10 @@ func (m *MemStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRu
 	if p.Action != nil {
 		r.Action = *p.Action
 	}
+	// The preset column follows the pgstore update (ADR-129 D1).
+	if p.CorsPresetID != nil {
+		r.CorsPresetID = *p.CorsPresetID
+	}
 	// ValidateMode nil-skip mirrors the pgstore coalesce pattern.
 	// The wire layer (cmd/apid/handlers_edge_rules.go) coerces
 	// '' to 'block' before the request reaches here, so a

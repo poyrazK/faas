@@ -708,6 +708,9 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				AllowOrigins: a.AllowOrigins, AllowMethods: a.AllowMethods,
 				AllowHeaders: a.AllowHeaders, ExposeHeaders: a.ExposeHeaders,
 				AllowCredentials: a.AllowCredentials, MaxAgeSeconds: a.MaxAgeSeconds,
+				// The preset reference, which used to be dropped (ADR-091
+				// amendment 2026-11-04).
+				CorsPresetID: corsPresetRef(kind, raw),
 			}
 		}
 	case state.EdgeRuleKindJWT:
@@ -990,6 +993,12 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 	if req.Action != nil {
 		decoded := ActionFromBody(string(kind), *req.Action)
 		out.Action = &decoded
+		if kind == state.EdgeRuleKindCORSA {
+			// A replaced cors action sets or clears the preset column
+			// with it (ADR-091 amendment 2026-11-04).
+			preset := corsPresetRef(string(kind), *req.Action)
+			out.CorsPresetID = &preset
+		}
 	}
 	// ValidateMode (ADR-128 D1): top-level wire field wins.
 	// If absent (nil pointer) AND Action carries a deprecated
