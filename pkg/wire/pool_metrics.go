@@ -38,3 +38,16 @@ func RegisterPoolMetrics(ops *OpsMetrics, pool *pgxpool.Pool) {
 	}
 	_ = reg.Register(db.NewPoolCollector(ops.MetricPrefix(), pool))
 }
+
+// RegisterNamedPoolMetrics exports a daemon's second pool as
+// <prefix>_<name>_db_pool_*, e.g. apid_background_db_pool_conns.
+func RegisterNamedPoolMetrics(ops *OpsMetrics, name string, pool *pgxpool.Pool) {
+	if ops == nil || pool == nil {
+		return
+	}
+	reg := ops.Registry()
+	if reg == nil {
+		return
+	}
+	_ = reg.Register(db.NewPoolCollector(ops.MetricPrefix()+"_"+name, pool))
+}

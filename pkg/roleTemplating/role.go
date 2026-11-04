@@ -59,6 +59,10 @@ const (
 	// (the daemons already own the canonical enum). The invariant
 	// test in role_test.go asserts these strings stay byte-equal.
 	RoleSingleBox Role = "single-box"
+	// RoleDatabase is a native managed-database node (ADR-1027), where only
+	// vmmd runs. It mirrors pkg/role.RoleDatabase; this package does not
+	// template database boxes, so it is absent from AllowedRoles.
+	RoleDatabase Role = "database"
 )
 
 // AllowedRoles is the canonical list of role values that
@@ -134,7 +138,7 @@ type daemonInfo struct {
 var daemonInfoTable = map[string]daemonInfo{
 	"vmmd": {
 		EnvKey: "FAAS_VMMD_ROLE",
-		Allows: map[Role]bool{RoleSingleBox: true, RoleComputeOnly: true},
+		Allows: map[Role]bool{RoleSingleBox: true, RoleComputeOnly: true, RoleDatabase: true},
 	},
 	"apid": {
 		EnvKey: "FAAS_APID_ROLE",

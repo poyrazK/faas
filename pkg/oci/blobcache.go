@@ -22,11 +22,18 @@ import (
 // the cache owns and closes. The returned reader is always an independent
 // reader owned by the caller.
 //
-// The digest is the cache key. OCI blobs are content-addressed, so a digest
-// is safe to share between repositories and private-registry credentials do
-// not become part of the cache key.
+// Open uses the shared pool, keyed by digest alone: OCI blobs are
+// content-addressed, so a digest is safe to share between repositories, but
+// only for bytes anyone could have pulled. Only anonymous pulls fill it.
+//
+// OpenScoped serves a pull made with registry credentials. Its blobs are kept
+// under scope (the registry and repository) and never enter the shared pool,
+// so a tenant who learns a private layer's digest cannot read it by listing
+// it in a manifest on a registry of its own that answers every HEAD (H77);
+// a shared, public copy of the same digest may still be served.
 type BlobCache interface {
 	Open(ctx context.Context, digest string, fetch func(context.Context) (io.ReadCloser, error)) (io.ReadCloser, error)
+	OpenScoped(ctx context.Context, scope, digest string, fetch func(context.Context) (io.ReadCloser, error)) (io.ReadCloser, error)
 }
 
 // BlobCacheObserver receives bounded cache lifecycle events. Implementations
@@ -128,14 +135,42 @@ func (c *DiskBlobCache) Open(ctx context.Context, digest string, fetch func(cont
 	if err := validateDigest(digest); err != nil {
 		return nil, err
 	}
+	return c.openAt(ctx, digest, c.blobPath(digest), digest, fetch)
+}
 
-	path := c.blobPath(digest)
+// OpenScoped is Open for a pull made with registry credentials (see
+// BlobCache). A copy in the shared pool is served, since it was pulled
+// anonymously; otherwise the blob is fetched and kept under scope only.
+func (c *DiskBlobCache) OpenScoped(ctx context.Context, scope, digest string, fetch func(context.Context) (io.ReadCloser, error)) (io.ReadCloser, error) {
+	if scope == "" {
+		return c.Open(ctx, digest, fetch)
+	}
+	if fetch == nil {
+		return nil, errors.New("oci: blob cache: nil fetcher")
+	}
+	if c == nil {
+		return fetch(ctx)
+	}
+	if err := validateDigest(digest); err != nil {
+		return nil, err
+	}
+	if f, ok := c.openCached(c.blobPath(digest)); ok {
+		c.notifyHit()
+		return f, nil
+	}
+	path := c.scopedBlobPath(scope, digest)
+	return c.openAt(ctx, path, path, digest, fetch)
+}
+
+// openAt serves the blob at path, fetching and installing it on a miss.
+// Concurrent misses with the same flight key share one fetch.
+func (c *DiskBlobCache) openAt(ctx context.Context, flight, path, digest string, fetch func(context.Context) (io.ReadCloser, error)) (io.ReadCloser, error) {
 	if f, ok := c.openCached(path); ok {
 		c.notifyHit()
 		return f, nil
 	}
 
-	result := c.flights.DoChan(digest, func() (any, error) {
+	result := c.flights.DoChan(flight, func() (any, error) {
 		// Another caller may have installed the entry between the initial
 		// check and acquiring the singleflight slot.
 		if c.hasCached(path) {
@@ -190,6 +225,16 @@ func (c *DiskBlobCache) Open(ctx context.Context, digest string, fetch func(cont
 func (c *DiskBlobCache) blobPath(digest string) string {
 	hexDigest := strings.TrimPrefix(digest, digestAlgo)
 	return filepath.Join(c.root, hexDigest[:2], hexDigest[2:])
+}
+
+// scopedBlobPath places a credentialed pull's blob under a directory named
+// for its scope. Shared entries sit in two-hex-digit directories, so the
+// "scoped" directory cannot collide with them, and the budget sweep walks
+// both.
+func (c *DiskBlobCache) scopedBlobPath(scope, digest string) string {
+	sum := sha256.Sum256([]byte(scope))
+	hexDigest := strings.TrimPrefix(digest, digestAlgo)
+	return filepath.Join(c.root, "scoped", hex.EncodeToString(sum[:16]), hexDigest[:2], hexDigest[2:])
 }
 
 func (c *DiskBlobCache) openCached(path string) (io.ReadCloser, bool) {

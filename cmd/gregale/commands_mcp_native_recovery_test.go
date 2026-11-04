@@ -19,6 +19,7 @@ import (
 )
 
 func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
+	t.Setenv("MCP_TASK_NAMESPACE", mcpNativeTestNamespace)
 	original := (*main.McpNativeCheckWorkers)
 	defer func() { (*main.McpNativeCheckWorkers) = original }()
 	for _, tc := range []struct {
@@ -70,9 +71,17 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				}
 				json.NewDecoder(r.Body).Decode(&request)
 				w.Header().Set("Content-Type", "application/json")
-				if request.Method == "server/discover" {
+				w.Header().Set("MCP-Protocol-Version", mcphosting.ProtocolVersion)
+				switch request.Method {
+				case "initialize":
+					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":%q,"capabilities":{"tools":{}}}}`, request.ID, mcphosting.ProtocolVersion)
+				case "notifications/initialized":
+					w.WriteHeader(http.StatusAccepted)
+				case "ping":
+					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{}}`, request.ID)
+				case "server/discover":
 					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":["%s"],"capabilities":{"tools":{}}}}`, request.ID, mcphosting.ProtocolVersion)
-				} else {
+				default:
 					fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[]}}`, request.ID)
 				}
 			}))
@@ -85,6 +94,10 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 					json.NewEncoder(w).Encode(api.DeploymentListResponse{Items: []api.DeploymentResponse{{ID: current, AppID: "web-id", Status: main.StatusLive, TrafficPercent: 100}}})
 				case "/v1/apps/web":
 					json.NewEncoder(w).Encode(api.AppResponse{ID: "web-id", Slug: "web", URL: endpoint.URL, StreamingEnabled: true, PublicAuth: api.PublicAuthStatus{Mode: api.AppPublicAuthModeOpen}})
+				case "/v1/apps/web/instances":
+					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "stable-instance", DeploymentID: "stable", State: "running"}})
+				case "/v1/apps/web/deployments/stable/instances/stable-instance/mcp-probe":
+					writeMCPVerificationProbe(t, w, r, "web-id", "stable", "stable-instance")
 				case "/v1/deployments/stable":
 					traffic := 0
 					if current == "stable" {
@@ -94,7 +107,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				case "/v1/deployments/stable/url":
 					json.NewEncoder(w).Encode(api.DeploymentPreviewURL{Alive: true, URL: endpoint.URL})
 				case "/v1/apps/observer":
-					json.NewEncoder(w).Encode(api.AppResponse{ID: "obs", WorkloadClass: "worker", Manifest: api.AppManifest{WorkerReplicas: &api.WorkerScaling{Min: 1}}})
+					json.NewEncoder(w).Encode(api.AppResponse{ID: "obs", WorkloadClass: "worker", Manifest: api.AppManifest{WorkerReplicas: &api.WorkerScaling{Min: 1}, Env: mcpNativeObserverFixtureEnv()}})
 				case "/v1/apps/observer/instances":
 					json.NewEncoder(w).Encode([]api.InstanceResponse{{ID: "observer", State: "running"}})
 				case "/v1/apps/metrics/custom-metrics":

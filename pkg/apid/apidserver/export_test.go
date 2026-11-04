@@ -31,6 +31,7 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
+	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
@@ -46,18 +47,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/oidcrepo"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -119,6 +123,9 @@ type PendingHostnameRow = pendingHostnameRow
 type PgHandlerEnv = pgHandlerEnv
 type PlanCron = planCron
 type PlanTokenWire = planTokenWire
+
+var CachedProjectApplyFields = cachedProjectApplyFields
+
 type ProjectEnvironmentBindingClone = projectEnvironmentBindingClone
 type PrometheusTargetGroup = prometheusTargetGroup
 type PromoteFeatureFlagRolloutRequest = promoteFeatureFlagRolloutRequest
@@ -264,6 +271,8 @@ const UploadSessionOpenCap = uploadSessionOpenCap
 const VmmdMetricsDiscoveryPath = vmmdMetricsDiscoveryPath
 
 // Package-level vars
+var ProjectDashboardDomainsForTest = (*server).projectDashboardDomains
+var SendCertIssuanceFailedEmailForTest = (*server).sendCertIssuanceFailedEmail
 var AppsDomainFunc = &appsDomainFunc
 var BuildPlanCacheOnce = &buildPlanCacheOnce
 var CapsDecl = &capsDecl
@@ -599,6 +608,11 @@ func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
 }
 
 func (s *server) InboundWebhookURLForTest(token string) string { return s.inboundWebhookURL(token) }
+
+// ProfilePlanForTest exposes the plan profiling judges app by (ADR-1155).
+func (s *server) ProfilePlanForTest(ctx context.Context, fallback api.Plan, app state.App) api.Plan {
+	return s.profilePlan(ctx, fallback, app)
+}
 func (s *server) IsWebDashboardOriginForTest(origin *url.URL) bool {
 	return s.isWebDashboardOrigin(origin)
 }
@@ -644,6 +658,14 @@ var ParseIssueListFilter = parseIssueListFilter
 var ParseRequestAnalyticsGroupBy = parseRequestAnalyticsGroupBy
 var ParseRequestAnalyticsRouteFilter = parseRequestAnalyticsRouteFilter
 var ParseRequestAnalyticsWindow = parseRequestAnalyticsWindow
+
+// RequestAnalyticsCompleteness judges the window [from, until) read at asOf.
+func RequestAnalyticsCompleteness(ctx context.Context, reader interface {
+	RequestTelemetryCompleteness(context.Context, string, time.Time, time.Time) ([]string, error)
+}, appID string, from, until, asOf time.Time) (*bool, []string) {
+	return requestAnalyticsCompletenessFrom(ctx, reader, nil, appID, requestAnalyticsWindow{From: from, Until: until, AsOf: asOf})
+}
+
 var ParseScanMultipart = parseScanMultipart
 var ParseSuspectedDependency = parseSuspectedDependency
 var ParseSweepOlderThan = parseSweepOlderThan
@@ -785,6 +807,7 @@ var ValidateAnnotationForm = validateAnnotationForm
 var ValidateCapturedProjectEnvironmentDatabaseResources = validateCapturedProjectEnvironmentDatabaseResources
 var ValidateCapturedProjectEnvironmentObjectResources = validateCapturedProjectEnvironmentObjectResources
 var ValidateCloneCoordinatorInventory = validateCloneCoordinatorInventory
+var FullProjectEnvironmentCloneAdmissionProblem = fullProjectEnvironmentCloneAdmissionProblem
 var ValidateOverrides = validateOverrides
 var ValidateProjectEnvironmentPromotionResume = validateProjectEnvironmentPromotionResume
 var ValidateScannedSchedules = validateScannedSchedules
@@ -1181,6 +1204,9 @@ func (r *server) DashboardSaveProfileInvestigation(p0 http.ResponseWriter, p1 *h
 func (r *server) DeleteProjectEnvironment(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteProjectEnvironment(p0, p1, p2)
 }
+func (r *server) DeleteProjectForTest(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.deleteProject(p0, p1, p2)
+}
 func (r *server) DeleteQueueBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteQueueBinding(p0, p1, p2)
 }
@@ -1426,6 +1452,14 @@ func (r *server) RollbackOn5xxSweep(p0 context.Context, p1 time.Time) error {
 func (r *server) ConfigGuardSweep(p0 context.Context, p1 time.Time) error {
 	return r.configGuardSweep(p0, p1)
 }
+
+func (r *server) DatabaseSwitchReleaseGuard(ctx context.Context, sw state.DatabaseSwitch) (string, error) {
+	return r.databaseSwitchReleaseGuard(ctx, sw)
+}
+
+func (r *server) DatabaseSwitchPromoteRelease(ctx context.Context, sw state.DatabaseSwitch, id string) error {
+	return r.databaseSwitchPromoteRelease(ctx, sw, id)
+}
 func (r *server) SetConfigGuardTelemetry(t state.ConfigGuardTelemetryStore) {
 	r.configGuardTelemetry = t
 }
@@ -1453,6 +1487,12 @@ func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
 }
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
+}
+
+// SourceRefManifestEventIntent is the declared subscription set a
+// production deploy records for go-live (ADR-20261101030512); nil records none.
+func SourceRefManifestEventIntent(staged sourceRefManifestStaged) []string {
+	return staged.eventSubscriptionIntent
 }
 
 // WithEventSubscriptionReconcile marks ctx as a production deploy whose
@@ -1898,6 +1938,11 @@ func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, int
 	return b.prepareWorkloadCandidates(ctx, lease, plan)
 }
 
+// EnvironmentGitOpsBackendForTest exercises the production worker adapters.
+func (s *server) EnvironmentGitOpsBackendForTest(intent state.EnvironmentGitOpsIntentStore, effects state.EnvironmentGitOpsEffectStore) environmentgitops.Backend {
+	return &environmentGitOpsBackend{server: s, intent: intent, effects: effects}
+}
+
 // DashboardWidgetAppForTest resolves a dashboard widget's app as the
 // dashboards host does (ADR-20261022173833).
 func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Account, slug string) (state.App, bool) {
@@ -1948,6 +1993,13 @@ func (r *server) SetManagedPostgresCapModeForTest(mode managedpostgres.CapEnforc
 	r.managedPostgresCapMode = mode
 }
 
+// SetManagedPostgresPlanExcessForTest sets whether the views report databases
+// past their plan, as configureManagedPostgresCapMode would with
+// FAAS_MANAGED_POSTGRES_PLAN_EXCESS_ENFORCEMENT and the compute cap both on.
+func (r *server) SetManagedPostgresPlanExcessForTest(on bool) {
+	r.managedPostgresPlanExcessOn = on
+}
+
 // EnsureDevPostgresForTest provisions a developer environment's database as
 // `gregale dev --postgres` does.
 func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Account, app state.App) (*api.DevPostgresResponse, error) {
@@ -1960,6 +2012,18 @@ func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Accoun
 func (r *server) RequestBillingMailOutboxesForTest() {
 	on := func() bool { return true }
 	r.paymentFailedOutboxRequested, r.accountRestoredOutboxRequested, r.subscriptionEndedOutboxRequested = on, on, on
+}
+
+// CreateProviderCustomerForTest creates acct's billing customer, replacing a
+// deleted subject's leftover customer that holds the email (ADR-20261103131742).
+func (r *server) CreateProviderCustomerForTest(ctx context.Context, acct state.Account) (string, error) {
+	return r.createProviderCustomer(ctx, acct)
+}
+
+// BillingContactBlocksDeletionForTest is the account-deletion billing
+// contact guard (ADR-20261103131742).
+func (r *server) BillingContactBlocksDeletionForTest(ctx context.Context, acct state.Account) *api.Problem {
+	return r.billingContactBlocksDeletion(ctx, acct)
 }
 
 var AppRestartRefusal = appRestartRefusal
@@ -1989,6 +2053,17 @@ var ProjectReadinessOverrides = projectReadinessOverrides
 // SetEventPublishClock pins the event publish rate limiter's clock.
 func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }
 
+// XPrepareDeliveryCrons runs the GitHub bridge's cron staging for one push
+// against store; staged marks a release staged without traffic.
+func XPrepareDeliveryCrons(ctx context.Context, store *state.MemStore, req *githubdpb.EnqueueBuildRequest, resource state.Account, app state.App, m *gregalemanifest.Manifest, kind state.DeploymentKind, staged bool) (context.Context, *api.DeploymentCronStagingRequest, *api.Problem) {
+	g := &githubdBridge{store: store, log: slog.Default()}
+	params := apidsource.EnqueueParams{}
+	if staged {
+		params.TrafficPercentExplicit = true
+	}
+	return g.prepareDeliveryCrons(ctx, req, resource, app, m, kind, params)
+}
+
 // GitHub connector bearer handlers (ADR-20261101160300).
 func (r *server) ListGitHubRepositoriesForTest(w http.ResponseWriter, req *http.Request, acct state.Account) {
 	r.listGitHubRepositories(w, req, acct)
@@ -2016,3 +2091,64 @@ func PurgeAppErrorsOnce(ctx context.Context, store AppErrorsPurgeStore, now func
 	p.now = now
 	p.purgeAll(ctx)
 }
+
+// LoadOrGenerateAuditHMACKey exposes the boot-time audit HMAC key loader.
+var LoadOrGenerateAuditHMACKey = loadOrGenerateAuditHMACKey
+
+// OIDCAccountLookup is the OIDC exchange's account lookup with project
+// repository bindings confirmed through repos (ADR-20261101160300,
+// amendment 1).
+func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.AccountLookup {
+	return newOIDCAccountLookup(store, repos)
+}
+
+// WriteIssueErrorForTest exercises the public issue quota response mapping.
+func WriteIssueErrorForTest(w http.ResponseWriter, err error) {
+	writeIssueError(w, err)
+}
+
+// Inline security alerts (bug hunt H99).
+func (r *server) AlertPasswordChangedInline(ctx context.Context, acct state.Account, method string) {
+	r.alertPasswordChangedInline(ctx, acct, method)
+}
+func (r *server) AlertMFAEnabledInline(ctx context.Context, acct state.Account) {
+	r.alertMFAEnabledInline(ctx, acct)
+}
+func (r *server) AlertMFADisabledInline(ctx context.Context, acct state.Account, method string) {
+	r.alertMFADisabledInline(ctx, acct, method)
+}
+
+// ResolveSourceReleaseCommand exposes the release command precedence of a
+// source deployment (ADR-20261102192943).
+func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) ([]string, bool, *api.Problem) {
+	resolved, problem := resolveSourceReleaseCommand(sourcePath, app, manifest)
+	return resolved.command, resolved.shell, problem
+}
+
+var MintMCPAuthCodeForTest = mintMCPAuthCode
+var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
+var MCPCodeScopesForTest = mcpCodeScopes
+
+var ALookupFunc = &aLookupFunc
+var AAAALookupFunc = &aaaaLookupFunc
+var CAALookupFunc = &caaLookupFunc
+var OwnedDomainsFunc = &ownedDomainsFunc
+var CheckPointsToGregale = checkPointsToGregale
+
+func (s *server) RunDoctorForDomain(ctx context.Context, log *slog.Logger, domain string) error {
+	return s.runDoctorForDomain(ctx, log, domain)
+}
+
+// WaitPasswordResetMail waits for forgot-password work started off the
+// request path (H86).
+func (r *server) WaitPasswordResetMail() { r.resetMail.wait() }
+
+// Login failure limiter internals (bug hunt round 8: eviction when full).
+func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
+func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key) }
+func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
+	return l.retryAfter(key)
+}
+
+// RouteProbeAccountQueues exposes the per-account probe ordering (H79).
+var RouteProbeAccountQueues = routeProbeAccountQueues

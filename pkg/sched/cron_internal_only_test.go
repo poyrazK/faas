@@ -165,12 +165,13 @@ func TestSynthesizeRequest_InternalOnlyAttachesJWT(t *testing.T) {
 	}
 }
 
-// TestSynthesizeRequest_OpenModeNoToken covers the negative
-// case: mode != 'internal_only' → no Authorization header.
-// This is the default posture for the existing tests + dev
-// boxes; adding a header for non-internal_only apps would be
-// a security regression (token leak on every wake).
-func TestSynthesizeRequest_OpenModeNoToken(t *testing.T) {
+// TestSynthesizeRequest_OpenModeCarriesToken: an open-mode app's synth
+// request carries a scheduler token bound to its app too. Public traffic
+// reaches the gateway's synth listener, so the gateway accepts no synth
+// request without one (ADR-20261103090000). The token goes to the gateway
+// only; the synth handler never forwards the HTTP Authorization header to
+// the app.
+func TestSynthesizeRequest_OpenModeCarriesToken(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -183,8 +184,12 @@ func TestSynthesizeRequest_OpenModeNoToken(t *testing.T) {
 	if err := hg.SynthesizeRequest(context.Background(), "app-open", http.MethodPost, "/"); err != nil {
 		t.Fatalf("SynthesizeRequest: %v", err)
 	}
-	if got := loadCaptured(captured).authHeader(); got != "" {
-		t.Errorf("Authorization header on open-mode request = %q, want empty", got)
+	tok := strings.TrimPrefix(loadCaptured(captured).authHeader(), "Bearer ")
+	if _, err := internalsvc.Verify(tok, map[string]ed25519.PublicKey{"schedd": pub}); err != nil {
+		t.Fatalf("open-mode token failed Verify: %v", err)
+	}
+	if got := internalsvc.StringClaim(tok, "app_id"); got != "app-open" {
+		t.Fatalf("token app_id = %q, want app-open", got)
 	}
 }
 
@@ -263,8 +268,10 @@ func TestConfigureInternalSvcAuth(t *testing.T) {
 	if gotMode != "app-x" {
 		t.Errorf("mode lookup not consulted; got appID = %q, want \"app-x\"", gotMode)
 	}
-	if loadCaptured(captured).authHeader() != "" {
-		t.Errorf("Authorization header attached for open mode")
+	// ADR-20261103090000: open-mode apps carry a scheduler token too.
+	tok := strings.TrimPrefix(loadCaptured(captured).authHeader(), "Bearer ")
+	if internalsvc.StringClaim(tok, "app_id") != "app-x" {
+		t.Errorf("open-mode request token = %q, want one bound to app-x", tok)
 	}
 }
 
@@ -328,8 +335,9 @@ func TestInvoke_InternalOnlyAttachesJWT(t *testing.T) {
 	}
 }
 
-// TestInvoke_OpenModeNoToken covers the negative case for Invoke.
-func TestInvoke_OpenModeNoToken(t *testing.T) {
+// TestInvoke_OpenModeCarriesToken: an open-mode app's dispatch carries a
+// scheduler token bound to its app (ADR-20261103090000).
+func TestInvoke_OpenModeCarriesToken(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -343,8 +351,9 @@ func TestInvoke_OpenModeNoToken(t *testing.T) {
 	if _, err := hg.Invoke(context.Background(), "app-open", inv); err != nil {
 		t.Fatalf("Invoke: %v", err)
 	}
-	if got := loadCaptured(captured).authHeader(); got != "" {
-		t.Errorf("Invoke Authorization header on open mode = %q, want empty", got)
+	tok := strings.TrimPrefix(loadCaptured(captured).authHeader(), "Bearer ")
+	if _, err := internalsvc.Verify(tok, map[string]ed25519.PublicKey{"schedd": pub}); err != nil || internalsvc.StringClaim(tok, "app_id") != "app-open" {
+		t.Errorf("Invoke token on open mode = %q (verify err %v), want one bound to app-open", tok, err)
 	}
 }
 
@@ -493,9 +502,9 @@ func TestPostBatch_InternalOnlyAttachesJWT(t *testing.T) {
 	}
 }
 
-// TestPostBatch_OpenModeNoToken covers the negative case for
-// postBatch (open mode → no JWT).
-func TestPostBatch_OpenModeNoToken(t *testing.T) {
+// TestPostBatch_OpenModeCarriesToken: an open-mode app's trigger batch
+// carries a scheduler token bound to its app (ADR-20261103090000).
+func TestPostBatch_OpenModeCarriesToken(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("genkey: %v", err)
@@ -528,7 +537,8 @@ func TestPostBatch_OpenModeNoToken(t *testing.T) {
 	if _, err := loop.postBatch(context.Background(), env); err != nil {
 		t.Fatalf("postBatch: %v", err)
 	}
-	if got := loadCaptured(captured).authHeader(); got != "" {
-		t.Errorf("postBatch Authorization header on open mode = %q, want empty", got)
+	tok := strings.TrimPrefix(loadCaptured(captured).authHeader(), "Bearer ")
+	if _, err := internalsvc.Verify(tok, map[string]ed25519.PublicKey{"schedd": pub}); err != nil || internalsvc.StringClaim(tok, "app_id") != "app-open" {
+		t.Errorf("postBatch token on open mode = %q (verify err %v), want one bound to app-open", tok, err)
 	}
 }

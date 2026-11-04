@@ -110,16 +110,30 @@ func TestRequestTelemetryMinuteCollapseShipsExactRowsAtOnce(t *testing.T) {
 	}
 }
 
-func TestRequestTelemetryMinuteCollapseCountsOpenRequestsAsPending(t *testing.T) {
+// adr: 20261028110044 — amendment 4: an open minute is read by no window yet,
+// so its requests are not pending; a closed minute waiting to ship is.
+func TestRequestTelemetryMinuteCollapseOpenMinuteIsNotPending(t *testing.T) {
 	f := newMinuteCollapseFixture(t, true)
 	app := uuid.New()
 	f.record(app, f.now, 7)
 	f.tickAt(f.now.Add(time.Second))
-	if f.coverage.PendingCount != 7 {
-		t.Fatalf("coverage pending = %d, want 7 requests held in the open minute", f.coverage.PendingCount)
+	if f.coverage.PendingCount != 0 || len(f.coverage.AppGaps) != 0 {
+		t.Fatalf("coverage pending = %d, gaps = %+v; an open minute must not hold the app pending", f.coverage.PendingCount, f.coverage.AppGaps)
 	}
-	if len(f.coverage.AppGaps) != 1 || f.coverage.AppGaps[0].AppID != app || f.coverage.AppGaps[0].PendingCount != 7 {
-		t.Fatalf("app gaps = %+v, want 7 pending for %s", f.coverage.AppGaps, app)
+	f.tickAt(f.now.Add(time.Minute))
+	if len(f.shipped) != 1 || f.coverage.PendingCount != 0 || len(f.coverage.AppGaps) != 0 {
+		t.Fatalf("after the minute closed: shipped %d rows, pending %d, gaps %+v", len(f.shipped), f.coverage.PendingCount, f.coverage.AppGaps)
+	}
+
+	m := newRequestTelemetryMinutes()
+	minute := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	m.add(RequestTelemetryRow{AccountID: app, AppID: app, DeploymentID: app, Route: "GET /", Method: "GET", Status: 200, ReceivedAt: minute.Add(10 * time.Second), Count: 4})
+	if got := m.undeliveredByApp()[app]; got != 0 {
+		t.Fatalf("open minute undelivered = %d, want 0", got)
+	}
+	m.close(minute.Add(time.Minute+6*time.Second), 5*time.Second, 64)
+	if got := m.undeliveredByApp()[app]; got != 4 {
+		t.Fatalf("closed minute undelivered = %d, want 4", got)
 	}
 }
 

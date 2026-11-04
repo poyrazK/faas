@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
-const doctorUsage = "usage: gregale doctor [--strict] [--json] [--path DIR | DIR] | --image REF [--registry-user USER --registry-password-stdin]"
+const doctorUsage = "usage: gregale doctor [--strict] [--json] [--app SLUG] [--path DIR | DIR] | --image REF [--registry-user USER --registry-password-stdin]"
 
 type doctorImageInspector interface {
 	InspectImage(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error)
@@ -97,7 +97,7 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 			return 1
 		}
 	} else {
-		renderDoctorHuman(osStdout, report)
+		renderDoctorHumanExit(osStdout, report, report.HasErrors() || (strict && report.HasWarnings()))
 	}
 	if report.HasErrors() || (strict && report.HasWarnings()) {
 		return 1

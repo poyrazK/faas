@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routemonitor"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -14,7 +15,7 @@ import (
 // rollbackMonitorIncident opens a real error-budget incident on stable after a
 // healthy baseline on candidate, with the failing release completed `released`
 // ago.
-func rollbackMonitorIncident(t *testing.T, released string) (*state.PgStore, state.Account, state.App, state.Deployment, state.Deployment) {
+func rollbackMonitorIncident(t *testing.T, released string) (*pgxpool.Pool, *state.PgStore, state.Account, state.App, state.Deployment, state.Deployment) {
 	t.Helper()
 	pool, s, a, app, stable, candidate := productionMonitorPG(t)
 	config, err := s.GetRouteMonitor(t.Context(), a.ID, app.ID)
@@ -36,12 +37,12 @@ func rollbackMonitorIncident(t *testing.T, released string) (*state.PgStore, sta
 	productionMonitorTraffic(t, pool, a, app, stable.ID, "POST", "/checkout", 500, 100, 600, false)
 	productionMonitorDue(t, pool, app.ID)
 	productionMonitorEvaluate(t, s, a, app)
-	return s, a, app, stable, candidate
+	return pool, s, a, app, stable, candidate
 }
 
 // adr: 845
 func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
-	s, a, app, stable, candidate := rollbackMonitorIncident(t, "5 minutes")
+	_, s, a, app, stable, candidate := rollbackMonitorIncident(t, "5 minutes")
 	claim, claimed, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID)
 	if err != nil || !claimed {
 		t.Fatalf("claim = %+v, %t, %v", claim, claimed, err)
@@ -49,8 +50,8 @@ func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
 	if claim.DeploymentID != stable.ID || claim.TargetDeploymentID != candidate.ID || claim.Route != "POST /checkout" {
 		t.Fatalf("claim = %+v, want %s -> %s for POST /checkout", claim, stable.ID, candidate.ID)
 	}
-	if _, again, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID); err != nil || again {
-		t.Fatalf("second claim = %t, %v; want no claim", again, err)
+	if retry, again, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID); err != nil || !again || retry != claim {
+		t.Fatalf("unlinked claim was not resumable: %+v %t %v", retry, again, err)
 	}
 	operation := uuid.NewString()
 	if err := s.RecordRouteMonitorRollback(t.Context(), a.ID, app.ID, claim.IncidentID, api.RouteMonitorIncidentRollback{Status: "requested", OperationID: operation, DecidedAt: time.Now().UTC()}); err != nil {
@@ -67,6 +68,9 @@ func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
 	if err := routemonitor.ValidateIncident(incident, app.Slug); err != nil {
 		t.Fatalf("incident with rollback failed validation: %v", err)
 	}
+	if _, again, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID); err != nil || again {
+		t.Fatalf("linked decision was claimed again: %t %v", again, err)
+	}
 	if err := s.RecordRouteMonitorRollback(t.Context(), a.ID, app.ID, claim.IncidentID, api.RouteMonitorIncidentRollback{Status: "skipped", DecidedAt: time.Now().UTC()}); err == nil {
 		t.Fatal("a recorded decision was overwritten")
 	}
@@ -74,7 +78,7 @@ func TestRouteMonitorRollbackPostgresClaimsOnceAndRecords(t *testing.T) {
 
 // adr: 845
 func TestRouteMonitorRollbackPostgresSkipsLateIncident(t *testing.T) {
-	s, a, app, _, _ := rollbackMonitorIncident(t, "2 hours")
+	_, s, a, app, _, _ := rollbackMonitorIncident(t, "2 hours")
 	if _, claimed, err := s.ClaimRouteMonitorRollback(t.Context(), a.ID, app.ID); err != nil || claimed {
 		t.Fatalf("late incident claimed=%t err=%v", claimed, err)
 	}

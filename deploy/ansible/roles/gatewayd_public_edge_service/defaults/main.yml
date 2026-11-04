@@ -12,6 +12,35 @@ faas_edge_control_plane_target: ''
 # that last served it, instead of this node's. The manifest's
 # public_edge.placement_routing sets it per cell.
 faas_edge_placement_routing: false
+# ADR-20261102081618 §5b: spread each app host's requests over every node the
+# app runs on, by ready instances. The manifest's
+# public_edge.placement_node_set sets it.
+faas_edge_placement_node_set: false
+# ADR-20261103163954 §4: per-client-address limits on requests and, with
+# faas_edge_public_front none, on connections and TLS handshakes. The values
+# are in pkg/api/limits.go.
+faas_edge_client_limits: false
+# ADR-20261102081618: how Cloudflare reaches this edge. "tunnel", the default,
+# is the connector only; "both" also opens the edge's TLS listener on
+# faas_edge_public_tls_port for proxied address records. The manifest's
+# public_edge.entry sets it per cell.
+faas_edge_entry: tunnel
+faas_edge_public_tls_port: 443
+# Operator-provisioned secrets, never in inventory or the repository: the
+# zone's Cloudflare Origin CA certificate and key (the pair the control
+# plane's Caddy serves), and the CA behind the zone's Authenticated Origin
+# Pulls certificate. The edge reads all three through systemd LoadCredential.
+faas_edge_public_tls_cert: /etc/faas/secrets/edge-tls/origin.pem
+faas_edge_public_tls_key: /etc/faas/secrets/edge-tls/origin.key
+faas_edge_public_tls_client_ca: /etc/faas/secrets/edge-tls/origin-pull-ca.pem
+# ADR-20261103163954: what stands in front of the edge's TLS listener.
+# "cloudflare", the default, requires the zone's client certificate above.
+# "none" serves clients directly: it verifies that certificate only when
+# given (so a proxied record still works, the way back under attack), and
+# faas_edge_public_tls_cert must be publicly trusted. The manifest's
+# public_edge.front and the firewall follow in a later step; until then
+# "none" is for a hand-run pilot only.
+faas_edge_public_front: cloudflare
 
 # Cloudflare Tunnel connector, pinned by version and per-architecture SHA-256
 # (cloudflare/cloudflared release notes, matching GitHub's asset digests).

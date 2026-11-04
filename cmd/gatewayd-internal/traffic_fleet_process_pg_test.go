@@ -210,7 +210,11 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	deps.rateLimitOutageGrace = time.Duration(spec.RateLimitGraceMS) * time.Millisecond
 	// Outer run() loads the operator key before runWithDeps. Exercise that
 	// same loader here; a configured deadline must not use a fixture signer.
-	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(os.Getenv)
+	fleetKey, err := loadGatewayFleetKey(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps.trafficDeadlines, err = newTrafficDeadlineSigner(fleetKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,6 +451,7 @@ func startFleetDaemonConfigured(t *testing.T, pool *pgxpool.Pool, apps []fleetDa
 		"FAAS_GATEWAY_LISTEN": "127.0.0.1:0", "FAAS_GATEWAY_CIRCUIT_BREAKER": "false",
 		"FAAS_GATEWAY_EGRESS_SOCKET": egressSocket,
 		"FAAS_EGRESS_SOCKET":         egressSocket,
+		gatewayFleetKeyEnv:           fleetTestKeyFile(t),
 	})
 	p := &fleetDaemonProcess{cmd: c, done: make(chan error, 1)}
 	p.stdin, err = c.StdinPipe()
@@ -493,6 +498,21 @@ func startFleetDaemonConfigured(t *testing.T, pool *pgxpool.Pool, apps []fleetDa
 		t.Fatalf("actual default daemon wiring = %+v", p.ready)
 	}
 	return p
+}
+
+// fleetTestKeyFile is the gateway fleet key file every daemon of a test
+// shares (ADR-20261102191500): FAAS_GATEWAY_FLEET_KEY_FILE when the test set
+// one, else a fresh file under the test's temp dir.
+func fleetTestKeyFile(t *testing.T) string {
+	t.Helper()
+	if path := os.Getenv(gatewayFleetKeyEnv); path != "" {
+		return path
+	}
+	path := filepath.Join(t.TempDir(), "gateway-fleet.key")
+	if err := os.WriteFile(path, []byte(strings.Repeat("2a", 32)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func fleetDaemonEnvironment(overrides map[string]string) []string {

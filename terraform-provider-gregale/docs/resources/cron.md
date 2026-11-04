@@ -44,10 +44,10 @@ resource "gregale_cron" "sync" {
 ### Optional
 
 - `enabled` (Boolean) Whether the scheduler evaluates this cron.
-- `failure_rules_json` (String) Optional versioned failure policy encoded as JSON. HTTP Crons match `outcome_codes` returned by the handler in `X-Gregale-Outcome-Code`; HTTP status and exit-code matchers are not supported. Retries use the account plan's finite durable invocation budget.
+- `failure_rules_json` (String) Optional versioned failure policy encoded as JSON. HTTP Crons match `outcome_codes` returned by the handler in `X-Gregale-Outcome-Code`; HTTP status and exit-code matchers are not supported. Retries use the account plan's finite durable invocation budget. Removing it from the configuration removes the rules from the cron.
 - `path` (String) App path to POST. Defaults to `/`.
 - `skip_if_running` (Boolean) Skip a fire while the previous invocation is still running.
-- `schedule_policy` (Object) Optional recurring-work policy. `overlap` accepts `allow`, `skip`, or `replace`; `start_deadline_seconds` sets the maximum delay before first start (zero disables it); `missed_runs` accepts `skip` or `coalesce_latest`. Replacement waits for an in-flight HTTP request to finish because Gregale cannot confirm that an already delivered request has stopped.
+- `schedule_policy` (Object) Optional recurring-work policy. `overlap` accepts `allow`, `skip`, or `replace`; `start_deadline_seconds` sets the maximum delay before first start (zero disables it); `missed_runs` accepts `skip` or `coalesce_latest`. Replacement waits for an in-flight HTTP request to finish because Gregale cannot confirm that an already delivered request has stopped. Removing it from the configuration removes the policy from the cron.
 - `timezone` (String) IANA timezone used to interpret the schedule. Defaults to `UTC`.
 
 ### Read-only

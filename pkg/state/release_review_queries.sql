@@ -36,7 +36,7 @@ SELECT 1 FROM project_environment_route_policies
 WHERE app_id=sqlc.arg(app_id)::uuid AND environment_slug=sqlc.arg(scope)::text FOR UPDATE;
 
 -- name: ReadDeploymentTrafficScope :one
-SELECT app_id::text,scope FROM deployments WHERE id=sqlc.arg(id)::uuid;
+SELECT (environment_workload_runtime IS NOT NULL)::boolean AS managed, app_id::text,scope FROM deployments WHERE id=sqlc.arg(id)::uuid;
 
 -- name: ListTrafficSiblingsInScope :many
 -- aborted_canary is the H5-62 candidate: aborted before its rollout completed.
@@ -52,3 +52,9 @@ WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='
 -- name: ReadLiveTrafficSumInScope :one
 SELECT coalesce(sum(traffic_percent),0)::bigint FROM deployments
 WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text AND status='live';
+
+-- name: DeploymentServedBefore :one
+-- Whether a deployment ever took traffic: it serves now, or the
+-- deployment_serving_ended_at trigger stamped when it stopped.
+SELECT (serving_ended_at IS NOT NULL OR (status = 'live' AND traffic_percent > 0))::boolean AS served
+FROM deployments WHERE id = sqlc.arg(id)::uuid;

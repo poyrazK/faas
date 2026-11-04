@@ -355,7 +355,7 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
 2. Migrations and the apid `sandboxes` domain: intents, tokens, gating.
 
    **Built (2026-11-02), on a local branch.**
-   - **`sandbox_sessions`** (migration `20261102111658009`, expand) holds the intent:
+   - **`sandbox_sessions`** (migration `20261104123540000`, expand) holds the intent:
      - §1's states, with CHECKs, and `kind`;
      - the preset, RAM, network mode, idle timeout, end and labels;
      - an outcome, `close_requested_at`, and `closed_at` on terminal states only;

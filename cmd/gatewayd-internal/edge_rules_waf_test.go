@@ -31,8 +31,10 @@ func TestCompileWAFRules(t *testing.T) {
 		wafStateRule("second", 20, "/*", &state.EdgeRuleWAFAction{Mode: "block"}),
 		wafStateRule("first", 10, "/api/*", valid),
 	})
-	if len(parseErrs) != 1 {
-		t.Errorf("parse errors = %v, want one for bad-glob", parseErrs)
+	// A value apid would refuse fails the host closed like a bad glob
+	// (ADR-091 amendment 2026-11-02); a missing action is edgeRuleShapeError's.
+	if len(parseErrs) != 2 || parseErrs[0].RuleID != "unknown-mode" || parseErrs[1].RuleID != "bad-glob" {
+		t.Errorf("parse errors = %v, want unknown-mode and bad-glob", parseErrs)
 	}
 	if len(rules) != 2 || rules[0].ID != "first" || rules[1].ID != "second" {
 		t.Fatalf("compiled = %+v, want [first second]", rules)

@@ -2,6 +2,9 @@ package state_test
 
 import (
 	"context"
+	"errors"
+
+	"github.com/onebox-faas/faas/pkg/api"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -66,5 +69,22 @@ func TestLegacyCompanyOwnerCarriesTheCompanysDunningStatus(t *testing.T) {
 				t.Fatalf("past-due owner Active=%v MayDeploy=%v; want running and not deploying", owner.Active(), owner.MayDeploy())
 			}
 		})
+	}
+}
+
+type issueOwnerReader struct {
+	ownerReader
+	app state.App
+}
+
+func (o issueOwnerReader) AppByID(context.Context, string) (state.App, error) { return o.app, nil }
+func TestIssueResourceAccountUsesCompanyPlanAndNamespace(t *testing.T) {
+	reader := issueOwnerReader{ownerReader: ownerReader{account: state.Account{ID: "creator", Plan: api.PlanFree, Status: state.AccountSuspended}, org: state.Org{ID: "company", ResourceOwnershipEnabled: true, Plan: api.PlanPro, Status: state.OrgStatusActive}}, app: state.App{ID: "app", AccountID: "creator", OrgID: "company"}}
+	owner, err := state.IssueResourceAccount(t.Context(), reader, "app", "creator")
+	if err != nil || owner.ID != "creator" || owner.Plan != api.PlanPro || !owner.Active() {
+		t.Fatalf("owner=%+v err=%v", owner, err)
+	}
+	if _, err := state.IssueResourceAccount(t.Context(), reader, "app", "other"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("namespace mismatch: %v", err)
 	}
 }

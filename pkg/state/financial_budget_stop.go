@@ -45,8 +45,12 @@ func financialBudgetStopActive(s FinancialBudgetStop, p FinancialBudget, now tim
 
 // Matches uses persisted preview identity, never a slug, environment name or
 // absence of production protection. environmentID is the immutable runtime owner.
+// The stop belongs to the subject that pays for app: its account, or its
+// organization (ADR-20261031211500). Callers read only the paying subject's
+// stops (FinancialBudgetPayer), so a member's stop never reaches an app its
+// organization pays for.
 func (s FinancialBudgetStop) Matches(app App, environmentID string) bool {
-	return app.AccountID == s.AccountID && app.PreviewOfSlug != "" &&
+	return (app.AccountID == s.AccountID || app.OrgID != "" && app.OrgID == s.AccountID) && app.PreviewOfSlug != "" &&
 		s.Spec.Scope.Matches(financial.Attribution{AppID: app.ID, ProjectID: app.ProjectID, EnvironmentID: environmentID})
 }
 

@@ -16,8 +16,13 @@ import (
 
 // updateProjectEnvironmentPolicies replaces only the headers/CORS policy for
 // the workload's stable environment URL. Other app edge rules are unchanged.
+// Like routes, a protected stage takes this policy from an approved project
+// plan or promotion; production keeps the direct edit (ADR-233).
 func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, environment, _, problem := s.loadProjectEnvironmentConfig(r.Context(), acct, r.PathValue("slug"), r.PathValue("environment"))
+	if problem == nil && environment.Protected && !state.IsProductionScope(environment.Slug) {
+		problem = api.NewProblem(http.StatusConflict, api.CodeConflict, "Protected environment", "apply configuration through an approved project plan or environment promotion")
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return

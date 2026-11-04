@@ -215,7 +215,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 94 | Workflows: code workflows SDK, attention/outcomes/performance, recovery policy | `workflows`, `workflow-*`, `recovery-policy` | `workflows-and-jobs` preview | `env: FAAS_WORKFLOWS_ENABLED=1` | beta |
 | 95 | Delayed tasks | `delayed-tasks` | `delayed-execution` preview | — | beta |
 | 96 | Async invocations and results | `invoke`, `invocations` | **MISSING** | — | beta |
-| 97 | Triggers and event sources: Kafka, NATS JetStream, Redis Streams, AMQP / RabbitMQ, SQS-compatible, bucket events, function webhooks; batch delivery | `/v1/triggers` | **MISSING** | batch: `pf: trigger_batch_delivery` | preview |
+| 97 | Triggers and event sources: Kafka, NATS JetStream, Redis Streams, AMQP / RabbitMQ, SQS-compatible, bucket events, function webhooks; batch delivery (broker semantics: [broker-triggers.md](broker-triggers.md)) | `/v1/triggers` | `event-triggers` preview | batch: `pf: trigger_batch_delivery` | preview |
 | 98 | Events: publish, schemas, subscriptions, deliveries, replays, recoveries, DLQ, work policies | `events`, `event-*`, `dlq`, `work-policies` | **MISSING** | — | preview |
 | 99 | Queues: in-platform SQS-compatible HTTP queue, pull leases, queue bindings, queue workloads | `queues`, `queue-bindings`, `queue-workload` | **MISSING** | — | preview |
 | 100 | Worker pools | `workers` | `worker-pools` preview | — | preview |

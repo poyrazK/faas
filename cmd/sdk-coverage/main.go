@@ -234,6 +234,7 @@ var routeExclude = map[string]bool{
 	// workload assertion. Owner API keys cannot publish these observations.
 	"POST /v1/runtime/data-api/connection-observations": true,
 	"POST /v1/runtime/data-api/usage":                   true,
+	"POST /v1/runtime/data-api/events":                  true,
 
 	// ADR-1027 in-place major upgrades: a preview gated by
 	// FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS and answering like unregistered
@@ -365,38 +366,39 @@ var routeExclude = map[string]bool{
 	// Mirror the exclusion across BOTH this list AND
 	// cmd/apid/spec_compliance_test.go::routeExclude; the two
 	// lists must move together.
-	"POST /v1/admin/instances/{id}/force-park":           true, // PR #1099 P2a — operator-only recovery primitive
-	"POST /v1/admin/apps/{slug}/force-cold-boot":         true, // PR #1099 P2b — operator-only recovery primitive
-	"POST /v1/admin/instances/{id}/force-restart":        true, // PR #1105 P2d — operator-only recovery primitive
-	"POST /v1/admin/builds/sweep-stuck":                  true, // PR #1099 P2c — operator-only recovery primitive
-	"GET /v1/admin/ops/jobs/runs":                        true, // operator-only active job-run projection
-	"GET /v1/admin/ops/data-repairs":                     true, // operator-only repair health projection
-	"GET /v1/admin/ops/jobs/runs/{id}":                   true, // operator-only job-run inspection
-	"POST /v1/admin/ops/jobs/runs/{id}/cancel":           true, // operator-only job-run cancellation
-	"GET /v1/admin/ops/deployments":                      true, // operator-only deployment incident projection
-	"GET /v1/admin/ops/deployments/{id}":                 true, // operator-only deployment inspection
-	"POST /v1/admin/ops/deployments/{id}/cancel":         true, // operator-only deployment cancellation
-	"POST /v1/admin/ops/deployments/{id}/retry":          true, // operator-only deployment retry
-	"GET /v1/admin/ops/github/recovery":                  true, // operator-only githubd queue projection
-	"POST /v1/admin/ops/github/deliveries/{id}/retry":    true, // operator-only githubd delivery recovery
-	"POST /v1/admin/ops/github/check-updates/{id}/retry": true, // operator-only githubd Check Run recovery
-	"POST /v1/admin/ops/accounts/{id}/suspend":           true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/restore":           true, // operator-only tenant lifecycle control
-	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":   true, // operator-only tenant security control
-	"POST /v1/admin/ops/nodes/{name}/drain":              true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/force-drain":        true, // operator-only destructive node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/activate":           true, // operator-only node lifecycle control
-	"POST /v1/admin/ops/nodes/{name}/retire":             true, // operator-only terminal node lifecycle control
-	"GET /v1/admin/operator-intents/{id}":                true, // PR #1099 P2.3 — operator-only intent polling endpoint
-	"GET /v1/admin/config":                               true, // operator-only runtime configuration catalog
-	"PATCH /v1/admin/config/{key}":                       true, // operator-only runtime configuration write
-	"GET /v1/admin/config-operations/{id}":               true, // operator-only runtime configuration operation polling
-	"GET /v1/admin/config/{key}/revisions":               true, // operator-only runtime configuration history
-	"GET /v1/admin/flags":                                true, // ADR-1700 operator-only platform flag catalog
-	"GET /v1/admin/flags/{key}":                          true, // ADR-1700 operator-only platform flag detail
-	"GET /v1/admin/flags/{key}/decision":                 true, // ADR-1700 operator-only platform flag inspector
-	"GET /v1/admin/accounts/{id}/flags":                  true, // ADR-1700 operator-only per-account platform flags
-	"GET /v1/admin/managed-postgres/usage/{account_id}":  true, // operator-only COGS/capacity view; public SDK is customer-scoped
+	"POST /v1/admin/instances/{id}/force-park":                true, // PR #1099 P2a — operator-only recovery primitive
+	"POST /v1/admin/apps/{slug}/force-cold-boot":              true, // PR #1099 P2b — operator-only recovery primitive
+	"POST /v1/admin/instances/{id}/force-restart":             true, // PR #1105 P2d — operator-only recovery primitive
+	"POST /v1/admin/builds/sweep-stuck":                       true, // PR #1099 P2c — operator-only recovery primitive
+	"GET /v1/admin/ops/jobs/runs":                             true, // operator-only active job-run projection
+	"GET /v1/admin/ops/data-repairs":                          true, // operator-only repair health projection
+	"GET /v1/admin/ops/jobs/runs/{id}":                        true, // operator-only job-run inspection
+	"POST /v1/admin/ops/jobs/runs/{id}/cancel":                true, // operator-only job-run cancellation
+	"GET /v1/admin/ops/deployments":                           true, // operator-only deployment incident projection
+	"GET /v1/admin/ops/deployments/{id}":                      true, // operator-only deployment inspection
+	"POST /v1/admin/ops/deployments/{id}/cancel":              true, // operator-only deployment cancellation
+	"POST /v1/admin/ops/deployments/{id}/retry":               true, // operator-only deployment retry
+	"GET /v1/admin/ops/github/recovery":                       true, // operator-only githubd queue projection
+	"POST /v1/admin/ops/github/deliveries/{id}/retry":         true, // operator-only githubd delivery recovery
+	"POST /v1/admin/ops/github/check-updates/{id}/retry":      true, // operator-only githubd Check Run recovery
+	"POST /v1/admin/ops/accounts/{id}/suspend":                true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/restore":                true, // operator-only tenant lifecycle control
+	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":        true, // operator-only tenant security control
+	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling": true, // operator-only support grant (ADR-20261101214152)
+	"POST /v1/admin/ops/nodes/{name}/drain":                   true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/force-drain":             true, // operator-only destructive node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/activate":                true, // operator-only node lifecycle control
+	"POST /v1/admin/ops/nodes/{name}/retire":                  true, // operator-only terminal node lifecycle control
+	"GET /v1/admin/operator-intents/{id}":                     true, // PR #1099 P2.3 — operator-only intent polling endpoint
+	"GET /v1/admin/config":                                    true, // operator-only runtime configuration catalog
+	"PATCH /v1/admin/config/{key}":                            true, // operator-only runtime configuration write
+	"GET /v1/admin/config-operations/{id}":                    true, // operator-only runtime configuration operation polling
+	"GET /v1/admin/config/{key}/revisions":                    true, // operator-only runtime configuration history
+	"GET /v1/admin/flags":                                     true, // ADR-1700 operator-only platform flag catalog
+	"GET /v1/admin/flags/{key}":                               true, // ADR-1700 operator-only platform flag detail
+	"GET /v1/admin/flags/{key}/decision":                      true, // ADR-1700 operator-only platform flag inspector
+	"GET /v1/admin/accounts/{id}/flags":                       true, // ADR-1700 operator-only per-account platform flags
+	"GET /v1/admin/managed-postgres/usage/{account_id}":       true, // operator-only COGS/capacity view; public SDK is customer-scoped
 
 	// Dashboard auth (issue #165 PR #2, ADR-032). The SDK uses the
 	// device-code flow for programmatic auth; the dashboard cookie
@@ -410,6 +412,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/auth/github":          true, // 302 to GitHub consent (browser-only)
 	"GET /v1/auth/github/callback": true, // 302 to dashboard (browser-only)
 	"GET /v1/auth/verify-email":    true, // HTML email-confirmation landing page (browser-only)
+	"POST /v1/auth/verify-email":   true, // the landing page's confirmation form post (browser-only)
 	"GET /auth/reset":              true, // HTML form render (browser-only)
 	"POST /logout":                 true, // dashboard form post (browser-only); SDK's Logout wraps the same handler as a convenience
 
@@ -556,6 +559,15 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
 	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
 	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
+	"PUT /v1/orgs/{slug}/billing/email":                                                                                "SetOrgBillingEmail",   // ADR-20261103131742
+	"GET /v1/orgs/{slug}/billing/costs":                                                                                "GetOrgFinancialCosts", // ADR-20261031211500
+	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                                     "PreviewOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets":                                                                              "ListOrgFinancialBudgets",
+	"POST /v1/orgs/{slug}/billing/budgets":                                                                             "CreateOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "GetOrgFinancialBudget",
+	"PUT /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "UpdateOrgFinancialBudget",
+	"DELETE /v1/orgs/{slug}/billing/budgets/{id}":                                                                      "DeleteOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}/revisions":                                                               "ListOrgFinancialBudgetRevisions",
 	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
 	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
 	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",
@@ -679,6 +691,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/orgs/{slug}/application-standard-publishers":                           "CreateApplicationStandardPublisher",
 	"GET /v1/orgs/{slug}/application-standard-publishers/{resource}":                 "GetApplicationStandardPublisher",
 	"GET /v1/apps/{slug}/release-review":                                             "GetAppReleaseReview",
+	"GET /v1/apps/{slug}/resource-inventory":                                         "GetAppResourceInventory",
+	"GET /v1/apps/{slug}/operation-preview":                                          "GetAppOperationPreview",
+	"GET /v1/apps/{slug}/costs":                                                      "GetAppCosts",
+	"POST /v1/apps/{slug}/env/batch":                                                 "ApplyEnvBatch",
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
 	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
 	"PUT /v1/apps/{slug}/route-budgets":                                              "SetEnvironmentRouteBudgets",
@@ -897,6 +913,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"DELETE /v1/apps/{slug}/issues/{issue_id}":                                 "DeleteIssue",
 	"GET /v1/apps/{slug}/issue-compound-alert-policy":                          "GetIssueCompoundAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-compound-alert-policy":                          "SetIssueCompoundAlertPolicy",
 	"POST /v1/apps/{slug}/issue-compound-alert-policy/preview":                 "PreviewIssueCompoundAlert",
@@ -1225,6 +1242,11 @@ var methodRouteMap = map[string]string{
 	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
 	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",
 	"DELETE /v1/agent-connections/self":                                                          "DisconnectAgent",
+	"GET /v1/orgs/{slug}/agent-connections":                                                      "ListOrgAgentConnections",
+	"DELETE /v1/orgs/{slug}/agent-connections/{id}":                                              "RevokeOrgAgentConnection",
+	"POST /v1/orgs/{slug}/agent-connections/revoke_all":                                          "RevokeAllOrgAgentConnections",
+	"GET /v1/orgs/{slug}/agent-policy":                                                           "GetOrgAgentPolicy",
+	"PUT /v1/orgs/{slug}/agent-policy":                                                           "SetOrgAgentPolicy",
 	"POST /v1/keys/{id}/rotate":                                                                  "RotateKey",
 	"PATCH /v1/account/keys/grace_window_days":                                                   "SetGraceWindow",
 	"GET /v1/account/keys/grace_window_days":                                                     "GetGraceWindow",

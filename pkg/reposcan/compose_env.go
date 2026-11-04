@@ -3,6 +3,7 @@ package reposcan
 import (
 	"fmt"
 	"io/fs"
+	"maps"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -46,8 +47,11 @@ func (e ComposeEnv) ImportsAny() bool {
 // capability, the Kubernetes Deployments' and CronJobs' environments. A
 // Compose service keeps its entries when a Kubernetes workload has its name,
 // as the scan merges the two.
-func ReadProjectEnv(fsys fs.FS, opts ScanOptions) (ComposeEnv, error) {
+func ReadProjectEnv(fsys fs.FS, opts ScanOptions, workloads ...[]Workload) (ComposeEnv, error) {
 	env, err := ReadComposeEnv(fsys)
+	for _, group := range workloads {
+		env = env.withReleaseEnvironment(group)
+	}
 	if err != nil || !opts.KubernetesManifests {
 		return env, err
 	}
@@ -73,6 +77,24 @@ func ReadProjectEnv(fsys fs.FS, opts ScanOptions) (ComposeEnv, error) {
 		}
 	}
 	return env, nil
+}
+
+// A folded migration runs in its owner's environment. Its defaults follow it
+// to that owner; explicit owner declarations retain precedence. Values stay in
+// ComposeEnv, never in the scanner's public result or deployment plan.
+func (e ComposeEnv) withReleaseEnvironment(workloads []Workload) ComposeEnv {
+	for _, w := range workloads {
+		if w.ReleaseService == "" {
+			continue
+		}
+		entries := maps.Clone(e.Services[w.ReleaseService])
+		if entries == nil {
+			continue
+		}
+		maps.Copy(entries, e.Services[w.Name])
+		e.Services[w.Name] = entries
+	}
+	return e
 }
 
 type composeEnvDoc struct {

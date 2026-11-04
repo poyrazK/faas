@@ -223,8 +223,7 @@ func buildExportKeyRotation(t *testing.T, s buildExportTestStore) {
 func buildExportOwnerErasure(t *testing.T, s buildExportTestStore) string {
 	t.Helper()
 	in, app, dep, b, _ := buildExportFixture(t, s)
-	old, err := s.RecordBuildExportPublication(t.Context(), in)
-	if err != nil {
+	if _, err := s.RecordBuildExportPublication(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
 	completeBuildExportFixture(t, s, in, b)
@@ -237,9 +236,10 @@ func buildExportOwnerErasure(t *testing.T, s buildExportTestStore) string {
 	if _, err := s.RestoreApp(t.Context(), app.ID, api.MustLimitsFor(api.PlanPro)); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := s.GetFreshBuildExportPublication(t.Context(), app.AccountID, app.ID, dep.ID, b.ID)
-	if err != nil || restored.ID != old.ID || !restored.VerifiedAt.Equal(old.VerifiedAt) || !restored.ExpiresAt.Equal(old.ExpiresAt) {
-		t.Fatal("restore changed retained approval or verification clock", err)
+	// Deleting the app cancelled this deploy in progress (#6413) and restore
+	// brings back only a live deployment, so its approval stays unusable.
+	if _, err := s.GetFreshBuildExportPublication(t.Context(), app.AccountID, app.ID, dep.ID, b.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+		t.Fatal("restore revived a cancelled deploy's approval", err)
 	}
 	if _, err := s.ScheduleAppDeletion(t.Context(), app.ID, time.Now().Add(-time.Hour)); err != nil {
 		t.Fatal(err)

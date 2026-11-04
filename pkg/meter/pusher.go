@@ -283,11 +283,21 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 	}
 	cursors := make(map[string]overageCursor)
 	grants := p.newMonthGrants()
+	held := newHeldUsage(start)
+	defer p.publishHeld(state.BillingMeterCompute, held)
 	pushed := 0
 	var firstErr error
 	for _, window := range ordered {
 		acct, ok := byID[window.AccountID]
-		if !ok || acct.Plan == "free" || !usageDeliverable(acct, window.Hour) {
+		if !ok {
+			held.add(state.BillingMeterCompute, UsageHeldUnknownSubject, window.Hour)
+			continue
+		}
+		if acct.Plan == "free" {
+			continue
+		}
+		if !usageDeliverable(acct, window.Hour) {
+			held.add(state.BillingMeterCompute, heldReason(acct), window.Hour)
 			continue
 		}
 		acct, err = p.accountForProvider(ctx, acct)
@@ -306,10 +316,20 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 			p.log.Warn("meter: billing identity incomplete",
 				"account", acct.ID, "provider_customer_id_set", acct.ProviderCustomerID != "",
 				"subscription_id_set", acct.StripeSubscriptionItem != "", "replay", true)
+			held.add(state.BillingMeterCompute, UsageHeldIdentityIncomplete, window.Hour)
+			continue
+		}
+		free, err := grants.freeAt(ctx, acct, window.Hour)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		billableMBSeconds := window.MBSeconds
-		if mode == billing.UsageModeOverage {
+		if free {
+			billableMBSeconds = 0 // settled below with a zero receipt
+		} else if mode == billing.UsageModeOverage {
 			billableMBSeconds, err = p.billablePendingUsage(ctx, acct, window, cursors, caps, grants)
 			if err != nil {
 				if firstErr == nil {
@@ -398,11 +418,21 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		return windows[i].AccountID < windows[j].AccountID
 	})
 	cursors := make(map[string]overageCursor)
+	held := newHeldUsage(start)
+	defer p.publishHeld(meter, held)
 	pushed := 0
 	var firstErr error
 	for _, window := range windows {
 		acct, exists := byID[window.AccountID]
-		if !exists || acct.Plan == api.PlanFree || !usageDeliverable(acct, window.Hour) {
+		if !exists {
+			held.add(meter, UsageHeldUnknownSubject, window.Hour)
+			continue
+		}
+		if acct.Plan == api.PlanFree {
+			continue
+		}
+		if !usageDeliverable(acct, window.Hour) {
+			held.add(meter, heldReason(acct), window.Hour)
 			continue
 		}
 		policy, configured := policyProvider.MeterUsagePolicy(acct.Plan, meter)
@@ -426,9 +456,17 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 		}
 		if acct.ProviderCustomerID == "" || acct.StripeSubscriptionItem == "" {
 			p.log.Warn("meter: billing identity incomplete", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "replay", true)
+			held.add(meter, UsageHeldIdentityIncomplete, window.Hour)
 			continue
 		}
-		if window.Hour.Before(policy.EffectiveFrom) {
+		free, err := grants.freeAt(ctx, acct, window.Hour)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if free || window.Hour.Before(policy.EffectiveFrom) {
 			if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, 0); err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -716,6 +754,20 @@ func (g *monthGrants) included(ctx context.Context, acct state.Account, hour tim
 		return 0, err
 	}
 	return state.MonthComputeIncludedMBSeconds(acct.Plan, snapshots, hour.Add(time.Hour)), nil
+}
+
+// freeAt reports whether acct was on Free for the hour starting at hour, by
+// its month's recorded plan history (ADR-20261101143527). Usage on Free is
+// never billed, also when the subject subscribes again within the lookback
+// and its unsettled Free hours come up as pending. A store without recorded
+// activations keeps the current plan.
+func (g *monthGrants) freeAt(ctx context.Context, acct state.Account, hour time.Time) (bool, error) {
+	hour = hour.UTC().Truncate(time.Hour)
+	snapshots, err := g.snapshots(ctx, acct, hour)
+	if err != nil {
+		return false, err
+	}
+	return state.MonthPlanAt(acct.Plan, snapshots, hour.Add(time.Hour)) == api.PlanFree, nil
 }
 
 // snapshots returns acct's recorded plan activations for hour's month; nil

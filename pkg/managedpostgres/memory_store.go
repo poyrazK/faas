@@ -36,7 +36,9 @@ type MemoryStore struct {
 	capEventsMailed           map[memoryCapEventKey]bool
 	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
 	restoreSlotNoticesMailed  map[memoryRestoreSlotNoticeKey]bool
+	planExcessNotices         map[string]memoryPlanExcessNotice
 	overageDeliveries         map[memoryOverageKey]OverageDelivery
+	overagePending            map[memoryOverageKey]OveragePendingStep
 	usageWaivers              map[string][]usageWaiver
 }
 
@@ -64,7 +66,9 @@ func NewMemoryStore() *MemoryStore {
 		capEventsMailed:           map[memoryCapEventKey]bool{},
 		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
 		restoreSlotNoticesMailed:  map[memoryRestoreSlotNoticeKey]bool{},
+		planExcessNotices:         map[string]memoryPlanExcessNotice{},
 		overageDeliveries:         map[memoryOverageKey]OverageDelivery{},
+		overagePending:            map[memoryOverageKey]OveragePendingStep{},
 		usageWaivers:              map[string][]usageWaiver{},
 	}
 }
@@ -111,7 +115,7 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	}
 	active := 0
 	for _, existing := range s.databases {
-		if s.sameQuotaOwner(ctx, existing, database) && existing.State != StateDeleted {
+		if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() {
 			active++
 		}
 	}
@@ -276,14 +280,10 @@ func (s *MemoryStore) ClaimDelete(ctx context.Context, accountID, databaseID, le
 	if s.databaseCutoverPinned(databaseID) || database.State == StateUpdating || database.State == StateDeleted || (!database.LeaseUntil.IsZero() && database.LeaseUntil.After(now)) {
 		return Database{}, ErrConflict
 	}
-	for _, candidate := range s.databases {
-		if candidate.RestoreSourceDatabaseID == database.ID && candidate.State != StateDeleted {
-			return Database{}, ErrConflict
-		}
-	}
+	// Restore copies do not refuse a delete (ADR-20261103091657).
 	for _, binding := range s.bindings {
 		if binding.DatabaseID == database.ID && binding.State != BindingStateDeleted {
-			return Database{}, ErrConflict
+			return Database{}, errDatabaseHasBindings
 		}
 	}
 	if database.State != StateDeleting {

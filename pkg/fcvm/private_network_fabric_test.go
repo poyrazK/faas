@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestReconcilePrivateNetworkFabricIsIdempotent(t *testing.T) {
@@ -28,7 +29,7 @@ func TestReconcilePrivateNetworkFabricIsIdempotent(t *testing.T) {
 	defer run.mu.Unlock()
 	var linkAdds int
 	for _, command := range run.commands {
-		if strings.Contains(strings.Join(command, " "), "ip link add") {
+		if strings.Contains(strings.Join(command, " "), "ip link add dev "+privatenetwork.BridgeName("acct-a", "prod")) {
 			linkAdds++
 		}
 	}
@@ -66,7 +67,7 @@ func TestReconcilePrivateNetworkFabricAddsTransportOnceAndTearsItDownFirst(t *te
 		if joined == "bridge fdb flush dev "+link {
 			flushes++
 		}
-		if strings.Contains(joined, "bridge fdb replace") {
+		if strings.Contains(joined, "bridge fdb append") {
 			fdbEntries++
 		}
 	}
@@ -135,9 +136,9 @@ func TestReconcilePrivateNetworkFabricWithPeersRefreshesFDB(t *testing.T) {
 	}
 }
 
-func TestReconcilePrivateNetworkFabricWithEmptyPeersFlushesAfterRestart(t *testing.T) {
+func TestReconcilePrivateNetworkFabricWithEmptyPeersRemovesStaleFloodAfterRestart(t *testing.T) {
 	run := &fakeRunner{}
-	m := newTestManager(run, &fakeVMM{}).WithCaptureRunner(&fabricPresentCaptureRunner{}).WithPrivateNetworkTransport(PrivateNetworkTransportConfig{
+	m := newTestManager(run, &fakeVMM{}).WithCaptureRunner(&fabricStalePeerCaptureRunner{}).WithPrivateNetworkTransport(PrivateNetworkTransportConfig{
 		Enabled:          true,
 		OverlayInterface: "tailscale0",
 		LocalAddress:     netip.MustParseAddr("100.64.0.10"),
@@ -152,11 +153,11 @@ func TestReconcilePrivateNetworkFabricWithEmptyPeersFlushesAfterRestart(t *testi
 	commands := append([][]string(nil), run.commands...)
 	run.mu.Unlock()
 	for _, command := range commands {
-		if strings.Join(command, " ") == "bridge fdb flush dev "+link {
+		if strings.Join(command, " ") == "bridge fdb del 00:00:00:00:00:00 dev "+link+" dst 100.64.0.11" {
 			return
 		}
 	}
-	t.Fatalf("reconcile after restart did not flush empty peer roster; commands=%v", commands)
+	t.Fatalf("reconcile after restart did not remove stale peer from empty roster; commands=%v", commands)
 }
 
 func TestRemovePrivateNetworkFabricIsReplaySafeWithCaptureRunner(t *testing.T) {
@@ -174,7 +175,10 @@ func TestCheckPrivateNetworkFabricReportsReadyTransport(t *testing.T) {
 	link := privatenetwork.FabricTransportLinkName("acct-a", "prod")
 	bridge := privatenetwork.BridgeName("acct-a", "prod")
 	cap := &fabricReadinessCaptureRunner{outputs: map[string][]byte{
-		"ip link show dev " + bridge:   nil,
+		"ip link show dev " + bridge:                                              nil,
+		"ip -d -j link show dev " + link:                                          transportIdentityFixture("acct-a", "prod"),
+		"bridge link show dev " + privatenetwork.RouterHostLink("acct-a", "prod"): []byte("master " + bridge),
+		"ip -n " + privatenetwork.RouterNamespace("acct-a", "fra1") + " -4 -o addr show dev " + privatenetwork.RouterPeerLink("acct-a", "prod"): []byte("inet 10.42.0.1/16 scope global "),
 		"ip link show dev " + link:     nil,
 		"bridge link show dev " + link: []byte("6: " + link + ": <BROADCAST> master " + bridge + " state forwarding\n"),
 		"bridge fdb show dev " + link: []byte("00:00:00:00:00:00 dst 100.64.0.12 dev " + link + "\n" +
@@ -203,7 +207,10 @@ func TestCheckPrivateNetworkFabricReportsFDBDrift(t *testing.T) {
 	link := privatenetwork.FabricTransportLinkName("acct-a", "prod")
 	bridge := privatenetwork.BridgeName("acct-a", "prod")
 	cap := &fabricReadinessCaptureRunner{outputs: map[string][]byte{
-		"ip link show dev " + bridge:   nil,
+		"ip link show dev " + bridge:                                              nil,
+		"ip -d -j link show dev " + link:                                          transportIdentityFixture("acct-a", "prod"),
+		"bridge link show dev " + privatenetwork.RouterHostLink("acct-a", "prod"): []byte("master " + bridge),
+		"ip -n " + privatenetwork.RouterNamespace("acct-a", "fra1") + " -4 -o addr show dev " + privatenetwork.RouterPeerLink("acct-a", "prod"): []byte("inet 10.42.0.1/16 scope global "),
 		"ip link show dev " + link:     nil,
 		"bridge link show dev " + link: []byte("6: " + link + ": <BROADCAST> master " + bridge + " state forwarding\n"),
 		"bridge fdb show dev " + link:  []byte("00:00:00:00:00:00 dst 100.64.0.12 dev " + link + "\n"),
@@ -228,12 +235,6 @@ func (*fabricMissingCaptureRunner) RunCapture(context.Context, []string) ([]byte
 	return nil, context.Canceled
 }
 
-type fabricPresentCaptureRunner struct{}
-
-func (*fabricPresentCaptureRunner) RunCapture(context.Context, []string) ([]byte, error) {
-	return nil, nil
-}
-
 type fabricReadinessCaptureRunner struct {
 	outputs map[string][]byte
 }
@@ -243,4 +244,20 @@ func (f *fabricReadinessCaptureRunner) RunCapture(_ context.Context, argv []stri
 		return output, nil
 	}
 	return nil, fmt.Errorf("unexpected capture command %q", strings.Join(argv, " "))
+}
+
+type fabricStalePeerCaptureRunner struct{}
+
+func (*fabricStalePeerCaptureRunner) RunCapture(_ context.Context, argv []string) ([]byte, error) {
+	if len(argv) > 3 && argv[0] == "ip" && argv[1] == "-d" {
+		return transportIdentityFixture("acct-a", "prod"), nil
+	}
+	if len(argv) > 2 && argv[0] == "bridge" && argv[1] == "fdb" {
+		return []byte("00:00:00:00:00:00 dst 100.64.0.11 self permanent"), nil
+	}
+	return nil, nil
+}
+
+func transportIdentityFixture(account, network string) []byte {
+	return []byte(fmt.Sprintf(`[{"link":"tailscale0","linkinfo":{"info_kind":"vxlan","info_data":{"id":%d,"local":"100.64.0.10","dstport":4789,"learning":false}}}]`, state.PreferredPrivateNetworkVNI(account, network)))
 }

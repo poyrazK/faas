@@ -281,6 +281,34 @@ func (s *server) waitingReleaseApprovals(ctx context.Context, app state.App) ([]
 			out = append(out, status)
 		}
 	}
+	held, err := s.releasesWaitingBeforeReleaseCommand(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, held...), nil
+}
+
+// releasesWaitingBeforeReleaseCommand lists the app's releases waiting for
+// approval before their release command runs (ADR-20261020085706 amendment
+// 12): they are not live yet, but they wait for the same people.
+func (s *server) releasesWaitingBeforeReleaseCommand(ctx context.Context, app state.App) ([]api.ReleaseApprovalStatus, error) {
+	rows, err := s.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		AppID: app.ID, Statuses: []state.DeploymentStatus{state.DeploySnapshotting}, OldestFirst: true, Limit: 50,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list releases in their release phase: %w", err)
+	}
+	out := []api.ReleaseApprovalStatus{}
+	now := time.Now()
+	for _, d := range rows {
+		wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now)
+		if err != nil {
+			return nil, fmt.Errorf("read release approvals: %w", err)
+		}
+		if wait.Waits && (wait.Status.State == api.ReleaseApprovalStateWaiting || wait.Status.State == api.ReleaseApprovalStateExpired) {
+			out = append(out, wait.Status)
+		}
+	}
 	return out, nil
 }
 
@@ -482,6 +510,13 @@ func (s *server) releaseApprovalState(ctx context.Context, app state.App, d stat
 	if err != nil {
 		return nil, api.ReleaseApprovalStatus{}, fmt.Errorf("read release approval policy: %w", err)
 	}
+	// A release waiting before its release command waits from its release
+	// phase, for the policy's timeout (ADR-20261020085706 amendment 12).
+	if wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now); err != nil {
+		return nil, api.ReleaseApprovalStatus{}, err
+	} else if wait.Waits {
+		return wait.Policy, wait.Status, nil
+	}
 	var decisions []state.ReleaseApproval
 	if approval.Gated(&policy, app, d) {
 		if decisions, err = store.ListReleaseApprovals(ctx, d.ID); err != nil {
@@ -501,15 +536,76 @@ func (s *server) releaseApprovalTrafficProblem(r *http.Request, app state.App, d
 // at 0% to the approvals a traffic increase meets: a release deployed with
 // no traffic, or parked for its schedule, is a forward release, not a
 // known-good one, and rolling back to it must not ship it past its approvals
-// or its schedule. A superseded target served before and needs none.
+// or its schedule. A superseded target is held by
+// supersededRollbackTargetProblem.
 func (s *server) rollbackTargetApprovalProblem(ctx context.Context, app state.App, target state.Deployment) *api.Problem {
 	if target.Status != state.DeployLive {
-		return nil
+		return s.supersededRollbackTargetProblem(ctx, app, target)
 	}
 	return s.approvalTrafficProblem(ctx, app, target)
 }
 
+// supersededRollbackTargetProblem holds a rollback to a superseded release
+// (amendment 10). A rejected release never ships by rollback, whether or not
+// its canary served. One that never served (staged without traffic, or
+// waiting for approval, then replaced) is a forward release, not a
+// known-good one: it meets the break-glass pause, the freezes and the
+// approvals a new release meets, and a rollback carries no override. A
+// release that served before is a rollback target, which those never hold.
+func (s *server) supersededRollbackTargetProblem(ctx context.Context, app state.App, target state.Deployment) *api.Problem {
+	_, status, err := s.releaseApprovalState(ctx, app, target)
+	if err != nil {
+		logCustomerFailure(s.log, "read release approvals for rollback target", err)
+		return api.ErrInternal("Gregale could not read this release's approvals.").WithHint("Retry in a moment.")
+	}
+	if status.State == api.ReleaseApprovalStateRejected {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "rejected")
+		return approval.Problem(status)
+	}
+	history, ok := s.store.(state.DeploymentServingHistoryStore)
+	if !ok {
+		return nil
+	}
+	served, err := history.DeploymentServedBefore(ctx, target.ID)
+	if err != nil {
+		logCustomerFailure(s.log, "read rollback target serving history", err)
+		return api.ErrInternal("Gregale could not check whether this release served before.").WithHint("Retry in a moment.")
+	}
+	if served {
+		return nil
+	}
+	if p := s.platformReleasePauseProblem(); p != nil {
+		return p
+	}
+	now := time.Now().UTC()
+	active, err := freeze.ActiveFor(ctx, s.store, app, target.Scope, now)
+	if err != nil {
+		s.log.Warn("deploy freeze: could not read freezes for a never-served rollback target", "app", app.ID, "err", err)
+		return api.ErrCapacity("could not read release freezes for this rollback target")
+	} else if len(active) > 0 {
+		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
+			WithHint("This release never served, so rolling back to it ships it as a new release. Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
+	}
+	if approval.Blocks(status) {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "held")
+		return approval.Problem(status)
+	}
+	return nil
+}
+
 func (s *server) approvalTrafficProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
+	if p := s.darkReleasePauseProblem(d); p != nil {
+		return p
+	}
+	// A release staged without traffic in a protected environment reaches
+	// traffic only through an approved plan or promotion (ADR-20261019071733
+	// amendment 9).
+	if neverServedDark(d) {
+		if p := protectedEnvironmentReleaseProblem(ctx, s.store, app, d.Scope); p != nil {
+			return p
+		}
+	}
 	// ADR-20261021152201: a release waiting for its scheduled start takes
 	// no traffic by hand.
 	if p := s.scheduledTrafficProblem(ctx, d); p != nil {
@@ -627,10 +723,42 @@ func (s *server) abortForApproval(ctx context.Context, app state.App, d state.De
 		return
 	}
 	reason := "release approval: " + summary
-	if _, _, err := decisions.RecoverRolloutWithDecision(ctx, app.ID, "abort", reason,
-		approval.AbortDecision(rule, summary, d, time.Now())); err != nil {
+	decision := approval.AbortDecision(rule, summary, d, time.Now())
+	// Abort this release, not the app's newest rollout: with another
+	// environment rolling out, an app-level abort is ambiguous and refused,
+	// and the rejected release would keep its canary traffic (approvals ADR
+	// amendment 11).
+	var err error
+	if predecessor, ok := s.rolloutPredecessor(ctx, d); ok {
+		_, _, err = decisions.RecoverRolloutForDeploymentWithDecision(ctx, app.ID, d.ID, predecessor.ID, "abort", reason, decision)
+	} else {
+		_, _, err = decisions.RecoverRolloutWithDecision(ctx, app.ID, "abort", reason, decision)
+	}
+	if err != nil {
 		s.log.Warn("apid: abort release for approval failed", "deployment", d.ID, "rule", rule, "err", err)
 	}
+}
+
+// rolloutPredecessor is the release a canary in flight returns its traffic
+// to on abort: the newest earlier live release of its scope that serves.
+func (s *server) rolloutPredecessor(ctx context.Context, d state.Deployment) (state.Deployment, bool) {
+	live, err := s.store.LiveDeployments(ctx, d.AppID)
+	if err != nil {
+		s.log.Warn("apid: read rollout predecessor", "deployment", d.ID, "err", err)
+		return state.Deployment{}, false
+	}
+	var best state.Deployment
+	found := false
+	for _, other := range live {
+		if other.ID == d.ID || other.TrafficPercent <= 0 || recoveryScope(other.Scope) != recoveryScope(d.Scope) ||
+			!other.CreatedAt.Before(d.CreatedAt) {
+			continue
+		}
+		if !found || other.CreatedAt.After(best.CreatedAt) {
+			best, found = other, true
+		}
+	}
+	return best, found
 }
 
 // appSharedInOrg reports whether more than one person can act on app.
@@ -697,20 +825,93 @@ func promotionAppsBySlug(plan projectEnvironmentPromotionPlan) []state.App {
 // security audit 2026-10-27): it is one decision, so it cannot meet a policy
 // of more than one approval, and a policy that forbids self-approval needs
 // it given by someone other than the promoter. approver is "" for an
-// approval made before approvers were recorded.
+// approval made before approvers were recorded. On a company app the
+// approver must hold a role the policy lets approve (amendment 9).
 func (s *server) protectedPromotionApprovalProblem(ctx context.Context, plan projectEnvironmentPromotionPlan, toEnvironment, approver, promoter string) *api.Problem {
-	if !plan.Preview.ApprovalRequired || !freeze.IsProductionScope(toEnvironment) {
+	policies, problem := s.promotionApprovalPolicies(ctx, plan, toEnvironment)
+	if problem != nil {
+		return problem
+	}
+	for _, p := range policies {
+		app, policy := p.app, p.policy
+		if policy.RequiredApprovals > 1 {
+			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+			return api.ErrReleaseApprovalPromotionInsufficient(app.Slug, toEnvironment, policy.RequiredApprovals)
+		}
+		if !policy.AllowSelfApproval && (approver == "" || approver == promoter) {
+			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+			return api.ErrReleaseApprovalPromotionSelf(app.Slug, toEnvironment)
+		}
+		if problem := s.promotionApproverRoleProblem(ctx, app, policy, toEnvironment, approver); problem != nil {
+			return problem
+		}
+	}
+	return nil
+}
+
+// promotionApproverRoleProblem refuses a promotion approval given by someone
+// a company app's policy does not let approve its releases: a member with
+// another role, or one who has left the organization (amendment 9).
+func (s *server) promotionApproverRoleProblem(ctx context.Context, app state.App, policy state.ReleaseApprovalPolicy, toEnvironment, approver string) *api.Problem {
+	shared, err := s.appSharedInOrg(ctx, app)
+	if err == nil && (!shared || approver == "") {
 		return nil
+	}
+	var member state.OrgMembership
+	if err == nil {
+		member, err = s.store.OrgMemberByAccount(ctx, app.OrgID, approver)
+	}
+	if errors.Is(err, state.ErrNotFound) || err == nil && (member.RemovedAt != nil || !approval.RoleAllowed(policy.Approvers, member.Role)) {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+		return api.ErrReleaseApprovalPromotionApprover(app.Slug, toEnvironment)
+	}
+	if err != nil {
+		logCustomerFailure(s.log, "read promotion approver role", err)
+		return api.ErrInternal("Gregale could not check who approved this promotion.").WithHint("Retry in a moment.")
+	}
+	return nil
+}
+
+// promotionApprovalKeyProblem refuses a protected production promotion's
+// approval sent with an API key or token when it would stand in for an app's
+// release approval policy: a person approves a release (amendment 4), and
+// CI holds keys (amendment 9).
+func (s *server) promotionApprovalKeyProblem(r *http.Request, plan projectEnvironmentPromotionPlan, toEnvironment string) *api.Problem {
+	if p, ok := principalFrom(r); !ok || p.Key == nil {
+		return nil
+	}
+	policies, problem := s.promotionApprovalPolicies(r.Context(), plan, toEnvironment)
+	if problem != nil {
+		return problem
+	}
+	if len(policies) > 0 {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+		return api.ErrReleaseApprovalPromotionSessionRequired(policies[0].app.Slug, toEnvironment)
+	}
+	return nil
+}
+
+type promotionApprovalPolicy struct {
+	app    state.App
+	policy state.ReleaseApprovalPolicy
+}
+
+// promotionApprovalPolicies lists the release approval policies a protected
+// production promotion's approval stands in for, by app slug.
+func (s *server) promotionApprovalPolicies(ctx context.Context, plan projectEnvironmentPromotionPlan, toEnvironment string) ([]promotionApprovalPolicy, *api.Problem) {
+	if !plan.Preview.ApprovalRequired || !freeze.IsProductionScope(toEnvironment) {
+		return nil, nil
 	}
 	store, ok := s.store.(state.ReleaseApprovalStore)
 	if !ok {
-		return nil
+		return nil, nil
 	}
+	var out []promotionApprovalPolicy
 	for _, app := range promotionAppsBySlug(plan) {
 		required, err := approval.CanaryRequired(ctx, s.store, app, toEnvironment, "")
 		if err != nil {
 			logCustomerFailure(s.log, "read release approval policy", err)
-			return api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
+			return nil, api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
 		}
 		if !required {
 			continue
@@ -721,18 +922,11 @@ func (s *server) protectedPromotionApprovalProblem(ctx context.Context, plan pro
 		}
 		if err != nil {
 			logCustomerFailure(s.log, "read release approval policy", err)
-			return api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
+			return nil, api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
 		}
-		if policy.RequiredApprovals > 1 {
-			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
-			return api.ErrReleaseApprovalPromotionInsufficient(app.Slug, toEnvironment, policy.RequiredApprovals)
-		}
-		if !policy.AllowSelfApproval && (approver == "" || approver == promoter) {
-			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
-			return api.ErrReleaseApprovalPromotionSelf(app.Slug, toEnvironment)
-		}
+		out = append(out, promotionApprovalPolicy{app: app, policy: policy})
 	}
-	return nil
+	return out, nil
 }
 
 // releaseApprovalCanaryProblem refuses a production release that would take

@@ -33,18 +33,25 @@ says so instead of skipping silently.
 
 ## Retention
 
-| Plan | Archived logs readable for | HTTP request events | Log drains |
-|---|---|---|---|
-| Free | 1 day | — | — |
-| Hobby | 7 days | 3 days | 3 per app, 10 per account |
-| Pro | 30 days | 7 days | 10 per app, 30 per account |
-| Scale | 90 days | 14 days | 25 per app, 100 per account |
+| Plan | Archived logs readable for | Job task output kept for | HTTP request events | Log drains |
+|---|---|---|---|---|
+| Free | 1 day | 1 day | — | — |
+| Hobby | 7 days | 7 days | 3 days | 3 per app, 10 per account |
+| Pro | 30 days | 30 days | 7 days | 10 per app, 30 per account |
+| Scale | 90 days | 90 days | 14 days | 25 per app, 100 per account |
 
 The archive deletes logs 90 days after they are written, whatever your plan,
 and deletes all of them when your account is deleted. Lines still in a
 running instance's memory are lost if the node
 running it fails before they are archived; use a [log drain](#log-drains) when
 every line matters.
+
+[Job](jobs.md) task output, what `gregale job logs` and the attempt history
+show, is deleted once the run finished longer ago than your plan's window. The
+run, its tasks and their attempts stay, with their statuses and exit codes;
+their output reads as empty and truncated (`gregale job logs` prints only
+`...[truncated]`). Deleting your account deletes all of it
+([ADR-20261102183152](adr/20261102183152-job-log-retention.md)).
 
 ## Filtering
 
@@ -150,4 +157,10 @@ gregale logs drain health my-api <drain-id>
 - An account can hold a limited number of log streams open at once (Free 2,
   Hobby 5, Pro 20, Scale 50); more answer `429 log_streams_limit`.
 - `--follow` reconnects by itself after ten quiet minutes.
+- Each instance can write a limited amount of log output per UTC hour:
+  Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB. Past it, Gregale
+  writes one line saying so and drops the rest of the hour's output
+  ([ADR-20261104085150](adr/20261104085150-log-volume-allowance.md)).
+- A log drain delivers at most 1 MiB of lines a second (bursts to 4 MiB);
+  lines past that are dropped and counted in `health`.
 - Logs have no separate charge.

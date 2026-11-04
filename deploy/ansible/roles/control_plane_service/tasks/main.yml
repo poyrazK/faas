@@ -429,6 +429,23 @@
     - faas-meterd
     - faas-outboundd
 
+- name: control_plane_service — set apid's deployment environment
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-environment.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-environment.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_environment | length > 0
+
+- name: control_plane_service — remove apid's deployment environment when unset
+  notify: restart faas-apid
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d/zz-faas-environment.conf
+    state: absent
+  when: faas_environment | length == 0
+
 - name: control_plane_service — set public-beta billing mode
   notify:
     - restart faas-apid

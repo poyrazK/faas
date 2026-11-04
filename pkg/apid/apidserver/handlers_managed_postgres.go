@@ -220,11 +220,13 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, problem)
 		return
 	}
+	excess := s.managedPostgresPlanExcess(databases, acct.Plan)
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
 		if filter.keep(database.ID) {
 			view := managedPostgresView(database)
 			view.Labels = filter.labelsOf(database.ID)
+			view.PlanExcess = excess[database.ID]
 			items = append(items, view)
 		}
 	}
@@ -437,7 +439,18 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		}
 		return
 	}
-	database, err := s.managedPostgres.Create(r.Context(), managedpostgres.CreateRequest{AccountID: acct.ID, Name: req.Name, Spec: spec})
+	request := managedpostgres.CreateRequest{AccountID: acct.ID, Name: req.Name, Spec: spec}
+	var database managedpostgres.Database
+	if req.RequestID != "" {
+		id, parseErr := uuid.Parse(req.RequestID)
+		if parseErr != nil || id == uuid.Nil {
+			managedPostgresProblem(w, managedpostgres.ErrInvalid)
+			return
+		}
+		database, err = s.managedPostgres.CreateWithID(r.Context(), request, id.String())
+	} else {
+		database, err = s.managedPostgres.Create(r.Context(), request)
+	}
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
@@ -461,6 +474,7 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 	}
 	view := managedPostgresView(database)
 	view.Labels = s.resourceLabels(r, acct, state.LabelKindDatabase, database.ID)
+	view.PlanExcess = s.managedPostgresPlanExcessOf(r.Context(), acct, database.ID)
 	writeJSON(w, http.StatusOK, view)
 }
 

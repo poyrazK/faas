@@ -221,6 +221,10 @@ func (s *server) receiveBoundWorkflowCallback(w http.ResponseWriter, r *http.Req
 		status = "ignored"
 		err = nil
 	}
+	if errors.Is(err, state.ErrWorkflowInvalidInput) {
+		api.WriteProblem(w, api.ErrValidation("Callback payload exceeds the supported size or numeric range."))
+		return true
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not durably complete workflow callback"))
 		return true

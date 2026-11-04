@@ -532,11 +532,11 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     }
     next();
   });
-  app.get('/healthz', (_req, res) => {
+  app.get('/healthz', (req, res) => {
     const catalogState = catalogStatus();
     res.status(catalogState.ready ? 200 : 503).json({
       status: catalogState.ready ? 'ok' : 'degraded',
-      instance_id: process.env.FAAS_INSTANCE_ID || '',
+      instance_id: (req.get('x-faas-instance-id') || '').trim(),
       catalog_revision: catalogState.revision,
       catalog_sha256: catalogState.sha256,
     });

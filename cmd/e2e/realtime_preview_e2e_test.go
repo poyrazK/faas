@@ -111,13 +111,14 @@ func TestE2E_RealtimePreviewTicketRetainedPublishAndOccupancy(t *testing.T) {
 		http.StatusCreated, &ticket)
 
 	// apid registers the endpoint with realtimed asynchronously; retry the
-	// handshake until it is known.
+	// handshake until it is known. An endpoint answers only on its account's
+	// hosts (ADR-1323 amendment 2026-11-02), so dial through the app's host.
 	url := "ws" + strings.TrimPrefix(h.EdgeURL(), "http") + realtime.ManagedPathPrefix + endpoint.ID
 	dialer := websocket.Dialer{Subprotocols: []string{realtime.ResumeSubprotocol}, HandshakeTimeout: 5 * time.Second}
 	var client *websocket.Conn
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		conn, resp, err := dialer.Dial(url, http.Header{"Authorization": {"Bearer " + ticket.Ticket}})
+		conn, resp, err := dialer.Dial(url, http.Header{"Authorization": {"Bearer " + ticket.Ticket}, "Host": {"rt-e2e.apps.test.example"}})
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}

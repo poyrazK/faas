@@ -58,9 +58,32 @@ func TestTenantWorkflowScheduleFairnessSurvivesPagingAndRunRetention(t *testing.
 			firstTenant = tenant.ID
 		}
 		fair := store.(state.FairTenantWorkflowScheduleStore)
+		paged := store.(state.FairTenantWorkflowSchedulePageStore)
 		schedules := store.(state.TenantWorkflowScheduleStore)
 		history := store.(state.WorkflowScheduleHistoryStore)
 		at := time.Now().UTC().Truncate(time.Minute).Add(-10 * time.Minute)
+		// A full page can remain eligible when its admission fails or is held
+		// by a capability flag. The next page must still be reachable without
+		// advancing those tenants' durable schedule cursors.
+		first, err := paged.ListFairTenantWorkflowScheduleCandidatesAfter(ctx, "", at, 3, nil)
+		if err != nil || len(first) != 3 {
+			t.Fatalf("first fair page: %d %v", len(first), err)
+		}
+		last := first[len(first)-1]
+		after := &state.FairTenantScheduleCursor{AppID: last.AppID, TenantID: last.PlatformTenantID, WorkflowName: last.FairWorkflowName, LastAdmittedAt: last.FairLastAdmittedAt}
+		second, err := paged.ListFairTenantWorkflowScheduleCandidatesAfter(ctx, "", at, 3, after)
+		if err != nil || len(second) != 3 {
+			t.Fatalf("second fair page: %d %v", len(second), err)
+		}
+		seenFirstPage := map[string]bool{}
+		for _, c := range first {
+			seenFirstPage[c.PlatformTenantID+"/"+c.FairWorkflowName] = true
+		}
+		for _, c := range second {
+			if seenFirstPage[c.PlatformTenantID+"/"+c.FairWorkflowName] {
+				t.Fatalf("fair scan repeated an unadvanced candidate: %+v", c)
+			}
+		}
 		admitted := map[string]int{}
 		for cycle := range 4 {
 			now := at.Add(time.Duration(cycle)*time.Minute + 30*time.Second)

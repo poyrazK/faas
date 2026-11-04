@@ -1322,7 +1322,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var privateNetworkPolicySubscriber *sched.PrivateNetworkPolicySubscriber
 	var privateNetworkPeeringSubscriber *sched.PrivateNetworkPeeringSubscriber
 	var privateNetworkFabricDeletionSubscriber *sched.PrivateNetworkFabricDeletionSubscriber
-	if api.PrivateNetworkEnabled() {
+	if api.PrivateNetworkEnabled() && !privateNetworkReconcilersRun(cfg.Role) {
+		log.Info("schedd: private network reconciler left to the central scheduler", "role", cfg.Role)
+	} else if api.PrivateNetworkEnabled() {
 		reconcileStore, ok := any(store).(state.AppPrivateNetworkAttachmentReconcileStore)
 		if !ok {
 			log.Warn("schedd: private network reconciler unavailable; state store lacks reconcile extension")
@@ -2035,6 +2037,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
 		WithPrivateNetworkFabricDeletionSubscriber(privateNetworkFabricDeletionSubscriber).
 		WithTriggerSecretIdentities(deliveryReaders).
+		// Broker triggers take at most their plan's
+		// TriggerRecordsPerSecondPerApp; records over it stay on the
+		// broker for a later poll (ADR-20261101093015).
+		WithTriggerRecordRateLimiter(sched.NewTriggerRecordRateLimiter()).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).
@@ -2894,6 +2900,17 @@ func triggersRetention(store state.Store, log *slog.Logger, value string) *sched
 	return sched.NewTriggersRetention(store, log)
 }
 
+// privateNetworkReconcilersRun reports whether a schedd with this role runs
+// the private-network reconcilers and their notify subscribers. They sweep
+// every attachment and push it to every live node through the vmmd router,
+// so one scheduler per fleet runs them: the control-plane or single-box one.
+// A node-local schedd (ADR-062) reads the same host-wide
+// FAAS_PRIVATE_NETWORK_ENABLED, and its unclaimed sweeps would race the
+// central one's attachment status writes.
+func privateNetworkReconcilersRun(r role.Role) bool {
+	return r != role.RoleComputeOnly
+}
+
 // subscribeWithReconnect drains a pg_notify-style feed via the
 // Shared subscriber Drain loop. Shared by the deletion
 // subscriber (ADR-026) and the egress drift subscriber (PR-B).
@@ -3195,10 +3212,25 @@ func (s schedFloorPlanResolver) ResolvePlan(ctx context.Context, accountID strin
 	if err != nil {
 		return api.PlanFree, false
 	}
-	if !acct.Active() {
-		return api.PlanFree, true
+	return floorPlan(acct), true
+}
+
+// ResolveAppPlan implements floor.AppPlanResolver: a company app's floor
+// follows its organization's plan and status, the subject meterd bills the
+// floor to, not its creator's account (ADR-20261101113742).
+func (s schedFloorPlanResolver) ResolveAppPlan(ctx context.Context, app state.App) (api.Plan, bool) {
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
+	if err != nil {
+		return api.PlanFree, false
 	}
-	return acct.Plan, true
+	return floorPlan(acct), true
+}
+
+func floorPlan(acct state.Account) api.Plan {
+	if !acct.Active() {
+		return api.PlanFree
+	}
+	return acct.Plan
 }
 
 // schedFloorLedger (issue #557 / ADR-071) adapts *sched.NodeLedger

@@ -75,6 +75,7 @@ type githubWebhookActivityResponse struct {
 	ReceivedAt  time.Time  `json:"received_at"`
 	ProcessedAt *time.Time `json:"processed_at,omitempty"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+	SkipReason  string     `json:"skip_reason,omitempty"`
 }
 
 type githubCheckActivityResponse struct {
@@ -569,6 +570,7 @@ func projectGithubActivity(activity githubdgrpc.AppActivity) *githubActivityResp
 		out.WebhookDeliveries = append(out.WebhookDeliveries, githubWebhookActivityResponse{
 			EventType: item.EventType, Status: item.Status, CommitSHA: item.CommitSHA,
 			ReceivedAt: item.ReceivedAt, ProcessedAt: item.ProcessedAt, UpdatedAt: item.UpdatedAt,
+			SkipReason: item.SkipReason,
 		})
 	}
 	for _, item := range activity.Checks {

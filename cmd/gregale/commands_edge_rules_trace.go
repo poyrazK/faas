@@ -250,7 +250,11 @@ func cmdEdgeRulesTrace(args []string) int {
 	}
 	if names := edgeruletrace.ReferencedEdgeRuleLists(contextRules); len(names) > 0 {
 		for _, name := range names {
-			list, listErr := client.GetEdgeRuleList(context.Background(), name)
+			// A company app's organization lists, then the caller's own.
+			list, listErr := client.GetEdgeRuleList(context.Background(), name, input.App)
+			if isNotFound(listErr) {
+				list, listErr = client.GetEdgeRuleList(context.Background(), name, "")
+			}
 			if listErr != nil && !isNotFound(listErr) {
 				return printErr("Edge rule list lookup failed", listErr)
 			}

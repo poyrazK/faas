@@ -106,19 +106,24 @@ func (r DomainReconciler) apply(ctx context.Context, lease state.HostingDomainLe
 		at := r.now()
 		d.Details.VerifiedAt = &at
 	}
-	allowCreate := d.Details.ProviderID == "" && d.Details.CreateStartedAt == nil
-	if allowCreate {
-		at := r.now()
-		d.Details.CreateStartedAt = &at
-		// Persist before any provider create. A crash or lost receipt must not repeat it.
-		prepared, saveErr := r.Store.SaveHostingDomain(ctx, lease, "pending_certificate", d.Details)
-		if saveErr != nil {
-			return lease, "provider_unavailable", saveErr
+	var beginCreate artifacts.DomainCreateFence
+	if d.Details.ProviderID == "" && d.Details.CreateStartedAt == nil {
+		beginCreate = func(ctx context.Context) (api.HostingDomainDetails, error) {
+			if lease.Domain.Details.CreateStartedAt != nil {
+				return d.Details, state.ErrConflict
+			}
+			details := d.Details
+			at := r.now()
+			details.CreateStartedAt = &at
+			prepared, err := r.Store.SaveHostingDomain(ctx, lease, "pending_certificate", details)
+			if err != nil {
+				return d.Details, err
+			}
+			lease = prepared
+			return lease.Domain.Details, nil
 		}
-		lease = prepared
-		d = lease.Domain
 	}
-	details, ready, err := r.Provider.Ensure(ctx, d, allowCreate)
+	details, ready, err := r.Provider.Ensure(ctx, d, beginCreate)
 	if err != nil {
 		code := "provider_unavailable"
 		if errors.Is(err, artifacts.ErrDomainProviderConflict) {

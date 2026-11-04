@@ -10,15 +10,18 @@ from ...client import AuthenticatedClient, Client
 from ...models.inject_workflow_event_request import InjectWorkflowEventRequest
 from ...models.inject_workflow_event_response import InjectWorkflowEventResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     id: UUID,
     *,
     body: InjectWorkflowEventRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(idempotency_key, Unset):
+        headers["Idempotency-Key"] = idempotency_key
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -95,11 +98,16 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: InjectWorkflowEventRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[InjectWorkflowEventResponse | Problem]:
     """Deliver an external event to a waiting workflow run.
 
+     A matching retained event may be retried after the run finishes. Reusing an event key with different
+    content conflicts.
+
     Args:
         id (UUID):
+        idempotency_key (str | Unset):
         body (InjectWorkflowEventRequest): An external event supplied to resume an awaiting
             workflow step.
 
@@ -114,6 +122,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         id=id,
         body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -128,11 +137,16 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: InjectWorkflowEventRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> InjectWorkflowEventResponse | Problem | None:
     """Deliver an external event to a waiting workflow run.
 
+     A matching retained event may be retried after the run finishes. Reusing an event key with different
+    content conflicts.
+
     Args:
         id (UUID):
+        idempotency_key (str | Unset):
         body (InjectWorkflowEventRequest): An external event supplied to resume an awaiting
             workflow step.
 
@@ -148,6 +162,7 @@ def sync(
         id=id,
         client=client,
         body=body,
+        idempotency_key=idempotency_key,
     ).parsed
 
 
@@ -156,11 +171,16 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: InjectWorkflowEventRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> Response[InjectWorkflowEventResponse | Problem]:
     """Deliver an external event to a waiting workflow run.
 
+     A matching retained event may be retried after the run finishes. Reusing an event key with different
+    content conflicts.
+
     Args:
         id (UUID):
+        idempotency_key (str | Unset):
         body (InjectWorkflowEventRequest): An external event supplied to resume an awaiting
             workflow step.
 
@@ -175,6 +195,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         id=id,
         body=body,
+        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -187,11 +208,16 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: InjectWorkflowEventRequest,
+    idempotency_key: str | Unset = UNSET,
 ) -> InjectWorkflowEventResponse | Problem | None:
     """Deliver an external event to a waiting workflow run.
 
+     A matching retained event may be retried after the run finishes. Reusing an event key with different
+    content conflicts.
+
     Args:
         id (UUID):
+        idempotency_key (str | Unset):
         body (InjectWorkflowEventRequest): An external event supplied to resume an awaiting
             workflow step.
 
@@ -208,5 +234,6 @@ async def asyncio(
             id=id,
             client=client,
             body=body,
+            idempotency_key=idempotency_key,
         )
     ).parsed

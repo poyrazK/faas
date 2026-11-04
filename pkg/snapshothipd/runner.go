@@ -18,6 +18,10 @@ const (
 	// budget. Reconciliation is event-cursor based, so this tighter cadence
 	// does not rescan the complete snapshots table.
 	DefaultInterval = 100 * time.Millisecond
+	// DefaultIdleInterval is the tick a runner with a wake signal keeps once
+	// its node is caught up. No notification announces the time-based work:
+	// retries (5 s and longer), stale leases and revalidation (5 minutes).
+	DefaultIdleInterval = time.Second
 	// DefaultMaxPerTick avoids making a registry outage or a large snapshot
 	// backlog monopolise a schedd process.
 	DefaultMaxPerTick = 4
@@ -32,12 +36,15 @@ const (
 // and shared storage, so no private IP, SSH path, or provider-specific API is
 // needed.
 type Runner struct {
-	store              state.SnapshotReplicaLeaseStore
-	backend            storage.StorageBackend
-	nodeID             string
-	log                *slog.Logger
-	metrics            Metrics
-	interval           time.Duration
+	store        state.SnapshotReplicaLeaseStore
+	backend      storage.StorageBackend
+	nodeID       string
+	log          *slog.Logger
+	metrics      Metrics
+	interval     time.Duration
+	idleInterval time.Duration
+	// wake, when set, ends an idle wait early; nil keeps the fixed interval.
+	wake               <-chan struct{}
 	maxTick            int
 	leaseRenewInterval time.Duration
 	// memory shares snapshot memory pages with image blocks (ADR-956); nil
@@ -58,6 +65,7 @@ func New(store state.SnapshotReplicaLeaseStore, backend storage.StorageBackend, 
 		nodeID:             nodeID,
 		log:                log,
 		interval:           DefaultInterval,
+		idleInterval:       DefaultIdleInterval,
 		maxTick:            DefaultMaxPerTick,
 		leaseRenewInterval: DefaultLeaseRenewInterval,
 	}
@@ -82,6 +90,23 @@ func (r *Runner) Interval() time.Duration {
 		return DefaultInterval
 	}
 	return r.interval
+}
+
+// WithWake lets a caught-up runner wait for wake, or DefaultIdleInterval,
+// instead of probing the database every interval. vmmd signals it on
+// db.NotifySnapshotFanout and after a LISTEN reconnect. A tick that finds
+// work keeps the fast interval until the node is caught up again.
+func (r *Runner) WithWake(wake <-chan struct{}) *Runner {
+	r.wake = wake
+	return r
+}
+
+// WithIdleInterval changes the caught-up tick of a runner with a wake signal.
+func (r *Runner) WithIdleInterval(interval time.Duration) *Runner {
+	if interval > 0 {
+		r.idleInterval = interval
+	}
+	return r
 }
 
 func (r *Runner) WithMaxPerTick(max int) *Runner {
@@ -110,17 +135,27 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 	go r.runMemorySharing(ctx)
-	r.runTick(ctx)
-	t := time.NewTicker(r.interval)
+	t := time.NewTimer(r.nextTick(r.runTick(ctx)))
 	defer t.Stop()
 	for {
+		// A nil wake channel never fires, which keeps the fixed interval.
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-r.wake:
 		case <-t.C:
-			r.runTick(ctx)
 		}
+		t.Reset(r.nextTick(r.runTick(ctx)))
 	}
+}
+
+// nextTick is the wait after a tick: the fast interval while there is work
+// or no wake signal, the idle interval otherwise.
+func (r *Runner) nextTick(busy bool) time.Duration {
+	if busy || r.wake == nil {
+		return r.interval
+	}
+	return r.idleInterval
 }
 
 func (r *Runner) validate() error {
@@ -145,12 +180,14 @@ type replicaReconciler interface {
 	ReconcileSnapshotReplicas(ctx context.Context, nodeID string) (added int, claimable bool, err error)
 }
 
-func (r *Runner) runTick(ctx context.Context) {
+// runTick reconciles and claims, and reports whether the node had work: the
+// probe found something to claim or enqueue, failed, or there is no probe.
+func (r *Runner) runTick(ctx context.Context) bool {
 	reconciler, ok := r.store.(replicaReconciler)
 	if !ok {
 		r.reconcile(ctx)
 		r.runWorkTick(ctx)
-		return
+		return true
 	}
 	added, claimable, err := reconciler.ReconcileSnapshotReplicas(ctx, r.nodeID)
 	if err != nil {
@@ -164,6 +201,7 @@ func (r *Runner) runTick(ctx context.Context) {
 	if claimable {
 		r.runWorkTick(ctx)
 	}
+	return claimable || added > 0
 }
 
 func (r *Runner) reconcile(ctx context.Context) {

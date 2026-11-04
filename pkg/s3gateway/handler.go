@@ -775,6 +775,9 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 			status, code, message = http.StatusForbidden, "AccessDenied", "The storage credential is no longer authorized."
 		} else if errors.Is(err, state.ErrObjectBudget) {
 			status, code, message = http.StatusPaymentRequired, "AccountProblem", objectBudgetMessage(err)
+		} else if limit := (*state.ObjectStorageLimitError)(nil); errors.As(err, &limit) && limit.Kind == "account_bytes" && errors.Is(err, state.ErrObjectCapacity) {
+			// ADR-20261101214152: the account's ceiling, which support can raise.
+			status, code, message = http.StatusConflict, "OperationAborted", fmt.Sprintf("The account would store more than its object storage ceiling: limit %d bytes, observed %d. Delete objects, or ask support for a higher ceiling. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
 		} else if errors.Is(err, state.ErrConflict) {
@@ -796,7 +799,7 @@ func objectBudgetMessage(err error) string {
 	if limit.Kind == "account_bytes" {
 		// ADR-20261101214152: downloads stop while the account stores more
 		// than its plan's ceiling; listing, HEAD and DELETE still work.
-		return fmt.Sprintf("The account stores more than its plan's object storage ceiling: limit %d bytes, observed %d. Delete objects, raise the spend cap or upgrade to download again. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
+		return fmt.Sprintf("The account stores more than its object storage ceiling: limit %d bytes, observed %d. Delete objects to download again, or ask support for a higher ceiling. See %s.", limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 	}
 	return fmt.Sprintf("The account reached its object storage %s limit for the month: limit %d, observed %d. See %s.", limit.Kind, limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 }

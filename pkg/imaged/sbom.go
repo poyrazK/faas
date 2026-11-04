@@ -83,12 +83,24 @@ func RunSyftAt(ctx context.Context, bin, dir string) ([]byte, error) {
 	return runSyftImpl(ctx, bin, dir)
 }
 
+// syftExcludes are the files the platform writes into every staging
+// tree (pkg/rootfs: guest-init as /sbin/init, the function runner).
+// They are not the customer's software, so a build's SBOM leaves them
+// out (rc.318 field report: guest-init showed up in customer SBOMs).
+var syftExcludes = []string{"./sbin/init", "./usr/local/bin/faas-runner"}
+
 // runSyftImpl is the shared body used by defaultSyftRun +
 // RunSyft + RunSyftAt. Parameterised on the binary path so the
 // JSON parse contract and the empty-output guard are not
 // duplicated.
 func runSyftImpl(ctx context.Context, bin, dir string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, bin, "dir:"+dir, "-o", "cyclonedx-json")
+	// The @1.5 suffix holds the documented schema (newer Syft defaults
+	// to CycloneDX 1.6).
+	args := []string{"dir:" + dir, "-o", "cyclonedx-json@1.5"}
+	for _, exclude := range syftExcludes {
+		args = append(args, "--exclude", exclude)
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("imaged: syft: %w", err)

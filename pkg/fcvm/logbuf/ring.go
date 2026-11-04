@@ -88,6 +88,16 @@ type Ring struct {
 	tail       []byte // partial-line buffer for Write's bytes without a '\n'
 	subs       []chan Line
 
+	// hourlyAllowance bounds the line bytes the ring accepts per UTC hour
+	// (ADR-20261104085150); 0 is unbounded. Past it, lines are dropped
+	// until the hour ends and one notice line says so, so the live view,
+	// the archive and every drain see the same bounded stream.
+	hourlyAllowance int64
+	allowanceHour   time.Time
+	allowanceUsed   int64
+	allowanceNoted  bool
+	allowanceDrops  int64
+
 	// onSlowSubscriber (issue #309 / tier-2 DX) is invoked once
 	// per dropped LINE (i.e. once per commitLocked call where
 	// at least one subscriber's channel was full). A single
@@ -295,7 +305,58 @@ func (r *Ring) Write(stream string, p []byte) (int, error) {
 // "tenant-controlled output bypasses the per-instance memory bound" hole
 // the peer review of PR #728 surfaced (the size > 0 evict loop in the
 // original commit could not compensate for a single line > maxBytes).
+// AllowanceNotice is the line a ring commits, once per hour, when its hourly
+// byte allowance drops output.
+const AllowanceNotice = "[gregale] this instance reached its plan's hourly log allowance; further output is dropped until the next UTC hour"
+
+// SetHourlyByteAllowance bounds the line bytes the ring accepts per UTC hour
+// (ADR-20261104085150). Zero or less removes the bound.
+func (r *Ring) SetHourlyByteAllowance(n int64) {
+	r.mu.Lock()
+	r.hourlyAllowance = max(n, 0)
+	r.mu.Unlock()
+}
+
+// AllowanceDrops reports how many lines the hourly allowance dropped.
+func (r *Ring) AllowanceDrops() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.allowanceDrops
+}
+
+// overAllowanceLocked charges line to the hour's allowance and reports
+// whether it must be dropped. The first drop of an hour commits the notice.
+func (r *Ring) overAllowanceLocked(stream, line string, now time.Time) bool {
+	if r.hourlyAllowance <= 0 {
+		return false
+	}
+	if hour := now.UTC().Truncate(time.Hour); !hour.Equal(r.allowanceHour) {
+		r.allowanceHour, r.allowanceUsed, r.allowanceNoted = hour, 0, false
+	}
+	if r.allowanceUsed+int64(len(line)) <= r.hourlyAllowance {
+		r.allowanceUsed += int64(len(line))
+		return false
+	}
+	r.allowanceDrops++
+	if !r.allowanceNoted {
+		r.allowanceNoted = true
+		r.acceptLocked(stream, AllowanceNotice, now)
+	}
+	return true
+}
+
 func (r *Ring) commitLocked(stream, line string, now time.Time) {
+	if len(line) > r.maxBytes {
+		return
+	}
+	if r.overAllowanceLocked(stream, line, now) {
+		return
+	}
+	r.acceptLocked(stream, line, now)
+}
+
+// acceptLocked appends a line that passed the size and allowance checks.
+func (r *Ring) acceptLocked(stream, line string, now time.Time) {
 	if len(line) > r.maxBytes {
 		// Pathological: a single line larger than the entire ring
 		// budget. Don't accept it; the call site (vmmd) logs at

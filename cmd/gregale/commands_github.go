@@ -231,7 +231,28 @@ func renderGitHubStatus(slug string, status api.GitHubInstallStatus) int {
 	if status.SyncResult != nil {
 		_, _ = fmt.Fprintf(osStdout, "  synced: detached=%t repositories=%d at=%s\n", status.SyncResult.Detached, status.SyncResult.RemoteRepositoryCount, status.SyncResult.SyncedAt.Format("2006-01-02T15:04:05Z07:00"))
 	}
+	renderGitHubRecentEvents(status.Activity)
 	return 0
+}
+
+// renderGitHubRecentEvents lists the GitHub events that reached the app and,
+// for one that deployed nothing, why (ADR-20261101160300, amendment 2).
+func renderGitHubRecentEvents(activity *api.GitHubInstallActivity) {
+	if activity == nil || len(activity.WebhookDeliveries) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(osStdout, "  recent_events:")
+	for _, event := range activity.WebhookDeliveries {
+		fields := []string{event.ReceivedAt.UTC().Format("2006-01-02T15:04:05Z"), event.EventType}
+		if commit := event.CommitSHA; commit != "" {
+			fields = append(fields, commit[:min(len(commit), 7)])
+		}
+		line := strings.Join(append(fields, event.Status), " ")
+		if why := api.GitHubSkipReasonDescription(event.SkipReason); why != "" {
+			line += " (deployed nothing: " + why + ")"
+		}
+		_, _ = fmt.Fprintf(osStdout, "    %s\n", line)
+	}
 }
 
 func parseGitHubDeployBranches(raw string) (map[string]string, error) {

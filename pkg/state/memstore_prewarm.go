@@ -144,6 +144,21 @@ func (m *MemStore) ActivePrewarmFloor(_ context.Context, appID string, now time.
 	return floor, nil
 }
 
+// ActivePrewarmFloors mirrors PgStore.ActivePrewarmFloors.
+func (m *MemStore) ActivePrewarmFloors(ctx context.Context, appIDs []string, now time.Time) (map[string]int, error) {
+	floors := make(map[string]int)
+	for _, id := range appIDs {
+		floor, err := m.ActivePrewarmFloor(ctx, id, now)
+		if err != nil {
+			return nil, err
+		}
+		if floor > 0 {
+			floors[id] = floor
+		}
+	}
+	return floors, nil
+}
+
 func (m *MemStore) ClaimPrewarmIntent(_ context.Context, id string, claimedAt time.Time) (PrewarmIntent, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

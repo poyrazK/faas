@@ -687,6 +687,7 @@ Every non-cron kind shares the same envelope:
 - 6MB payload cap (Lambda's hard cap; fixed)
 
 A batch closes on ANY of: `len == batch_size_max`, `now >= window_deadline`, `Σ(payload_bytes) >= 6MB`.
+(ADR-20261101104512: `batch_window_ms` is stored but not applied to external broker triggers; a batch is what one poll returns.)
 
 #### Wire envelope
 
@@ -1656,6 +1657,8 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_loop_last_beat_age_seconds{loop}` gauge | ≪ loop budget | none (ADR-190 diagnostic; pairs with the stalled gauge) |
 | `<daemon>_grpc_client_calls_without_deadline_total{method}` rate | 0 | none — every labelled method is a call site still relying on `FAAS_GRPC_DEFAULT_DEADLINE` (ADR-190 §1); fix the site, not the alert |
 | `gateway_route_lookup_stale_served_total` rate | 0 | > 0 / 5 m warn (ADR-190 §3 — Postgres route lookups are erroring and the edge is coasting on last-known-good routes bounded by `FAAS_GATEWAY_ROUTE_STALE_TTL`) |
+| `gateway_route_lookup_unknown_host_total{outcome}` rate | `shed` 0 | none yet (ADR-20261103163954 §4 — host lookups answered without a store read: `remembered_miss` is a 404 from a recent answer that the host routes nowhere, normal for scanners and typos; `shed` is a 503 because the gateway spent its budget of reads for hosts it has never seen route, `GatewayNewHostLookupsPerSecond` in `pkg/api/limits.go`, and means a flood of names that route nowhere) |
+| `gatewayd_public_object_host_lookups_shed_total` rate | 0 | none yet (ADR-20261103163954 §4 — the public-read matcher, which runs in front of every GET and HEAD on an edge before the gateway, refused a host lookup with 503 because the edge spent its budget of store reads for hostnames it has never seen name an app, `PublicReadNewHostLookupsPerSecond` in `pkg/api/limits.go`; a non-zero rate means a flood of names that name no app) |
 | `gateway_route_metrics_rejected_total` rate | 0 | > 0 sustained 15 m warn via `GatewayRouteMetricsBudgetExhausted` (ADR-20261024154324 — the gateway holds `gateway_route_metrics_budget_routes` live (app, route) pairs and declines new per-route series; `gateway_route_metrics_routes` and `gateway_route_metrics_evictions_total` are the live count and idle-app evictions) |
 | `apid_route_insights_last_success_timestamp_seconds` gauge | within the 6 h interval | no successful run in 13 h, warn via `FaasRouteInsightsStalled`; `apid_route_insights_runs_total{outcome}` / `apid_route_insights_apps_total{outcome}` failures warn via `FaasRouteInsightsFailing` (ADR-20261024154324) |
 | `apid_route_monitor_lag_seconds` gauge | < 60 s | > 300 s for 10 m warn via `FaasRouteMonitorLagging` (ADR-20261024154324 — production route monitors are overdue, so budget incidents and opt-in rollbacks are late) |

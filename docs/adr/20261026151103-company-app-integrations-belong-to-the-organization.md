@@ -220,3 +220,50 @@ company triggers go through the reviewed queue-binding APIs
 ADR-20261029100110. Managed PostgreSQL cutover preparation keeps the
 creator-only fallback. Background workers that read the creator's account
 instead of `state.AppResourceAccount` are not covered here.
+
+## Amendment 5 (2026-11-02): the cron routes amendment 4 missed
+
+Amendment 4 mapped the cron routes, but three were left out, and a member who
+did not create a company app was refused them: a cron's status
+(`GET /v1/crons/{id}/status`, read permission), its labels
+(`PATCH /v1/crons/{id}/labels`, configure permission), and a manual run's
+request (`GET /v1/cron-fire-now-requests/{request_id}`, read permission). The
+last one broke `gregale cron run --wait` for every member but the app's
+creator: the request is stored under the company's account, and the member
+polling it got 404. appaccess now resolves a run request to its cron's app,
+so the request is read with the cron's permission.
+
+## Amendment 6 (2026-11-03): every app endpoint is reviewed
+
+Amendments 1–5 mapped endpoints one feature at a time. Bug hunt 37 found 784
+app endpoints still unmapped (408 of them reached by CLI commands, including
+`gregale deploy --ref`, `gregale dev` and previews from a ref), plus 53 bucket
+endpoints and one queue endpoint missing from authz's own maps. An unmapped
+app endpoint fell back to the creator alone, as an owner or admin; an unmapped
+bucket or queue endpoint was refused to everyone. So on a company app most
+features worked only for its creator, and for nobody once the creator left.
+
+Every app-addressed endpoint now has an action (`featureRouteActions` in
+`pkg/apid/appaccess`, beside `routeActions`), by these rules:
+
+- reads take `OrgActionReadApp`; reads of request data, payloads, stack
+  traces, profiles, dead letters and other evidence take
+  `OrgActionReadAppLogs`;
+- configuration writes take `OrgActionConfigureApp`; runs, replays, deploys
+  and actions on live work take `OrgActionDeployApp`; secret references take
+  `OrgActionManageAppSecrets`;
+- features that hold or reveal credentials, money or end-user data
+  (consumers, product billing and customers, realtime, inbound webhooks,
+  outbound bindings, deploy and other tokens, registry credentials, crash
+  snapshots), live connections into the app's data (entity connect and
+  session grants, fork execs), and writes that change the app's exposure,
+  policies, gates, traffic mirrors or repository binding take
+  `OrgActionManageAppSecurity`;
+- bucket configuration reads take `ReadObjectStorage`; bucket writes, signed
+  URLs, uploads, deletions and anything naming a credential take
+  `ManageObjectStorage`; `PUT .../queue-workload` takes
+  `OrgActionConfigureQueues`.
+
+`TestEveryAppRouteIsReviewed` scans apidserver's registrations and fails when
+an app endpoint is in no map, so a new endpoint is reviewed when it is added
+instead of silently becoming creator-only.

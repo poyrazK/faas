@@ -157,6 +157,27 @@ func utcTimePtr(t *time.Time) *time.Time {
 // the explicit ThrottleValidationContext keeps the boundary clear
 // without forcing a global lookup. matchPath is the rule's effective
 // match_path; kind=validate path parameters must align with it.
+// JWTAudienceProblem refuses a new or edited kind=jwt action that names
+// neither an audience nor a required claim (ADR-091 amendment 2026-11-02,
+// review round 8). The gateway skips the aud check when audience is empty, so
+// such a rule accepted every token its issuer signs: with a shared issuer
+// (GitHub Actions OIDC, Google) anyone can mint one for an audience of their
+// own. Rules saved before this check keep working, and a rollback may restore
+// one; only create and update are refused.
+func JWTAudienceProblem(a api.EdgeRuleJWTAction) *api.Problem {
+	for _, aud := range a.Audience {
+		if strings.TrimSpace(aud) == "" {
+			return api.ErrValidation("jwt action audience entries must not be empty")
+		}
+	}
+	if len(a.Audience) > 0 || len(a.RequiredClaims) > 0 {
+		return nil
+	}
+	return api.ErrValidation("jwt action needs an audience (or at least one required_claims entry): without one, " +
+		"every token the issuer signs passes, including tokens a shared issuer such as GitHub Actions or Google " +
+		"mints for anyone's audience")
+}
+
 func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, plan api.Plan) *api.Problem {
 	k := state.EdgeRuleKind(kind)
 	if !k.IsValid() {
@@ -201,7 +222,10 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return api.ErrValidation(fmt.Sprintf("jwt action: %v", err))
 		}
-		return a.Validate()
+		if prob := a.Validate(); prob != nil {
+			return prob
+		}
+		return JWTAudienceProblem(a)
 	case state.EdgeRuleKindIP:
 		var a api.EdgeRuleIPAction
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -348,6 +372,9 @@ func ValidateEdgeRuleAction(kind string, raw json.RawMessage, matchPath string, 
 // handling (the gateway refuses them at match time), so the check reveals
 // nothing about slugs the caller does not own.
 //
+// A credential bound to one app may route only to that app (ADR-091
+// amendment 2026-11-02, review round 8).
+//
 // A target of the account in another edge-rule scope is refused too (ADR-091
 // amendment 2026-10-31): a company app keeps its creator's account, so a
 // route on the creator's personal app could serve the company app on the
@@ -360,6 +387,9 @@ func (s *Service) RouteTargetProblem(ctx context.Context, accountID, sourceAppID
 	var action api.EdgeRuleRouteAction
 	if json.Unmarshal(raw, &action) != nil || action.TargetAppSlug == "" {
 		return nil //nolint:nilerr // A malformed action is ValidateEdgeRuleAction's to report.
+	}
+	if prob := s.appBoundRouteTargetProblem(ctx, sourceAppID, action.TargetAppSlug); prob != nil {
+		return prob
 	}
 	target, err := s.Host.Store().AppBySlug(ctx, action.TargetAppSlug)
 	if errors.Is(err, state.ErrNotFound) {
@@ -678,6 +708,9 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 				AllowOrigins: a.AllowOrigins, AllowMethods: a.AllowMethods,
 				AllowHeaders: a.AllowHeaders, ExposeHeaders: a.ExposeHeaders,
 				AllowCredentials: a.AllowCredentials, MaxAgeSeconds: a.MaxAgeSeconds,
+				// The preset reference, which used to be dropped (ADR-091
+				// amendment 2026-11-04).
+				CorsPresetID: corsPresetRef(kind, raw),
 			}
 		}
 	case state.EdgeRuleKindJWT:
@@ -960,6 +993,12 @@ func edgeRuleUpdateParamsFrom(req api.UpdateEdgeRuleRequest, kind state.EdgeRule
 	if req.Action != nil {
 		decoded := ActionFromBody(string(kind), *req.Action)
 		out.Action = &decoded
+		if kind == state.EdgeRuleKindCORSA {
+			// A replaced cors action sets or clears the preset column
+			// with it (ADR-091 amendment 2026-11-04).
+			preset := corsPresetRef(string(kind), *req.Action)
+			out.CorsPresetID = &preset
+		}
 	}
 	// ValidateMode (ADR-128 D1): top-level wire field wins.
 	// If absent (nil pointer) AND Action carries a deprecated

@@ -51,6 +51,12 @@ const (
 	RtOutcomeInserted    = "inserted"
 	rtOutcomeRateLimited = "rate_limited"
 	rtOutcomeDBError     = "db_error"
+	// rtOutcomeNotRetained answers a row whose app's plan keeps no request
+	// telemetry. Its usage was recorded first, so the row is complete:
+	// gateways accept it instead of retrying it or journaling it as a loss.
+	// A gateway older than this outcome treats it as a rejection, as it did
+	// rate_limited.
+	rtOutcomeNotRetained = "not_retained"
 )
 
 // RequestTelemetryStore is the Store subset the receiver needs.
@@ -98,7 +104,18 @@ type requestTelemetryReceiver struct {
 	plans   *telemetryPlans
 	enabled bool
 	gate    IngestGate
+	// rollups, when set, counts every row a plan keeps into the analytics
+	// rollups before the ingest cap (ADR-20261103113952).
+	rollups *RequestAnalyticsRollups
 }
+
+// RequestTelemetryOption configures RegisterRequestTelemetryReceiver.
+// IngestGate and *RequestAnalyticsRollups are options.
+type RequestTelemetryOption interface {
+	applyRequestTelemetry(*requestTelemetryReceiver)
+}
+
+func (g IngestGate) applyRequestTelemetry(r *requestTelemetryReceiver) { r.gate = g }
 
 // NewRequestTelemetryReceiver wires a production receiver.
 func NewRequestTelemetryReceiver(store RequestTelemetryStore, ops *wire.OpsMetrics, limiter *telemetryRateLimiter, enabled bool) *requestTelemetryReceiver {
@@ -416,15 +433,20 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 	}
 	limits := plan.Limits
 	if !limits.DebugTelemetryEnabled {
-		// Plan doesn't include telemetry — same as rate-limit
-		// overflow: drop the row, count as rate_limited (the
-		// gateway should stop sending, same code path).
-		out.Outcome = rtOutcomeRateLimited
-		out.RetryAfterMs = 60_000
+		// The plan keeps no request telemetry. Usage is already durable
+		// above, so the row is done; rate_limited here made every gateway
+		// retry Free-plan rows with backoff and count them as lost.
+		r.observe(rtOutcomeNotRetained)
+		out.Outcome = rtOutcomeNotRetained
 		return out
 	}
 
-	// ---- 3. Per-account token bucket check ----
+	// ---- 3. Analytics rollups ----
+	// Every row the plan keeps counts toward analytics, including the rows
+	// the debugger's ingest cap below turns away (ADR-20261103113952).
+	r.addRollup(req, accountID, appID, deploymentID, eventID, count, consumerID)
+
+	// ---- 4. Per-account token bucket check ----
 	// Each row is charged to its app as well, so one busy app cannot use
 	// up its siblings' rows (ADR-20261026143210 amendment 1).
 	taken, retryAfter := r.limiter.TakeForApp(plan.Subject, appID, limits.DebugTelemetryRequestsPerMinute)
@@ -437,7 +459,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		return out
 	}
 
-	// ---- 4. INSERT ----
+	// ---- 5. INSERT ----
 	// Wire compatibility: older gateways do not send the additive dimension
 	// fields. Map proto3 empty defaults to the database sentinels so a rolling
 	// upgrade continues to insert rows while new gateways populate dimensions.
@@ -582,10 +604,12 @@ func (r *requestTelemetryReceiver) observe(outcome string) {
 // RegisterRequestTelemetryReceiver binds the RequestTelemetryServer
 // onto a gRPC server. Called from runRequestTelemetryServer in
 // main.go alongside the other gRPC services.
-func RegisterRequestTelemetryReceiver(s *grpc.Server, store RequestTelemetryStore, ops *wire.OpsMetrics, limiter *telemetryRateLimiter, enabled bool, gate ...IngestGate) {
+func RegisterRequestTelemetryReceiver(s *grpc.Server, store RequestTelemetryStore, ops *wire.OpsMetrics, limiter *telemetryRateLimiter, enabled bool, opts ...RequestTelemetryOption) {
 	receiver := NewRequestTelemetryReceiver(store, ops, limiter, enabled)
-	if len(gate) > 0 {
-		receiver.gate = gate[0]
+	for _, opt := range opts {
+		if opt != nil {
+			opt.applyRequestTelemetry(receiver)
+		}
 	}
 	apidpb.RegisterRequestTelemetryServer(s, receiver)
 }

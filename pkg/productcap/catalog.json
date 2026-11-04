@@ -262,6 +262,9 @@
       "routes": [
         "/dashboard/apps/{}/alert-rollbacks",
         "/v1/apps/{}/alert-rollbacks"
+      ],
+      "cli": [
+        "alerts actions"
       ]
     },
     {
@@ -339,7 +342,10 @@
       "routes": [
         "/dashboard/account/keys",
         "/v1/account/keys",
+        "/v1/agent-connections",
         "/v1/keys",
+        "/v1/orgs/{}/agent-connections",
+        "/v1/orgs/{}/agent-policy",
         "/v1/orgs/{}/keys"
       ],
       "cli": [
@@ -411,7 +417,8 @@
       "parent": "billing",
       "routes": [
         "/dashboard/app-costs",
-        "/v1/billing/costs"
+        "/v1/billing/costs",
+        "/v1/apps/{}/costs"
       ],
       "cli": [
         "app costs",
@@ -458,6 +465,11 @@
       "routes": [
         "/dashboard/apps/{}/tasks",
         "/v1/apps/{}/tasks"
+      ],
+      "cli": [
+        "app cp",
+        "app exec",
+        "app port-forward"
       ]
     },
     {
@@ -548,6 +560,8 @@
         "/dashboard/apps/{}/restore",
         "=/v1/apps",
         "=/v1/apps/{}",
+        "/v1/apps/{}/operation-preview",
+        "/v1/apps/{}/resource-inventory",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
         "/v1/deleted-apps",
@@ -827,6 +841,7 @@
       "description": "Grant other apps access to a bucket.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -846,6 +861,7 @@
       "description": "Let browsers on your own sites use a bucket's signed URLs and upload grants.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -868,6 +884,7 @@
       "description": "Encrypt buckets with customer-chosen keys.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3348,6 +3365,7 @@
       "description": "Upload large objects in parts.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3413,6 +3431,7 @@
       "description": "Expire or transition objects by rule.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3435,6 +3454,7 @@
       "description": "Lock objects, protect writes and keep write receipts.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3466,6 +3486,7 @@
       "description": "Use private managed object buckets and signed URLs from an API.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -3523,6 +3544,7 @@
       "description": "Keep and restore earlier versions of objects.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -4355,7 +4377,7 @@
       "id": "projects",
       "name": "Projects",
       "category": "delivery",
-      "description": "Deploy a Compose file or a repository of several services as one project: each service is an app, and they call each other by name.",
+      "description": "Deploy a Compose file or repository as one project: each service counts toward the plan's app limit. Free supports one service; multi-service projects require Hobby or higher, and services call each other by name.",
       "maturity": "ga",
       "plans": [
         "free",
@@ -5116,6 +5138,7 @@
       "description": "Mint S3-compatible credentials for a bucket.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -5410,6 +5433,7 @@
       "description": "Share objects with signed URLs and accept browser uploads.",
       "maturity": "preview",
       "plans": [
+        "free",
         "hobby",
         "pro",
         "scale"
@@ -5814,8 +5838,6 @@
       "description": "Serve a wildcard custom domain.",
       "maturity": "ga",
       "plans": [
-        "free",
-        "hobby",
         "pro",
         "scale"
       ],

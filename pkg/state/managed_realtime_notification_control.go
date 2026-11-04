@@ -136,7 +136,7 @@ func (s *PgStore) ControlManagedRealtimeNotification(ctx context.Context, ep, pr
 	defer func() { _ = tx.Rollback(ctx) }()
 	// Endpoint -> inbox -> fallback -> jobs matches append/ACK ordering.
 	var exists bool
-	if err = tx.QueryRow(ctx, `select enabled from managed_realtime_endpoints where id=$1 for update`, ep).Scan(&exists); err != nil {
+	if err = tx.QueryRow(ctx, `select enabled from managed_realtime_endpoints where id=$1 for no key update`, ep).Scan(&exists); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}

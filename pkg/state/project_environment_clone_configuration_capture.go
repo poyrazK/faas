@@ -5,10 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// ErrProjectEnvironmentCloneSourceNotDeployed refuses a capture whose source
+// environment exists but holds a workload with no live deployment to copy.
+var ErrProjectEnvironmentCloneSourceNotDeployed = fmt.Errorf("a source workload has no live deployment to clone: %w", ErrConflict)
 
 // This request intentionally has no caller-supplied source revision or release.
 // The state transaction selects and captures the actual source configuration.
@@ -21,7 +26,25 @@ import (
 type ProjectEnvironmentCloneCaptureRequest struct {
 	AccountID, ProjectID, SourceEnvironment, TargetEnvironment, IdempotencyKey string
 	RequireCompleteInventory                                                   bool
+	// AdmissionSwitches names global runtime switches that must each be
+	// stored as true. The capture share-locks their rows until it commits, so
+	// a replica whose cache is stale cannot admit after a switch went off, and
+	// turning one off waits for the admissions already deciding on it.
+	AdmissionSwitches []string
+	// QualifiedObjectBackends names the storage backends whose buckets a
+	// clone may copy. With RequireCompleteInventory, a source bucket on any
+	// other backend, or without versioning, refuses the capture.
+	QualifiedObjectBackends []string
+	// CheckObjectCapacity, with RequireCompleteInventory, is given the IDs of
+	// the source's buckets once the capture holds them; an error refuses the
+	// capture. Admission uses it to refuse a clone whose copy would take the
+	// account past its object storage limits.
+	CheckObjectCapacity func(ctx context.Context, bucketIDs []string) error
 }
+
+// ErrProjectEnvironmentCloneAdmissionClosed refuses a capture whose admission
+// switches are not all stored as on.
+var ErrProjectEnvironmentCloneAdmissionClosed = fmt.Errorf("full environment clone admission is closed: %w", ErrConflict)
 
 // The root covers the current frozen configuration catalogue. Complete mode
 // still requires coverage of the remaining resource kinds and a data checkpoint.

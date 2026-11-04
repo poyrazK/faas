@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/url"
 	"reflect"
 	"strings"
@@ -72,8 +74,8 @@ func applyMCPGatewayPolicy(ctx context.Context, c *Client, slug string, cfg mcph
 		if rule.Kind != "jwt" || !rule.Enabled {
 			continue
 		}
-		var action api.EdgeRuleJWTAction
-		if json.Unmarshal(rule.Action, &action) != nil || action.MCP == nil || rule.MatchHost != resource.Host || rule.MatchPath != "/**" || len(rule.MatchMethods) != 0 || len(rule.MatchHeaders) != 0 || existing != nil {
+		action, err := decodeMCPGatewayAction(rule.Action)
+		if err != nil || action.MCP == nil || rule.MatchHost != resource.Host || rule.MatchPath != "/**" || len(rule.MatchMethods) != 0 || len(rule.MatchHeaders) != 0 || existing != nil {
 			return api.EdgeRuleResponse{}, errors.New("resolve existing JWT rules before applying an MCP gateway policy")
 		}
 		existing = rule
@@ -104,14 +106,45 @@ func applyMCPGatewayPolicy(ctx context.Context, c *Client, slug string, cfg mcph
 }
 
 func verifyMCPPolicyEcho(rule api.EdgeRuleResponse, expected api.EdgeRuleJWTAction) error {
-	var actual api.EdgeRuleJWTAction
+	actual, err := decodeMCPGatewayAction(rule.Action)
 	// Normalize omitted empty slices through the wire representation, while
 	// retaining explicit empty scope maps, whose deny-all semantics matter.
 	encoded, _ := json.Marshal(expected)
 	var normalized api.EdgeRuleJWTAction
 	_ = json.Unmarshal(encoded, &normalized)
-	if json.Unmarshal(rule.Action, &actual) != nil || !reflect.DeepEqual(actual, normalized) {
+	if err != nil || actual.RequiresExp() != normalized.RequiresExp() {
+		return fmt.Errorf("control plane did not persist the requested MCP policy on rule %s; upgrade apid and gateway before activation", rule.ID)
+	}
+	actual.RequireExp, normalized.RequireExp = nil, nil
+	if !reflect.DeepEqual(actual, normalized) {
 		return fmt.Errorf("control plane did not persist the requested MCP policy on rule %s; upgrade apid and gateway before activation", rule.ID)
 	}
 	return nil
+}
+
+// Responses contain the state's tagged union; requests use the flat JWT body.
+// Reject other action kinds and unknown fields rather than dropping constraints.
+func decodeMCPGatewayAction(body json.RawMessage) (api.EdgeRuleJWTAction, error) {
+	var action api.EdgeRuleJWTAction
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || fields == nil {
+		return action, errors.New("invalid MCP gateway action")
+	}
+	if nested, present := fields["jwt"]; present {
+		var kind string
+		if raw, ok := fields["kind"]; ok {
+			if json.Unmarshal(raw, &kind) != nil || kind != "jwt" || len(fields) != 2 {
+				return action, errors.New("invalid MCP gateway action kind")
+			}
+		} else if len(fields) != 1 {
+			return action, errors.New("invalid MCP gateway action envelope")
+		}
+		body = nested
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&action) != nil || decoder.Decode(new(any)) != io.EOF || bytes.Equal(bytes.TrimSpace(body), []byte("null")) {
+		return action, errors.New("invalid MCP gateway action")
+	}
+	return action, nil
 }

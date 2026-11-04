@@ -104,6 +104,18 @@ type AgentRun struct {
 	WorkflowEvent          pgtype.Text
 }
 
+type AgentRunCallback struct {
+	RunID          pgtype.UUID
+	AccountID      pgtype.UUID
+	EndpointID     pgtype.UUID
+	ThreadID       string
+	ToolCallID     string
+	ProviderCallID pgtype.Text
+	IssuedAt       pgtype.Timestamptz
+	DeliveredAt    pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
 type AgentRunOutput struct {
 	RunID        pgtype.UUID
 	AccountID    pgtype.UUID

@@ -155,3 +155,29 @@ func webhookVerificationCode(err error) WebhookVerificationErrorCode {
 	}
 	return verificationErr.Code
 }
+
+// During a secret rotation's overlap a delivery carries the new secret's
+// signature and, in X-Faas-Webhook-Signature-Previous, the old secret's. A
+// receiver holding either secret verifies it; any other secret does not.
+func TestVerifyWebhookAcceptsThePreviousSecretDuringRotation(t *testing.T) {
+	newSecret := []byte("whsec_rotated_456")
+	mac := hmac.New(sha256.New, newSecret)
+	_, _ = fmt.Fprintf(mac, "%d.%s.", webhookTestTimestamp, webhookTestDelivery)
+	_, _ = mac.Write([]byte(webhookTestBody))
+	headers := webhookTestHeaders()
+	headers.Set(WebhookSignatureHeader, "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	headers.Set(WebhookPreviousSignatureHeader, webhookTestSignature)
+
+	for _, secret := range [][]byte{newSecret, []byte(webhookTestSecret)} {
+		if _, err := VerifyWebhookWithOptions(secret, headers, []byte(webhookTestBody), webhookTestOptions()); err != nil {
+			t.Fatalf("verify with %q: %v", secret, err)
+		}
+	}
+	if _, err := VerifyWebhookWithOptions([]byte("other"), headers, []byte(webhookTestBody), webhookTestOptions()); webhookVerificationCode(err) != WebhookVerificationBadSignature {
+		t.Fatalf("unrelated secret error = %v, want bad_signature", err)
+	}
+	headers.Set(WebhookPreviousSignatureHeader, "garbage")
+	if _, err := VerifyWebhookWithOptions(newSecret, headers, []byte(webhookTestBody), webhookTestOptions()); err != nil {
+		t.Fatalf("a malformed previous signature must not fail the current one: %v", err)
+	}
+}

@@ -52,11 +52,35 @@ func TestCapabilitiesForPlanResolvesPlanEntitlements(t *testing.T) {
 	if !freeByKey["custom-domains"].Enabled {
 		t.Fatal("custom domains should be enabled on free")
 	}
-	if freeByKey["object-storage"].Enabled {
-		t.Fatal("object storage should be gated off on free")
+	// Free gets 1 GiB of storage (ADR-20261101214152) but no app code run on
+	// bucket notifications, because Free has no triggers.
+	if !freeByKey["object-storage"].Enabled {
+		t.Fatal("object storage should be enabled on free")
+	}
+	if freeByKey["object-storage-compute"].Enabled {
+		t.Fatal("object storage compute triggers should be gated off on free")
 	}
 	if !hobbyByKey["object-storage"].Enabled {
 		t.Fatal("object storage should be enabled on hobby")
+	}
+}
+
+// The catalog's wildcard-domains entitlement must match the limits table,
+// which enforces it; GET /v1/capabilities reported it enabled on Free and
+// Hobby while domain create refused it.
+func TestWildcardDomainsEntitlementMatchesLimits(t *testing.T) {
+	for _, plan := range Plans {
+		limits, ok := LimitsFor(plan)
+		if !ok {
+			t.Fatalf("no limits for %s", plan)
+		}
+		entitled, err := CapabilityEntitled("wildcard-domains", plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entitled != limits.WildcardDomainsAllowed {
+			t.Fatalf("%s: catalog entitles wildcard-domains = %v, limits allow = %v", plan, entitled, limits.WildcardDomainsAllowed)
+		}
 	}
 }
 
