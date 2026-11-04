@@ -15,6 +15,11 @@ the run's app, and appends one JSON line per run.
 `run` deploys real apps. It requires GREGALE_EVAL_TOKEN, an API key of a
 dedicated evaluation account, and never uses your own login. GREGALE_EVAL_API
 selects the API (default https://api.gregale.dev).
+
+Toolset `hosted` connects the agent to the hosted MCP server
+(GREGALE_EVAL_MCP_URL, default <api>/mcp) instead of a local `gregale mcp
+serve`. Each hosted run mints its own agent key with the evaluation token,
+hands it to the agent in GREGALE_EVAL_AGENT_KEY, and revokes it afterwards.
 """
 
 from __future__ import annotations
@@ -37,10 +42,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 TASKS = HERE / "tasks.json"
 AGENTS = ("claude", "codex")
-TOOLSETS = ("core", "release", "diagnose", "all", "none")
+TOOLSETS = ("core", "release", "diagnose", "all", "none", "hosted")
 SETUP_KINDS = ("deploy", "replace")
 CHECK_KINDS = ("http", "serving", "file_contains", "answer")
 DEFAULT_API = "https://api.gregale.dev"
+# The environment variable that carries a hosted run's agent key; MCP configs
+# name it rather than holding the key.
+AGENT_KEY_ENV = "GREGALE_EVAL_AGENT_KEY"
 # Shell commands a Claude run may use without asking; everything else is
 # denied in headless mode.
 CLAUDE_ALLOWED_TOOLS = ["Bash(gregale *)", "Bash(curl *)", "Read", "Edit", "Write", "Glob", "Grep", "mcp__gregale"]
@@ -99,11 +107,16 @@ def mcp_args(toolset: str, writes: bool) -> list[str]:
     return args + ["--allow-writes"] if writes else args
 
 
-def claude_command(prompt: str, run_dir: Path, gregale: str, toolset: str, budget: float, model: str | None, writes: bool) -> list[str]:
+def claude_command(prompt: str, run_dir: Path, gregale: str, toolset: str, budget: float, model: str | None, writes: bool, mcp_url: str = "") -> list[str]:
     command = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
                "--max-budget-usd", f"{budget:.2f}", "--permission-mode", "dontAsk", "--allowedTools", *CLAUDE_ALLOWED_TOOLS, "--strict-mcp-config"]
     if toolset != "none":
-        config = {"mcpServers": {"gregale": {"command": gregale, "args": mcp_args(toolset, writes)}}}
+        if toolset == "hosted":
+            # Claude expands ${VAR} in MCP headers, so the key stays out of the file.
+            server = {"type": "http", "url": mcp_url, "headers": {"Authorization": "Bearer ${" + AGENT_KEY_ENV + "}"}}
+        else:
+            server = {"command": gregale, "args": mcp_args(toolset, writes)}
+        config = {"mcpServers": {"gregale": server}}
         path = run_dir / "mcp.json"
         path.write_text(json.dumps(config))
         command += ["--mcp-config", str(path)]
@@ -112,11 +125,14 @@ def claude_command(prompt: str, run_dir: Path, gregale: str, toolset: str, budge
     return command
 
 
-def codex_command(prompt: str, project: Path, gregale: str, toolset: str, model: str | None, writes: bool) -> list[str]:
+def codex_command(prompt: str, project: Path, gregale: str, toolset: str, model: str | None, writes: bool, mcp_url: str = "") -> list[str]:
     # --ignore-user-config keeps your own Codex settings and MCP servers out.
     command = ["codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", "-C", str(project), "-s", "workspace-write",
                "-c", "sandbox_workspace_write.network_access=true", "-c", "shell_environment_policy.inherit=all"]
-    if toolset != "none":
+    if toolset == "hosted":
+        command += ["-c", f"mcp_servers.gregale.url={json.dumps(mcp_url)}",
+                    "-c", f"mcp_servers.gregale.bearer_token_env_var={json.dumps(AGENT_KEY_ENV)}"]
+    elif toolset != "none":
         command += ["-c", f"mcp_servers.gregale.command={json.dumps(gregale)}",
                     "-c", f"mcp_servers.gregale.args={json.dumps(mcp_args(toolset, writes))}",
                     "-c", 'mcp_servers.gregale.env_vars=["FAAS_TOKEN","FAAS_API"]']
@@ -207,11 +223,12 @@ def parse_codex(lines) -> dict:
 class Gregale:
     """The evaluation account, reached only with GREGALE_EVAL_TOKEN."""
 
-    def __init__(self, binary: str, api: str, token: str):
+    def __init__(self, binary: str, api: str, token: str, mcp_url: str = ""):
         self.binary, self.api, self.token = binary, api.rstrip("/"), token
+        self.mcp_url = mcp_url or self.api + "/mcp"
 
     def env(self) -> dict:
-        env = {k: v for k, v in os.environ.items() if not k.startswith("FAAS_")}
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FAAS_") and k != AGENT_KEY_ENV}
         env.update(FAAS_TOKEN=self.token, FAAS_API=self.api)
         return env
 
@@ -219,10 +236,35 @@ class Gregale:
         return subprocess.run([self.binary, "--non-interactive", "--json", *args], cwd=cwd, env=self.env(),
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
 
-    def get(self, path: str) -> dict:
-        request = urllib.request.Request(self.api + path, headers={"Authorization": f"Bearer {self.token}"})
+    def request(self, method: str, path: str, body: dict | None = None) -> dict:
+        data = json.dumps(body).encode() if body is not None else None
+        headers = {"Authorization": f"Bearer {self.token}"}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(self.api + path, data=data, method=method, headers=headers)
         with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read())
+            raw = response.read()
+            return json.loads(raw) if raw.strip() else {}
+
+    def get(self, path: str) -> dict:
+        return self.request("GET", path)
+
+    def mint_agent_key(self, label: str, writes: bool) -> tuple[str, str]:
+        """A fresh agent key for one hosted run: (id, plaintext)."""
+        scopes = ["agent", "deploy:write"] if writes else ["agent"]
+        try:
+            key = self.request("POST", "/v1/keys", {"label": label, "scopes": scopes})
+        except urllib.error.HTTPError as error:
+            raise EvalError(f"minting the hosted run's agent key failed: HTTP {error.code}") from None
+        if not key.get("id") or not key.get("plaintext"):
+            raise EvalError("minting the hosted run's agent key returned no key")
+        return key["id"], key["plaintext"]
+
+    def revoke_key(self, key_id: str) -> None:
+        try:
+            self.request("DELETE", f"/v1/keys/{key_id}")
+        except (urllib.error.URLError, OSError) as error:
+            print(f"agent-eval: revoking agent key {key_id} failed: {error}", file=sys.stderr)
 
 
 def http_check(url: str, check: dict, deadline_s: float = 120, fetch=None) -> tuple[bool, str]:
@@ -282,6 +324,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
     run_dir = Path(tempfile.mkdtemp(prefix=f"agent-eval-{task['id']}-"))
     project = run_dir / "project"
     record = {"task": task["id"], "agent": agent, "toolset": toolset, "app": slug, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    agent_key_id = ""
     try:
         init = gregale.cli("init", "--template", task["template"], "--path", str(project), "--name", slug)
         if init.returncode != 0:
@@ -296,10 +339,12 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         prompt = task["prompt"].format(app=slug) + " The gregale CLI is installed and logged in" + (" and the Gregale MCP server is connected." if toolset != "none" else ".")
         model = options.claude_model if agent == "claude" else options.codex_model
         if agent == "claude":
-            command = claude_command(prompt, run_dir, gregale.binary, toolset, task["budget_usd"], model, options.mcp_writes)
+            command = claude_command(prompt, run_dir, gregale.binary, toolset, task["budget_usd"], model, options.mcp_writes, gregale.mcp_url)
         else:
-            command = codex_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes)
+            command = codex_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes, gregale.mcp_url)
         env = gregale.env()
+        if toolset == "hosted":
+            agent_key_id, env[AGENT_KEY_ENV] = gregale.mint_agent_key(f"agent-eval-{slug}", options.mcp_writes)
         # The agent's shell `gregale` must be the binary under test.
         (run_dir / "bin").mkdir()
         (run_dir / "bin" / "gregale").symlink_to(Path(gregale.binary).resolve())
@@ -325,6 +370,8 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
     except (EvalError, subprocess.TimeoutExpired, OSError) as error:
         record.update(success=False, error=str(error))
     finally:
+        if agent_key_id:
+            gregale.revoke_key(agent_key_id)
         if not options.keep_apps:
             gregale.cli("apps", "rm", "--yes", slug, timeout=120)
         if not options.keep_dirs:
@@ -403,7 +450,7 @@ def main(argv=None) -> int:
         for agent in agents:
             if not shutil.which(agent):
                 raise EvalError(f"{agent} is not installed")
-        gregale = Gregale(options.gregale, os.environ.get("GREGALE_EVAL_API", DEFAULT_API), token)
+        gregale = Gregale(options.gregale, os.environ.get("GREGALE_EVAL_API", DEFAULT_API), token, os.environ.get("GREGALE_EVAL_MCP_URL", ""))
         with open(options.out, "a") as out:
             for task in selected:
                 for agent in agents:

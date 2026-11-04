@@ -37,6 +37,13 @@ python3 scripts/agent-eval/agent_eval.py summarize agent-eval-results.jsonl
 ```
 
 - `--toolsets none` runs with the CLI only, so it shows what MCP adds.
+- `--toolsets hosted` connects the agent to the hosted MCP server
+  (`GREGALE_EVAL_MCP_URL`, default `$GREGALE_EVAL_API/mcp`) instead of a local
+  `gregale mcp serve`. Each hosted run mints an agent key
+  (`agent,deploy:write`; `agent` alone with `--no-mcp-writes`) with the
+  evaluation token, hands it to the agent in `GREGALE_EVAL_AGENT_KEY` and
+  revokes it when the run ends. The MCP config names the variable, never the
+  key.
 - `--gregale` selects the binary under test. It serves MCP, and it is the
   `gregale` on the agent's `PATH`.
 - Each task has a dollar budget (`budget_usd`, enforced by Claude's

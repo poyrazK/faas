@@ -167,6 +167,18 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command[-1], "deploy it")
         self.assertNotIn("mcp_servers", " ".join(ev.codex_command("x", Path("/tmp/p"), "/bin/gregale", "none", None, True)))
 
+    def test_hosted_claude_names_the_key_variable_not_the_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            ev.claude_command("deploy it", Path(d), "/bin/gregale", "hosted", 3.0, None, True, "https://api.example/mcp")
+            config = json.loads((Path(d) / "mcp.json").read_text())
+        self.assertEqual(config["mcpServers"]["gregale"], {"type": "http", "url": "https://api.example/mcp", "headers": {"Authorization": "Bearer ${GREGALE_EVAL_AGENT_KEY}"}})
+
+    def test_hosted_codex(self):
+        joined = " ".join(ev.codex_command("x", Path("/tmp/p"), "/bin/gregale", "hosted", None, True, "https://api.example/mcp"))
+        self.assertIn('mcp_servers.gregale.url="https://api.example/mcp"', joined)
+        self.assertIn('mcp_servers.gregale.bearer_token_env_var="GREGALE_EVAL_AGENT_KEY"', joined)
+        self.assertNotIn("mcp_servers.gregale.command", joined)
+
 
 class FakeGregale:
     def __init__(self, serving, latest):
@@ -239,6 +251,45 @@ class MainTests(unittest.TestCase):
             env = ev.Gregale("/bin/gregale", "https://api.example/", "fp_test_eval").env()
         self.assertEqual((env["FAAS_TOKEN"], env["FAAS_API"]), ("fp_test_eval", "https://api.example"))
         self.assertNotIn("FAAS_PROFILE", env)
+
+    def test_gregale_env_drops_a_stray_agent_key(self):
+        with mock.patch.dict(os.environ, {"GREGALE_EVAL_AGENT_KEY": "fp_live_stray"}):
+            gregale = ev.Gregale("/bin/gregale", "https://api.example/", "fp_test_eval")
+            self.assertNotIn("GREGALE_EVAL_AGENT_KEY", gregale.env())
+        self.assertEqual(gregale.mcp_url, "https://api.example/mcp")
+
+
+class HostedRunTests(unittest.TestCase):
+    """A hosted run mints its own agent key, hands it over in the environment and revokes it."""
+
+    def test_hosted_run_mints_and_revokes_its_key(self):
+        calls, seen_env = [], {}
+
+        class Hosted(ev.Gregale):
+            def request(self, method, path, body=None):
+                calls.append((method, path, body))
+                if method == "POST":
+                    return {"id": "k1", "plaintext": "fp_live_agent"}
+                return {}
+
+            def cli(self, *args, cwd=None, timeout=900):
+                if args[0] == "init":
+                    Path(args[args.index("--path") + 1]).mkdir(parents=True)
+                return ev.subprocess.CompletedProcess(args, 0, "", "")
+
+        def fake_run(command, cwd=None, env=None, **kwargs):
+            seen_env.update(env)
+            return ev.subprocess.CompletedProcess(command, 0, b"", b"")
+
+        task = {"id": "diagnose-failure", "template": "node", "prompt": "Why does {app} fail?", "budget_usd": 1.0, "timeout_s": 60,
+                "checks": [{"kind": "answer", "pattern": "x"}]}
+        options = mock.Mock(claude_model=None, codex_model=None, mcp_writes=True, keep_apps=False, keep_dirs=False)
+        with mock.patch.object(ev.subprocess, "run", side_effect=fake_run):
+            ev.run_one(task, "codex", "hosted", Hosted("/bin/sh", "https://api.example", "fp_test_eval"), options)
+        self.assertEqual(seen_env["GREGALE_EVAL_AGENT_KEY"], "fp_live_agent")
+        self.assertEqual(calls[0][:2], ("POST", "/v1/keys"))
+        self.assertEqual(calls[0][2]["scopes"], ["agent", "deploy:write"])
+        self.assertIn(("DELETE", "/v1/keys/k1", None), calls)
 
 
 if __name__ == "__main__":
