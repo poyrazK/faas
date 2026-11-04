@@ -420,6 +420,19 @@ ADR-568 requires.
     runtime capture does. A completed capture resumes the guest and restarts
     them; a failed one leaves them stopped, and the original is retired with
     its attempt.
+- 2026-11-04, n2, rerun with e04c805824 on a host shared with other runs:
+  - Both graphs passed `baseline_serving` and `source_outage_restart`, with
+    no liveness kill, route-read failure or 404.
+  - Both failed `held_revision_supersession` at the 12-minute activation
+    wait. Preparing the superseding revision took 6-7 minutes, against about
+    3.5 minutes for the baseline.
+  - Both captures of github's generation 3 completed. Its first restore then
+    ran out the 5-minute qualification claim
+    (`EnvironmentGitOpsQualificationLeaseDuration`) while it staged full drive
+    copies and waited for the resume ack. gitlab's preparation left 5 minutes,
+    and its qualification was still running when the wait ended. On this host
+    the phase needs either a longer activation wait or a longer qualification
+    lease; both are unchanged.
 - Pending: the n2 native GitOps journey through the resilience phases.
 
 ## Rejected alternatives
