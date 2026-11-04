@@ -377,7 +377,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #667 / ADR-078: tail primitive on with floor timeout.
 			TailEnabled: true, TailTimeoutS: 5, TailCapMax: 16, ConcurrentTailsPerInstance: 4,
 			// Issue #562: Free gets a one-day archive surface.
-			LogArchiveEnabled: true, LogArchiveRetentionDaysMax: 1,
+			LogArchiveEnabled: true, LogArchiveRetentionDaysMax: 1, LogBytesPerInstanceHour: 16 << 20,
 			// ADR-096: Free = 1 day retention, 50 fingerprints, 25 request rows.
 			AppErrorsRetentionDays: 1, AppErrorsMaxFingerprintsPerApp: 50, AppErrorsMaxRequestRowsPerFingerprint: 25,
 			// ADR-120 / issue #975 item #5: consumer keys — Free gated
@@ -549,7 +549,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #667 / ADR-078: tail primitive on at 15 s.
 			TailEnabled: true, TailTimeoutS: 15, TailCapMax: 16, ConcurrentTailsPerInstance: 16,
 			// Issue #562: Hobby unlocks log archive with 7-day retention.
-			LogArchiveEnabled: true, LogArchiveRetentionDaysMax: 7,
+			LogArchiveEnabled: true, LogArchiveRetentionDaysMax: 7, LogBytesPerInstanceHour: 64 << 20,
 			// ADR-096: Hobby = 7 days, 200 fingerprints, 100 request rows.
 			AppErrorsRetentionDays: 7, AppErrorsMaxFingerprintsPerApp: 200, AppErrorsMaxRequestRowsPerFingerprint: 100,
 			// ADR-120 / issue #975 item #5: consumer keys — Hobby gets
@@ -717,7 +717,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #667 / ADR-078: tail primitive on at 30 s.
 			TailEnabled: true, TailTimeoutS: 30, TailCapMax: 16, ConcurrentTailsPerInstance: 64,
 			// Issue #562: Pro extends retention to 30 days.
-			LogArchiveEnabled: true, LogArchiveRetentionDaysMax: 30,
+			LogArchiveEnabled: true, LogArchiveRetentionDaysMax: 30, LogBytesPerInstanceHour: 256 << 20,
 			// ADR-096: Pro = 30 days, 1000 fingerprints, 500 request rows.
 			AppErrorsRetentionDays: 30, AppErrorsMaxFingerprintsPerApp: 1000, AppErrorsMaxRequestRowsPerFingerprint: 500,
 			// ADR-120 / issue #975 item #5: consumer keys — Pro gets
@@ -888,7 +888,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Issue #667 / ADR-078: tail primitive on at 60 s.
 			TailEnabled: true, TailTimeoutS: 60, TailCapMax: 16, ConcurrentTailsPerInstance: 256,
 			// Issue #562: Scale extends retention to 90 days.
-			LogArchiveEnabled: true, LogArchiveRetentionDaysMax: 90,
+			LogArchiveEnabled: true, LogArchiveRetentionDaysMax: 90, LogBytesPerInstanceHour: 1 << 30,
 			// ADR-096: Scale = 90 days, 5000 fingerprints, 1000 request rows.
 			AppErrorsRetentionDays: 90, AppErrorsMaxFingerprintsPerApp: 5000, AppErrorsMaxRequestRowsPerFingerprint: 1000,
 			// ADR-120 / issue #975 item #5: consumer keys — Scale gets
