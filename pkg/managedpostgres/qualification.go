@@ -663,6 +663,11 @@ type QualificationOptions struct {
 	// resource with no settled usage yet. The failed check remains mandatory:
 	// the run returns ErrQualificationFailed and cannot authorize provisioning.
 	ContinueAfterUsageFailure bool
+	// WaitForUsage makes the usage check wait until the hour the resource
+	// was created in has closed, and retry while the provider catches up: a
+	// live provider reports an hour only after it ends. Unset, the check
+	// reads that hour once.
+	WaitForUsage bool
 	// ComputeCap also runs the compute cap probe (ADR-20261025094915
 	// decision 10) on the disposable resource.
 	ComputeCap bool
@@ -753,6 +758,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	deleteRecoveryKey := qualificationKey("delete-recovery", options.ResourceID)
 	credentialKey := qualificationKey("credential", options.ResourceID)
 	restoreResourceID := qualificationKey("restore", options.ResourceID)
+	provisionStarted := time.Now().UTC()
 	observed, err := provider.Provision(ctx, ProvisionRequest{
 		ResourceID:     options.ResourceID,
 		Spec:           options.Spec,
@@ -768,6 +774,13 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	credentialIssued := false
 	restoreCredentialIssued := false
 	var restoreCredentialRequest CredentialRequest
+	storageCredentialIssued := false
+	storageCredentialRequest := CredentialRequest{
+		ProviderResourceID: providerResourceID,
+		IdentityKey:        qualificationKey("storage-identity", options.ResourceID),
+		Access:             CredentialMigration,
+		IdempotencyKey:     qualificationKey("storage-credential", options.ResourceID),
+	}
 	var restoreProber RestoreDataProber
 	var material CredentialMaterial
 	restoreProbePrepared := false
@@ -795,6 +808,11 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		if restoreCredentialIssued {
 			if cleanupErr := provider.RevokeCredentials(cleanupCtx, restoreCredentialRequest); cleanupErr != nil {
 				record("cleanup_restore_credentials", cleanupErr)
+			}
+		}
+		if storageCredentialIssued {
+			if cleanupErr := provider.RevokeCredentials(cleanupCtx, storageCredentialRequest); cleanupErr != nil {
+				record("cleanup_storage_credentials", cleanupErr)
 			}
 		}
 		if restoreAttempted && !restoreDeleted {
@@ -868,8 +886,7 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		record("restore_source_identity", nil)
 	}
 
-	windowTo := time.Now().UTC().Truncate(time.Hour)
-	usage, usageErr := provider.Usage(ctx, providerResourceID, UsageWindow{From: windowTo.Add(-time.Hour), To: windowTo})
+	usage, usageErr := qualifyProviderUsage(ctx, provider, providerResourceID, provisionStarted, options.PollInterval, options.WaitForUsage)
 	if record("usage", usageErr) {
 		if err := usage.Validate(); !record("usage_valid", err) && !options.ContinueAfterUsageFailure {
 			return report, resultErr
@@ -951,7 +968,14 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			record("storage_cap_probe", ErrUnsupported)
 			return report, resultErr
 		}
-		evidence, probeErr := prober.ProbeStorageCap(ctx, providerResourceID, material)
+		// The probe creates its table, which only a migration login may do.
+		storageCredentialIssued = true
+		storageMaterial, issueErr := provider.IssueCredentials(ctx, storageCredentialRequest)
+		if issueErr != nil {
+			record("storage_cap_probe", issueErr)
+			return report, resultErr
+		}
+		evidence, probeErr := prober.ProbeStorageCap(ctx, providerResourceID, storageMaterial)
 		report.StorageCap = &evidence
 		if probeErr == nil {
 			probeErr = evidence.Validate()
