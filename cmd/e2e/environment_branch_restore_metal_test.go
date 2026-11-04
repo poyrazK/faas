@@ -104,6 +104,7 @@ func TestEnvironmentBranchIdentityReloadMetal(t *testing.T) {
 	// Branch one: its first wake cold-boots under its own identity and queues
 	// the parent's credential-free capture.
 	first := createEnvironmentBranch(t, h, key, project.Slug, "pr-1", appID)
+	waitDeploymentLive(t, pool, first)
 	body, wakeID, status := doGetWithHostCapturingWakeID(t, client, url, environmentBranchHost(t, store, account.ID, project.ID, "pr-1", appID), 60*time.Second)
 	if status != http.StatusOK || !strings.HasSuffix(strings.TrimSpace(string(body)), " reloads=0") {
 		t.Fatalf("first branch wake: status=%d body=%q, want a cold boot without a reload", status, body)
@@ -120,6 +121,7 @@ func TestEnvironmentBranchIdentityReloadMetal(t *testing.T) {
 	// Branch two gets its own value, then wakes for the first time: it must
 	// restore the capture and reload that value through after_restore.
 	second := createEnvironmentBranch(t, h, key, project.Slug, "pr-2", appID)
+	waitDeploymentLive(t, pool, second)
 	var scope string
 	if err := pool.QueryRow(ctx, `select scope from deployments where id = $1`, second).Scan(&scope); err != nil {
 		t.Fatalf("branch deployment scope: %v", err)
@@ -183,6 +185,21 @@ func createEnvironmentBranch(t *testing.T, h *e2etest.Harness, key, projectSlug,
 	}
 	t.Fatalf("branch %s published no workload for app %s: %s", branch, appID, raw)
 	return ""
+}
+
+// waitDeploymentLive waits for a branch deployment to activate: the gateway
+// routes a branch host only to its live deployment.
+func waitDeploymentLive(t *testing.T, pool *pgxpool.Pool, deploymentID string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Minute)
+	var status string
+	for time.Now().Before(deadline) {
+		if err := pool.QueryRow(t.Context(), `select status from deployments where id = $1`, deploymentID).Scan(&status); err == nil && status == "live" {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("branch deployment %s did not go live (status %q)", deploymentID, status)
 }
 
 func environmentBranchHost(t *testing.T, store *state.PgStore, accountID, projectID, branch, appID string) string {
