@@ -211,7 +211,7 @@ func TestMagicLinkOutboxNewAccountProofRevokesPreVerificationCredentials(t *test
 		t.Fatal(err)
 	}
 	failed := httptest.NewRecorder()
-	handler.ServeHTTP(failed, httptest.NewRequest(http.MethodGet, link, nil))
+	handler.ServeHTTP(failed, browserOpenedLink(link))
 	if failed.Code != http.StatusInternalServerError || len(failed.Result().Cookies()) != 0 {
 		t.Fatal("failed ownership transaction authenticated", failed.Code)
 	}
@@ -222,7 +222,7 @@ func TestMagicLinkOutboxNewAccountProofRevokesPreVerificationCredentials(t *test
 		t.Fatal(err)
 	}
 	verified := httptest.NewRecorder()
-	handler.ServeHTTP(verified, httptest.NewRequest(http.MethodGet, link, nil))
+	handler.ServeHTTP(verified, browserOpenedLink(link))
 	if verified.Code != http.StatusFound || len(verified.Result().Cookies()) == 0 {
 		t.Fatal("new account did not sign in after ownership proof", verified.Code)
 	}
