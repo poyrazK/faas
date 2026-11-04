@@ -308,10 +308,9 @@ func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
 
 // TestEdgeRulesValidate_StreamingSkipped asserts the per-rule
 // apply_while_streaming opt-in. With the field set to false (the
-// default) AND an Upgrade request carrying a body that would
-// otherwise reject, applyEdgeRuleValidate returns false (the rule
-// is skipped for upgrade requests per handler.go:1576) and the
-// request reaches Backend.Pick.
+// default), a body-less upgrade request (a WebSocket handshake) skips
+// the schema and reaches Backend.Pick, while an upgrade request that
+// carries a body has it validated like any other (ADR-20261103090000).
 func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -354,36 +353,50 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 
 	resetEdgeRuleCache(t, h)
 
-	// An "upgrade" request: Connection: Upgrade + Upgrade: websocket
-	// both set so isUpgradeRequest() returns true (handler.go:1576).
-	// Body deliberately violates the schema. The rule should NOT
-	// fire (return false from applyEdgeRuleValidate because of the
-	// upgrade), so Backend.Pick miss → 404, NOT 422.
+	// Connection: Upgrade + Upgrade: websocket make isUpgradeRequest()
+	// true. The schema requires a string name, so a body of {"name":123}
+	// rejects when it is checked.
+	upgrade := func(body []byte) (int, []byte) {
+		t.Helper()
+		var reader io.Reader
+		if body != nil {
+			reader = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(context.Background(),
+			http.MethodPost, h.GatewayURL+"/users", reader)
+		if err != nil {
+			t.Fatalf("new req: %v", err)
+		}
+		req.Host = synthHost
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		resp, err := h.HTTPClient().Do(req)
+		if err != nil {
+			t.Fatalf("upgrade req: %v", err)
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read upgrade response: %v", readErr)
+		}
+		return resp.StatusCode, respBody
+	}
+
+	// A handshake has no body: the rule skips it and the request reaches
+	// Backend.Pick (404 for this synth route).
+	status, respBody := upgrade(nil)
+	if status == http.StatusUnprocessableEntity {
+		t.Errorf("streaming-skipped: rule fired on a body-less upgrade request; status=%d (want non-422)", status)
+	}
+	assertBackendFallthrough(t, status, respBody)
+
+	// Upgrade headers do not exempt a body: any client can add them.
 	badBody, _ := json.Marshal(map[string]any{"name": 123})
-	req, err := http.NewRequestWithContext(context.Background(),
-		http.MethodPost, h.GatewayURL+"/users", bytes.NewReader(badBody))
-	if err != nil {
-		t.Fatalf("new req: %v", err)
+	status, respBody = upgrade(badBody)
+	if status != http.StatusUnprocessableEntity || problemCode(respBody) != api.CodeRequestValidationFailed {
+		t.Errorf("upgrade request with a body: status=%d body=%s, want 422 %s", status, respBody, api.CodeRequestValidationFailed)
 	}
-	req.Host = synthHost
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Upgrade", "websocket")
-
-	resp, err := h.HTTPClient().Do(req)
-	if err != nil {
-		t.Fatalf("upgrade req: %v", err)
-	}
-	respBody, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if readErr != nil {
-		t.Fatalf("read upgrade response: %v", readErr)
-	}
-
-	if resp.StatusCode == http.StatusUnprocessableEntity {
-		t.Errorf("streaming-skipped: rule fired on upgrade request; status=%d (want non-422)", resp.StatusCode)
-	}
-	assertBackendFallthrough(t, resp.StatusCode, respBody)
 }
 
 // TestEdgeRulesValidate_ExternalRefRejected pins the gateway-side
@@ -454,7 +467,10 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	headers, respBody, status := doReqHeaders(t, h, synthHost, http.MethodPost,
 		"/users", body)
 
-	if status != http.StatusServiceUnavailable || problemCode(respBody) != api.CodeTrafficPolicyUnavailable || headers.Get("Retry-After") != "1" {
+	// A rule the gateway cannot enforce is the owner's to fix, not an outage:
+	// the refusal names the rule and asks for no retry (ADR-091 amendment
+	// 2026-11-03).
+	if status != http.StatusServiceUnavailable || problemCode(respBody) != api.CodeTrafficPolicyUnavailable || headers.Get("Retry-After") != "" || !bytes.Contains(respBody, []byte(invalidRuleID)) {
 		t.Fatalf("uncompiled owned policy did not refuse dispatch: status=%d body=%s headers=%v", status, respBody, headers)
 	}
 	metricsReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet,

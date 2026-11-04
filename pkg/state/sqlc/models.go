@@ -7301,6 +7301,16 @@ type IssueEvent struct {
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
 	OriginalIssueID          pgtype.UUID
+	OccurrenceCount          int64
+	AttributionVersion       int32
+	OccurrenceWeightKnown    bool
+	HttpTimeBuckets          []byte
+}
+
+type IssueEventUsage struct {
+	AppID         pgtype.UUID
+	RetainedCount int64
+	Initialized   bool
 }
 
 type IssueFrequencyAlertReceipt struct {
@@ -7794,6 +7804,7 @@ type Job struct {
 	ImageEntrypoint                   []string
 	ImageCmd                          []string
 	Labels                            []byte
+	EnvironmentGitSourceID            pgtype.UUID
 }
 
 type JobRegistryCredential struct {
@@ -11709,6 +11720,23 @@ type PrivateNetworkPeering struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type PrivateNetworkServiceOwner struct {
+	NetworkID        string
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	InstanceID       string
+	ServiceAddressID pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
+}
+
+type PrivateNetworkTransportIdentity struct {
+	NetworkID string
+	AccountID pgtype.UUID
+	Region    string
+	Vni       int32
+	CreatedAt pgtype.Timestamptz
+}
+
 type ProductControlBillingDocument struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -14943,6 +14971,13 @@ type SourceBuildRootf struct {
 type SourceBuildRootfsCurrent struct {
 	DeploymentID pgtype.UUID
 	ArtifactID   pgtype.UUID
+}
+
+type StaticEgressProvisioningGrant struct {
+	SourceID   string
+	AccountID  pgtype.UUID
+	CustomerIp netip.Addr
+	CreatedAt  pgtype.Timestamptz
 }
 
 type StatusIncident struct {

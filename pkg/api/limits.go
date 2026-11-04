@@ -9295,38 +9295,28 @@ const (
 	// certificate for a customer hostname.
 	//
 	// OnDemandTLSRegisteredDomainNewHostsPerWeek caps how many distinct
-	// new hostnames below wildcard custom domains may be admitted for
+	// new exact and wildcard hostnames may be admitted for
 	// certificate issuance per registered domain (public suffix + 1) in a
-	// rolling 7-day window, across every wildcard under that domain.
+	// rolling 7-day window, across every claim under that domain.
 	// Hosts admitted before stay admitted, so reloads and renewals never
 	// consume it. 40 stays under Let's Encrypt's 50 certificates per
-	// registered domain per week, which sibling wildcards share.
+	// registered domain per week, shared by exact hosts and wildcard leaves.
 	//
 	// OnDemandTLSOwnerNewHostsPerWeek caps the same admissions per owner
-	// (the wildcard app's organization, else its account) across all of
+	// (the app's organization, else its account) across all of
 	// the owner's registered domains, so one tenant with many domains
 	// cannot draw unbounded orders from the platform's shared ACME
 	// account.
 	//
 	// OnDemandTLSFleetNewHostsPer3h caps new-host admissions across the
 	// deployment in a rolling 3-hour window. Let's Encrypt allows one ACME
-	// account 300 new orders per 3 hours; the other half is left for
-	// exact custom domains, whose admission is their verified row.
+	// account 300 new orders per 3 hours; the remaining capacity is
+	// reserved for renewals and issuance retries. Exact and wildcard hosts
+	// share all three new-host caps (ADR-520 amendment 4).
 	//
 	// The three counts come from a ledger that outlives the wildcard
 	// (custom_domain_tls_admissions), so deleting and re-creating a
 	// wildcard does not reset them (bug hunt 32 M7, ADR-520 amendment 1).
-	//
-	// OnDemandTLSHostRetry* back off a host the edge keeps asking for
-	// right after being allowed: an admitted host costs no budget, so
-	// one whose ACME order keeps failing would otherwise draw an order
-	// on every handshake. OnDemandTLSHostRetryAllows allows, each in its
-	// own OnDemandTLSHostRetryBucketSeconds slice, within
-	// OnDemandTLSHostRetryWindowSeconds start a backoff of
-	// OnDemandTLSHostRetryBackoffSeconds that doubles on each repeat up to
-	// OnDemandTLSHostRetryMaxBackoffSeconds. A host that has not triggered
-	// a backoff for OnDemandTLSHostRetryResetSeconds starts again from the
-	// first step. OnDemandTLSHostRetryEntries bounds the tracked hosts.
 	//
 	// OnDemandTLSIssuanceGraceSeconds is how long after verification a
 	// failed port-443 probe is reported as pending instead of failed: the
@@ -9335,13 +9325,6 @@ const (
 	OnDemandTLSRegisteredDomainNewHostsPerWeek = 40
 	OnDemandTLSOwnerNewHostsPerWeek            = 200
 	OnDemandTLSFleetNewHostsPer3h              = 150
-	OnDemandTLSHostRetryAllows                 = 3
-	OnDemandTLSHostRetryBucketSeconds          = 30
-	OnDemandTLSHostRetryWindowSeconds          = 10 * 60
-	OnDemandTLSHostRetryBackoffSeconds         = 60 * 60
-	OnDemandTLSHostRetryMaxBackoffSeconds      = 24 * 60 * 60
-	OnDemandTLSHostRetryResetSeconds           = 24 * 60 * 60
-	OnDemandTLSHostRetryEntries                = 10000
 	OnDemandTLSIssuanceGraceSeconds            = 900
 	// CustomDomainTLSAllowedHostsMax caps the names in one wildcard custom
 	// domain's optional host allowlist (ADR-520 amendment 2). With an
@@ -13651,6 +13634,8 @@ const (
 	IssueCursorMaxBytes   = 2048
 	IssueMaxTokenLifetime = 90 * 24 * time.Hour
 	IssueMaxClockSkew     = 5 * time.Minute
+	// IssueHTTPBatchMaxCount bounds the weight of one gateway aggregation.
+	IssueHTTPBatchMaxCount int64 = 1_000_000_000
 )
 
 // Offline grouping evaluation and reviewed partition snapshots (ADR-1744).
@@ -13722,6 +13707,16 @@ func (p Plan) IssueLimits() IssueLimits {
 
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
+const IssueIngestPurgeBatch = 100
+
+// Attribution scans return complete payloads. Bound each page by bytes as
+// well as rows so valid source-mapped events fit within apid's memory budget.
+const IssueAttributionBatch = 50
+const IssueAttributionMaxBatches = 200
+const IssueAttributionRowTimeout = time.Second
+const IssueAttributionReviewBatch = 25
+const IssueAttributionReviewMaxBatches = 40
+const IssueAttributionReviewBudget = 5 * time.Second
 
 // IssueAttributionRetryWindow bounds how long after ingestion the issue
 // maintenance pass retries customer attribution for an occurrence whose
@@ -16224,7 +16219,7 @@ const (
 // references are retained even if merging exceeds the new-reference quota.
 const (
 	IssueTrackerLinksMax          = 20
-	IssueTrackerNativeRequestsMax = 100 // retained recovery receipts per original issue
+	IssueTrackerNativeRequestsMax = 100 // unresolved native requests per original issue
 	IssueTrackerLinkURLMaxBytes   = 512
 	IssueTrackerLinkTitleMaxBytes = 256
 )
@@ -17089,7 +17084,7 @@ const (
 	DataPipelineGenerationsMax             = 1000
 	DataPipelineHistoryMax                 = 100
 	DataPipelineSchemaRefreshAppsMax       = 100
-	DataPipelineSchemaRetriesMax           = 10
+	DataPipelineSchemaRetriesMax           = 10 // Independent budgets for schema attempts and retirement API refreshes.
 	DataPipelineSetupsMax                  = 3
 	DataPipelineSetupsPerConnection        = 1
 	DataPipelineSetupHistoryMax            = 100
@@ -17106,6 +17101,10 @@ const (
 	DataPipelineLease                      = 60 * time.Second
 	DataPipelineOperationTimeout           = 20 * time.Second
 	DataPipelinePollInterval               = 15 * time.Second
+	DataPipelineReconcileConcurrency       = 8
+	DataPipelineCheckConcurrency           = 2
+	DataPipelineSetupConcurrency           = 2
+	DataPipelineWorkerIdleInterval         = time.Second
 	DataPipelineVerificationChunkRows      = 2000
 	DataPipelineVerificationChunkBytes     = 4 << 20
 	DataPipelineVerificationRangesMax      = 4096
@@ -17116,6 +17115,7 @@ const (
 	DataPipelineVerificationQueryTimeout   = 2 * time.Second
 	DataPipelineVerificationPoll           = 25 * time.Millisecond
 	DataPipelineVerificationBytesMax       = 16 << 20
+	DataPipelineVerificationKeyBytesMax    = 1 << 20
 	DataPipelineRetainedWALMaxBytes        = int64(1 << 30)
 	DataPipelineDiscoveryTablesMax         = 128
 	DataPipelineCheckMaxBytes              = 4 << 20
@@ -17310,3 +17310,10 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	}
 	return l.TenantHostnamesPerSurface
 }
+
+// Domain doctor DNS probes are bounded independently of the inventory size.
+// The query ceiling accommodates the maximum DNS label depth plus aliases.
+const (
+	DomainDoctorDNSTimeout    = 5 * time.Second
+	DomainDoctorCAAMaxQueries = 128
+)

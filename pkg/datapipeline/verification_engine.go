@@ -68,6 +68,13 @@ func verifyResumable(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 	if c.Table < len(relations) && len(c.Cursor) != 0 && len(c.Cursor) != len(primaryColumns(relations[c.Table])) {
 		return false, &blocked{"verification_tracking_lost", true}
 	}
+	// Older in-flight checkpoints can adopt their request revision without
+	// changing the proof. Subsequent reader or pause intents retain this value.
+	if c.Progress.ManualAttempt == 0 && p.VerifyRequested {
+		if schema, attempt := verificationAttempt(p); schema == "" {
+			c.Progress.ManualAttempt = attempt
+		}
+	}
 	ob.VerificationProgress = &c.Progress
 	if c.Progress.State == "passed" {
 		return true, nil

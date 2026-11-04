@@ -568,7 +568,8 @@ type AppSpec struct {
 	// from reaching here. Plan-gated upstream by
 	// pkg/api/limits.go::Plan.StaticEgressIPAllowed.
 	// Additive per ADR-016.
-	StaticEgressIP string
+	StaticEgressIP       string
+	StaticEgressExcluded bool
 }
 
 // SnapshotRef points at the snapshot to restore from and the Firecracker
@@ -2004,6 +2005,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// SNAT rule in the postrouting chain AFTER
 		// the default MASQUERADE.
 		StaticEgressIp:             a.StaticEgressIP,
+		StaticEgressExcluded:       a.StaticEgressExcluded,
 		StartupDeadlineS:           a.StartupDeadlineS,
 		DisableStartupCpuBoost:     a.DisableStartupCPUBoost,
 		ExecutionMode:              a.ExecutionMode,

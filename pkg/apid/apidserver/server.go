@@ -4902,10 +4902,12 @@ func (s *server) handler() http.Handler {
 	// The /confirm, /verify, /recover, and /disable routes ARE
 	// idempotent (no body-shape side effect).
 	mux.HandleFunc("POST /v1/account/mfa/enroll", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaEnroll))))
-	mux.HandleFunc("POST /v1/account/mfa/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaConfirm)))))
-	mux.HandleFunc("POST /v1/account/mfa/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaVerify)))))
-	mux.HandleFunc("POST /v1/account/mfa/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaRecover)))))
-	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaDisable)))))
+	// Each request must prove its current session's factor. Replaying a
+	// cached success would bypass code consumption and CSRF verification.
+	mux.HandleFunc("POST /v1/account/mfa/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaConfirm))))
+	mux.HandleFunc("POST /v1/account/mfa/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaVerify))))
+	mux.HandleFunc("POST /v1/account/mfa/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaRecover))))
+	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisable))))
 	mux.HandleFunc("POST /v1/account/mfa/disable-email", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmail))))
 	mux.HandleFunc("/auth/reset/mfa", s.mfaDisableEmailPageRoute())
 	mux.HandleFunc("POST /v1/account/mfa/disable-email/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailConfirm))))
@@ -5257,6 +5259,7 @@ func (s *server) handler() http.Handler {
 	// and answers a wrong code with 401, so guesses count against §11's
 	// 10/min/IP budget like /login does.
 	mux.Handle("GET /dashboard/mfa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardMFA))))
+	mux.Handle("GET /dashboard/account/mfa", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardMFASettings))))
 	mux.Handle("POST /dashboard/mfa", s.dashboardAuthChain(middleware.AuthLimitConfig{
 		CountStatuses: []int{http.StatusUnauthorized},
 	}, s.sessionAuth(http.HandlerFunc(s.dashboardMFAVerify))))

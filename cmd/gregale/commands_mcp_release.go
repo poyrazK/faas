@@ -219,45 +219,57 @@ func prepareMCPCandidate(ctx context.Context, c *Client, slug, id string, cfg mc
 }
 
 func verifyMCPRoles(ctx context.Context, candidate string, roles []mcpReleaseRole) ([]map[string]any, error) {
+	entries := make([]map[string]any, len(roles))
+	errors := make([]error, len(roles))
+	runMCPVerificationJobs(ctx, len(roles), func(ctx context.Context, index int) {
+		entries[index], errors[index] = verifyMCPRole(ctx, candidate, roles[index])
+	})
 	checks := make([]map[string]any, 0, len(roles))
-	for _, role := range roles {
-		probe, err := mcphosting.NewClient(candidate, role.token, role.contract.ProtocolVersion)
-		if err != nil {
-			return checks, err
-		}
-		catalog, _, err := probe.DiscoverCatalog(ctx)
-		if err != nil {
-			return checks, fmt.Errorf("role %s discovery: %w", role.Name, err)
-		}
-		var contract mcphosting.Contract
-		if role.contract.Version == 1 {
-			contract, err = mcphosting.NewContract(probe.Version, catalog.Tools)
-		} else {
-			contract, err = mcphosting.NewCatalogContract(probe.Version, catalog)
-		}
-		if err != nil {
-			return checks, err
-		}
-		diff, err := mcphosting.CompareContractsWithOptions(role.contract, contract, mcphosting.ContractDiffOptions{StrictCatalog: true})
-		if err != nil {
-			return checks, err
-		}
-		entry := map[string]any{"role": role.Name, "diff": diff}
-		if role.Authorization != nil {
-			authorization := probe.CheckAuthorization(ctx, role.Authorization.AuthorizationExpectations, catalog, role.Authorization.insufficientToken)
-			entry["authorization"] = authorization
-			checks = append(checks, entry)
-			if !mcpAuthorizationChecksPassed(authorization) {
-				return checks, fmt.Errorf("role %s authorization expectations failed; promotion blocked", role.Name)
-			}
-		} else {
+	for index, entry := range entries {
+		if entry != nil {
 			checks = append(checks, entry)
 		}
-		if !diff.Compatible {
-			return checks, fmt.Errorf("role %s catalog requires review; capture and review its baseline before promoting", role.Name)
+		if errors[index] != nil {
+			return checks, errors[index]
 		}
 	}
 	return checks, nil
+}
+
+func verifyMCPRole(ctx context.Context, candidate string, role mcpReleaseRole) (map[string]any, error) {
+	probe, err := mcphosting.NewClient(candidate, role.token, role.contract.ProtocolVersion)
+	if err != nil {
+		return nil, err
+	}
+	catalog, _, err := probe.DiscoverCatalog(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("role %s discovery: %w", role.Name, err)
+	}
+	var contract mcphosting.Contract
+	if role.contract.Version == 1 {
+		contract, err = mcphosting.NewContract(probe.Version, catalog.Tools)
+	} else {
+		contract, err = mcphosting.NewCatalogContract(probe.Version, catalog)
+	}
+	if err != nil {
+		return nil, err
+	}
+	diff, err := mcphosting.CompareContractsWithOptions(role.contract, contract, mcphosting.ContractDiffOptions{StrictCatalog: true})
+	if err != nil {
+		return nil, err
+	}
+	entry := map[string]any{"role": role.Name, "diff": diff}
+	if role.Authorization != nil {
+		authorization := probe.CheckAuthorization(ctx, role.Authorization.AuthorizationExpectations, catalog, role.Authorization.insufficientToken)
+		entry["authorization"] = authorization
+		if !mcpAuthorizationChecksPassed(authorization) {
+			return entry, fmt.Errorf("role %s authorization expectations failed; promotion blocked", role.Name)
+		}
+	}
+	if !diff.Compatible {
+		return entry, fmt.Errorf("role %s catalog requires review; capture and review its baseline before promoting", role.Name)
+	}
+	return entry, nil
 }
 
 func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, audit *mcpAccessAuditOptions, smoke *mcpSmokeGate, pin ...*mcpCatalogPinReceipt) int {
@@ -272,15 +284,13 @@ func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, c
 	if cfg.Auth.Mode == "external-oauth" {
 		probe.ExpectedAuth = &cfg.Auth
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	report := mcphosting.Doctor(probeCtx, probe, cfg.Legacy, "", nil)
-	catalogHealth := probeMCPCatalogDeployment(probeCtx, c, slug, id, candidate, 2*time.Second)
+	report := mcpReleaseDoctor(ctx, probe, cfg.Legacy)
+	catalogHealth := probeMCPCatalogDeployment(ctx, c, slug, id, candidate, 2*time.Second)
 	protocolRoles := roles
 	if len(protocolRoles) == 0 {
 		protocolRoles = []mcpReleaseRole{{Name: "default", token: token}}
 	}
-	protocolQualification := qualifyMCPProtocolDeployment(probeCtx, c, slug, id, candidate, cfg.Endpoint, protocolRoles, 2*time.Second)
+	protocolQualification := qualifyMCPProtocolDeployment(ctx, c, slug, id, candidate, cfg.Endpoint, protocolRoles, 2*time.Second)
 	catalogIntegrity := map[string]any{"deployment_id": id, "health": catalogHealth}
 	protocolIntegrity := map[string]any{"deployment_id": id, "endpoint": cfg.Endpoint, "qualification": protocolQualification}
 	var pinErr error
@@ -305,24 +315,7 @@ func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, c
 		}
 		receipt["promotion_error"] = protocolErr
 	}
-	var readiness []map[string]any
-	ready := true
-	for _, role := range protocolRoles {
-		version := mcphosting.ProtocolVersion
-		var baseline *mcphosting.Contract
-		if role.contract.Version != 0 {
-			baseline = &role.contract
-			version = role.contract.ProtocolVersion
-		}
-		publicProbe, probeErr := mcphosting.NewClient(candidate, role.token, version)
-		if probeErr != nil {
-			ready = false
-			continue
-		}
-		result := mcphosting.CheckReadiness(probeCtx, publicProbe, baseline)
-		readiness = append(readiness, map[string]any{"role": role.Name, "deployment_id": id, "report": result})
-		ready = ready && result.OK
-	}
+	readiness, ready := checkMCPReleaseReadiness(ctx, candidate, id, protocolRoles)
 	receipt["readiness"] = readiness
 	if !ready {
 		receipt["promotion_error"] = "Public MCP readiness failed; candidate remains unpromoted"
@@ -377,14 +370,14 @@ func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, c
 		if catalogHealth.Supported && !catalogHealth.Healthy {
 			receipt["promotion_error"] = fmt.Sprintf("catalog health check failed: %s", catalogHealth.Error)
 		} else {
-			checks, gateErr := verifyMCPRoles(probeCtx, candidate, roles)
+			checks, gateErr := verifyMCPRoles(ctx, candidate, roles)
 			receipt["catalog_checks"] = checks
 			if gateErr != nil {
 				receipt["promotion_error"] = gateErr.Error()
 			} else {
 				var policy *api.MCPAccessPolicyExpectation
 				if audit != nil {
-					access := collectMCPAccessAudit(probeCtx, c, slug, cfg, roles, *audit)
+					access := collectMCPAccessAudit(ctx, c, slug, cfg, roles, *audit)
 					receipt["access_audit"] = access
 					policy = access.PolicyExpectation
 					if !access.OK {

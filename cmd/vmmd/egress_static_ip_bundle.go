@@ -12,12 +12,12 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
-	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -154,79 +154,35 @@ func LoadStaticEgressIPBundle(path string, log *slog.Logger) (StaticEgressIPBund
 // path sees either the prior set OR the new set, never a
 // partial mix.
 //
-// Errors are logged at Warn and swallowed — the bridge alias
+// Errors are logged at Warn and returned — the bridge alias
 // + host renderer still get the new entries, so a Postgres
 // hiccup degrades to "operator provisioning not synced" (the
-// apid PUT returns 404 until the next SIGHUP succeeds). This
+// apid PUT returns 404 until a periodic retry succeeds). This
 // is the right tradeoff: better to partially lose the gate
 // than to block the bundle reload.
 //
-// Implementation note: the bundle is grouped by accountID
-// before the call so each account's set is replaced in one
-// transaction (the vmmd is unlikely to have many accounts
-// in v1, but the per-account grouping is the right shape
-// for multi-account clusters in the future).
-func writeProvisionedStaticEgressIPs(ctx context.Context, st state.Store, entries []StaticEgressIPEntry, log *slog.Logger) {
-	byAccount := make(map[string][]netip.Addr)
-	for _, e := range entries {
-		if e.AccountID == "" || !e.IP.IsValid() {
-			continue
-		}
-		byAccount[e.AccountID] = append(byAccount[e.AccountID], e.IP)
+// Each stable vmmd source replaces its complete set, including accounts
+// that disappeared from the file. Other nodes retain their own grants.
+func writeProvisionedStaticEgressIPs(ctx context.Context, st state.Store, entries []StaticEgressIPEntry, log *slog.Logger, sources ...string) error {
+	source := "default-local"
+	if len(sources) > 0 && sources[0] != "" {
+		source = sources[0]
 	}
-	for accountID, ips := range byAccount {
-		if err := st.ReplaceProvisionedStaticEgressIPs(ctx, accountID, ips); err != nil {
-			log.Warn("vmmd: static egress IP bundle: Postgres gate write failed; apid PUT will 404 until next reload",
-				"account_id", accountID, "ips", len(ips), "err", err)
-		}
+	grants := make([]state.StaticEgressIPGrant, 0, len(entries))
+	for _, entry := range entries {
+		grants = append(grants, state.StaticEgressIPGrant{AccountID: entry.AccountID, IP: entry.IP})
 	}
-}
-
-// pushStaticEgressIPRulesToHostRenderer (ADR-119 redesign) is
-// the seam between the vmmd bundle and the host renderer. The
-// bundle's (PerVMHostIP, CustomerIP) tuples flow into the
-// netns.ActiveHostPolicy.StaticEgressRules list, which is the
-// canonical input the host renderer reads.
-//
-// At bundle-reload time we do NOT have per-VM host IPs yet
-// (those are allocated at Wake via
-// pkg/fcvm.AcquireStaticEgressIP). The bundle carries only
-// the (accountID, appID, customerIP) tuple. The per-VM host
-// IP is filled in by the Manager.RegisterStaticEgressIPForVM
-// call at Wake time, which rebuilds the host renderer.
-//
-// What we emit here is the "customer IP set" — the renderer
-// uses per-VM host IPs as the `ip saddr` source. The two
-// maps must compose at Render time (see the renderer's
-// rebuildHostStaticEgressRules walk).
-//
-// For the v1 single-node flow this is sufficient: the apid
-// PUT path reserves the per-VM host IP FIRST, then the
-// customer's app wakes, then the host renderer rebuilds with
-// the (perVMHostIP, customerIP) tuple. The bundle reload
-// simply asserts the customer IP set is what we expect.
-func pushStaticEgressIPRulesToHostRenderer(entries []StaticEgressIPEntry) {
-	cur := netns.ActiveHostPolicyForRender()
-	if cur == nil {
-		return
+	writer, ok := st.(state.StaticEgressProvisioningStore)
+	if !ok {
+		return fmt.Errorf("static egress provisioning source storage unavailable")
 	}
-	rules := make([]netns.StaticEgressRule, 0, len(entries))
-	for _, e := range entries {
-		if e.AccountID == "" || e.AppID == "" || !e.IP.IsValid() {
-			continue
-		}
-		rules = append(rules, netns.StaticEgressRule{
-			CustomerIP: e.IP,
-			AccountID:  e.AccountID,
-			AppID:      e.AppID,
-		})
+	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := writer.ReplaceStaticEgressProvisioning(publishCtx, source, grants); err != nil {
+		log.Warn("vmmd: static egress provisioning publication failed; retrying", "source", source, "err", err)
+		return err
 	}
-	// Copy the current policy, install the new rules, and swap
-	// (single atomic pointer copy). The watcher reads the new
-	// pointer on the next Render cycle.
-	next := *cur
-	next.StaticEgressRules = rules
-	netns.SwapActiveHostPolicy(next)
+	return nil
 }
 
 // watchStaticEgressIPBundleReload is the SIGHUP-driven reload
@@ -236,29 +192,32 @@ func pushStaticEgressIPRulesToHostRenderer(entries []StaticEgressIPEntry) {
 //  1. forwards the entries to mgr.SetStaticEgressIPAliases so
 //     the bridge alias set on br-tenants stays in sync with
 //     the operator file (existing behaviour);
-//  2. pushes the entries into the host renderer via
-//     pushStaticEgressIPRulesToHostRenderer (new in the
-//     redesign — the renderer reads ActiveHostPolicy, not
-//     DefaultHostPolicy);
-//  3. mirrors the (accountID, customerIP) tuples into the
+//  2. mirrors the (accountID, customerIP) tuples into the
 //     Postgres gate table via
 //     writeProvisionedStaticEgressIPs (new in the redesign
 //     — the apid PUT path reads Postgres, not the bundle).
 //
 // Empty path = "no static IP bundle configured" — the goroutine
 // skips cleanly (same posture as watchEgressBundleReload above).
-// The same SIGHUP signal drives both watchers in production;
-// vmmd main wires hupCh once and shares it across both.
+// Each watcher receives its own signal registration so one SIGHUP
+// reaches both policy reloaders.
 //
 // Failure model: a missing file is not an error (returns
 // zero-value bundle = "remove all aliases"). A malformed file
 // keeps the prior alias set live — the reload never silently
 // strips a customer's IP because of a parse glitch.
-func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarget, st state.Store, path string, log *slog.Logger, hupCh <-chan os.Signal) {
+func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarget, st state.Store, path string, log *slog.Logger, hupCh <-chan os.Signal, sources ...string) {
 	if path == "" {
 		log.Debug("vmmd: static egress IP bundle reload disabled (no path configured)")
+		if st != nil {
+			publishStaticEgressBundle(ctx, mgr, st, nil, log, sources...)
+		}
 		return
 	}
+	var desired []StaticEgressIPEntry
+	loaded := false
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 	// Startup load: install aliases before any Wake observes
 	// the bridge, so a fresh vmmd with a non-empty bundle has
 	// the customer IPs aliased before any per-VM SNAT rule
@@ -270,8 +229,9 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 			"path", path, "err", err)
 	} else {
 		mgr.SetStaticEgressIPAliases(bundle.Entries)
-		pushStaticEgressIPRulesToHostRenderer(bundle.Entries)
-		writeProvisionedStaticEgressIPs(ctx, st, bundle.Entries, log)
+		loaded = true
+		desired = bundle.Entries
+		publishStaticEgressBundle(ctx, mgr, st, desired, log, sources...)
 		log.Info("vmmd: static egress IP bundle loaded at startup",
 			"path", path, "entries", len(bundle.Entries))
 	}
@@ -279,6 +239,11 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 		select {
 		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			if loaded {
+				mgr.SetStaticEgressIPAliases(desired)
+				publishStaticEgressBundle(ctx, mgr, st, desired, log, sources...)
+			}
 		case <-hupCh:
 			log.Info("vmmd: SIGHUP received, reloading static egress IP bundle")
 			bundle, err := LoadStaticEgressIPBundle(path, log)
@@ -288,8 +253,9 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 				continue
 			}
 			mgr.SetStaticEgressIPAliases(bundle.Entries)
-			pushStaticEgressIPRulesToHostRenderer(bundle.Entries)
-			writeProvisionedStaticEgressIPs(ctx, st, bundle.Entries, log)
+			loaded = true
+			desired = bundle.Entries
+			publishStaticEgressBundle(ctx, mgr, st, desired, log, sources...)
 			log.Info("vmmd: static egress IP bundle reloaded",
 				"path", path, "entries", len(bundle.Entries))
 		}
@@ -302,4 +268,15 @@ func watchStaticEgressIPBundleReload(ctx context.Context, mgr staticEgressIPTarg
 // (same posture as egressBundleTarget above).
 type staticEgressIPTarget interface {
 	SetStaticEgressIPAliases(entries []StaticEgressIPEntry)
+}
+
+func publishStaticEgressBundle(ctx context.Context, mgr staticEgressIPTarget, st state.Store, entries []StaticEgressIPEntry, log *slog.Logger, sources ...string) {
+	_ = writeProvisionedStaticEgressIPs(ctx, st, entries, log, sources...)
+	if repair, ok := mgr.(interface{ ReconcileStaticEgressPolicies(context.Context) error }); ok {
+		repairCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := repair.ReconcileStaticEgressPolicies(repairCtx); err != nil {
+			log.Warn("vmmd: repair static egress after bundle publication", "err", err)
+		}
+	}
 }

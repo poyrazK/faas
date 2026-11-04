@@ -745,6 +745,50 @@ func TestNodeJoinDrainsExistingTrafficBeforeStoppingListeners(t *testing.T) {
 	}
 }
 
+// production-us rc.319 (2026-11-04): the edge socket stayed open through a
+// drained install, a tunnel request socket-activated the edge, and its Wants=
+// chain started the old release's gatewayd-internal, vmmd and realtimed
+// mid-install. The old gateway crash-looped into its start limit and the
+// daemon-set restart was refused. A drained install takes the edge out of
+// the tunnel first and returns it after the restart.
+func TestNodeJoinTakesTheDrainedEdgeOutOfTheTunnel(t *testing.T) {
+	playbook := nodeJoinPlaybook(t)
+	out := strings.Index(playbook, "- name: Take the drained node's app edge out of the tunnel before the install")
+	stop := strings.Index(playbook, "- name: Stop stale compute-only services before replacing the active release")
+	restart := strings.Index(playbook, "- name: Enable and restart the compute-only daemon set")
+	back := strings.Index(playbook, "- name: Return the node's app edge to the tunnel")
+	ready := strings.Index(playbook, "- name: Require dependency-aware readiness after release installation")
+	if out < 0 || stop < 0 || restart < 0 || back < 0 || ready < 0 || !(out < stop && stop < restart && restart < back && back < ready) {
+		t.Fatalf("edge order invalid: out=%d stop=%d restart=%d back=%d ready=%d", out, stop, restart, back, ready)
+	}
+	outBlock := playbook[out:stop]
+	for _, token := range []string{"state: stopped", "not (faas_join_skip_drain | bool)", "faas_edge_on_compute_nodes | default(false) | bool"} {
+		if !strings.Contains(outBlock, token) {
+			t.Errorf("edge take-out missing %q", token)
+		}
+	}
+	// The connector leaves first, so Cloudflare stops sending before the
+	// socket refuses; closing the socket is what stops socket activation.
+	connector := strings.Index(outBlock, "- faas-cloudflared.service")
+	socket := strings.Index(outBlock, "- faas-gatewayd-public-edge.socket")
+	if connector < 0 || socket < 0 || connector > socket {
+		t.Fatalf("edge take-out must stop the connector, then the socket: connector=%d socket=%d", connector, socket)
+	}
+	backEnd := strings.Index(playbook[back:], "\n    - name: ")
+	if backEnd < 0 {
+		t.Fatal("edge return task has no successor")
+	}
+	backBlock := playbook[back : back+backEnd]
+	for _, token := range []string{"state: started", "faas_edge_on_compute_nodes | default(false) | bool", "- faas-gatewayd-public-edge.socket", "- faas-cloudflared.service"} {
+		if !strings.Contains(backBlock, token) {
+			t.Errorf("edge return missing %q", token)
+		}
+	}
+	if strings.Contains(backBlock, "faas_join_skip_drain") {
+		t.Error("the edge returns after every restart, drained or not")
+	}
+}
+
 func TestNodeJoinDefersFreshHostDaemonsUntilCredentialsAndDoctor(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "node_join.yml"))
 	if err != nil {

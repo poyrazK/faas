@@ -10,16 +10,51 @@ import (
 )
 
 func (m *MemStore) environmentGitOpsManagedJobLocked(jobID string) bool {
+	if job, exists := m.jobs[jobID]; exists && job.EnvironmentGitSourceID != "" {
+		return !m.environmentGitOpsJobReleasedLocked(job)
+	}
 	for _, intent := range m.appEnvironmentWorkloadIntents {
 		if intent.JobID == jobID {
+			return !m.environmentGitOpsJobReleasedLocked(m.jobs[jobID])
+		}
+	}
+	return false
+}
+
+func (m *MemStore) environmentGitOpsJobReleasedLocked(job Job) bool {
+	if job.EnvironmentGitSourceID != "" {
+		source, known := m.environmentGitOps[job.EnvironmentGitSourceID]
+		return known && source.source.Detached
+	}
+	// N-1 rows may already have been detached before attribution was added.
+	// Release only a linked Job that predates a proven retired scope, with no
+	// active replacement whose legacy ownership could be mistaken for history.
+	if job.CreatedAt.IsZero() {
+		return false
+	}
+	for _, intent := range m.appEnvironmentWorkloadIntents {
+		if intent.JobID != job.ID || intent.AccountID != job.AccountID {
+			continue
+		}
+		active, retired := false, false
+		for _, memory := range m.environmentGitOps {
+			if memory.source.AccountID != intent.AccountID || memory.source.EnvironmentID != intent.EnvironmentID {
+				continue
+			}
+			active = active || !memory.source.Detached
+			for _, appID := range memory.resources {
+				retired = retired || memory.source.Detached && appID == intent.AppID && !job.CreatedAt.After(memory.source.UpdatedAt)
+			}
+		}
+		if retired && !active {
 			return true
 		}
 	}
 	return false
 }
 
-func (m *MemStore) syncEnvironmentGitOpsJobLocked(row EnvironmentWorkloadIntent, app gitOpsIntentApp,
-	workload api.EnvironmentWorkload, plan api.Plan) (EnvironmentWorkloadIntent, error) {
+func (m *MemStore) syncEnvironmentGitOpsJobLocked(source EnvironmentGitSource, row EnvironmentWorkloadIntent, app gitOpsIntentApp,
+	workload api.EnvironmentWorkload, plan api.Plan, attributeSource bool) (EnvironmentWorkloadIntent, error) {
 	// The caller passes the intent row after applying the reviewed plan. Its
 	// variables are the approved snapshot; comparing them to the pre-apply app
 	// observation would silently preserve stale Job environment values.
@@ -70,6 +105,9 @@ func (m *MemStore) syncEnvironmentGitOpsJobLocked(row EnvironmentWorkloadIntent,
 		return row, ErrConflict
 	}
 	jobName := environmentGitOpsJobName(row.EnvironmentID, row.AppID)
+	if prior, exists := m.jobs[row.JobID]; exists && prior.Status == "deleted" && !m.environmentGitOpsManagedJobLocked(prior.ID) {
+		row.JobID = ""
+	}
 	if row.JobID == "" {
 		count := 0
 		for _, job := range m.jobs {
@@ -87,6 +125,9 @@ func (m *MemStore) syncEnvironmentGitOpsJobLocked(row EnvironmentWorkloadIntent,
 			return row, err
 		}
 		job.Status = "paused"
+		if attributeSource {
+			job.EnvironmentGitSourceID = source.ID
+		}
 		job.CronSchedule, job.CronTimezone = row.Schedule.Cron, row.Schedule.Timezone
 		job.SchedulePolicy = workpolicy.Clone(row.Schedule.SchedulePolicy)
 		job.FailureRules = workpolicy.Clone(row.Schedule.FailureRules)
@@ -117,6 +158,9 @@ func (m *MemStore) syncEnvironmentGitOpsJobLocked(row EnvironmentWorkloadIntent,
 	job.Name, job.Kind, job.ImageRef = jobName, "recurring", sourceRef
 	job.RAMMB, job.TaskTimeoutS, job.MaxParallelism, job.RetryMax = api.JobRAMMB[index], api.JobTaskTimeoutSec[index], 1, 0
 	job.EnvOverrides, job.Status, job.Command = append(json.RawMessage(nil), envOverrides...), "paused", command
+	if attributeSource {
+		job.EnvironmentGitSourceID = source.ID
+	}
 	job.CronSchedule, job.CronTimezone = row.Schedule.Cron, row.Schedule.Timezone
 	job.SchedulePolicy = workpolicy.Clone(row.Schedule.SchedulePolicy)
 	job.FailureRules = workpolicy.Clone(row.Schedule.FailureRules)

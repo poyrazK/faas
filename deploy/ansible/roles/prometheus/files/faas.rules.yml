@@ -3239,15 +3239,22 @@ groups:
       # box. It is also the gate on lowering any pkg/db
       # DaemonMaxConnections entry: a cap may only come down while this
       # is flat at zero for the daemon in question.
+      #
+      # A daemon may run more than one pool (apid's background pool, #6464,
+      # exports apid_background_db_pool_*). rate() drops the metric name, so
+      # two pools of one job would collide and fail the whole rule ("vector
+      # cannot contain metrics with the same labelset"; production-us rc.319,
+      # 2026-11-04). The pool label, taken from the name before rate() runs,
+      # keeps them apart.
       - alert: FaasDBPoolStarved
-        expr: sum by (job, instance) (rate({__name__=~".+_db_pool_canceled_acquires_total"}[5m])) > 0
+        expr: sum by (job, instance, pool) (rate(label_replace({__name__=~".+_db_pool_canceled_acquires_total"}, "pool", "$1", "__name__", "(.+)_db_pool_canceled_acquires_total")[5m:30s])) > 0
         for: 5m
         labels:
           severity: page
           component: platform
           family: db_pool
         annotations:
-          summary: "Daemon {{ $labels.job }} is abandoning Postgres pool acquisitions"
+          summary: "Daemon {{ $labels.job }} is abandoning Postgres pool acquisitions ({{ $labels.pool }} pool)"
           description: "{{ $labels.job }} has callers giving up while waiting for a pool connection. Compare <daemon>_db_pool_conns against <daemon>_db_pool_max_conns: at the cap, the daemon's DaemonMaxConnections entry is too small for its concurrency; below the cap, connections are being held too long by a slow query or a leaked transaction."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
 
@@ -8466,8 +8473,10 @@ groups:
         # Only acquired connections are in use. A grown pool's idle connections
         # also report under <daemon>_db_pool_conns{state="idle"}; summing every
         # state read apid's 1 acquired + 11 idle as 12/12 and fired on every
-        # daemon after rc.263 activated this rule.
-        expr: sum by (job, instance) ({__name__=~".+_db_pool_conns",state="acquired"}) / on (job, instance) max by (job, instance) ({__name__=~".+_db_pool_max_conns"}) > 0.9
+        # daemon after rc.263 activated this rule. Each pool is compared with
+        # its own cap: apid's request and background pools (#6464) report
+        # under apid_ and apid_background_.
+        expr: sum by (job, instance, pool) (label_replace({__name__=~".+_db_pool_conns",state="acquired"}, "pool", "$1", "__name__", "(.+)_db_pool_conns")) / on (job, instance, pool) max by (job, instance, pool) (label_replace({__name__=~".+_db_pool_max_conns"}, "pool", "$1", "__name__", "(.+)_db_pool_max_conns")) > 0.9
         for: 10m
         labels:
           severity: warn
@@ -8475,7 +8484,7 @@ groups:
           family: db_pool
           public_status: internal
         annotations:
-          summary: "{{ $labels.job }} is using over 90% of its database pool"
+          summary: "{{ $labels.job }} is using over 90% of its {{ $labels.pool }} database pool"
           description: "{{ $labels.job }} on {{ $labels.instance }} has held more than 90% of its pool cap (pkg/db.DaemonMaxConnections) for 10m. Callers will start waiting for connections; FaasDBPoolStarved fires once they give up."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
       - alert: FaasScheddLoopWorkDropped

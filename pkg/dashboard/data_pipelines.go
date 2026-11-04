@@ -3,25 +3,27 @@ package dashboard
 import "github.com/onebox-faas/faas/pkg/api"
 
 type DataPipelinesData struct {
-	Alerts             []DataPipelineAlerts
-	Readers            []DataPipelineReaders
-	DataAPIEnabled     bool
-	AuthApps           []DataPipelineAuthApp
-	SetupEnabled       bool
-	Setups             []DataPipelineSetupItem
-	Enabled            bool
-	CSRFToken          string
-	ConnectionID       string
-	ConnectionRevision int64
-	RefreshSeconds     int
-	Connections        []api.DataConnection
-	Check              *api.DataConnectionCheck
-	Pipelines          []api.DataPipeline
-	SchemaChanges      []DataPipelineSchemaChange
-	TableSelections    []DataPipelineTableSelection
-	Verifications      []DataPipelineVerificationItem
-	Databases          []ManagedPostgresDatabaseItem
-	Message            string
+	Alerts                    []DataPipelineAlerts
+	Readers                   []DataPipelineReaders
+	DataAPIEnabled            bool
+	AuthApps                  []DataPipelineAuthApp
+	SetupEnabled              bool
+	Setups                    []DataPipelineSetupItem
+	Enabled                   bool
+	ReadersEnabled            bool
+	VerificationCancelEnabled bool
+	CSRFToken                 string
+	ConnectionID              string
+	ConnectionRevision        int64
+	RefreshSeconds            int
+	Connections               []api.DataConnection
+	Check                     *api.DataConnectionCheck
+	Pipelines                 []api.DataPipeline
+	SchemaChanges             []DataPipelineSchemaChange
+	TableSelections           []DataPipelineTableSelection
+	Verifications             []DataPipelineVerificationItem
+	Databases                 []ManagedPostgresDatabaseItem
+	Message                   string
 }
 
 type DataPipelineAlerts struct {
@@ -69,6 +71,7 @@ type DataPipelineSchemaChange struct {
 	CancellationTable, CancellationID, CancellationState, CancellationStage string
 	CancellationChoices                                                     []string
 	CanApproveCancellation, CanDiscardCancellation                          bool
+	CanRetryCancellation                                                    bool
 }
 
 type DataPipelineTableCopy struct {
