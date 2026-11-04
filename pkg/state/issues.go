@@ -8,6 +8,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// ErrIssueAttributionConflict means independently observed identities do not
+// agree. The occurrence remains valid, but must not be attributed.
+var ErrIssueAttributionConflict = errors.New("issue attribution evidence conflicts")
+
 // IssueStore is a focused persistence boundary owned by apid. Daemons send
 // evidence to apid; they never open their own connection to these tables.
 type IssueStore interface {
@@ -33,13 +37,22 @@ type IssueCredential struct {
 	ID, AccountID, AppID, DeploymentID, Environment string
 }
 
+// IssueBatchStore atomically records a validated OTLP export.
+type IssueBatchStore interface {
+	RecordIssueBatch(context.Context, []RecordIssueParams) ([]api.IssueEventResponse, error)
+}
+
 type RecordIssueParams struct {
 	Credential                      IssueCredential
 	Event                           api.IssueEvent
 	Fingerprint, Title, PayloadHash string
 	GroupingVersion                 int
-	Limits                          api.IssueLimits
-	Now                             time.Time
+	// OccurrenceCount is a trusted gateway aggregate; zero means one event.
+	OccurrenceCount int64
+	// TimeBuckets hold [Unix millisecond, count] pairs for one HTTP second.
+	TimeBuckets [][2]int64
+	Limits      api.IssueLimits
+	Now         time.Time
 }
 
 type IssueCursor struct {
@@ -70,6 +83,9 @@ type IssueListFilter struct {
 
 var ErrIssueEventConflict = errors.New("issue event ID reused with another payload")
 var ErrIssueGroupingConflict = errors.New("issue group membership conflicts with requested action")
+
+// ErrIssueTicketPending protects provider creation and recovery during deletion.
+var ErrIssueTicketPending = errors.New("issue has a native ticket awaiting creation or attachment")
 var ErrIssueQuota = errors.New("issue storage quota exceeded")
 var ErrIssueRateLimited = errors.New("issue ingestion rate exceeded")
 
@@ -80,9 +96,16 @@ type IssueLimitError struct {
 	Resource        string
 	Limit, Observed int64
 	Rate            bool
+	// NoCapacityAtBatchStart marks an app-wide event limit encountered before
+	// any occurrence in an atomic batch could succeed.
+	NoCapacityAtBatchStart bool
 }
 
 func (e *IssueLimitError) Error() string { return "issue limit exceeded: " + e.Resource }
+
+// IssueBatchNoCapacityAtStart tells an OTLP delivery that splitting this
+// batch cannot admit a new occurrence until capacity becomes available.
+func (e *IssueLimitError) IssueBatchNoCapacityAtStart() bool { return e.NoCapacityAtBatchStart }
 func (e *IssueLimitError) Unwrap() error {
 	if e.Rate {
 		return ErrIssueRateLimited

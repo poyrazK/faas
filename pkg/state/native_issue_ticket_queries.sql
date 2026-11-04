@@ -1,7 +1,10 @@
 -- name: NativeIssueTicketGet :one
 SELECT * FROM native_issue_ticket_receipts WHERE account_id=$1 AND request_id=$2;
 -- name: NativeIssueTicketCount :one
-SELECT count(*) FROM native_issue_ticket_receipts WHERE issue_id=$1;
+-- Completed links and explicit provider rejections remain as durable
+-- idempotency evidence, but no longer occupy an unresolved-request slot.
+SELECT count(*) FROM native_issue_ticket_receipts WHERE issue_id=$1
+AND (state IN ('dispatching','created') OR (state='ready' AND claim_id IS NULL));
 -- name: NativeIssueTicketInsert :one
 INSERT INTO native_issue_ticket_receipts(account_id,request_id,app_id,issue_id,request_hash)
 VALUES($1,$2,$3,$4,$5) ON CONFLICT(account_id,request_id) DO NOTHING RETURNING *;
@@ -14,4 +17,5 @@ UPDATE native_issue_ticket_receipts SET state=sqlc.arg(state),ticket_url=sqlc.ar
 WHERE account_id=sqlc.arg(account_id) AND request_id=sqlc.arg(request_id) AND state='dispatching' AND claim_id=sqlc.arg(claim_id) RETURNING *;
 -- name: NativeIssueTicketLinked :one
 UPDATE native_issue_ticket_receipts SET state='linked',link_id=sqlc.arg(link_id),updated_at=now()
-WHERE account_id=sqlc.arg(account_id) AND request_id=sqlc.arg(request_id) AND state='created' RETURNING *;
+WHERE account_id=sqlc.arg(account_id) AND request_id=sqlc.arg(request_id)
+AND (state='created' OR (state='linked' AND link_id=sqlc.arg(link_id))) RETURNING *;

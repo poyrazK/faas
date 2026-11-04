@@ -1999,4 +1999,4 @@ check-binding-runner-sync:
 	python3 scripts/sync_binding_runner.py --check
 .PHONY: test-data-pipeline
 test-data-pipeline: ## Real TLS Postgres replication and signed HTTP acceptance (Docker, Node, Go)
-	@bash scripts/test-data-pipeline.sh
+	@$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) bash scripts/test-data-pipeline.sh

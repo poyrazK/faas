@@ -17,6 +17,7 @@ type IssueReleaseHealth struct {
 	RegressedIssueGroups int64     `json:"regressed_issue_groups"`
 	IdentifiedCustomers  int64     `json:"identified_customers"`
 	UnattributedEvents   int64     `json:"unattributed_events"`
+	UnknownHTTPBatches   int64     `json:"unknown_http_batches,omitempty"`
 }
 
 type IssueReleaseComparison struct {

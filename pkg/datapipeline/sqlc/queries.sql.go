@@ -923,36 +923,39 @@ func (q *Queries) PipelineConnections(ctx context.Context, db DBTX, arg Pipeline
 
 const pipelineControl = `-- name: PipelineControl :one
 UPDATE data_pipelines SET
- verification_progress=CASE WHEN $1::bigint>0 OR $2::boolean THEN '{}'::jsonb ELSE verification_progress END,
+ verification_progress=CASE WHEN $1::bigint>0 THEN '{}'::jsonb
+ WHEN $2::boolean THEN jsonb_build_object('ManualAttempt',revision+1) ELSE verification_progress END,
  schema_change=CASE WHEN $1::bigint>0 THEN '{}'::jsonb ELSE schema_change END,
  schema_approval=CASE WHEN $1::bigint>0 THEN '' ELSE schema_approval END,
  desired_state=$3,state=$4,generation=generation+$1::bigint,
  applied_through_at=CASE WHEN $1::bigint>0 THEN NULL ELSE applied_through_at END,
  initialized=CASE WHEN $1::bigint>0 THEN false ELSE initialized END,
- revision=revision+1,verify_requested=$2,verification=CASE WHEN $1::bigint>0 THEN 'unknown' WHEN $2 THEN 'pending' ELSE verification END,
+ revision=revision+1,verify_requested=$5,verification=CASE WHEN $1::bigint>0 THEN 'unknown' WHEN $2 THEN 'pending' ELSE verification END,
  verified_at=CASE WHEN $2 OR $1::bigint>0 THEN NULL ELSE verified_at END,
  retry_at=clock_timestamp()
-WHERE account_id=$5::text::uuid AND id=$6::text::uuid AND revision=$7 AND state<>'deleted'
+WHERE account_id=$6::text::uuid AND id=$7::text::uuid AND revision=$8 AND state<>'deleted'
  AND (coalesce(reader_change->>'State','')<>'approved' OR $1::bigint=0)
 RETURNING id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
 `
 
 type PipelineControlParams struct {
-	GenerationDelta int64
-	VerifyRequested bool
-	DesiredState    string
-	State           string
-	AccountID       string
-	ID              string
-	Revision        int64
+	GenerationDelta   int64
+	StartVerification bool
+	DesiredState      string
+	State             string
+	VerifyRequested   bool
+	AccountID         string
+	ID                string
+	Revision          int64
 }
 
 func (q *Queries) PipelineControl(ctx context.Context, db DBTX, arg PipelineControlParams) (DataPipeline, error) {
 	row := db.QueryRow(ctx, pipelineControl,
 		arg.GenerationDelta,
-		arg.VerifyRequested,
+		arg.StartVerification,
 		arg.DesiredState,
 		arg.State,
+		arg.VerifyRequested,
 		arg.AccountID,
 		arg.ID,
 		arg.Revision,
@@ -1531,6 +1534,44 @@ func (q *Queries) PipelineRequestTables(ctx context.Context, db DBTX, arg Pipeli
 		arg.AccountID,
 		arg.ID,
 		arg.Revision,
+		arg.MaxAgeSeconds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pipelineRetryTableRetirement = `-- name: PipelineRetryTableRetirement :execrows
+UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),
+ schema_change=jsonb_set(schema_change,'{Cancellation,RefreshRetry}',to_jsonb(coalesce((schema_change->'Cancellation'->>'RefreshRetry')::integer,0)+1))
+WHERE account_id=$1::text::uuid AND id=$2::text::uuid AND revision=$3
+ AND desired_state='running' AND state='blocked' AND reason='schema_api_refresh_failed'
+ AND schema_approval=schema_change->>'ID'
+ AND schema_change->'Cancellation'->>'ID'=$4::text
+ AND schema_change->'Cancellation'->>'State'='approved' AND schema_change->'Cancellation'->>'Stage'='archived'
+ AND schema_change->'Cancellation'->>'Retention'='retain_private'
+ AND coalesce((schema_change->'Cancellation'->>'RefreshRetry')::integer,0)<$5::integer
+ AND coalesce(reader_change->>'State','')<>'approved'
+ AND observed_revision=revision AND observed_at>clock_timestamp()-($6::bigint*interval '1 second')
+`
+
+type PipelineRetryTableRetirementParams struct {
+	AccountID      string
+	ID             string
+	Revision       int64
+	CancellationID string
+	MaxRetries     int32
+	MaxAgeSeconds  int64
+}
+
+func (q *Queries) PipelineRetryTableRetirement(ctx context.Context, db DBTX, arg PipelineRetryTableRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, pipelineRetryTableRetirement,
+		arg.AccountID,
+		arg.ID,
+		arg.Revision,
+		arg.CancellationID,
+		arg.MaxRetries,
 		arg.MaxAgeSeconds,
 	)
 	if err != nil {

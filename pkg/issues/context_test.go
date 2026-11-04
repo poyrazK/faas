@@ -36,6 +36,19 @@ func TestReportedContextDoesNotChangeGrouping(t *testing.T) {
 		t.Fatal("missing allowlist redaction marker")
 	}
 }
+
+func TestBreadcrumbSkewUsesReportedOccurrence(t *testing.T) {
+	now := time.Now().UTC()
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: now.Add(4 * time.Minute), ExceptionType: "Error", Breadcrumbs: []api.IssueBreadcrumb{{OccurredAt: now.Add(6 * time.Minute), Category: "custom", Level: "info", Message: "entry"}}}
+	got, _, _, err := Normalize(event, now, api.PlanPro.IssueLimits())
+	if err != nil || !got.OccurredAt.Equal(now) || len(got.Breadcrumbs) != 1 {
+		t.Fatalf("valid skew rejected: %+v %v", got, err)
+	}
+	event.Breadcrumbs[0].OccurredAt = event.OccurredAt.Add(api.IssueMaxClockSkew + time.Second)
+	if _, _, _, err := Normalize(event, now, api.PlanPro.IssueLimits()); err == nil {
+		t.Fatal("invalid future breadcrumb accepted")
+	}
+}
 func TestReportedContextRejectsMalformedEvidence(t *testing.T) {
 	now := time.Now().UTC()
 	for _, crumb := range []api.IssueBreadcrumb{{OccurredAt: now, Category: "headers", Level: "info"}, {OccurredAt: now, Category: "custom", Level: "fatal"}, {OccurredAt: now.Add(time.Hour), Category: "custom", Level: "info"}, {OccurredAt: now, Category: "custom", Level: "info", Message: "nul\x00"}} {
@@ -43,6 +56,22 @@ func TestReportedContextRejectsMalformedEvidence(t *testing.T) {
 		if _, _, _, err := Normalize(in, now, api.PlanPro.IssueLimits()); err == nil {
 			t.Fatalf("accepted %+v", crumb)
 		}
+	}
+}
+
+func TestIssueTextReplacesNULBeforePersistence(t *testing.T) {
+	now := time.Now().UTC()
+	in := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: now, ExceptionType: "Err\x00or", Message: "bad\x00message", StackTrace: "stack\x00trace", Route: "/route\x00x", RequestID: "req\x00id", FingerprintOverride: "fp\x00id", ErrorCode: "code\x00id", Frames: []api.IssueFrame{{File: "file\x00x", Function: "fn\x00x", InApp: true}}, Causes: []api.IssueCause{{ExceptionType: "Cause\x00Error", Message: "cause\x00message", Frames: []api.IssueFrame{{File: "cause\x00file"}}}}}
+	event, _, title, err := Normalize(in, now, api.PlanPro.IssueLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(event)
+	if err != nil || strings.Contains(string(raw), `\u0000`) || strings.ContainsRune(title, 0) {
+		t.Fatalf("NUL reached persistence: %s %q %v", raw, title, err)
+	}
+	if event.Message != "bad\uFFFDmessage" || !strings.Contains(title, "bad\uFFFDmessage") {
+		t.Fatalf("surrounding evidence was lost: %+v %q", event, title)
 	}
 }
 

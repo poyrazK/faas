@@ -297,6 +297,7 @@ type (
 	IssueRelease                        = api.IssueRelease
 	IssueActivity                       = api.IssueActivity
 	IssueImpact                         = api.IssueImpact
+	IssueImpactSummary                  = api.IssueImpactSummary
 	IssueImpactAlertPolicy              = api.IssueImpactAlertPolicy
 	UpdateIssueImpactAlertPolicyRequest = api.UpdateIssueImpactAlertPolicyRequest
 	IssueOwnershipRule                  = api.IssueOwnershipRule

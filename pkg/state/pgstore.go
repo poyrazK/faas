@@ -19,6 +19,7 @@ import (
 	"math"
 	"net"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -6131,6 +6132,11 @@ func (s *PgStore) ApplyProjectReconcile(
 	for _, app := range existing {
 		byID[app.ID] = app
 	}
+	environmentOnly, err := sqlc.New().EnvironmentOnlyProjectAppIDs(ctx, tx, sqlc.EnvironmentOnlyProjectAppIDsParams{
+		AccountID: mustPgUUID(project.AccountID), ProjectID: mustPgUUID(project.ID)})
+	if err != nil {
+		return ProjectReconcileResult{}, err
+	}
 
 	creates, removes := 0, 0
 	removeIDs := make(map[string]bool)
@@ -6159,6 +6165,9 @@ func (s *PgStore) ApplyProjectReconcile(
 				return ProjectReconcileResult{}, ErrNotFound
 			}
 			if mutation.Op == "remove" {
+				if slices.Contains(environmentOnly, mutation.App.ID) {
+					return ProjectReconcileResult{}, ErrConflict
+				}
 				removes++
 			}
 		default:
@@ -6225,6 +6234,10 @@ func (s *PgStore) ApplyProjectReconcile(
 			if err != nil {
 				return ProjectReconcileResult{}, mapErr(err)
 			}
+			updated, err = syncProductionWorkloadSpecTx(ctx, tx, updated, projectReconcileSettingsParams(updated, mutation))
+			if err != nil {
+				return ProjectReconcileResult{}, err
+			}
 			out.Changed = append(out.Changed, updated)
 		case "remove":
 			removed, err := softDeleteAppInTx(ctx, tx, mutation.App.ID)
@@ -6249,6 +6262,10 @@ func (s *PgStore) ApplyProjectReconcile(
 				restored, restoreErr := scanApp(tx.QueryRow(ctx, `update apps set status = 'active', deleted_at = null, delete_grace_until = null, root_dir = $2, workload_name = $3, workload_class = $4, start_command = $5, manifest = $6, platform_tenant_required = case when $7 then $8 else platform_tenant_required end, ram_mb = case when $9 and $10 > 0 then $10 else ram_mb end, cpu_millicores = case when $9 and $11 > 0 then $11 else cpu_millicores end, max_concurrency = case when $9 and $12 > 0 then $12 else max_concurrency end where id = $1 returning `+appsSelectColumns, tombstone.ID, tombstone.RootDir, tombstone.WorkloadName, string(tombstone.WorkloadClass), nullString(tombstone.StartCommand), manifestBytes, mutation.SetPlatformTenantRequired, app.PlatformTenantRequired, mutation.SetResources, app.RAMMB, app.CPUMillicores, app.MaxConcurrency))
 				if restoreErr != nil {
 					return ProjectReconcileResult{}, mapErr(restoreErr)
+				}
+				restored, restoreErr = syncProductionWorkloadSpecTx(ctx, tx, restored, projectReconcileSettingsParams(restored, mutation))
+				if restoreErr != nil {
+					return ProjectReconcileResult{}, restoreErr
 				}
 				out.Added = append(out.Added, restored)
 				continue
@@ -10496,9 +10513,9 @@ func (s *PgStore) MarkDeploymentLiveIfLatest(ctx context.Context, id string) err
 // starts. A serialization failure has aborted the complete attempt; its
 // deferred rollback releases every row/session lock and pool connection.
 // Retry only that failure with a fresh snapshot and the same original guards.
-func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest, recovery bool) error {
+func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest, recovery bool, expectedServingID ...string) error {
 	for {
-		err := s.markDeploymentLiveOnce(ctx, id, fenceLatest, recovery)
+		err := s.markDeploymentLiveOnce(ctx, id, fenceLatest, recovery, expectedServingID...)
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.SerializationFailure {
 			return err
@@ -10513,7 +10530,7 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 	}
 }
 
-func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLatest, recovery bool) (resultErr error) {
+func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLatest, recovery bool, expectedServingID ...string) (resultErr error) {
 	defer func() { resultErr = mapErr(resultErr) }()
 	tx, err := s.beginDeploymentTrafficMutation(ctx, id)
 	if err != nil {
@@ -10572,6 +10589,11 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			return ErrNotFound
 		}
 		return fmt.Errorf("state: mark deployment live load: %w", err)
+	}
+	if len(expectedServingID) > 0 {
+		if err := deploymentActivationServingMatchesTx(ctx, tx, dep, expectedServingID[0]); err != nil {
+			return err
+		}
 	}
 	if recovery {
 		if dep.Status == DeploySuperseded {
@@ -21939,6 +21961,9 @@ WHERE kind = 'wake.boot_started'
 // fallback here keeps the param semantics identical to the sqlc
 // version (no string-built queries, all parameters bound).
 //
+// The kind prefix is literal, and events_at_id_idx returns rows newest
+// first, so the limit stops the scan (ADR-20261103094121).
+//
 // Bounded by the handler to api.ObsAdminEventsLimitMax (500). The
 // interface{} params for the discriminator columns (actor, kind_prefix,
 // subject, since) match the sqlc-emitted shape — the SQL uses the
@@ -21954,7 +21979,7 @@ func (s *PgStore) ListAllEventsPaged(ctx context.Context, actor, kindPrefix, sub
 	rows, err := s.pool.Query(ctx,
 		`select id, at, actor, kind, subject, data from events
 		 where ($1 = '' or actor = $1)
-		   and ($2 = '' or kind like $2 || '%')
+		   and ($2 = '' or starts_with(kind, $2))
 		   and ($3 = '' or subject = $3::uuid)
 		   and ($4 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $4)
 		 order by at desc, id desc
