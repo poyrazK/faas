@@ -174,6 +174,12 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 	if earliest, latest, ok := database.RestoreRange(time.Now().UTC()); ok {
 		out.RestoreRange = &api.ManagedPostgresRestoreRange{Earliest: earliest.UTC().Format(time.RFC3339Nano), Latest: latest.UTC().Format(time.RFC3339Nano)}
 	}
+	if database.Previews != "" && database.Previews != managedpostgres.PreviewsOff {
+		out.Previews = string(database.Previews)
+	}
+	if !database.Preview.IsZero() {
+		out.Preview = &api.ManagedPostgresPreviewOwner{SourceDatabaseID: database.Preview.SourceDatabaseID, PRNumber: database.Preview.PRNumber}
+	}
 	return out
 }
 
@@ -477,7 +483,12 @@ func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var database managedpostgres.Database
-	if purge {
+	if previewDatabase, ok := s.previewDatabase(r.Context(), acct, r.PathValue("id")); ok {
+		// A PR preview environment's database has no undo window
+		// (ADR-20261102123523); the next preview build sets it up again.
+		purge = true
+		database, err = s.previewDatabaseManager().Purge(r.Context(), acct.ID, previewDatabase.ID)
+	} else if purge {
 		database, err = s.managedPostgres.Delete(r.Context(), acct.ID, r.PathValue("id"))
 	} else {
 		database, err = s.managedPostgres.ScheduleDelete(r.Context(), acct.ID, r.PathValue("id"))

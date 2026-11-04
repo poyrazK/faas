@@ -54,7 +54,7 @@
        - It is taken once, when the environment first needs it. Later pushes keep the copy and whatever was written to it, so the PR's migrations run against it the way they will run against production.
   3. **The build waits for its database; a refusal fails the preview.**
      - The GitHub bridge enqueues a preview build only once every preview binding it needs is ready. Until then it answers `Unavailable`, which githubd retries like any retryable failure.
-     - When setup is refused, the reason is recorded as a setup failure on the PR (ADR-20261026090000 decision 3). The check names the source database and the reason, for example:
+     - When setup is refused, the reason is recorded as a setup failure on the PR (ADR-20261026090000 decision 3). The check says the preview's database was refused and why, but names no database, because the PR may be public. Reasons include:
        - the plan does not allow it, or the limit in decision 5 is reached;
        - the source has no restore window for `copy`;
        - the backend refuses.
@@ -93,10 +93,14 @@
      - `Service.SetPreviews`, `Service.EnsurePreviewDatabase` (empty) and `Service.PurgePreviewDatabase`;
      - the reservation rule in decision 5.
   3. **apid:**
-     - the setting route and CLI;
-     - setup in the bridge and the preview create path;
-     - teardown and the reconciler sweep;
-     - setup failures on the PR.
+     - the setting route and CLI (`gregale postgres previews set DATABASE empty|off`);
+     - setup in the bridge and the preview create path (`pkg/apid/previewdb`). The bridge sets up before it spends the deploy window, so retries while a database provisions cost no deploys. The API create path does not wait for a provisioning database: its binding delivers `DATABASE_URL` when ready;
+     - teardown in the destroy path and the janitor; a customer's delete of a preview database purges it;
+     - setup failures on the PR;
+     - only the setup may bind a preview database (`CreateBindingRequest.PreviewSetup`).
+
+     Organization-owned databases are not set up in this step: setup and the setting route use the account's personal ownership, as developer-session databases do.
+  3b. **The reconciler sweep** for preview databases whose environment closed while a teardown stopped midway, or while an older apid tore it down.
   4. **Guards:** the storage pool exclusion and the compute hold (decision 6).
   5. **`copy`.**
   6. **Launch:** customer docs, the dashboard, a `tests/journeys` journey (preview with an empty database migrated by its release command, torn down with the PR), then `beta`.

@@ -40,6 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
+	"github.com/onebox-faas/faas/pkg/apid/previewdb"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
@@ -92,6 +93,9 @@ type githubdBridge struct {
 	// agentSteps reports whether an account may deploy workflow agent steps
 	// (ADR-20261027090010 §1); nil refuses them.
 	agentSteps func(state.Account) bool
+	// previewDatabases sets up a PR preview build's managed PostgreSQL
+	// databases (ADR-20261102123523); nil sets up none.
+	previewDatabases func(context.Context, state.Account, api.Plan, state.App) error
 }
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
@@ -355,6 +359,13 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest)
 	if releaseProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
+	}
+	// A preview build waits for its databases before it spends the deploy
+	// window, so the retries while one provisions cost no deploys.
+	if eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+		if err := g.preparePreviewDatabases(ctx, acct, resource.Plan, app); err != nil {
+			return nil, err
+		}
 	}
 	// PR preview builds stop at their share of the window, so a busy pull
 	// request cannot spend the deploys production needs (ADR-20261028100000).
@@ -773,15 +784,48 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
-		store:       store,
-		notif:       notif,
-		log:         log,
-		ops:         ops,
-		spool:       spool,
-		stagingRoot: filepath.Join(stagingRoot, "build-sources"),
-		spoolRoot:   spool,
-		agentSteps:  agentSteps,
+		store:            store,
+		notif:            notif,
+		log:              log,
+		ops:              ops,
+		spool:            spool,
+		stagingRoot:      filepath.Join(stagingRoot, "build-sources"),
+		spoolRoot:        spool,
+		agentSteps:       agentSteps,
+		previewDatabases: previewDatabases,
 	})
+}
+
+// preparePreviewDatabases sets up a PR preview build's databases
+// (ADR-20261102123523). One still provisioning answers Unavailable, which
+// githubd retries; a refusal answers ResourceExhausted, which githubd
+// reports on the pull request as a setup failure.
+func (g *githubdBridge) preparePreviewDatabases(ctx context.Context, acct state.Account, plan api.Plan, preview state.App) error {
+	if g.previewDatabases == nil {
+		return nil
+	}
+	err := g.previewDatabases(ctx, acct, plan, preview)
+	if err != nil && !errors.Is(err, previewdb.ErrPending) {
+		g.log.Warn("githubd bridge: preview databases", "app_id", preview.ID, "err", err)
+	}
+	return previewDatabasesStatus(err)
+}
+
+// previewDatabasesStatus is the bridge's answer to a preview database setup
+// error: Unavailable for one githubd should retry, ResourceExhausted for a
+// refusal it reports on the pull request.
+func previewDatabasesStatus(err error) error {
+	var refused *previewdb.RefusedError
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &refused):
+		return status.Errorf(codes.ResourceExhausted, "EnqueueBuild: %s", refused.Reason)
+	case errors.Is(err, previewdb.ErrPending):
+		return status.Error(codes.Unavailable, "EnqueueBuild: the preview's managed PostgreSQL database is still provisioning")
+	default:
+		return status.Error(codes.Unavailable, "EnqueueBuild: the preview's managed PostgreSQL database could not be set up yet")
+	}
 }

@@ -502,6 +502,7 @@ touch them. The tables below map each earlier name.
 | `gregale postgres compute-policy` | `gregale postgres compute-policy set` |
 | `gregale postgres overage` | `gregale postgres overage get` |
 | `gregale postgres overage` | `gregale postgres overage set` |
+| `gregale postgres previews` | `gregale postgres previews set` |
 | `gregale postgres resize-status` | `gregale postgres resize status` |
 | `gregale previews join` | `gregale feature join` |
 | `gregale previews leave` | `gregale feature leave` |

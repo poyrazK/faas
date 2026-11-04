@@ -7937,6 +7937,38 @@ Read compute resize progress
 
 `gregale postgres resize status <database> <request_uuid>`
 
+### postgres previews
+
+Give each PR preview environment its own database (preview)
+
+`gregale postgres previews <set> <database> empty|off`
+
+Examples:
+
+```sh
+gregale postgres previews set orders empty
+```
+
+empty: every PR preview of an app bound to the database gets its own empty database, bound with the same environment keys and access and removed with the preview. The PR&#39;s release command migrates it.
+
+off: previews get no database; existing preview databases go with their pull requests.
+
+#### postgres previews set
+
+Give each PR preview environment its own database (preview)
+
+`gregale postgres previews set <database> empty|off`
+
+Examples:
+
+```sh
+gregale postgres previews set orders empty
+```
+
+empty: every PR preview of an app bound to the database gets its own empty database, bound with the same environment keys and access and removed with the preview. The PR&#39;s release command migrates it.
+
+off: previews get no database; existing preview databases go with their pull requests.
+
 ### postgres list
 
 List managed PostgreSQL databases

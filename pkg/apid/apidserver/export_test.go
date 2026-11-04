@@ -1634,6 +1634,13 @@ func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) 
 	return r.cleanupDevSessionResources(ctx, app)
 }
 
+// Preview databases (ADR-20261102123523).
+var PreviewDatabasesStatus = previewDatabasesStatus
+
+func (r *server) PrepareBuildPreviewDatabases(ctx context.Context, acct state.Account, plan api.Plan, preview state.App) error {
+	return r.prepareBuildPreviewDatabases(ctx, acct, plan, preview)
+}
+
 func IssueNativeSetClients(e pgHandlerEnv, gh GithubdClient, provider issuetracker.StatusProvider) {
 	e.s.githubd = gh
 	e.s.nativeTrackerProvider = provider

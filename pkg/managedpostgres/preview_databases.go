@@ -212,12 +212,18 @@ func (s *Service) EnsurePreviewDatabase(ctx context.Context, request PreviewData
 }
 
 // previewDatabaseProgress moves a preview database's provisioning along; a
-// ready or deleting one is returned as it is.
+// ready or deleting one is returned as it is. One another worker holds, or
+// whose next attempt is not due, is returned as it is too: the lifecycle
+// reconciler moves it along.
 func (s *Service) previewDatabaseProgress(ctx context.Context, database Database) (Database, error) {
 	if database.State != StateProvisioning && database.State != StateFailed {
 		return database, nil
 	}
-	return s.Reconcile(ctx, database.AccountID, database.ID)
+	reconciled, err := s.Reconcile(ctx, database.AccountID, database.ID)
+	if errors.Is(err, ErrConflict) {
+		return database, nil
+	}
+	return reconciled, err
 }
 
 // PreviewDatabases returns the undeleted databases one PR preview environment
