@@ -20,8 +20,11 @@ import (
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rid := r.Header.Get(api.RequestIDHeader)
-		if rid == "" {
+		if rid == "" || len(rid) > 128 {
 			rid = newRequestID()
+			// Propagate the replacement to downstream audit and application
+			// handlers, not just to the response and request context.
+			r.Header.Set(api.RequestIDHeader, rid)
 		}
 		w.Header().Set(api.RequestIDHeader, rid)
 		r = r.WithContext(WithRequestID(r.Context(), rid)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.

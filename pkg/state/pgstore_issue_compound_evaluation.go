@@ -37,7 +37,7 @@ func recordIssueCompoundAlerts(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, 
 		return err
 	}
 	for _, rule := range policy.Rules {
-		if !rule.Enabled || rule.Environment != "" && rule.Environment != row.Environment || !in.Event.OccurredAt.After(in.Now.Add(-time.Duration(rule.WindowSeconds)*time.Second)) || in.Event.OccurredAt.After(in.Now) {
+		if !rule.Enabled || rule.Environment != "" && rule.Environment != row.Environment || !issueLatestEventTime(in).After(in.Now.Add(-time.Duration(rule.WindowSeconds)*time.Second)) || issueLatestEventTime(in).After(in.Now) {
 			continue
 		}
 		decision, err := compoundDecision(ctx, q, tx, row, rule, in.Now)

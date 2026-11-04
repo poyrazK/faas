@@ -10,9 +10,10 @@ import (
 )
 
 // Captures use the typed state capture as their immutable source. Managed
-// databases are copied at one frozen data point (ADR-20261024224230); bucket
-// data still needs a coordinated checkpoint and is deferred before any
-// mutation.
+// databases and buckets are copied at one frozen data point
+// (ADR-20261024224230, ADR-20261103160000). A clone with buckets stays
+// capturing, with its point recorded, until the coordinator has pinned each
+// bucket's versions as of that point (captureProjectEnvironmentCloneObjectManifests).
 func captureProjectEnvironmentClone(ctx context.Context, store projectEnvironmentCloneCoordinatorStore, lease state.ProjectEnvironmentCloneLease) (state.ProjectEnvironmentCloneLease, error) {
 	op := lease.Operation
 	if op.Status != state.CloneOperationPending && op.Status != state.CloneOperationCapturing {
@@ -38,9 +39,6 @@ func captureProjectEnvironmentClone(ctx context.Context, store projectEnvironmen
 	if err != nil {
 		return lease, err
 	}
-	if len(objects) != 0 {
-		return lease, errCloneCheckpointUnavailable
-	}
 	resources, err := capturedCloneConfigurationResources(op, capture, views)
 	if err != nil {
 		return lease, err
@@ -56,7 +54,15 @@ func captureProjectEnvironmentClone(ctx context.Context, store projectEnvironmen
 		}
 		lease.Operation, op = updated, updated
 	}
-	if len(databases) != 0 {
+	if len(objects) != 0 && cloneOperationHasObjectResources(op) {
+		// The point and the bucket resources are recorded; the coordinator
+		// pins their versions before the clone moves on to copying.
+		if len(op.Resources) < configured || !cloneCoordinatorResourcesEqual(op.Resources[:configured], resources) {
+			return lease, state.ErrConflict
+		}
+		return lease, nil
+	}
+	if len(databases) != 0 || len(objects) != 0 {
 		point, err := captureCloneDataPoint(ctx, store, lease)
 		if err != nil {
 			return lease, err
@@ -66,6 +72,18 @@ func captureProjectEnvironmentClone(ctx context.Context, store projectEnvironmen
 			return lease, err
 		}
 		resources = append(resources, captured...)
+		planned, err := capturedProjectEnvironmentObjectResources(objects, point)
+		if err != nil {
+			return lease, err
+		}
+		resources = append(resources, planned...)
+	}
+	if len(objects) != 0 {
+		updated, err := store.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCapturing, op.Revision, resources, "")
+		if err == nil {
+			lease.Operation = updated
+		}
+		return lease, err
 	}
 	if len(op.Resources) != 0 && !cloneCoordinatorResourcesEqual(op.Resources, resources) && !cloneCoordinatorResourcesEqual(op.Resources, resources[:configured]) {
 		return lease, state.ErrConflict
@@ -86,7 +104,7 @@ func captureProjectEnvironmentClone(ctx context.Context, store projectEnvironmen
 // point-in-time restore would give.
 func captureCloneDataPoint(ctx context.Context, store projectEnvironmentCloneCoordinatorStore, lease state.ProjectEnvironmentCloneLease) (time.Time, error) {
 	for _, resource := range lease.Operation.Resources {
-		if resource.Kind != "managed_postgres" {
+		if resource.Kind != "managed_postgres" && resource.Kind != "object_storage" {
 			continue
 		}
 		point, err := time.Parse(time.RFC3339Nano, resource.CapturePoint)

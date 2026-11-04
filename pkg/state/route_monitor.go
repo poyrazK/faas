@@ -149,8 +149,9 @@ type RouteMonitorRollbackClaim struct {
 }
 
 // RouteMonitorRollbackStore claims at most one automatic rollback decision per
-// incident. Monitor evaluation never writes deployments; apid requests the
-// checked rollback after a claim and records its outcome.
+// incident. Claims without an operation are resumable. APID binds checked
+// intent creation to the claim with WithRouteMonitorRollbackClaim so the
+// operation and incident link commit together.
 type RouteMonitorRollbackStore interface {
 	ClaimRouteMonitorRollback(ctx context.Context, accountID, appID string) (RouteMonitorRollbackClaim, bool, error)
 	RecordRouteMonitorRollback(ctx context.Context, accountID, appID, incidentID string, outcome api.RouteMonitorIncidentRollback) error
@@ -165,6 +166,10 @@ type RouteMonitorRollbackStore interface {
 func decideRouteMonitorRollback(c api.RouteMonitorConfig, i *api.RouteMonitorIncident, d Deployment, promotedAt *time.Time, now time.Time) (RouteMonitorRollbackClaim, bool, bool) {
 	if d.ID != i.DeploymentID || d.Status != DeployLive || d.TrafficPercent != 100 || d.CanaryTotalSteps > 0 && d.CanaryStep < d.CanaryTotalSteps {
 		return RouteMonitorRollbackClaim{}, false, false
+	}
+	if resumableRouteMonitorClaim(c, *i) && d.Scope != "production" {
+		return RouteMonitorRollbackClaim{IncidentID: i.ID, DeploymentID: i.DeploymentID,
+			TargetDeploymentID: i.Rollback.TargetDeploymentID, Route: i.Rollback.Route}, true, false
 	}
 	decision := routemonitor.DecideRollback(c, *i, routemonitor.ReleasedAt(d.CreatedAt, d.CanaryStepStartedAt, d.RolloutCompletedAt, promotedAt))
 	if decision.Eligible && d.Scope == "production" {

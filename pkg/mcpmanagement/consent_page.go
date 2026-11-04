@@ -42,7 +42,11 @@ func consentPage(v consentView) string {
 	w(`<p>Return address: `, e(v.Redirect), `</p><p>Gregale API: `, e(v.APIBase), "</p>\n")
 	switch {
 	case v.Account != "":
-		w(`<p>Account: <strong>`, e(v.Account), `</strong></p><p>This client can inspect apps, deployments, logs, metrics, health and routes in this account. App logs may contain private data.</p>`)
+		w(`<p>Account: <strong>`, e(v.Account), `</strong></p>`)
+		if v.Org != "" {
+			w(`<p>Acting in the organization <strong>`, e(v.Org), `</strong>, within your role there.</p>`)
+		}
+		w(`<p>This client can inspect apps, deployments, logs, metrics, health and routes in this account. App logs may contain private data.</p>`)
 		if len(v.Capabilities) > 0 {
 			w(`<p>With write access it may also:</p><ul>`)
 			for _, capability := range v.Capabilities {

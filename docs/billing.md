@@ -12,6 +12,42 @@ Usage is measured in GB-RAM-hours for running app instances. The plan also sets 
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
 
+## Changing plan
+
+`gregale billing plan PLAN` (or `PATCH /v1/account/plan`, or Change plan on the dashboard billing page) changes plan. Your first paid plan starts with a hosted checkout. Prices are before tax: the billing provider adds any sales tax or VAT that applies where you live. The billing portal shows invoices and payment methods but does not switch plans.
+
+If a plan ends without a downgrade, for example when a subscription lapses, its limits still bind: see [after a plan ends or shrinks](plans.md#what-each-limit-means).
+
+### Upgrades
+
+On an existing subscription an upgrade happens in place: the billing provider charges the prorated difference for the rest of the billing period, plus tax, to the card on the subscription, and the new plan applies once that charge succeeds. If the charge is declined nothing changes; update the card in the billing portal and try again. If your bank asks to confirm the charge (3-D Secure), the upgrade answers `402 payment_authentication_required` and nothing is charged: add the card again in the billing portal, where your bank can confirm it, then retry the upgrade.
+
+### Downgrades
+
+A downgrade applies at the end of the billing period, and is refused until your apps, databases and stored objects fit the lower plan. Downgrading to Free cancels the subscription at the end of the period.
+
+### Cancel and resume
+
+A cancelled subscription (`gregale billing cancel`, a downgrade to Free, or a deletion request) keeps its plan until the end of the billing period and then ends. A scheduled downgrade likewise applies at the end of the period. `GET /v1/billing/status` shows what is scheduled (`subscription_ends_at`, `scheduled_plan`, `scheduled_plan_at`), and so does the dashboard billing page.
+
+To keep the subscription instead, ask for the plan you already have: `gregale billing plan pro` on a Pro account, `PATCH /v1/account/plan` with `{"plan": "pro"}`, or Keep subscription on the dashboard. The scheduled cancellation or downgrade is undone and the subscription renews as before. Organizations use `PATCH /v1/orgs/{slug}/plan` the same way.
+
+A subscription that is ending cannot change plans: an upgrade or downgrade answers `409 billing_subscription_ending` until you keep it. Once the period has ended the account is on Free, and a new paid plan starts with a new checkout.
+
+Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap need an admin credential and MFA, and a dashboard session also needs a recent step-up: the portal link is a signed-in session that can cancel the subscription and replace the card.
+
+## Billing email
+
+The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it, so give the organization its own address:
+
+```bash
+curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
+  -H "Authorization: Bearer $GREGALE_TOKEN" -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"billing_email":"billing@acme.example"}'
+```
+
+Only the owner can change it, with MFA and a recent step-up. When the organization already has a subscription, its billing customer moves to the new address first. An address that already pays for another Gregale account or organization is refused with `409 billing_email_in_use`, and so is an upgrade from an organization whose billing email is in use that way. While a member's email is the organization's billing email, that member cannot be removed or delete their account (`409 billing_contact_member`); move the billing email first.
+
 ## Spend cap
 
 A spend cap is a hard ceiling on the overage an account is billed in a UTC

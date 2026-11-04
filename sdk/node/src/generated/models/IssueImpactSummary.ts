@@ -9,5 +9,9 @@ export type IssueImpactSummary = {
   identified_customers: number;
   observed_events: number;
   unattributed_events: number;
+  /**
+   * Legacy HTTP records with unknown folded weights; observed event counts are lower bounds.
+   */
+  unknown_http_batches?: number;
 };
 

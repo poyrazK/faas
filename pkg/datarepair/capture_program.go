@@ -41,10 +41,10 @@ type captureProbeProgram struct {
 func captureProgram() captureProbeProgram {
 	functions, fingerprint := doctorFunctions()
 	functions = slices.DeleteFunc(functions, func(f doctorFunction) bool {
-		return !slices.Contains([]string{"begin_operation", "finish_operation", "check_enrollment", "fingerprint", "guard_row", "capture_row", "protect_operation", "protect_change", "require_finalized"}, f.Name)
+		return !slices.Contains([]string{"begin_operation", "finish_operation", "check_enrollment", "fingerprint", "type_fingerprint", "guard_row", "capture_row", "protect_operation", "protect_change", "require_finalized"}, f.Name)
 	})
 	for i := range functions {
-		functions[i].Runtime = slices.Contains([]string{"begin_operation", "finish_operation", "check_enrollment", "fingerprint"}, functions[i].Name)
+		functions[i].Runtime = slices.Contains([]string{"begin_operation", "finish_operation", "check_enrollment", "fingerprint", "type_fingerprint"}, functions[i].Name)
 	}
 	columns := slices.DeleteFunc(doctorColumns(), func(c doctorColumn) bool { return c.Table == "plans" || c.Table == "retention_runs" })
 	quote := func(v any) string { return "'" + strings.ReplaceAll(doctorJSON(v), "'", "''") + "'::jsonb" }
@@ -54,7 +54,7 @@ func captureProgram() captureProbeProgram {
 		"__INTERNAL_TRIGGERS_SQL__", doctorInternalTriggersSQL,
 		"__PERMISSIONS_SQL__", doctorPermissionsSQL,
 	).Replace(captureCatalogSQL)
-	enrollment := strings.NewReplacer("__MAX_OBJECTS__", strconv.Itoa(api.DataRepairDoctorMaxObjects), "__FINGERPRINT_SQL__", strings.ReplaceAll(fingerprint, "$1::oid", "e.relation::oid")).Replace(captureEnrollmentSQL)
+	enrollment := strings.NewReplacer("__CASCADING_FIELDS__", cascadingFieldsSQL("c.oid", "e.fields"), "__TYPE_CONTRACT_CHANGED__", typeContractMismatchSQL("e.relation", "e.type_fingerprint"), "__MAX_OBJECTS__", strconv.Itoa(api.DataRepairDoctorMaxObjects), "__FINGERPRINT_SQL__", strings.ReplaceAll(fingerprint, "$1::oid", "e.relation::oid"), "__UNSUPPORTED_EXPRESSIONS__", unsupportedExpressionsSQL("c.oid"), "__LOSSY_TYPES__", lossyValueTypesSQL("c.oid", "e.fields||e.keys")).Replace(captureEnrollmentSQL)
 	pythonSQL := func(sql string) string { return strings.ReplaceAll(strings.ReplaceAll(sql, "%", "%%"), "$1", "%s") }
 	messages := map[string]captureProgramMessage{}
 	for code, m := range captureMessages() {
@@ -63,7 +63,7 @@ func captureProgram() captureProbeProgram {
 		}
 	}
 	return captureProbeProgram{Version: 1, TimeoutMS: api.DataRepairDoctorTimeoutSeconds * 1000, MaxResponseBytes: api.DataRepairDoctorMaxResponseBytes, MaxObjects: api.DataRepairDoctorMaxObjects, MaxTableBytes: api.DataRepairSourceMaxFilterBytes, MaxContextBytes: api.DataRepairCaptureContextMaxBytes,
-		FindingIDs: captureFindingIDs(), Messages: messages, SetupSQL: "SELECT set_config('search_path','pg_catalog',true),set_config('statement_timeout','" + strconv.Itoa(api.DataRepairDoctorTimeoutSeconds*1000) + "',true),set_config('lock_timeout','" + strconv.Itoa(api.DataRepairDoctorTimeoutSeconds*1000) + "',true)", CatalogSQL: catalog, EnrollmentSQL: enrollment, PythonCatalogSQL: pythonSQL(catalog), PythonEnrollmentSQL: pythonSQL(enrollment)}
+		FindingIDs: captureFindingIDs(), Messages: messages, SetupSQL: "SELECT set_config('jit','off',true),set_config('search_path','pg_catalog',true),set_config('statement_timeout','" + strconv.Itoa(api.DataRepairDoctorTimeoutSeconds*1000) + "',true),set_config('lock_timeout','" + strconv.Itoa(api.DataRepairDoctorTimeoutSeconds*1000) + "',true)", CatalogSQL: catalog, EnrollmentSQL: enrollment, PythonCatalogSQL: pythonSQL(catalog), PythonEnrollmentSQL: pythonSQL(enrollment)}
 }
 
 // CaptureReadinessProgram is the trusted, generated client probe shared by the

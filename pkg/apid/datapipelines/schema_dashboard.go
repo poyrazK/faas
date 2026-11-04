@@ -26,6 +26,7 @@ func schemaView(p datapipeline.Pipeline) dashboard.DataPipelineSchemaChange {
 		}
 		v.CanApproveCancellation = cancel.State == "pending" && p.Reason == pendingReason && p.State == "blocked" && p.DesiredState == "running" && p.ObservationFresh
 		v.CanDiscardCancellation = (cancel.State == "requested" || cancel.State == "pending") && p.DesiredState == "running"
+		v.CanRetryCancellation = datapipeline.CanRetryTableRetirement(p)
 		if cancel.State == "withdrawn" {
 			v.CancellationTable = ""
 		}

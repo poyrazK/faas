@@ -226,6 +226,14 @@ func (s *PgStore) FinishConfigChange(ctx context.Context, f ConfigChangeFinish) 
 		return ConfigRevision{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	r, err := s.finishConfigChangeTx(ctx, tx, f)
+	if err != nil {
+		return ConfigRevision{}, err
+	}
+	return r, tx.Commit(ctx)
+}
+
+func (s *PgStore) finishConfigChangeTx(ctx context.Context, tx pgx.Tx, f ConfigChangeFinish) (ConfigRevision, error) {
 	q := sqlc.New()
 	now := f.Now.UTC()
 	if err := q.LockAppConfigScope(ctx, tx, sqlc.LockAppConfigScopeParams{AppID: mustPgUUID(f.AppID), Scope: f.Scope}); err != nil {
@@ -255,7 +263,7 @@ func (s *PgStore) FinishConfigChange(ctx context.Context, f ConfigChangeFinish) 
 		KeepAfter: revision.Revision - api.ConfigRevisionsRetained}); err != nil {
 		return ConfigRevision{}, fmt.Errorf("state: prune config revisions: %w", err)
 	}
-	return revision, tx.Commit(ctx)
+	return revision, nil
 }
 
 func (s *PgStore) AbandonConfigChange(ctx context.Context, guardID string, now time.Time) error {
@@ -319,7 +327,13 @@ func (s *PgStore) ListWatchingConfigGuards(ctx context.Context, limit int) ([]Co
 	if limit <= 0 || limit > api.ConfigGuardBatchSize {
 		limit = api.ConfigGuardBatchSize
 	}
-	rows, err := sqlc.New().ListWatchingAppConfigGuards(ctx, s.pool, int32(limit)) //nolint:gosec // bounded by ConfigGuardBatchSize
+	cursor := configGuardCursor(ctx)
+	params := sqlc.ListWatchingAppConfigGuardsParams{RowLimit: int32(limit)} //nolint:gosec // bounded by ConfigGuardBatchSize
+	if cursor.ID != "" {
+		params.AfterChangedAt = pgTimestamptzUTC(cursor.ChangedAt)
+		params.AfterID = mustPgUUID(cursor.ID)
+	}
+	rows, err := sqlc.New().ListWatchingAppConfigGuards(ctx, s.pool, params)
 	if err != nil {
 		return nil, fmt.Errorf("state: list watching config guards: %w", err)
 	}

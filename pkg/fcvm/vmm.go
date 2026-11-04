@@ -4175,6 +4175,13 @@ func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
 	if err := v.checkOwnedJail(l.Instance); err != nil {
 		return err
 	}
+	// The drive handoff pins each drive through the jail root, so its handles
+	// sit on the image binds and keep them busy. The process has exited; close
+	// them before unmounting, or every bind is "target is busy" until this
+	// vmmd exits (2026-11-03).
+	if err := v.releaseRuntimeDriveHandoff(l.Instance); err != nil {
+		return fmt.Errorf("vmm: release runtime drive handoff: %w", err)
+	}
 	if err := v.unmountBindMounts(l.Instance); err != nil {
 		return err
 	}

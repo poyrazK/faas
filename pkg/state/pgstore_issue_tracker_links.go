@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -91,6 +92,9 @@ func (s *PgStore) PutIssueTrackerLink(ctx context.Context, app, account, id, act
 		return api.IssueTrackerLink{}, err
 	} else {
 		if existing.Title == normalized.Title {
+			if err = reconcileNativeTicketLink(ctx, tx, root.ID, existing.ID, existing.Url); err != nil {
+				return api.IssueTrackerLink{}, err
+			}
 			return issueTrackerLinkRow(existing), tx.Commit(ctx)
 		}
 		action = "tracker_link_updated"
@@ -99,10 +103,22 @@ func (s *PgStore) PutIssueTrackerLink(ctx context.Context, app, account, id, act
 	if err != nil {
 		return api.IssueTrackerLink{}, mapErr(err)
 	}
+	if err = reconcileNativeTicketLink(ctx, tx, root.ID, row.ID, row.Url); err != nil {
+		return api.IssueTrackerLink{}, err
+	}
 	if err = issueRegroupAudit(ctx, q, tx, root, action, actor, map[string]string{"link_id": issueID(row.ID), "provider": row.Provider, "external_key": row.ExternalKey, "url": row.Url, "original_issue_id": issueID(row.IssueID)}, now); err != nil {
 		return api.IssueTrackerLink{}, err
 	}
 	return issueTrackerLinkRow(row), tx.Commit(ctx)
+}
+
+// A confirmed provider URL may also be attached manually after a connection
+// changes. Preserve receipt idempotency while resolving its pending state.
+func reconcileNativeTicketLink(ctx context.Context, tx pgx.Tx, canonical, link pgtype.UUID, ticketURL string) error {
+	_, err := tx.Exec(ctx, `UPDATE native_issue_ticket_receipts SET state='linked',link_id=$1,updated_at=now()
+ WHERE state='created' AND ticket_url=$2 AND issue_id IN
+ (SELECT original_issue_id FROM issue_group_assignments WHERE canonical_issue_id=$3)`, link, ticketURL, canonical)
+	return err
 }
 func (s *PgStore) DeleteIssueTrackerLink(ctx context.Context, app, account, id, link, actor string, now time.Time) error {
 	parsed, err := uuid.Parse(link)

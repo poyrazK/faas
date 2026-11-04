@@ -52,7 +52,7 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	if r.URL.Path != p.EndpointPath() && r.URL.Path != p.MetadataPath() {
 		return false
 	}
-	if origin := r.Header.Get("Origin"); origin != "" && !slices.Contains(p.AllowedOrigins, origin) {
+	if origins := r.Header.Values("Origin"); len(origins) > 1 || (len(origins) == 1 && !slices.Contains(p.AllowedOrigins, origins[0])) {
 		return mcpPolicyReject(w, http.StatusForbidden, p, "Origin is not allowed")
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
@@ -94,11 +94,54 @@ func mcpPolicyPreflight(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if r.Header.Get("Origin") != "" {
+		w.Header().Add("Vary", "Access-Control-Request-Method, Access-Control-Request-Headers")
+		methods := r.Header.Values("Access-Control-Request-Method")
+		if len(methods) != 1 || !slices.Contains([]string{"GET", "POST", "DELETE", "OPTIONS"}, methods[0]) {
+			http.Error(w, "MCP preflight method is not allowed", http.StatusBadRequest)
+			return true
+		}
+		headers, ok := mcpPreflightHeaders(r.Header.Values("Access-Control-Request-Headers"))
+		if !ok {
+			http.Error(w, "MCP preflight header is not allowed", http.StatusBadRequest)
+			return true
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, MCP-Protocol-Version, MCP-Session-Id, MCP-Method, MCP-Name")
+		w.Header().Set("Access-Control-Allow-Headers", strings.Join(headers, ", "))
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return true
+}
+
+// Reflect only explicitly supported headers and well-formed annotated parameter
+// names. Never widen the caller's configured Origin policy.
+func mcpPreflightHeaders(values []string) ([]string, bool) {
+	headers := []string{}
+	for _, value := range values {
+		for _, raw := range strings.Split(value, ",") {
+			name := strings.ToLower(strings.TrimSpace(raw))
+			if name == "" {
+				continue
+			}
+			switch name {
+			case "authorization", "content-type", "accept", "mcp-protocol-version", "mcp-session-id", "mcp-method", "mcp-name":
+			default:
+				suffix, ok := strings.CutPrefix(name, "mcp-param-")
+				if !ok || suffix == "" {
+					return nil, false
+				}
+				for _, ch := range suffix {
+					valid := ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || strings.ContainsRune("!#$%&'*+.^_`|~-", ch)
+					if !valid {
+						return nil, false
+					}
+				}
+			}
+			if !slices.Contains(headers, name) {
+				headers = append(headers, name)
+			}
+		}
+	}
+	return headers, true
 }
 
 func (h *Handler) authenticateMCPResource(w http.ResponseWriter, r *http.Request, app App, rule *EdgeRuleJWTResolved) (*JWTClaims, bool) {
@@ -115,13 +158,7 @@ func (h *Handler) authenticateMCPResource(w http.ResponseWriter, r *http.Request
 	if rule.PlatformTenantExternalRefClaim != "" {
 		verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, rule.PlatformTenantExternalRefClaim)
 	}
-	if h.edgeRules != nil {
-		if throttle := matchEdgeGate(r, func(ctx context.Context, path string) *EdgeRuleThrottleResolved {
-			return h.edgeRules.MatchThrottle(ctx, hostname(r.Host), path, r.Method)
-		}); throttle != nil && throttle.AccountID == app.AccountID && throttle.KeyBy == api.ThrottleKeyByJWTClaim && throttle.JWTClaimName != "" {
-			verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, throttle.JWTClaimName)
-		}
-	}
+	verifyRule.ExtractClaims = append(verifyRule.ExtractClaims, h.throttleJWTClaimNames(r, app)...)
 	claims, err := h.verifyJWTWithDeadline(r.Context(), raw, &verifyRule)
 	if err != nil || claims == nil || claims.Subject == "" || claims.Exp.IsZero() || !claims.Exp.After(time.Now()) {
 		h.jwtEmit(r.Context(), "jwt", "failed", rule.ID, r.Host, nil, nil)

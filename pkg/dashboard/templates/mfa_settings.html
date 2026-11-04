@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    section { border-top: 1px solid #888; margin-top: 2rem; }
+    label { display: block; margin: .75rem 0; }
+    input, button { font: inherit; padding: .4rem; }
+    #notice { white-space: pre-wrap; }
+    #notice[data-error] { color: #b3261e; }
+    #qr { max-width: 240px; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Two-factor authentication</h1>
+    <p>Signed in as <strong>{{.Account.Email}}</strong>.</p>
+    <p id="notice" role="status" aria-live="polite"></p>
+    <noscript>Enable JavaScript to manage your authenticator and recovery codes.</noscript>
+    {{if not (index .Data "Enrolled")}}
+    <section id="enroll">
+      <h2>Set up an authenticator</h2>
+      {{if index .Data "PendingSetup"}}<p>To finish a saved setup, enter its authentication code below. Starting setup again creates a new key and new recovery codes.</p>{{end}}
+      <button id="start" type="button">Start setup</button>
+      <div id="setup" {{if not (index .Data "PendingSetup")}}hidden{{end}}>
+        <div id="material" hidden>
+        <p>Scan this QR code in your authenticator, or enter the setup key.</p>
+        <img id="qr" alt="Authenticator setup QR code">
+        <p>Setup key: <code id="secret"></code></p>
+        <p>Save these recovery codes somewhere safe. Each code can be used once.</p>
+        <pre id="codes"></pre>
+        </div>
+        <form data-action="confirm">
+          {{if index .Data "HasPassword"}}<label>Current password <input name="current_password" type="password" autocomplete="current-password" required></label>{{end}}
+          <label><input id="saved" type="checkbox" required> I saved my recovery codes</label>
+          <label>Authentication code <input name="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label>
+          <button type="submit">Finish setup</button>
+        </form>
+      </div>
+    </section>
+    {{else}}
+    <section id="verify">
+      <h2>Verify your authenticator</h2>
+      <form data-action="verify">
+        <label>Authentication code <input name="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label>
+        <button type="submit">Verify</button>
+      </form>
+    </section>
+    <section id="recover">
+      <h2>Use a recovery code</h2>
+      <p>If you lost your authenticator, enter one of your saved recovery codes.</p>
+      <form data-action="recover">
+        <label>Recovery code <input name="code" autocomplete="off" required></label>
+        <button type="submit">Recover access</button>
+      </form>
+    </section>
+    <section id="disable">
+      <h2>Turn off two-factor authentication</h2>
+      <p>Enter your password or a recovery code.</p>
+      <form data-action="disable">
+        <label>Password <input name="password" type="password" autocomplete="current-password"></label>
+        <label>Recovery code <input name="recovery_code" autocomplete="off"></label>
+        <button type="submit">Turn off</button>
+      </form>
+    </section>
+    {{end}}
+    <p><a href="/dashboard/">Continue to dashboard</a></p>
+  </main>
+  <script nonce="{{.Nonce}}">
+    (() => {
+      const notice = document.getElementById('notice');
+      let busy = false;
+      function message(text, failed = false) {
+        notice.textContent = text;
+        notice.toggleAttribute('data-error', failed);
+      }
+      async function json(url, options) {
+        const response = await fetch(url, {credentials: 'same-origin', ...options});
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || result.title || 'Please try again.');
+        return result;
+      }
+      async function submit(action, body) {
+        if (['confirm', 'recover', 'disable'].includes(action)) {
+          const token = await json('/v1/auth/csrf?action=mfa_' + action);
+          body.csrf_token = token.csrf_token;
+        }
+        return json('/v1/account/mfa/' + action, {
+          method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+        });
+      }
+      async function run(work) {
+        if (busy) return;
+        busy = true;
+        document.querySelectorAll('button').forEach(button => button.disabled = true);
+        message('Working…');
+        try { await work(); }
+        catch (error) { message(error.message, true); }
+        finally {
+          busy = false;
+          document.querySelectorAll('button').forEach(button => button.disabled = false);
+        }
+      }
+      document.getElementById('start')?.addEventListener('click', () => run(async () => {
+        const enrollment = await submit('enroll', {});
+        document.getElementById('secret').textContent = enrollment.secret;
+        document.getElementById('qr').src = 'data:image/png;base64,' + enrollment.qr_code_png_base64;
+        document.getElementById('codes').textContent = enrollment.recovery_codes.join('\n');
+        document.getElementById('saved').checked = false;
+        document.getElementById('setup').hidden = false;
+        document.getElementById('material').hidden = false;
+        message('Save your recovery codes, then enter an authentication code to finish setup.');
+      }));
+      document.querySelectorAll('form[data-action]').forEach(form => form.addEventListener('submit', event => {
+        event.preventDefault();
+        run(async () => {
+          const body = Object.fromEntries(new FormData(form));
+          if (form.dataset.action === 'disable') {
+            if (!!body.password === !!body.recovery_code) throw new Error('Enter either your password or one recovery code.');
+          }
+          await submit(form.dataset.action, body);
+          form.reset();
+          if (form.dataset.action === 'confirm' || form.dataset.action === 'disable') {
+            location.replace('/dashboard/account/mfa');
+          } else {
+            message('Access restored. You can continue to the dashboard.');
+          }
+        });
+      }));
+      const action = new URLSearchParams(location.search).get('action');
+      if (['enroll', 'confirm', 'verify', 'recover', 'disable'].includes(action)) {
+        const section = document.getElementById(action === 'confirm' ? 'enroll' : action);
+        section?.scrollIntoView();
+        section?.querySelector('input:not([type="checkbox"]), button')?.focus();
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -74,7 +74,7 @@ func managedServiceProbeDispatchFencesReleaseChange(t *testing.T, worker bool) {
 	f.WorkloadClass = state.WorkloadClassHTTP
 	f.Runtime = map[string]json.RawMessage{}
 	f.AppID, f.Resource, f.ServiceBindings = target, "workload/billing", nil
-	fake := &managedProbeDispatchStore{MemStore: state.NewMemStore(), apps: map[string]state.App{caller: {ID: caller, AccountID: account, ProjectID: project, Status: state.AppActive}, target: {ID: target, AccountID: account, ProjectID: project, Status: state.AppActive}}, deps: map[string]state.Deployment{depID: dep, targetID: freeze(targetID, target, f)}, route: state.EnvironmentGitOpsServiceBindingRoute{CallerAppID: caller, CallerDeploymentID: depID, TargetAppID: target, TargetDeploymentID: targetID, AccountID: account, ReleaseSetID: uuid.NewString(), RequireHTTPS: true}}
+	fake := &managedProbeDispatchStore{MemStore: state.NewMemStore(), apps: map[string]state.App{caller: {ID: caller, AccountID: account, ProjectID: project, Status: state.AppActive}, target: {ID: target, AccountID: account, ProjectID: project, Status: state.AppActive}}, deps: map[string]state.Deployment{depID: dep, targetID: freeze(targetID, target, f)}, route: state.EnvironmentGitOpsServiceBindingRoute{CallerAppID: caller, CallerDeploymentID: depID, TargetAppID: target, TargetDeploymentID: targetID, AccountID: account, ReleaseSetID: uuid.NewString(), RequireHTTPS: true, ReconciliationActive: true}}
 	store := statetest.NewMem(fake)
 	spec, err := state.ResolveManagedServiceProbe(t.Context(), store, caller, depID, "billing")
 	if err != nil {
@@ -149,7 +149,7 @@ func TestSourceManagedProbeRuntimeAdmissionAndDrift(t *testing.T) {
 			t.Fatalf("invalid reviewed scheduler fixture: %v", err)
 		}
 	}
-	fake := &managedProbeDispatchStore{MemStore: memory, apps: map[string]state.App{app.ID: app, target.ID: target}, deps: map[string]state.Deployment{dep.ID: dep, targetDep.ID: targetDep}, tasks: map[string]state.AppTask{}, route: state.EnvironmentGitOpsServiceBindingRoute{CallerAppID: app.ID, CallerDeploymentID: dep.ID, TargetAppID: target.ID, TargetDeploymentID: targetDep.ID, AccountID: account.ID, ReleaseSetID: uuid.NewString(), RequireHTTPS: true}}
+	fake := &managedProbeDispatchStore{MemStore: memory, apps: map[string]state.App{app.ID: app, target.ID: target}, deps: map[string]state.Deployment{dep.ID: dep, targetDep.ID: targetDep}, tasks: map[string]state.AppTask{}, route: state.EnvironmentGitOpsServiceBindingRoute{CallerAppID: app.ID, CallerDeploymentID: dep.ID, TargetAppID: target.ID, TargetDeploymentID: targetDep.ID, AccountID: account.ID, ReleaseSetID: uuid.NewString(), RequireHTTPS: true, ReconciliationActive: true}}
 	fake.runtimeReadErr = errors.New("owned source runtime fixture unavailable")
 	store := statetest.NewMem(fake)
 	spec, err := state.ResolveManagedServiceProbe(t.Context(), store, app.ID, dep.ID, "billing")

@@ -183,6 +183,11 @@ func testTrafficRevisionAppPublication(t *testing.T, store Store, account Accoun
 	slug := app.Slug
 	switch mode {
 	case "restore":
+		// Deleting an app cancels its deploys in progress (#6413); restore
+		// brings back the live one, so that is the revision URL it publishes.
+		if err := store.MarkDeploymentLive(t.Context(), deployment.ID); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := store.ScheduleAppDeletion(t.Context(), app.ID, time.Now().Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}

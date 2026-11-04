@@ -80,3 +80,54 @@ tests:
               summary: meterd sample ticks keep failing
               description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 72 h."
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md
+  # ADR-20261103121407: ledger dual-run drift and held usage near the lookback.
+  - name: ledger drift for two hours fires; a match does not
+    interval: 1m
+    input_series:
+      - series: meterd_financial_ledger_reconcile_accounts{job="meterd",instance="cp",month="previous",result="drift"}
+        values: 0x30 2x150
+      - series: meterd_financial_ledger_reconcile_accounts{job="meterd",instance="cp",month="previous",result="match"}
+        values: 40x180
+    alert_rule_test:
+      - eval_time: 140m
+        alertname: FaasMeterdLedgerDrift
+        exp_alerts: []
+      - eval_time: 160m
+        alertname: FaasMeterdLedgerDrift
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: billing_delivery
+              public_status: internal
+              month: previous
+              result: drift
+            exp_annotations:
+              summary: "2 accounts' previous month reconcile as drift"
+              description: "The financial ledger's net compute and the compute receipts meterd delivered disagree (drift) or could not be compared (failed) for the previous UTC month, for two hours (ADR-20261019193600). Customers may be billed differently from the ledger the cost reports use. meterd_financial_ledger_drift_mb_seconds is the summed difference."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md
+  - name: held usage about to leave the lookback fires after an hour
+    interval: 1m
+    input_series:
+      - series: meterd_billing_usage_held_expiring_windows{job="meterd",instance="cp",meter="compute",reason="suspended"}
+        values: 0x10 3x80
+      - series: meterd_billing_usage_held_expiring_windows{job="meterd",instance="cp",meter="compute",reason="identity_incomplete"}
+        values: 0x90
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: FaasMeterdHeldUsageExpiring
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: FaasMeterdHeldUsageExpiring
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: billing_delivery
+              public_status: internal
+              meter: compute
+              reason: suspended
+            exp_annotations:
+              summary: "3 held compute usage hours leave the billing lookback within 72 h (suspended)"
+              description: "meterd holds usage back while its subject is suspended, being deleted, has no complete billing identity or is unknown, and retries it every pass, but only within the billing lookback. These hours fall out of it within 72 hours and are then never billed (ADR-20261103121407). Clear the reason (reactivate, finish checkout) or accept the loss."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md

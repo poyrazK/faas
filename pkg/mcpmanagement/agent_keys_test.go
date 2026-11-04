@@ -4,6 +4,7 @@ package mcpmanagement
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,45 @@ func readAgentKeyResponse(t *testing.T, response *http.Response) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// The hosted bridge listens on loopback behind gatewayd-public, which
+// forwards the public Host. The MCP SDK's localhost protection refused every
+// such call ("invalid Host header"), so no client got past sign-in in
+// production; the bridge's own Host and Origin checks stand in for it.
+func TestHostedBridgeAcceptsItsPublicHostOnALoopbackListener(t *testing.T) {
+	f := agentKeyFixture(t, map[string][]string{"fp_test_agent_reader": {api.ScopeAgent, api.ScopeAppsRead}})
+	options := f.opts
+	options.ResourceURL = "https://mcp.example/mcp"
+	handler, err := NewHTTPHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loopback := httptest.NewServer(handler)
+	t.Cleanup(loopback.Close)
+	post := func(host string) *http.Response {
+		req, err := http.NewRequest(http.MethodPost, loopback.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		req.Header.Set("Authorization", "Bearer fp_test_agent_reader")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		response, err := loopback.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	response := post("mcp.example")
+	if body := readAgentKeyResponse(t, response); response.StatusCode != http.StatusOK {
+		t.Fatalf("initialize with the public Host = %d %s", response.StatusCode, body)
+	}
+	response = post("evil.example")
+	if body := readAgentKeyResponse(t, response); response.StatusCode != http.StatusForbidden {
+		t.Fatalf("initialize with another Host = %d %s, want 403", response.StatusCode, body)
+	}
 }
 
 func agentKeyFixture(t *testing.T, keys map[string][]string) *remoteFixture {

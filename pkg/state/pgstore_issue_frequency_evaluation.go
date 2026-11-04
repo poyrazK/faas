@@ -18,7 +18,7 @@ func recordIssueFrequencyAlerts(ctx context.Context, q *sqlc.Queries, tx pgx.Tx,
 		return err
 	}
 	for _, rule := range policy.Rules {
-		if !issues.FrequencyRuleMatches(rule, issueRow(row), in.Event.OccurredAt, in.Now) {
+		if !issues.FrequencyRuleMatches(rule, issueRow(row), issueLatestEventTime(in), in.Now) {
 			continue
 		}
 		since := in.Now.Add(-time.Duration(rule.WindowSeconds) * time.Second)

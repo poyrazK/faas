@@ -126,23 +126,45 @@ func (b *PGBackend) loadPlacementSnapshots(ctx context.Context, apps []string) (
 		return nil, err, nil
 	}
 	loaded := make(map[string]TargetPlacementSnapshot, len(apps))
-	var readinessErr error
+	// One readiness read covers as many apps' targets as a batch holds; per
+	// app it was the gateway's most frequent control-plane statement. An app
+	// is never split across reads, and the states are keyed by instance.
+	var (
+		readinessErr error
+		chunk        []Target
+		chunkApps    []string
+	)
+	loadChunk := func() {
+		if len(chunkApps) == 0 {
+			return
+		}
+		states, loadErr := b.readinessLoader(readCtx, chunk)
+		for _, app := range chunkApps {
+			if loadErr != nil {
+				readinessErr = errors.Join(readinessErr, fmt.Errorf("placement readiness app %s: %w", app, loadErr))
+				continue
+			}
+			snapshot := loaded[app]
+			snapshot.readiness = states
+			loaded[app] = snapshot
+		}
+		chunk, chunkApps = nil, nil
+	}
 	for _, app := range apps {
 		snapshot := snapshots[app]
 		snapshot.readiness = nil
-		if validPlacementSnapshot(app, snapshot) && b.readinessLoader != nil {
-			targets := make([]Target, 0, len(snapshot.Targets))
-			for _, candidate := range snapshot.Targets {
-				targets = append(targets, candidate.Target)
-			}
-			states, loadErr := b.readinessLoader(readCtx, targets)
-			if loadErr != nil {
-				readinessErr = errors.Join(readinessErr, fmt.Errorf("placement readiness app %s: %w", app, loadErr))
-			} else {
-				snapshot.readiness = states
-			}
-		}
 		loaded[app] = snapshot
+		if !validPlacementSnapshot(app, snapshot) || b.readinessLoader == nil {
+			continue
+		}
+		if len(chunk)+len(snapshot.Targets) > api.TrafficReadinessBatchSize {
+			loadChunk()
+		}
+		for _, candidate := range snapshot.Targets {
+			chunk = append(chunk, candidate.Target)
+		}
+		chunkApps = append(chunkApps, app)
 	}
+	loadChunk()
 	return loaded, readCtx.Err(), readinessErr
 }

@@ -342,10 +342,11 @@ func TestScan_SortedByNameCaseInsensitive(t *testing.T) {
 func TestHashWorkloadSourceScopesContentAndBuildMetadata(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"services/api/server.js": &fstest.MapFile{Data: []byte("v1")},
-		"README.md":              &fstest.MapFile{Data: []byte("outside-v1")},
+		"services/api/server.js":  &fstest.MapFile{Data: []byte("v1")},
+		"services/api/Dockerfile": &fstest.MapFile{Data: []byte("FROM node:22")},
+		"README.md":               &fstest.MapFile{Data: []byte("outside-v1")},
 	}
-	workload := Workload{RootDir: "services/api", Dockerfile: "Dockerfile", Command: []string{"node", "server.js"}}
+	workload := Workload{RootDir: "services/api", Dockerfile: "Dockerfile", Command: []string{"node", "server.js"}, DetectedBy: Detection{Detector: DetectorCompose}}
 	base, err := hashWorkloadSource(fsys, workload)
 	if err != nil {
 		t.Fatal(err)

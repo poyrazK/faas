@@ -216,6 +216,7 @@ from .billing_status_response import BillingStatusResponse
 from .billing_status_response_account_status import BillingStatusResponseAccountStatus
 from .billing_status_response_mode import BillingStatusResponseMode
 from .billing_status_response_plan import BillingStatusResponsePlan
+from .billing_status_response_scheduled_plan import BillingStatusResponseScheduledPlan
 from .binding_adoption_counts import BindingAdoptionCounts
 from .binding_application_ack_target import BindingApplicationAckTarget
 from .binding_application_ack_target_application_ack import BindingApplicationAckTargetApplicationAck
@@ -334,6 +335,7 @@ from .config_revision_source import ConfigRevisionSource
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
+from .confirm_email_verification_body import ConfirmEmailVerificationBody
 from .connection_budget_capacity import ConnectionBudgetCapacity
 from .connection_budget_capacity_source import ConnectionBudgetCapacitySource
 from .connection_budget_capacity_state import ConnectionBudgetCapacityState
@@ -943,6 +945,7 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .key_org import KeyOrg
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .list_account_workflow_attention_dependency_status import ListAccountWorkflowAttentionDependencyStatus
 from .list_account_workflow_attention_priority import ListAccountWorkflowAttentionPriority
@@ -1639,9 +1642,14 @@ from .operation_workflow_verification_duration import OperationWorkflowVerificat
 from .operation_workflow_verification_performance import OperationWorkflowVerificationPerformance
 from .org_activity_response import OrgActivityResponse
 from .org_activity_response_data import OrgActivityResponseData
+from .org_agent_policy_request import OrgAgentPolicyRequest
+from .org_agent_policy_request_allowed_scopes_item import OrgAgentPolicyRequestAllowedScopesItem
+from .org_agent_policy_response import OrgAgentPolicyResponse
 from .org_app_list_response import OrgAppListResponse
 from .org_app_summary import OrgAppSummary
 from .org_app_summary_type import OrgAppSummaryType
+from .org_billing_email_request import OrgBillingEmailRequest
+from .org_billing_email_response import OrgBillingEmailResponse
 from .org_invitation_response import OrgInvitationResponse
 from .org_invitation_response_role import OrgInvitationResponseRole
 from .org_invitation_response_status import OrgInvitationResponseStatus
@@ -2771,6 +2779,7 @@ __all__ = (
     "BillingStatusResponseAccountStatus",
     "BillingStatusResponseMode",
     "BillingStatusResponsePlan",
+    "BillingStatusResponseScheduledPlan",
     "BindingAdoptionCounts",
     "BindingApplicationAckTarget",
     "BindingApplicationAckTargetApplicationAck",
@@ -2887,6 +2896,7 @@ __all__ = (
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
+    "ConfirmEmailVerificationBody",
     "ConnectionBudgetCapacity",
     "ConnectionBudgetCapacitySource",
     "ConnectionBudgetCapacityState",
@@ -3482,6 +3492,7 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "KeyOrg",
     "LatestDeploymentsByAppResponse",
     "ListAccountWorkflowAttentionDependencyStatus",
     "ListAccountWorkflowAttentionPriority",
@@ -4064,9 +4075,14 @@ __all__ = (
     "OperationWorkflowVerificationPerformance",
     "OrgActivityResponse",
     "OrgActivityResponseData",
+    "OrgAgentPolicyRequest",
+    "OrgAgentPolicyRequestAllowedScopesItem",
+    "OrgAgentPolicyResponse",
     "OrgAppListResponse",
     "OrgAppSummary",
     "OrgAppSummaryType",
+    "OrgBillingEmailRequest",
+    "OrgBillingEmailResponse",
     "OrgInvitationResponse",
     "OrgInvitationResponseRole",
     "OrgInvitationResponseStatus",

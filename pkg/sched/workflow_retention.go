@@ -2,6 +2,8 @@ package sched
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -25,48 +27,46 @@ func NewWorkflowRetention(store state.WorkflowStore, log *slog.Logger) *Workflow
 	}
 }
 
-// SweepOnce runs one pass of retention cleanup.
+// SweepOnce performs one bounded batch for each retention phase.
 func (r *WorkflowRetention) SweepOnce(ctx context.Context) error {
+	_, err := r.sweepOnce(ctx)
+	return err
+}
+
+// sweepOnce visits every phase before requesting another pass, so a sustained
+// run backlog cannot prevent history or event cleanup from making progress.
+func (r *WorkflowRetention) sweepOnce(ctx context.Context) (bool, error) {
 	if r.store == nil {
-		return nil
+		return false, nil
 	}
-
-	// 30 days retention for finished workflow runs and their associated steps
+	var failures []error
 	runsDeleted, err := r.store.SweepExpiredWorkflowRuns(ctx, 30*24*time.Hour)
+	more := err == nil && runsDeleted >= api.WorkflowRetentionPruneBatch
 	if err != nil {
-		if r.log != nil {
-			r.log.Warn("workflow retention: sweep runs failed", "err", err)
-		}
-		return err
+		failures = append(failures, fmt.Errorf("sweep runs: %w", err))
 	}
-
 	historyDeleted := 0
-	if history, ok := r.store.(state.WorkflowScheduleHistoryStore); ok {
+	if history, ok := r.store.(state.WorkflowScheduleHistoryStore); ok && ctx.Err() == nil {
 		before := time.Now().UTC().Add(-api.WorkflowScheduleHistoryRetention)
-		for {
-			n, err := history.PruneWorkflowScheduleOccurrences(ctx, before, api.WorkflowScheduleHistoryPruneBatch)
-			if err != nil {
-				return err
-			}
-			historyDeleted += n
-			if n < api.WorkflowScheduleHistoryPruneBatch {
-				break
-			}
+		historyDeleted, err = history.PruneWorkflowScheduleOccurrences(ctx, before, api.WorkflowScheduleHistoryPruneBatch)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("prune schedule history: %w", err))
+		} else if historyDeleted >= api.WorkflowScheduleHistoryPruneBatch {
+			more = true
 		}
 	}
-
-	// 90-day age threshold for events of terminal runs only.
-	eventsDeleted, err := r.store.SweepExpiredWorkflowEvents(ctx, 90*24*time.Hour)
-	if err != nil {
-		if r.log != nil {
-			r.log.Warn("workflow retention: sweep events failed", "err", err)
+	eventsDeleted := 0
+	if ctx.Err() == nil {
+		eventsDeleted, err = r.store.SweepExpiredWorkflowEvents(ctx, 90*24*time.Hour)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("sweep events: %w", err))
 		}
-		return err
+		if eventsDeleted >= api.WorkflowRetentionPruneBatch {
+			more = true
+		}
 	}
-
 	if (runsDeleted > 0 || eventsDeleted > 0 || historyDeleted > 0) && r.log != nil {
 		r.log.Info("workflow retention: sweep complete", "runs_deleted", runsDeleted, "events_deleted", eventsDeleted, "schedule_occurrences_deleted", historyDeleted)
 	}
-
-	return nil
+	return more && ctx.Err() == nil, errors.Join(errors.Join(failures...), ctx.Err())
 }

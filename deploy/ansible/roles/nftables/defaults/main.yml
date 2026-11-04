@@ -134,6 +134,12 @@ faas_cloudflare_ipv6_cidrs: []
 # every source even on a Cloudflare origin. The platform site keeps answering
 # Cloudflare only at Caddy (public_edge role).
 faas_custom_domain_tls: false
+# ADR-20261103163954: a compute edge with no proxy in front. Its public entry
+# addresses take TCP/443 from every source and nothing else; sshd stays on the
+# node's other addresses behind the provider firewall. Takes precedence over
+# faas_cloudflare_origin_only and faas_custom_domain_tls. Write each address in
+# canonical form (vmmd renders the same policy and refuses any other).
+faas_public_entry_addrs: []
 
 # UDP public app ports use the same explicit IPv4 source list as udpd.
 faas_udpd_enabled: false

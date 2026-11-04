@@ -1,5 +1,7 @@
 package sched_test
 
+// adr: 487
+
 import (
 	"encoding/json"
 	"fmt"
@@ -117,16 +119,12 @@ func TestTenantScheduleDeniedPageDoesNotStarveAnotherAccount(t *testing.T) {
 	engine.WithCapabilities(decider)
 	now := time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC)
 	loop := sched.NewLoop(nil, engine, nil).WithWorkflowsDispatched(true).WithClock(func() time.Time { return now })
-	for range 2 {
+	// Each page takes a minute: the denied page must not be revisited forever.
+	for range 4 {
 		if err := loop.RunWorkflowSchedulesTick(ctx); err != nil {
 			t.Fatal(err)
 		}
-	}
-	now = now.Add(time.Minute)
-	for range 2 {
-		if err := loop.RunWorkflowSchedulesTick(ctx); err != nil {
-			t.Fatal(err)
-		}
+		now = now.Add(time.Minute)
 	}
 	for i, app := range apps {
 		runs, _, err := store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{})

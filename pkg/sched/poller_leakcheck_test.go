@@ -32,7 +32,6 @@ func TestTriggerPollers_RegistryComplete(t *testing.T) {
 		"kafka":         false,
 		"nats":          false,
 		"redis_streams": false,
-		"sqs_compat":    false,
 		"amqp":          false,
 		"rabbitmq":      false,
 	}
@@ -49,6 +48,12 @@ func TestTriggerPollers_RegistryComplete(t *testing.T) {
 		if !present {
 			t.Errorf("registry missing poller for kind=%q — every sqlc.Trigger.kind MUST have a registered broker adapter", kind)
 		}
+	}
+	// sqs_compat is delisted (#5933): its poller spoke no real SQS protocol
+	// and failed every poll, yet kept polling customers' endpoints with their
+	// stored credentials for every existing row. No poller is built for it.
+	if _, ok := defaultRegistry.factories["sqs_compat"]; ok {
+		t.Error("delisted sqs_compat kind still has a poller")
 	}
 	// Queue is deliberately Loop-owned because its pgxpool dependency must be
 	// explicit. A nil-pool loop recognizes the kind and fails closed instead

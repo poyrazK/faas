@@ -28,6 +28,11 @@ This is the signal that did not exist on 2026-09-12, when `fsn-1` sat at 96 of
 daemon has held more than 90% of its pool cap for 10 minutes, before callers
 start giving up. Treat it with the "At the cap" branch under Check.
 
+Both alerts carry a `pool` label, the metric prefix of the pool that is short.
+A daemon can run more than one pool: apid's background loops have their own
+(`apid_background_db_pool_*`), separate from the one serving requests
+(`apid_db_pool_*`). Each pool is held against its own cap.
+
 ## Symptom
 
 Requests to the affected daemon time out or return 503 while Postgres itself

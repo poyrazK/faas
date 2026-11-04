@@ -19,6 +19,11 @@ import (
 )
 
 func Plan(ctx context.Context, store any, account state.Account, project state.Project, safe *api.ProjectSafeRelease, apps []state.App, scan reposcan.Result) ([]state.App, error) {
+	var err error
+	apps, err = state.ProjectAppsForEnvironment(ctx, store, account.ID, project.ID, "production", apps)
+	if err != nil {
+		return nil, err
+	}
 	dormant := map[string]bool{}
 	reader, available := store.(state.ProjectReleaseAdditionsStore)
 	if available {

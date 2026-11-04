@@ -910,12 +910,19 @@ func (q *Queries) CompleteSuspensionFollowup(ctx context.Context, db DBTX, arg C
 
 const confirmMFAEnabledEnrollment = `-- name: ConfirmMFAEnabledEnrollment :one
 UPDATE accounts SET mfa_enrolled_at=clock_timestamp(),mfa_required=false,mfa_revision=mfa_revision+1
+    ,mfa_totp_last_step=$2::bigint
 WHERE id=$1 AND mfa_enrolled_at IS NULL AND mfa_secret_encrypted IS NOT NULL
+    AND (mfa_totp_last_step IS NULL OR mfa_totp_last_step<$2::bigint)
 RETURNING mfa_enrolled_at
 `
 
-func (q *Queries) ConfirmMFAEnabledEnrollment(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Timestamptz, error) {
-	row := db.QueryRow(ctx, confirmMFAEnabledEnrollment, id)
+type ConfirmMFAEnabledEnrollmentParams struct {
+	ID   pgtype.UUID
+	Step int64
+}
+
+func (q *Queries) ConfirmMFAEnabledEnrollment(ctx context.Context, db DBTX, arg ConfirmMFAEnabledEnrollmentParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, confirmMFAEnabledEnrollment, arg.ID, arg.Step)
 	var mfa_enrolled_at pgtype.Timestamptz
 	err := row.Scan(&mfa_enrolled_at)
 	return mfa_enrolled_at, err
@@ -4872,6 +4879,7 @@ func (q *Queries) RevokeMagicLinkSessions(ctx context.Context, db DBTX, accountI
 
 const savePendingMFAEnrollment = `-- name: SavePendingMFAEnrollment :execrows
 UPDATE accounts SET mfa_secret_encrypted=$2,mfa_recovery_codes_hash=$3,mfa_revision=mfa_revision+1
+    ,mfa_totp_last_step=NULL
 WHERE id=$1 AND mfa_enrolled_at IS NULL
 `
 

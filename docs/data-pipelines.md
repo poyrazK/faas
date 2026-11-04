@@ -100,7 +100,9 @@ app. See [Data API onboarding](data-api-onboarding.md) for token and client setu
 
 Setup submission records immutable table/reader selections, a frozen mirror plan
 and a stable database ID before any provider operation. New mirror names include
-a setup-specific suffix. Provider reconciliation runs in the private apid worker,
+a setup-specific suffix and a letter prefix when the pipeline name starts with a
+digit. Queued setups with the older invalid name recover on retry using the same
+reserved database ID. Provider reconciliation runs in the private apid worker,
 using the existing managed database service and its provisioning/account gates.
 Repeated submissions with the same setup name and selections return the existing
 operation. Different selections under that name conflict; use a new name after
@@ -120,7 +122,9 @@ paths. Read-only API setup does not enable browser CORS origins.
 
 Progress includes configuration, build submission and deployment readiness.
 The endpoint and a bounded authenticated query example appear after the intended
-deployment is live. An accepted build with a lost response is recovered using its
+deployment is serving the default environment. A newer failed deployment or a
+deployment in another environment does not hide that endpoint. An accepted build
+with a lost response is recovered using its
 saved intent identity. A terminal deployment failure requires **Retry saved setup**:
 that creates a new build/deployment attempt linked in the saved metadata and
 annotation, while retaining the same app, binding, pipeline and mirror. API failure
@@ -178,9 +182,15 @@ rows are stored in setup records.
   `max_slot_wal_keep_size` set to a positive value no greater than `1GB`.
 - A source role with REPLICATION, database CREATE, SELECT, and ownership rights
   on each selected table, so it can manage its own publication and logical slot.
-- Between 1 and 16 ordinary public tables, each with a primary key and at most
-  128 columns. Names must be lowercase SQL identifiers beginning with a letter.
-  Partitioned tables, source row security, generated columns, arrays, enums,
+- A writable primary and read-write source sessions. Replicas and sessions with
+  `transaction_read_only` enabled fail checks with `source_writable_required`.
+- Between 1 and 16 permanent, logged public tables, each with a valid, nondeferrable primary
+  key and at most 128 columns. Primary-key `INCLUDE` columns remain ordinary mirror
+  columns; they do not become key columns. Compatibility is checked again under a
+  source table lock before creating a publication. Names must be lowercase SQL
+  identifiers beginning with a letter.
+  Unlogged, partitioned or inherited tables (including inheritance parents), source row
+  security, generated columns, arrays, enums,
   domains, and custom types are currently unsupported.
 - Supported builtin types: integer, floating point, numeric, boolean, text,
   varchar/char, UUID, timestamp/date/time/interval, JSON/JSONB, bytea, inet/cidr,
@@ -227,6 +237,12 @@ in an unchanged live table gates only that table and offers confirmed
 starts a new generation and replaces only the preceding generation's owned
 tables. It can interrupt reads and requires enough time for a full new copy. Existing
 Data API queries may return no rows while the new generation denies reads.
+
+Pause and account suspension can disable owned destination subscriptions even
+when the worker cannot decrypt the source credential. Disconnect also suspends
+them, but stays `deleting` with `credential_unavailable` until source cleanup can
+finish. Restore the encryption key or rotate the connection to resume cleanup;
+pending cleanup continues to hold the pipeline's capacity allocation.
 After a resync that changes the schema, run
 `gregale data-api refresh orders-data --wait`. Regenerate client types before
 using new columns. Supported approved additions use the automatic refresh below.
@@ -238,17 +254,39 @@ all ranges are checked and a final consistency fence succeeds; reaching a
 verification work limit reports `inconclusive`, never equality. See
 [Resumable verification](#resumable-verification) for progress and recovery.
 
+Resync and deletion discover unfinished generations from their private mirror
+receipt and owned native resources, including generations skipped by repeated
+resync requests after an outage. Cleanup refreshes retiring subscriptions with
+the current source credential and approved network destination before contacting
+the publisher. Native ownership conflicts block recovery instead of adopting
+unrelated resources.
+
+Pause stops owned subscriptions from every unfinished generation before reporting
+success, including when the worker cannot open a new source connection. Existing
+native sessions can otherwise survive source password revocation. The destination
+must remain reachable to confirm pause. Deletion also stops these streams when
+source access fails, while keeping cleanup pending until the publisher can be
+reached. Subscription ownership markers, slot names and publication membership
+are checked before changes; a conflicting marker blocks the operation.
+
 Deleting a pipeline removes its publications, subscriptions, and replication
-slots, while keeping destination rows. An unreachable source leaves deletion
-pending; restore connectivity or rotate credentials and retry. Active source
+slots from every unfinished generation, while keeping destination rows. An
+unreachable source leaves deletion pending; restore connectivity or rotate
+credentials and retry. Active source
 connections cannot be removed. Database/account deletion requires pipeline
 cleanup first. Historical list output is bounded to 100 records; active records
 remain visible. Connection URLs and private worker credentials never appear in
 list/status responses.
 
 Limits per account are 10 source connections and 3 active pipelines, with at most
-32 read subjects per pipeline and 1,000 resync generations. The worker checks a
-pipeline about every 15 seconds.
+32 read subjects per pipeline and 1,000 resync generations. A completed pipeline
+check becomes due again after 15 seconds. The worker drains due jobs with eight
+concurrent pipeline reconciliations, two connection checks and two setup steps.
+These queues progress independently and poll once per second when empty. Slow
+sources or provisioning calls do not hold up the other queues. Per-resource
+leases, destination locks and operation timeouts still apply. The 100-account
+pilot cap is an admission limit; qualify observation latency under the intended
+endpoint and verification load before enabling that many accounts.
 
 ### Capacity admission
 
@@ -665,6 +703,14 @@ none remain, the existing pipeline returns to live. A later re-add creates a new
 table and approval/proof identity; it cannot reuse retained rows or a cancelled
 proof. Cancellation does not change the source table or saved reader list.
 
+If that refresh fails after private retention completes, fix the runtime problem
+and choose **Retry API refresh**. The same action is available during live-table
+removal. Each retirement permits ten explicit refresh retries, independently of
+the copy/verification retry budget. A retry preserves the approved table and
+native identities, creates one new durable refresh attempt, and resumes after
+worker restarts without retiring the table again. A fresh observation and current
+revision are required; the saved selection changes only after refresh succeeds.
+
 Local acceptance cancels a real blocked COPY while another new table is copying,
 loses source/native/completion acknowledgements, and restarts cleanup. It checks
 healthy signed reads and CDC against a 100,000-row baseline, private row retention,
@@ -735,6 +781,11 @@ Proof, private completion and reopening commit together; catalog completion can
 be recovered after a restart. Pipeline generation and selected table names stay
 unchanged. The proof names its one-table scope; it does not mark the entire
 pipeline verified.
+
+Repair also supports a pipeline with a single selected table. Its publication
+is temporarily empty while native tracking is retired; that exact empty set is
+valid only for the scoped recovery stage. The table is then republished, copied,
+verified and refreshed before reads reopen.
 
 Repair reuses the reserved copy peak, actual native headroom checks and existing
 ten-attempt schema budget. Changed source definitions, shared replication loss,
@@ -830,6 +881,12 @@ and range boundaries stay in the private destination schema, outside dashboard
 and control API metadata. CLI verification continues to report the existing
 `pending`, `passed`, `mismatch` and `inconclusive` results.
 
+A manual check retains its request identity across reader previews, approvals,
+discards and pause/resume. These actions keep its saved ranges and counters;
+native changes still dirty ranges for rechecking. An explicit new verification
+request or retry receives a fresh identity. Generation, source definition and
+storage checks continue to prevent proof reuse after incompatible changes.
+
 The worker briefly obtains a source SHARE lock, waits for native replication to
 acknowledge a sampled WAL insertion checkpoint, and locks the destination table
 against writes while comparing one primary-key range. Comparison settings make
@@ -839,6 +896,23 @@ transaction as every replicated or direct destination write. Primary-key changes
 invalidate both the old and new ranges; a replicated truncate invalidates every
 range. Ranges that grow are split into smaller batches. This adds no source
 triggers, heartbeat rows, extra replication slots or source-side journal.
+
+Each digest row encodes column values as nullable text under those comparison
+settings. JSON `null` remains the string `null`, distinct from SQL `NULL`, and
+`json` values retain their original spelling, whitespace and duplicate keys.
+Approved backfills restore each value using its destination column type and
+assign only the approved new columns. A row-encoding version invalidates older
+verification ranges and proofs when a run resumes, while preserving the logical
+approval and cancellation identity.
+
+The database bounds each scan by both row count and encoded bytes before sending
+results. It first selects a bounded ordered list of tuple locations in the same
+snapshot, then encodes only the byte-bounded prefix and one server-side lookahead.
+The lookahead is excluded from the returned rows; separate metadata signals
+remaining rows, including a trailing destination row that must cause a mismatch.
+An individually allowed row larger than the chunk budget is processed alone.
+This prevents large valid rows from exhausting query time while unread results
+are drained. Tuple locations remain transient and never enter checkpoints.
 
 Source physical rewrites can change values without normal CDC row events. Each
 run also records opaque heap/TOAST/storage fingerprints, checks them under each
@@ -860,7 +934,12 @@ completion. Lost completion acknowledgements reuse the saved proof and original
 completion time.
 
 Batches use 2,000 rows, a 4 MiB normal byte budget and at most four batches per
-worker tick. One row may use up to 16 MiB. At most 4,096 ranges are retained per
+worker tick. One row may use up to 16 MiB. The serialized text values of one
+primary key may use at most 1 MiB, keeping cursors within the private 4 MiB
+checkpoint bound. A key over this budget reports `verification_key_limit` and
+an inconclusive result, then retires temporary tracking. It does not repeatedly
+retry a failed checkpoint. Reduce key values before retrying; changing a key's
+definition requires resync. At most 4,096 ranges are retained per
 pipeline, including ranges created by splits; this replaces the old per-table
 size cap with a bounded amount of persistent verification metadata. Source and
 destination lock acquisition is limited to 250 ms, individual statements to two
@@ -875,7 +954,9 @@ remains outstanding.
 
 Choose **Stop verification** to cancel the current run. Cancellation is bound to
 the account, revision and exact run, and removes temporary tracking on the next
-worker reconciliation. It retains the mirror, applied schema and replication
+worker reconciliation with destination access, including when source credentials
+or connectivity are unavailable. You can stop verification during billing grace.
+It retains the mirror, applied schema and replication
 resources. For a schema workflow, reads stay gated; choose **Retry schema
 workflow** to start a fresh check. A stopped or limited manual check can use
 **Retry verification**. Stopping a check does not cancel an already queued API
@@ -903,6 +984,9 @@ applying it. This is whole-table access, not a per-customer row filter. The
 existing limit of 1–32 unique subjects still applies. A retired generation must
 be resynced before its readers can be edited.
 
+Subjects must contain valid UTF-8. Malformed input is rejected before saving a
+preview, so JSON persistence cannot change its values or approval identity.
+
 Previewing does not change access. Confirmation saves an approved request;
 **approved** means it is waiting for acknowledgement from the mirror, and
 **applied** means the mirror's committed update has been acknowledged. The
@@ -921,8 +1005,14 @@ When a workflow later opens a table, it uses the committed reader list, includin
 after a worker restart or a lost acknowledgement. Revocation governs subsequent
 database reads after commit; already-running transactions may finish under their
 existing snapshot. Changes can also be applied while replication is paused or
-the source is unreachable, provided the worker can open the saved credential and
-reach the mirror.
+the source credential is unavailable, provided the worker can reach the mirror.
+
+During an active account's past-due grace period, previews and approvals may
+remove existing subjects while retaining at least one. Adding or replacing a
+subject still requires deployment eligibility. Approval checks the saved preview
+again, so a grant previewed before the grace period cannot bypass this rule.
+Discarding an unapproved preview remains available. Operator and account
+eligibility still apply.
 
 Local acceptance revokes Alice and grants Bob during a real live-table repair
 COPY with mixed-table source writes. Signed Data API requests prove that Alice

@@ -22,7 +22,7 @@ try {
   if (!['runtime', 'observer', 'operator'].includes(role)) throw new Error('Invalid Task doctor role');
   const config = JSON.parse(readFileSync(new URL('./gregale-mcp.json', import.meta.url)));
   const settings = resolveMcpTaskSettings(config, { role: role === 'runtime' ? 'worker' : 'observer' });
-  const cipher = role === 'runtime' ? createMcpTaskPayloadCipher(settings.ownerKey, settings.encryptionKeys) : undefined;
+  const cipher = role === 'runtime' ? createMcpTaskPayloadCipher(settings.ownerKey, settings.encryptionKeys, settings.nativeOwnerKeys) : undefined;
   add('configuration', 'passed', 'Task bindings for the requested role are available');
   stage = 'database_schema_and_permissions';
   pool = new pg.Pool({ connectionString: settings.databaseURL, max: 1, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
@@ -67,7 +67,7 @@ try {
   }
   if (role === 'runtime') {
   stage = 'worker_inventory';
-  const metrics = await createMcpTaskQueueObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner }).queueMetrics();
+  const metrics = await createMcpTaskQueueObserver({ pool, namespace: settings.namespace, maxRunning: settings.maxRunning, maxRunningPerOwner: settings.maxRunningPerOwner, maxAttempts: settings.maxAttempts }).queueMetrics();
   if (metrics.activeWorkers > 0) {
     add('worker_inventory', 'passed', 'Live worker registrations are available');
     add('handler_coverage', metrics.unsupportedHandlerTasks > 0 ? 'failed' : 'passed', metrics.unsupportedHandlerTasks > 0 ? 'Deploy compatible handler versions for pending work' : 'No currently eligible pending work lacks a live handler version');

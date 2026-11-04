@@ -91,6 +91,31 @@ Once every unit on a fleet runs on its runtime role and has soaked:
 
 From then on the owner is reachable only from root on the control plane.
 
+#### Amendment (2026-11-03): how the contract ships
+
+- **The shared `faas` OS user moves to `faas_shared`, not to new OS users.**
+  Every runtime role holds the same `faas_runtime` grants until step 3, so a
+  per-daemon OS user buys attribution but no privilege reduction, while
+  moving a unit's `User=` touches its state directories, sockets and secret
+  files on every host that runs it. The role `postgres_shared_runtime_role`
+  gives the units that open the database as `faas` (gatewayd-public, githubd,
+  s3-gatewayd, maild, agentd, edgednsd) `FAAS_DB_ROLE=faas_shared` under the
+  same `faas_postgres_runtime_roles_enabled` switch. A daemon gets its own OS
+  user in step 3, together with its narrowed grants, so each move also
+  removes privilege.
+- **The contract is its own switch, `faas_postgres_owner_contracted`**
+  (default false; CD variable `POSTGRES_OWNER_CONTRACT_ENABLED`). It needs
+  the runtime roles, refuses while any session is logged in as `faas` or
+  while compute CIDRs exist without a `faas_compute` password, and leaves
+  pgbouncer fleets alone until their second pool is budgeted. It keeps
+  `faas_map root faas` and drops the other owner mappings and the owner's
+  `host` lines; a marker in the cluster's config directory keeps the node-join
+  pg_hba rewrite from adding them back.
+- **Neither switch turns on by default yet.** Each fleet enables them after
+  its own soak; the defaults flip once every fleet runs contracted.
+- Moving compute nodes stays an operator step (runbook): rewrite each node's
+  `compute-db.env` and the `COMPUTE_DATABASE_URL` secret to `faas_compute`.
+
 ### 3. Narrow (follow-up)
 
 Replace each daemon's membership in `faas_runtime` with a grant set derived

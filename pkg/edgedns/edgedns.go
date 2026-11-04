@@ -1,5 +1,7 @@
-// Package edgedns keeps an app host's proxied address records in step with
-// the compute nodes whose edges are ready (ADR-20261102081618 §3).
+// Package edgedns keeps an app host's address records in step with the
+// compute nodes whose edges are ready (ADR-20261102081618 §3). A name's
+// records are proxied by Cloudflare, or DNS-only so clients connect to the
+// nodes themselves (ADR-20261103163954 §1).
 //
 // Cloudflare spreads a name's connections over every address record behind
 // it, but it does not health-check them: a node that stops answering keeps
@@ -16,6 +18,8 @@ import (
 	"log/slog"
 	"net/netip"
 	"slices"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Defaults for the probe thresholds (ADR-20261102081618 §3).
@@ -40,12 +44,17 @@ type Node struct {
 type Name struct {
 	ZoneID string
 	Host   string
+	// DNSOnly makes the name's records DNS-only, so clients connect to the
+	// nodes, instead of proxied by Cloudflare. A name moves whole: when a
+	// name has records of both kinds, Cloudflare treats them all as proxied.
+	DNSOnly bool
 }
 
 // Record is an address record behind a managed name.
 type Record struct {
-	ID   string
-	Addr netip.Addr
+	ID      string
+	Addr    netip.Addr
+	DNSOnly bool
 }
 
 // DNS reads and writes a zone's address records.
@@ -53,31 +62,59 @@ type DNS interface {
 	// Records returns name's A and AAAA records, and whether a CNAME holds
 	// the name (an address record cannot sit beside one).
 	Records(ctx context.Context, name Name) (records []Record, cname bool, err error)
-	// Create adds a proxied address record for addr.
+	// Create adds an address record for addr in name's mode.
 	Create(ctx context.Context, name Name, addr netip.Addr) error
+	// SetMode switches one record to name's mode.
+	SetMode(ctx context.Context, name Name, id string) error
 	// Delete removes one record.
 	Delete(ctx context.Context, name Name, id string) error
 }
 
+// Op is what a Change does to a record.
+type Op string
+
+// The record writes.
+const (
+	OpCreate Op = "create"
+	OpMode   Op = "mode"
+	OpDelete Op = "delete"
+)
+
 // Change is one record write a tick makes, or would make in a dry run.
 type Change struct {
-	Create bool
-	Name   Name
-	Addr   netip.Addr
-	ID     string // the record a deletion removes
+	Op   Op
+	Name Name
+	Addr netip.Addr
+	ID   string // the record a mode switch or deletion touches
 }
 
 func (c Change) String() string {
-	if c.Create {
+	switch c.Op {
+	case OpCreate:
 		return fmt.Sprintf("create %s -> %s", c.Name.Host, c.Addr)
+	case OpMode:
+		return fmt.Sprintf("make %s -> %s (%s) %s", c.Name.Host, c.Addr, c.ID, modeName(c.Name.DNSOnly))
 	}
 	return fmt.Sprintf("delete %s -> %s (%s)", c.Name.Host, c.Addr, c.ID)
 }
 
-// Plan returns the writes that move a name's records to desired: creations
-// first, so the set never empties on the way. With an empty desired set it
-// deletes nothing: the last record is never removed (fail static).
+func modeName(dnsOnly bool) string {
+	if dnsOnly {
+		return "dns-only"
+	}
+	return "proxied"
+}
+
+// Plan returns the writes that move a name's records to desired, in the
+// name's mode: creations first, so the set never empties on the way, then
+// mode switches of the records that stay, then deletions. With an empty
+// desired set it deletes nothing: the last record is never removed (fail
+// static). A DNS-only name keeps at most api.EdgeDNSOnlyAddrsPerNameMax
+// addresses.
 func Plan(name Name, current []Record, desired []netip.Addr) []Change {
+	if name.DNSOnly {
+		desired = capAddrs(current, desired, api.EdgeDNSOnlyAddrsPerNameMax)
+	}
 	var changes []Change
 	have := make(map[netip.Addr]bool, len(current))
 	for _, r := range current {
@@ -85,7 +122,13 @@ func Plan(name Name, current []Record, desired []netip.Addr) []Change {
 	}
 	for _, addr := range desired {
 		if !have[addr] {
-			changes = append(changes, Change{Create: true, Name: name, Addr: addr})
+			changes = append(changes, Change{Op: OpCreate, Name: name, Addr: addr})
+		}
+	}
+	for _, r := range current {
+		stays := len(desired) == 0 || slices.Contains(desired, r.Addr)
+		if stays && r.DNSOnly != name.DNSOnly {
+			changes = append(changes, Change{Op: OpMode, Name: name, Addr: r.Addr, ID: r.ID})
 		}
 	}
 	if len(desired) == 0 {
@@ -93,10 +136,31 @@ func Plan(name Name, current []Record, desired []netip.Addr) []Change {
 	}
 	for _, r := range current {
 		if !slices.Contains(desired, r.Addr) {
-			changes = append(changes, Change{Name: name, Addr: r.Addr, ID: r.ID})
+			changes = append(changes, Change{Op: OpDelete, Name: name, Addr: r.Addr, ID: r.ID})
 		}
 	}
 	return changes
+}
+
+// capAddrs keeps at most limit of desired, the ones already listed first, so
+// a full name does not swap addresses from tick to tick.
+func capAddrs(current []Record, desired []netip.Addr, limit int) []netip.Addr {
+	if len(desired) <= limit {
+		return desired
+	}
+	listed := make(map[netip.Addr]bool, len(current))
+	for _, r := range current {
+		listed[r.Addr] = true
+	}
+	kept := make([]netip.Addr, 0, limit)
+	for _, first := range []bool{true, false} {
+		for _, addr := range desired {
+			if listed[addr] == first && len(kept) < limit {
+				kept = append(kept, addr)
+			}
+		}
+	}
+	return kept
 }
 
 // health is one node's probe history.
@@ -177,19 +241,20 @@ func (r *Reconciler) Step(ctx context.Context, nodes []Node) error {
 		count := len(current[name])
 		createFailed := false
 		for _, c := range changes {
-			if !c.Create && createFailed {
+			if c.Op == OpDelete && createFailed {
 				// The replacement is not in place; deleting now could
 				// leave the name with nothing behind it.
 				continue
 			}
 			if err := r.apply(ctx, c); err != nil {
 				errs = append(errs, err)
-				createFailed = createFailed || c.Create
+				createFailed = createFailed || c.Op == OpCreate
 				continue
 			}
-			if c.Create {
+			switch c.Op {
+			case OpCreate:
 				count++
-			} else {
+			case OpDelete:
 				count--
 			}
 		}
@@ -251,19 +316,19 @@ func (r *Reconciler) observe(nodes []Node) []netip.Addr {
 }
 
 func (r *Reconciler) apply(ctx context.Context, c Change) error {
-	action := "delete"
-	if c.Create {
-		action = "create"
-	}
+	action := string(c.Op)
 	if r.cfg.DryRun {
 		r.log.Info("edgedns: would "+c.String(), "dry_run", true)
 		r.metrics.changed(c.Name.Host, action, true)
 		return nil
 	}
 	var err error
-	if c.Create {
+	switch c.Op {
+	case OpCreate:
 		err = r.dns.Create(ctx, c.Name, c.Addr)
-	} else {
+	case OpMode:
+		err = r.dns.SetMode(ctx, c.Name, c.ID)
+	default:
 		err = r.dns.Delete(ctx, c.Name, c.ID)
 	}
 	if err != nil {

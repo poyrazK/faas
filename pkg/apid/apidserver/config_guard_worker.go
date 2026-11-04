@@ -25,6 +25,8 @@ const configGuardAbandonAfter = 5 * time.Minute
 // configGuardSweep evaluates every watching guard once. One failing guard
 // does not stop the others.
 func (s *server) configGuardSweep(ctx context.Context, now time.Time) error {
+	s.configGuardSweepMu.Lock()
+	defer s.configGuardSweepMu.Unlock()
 	store, ok := s.store.(state.ConfigRevisionStore)
 	if !ok {
 		return nil
@@ -33,11 +35,22 @@ func (s *server) configGuardSweep(ctx context.Context, now time.Time) error {
 	if telemetry == nil {
 		telemetry, _ = s.store.(state.ConfigGuardTelemetryStore)
 	}
-	guards, err := store.ListWatchingConfigGuards(ctx, api.ConfigGuardBatchSize)
+	guards, err := store.ListWatchingConfigGuards(state.WithConfigGuardCursor(ctx, s.configGuardCursor), api.ConfigGuardBatchSize)
 	if err != nil {
 		return err
 	}
+	if len(guards) == 0 && s.configGuardCursor.ID != "" {
+		s.configGuardCursor = state.ConfigGuardCursor{}
+		guards, err = store.ListWatchingConfigGuards(ctx, api.ConfigGuardBatchSize)
+		if err != nil {
+			return err
+		}
+	}
 	for _, guard := range guards {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		s.configGuardCursor = state.ConfigGuardCursor{ChangedAt: guard.LastChangeAt, ID: guard.ID}
 		if err := s.evaluateConfigGuard(ctx, store, telemetry, guard, now); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -107,6 +120,11 @@ func (s *server) closeConfigGuard(ctx context.Context, store state.ConfigRevisio
 	if err != nil || !closed {
 		return err
 	}
+	s.emitConfigGuardOutcome(ctx, g, status, decision)
+	return nil
+}
+
+func (s *server) emitConfigGuardOutcome(ctx context.Context, g state.ConfigGuard, status string, decision configguard.Decision) {
 	if status == state.ConfigGuardRegressed || status == state.ConfigGuardRestored {
 		s.log.Warn("config guard: "+status, "app", g.AppID, "scope", g.Scope, "guard", g.ID, "rule", decision.Rule, "summary", decision.Summary)
 		accountID := g.AccountID
@@ -117,7 +135,6 @@ func (s *server) closeConfigGuard(ctx context.Context, store state.ConfigRevisio
 			"restored_revision": decision.RestoredRevision,
 		})
 	}
-	return nil
 }
 
 // restoreConfigGuard returns the guard's own changes to its base revision:
@@ -154,42 +171,26 @@ func (s *server) restoreConfigGuard(ctx context.Context, store state.ConfigRevis
 	if err != nil {
 		return fmt.Errorf("load account: %w", err)
 	}
-	if err := s.applyVariableWrites(ctx, acct, app, g.Scope, writes, nil); err != nil {
-		return fmt.Errorf("restore variables: %w", err)
+	restoreStore, ok := s.store.(state.ConfigRestoreStore)
+	if !ok {
+		return errors.New("atomic config restoration is unavailable")
 	}
-	if err := s.restoreRetainedSecrets(ctx, acct, app, g.Scope, retained); err != nil {
-		return fmt.Errorf("restore secrets: %w", err)
+	revision, err := restoreStore.ApplyConfigRestore(ctx, state.ConfigRestore{
+		Finish: state.ConfigChangeFinish{AccountID: acct.ID, AppID: app.ID, Scope: g.Scope,
+			Actor: configGuardActor, Source: state.ConfigSourceGuardRestore, RestoredRevision: g.BaseRevision, Now: now},
+		ExpectedVariables: variables, ExpectedSecrets: secrets, Variables: configVariableRestores(writes),
+		Secrets: retained, Guard: &g, Decision: decision,
+	})
+	if errors.Is(err, state.ErrConfigRestoreChanged) {
+		// Re-evaluate the fresh state next round.
+		return nil
 	}
-	revision, err := store.FinishConfigChange(ctx, state.ConfigChangeFinish{AccountID: acct.ID, AppID: app.ID, Scope: g.Scope,
-		Actor: configGuardActor, Source: state.ConfigSourceGuardRestore, RestoredRevision: g.BaseRevision, Now: now})
 	if err != nil {
-		return fmt.Errorf("record restore revision: %w", err)
+		return fmt.Errorf("restore guarded config: %w", err)
 	}
 	decision.RestoredRevision = revision.Revision
 	s.requestConfigRestart(ctx, app)
-	return s.closeConfigGuard(ctx, store, g, state.ConfigGuardRestored, decision, now)
-}
-
-// restoreRetainedSecrets writes back each replaced secret's sealed row and
-// deletes each secret the guard added. Nothing is unsealed.
-func (s *server) restoreRetainedSecrets(ctx context.Context, acct state.Account, app state.App, scope string, retained []state.ConfigGuardSecret) error {
-	for _, secret := range retained {
-		var err error
-		if secret.Existed {
-			err = s.store.UpsertAppSecretWithClassInScope(ctx, acct.ID, app.ID, scope, secret.Key, secret.Kid, secret.ValueHash, secret.SecretClass, secret.Ciphertext)
-		} else if err = s.store.DeleteAppSecretInScope(ctx, acct.ID, app.ID, scope, secret.Key); errors.Is(err, state.ErrNotFound) {
-			err = nil
-		}
-		if err != nil {
-			return fmt.Errorf("%s: %w", secret.Key, err)
-		}
-		s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, app, "set", scope, secret.Key)
-	}
-	if len(retained) > 0 {
-		if _, err := s.invalidateAppSnapshots(ctx, app.ID); err != nil {
-			return err
-		}
-	}
+	s.emitConfigGuardOutcome(ctx, g, state.ConfigGuardRestored, decision)
 	return nil
 }
 

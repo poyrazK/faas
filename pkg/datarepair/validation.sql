@@ -1,7 +1,7 @@
 -- Advisory reads only. Never refresh a document, approval, or receipt.
 CREATE OR REPLACE FUNCTION gregale_repair.validate_plan(plan uuid, expected_scope jsonb, expected_digest text) RETURNS jsonb
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog AS $$
-DECLARE p gregale_repair.plans; e gregale_repair.enrollments; item jsonb; current_version text; values_match boolean; fields text;
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET jit = 'off' AS $$
+DECLARE p gregale_repair.plans; e gregale_repair.enrollments; item jsonb; current_version text; values_match boolean;
  issues jsonb:='[]'; rows jsonb:='[]'; checked integer:=0; unchanged integer:=0; reason text;
  schema_changed boolean:=false;
 BEGIN
@@ -20,8 +20,8 @@ BEGIN
   schema_changed:=NOT FOUND;
   BEGIN
    IF NOT schema_changed THEN
-    schema_changed:=e.fingerprint IS DISTINCT FROM p.document->>'schema_fingerprint' OR
-     e.fingerprint IS DISTINCT FROM gregale_repair.fingerprint(e.relation) OR
+    schema_changed:=e.fingerprint_datestyle IS NULL OR e.fingerprint_intervalstyle IS NULL OR __TYPE_CONTRACT_CHANGED__ OR __CASCADING_ENROLLED_FIELDS__ OR e.fingerprint_timezone IS NULL OR e.fingerprint IS DISTINCT FROM p.document->>'schema_fingerprint' OR
+     e.fingerprint IS DISTINCT FROM gregale_repair.fingerprint(e.relation) OR __UNSUPPORTED_ENROLLED_EXPRESSIONS__ OR __LOSSY_ENROLLED_TYPES__ OR __UNPROVEN_PLAN__ OR
      NOT EXISTS(SELECT 1 FROM pg_class WHERE oid=e.relation AND NOT relrowsecurity AND NOT relforcerowsecurity);
    END IF;
    IF NOT schema_changed THEN
@@ -32,8 +32,7 @@ BEGIN
      reason:=CASE WHEN current_version IS NULL THEN 'record_missing'
       WHEN current_version IS DISTINCT FROM item->>'expected_version' THEN 'record_version_changed' ELSE NULL END;
      IF reason IS NULL THEN
-      SELECT string_agg(format('%L,t.%I',k,k),',' ORDER BY k) INTO fields FROM jsonb_object_keys(item->'after') k;
-      EXECUTE format('SELECT jsonb_build_object(%s) @> $2 FROM %s t WHERE gregale_row_identity=$1',fields,e.relation)
+      EXECUTE format('SELECT gregale_repair.values_match(t.*,$2) FROM %s t WHERE gregale_row_identity=$1',e.relation)
        INTO values_match USING (item->>'row_identity')::uuid,item->'after';
       IF values_match IS DISTINCT FROM true THEN reason:='recorded_values_changed'; END IF;
      END IF;

@@ -1,12 +1,14 @@
 // adr: 20261102081618
 // edgedns_test.go pins how the managed names' records follow the compute
 // nodes: probes in a row decide, a drain is immediate, and the last record
-// never goes.
+// never goes. A name's records all take its mode, proxied or DNS-only
+// (ADR-20261103163954 §1).
 package edgedns_test
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgedns"
 )
 
@@ -37,6 +40,7 @@ func TestPlan(t *testing.T) {
 		{name: "replace creates first", current: []edgedns.Record{rec("r1", addrA)}, desired: []netip.Addr{addrB}, want: []string{"create *.gregale.dev -> 203.0.113.2", "delete *.gregale.dev -> 203.0.113.1 (r1)"}},
 		{name: "no node keeps every record", current: []edgedns.Record{rec("r1", addrA)}},
 		{name: "in step", current: []edgedns.Record{rec("r1", addrA)}, desired: []netip.Addr{addrA}},
+		{name: "DNS-only records go back behind Cloudflare", current: []edgedns.Record{dnsOnly("r1", addrA)}, desired: []netip.Addr{addrA}, want: []string{"make *.gregale.dev -> 203.0.113.1 (r1) proxied"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
@@ -47,6 +51,103 @@ func TestPlan(t *testing.T) {
 				t.Fatalf("Plan = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func dnsOnly(id string, a netip.Addr) edgedns.Record {
+	return edgedns.Record{ID: id, Addr: a, DNSOnly: true}
+}
+
+func TestPlanDNSOnly(t *testing.T) {
+	pilot := edgedns.Name{ZoneID: "zone-1", Host: "pilot.gregale.dev", DNSOnly: true}
+	proxied := func(id string, a netip.Addr) edgedns.Record { return edgedns.Record{ID: id, Addr: a} }
+	for _, tc := range []struct {
+		name    string
+		current []edgedns.Record
+		desired []netip.Addr
+		want    []string
+	}{
+		{name: "created DNS-only", desired: []netip.Addr{addrA}, want: []string{"create pilot.gregale.dev -> 203.0.113.1"}},
+		{
+			name:    "the name moves whole: a create, then the kept record's switch, then the delete",
+			current: []edgedns.Record{proxied("r1", addrA), proxied("r2", addrB)},
+			desired: []netip.Addr{addrA, netip.MustParseAddr("203.0.113.3")},
+			want: []string{
+				"create pilot.gregale.dev -> 203.0.113.3",
+				"make pilot.gregale.dev -> 203.0.113.1 (r1) dns-only",
+				"delete pilot.gregale.dev -> 203.0.113.2 (r2)",
+			},
+		},
+		{
+			name:    "with no node ready every record still switches and none goes",
+			current: []edgedns.Record{proxied("r1", addrA), dnsOnly("r2", addrB)},
+			want:    []string{"make pilot.gregale.dev -> 203.0.113.1 (r1) dns-only"},
+		},
+		{name: "in step", current: []edgedns.Record{dnsOnly("r1", addrA)}, desired: []netip.Addr{addrA}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, c := range edgedns.Plan(pilot, tc.current, tc.desired) {
+				got = append(got, c.String())
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("Plan = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPlanCapsADNSOnlyNameAndKeepsTheListedAddresses(t *testing.T) {
+	pilot := edgedns.Name{ZoneID: "zone-1", Host: "pilot.gregale.dev", DNSOnly: true}
+	limit := api.EdgeDNSOnlyAddrsPerNameMax
+	var desired []netip.Addr
+	for i := range limit + 4 {
+		desired = append(desired, netip.MustParseAddr(fmt.Sprintf("203.0.113.%d", 10+i)))
+	}
+	// The last address is already listed: it stays, and only limit-1 of the
+	// others join it.
+	listed := desired[len(desired)-1]
+	current := []edgedns.Record{dnsOnly("r-listed", listed)}
+	var creates []netip.Addr
+	for _, c := range edgedns.Plan(pilot, current, desired) {
+		if c.Op != edgedns.OpCreate {
+			t.Fatalf("Plan touched the listed record: %s", c)
+		}
+		creates = append(creates, c.Addr)
+	}
+	if want := desired[:limit-1]; !slices.Equal(creates, want) {
+		t.Fatalf("creates = %v, want the first %d desired", creates, len(want))
+	}
+	// A proxied name has no cap: Cloudflare answers with its own addresses.
+	if got := edgedns.Plan(wildcard, nil, desired); len(got) != len(desired) {
+		t.Fatalf("a proxied name planned %d creates, want %d", len(got), len(desired))
+	}
+}
+
+func TestReconcilerMovesANameToDNSOnlyWithoutDroppingARecord(t *testing.T) {
+	dns := newFakeDNS(addrA, addrB)
+	pilot := edgedns.Name{ZoneID: wildcard.ZoneID, Host: wildcard.Host, DNSOnly: true}
+	r, err := edgedns.NewReconciler(edgedns.Config{Names: []edgedns.Name{pilot}}, dns, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := []edgedns.Node{
+		{Name: "a", Public: addrA, Active: true, Ready: true},
+		{Name: "b", Public: addrB, Active: true, Ready: true},
+	}
+	if err := r.Step(context.Background(), nodes); err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range dns.records[wildcard.Host] {
+		if !rec.DNSOnly {
+			t.Fatalf("record %s is still proxied after the tick", rec.ID)
+		}
+	}
+	if got := dns.addrs(); !slices.Equal(got, []netip.Addr{addrA, addrB}) {
+		t.Fatalf("records = %v, want both kept", got)
+	}
+	if dns.writes != 2 {
+		t.Fatalf("writes = %d, want one switch per record", dns.writes)
 	}
 }
 
@@ -77,7 +178,17 @@ func (f *fakeDNS) Create(_ context.Context, name edgedns.Name, addr netip.Addr) 
 		return errors.New("create refused")
 	}
 	f.writes++
-	f.records[name.Host] = append(f.records[name.Host], edgedns.Record{ID: "r" + addr.String(), Addr: addr})
+	f.records[name.Host] = append(f.records[name.Host], edgedns.Record{ID: "r" + addr.String(), Addr: addr, DNSOnly: name.DNSOnly})
+	return nil
+}
+
+func (f *fakeDNS) SetMode(_ context.Context, name edgedns.Name, id string) error {
+	f.writes++
+	for i, r := range f.records[name.Host] {
+		if r.ID == id {
+			f.records[name.Host][i].DNSOnly = name.DNSOnly
+		}
+	}
 	return nil
 }
 
@@ -262,8 +373,8 @@ func TestReconcilerCountsFailedCloudflareCalls(t *testing.T) {
 		})
 	}
 	got, err := testutil.GatherAndCount(f.reg, "edge_dns_errors_total")
-	if err != nil || got != 3 {
-		t.Fatalf("edge_dns_errors_total series = %d %v, want read, create and delete", got, err)
+	if err != nil || got != 4 {
+		t.Fatalf("edge_dns_errors_total series = %d %v, want read, create, mode and delete", got, err)
 	}
 	if v := testutil.ToFloat64(f.metrics.ErrorsForTest("create")); v != 1 {
 		t.Fatalf("create errors = %v, want 1", v)
