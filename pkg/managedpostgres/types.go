@@ -721,6 +721,9 @@ type UsageProgress struct {
 	// A resource created inside the current window has no completed window
 	// to collect yet, so its missing first observation is not a gap.
 	CreatedAt time.Time
+	// CreationLeaseUntil is snapshot metadata: while the resource is
+	// provisioning, when its worker's lifecycle lease ends. Zero otherwise.
+	CreationLeaseUntil time.Time
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
