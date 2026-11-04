@@ -4743,6 +4743,9 @@ type CronResponse struct {
 	SkipIfRunning       bool                       `json:"skip_if_running"`
 	CreatedAt           string                     `json:"created_at"`
 	LastFiredAt         string                     `json:"last_fired_at,omitempty"`
+	// Environment is the project environment the cron runs in; omitted for
+	// the app's production environment (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 	// Labels are the cron's key/value labels (ADR-20261031100025), on its
 	// list and read while the resource-labels capability is on for the
 	// caller. Labels are not secret.
@@ -4767,6 +4770,10 @@ type CreateCronRequest struct {
 	Enabled             *bool                      `json:"enabled,omitempty"`
 	Timezone            string                     `json:"timezone,omitempty"`
 	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
+	// Environment names the project environment the cron runs in; omitted
+	// or "production" is the app's production environment. A cron's
+	// environment never changes (ADR-20261104120000).
+	Environment string `json:"environment,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.

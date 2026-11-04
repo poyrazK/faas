@@ -4383,6 +4383,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if path == "" {
 		path = "/"
 	}
+	scope, scopeProblem := s.cronEnvironmentScope(r.Context(), app, req.Environment, len(cronCommand) > 0)
+	if scopeProblem != nil {
+		api.WriteProblem(w, scopeProblem)
+		return
+	}
 	skipIfRunning := false
 	if req.SkipIfRunning != nil {
 		skipIfRunning = *req.SkipIfRunning
@@ -4392,7 +4397,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
 		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
-		RetryBackoffSeconds: req.RetryBackoffSeconds,
+		RetryBackoffSeconds: req.RetryBackoffSeconds, DeploymentScope: scope,
 	})
 	if err != nil {
 		var qe *state.CronQuotaError
@@ -6894,6 +6899,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 	if !c.LastFiredAt.IsZero() {
 		resp.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
 	}
+	resp.Environment = c.DeploymentScope
 	return resp
 }
 

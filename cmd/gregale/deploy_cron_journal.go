@@ -21,6 +21,16 @@ type deployCronStagingClient interface {
 	ApplyDeploymentCronStaging(context.Context, string, api.DeploymentCronStagingRequest) (api.DeploymentStagingReceipt, error)
 }
 
+// deployStagesManifestCrons reports whether a deploy replaces the app's HTTP
+// crons with its gregale.yaml cron triggers. Crons fire only into production
+// (ADR-20261104120000), and the staging request names no environment, so a
+// deploy to any other environment would replace production's crons with the
+// stage manifest's. Those deploys leave crons alone, as source deploys from a
+// git ref already do; so do --no-triggers and dark (--traffic 0) deploys.
+func deployStagesManifestCrons(noTriggers bool, trafficPercent int, environment string) bool {
+	return !noTriggers && trafficPercent != 0 && (environment == "" || environment == "production")
+}
+
 func (s *savedDeploySession) prepareCronJournal(ctx context.Context, c deployCronStagingClient, dir string, noTriggers bool) error {
 	if noTriggers || dir == "" || s.record.DarkDeploy {
 		return nil

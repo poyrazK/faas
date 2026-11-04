@@ -5044,6 +5044,12 @@ func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due 
 	if len(due) == 0 {
 		return
 	}
+	if c.DeploymentScope != "" {
+		// Stage HTTP crons are not admitted yet (ADR-20261104120000); an
+		// invocation without the cron's environment would run in production.
+		l.log.Warn("cron: environment HTTP cron is not dispatched", "cron_id", c.ID)
+		return
+	}
 	store := l.engine.Store()
 	occurrences, ok := store.(state.ScheduledCronInvocationStore)
 	if !ok {
@@ -5333,7 +5339,7 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
 		l.cronMetrics.decision("no_live_deployment")
 		if suspender, ok := store.(state.CronSuspensionStore); ok {
-			count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+			count, suspendErr := state.SuspendCronEnvironment(ctx, suspender, c)
 			if suspendErr != nil {
 				l.log.Warn("cron command: suspend after missing live deployment", "cron_id", c.ID, "err", suspendErr)
 			} else if count > 0 {
@@ -5362,7 +5368,7 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 
 func (l *Loop) suspendCommandCronWithoutDeployment(ctx context.Context, c state.Cron) {
 	if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
-		count, err := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+		count, err := state.SuspendCronEnvironment(ctx, suspender, c)
 		if err != nil {
 			l.log.Warn("cron command: suspend after missing live deployment", "cron_id", c.ID, "err", err)
 		} else if count > 0 {
@@ -5458,7 +5464,7 @@ func (l *Loop) suspendIfNoLiveDeployment(ctx context.Context, store state.Store,
 		return false
 	}
 	if suspender, ok := store.(state.CronSuspensionStore); ok {
-		count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+		count, suspendErr := state.SuspendCronEnvironment(ctx, suspender, c)
 		if suspendErr != nil {
 			l.log.Warn("cron: suspend after missing live deployment", "cron_id", c.ID, "app_id", c.AppID, "err", suspendErr)
 		} else if count > 0 {
@@ -5545,6 +5551,10 @@ func (l *Loop) dispatchCron(ctx context.Context, c state.Cron, now time.Time, tr
 	// Move 1: the cron row in invocations shows up in /v1/invocations and
 	// the meter sees it. cron_id is stamped so the run history joins back
 	// to crons.
+	if c.DeploymentScope != "" {
+		l.log.Warn("cron: environment HTTP cron is not dispatched", "cron_id", c.ID)
+		return CronRun{}, fmt.Errorf("%w: environment HTTP crons are not dispatched", ErrCronRunNotQueued)
+	}
 	cronID := c.ID
 	cronHeaders, err := json.Marshal(pkgtrace.MergeHeaderMap(ctx, map[string]string{"x-faas-cron": "true"}))
 	if err != nil {
