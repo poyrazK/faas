@@ -671,6 +671,10 @@ func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
 func (r *fakeVMM) Destroys() *int                   { return &r.destroys }
 func (r *fakeVMM) LastColdBootSpec() *AppSpec       { return &r.lastColdBootSpec }
+
+// AckEnvironmentBranchContainment makes cold boots acknowledge a requested
+// contained environment branch profile (ADR-20261031193635).
+func (r *fakeVMM) AckEnvironmentBranchContainment() { r.branchAck = true }
 func (r *fakeVMM) LastColdBootCtx() context.Context { return r.lastColdBootCtx }
 func (r *fakeVMM) LastSnapRef() *SnapshotRef        { return &r.lastSnapRef }
 func (r *fakeVMM) Mu() *sync.Mutex                  { return &r.mu }

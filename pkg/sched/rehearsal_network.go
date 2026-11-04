@@ -58,5 +58,9 @@ func (e *Engine) createRehearsalCheckedRuntime(ctx context.Context, nodeID, inst
 		e.bestEffortDestroy(ctx, nodeID, instanceID)
 		return nil, errors.New("runtime did not acknowledge rehearsal network containment")
 	}
+	if spec.EnvironmentBranchContained && (out == nil || !out.EnvironmentBranchContained || out.Instance != instanceID || out.Netns == "") {
+		e.bestEffortDestroy(ctx, nodeID, instanceID)
+		return nil, errEnvironmentBranchContainmentUnacknowledged
+	}
 	return out, nil
 }

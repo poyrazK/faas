@@ -444,6 +444,9 @@ type VMInstanceStat struct {
 // (current behaviour preserved).
 type AppSpec struct {
 	RehearsalRunID string
+	// EnvironmentBranchContained asks for the contained environment branch
+	// profile (ADR-20261031193635); the runtime must acknowledge it.
+	EnvironmentBranchContained bool
 	// Migration evidence stays in schedd; no receipt values enter the protobuf
 	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
 	migrationRuntime     *migrationRuntimeInputs
@@ -642,6 +645,9 @@ type SnapshotBytes struct {
 // proto side stays narrow.
 type WakeOutcome struct {
 	RehearsalRunID string
+	// EnvironmentBranchContained: the runtime installed the contained
+	// environment branch profile (ADR-20261031193635).
+	EnvironmentBranchContained bool
 	// Populated only by CreateAdmittedRuntime after exact receipt validation.
 	RuntimeAdmissionReceipt *runtimeadmission.Receipt
 
@@ -774,6 +780,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 		return nil, liftErr(err)
 	}
 	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
+		return nil, err
+	}
+	if err := c.confirmEnvironmentBranchContainment(ctx, app, instance, resp); err != nil {
 		return nil, err
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
@@ -1173,6 +1182,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 		return nil, liftErr(err)
 	}
 	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
+		return nil, err
+	}
+	if err := c.confirmEnvironmentBranchContainment(ctx, app, instance, resp); err != nil {
 		return nil, err
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
@@ -1965,23 +1977,24 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		})
 	}
 	out := &vmmdpb.AppSpec{
-		RehearsalRunId:  a.RehearsalRunID,
-		BaseKey:         a.BaseKey,
-		LayerKey:        a.LayerKey,
-		VcpuCount:       a.VCPUCount,
-		MemSizeMib:      a.MemSizeMiB,
-		CpuMillicores:   a.CPUMillicores,
-		EgressMbit:      a.EgressMbit,
-		AppId:           a.AppID,
-		SealedEnv:       sealed,
-		ApiEnv:          apiEnv,
-		Sidecars:        sidecars,
-		MainDependsOn:   mainDependsOn,
-		EgressAllowlist: a.EgressAllowlist,
-		EgressPorts:     egressPortsToWire(a.EgressPorts),
-		Quarantine:      a.Quarantine,
-		IdentityReload:  a.IdentityReload,
-		Port:            uint32(a.Port),
+		RehearsalRunId:             a.RehearsalRunID,
+		BaseKey:                    a.BaseKey,
+		LayerKey:                   a.LayerKey,
+		VcpuCount:                  a.VCPUCount,
+		MemSizeMib:                 a.MemSizeMiB,
+		CpuMillicores:              a.CPUMillicores,
+		EgressMbit:                 a.EgressMbit,
+		AppId:                      a.AppID,
+		SealedEnv:                  sealed,
+		ApiEnv:                     apiEnv,
+		Sidecars:                   sidecars,
+		MainDependsOn:              mainDependsOn,
+		EgressAllowlist:            a.EgressAllowlist,
+		EgressPorts:                egressPortsToWire(a.EgressPorts),
+		Quarantine:                 a.Quarantine,
+		IdentityReload:             a.IdentityReload,
+		EnvironmentBranchContained: a.EnvironmentBranchContained,
+		Port:                       uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.
 		HealthcheckPath:          a.HealthcheckPath,
@@ -2067,16 +2080,17 @@ func sidecarProbeToProto(in *api.SidecarProbe) *vmmdpb.SidecarProbeSpec {
 
 func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 	o := &WakeOutcome{
-		RehearsalRunID:        r.GetRehearsalRunId(),
-		Instance:              r.GetInstance(),
-		LeaseUID:              r.GetLeaseUid(),
-		HostIP:                r.GetHostIp(),
-		Netns:                 r.GetNetns(),
-		VethHost:              r.GetVethHost(),
-		VethPeer:              r.GetVethPeer(),
-		Method:                r.GetMethod(),
-		RequestedMethod:       r.GetRequestedMethod(),
-		RestoreFallbackReason: r.GetRestoreFallbackReason(),
+		RehearsalRunID:             r.GetRehearsalRunId(),
+		EnvironmentBranchContained: r.GetEnvironmentBranchContained(),
+		Instance:                   r.GetInstance(),
+		LeaseUID:                   r.GetLeaseUid(),
+		HostIP:                     r.GetHostIp(),
+		Netns:                      r.GetNetns(),
+		VethHost:                   r.GetVethHost(),
+		VethPeer:                   r.GetVethPeer(),
+		Method:                     r.GetMethod(),
+		RequestedMethod:            r.GetRequestedMethod(),
+		RestoreFallbackReason:      r.GetRestoreFallbackReason(),
 	}
 	// ADR-051 PR-D: decode the optional characterization struct
 	// back into pkg/api.CharacterizationReport. Empty struct =

@@ -416,9 +416,12 @@ type BrokerLagReader interface {
 // one app's instances is serialised by a per-app lock so a Wake and a reaper
 // Park for the same app never race the ledger or the state machine.
 type Engine struct {
-	validatorArtifactCheck func(context.Context, string, string) error
-	store                  state.Store
-	ledger                 *NodeLedger
+	// environmentBranchEgress caches deployments outside any contained
+	// environment branch (ADR-20261031193635).
+	environmentBranchEgress environmentBranchEgressCache
+	validatorArtifactCheck  func(context.Context, string, string) error
+	store                   state.Store
+	ledger                  *NodeLedger
 	// functionDestinationReleases keeps a failing function source's retries
 	// from releasing its retired destination's reservation more than once.
 	functionDestinationReleases releasedDestinations
