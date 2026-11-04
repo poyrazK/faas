@@ -287,6 +287,9 @@ SELECT EXISTS (
     SELECT 1 FROM deployments
     WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text
       AND revision > sqlc.arg(revision)::bigint
+      -- A newer revision that failed or was cancelled ships nothing, so it
+      -- does not outpace an older release (ADR-20261020085706 amendment 14).
+      AND status NOT IN ('failed', 'cancelled')
 );
 
 -- name: ReadDeploySettingsLatest :one
@@ -3499,7 +3502,7 @@ INSERT INTO request_telemetry (
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
     guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
-    content_outcome, trace_inferred, platform_refusal
+    content_outcome, trace_inferred, platform_refusal, deployment_pinned, long_lived
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -3521,7 +3524,9 @@ INSERT INTO request_telemetry (
     COALESCE(NULLIF(sqlc.arg('flag_evidence_json')::text, '')::jsonb, '[]'::jsonb),
     sqlc.arg('content_outcome')::text,
     sqlc.arg('trace_inferred')::bool,
-    sqlc.arg('platform_refusal')::bool
+    sqlc.arg('platform_refusal')::bool,
+    sqlc.arg('deployment_pinned')::bool,
+    sqlc.arg('long_lived')::bool
 );
 
 -- name: ListRequestTelemetryByPlatformTenant :many
@@ -3567,7 +3572,10 @@ WHERE app_id = $1
   AND (sqlc.arg('cursor_received_at')::timestamptz IS NULL
        OR (received_at, id) < (sqlc.arg('cursor_received_at')::timestamptz,
                                sqlc.arg('cursor_id')::uuid))
-  AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text)
+  -- Route labels carry their method ("GET /checkout"). A filter that is a
+  -- bare path ("/checkout") matches the path under every method.
+  AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text
+       OR (left(sqlc.arg('route')::text, 1) = '/' AND split_part(route, ' ', 2) = sqlc.arg('route')::text))
   -- Filters are explicit query parameters so sqlc keeps the generated
   -- params stable. The cursor stores the same values and the handler
   -- rejects a page walk when they change.
@@ -3726,6 +3734,28 @@ WHERE app_id = sqlc.arg(app_id)
   AND received_at >= sqlc.arg(received_from)
   AND received_at <  sqlc.arg(received_until)
 ORDER BY (id::text = sqlc.arg(identifier)::text) DESC, received_at DESC
+LIMIT 1;
+
+-- name: GetRequestTelemetryByAppTraceNearest :one
+-- Resolves a public x-faas-request-id after the request-ID journal mapped it
+-- to its trace and start time. Several requests can share one trace (a
+-- propagated traceparent, retries), so the newest row of the trace may be
+-- another request: take the row whose start (received_at minus latency) is
+-- nearest the journaled start instead. Same columns as
+-- GetRequestTelemetryByAppAndIdentifier, so callers convert the row.
+SELECT id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest, trace_inferred
+FROM request_telemetry
+WHERE app_id = sqlc.arg(app_id)
+  AND trace_id = sqlc.arg(trace_id)::text
+  AND received_at >= sqlc.arg(received_from)
+  AND received_at <  sqlc.arg(received_until)
+ORDER BY abs(extract(epoch FROM (received_at - make_interval(secs => latency_ms / 1000.0)))
+             - extract(epoch FROM sqlc.arg(started_at)::timestamptz)),
+         received_at DESC
 LIMIT 1;
 
 -- name: ListRequestTelemetryByAccountTrace :many
@@ -5567,7 +5597,9 @@ COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
 COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes,
 COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
 s.accrued_through AS gateway_storage_through,
-i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete
+i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete,
+(EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready')
+ OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = sqlc.arg(period_start)
@@ -13786,6 +13818,15 @@ UNION ALL SELECT 1 FROM object_multipart_part_writers d WHERE d.upload_id=$1 AND
 SELECT account_id,bucket_id,(part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())::boolean AS part_urls_drained
 FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting';
 
+-- name: ObjectMultipartAbandonedPartWritersSettle :execrows
+-- The caller verified the native abort; see ObjectMultipartAbandonedPartSettler.
+UPDATE object_multipart_part_writers d SET settled=true
+FROM object_storage_multipart_part_grants g, object_storage_multipart_uploads u
+WHERE d.upload_id=sqlc.arg(id) AND u.id=d.upload_id AND u.state='aborting' AND u.lease_token=sqlc.arg(lease_token)::text
+AND d.managed AND d.dispatched AND NOT d.settled
+AND g.upload_id=d.upload_id AND g.part_number=d.part_number AND g.transfer_token=d.transfer_token
+AND g.unsafe_until IS NOT NULL AND g.unsafe_until<=clock_timestamp();
+
 -- name: ObjectMultipartReleaseTrackedParts :exec
 DELETE FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND cleanup_tracked;
 
@@ -13925,12 +13966,19 @@ INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rul
 ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules;
 
 -- name: ObjectNotificationsCapture :execrows
-UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot || sqlc.arg(recipients)::jsonb
+-- Notification recipients meet the same company reach as subscriptions
+-- (ADR-20261025211616): a rule cannot route a company bucket's events past it.
+UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot ||
+ event_recipients_in_producer_reach(account_id, payload->>'producer', sqlc.arg(recipients)::jsonb)
 WHERE account_id=sqlc.arg(account_id)::uuid AND source='gregale.storage' AND event_id=sqlc.arg(event_id)::text
 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification');
 
 -- name: ObjectNotificationTargetApp :one
 SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';
+
+-- name: ObjectNotificationTargetInReach :one
+-- Whether a bucket app's events may reach the target app (ADR-20261025211616).
+SELECT event_app_in_producer_reach(sqlc.arg(account_id)::uuid, sqlc.arg(producer)::text, sqlc.arg(target_app_id)::text)::boolean AS in_reach;
 
 -- name: ObjectNotificationTargetQueue :one
 SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled;
@@ -16905,9 +16953,11 @@ ORDER BY d.id LIMIT 2;
 -- Exact selected labels and shared windows. Aggregate publisher weights without
 -- expanding requests. Percentile ranks interpolate bucket representatives, like
 -- RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
--- Platform refusals never count. warm_latency (the canary guard) ranks only
--- requests that did not cold boot and reports how many it ranked
--- (ADR-20261028110044 amendment 3); the production monitor stays end to end.
+-- Platform refusals and requests that named their deployment never count.
+-- warm_latency (the canary guard) ranks only requests that did not cold boot;
+-- no reader ranks a long-lived response's duration. A side reports how many
+-- requests it ranked when that differs from its requests, and always for the
+-- guard (ADR-20261028110044 amendments 3 and 5).
 WITH selected AS (
  SELECT (value->>'method')::text AS method, (value->>'path')::text AS path,
   (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled
@@ -16916,14 +16966,14 @@ WITH selected AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end" FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
 ), observed AS MATERIALIZED (
  SELECT s.method, s.path, s.latency_enabled, w.start, w."end", t.deployment_id, t.latency_ms, t.status, t.count,
-  (sqlc.arg(warm_latency)::boolean AND t.cold_boot) AS latency_excluded
+  (sqlc.arg(warm_latency)::boolean AND t.cold_boot OR t.long_lived) AS latency_excluded
  FROM selected s CROSS JOIN windows w LEFT JOIN request_telemetry t
  ON t.app_id = sqlc.arg(app_id)::text::uuid AND t.account_id = sqlc.arg(account_id)::text::uuid
  AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
  AND t.method = s.method AND t.route = s.method || ' ' || s.path
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND t.received_at >= sqlc.arg(since)::timestamptz AND t.received_at < sqlc.arg(until)::timestamptz
- AND NOT t.platform_refusal
+ AND NOT t.platform_refusal AND NOT t.deployment_pinned
  AND (sqlc.arg(customer_id)::text = ''
   OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
   OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
@@ -16961,9 +17011,9 @@ WITH selected AS (
 )
 SELECT coalesce(jsonb_agg(jsonb_build_object('method', c.method, 'path', c.path, 'start', c.start, 'end', c."end",
  'candidate', jsonb_build_object('requests', c.candidate_requests, 'server_errors', c.candidate_errors, 'p95_latency_ms', candidate.p95_ms,
-  'latency_requests', CASE WHEN sqlc.arg(warm_latency)::boolean AND c.latency_enabled THEN c.candidate_latency_requests END),
+  'latency_requests', CASE WHEN c.latency_enabled AND (sqlc.arg(warm_latency)::boolean OR c.candidate_latency_requests <> c.candidate_requests) THEN c.candidate_latency_requests END),
  'stable', jsonb_build_object('requests', c.stable_requests, 'server_errors', c.stable_errors, 'p95_latency_ms', stable.p95_ms,
-  'latency_requests', CASE WHEN sqlc.arg(warm_latency)::boolean AND c.latency_enabled THEN c.stable_latency_requests END)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
+  'latency_requests', CASE WHEN c.latency_enabled AND (sqlc.arg(warm_latency)::boolean OR c.stable_latency_requests <> c.stable_requests) THEN c.stable_latency_requests END)) ORDER BY c.method, c.path, c.start), '[]'::jsonb)::jsonb AS observations
 FROM counts c
 LEFT JOIN percentiles candidate ON candidate.method = c.method AND candidate.path = c.path AND candidate.start = c.start AND candidate.deployment_id = sqlc.arg(candidate_id)::text::uuid
 LEFT JOIN percentiles stable ON stable.method = c.method AND stable.path = c.path AND stable.start = c.start AND stable.deployment_id = sqlc.arg(stable_id)::text::uuid;
@@ -17133,7 +17183,8 @@ LIMIT 1 FOR SHARE;
 -- Advisory identity cohorts use the same exact routes, deployment pair and
 -- closed windows as aggregate health. Rank before bounding output and sorting
 -- weighted latency. Request-time attribution never follows today's tenant link.
--- Like the guard, skip platform refusals and rank only warm latency.
+-- Like the guard, skip platform refusals and requests that named their
+-- deployment, and rank only warm, bounded latency.
 WITH selected AS (
  SELECT value->>'method' AS method, value->>'path' AS path,
   (coalesce((value->>'check_latency')::boolean, false) OR coalesce((value->>'max_p95_ms')::bigint, 0) > 0) AS latency_enabled,
@@ -17145,7 +17196,7 @@ WITH selected AS (
  SELECT (value->>'start')::timestamptz AS start, (value->>'end')::timestamptz AS "end"
  FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
 ), observed AS MATERIALIZED (
- SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status, rt.cold_boot,
+ SELECT s.method, s.path, s.latency_enabled, w.start, w."end", rt.deployment_id, rt.latency_ms, rt.status, rt.count::bigint AS requests, (rt.status=ANY(s.watch_statuses)) AS watched_status, (rt.cold_boot OR rt.long_lived) AS latency_excluded,
   CASE WHEN sqlc.arg(group_by)::text = 'tenant' THEN pt.id ELSE c.id END AS customer_id,
   CASE WHEN sqlc.arg(group_by)::text = 'tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed
  FROM selected s CROSS JOIN windows w JOIN request_telemetry rt
@@ -17154,7 +17205,7 @@ WITH selected AS (
  AND rt.method = s.method AND rt.route = s.method || ' ' || s.path
  AND rt.received_at >= w.start AND rt.received_at < w."end"
  AND rt.received_at >= sqlc.arg(since)::timestamptz AND rt.received_at < sqlc.arg(until)::timestamptz
- AND NOT rt.platform_refusal
+ AND NOT rt.platform_refusal AND NOT rt.deployment_pinned
  LEFT JOIN api_consumers c ON c.id = rt.consumer_id AND c.account_id = rt.account_id AND c.app_id = rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id = rt.platform_tenant_id AND pt.account_id = rt.account_id
 ), totals AS (
@@ -17188,10 +17239,10 @@ WITH selected AS (
  SELECT b.method, b.path, b.customer_id, b.position, w.start, w."end",
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(candidate_id)::text::uuid), 0)::bigint AS candidate_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(candidate_id)::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS candidate_errors,
- coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(candidate_id)::text::uuid AND NOT o.cold_boot), 0)::bigint AS candidate_latency_requests,
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(candidate_id)::text::uuid AND NOT o.latency_excluded), 0)::bigint AS candidate_latency_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid), 0)::bigint AS stable_requests,
  coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid AND o.status BETWEEN 500 AND 599), 0)::bigint AS stable_errors,
- coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid AND NOT o.cold_boot), 0)::bigint AS stable_latency_requests
+ coalesce(sum(o.requests) FILTER (WHERE o.deployment_id = sqlc.arg(stable_id)::text::uuid AND NOT o.latency_excluded), 0)::bigint AS stable_latency_requests
  FROM bounded b CROSS JOIN windows w LEFT JOIN observed o
  ON o.method = b.method AND o.path = b.path AND o.customer_id = b.customer_id AND o.start = w.start
  GROUP BY b.method, b.path, b.customer_id, b.position, w.start, w."end"
@@ -17214,7 +17265,7 @@ WITH selected AS (
  FROM status_windows GROUP BY method,path,customer_id
 ), weighted AS (
  SELECT o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms, sum(o.requests) AS weight
- FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled AND NOT o.cold_boot
+ FROM observed o JOIN bounded b USING (method, path, customer_id) WHERE o.latency_enabled AND NOT o.latency_excluded
  GROUP BY o.method, o.path, o.customer_id, o.start, o.deployment_id, o.latency_ms
 ), ranked AS (
  SELECT *, sum(weight) OVER (PARTITION BY method, path, customer_id, start, deployment_id ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
@@ -17275,7 +17326,7 @@ WITH selected AS (
  AND t.method=s.method AND t.route=s.method || ' ' || s.path
  AND t.received_at>=w.start AND t.received_at<w."end"
  AND t.received_at>=sqlc.arg(since)::timestamptz AND t.received_at<sqlc.arg(until)::timestamptz
- AND NOT t.platform_refusal
+ AND NOT t.platform_refusal AND NOT t.deployment_pinned
  AND (sqlc.arg(customer_id)::text = ''
   OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
   OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
@@ -17314,7 +17365,8 @@ WITH windows AS (
  AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid,sqlc.arg(stable_id)::text::uuid)
  AND t.received_at >= w.start AND t.received_at < w."end"
  AND (sqlc.arg(latency)::boolean OR t.status BETWEEN sqlc.arg(status_min)::integer AND sqlc.arg(status_max)::integer)
- AND NOT t.platform_refusal AND NOT (sqlc.arg(latency)::boolean AND sqlc.arg(warm_latency)::boolean AND t.cold_boot)
+ AND NOT t.platform_refusal AND NOT t.deployment_pinned
+ AND NOT (sqlc.arg(latency)::boolean AND (sqlc.arg(warm_latency)::boolean AND t.cold_boot OR t.long_lived))
  AND (sqlc.arg(customer_id)::text = ''
   OR (sqlc.arg(customer_group_by)::text = 'tenant' AND t.platform_tenant_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid)
   OR (sqlc.arg(customer_group_by)::text = 'consumer' AND t.consumer_id = NULLIF(sqlc.arg(customer_id)::text, '')::uuid))
@@ -17356,7 +17408,7 @@ WITH windows AS (
  AND t.method=sqlc.arg(method)::text AND t.route=sqlc.arg(method)::text || ' ' || sqlc.arg(path)::text
  AND t.deployment_id IN (sqlc.arg(candidate_id)::text::uuid,sqlc.arg(stable_id)::text::uuid)
  AND t.received_at>=w.start AND t.received_at<w."end"
- AND NOT t.platform_refusal AND NOT (sqlc.arg(warm_latency)::boolean AND t.cold_boot)
+ AND NOT t.platform_refusal AND NOT t.deployment_pinned AND NOT (sqlc.arg(warm_latency)::boolean AND t.cold_boot OR t.long_lived)
  AND (sqlc.arg(customer_id)::text=''
   OR (sqlc.arg(customer_group_by)::text='tenant' AND t.platform_tenant_id=NULLIF(sqlc.arg(customer_id)::text,'')::uuid)
   OR (sqlc.arg(customer_group_by)::text='consumer' AND t.consumer_id=NULLIF(sqlc.arg(customer_id)::text,'')::uuid))
@@ -17475,14 +17527,14 @@ WITH selected AS (
  FROM jsonb_array_elements(sqlc.arg(windows)::jsonb)
 ), raw AS MATERIALIZED (
  SELECT s.method,s.path,s.error_budget,s.latency_budget,w.start,w."end",rt.status,
-  rt.latency_ms,rt.count::bigint AS requests,
+  rt.latency_ms,rt.count::bigint AS requests,rt.long_lived,
   CASE WHEN sqlc.arg(group_by)::text='tenant' THEN pt.id ELSE c.id END AS customer_id,
   CASE WHEN sqlc.arg(group_by)::text='tenant' THEN rt.platform_tenant_id IS NULL ELSE rt.consumer_id IS NULL END AS unattributed,
   CASE WHEN sqlc.arg(group_by)::text='tenant' THEN rt.platform_tenant_id IS NOT NULL AND pt.id IS NULL ELSE rt.consumer_id IS NOT NULL AND c.id IS NULL END AS unresolved
  FROM selected s CROSS JOIN windows w
  JOIN request_telemetry rt ON rt.account_id=sqlc.arg(account_id)::text::uuid AND rt.app_id=sqlc.arg(app_id)::text::uuid
   AND rt.deployment_id=sqlc.arg(deployment_id)::text::uuid AND rt.method=s.method AND rt.route=s.method||' '||s.path
-  AND rt.received_at>=w.start AND rt.received_at<w."end" AND NOT rt.platform_refusal
+  AND rt.received_at>=w.start AND rt.received_at<w."end" AND NOT rt.platform_refusal AND NOT rt.deployment_pinned
  LEFT JOIN api_consumers c ON c.id=rt.consumer_id AND c.account_id=rt.account_id AND c.app_id=rt.app_id
  LEFT JOIN platform_tenants pt ON pt.id=rt.platform_tenant_id AND pt.account_id=rt.account_id
 ), required AS (
@@ -17496,14 +17548,15 @@ WITH selected AS (
 ), cohort_counts AS (
  SELECT i.method,i.path,i.customer_id,i.required,w.start,w."end",
   coalesce(sum(o.requests),0)::bigint AS requests,
-  coalesce(sum(o.requests) FILTER(WHERE o.status BETWEEN 500 AND 599),0)::bigint AS errors
+  coalesce(sum(o.requests) FILTER(WHERE o.status BETWEEN 500 AND 599),0)::bigint AS errors,
+  coalesce(sum(o.requests) FILTER(WHERE NOT o.long_lived),0)::bigint AS latency_requests
  FROM identities i CROSS JOIN windows w LEFT JOIN raw o
   ON o.method=i.method AND o.path=i.path AND o.customer_id=i.customer_id AND o.start=w.start
  GROUP BY i.method,i.path,i.customer_id,i.required,w.start,w."end"
 ), weighted AS (
  SELECT o.method,o.path,o.customer_id,o.start,o.latency_ms,sum(o.requests)::bigint AS weight
  FROM raw o JOIN identities i USING(method,path,customer_id)
- WHERE o.latency_budget>0 GROUP BY o.method,o.path,o.customer_id,o.start,o.latency_ms
+ WHERE o.latency_budget>0 AND NOT o.long_lived GROUP BY o.method,o.path,o.customer_id,o.start,o.latency_ms
 ), ranked_latency AS (
  SELECT *,sum(weight) OVER(PARTITION BY method,path,customer_id,start ORDER BY latency_ms ROWS UNBOUNDED PRECEDING) AS cumulative,
   sum(weight) OVER(PARTITION BY method,path,customer_id,start) AS total FROM weighted
@@ -17524,7 +17577,7 @@ WITH selected AS (
    WHEN c.errors::numeric*sqlc.arg(max_rate_bps)::bigint>s.error_budget::numeric*c.requests THEN CASE WHEN c.errors<sqlc.arg(minimum_errors)::bigint THEN 'unknown' ELSE 'violated' END
    ELSE 'healthy' END AS error_status,
   CASE WHEN s.latency_budget=0 THEN 'disabled'
-   WHEN c.start<sqlc.arg(observation_anchor)::timestamptz OR c.requests<sqlc.arg(minimum_latency_requests)::bigint OR p.p95_ms IS NULL THEN 'unknown'
+   WHEN c.start<sqlc.arg(observation_anchor)::timestamptz OR c.latency_requests<sqlc.arg(minimum_latency_requests)::bigint OR p.p95_ms IS NULL THEN 'unknown'
    WHEN p.p95_ms>s.latency_budget THEN 'violated' ELSE 'healthy' END AS latency_status,
   p.p95_ms
  FROM cohort_counts c JOIN selected s USING(method,path)
@@ -17538,7 +17591,7 @@ WITH selected AS (
   bool_and(latency_status='healthy') AS latency_healthy,
   bool_and(latency_status='disabled') AS latency_disabled,
   bool_or(requests>0) AS observed,
-  jsonb_agg(jsonb_build_object('start',start,'end',"end",'observed',jsonb_build_object('requests',requests,'server_errors',errors,'p95_latency_ms',p95_ms)) ORDER BY start) AS windows
+  jsonb_agg(jsonb_build_object('start',start,'end',"end",'observed',jsonb_build_object('requests',requests,'server_errors',errors,'p95_latency_ms',p95_ms,'latency_requests',CASE WHEN latency_requests<>requests THEN latency_requests END)) ORDER BY start) AS windows
  FROM evaluated_windows GROUP BY method,path,customer_id,required
 ), classified AS (
  SELECT *,CASE WHEN error_violated OR latency_violated THEN 'violated'
@@ -19644,7 +19697,7 @@ SELECT NOT EXISTS (
     JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
       AND sibling.status = 'live' AND sibling.id <> route.deployment_id
     WHERE route.graph_id = sqlc.arg(graph_id)::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
-) AND public.environment_workload_serving_ready(sqlc.arg(graph_id)::uuid) AS serving_weights_match;
+) AND environment_workload_serving_ready(sqlc.arg(graph_id)::uuid) AS serving_weights_match;
 
 -- A previous gateway acknowledgement becomes stale if managed candidate
 -- traffic drifts. Retained routes are intentionally excluded because their

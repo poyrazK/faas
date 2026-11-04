@@ -32,6 +32,10 @@ table inet faas {
     size 65536
     flags dynamic
   }
+  set public_block_{{ suffix }} {
+    type {{ key_type }}
+    flags interval,timeout
+  }
 {% if proxies %}  set public_entry_proxy_{{ suffix }} {
     type {{ key_type }}
     flags interval
@@ -40,7 +44,8 @@ table inet faas {
   }
 {% endif %}{% endfor %}  chain input {
     type filter hook input priority 0; policy drop;
-    ct state established,related accept
+{% for addr in faas_public_entry_addrs | default([]) %}{% set fam = 'ip6' if ':' in addr else 'ip' %}    {{ fam }} daddr {{ addr }} {{ fam }} saddr @public_block_{{ 'v6' if ':' in addr else 'v4' }} counter drop comment "public entry block list"
+{% endfor %}    ct state established,related accept
     iif lo accept
     iifname "br-tenants" ip daddr {{ masquerade_cidr }} accept
     iifname "br-tenants" tcp dport { 80,443 } accept

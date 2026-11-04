@@ -58,6 +58,9 @@ func consentPage(v consentView) string {
 		if v.Org != "" {
 			w(`<p>Acting in the organization <strong>`, e(v.Org), `</strong>, within your role there.</p>`)
 		}
+		if len(v.Projects) > 0 {
+			w(`<p>Limited to the projects <strong>`, e(strings.Join(v.Projects, ", ")), `</strong>; other apps are out of reach.</p>`)
+		}
 		w(`<p>This client can inspect apps, deployments, logs, metrics, health and routes in this account. App logs may contain private data.</p>`)
 		if len(v.Capabilities) > 0 {
 			w(`<p>Additional permissions:</p><ul>`)

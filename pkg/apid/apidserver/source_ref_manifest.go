@@ -191,7 +191,28 @@ func (s *server) applyManifestWorkloads(
 // stored as a single shell command, matching Heroku's Procfile semantics.
 // A source that declares neither keeps the release command its project's
 // Compose file gave the app (ADR-20261102192943).
-func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
+//
+// A deployment that declares one is refused while this installation cannot
+// run release commands (releasePhaseOff), rather than failing in imaged after
+// its build.
+func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest, releasePhaseOff bool) (deploymentReleaseCommand, *api.Problem) {
+	resolved, problem := resolveSourceReleaseDeclaration(sourcePath, app, manifest)
+	if problem == nil && releasePhaseOff && len(resolved.command) > 0 {
+		return deploymentReleaseCommand{}, releasePhaseOffProblem()
+	}
+	return resolved, problem
+}
+
+// releasePhaseOffProblem refuses a deployment that declares a release command
+// while FAAS_RELEASE_PHASE_ENABLED is off on apid: imaged would fail it after
+// the build with the same code.
+func releasePhaseOffProblem() *api.Problem {
+	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeReleasePhaseUnavailable, "Release commands unavailable",
+		"This deployment declares a release command (gregale.yaml release.command, a Procfile release: process, or its project's Compose file), "+
+			"but release commands are not available on this Gregale installation yet. Remove the declaration and run the command from the app or a machine you control.")
+}
+
+func resolveSourceReleaseDeclaration(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
 	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return validateDeploymentReleaseCommand(manifest.Release.Command)
 	}

@@ -68,6 +68,9 @@ func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Accou
 	if p, ok := principalFrom(r); ok && p.Key != nil {
 		resp.KeyScopes = p.Key.Scopes
 		resp.KeyOrg = s.keyOrg(r.Context(), p.Key.OrgID)
+		if p.Key.ProjectLimited {
+			resp.KeyProjects = s.projectSlugsByID(r.Context(), p.Key.ProjectIDs)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -899,6 +902,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		dep.ID = publishedImageDeploymentID(app.ID, dep.Scope, req.Image)
 		dep.ReleaseCommand = append([]string(nil), publishedPrevious.ReleaseCommand...)
 		dep.ReleaseCommandShell = publishedPrevious.ReleaseCommandShell
+		if s.releasePhaseOff && len(dep.ReleaseCommand) > 0 {
+			api.WriteProblem(w, releasePhaseOffProblem())
+			return
+		}
 	}
 	if !s.admitCanaryDeployment(w, r, dep) {
 		return

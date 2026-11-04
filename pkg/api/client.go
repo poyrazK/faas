@@ -4558,9 +4558,12 @@ func (c *Client) ListKeys(ctx context.Context) ([]APIKeyResponse, error) {
 	var out []APIKeyResponse
 	return out, c.do(ctx, "GET", "/v1/keys", nil, &out)
 }
-func (c *Client) CreateKey(ctx context.Context, label string, scopes []string) (APIKeyResponse, error) {
+
+// CreateKey mints an account key; projects limits an agent key to those
+// projects' apps (ADR-20261104085712).
+func (c *Client) CreateKey(ctx context.Context, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 func (c *Client) DeleteKey(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/keys/"+id, nil, nil)
@@ -4618,10 +4621,11 @@ func (c *Client) ListOrgAPIKeys(ctx context.Context, slug string) (ListOrgAPIKey
 // CreateOrgAPIKey mints a new API key against the org. Returns the
 // standard APIKeyResponse — plaintext is present on this single
 // response and never returned again. `scopes` is optional; nil
-// defaults to ["admin"] on the server side (mirrors CreateKey).
-func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string) (APIKeyResponse, error) {
+// defaults to ["admin"] on the server side (mirrors CreateKey). projects
+// limits an agent key to those projects' apps (ADR-20261104085712).
+func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 
 // GetOrgAPIKey fetches a single key by id within the org. Cross-org

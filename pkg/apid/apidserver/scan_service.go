@@ -1054,7 +1054,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		if len(workloads) == 1 {
 			var releaseProblem *api.Problem
 			var sourceRelease deploymentReleaseCommand
-			sourceRelease, releaseProblem = resolveSourceReleaseCommand(staged, sourceApp, manifest)
+			sourceRelease, releaseProblem = resolveSourceReleaseDeclaration(staged, sourceApp, manifest)
 			if releaseProblem != nil {
 				_ = os.Remove(staged)
 				res.Error = "release declaration invalid (server logs carry the detail)"
@@ -1065,6 +1065,12 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			if len(sourceRelease.command) > 0 {
 				releaseCommand = sourceRelease
 			}
+		}
+		if s.releasePhaseOff && len(releaseCommand.command) > 0 {
+			_ = os.Remove(staged)
+			res.Error = releasePhaseOffProblem().Detail
+			out = append(out, res)
+			continue
 		}
 		// Enqueue via the shared helper. The helper does CreateDeployment
 		// + build.log spool + UpdateDeploymentStatus(building) + CreateBuild

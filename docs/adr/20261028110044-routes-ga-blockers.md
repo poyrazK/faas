@@ -336,3 +336,50 @@ A fifth review found evidence that never arrived or was anchored too early.
   restart resets its coverage, so route evidence and removal still see the gap.
 - Releases promoted before this amendment have no `promoted_at`; the monitor
   keeps anchoring them on their recorded rollout times.
+
+## Amendment 5 (2026-11-02): named deployments, long-lived responses, pin reads
+
+A sixth review found traffic that route evidence should not count and a pin
+cache on the request path.
+
+1. **Requests that named their deployment counted as production evidence.**
+   Every deployment has a preview URL (`https://deploy-44-my-api.gregale.dev`),
+   deployments can have alias URLs, and project releases accept revision pins.
+   Their requests were ordinary telemetry for that deployment. CI smoke tests,
+   QA sessions and negative tests against a canary's URL counted as canary
+   evidence, and the same against the serving deployment's URL could open a
+   production incident and, with automatic rollback on, roll back a healthy
+   release.
+2. **Long-lived responses counted their lifetime as latency.** A request's
+   latency runs until the handler returns, so a WebSocket or a declared stream
+   recorded its whole connection. A latency budget or relative check on such a
+   route could never pass.
+3. **Pin reads blocked requests.** Amendment 4's pin cache took one mutex on
+   every request and read the store inside the request that found an entry
+   expired, with a 500 ms timeout.
+
+**Decision.**
+
+- Request telemetry records `deployment_pinned` when the gateway served a
+  deployment preview or alias URL (`PinnedDeploymentID` without a
+  `PublicEnvironmentID`) or a revision pin, and `long_lived` when the response
+  outlived its request budget (`streamDetached`: a WebSocket upgrade or a
+  declared stream). An environment URL, a project release and production
+  routing are not pinned.
+- Route health, its customer cohorts, client-error signals, investigations and
+  the production monitor skip pinned requests. Every reader counts a
+  long-lived response as a request and its errors, but leaves its duration out
+  of latency; a side reports `latency_requests` whenever it ranked fewer
+  requests than it counted, and the latency minimum applies to that count.
+- A lookup only reads the pin cache. An app's first lookup and each expiry
+  start one background read; lookups keep the last known pins meanwhile.
+
+**Consequences.**
+
+- A guarded route's evidence no longer includes traffic sent to the
+  deployment's own URL; a route used only through such URLs has no evidence.
+- A route that only serves long-lived responses has no latency evidence and
+  stays unknown on latency checks.
+- Until a node's gatewayd runs this release, its rows carry neither flag.
+- An app's first request after a gateway starts can still fold a selected
+  route into `__route_other__` while its pins load.

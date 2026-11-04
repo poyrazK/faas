@@ -386,6 +386,7 @@ type MemStore struct {
 	// (ADR-1451). Revisions are kept in revision order per scope.
 	configRevisions    map[configScopeKey][]ConfigRevision
 	envBatchReceipts   map[string]envBatchRecord
+	scalingReceipts    map[string]scalingRecord
 	configGuards       map[string]ConfigGuard
 	configGuardSecrets map[string]map[string]ConfigGuardSecret
 	// releaseFreezes mirrors release_freezes (ADR-20261019071733).
@@ -1382,6 +1383,7 @@ type MemStore struct {
 	// Store (this interface) so the sqlc vs memstore parity holds.
 	orgs             map[string]Org
 	orgAgentPolicies map[string]OrgAgentPolicy // ADR-20261101225122
+	keyProjectLimits map[string][]string       // ADR-20261104085712
 	orgsBySlug       map[string]string         // lower(slug) -> id
 	memberships      map[orgAccountKey]OrgMembership
 	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation
@@ -4691,6 +4693,10 @@ func (m *MemStore) ApplyProjectPlan(
 // applyProjectReconcileResources mirrors the Postgres rule: each positive
 // declared value replaces the app's (ADR-20261023120000).
 func applyProjectReconcileResources(app *App, declared App) {
+	beforeScaling := scalingSettings(*app)
+	if app.ScalingRevision < 1 {
+		app.ScalingRevision = 1
+	}
 	if declared.RAMMB > 0 {
 		app.RAMMB = declared.RAMMB
 	}
@@ -4699,6 +4705,9 @@ func applyProjectReconcileResources(app *App, declared App) {
 	}
 	if declared.MaxConcurrency > 0 {
 		app.MaxConcurrency = declared.MaxConcurrency
+	}
+	if scalingSettings(*app) != beforeScaling {
+		app.ScalingRevision++
 	}
 }
 
@@ -5080,8 +5089,10 @@ func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return App{}, err
 	}
+	// A soft-deleted app keeps its slug until it is purged, as the
+	// apps_slug_key UNIQUE (slug) constraint does in Postgres.
 	for _, a := range m.apps {
-		if a.Slug == app.Slug && a.Status != AppDeleted {
+		if a.Slug == app.Slug {
 			return App{}, fmt.Errorf("state: slug %q already taken", app.Slug)
 		}
 	}
@@ -5103,6 +5114,7 @@ func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 		app.Status = AppActive
 	}
 	app.ScalingPolicyRevision = 1
+	app.ScalingRevision = 1
 	app.Visibility = api.NormalizeAppVisibility(app.Visibility)
 	if app.CPUMillicores == 0 {
 		app.CPUMillicores = api.DefaultAppCPUMillicores
@@ -5269,8 +5281,9 @@ func (m *MemStore) prepareAppIfUnderQuotaLocked(app App, limits api.Limits, apps
 	}
 	// 1. Return the slug collision before quota. Deploy clients use this
 	// signal to fetch and continue with an app they previously reserved.
+	// A soft-deleted app still holds its slug (apps_slug_key in Postgres).
 	for _, a := range apps {
-		if a.Slug == app.Slug && a.Status != AppDeleted {
+		if a.Slug == app.Slug {
 			return App{}, ErrConflict
 		}
 	}
@@ -5299,6 +5312,7 @@ func (m *MemStore) prepareAppIfUnderQuotaLocked(app App, limits api.Limits, apps
 		app.Status = AppActive
 	}
 	app.ScalingPolicyRevision = 1
+	app.ScalingRevision = 1
 	app.Visibility = api.NormalizeAppVisibility(app.Visibility)
 	if app.CPUMillicores == 0 {
 		app.CPUMillicores = api.DefaultAppCPUMillicores
@@ -7126,6 +7140,10 @@ func (m *MemStore) updateAppWithActivity(ctx context.Context, id string, p Updat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.updateAppLocked(ctx, id, p, entry, build, outboxID)
+}
+
+func (m *MemStore) updateAppLocked(ctx context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return App{}, err
 	}
@@ -7320,7 +7338,7 @@ func (m *MemStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug st
 	}
 	for i := range m.apps {
 		other := m.apps[i]
-		if other.ID != found.ID && other.Slug == newSlug && other.Status != AppDeleted {
+		if other.ID != found.ID && other.Slug == newSlug {
 			return App{}, ErrConflict
 		}
 	}
@@ -7359,6 +7377,12 @@ func (m *MemStore) SetAppMinInstances(ctx context.Context, appID string, min int
 	a, ok := m.apps[appID]
 	if !ok {
 		return ErrNotFound
+	}
+	if a.ScalingRevision < 1 {
+		a.ScalingRevision = 1
+	}
+	if a.MinInstances != min {
+		a.ScalingRevision++
 	}
 	a.MinInstances = min
 	m.apps[appID] = a
@@ -10205,7 +10229,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		}
 		if d.Status != DeployLive {
 			for _, other := range m.deployments {
-				if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
+				if outpaces(other, d) {
 					m.putDeploymentLocked(id, m.supersedeOutpacedDeploymentLocked(d))
 					return ErrDeploymentSuperseded
 				}

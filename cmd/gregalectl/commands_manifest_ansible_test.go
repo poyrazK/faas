@@ -790,6 +790,81 @@ func TestRenderManifestAnsibleFiles_EdgeWithNoFront(t *testing.T) {
 	}
 }
 
+// ADR-20261103163954 §3: public_edge.dns.certificate turns on edgednsd's
+// certificate in the managed zone; serve switches the compute edges to it.
+func TestRenderManifestAnsibleFiles_EdgeCertificate(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n      entry_ipv4: 198.51.100.2\n", 1) +
+		"public_edge:\n  compute_nodes: true\n  entry: both\n  front: none\n  dns:\n    zone_id: zone-1\n    names: [\"*.example.dev\"]\n"
+	render := func(t *testing.T, yaml string) (controlVars, computeVars string) {
+		t.Helper()
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatalf("manifest.Parse: %v", err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatalf("manifest.Validate: %v", errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatalf("renderManifestAnsibleFiles: %v", err)
+		}
+		for _, file := range files {
+			switch {
+			case strings.HasSuffix(file.Path, "fsn-1.yml"):
+				controlVars = string(file.Body)
+			case strings.HasSuffix(file.Path, "fsn-2.yml"):
+				computeVars = string(file.Body)
+			}
+		}
+		return controlVars, computeVars
+	}
+	controlVars, computeVars := render(t, base)
+	if strings.Contains(controlVars+computeVars, "certificate") || strings.Contains(computeVars, "cert_source") {
+		t.Fatalf("no certificate configured, yet one rendered:\n%s\n%s", controlVars, computeVars)
+	}
+	controlVars, computeVars = render(t, base+"    certificate:\n      names: [\"*.example.dev\"]\n")
+	for _, want := range []string{
+		"faas_edgednsd_certificate_names: [\"*.example.dev\"]\n",
+		"faas_edgednsd_certificate_zone_id: \"zone-1\"\n",
+		"faas_edgednsd_acme_ca: \"letsencrypt-staging\"\n",
+	} {
+		if !strings.Contains(controlVars, want) {
+			t.Errorf("control plane vars missing %q:\n%s", want, controlVars)
+		}
+	}
+	if strings.Contains(computeVars, "faas_edge_public_tls_cert_source") {
+		t.Errorf("the edges serve the certificate before serve is set:\n%s", computeVars)
+	}
+	if strings.Contains(controlVars, "faas_edgednsd_ct_") {
+		t.Errorf("a transparency watch rendered without its block:\n%s", controlVars)
+	}
+	controlVars, _ = render(t, base+"    certificate:\n      names: [\"*.example.dev\"]\n      transparency:\n        domain: Example.dev\n        allow_names: [\"example.dev\", \"*.example.dev\"]\n")
+	for _, want := range []string{
+		"faas_edgednsd_ct_domain: \"example.dev\"\n",
+		"faas_edgednsd_ct_allow_names: [\"example.dev\", \"*.example.dev\"]\n",
+	} {
+		if !strings.Contains(controlVars, want) {
+			t.Errorf("control plane vars missing %q:\n%s", want, controlVars)
+		}
+	}
+	// The move to production: edgednsd orders from it while the edges still
+	// serve the staging certificate it stored before.
+	controlVars, computeVars = render(t, base+"    certificate:\n      names: [\"*.example.dev\"]\n      ca: letsencrypt\n      serve: letsencrypt-staging\n")
+	if !strings.Contains(controlVars, "faas_edgednsd_acme_ca: \"letsencrypt\"\n") {
+		t.Errorf("control plane vars miss the production CA:\n%s", controlVars)
+	}
+	for _, want := range []string{"faas_edge_public_tls_cert_source: \"database\"\n", "faas_edge_public_tls_cert_ca: \"letsencrypt-staging\"\n"} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute vars missing %q:\n%s", want, computeVars)
+		}
+		if strings.Contains(controlVars, want) {
+			t.Errorf("%q rendered on the control plane", want)
+		}
+	}
+}
+
 // ADR-1141 amendment 2026-10-24: workload_identity.source_dir reaches both
 // roles' hosts, so the control plane installs the JWKS and each compute node
 // the signing key. Without it nothing renders and issuance stays off.

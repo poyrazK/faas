@@ -242,8 +242,10 @@ func valid(c api.RouteHealthCounts) bool {
 	return c.Requests >= 0 && c.ServerErrors >= 0 && c.ServerErrors <= c.Requests && (c.LatencyRequests == nil || *c.LatencyRequests >= 0 && *c.LatencyRequests <= c.Requests)
 }
 
-// LatencySamples is how many requests a p95 ranked: the warm requests the
-// canary guard reports, or every request when it reports none.
+// LatencySamples is how many requests a p95 ranked: the count a reader
+// reports when it left requests out (cold boots for the canary guard,
+// long-lived responses for every reader; ADR-20261028110044 amendments 3 and
+// 5), or every request when it reports none.
 func LatencySamples(c api.RouteHealthCounts) int64 {
 	if c.LatencyRequests != nil {
 		return *c.LatencyRequests

@@ -797,6 +797,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		// column DEFAULT (migration 00212).
 		RouteMetricsEnabled:     app.RouteMetricsEnabled,
 		OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
+		TracingEnabled:          app.Manifest.Tracing != nil && app.Manifest.Tracing.Enabled,
 		DeclaredRoutes:          gatewayDeclaredRoutes(app.DeclaredRoutes),
 		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
 		// maintenance flag. Plumbed from apps.maintenance_mode so
@@ -1492,6 +1493,9 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			inv.ResetApp(p.AppID)
 			inv.InvalidateRoutesForApp(p.AppID)
 			inv.InvalidateResponseCacheByApp(p.AppID)
+			if counts, ok := inv.(interface{ ForgetDeletedAppRequestCounts(string) }); ok {
+				counts.ForgetDeletedAppRequestCounts(p.AppID)
+			}
 		} else {
 			inv.FlushRoutes()
 			inv.InvalidateResponseCacheAll()

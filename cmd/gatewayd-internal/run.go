@@ -3510,6 +3510,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					WakeId:                               row.WakeID,
 					TraceInferred:                        row.TraceInferred,
 					PlatformRefusal:                      row.PlatformRefusal,
+					DeploymentPinned:                     row.DeploymentPinned,
+					LongLived:                            row.LongLived,
 					InstanceId:                           row.InstanceID,
 					GuestDurationMs:                      int32(row.GuestDurationMS),
 					GuestRuntime:                         row.GuestRuntime,

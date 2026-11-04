@@ -1052,6 +1052,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeRuntimeCapture {
 		jailer.WithNativeRuntimeCapture()
 	}
+	if cfg.NativeQualificationCapture {
+		// ADR 20261023093000: LoadConfig already required native recovery
+		// and both private roots.
+		jailer.WithEnvironmentQualificationCapture()
+	}
 	// Adoption ADR §2: only guests whose console is a file survive a vmmd
 	// restart in an adoptable state (V-A3). Records imply file consoles.
 	if cfg.AdoptionRecord && !cfg.NativeProcessRecovery {
@@ -1619,11 +1624,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if recv != nil {
 		if readinessStore, ok := store.(state.EnvironmentQualificationFrameworkReadyReceiptStore); ok {
-			recv.WithQualificationFrameworkReadyRecorder(func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
+			record := func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
 				runtimeName string, warmupMS int64) error {
 				_, err := readinessStore.RecordEnvironmentQualificationFrameworkReadyReceipt(recordCtx, frame, runtimeName, warmupMS)
 				return err
-			})
+			}
+			recv.WithQualificationFrameworkReadyRecorder(record)
+			// A native qualification restore reads the restored runner's
+			// stored framework-ready state itself (ADR 20261023093000).
+			mgr.WithQualificationFrameworkReadyRecorder(record)
 		}
 		// Workstream B: the guest metadata event proxy sends only the
 		// caller-authored JSON over the instance-bound vsock stream. Resolve
@@ -2224,6 +2233,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		w = newEgressWatcher(log, egressStagingDir, egressLivePath)
 	}
 	mgr.SetHostRenderer(w)
+	// ADR-20261103163954 §2: the operator's block list on the public entry
+	// addresses, re-added after every reload and on a loop.
+	var blocks *publicBlockApplier
+	if nodeID != "" && len(hostPolicy.PublicEntryAddrs) > 0 {
+		blocks = &publicBlockApplier{path: publicBlockListPath, stagingDir: egressStagingDir, nft: w.nft, log: log, now: time.Now}
+		w.afterReload = blocks.apply
+	}
 	if nodeID != "" {
 		// A previous vmmd process may have left a runtime ruleset rendered
 		// from different host-network values. Apply the deployment-owned
@@ -2246,6 +2262,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}()
 		}
 		log.Info("vmmd: egress watcher wired", "node_id", nodeID, "staging", egressStagingDir, "live", egressLivePath)
+		if blocks != nil {
+			go blocks.run(ctx, w)
+		}
 	}
 
 	// Issue #679 / PR-A: install the SIGHUP-driven egress
