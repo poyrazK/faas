@@ -133,6 +133,11 @@ type Handler struct {
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
 	// still dark-launched in schedd.
 	releasePhaseEnabled bool
+	// releasePaused reports the break-glass release pause (ADR
+	// 20261022140000). An approved release held before its release command
+	// does not resume while it is on (ADR-20261020085706 amendment 13). Nil
+	// is never paused.
+	releasePaused func() bool
 	// rehearsalCommandsEnabled mirrors apid's FAAS_REHEARSAL_COMMAND_EXECUTION
 	// gate for the release commands imaged pins in contained rehearsals.
 	rehearsalCommandsEnabled bool
@@ -630,6 +635,17 @@ func (h *Handler) WithRehearsalCommandsEnabled(enabled bool) *Handler {
 func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
 	h.releasePhaseEnabled = enabled
 	return h
+}
+
+// WithReleasePause follows the break-glass release pause (ADR
+// 20261022140000) for releases resuming after approval.
+func (h *Handler) WithReleasePause(paused func() bool) *Handler {
+	h.releasePaused = paused
+	return h
+}
+
+func (h *Handler) releasePauseOn() bool {
+	return h.releasePaused != nil && h.releasePaused()
 }
 
 // WithLegacyParentDeferral is for the rolling pre-stage only. A child base
@@ -2124,6 +2140,11 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 	if len(dep.ReleaseCommand) > 0 {
 		if !h.releasePhaseEnabled {
 			return h.failReleasePhaseUnavailable(ctx, dep)
+		}
+		// ADR-20261020085706 amendment 13: a release a newer revision
+		// overtook never runs its release command.
+		if superseded, err := h.supersedeOutpacedRelease(ctx, dep); err != nil || superseded {
+			return err
 		}
 		// ADR-20261020085706 amendment 12: a release its app's approvals
 		// gate runs its release command only once approved.

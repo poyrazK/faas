@@ -571,6 +571,9 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if releasePhaseEnabled {
 		log.Info("imaged: deployment release phase enabled")
 	}
+	// ADR-20261020085706 amendment 13: an approved release held before its
+	// release command waits out the break-glass release pause.
+	h.WithReleasePause(startReleasePauseWatcher(ctx, store, pool, log))
 	// ADR-20261029174438: prepare several deployments at once, off by default.
 	parallelPrep, err := parseBoolEnv("FAAS_IMAGED_PARALLEL_PREP", getenv("FAAS_IMAGED_PARALLEL_PREP"))
 	if err != nil {
