@@ -482,8 +482,13 @@ func (j *nativeGitOpsJourney) waitWorkerRunning(t *testing.T) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
+		// A customer worker: a running instance of a live deployment. The
+		// graph's qualification workers also run, but never take deliveries.
 		var running int
-		err := j.h.Pool.QueryRow(ctx, `SELECT count(*) FROM instances WHERE app_id=$1 AND state=$2`,
+		err := j.h.Pool.QueryRow(ctx, `SELECT count(*) FROM instances i
+			JOIN deployments d ON d.id=i.deployment_id AND d.status='live'
+			WHERE i.app_id=$1 AND i.state=$2
+			  AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=i.id)`,
 			j.worker.ID, string(state.StateRunning)).Scan(&running)
 		if err == nil && running > 0 {
 			return
