@@ -208,7 +208,7 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 		oauthError(w, 500, "server_error", "Could not prepare account connection")
 		return
 	}
-	g := &oauthGrant{id: id, clientID: flow.ClientID, accountID: account.ID, scopes: grantScopes(flow.Scopes, account.KeyScopes), client: client, expires: minTime(expiry, flow.Expires), credentialExpires: expiry, renewable: renewable, credentialIssued: time.Now(), availableApps: apps, availableEnvironments: environments, capabilities: keyCapabilities(flow.Capabilities, account.KeyScopes), org: org, orgName: orgName}
+	g := &oauthGrant{id: id, clientID: flow.ClientID, accountID: account.ID, scopes: grantScopes(flow.Scopes, account.KeyScopes), client: client, expires: minTime(expiry, flow.Expires), credentialExpires: expiry, renewable: renewable, credentialIssued: time.Now(), availableApps: apps, availableEnvironments: environments, capabilities: keyCapabilities(flow.Capabilities, account.KeyScopes), org: org, orgName: orgName, projects: account.KeyProjects}
 	r.grants[id], active.GrantID = g, id
 	r.opts.Telemetry.consentStep("signed_in")
 	active.NativeCode, active.NativeURL = "", ""

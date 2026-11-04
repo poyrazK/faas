@@ -47,6 +47,8 @@ class AgentConnectionResponse:
     """The organization the agent acts in."""
     member: str | Unset = UNSET
     """Email of the member who connected the agent, in an organization's list."""
+    projects: list[str] | Unset = UNSET
+    """Slugs of the projects the agent is limited to; absent when it reaches every project."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,6 +82,10 @@ class AgentConnectionResponse:
 
         member = self.member
 
+        projects: list[str] | Unset = UNSET
+        if not isinstance(self.projects, Unset):
+            projects = self.projects
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -105,6 +111,8 @@ class AgentConnectionResponse:
             field_dict["org_id"] = org_id
         if member is not UNSET:
             field_dict["member"] = member
+        if projects is not UNSET:
+            field_dict["projects"] = projects
 
         return field_dict
 
@@ -150,6 +158,8 @@ class AgentConnectionResponse:
 
         member = d.pop("member", UNSET)
 
+        projects = cast(list[str], d.pop("projects", UNSET))
+
         agent_connection_response = cls(
             id=id,
             kind=kind,
@@ -163,6 +173,7 @@ class AgentConnectionResponse:
             expires_at=expires_at,
             org_id=org_id,
             member=member,
+            projects=projects,
         )
 
         agent_connection_response.additional_properties = d

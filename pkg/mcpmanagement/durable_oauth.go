@@ -36,6 +36,8 @@ type storedGrant struct {
 	// (ADR-20261101225122).
 	Org     string `json:",omitempty"`
 	OrgName string `json:",omitempty"`
+	// Projects the key is limited to (ADR-20261104085712).
+	Projects []string `json:",omitempty"`
 }
 
 type oauthSnapshot struct {
@@ -55,7 +57,7 @@ type oauthSnapshot struct {
 func (r *remoteServer) snapshotLocked() oauthSnapshot {
 	snapshot := oauthSnapshot{Format: stateFormat, APIBase: r.opts.APIBase, ResourceURL: r.opts.ResourceURL, Clients: cloneRecords(r.clients), Requests: cloneRecords(r.requests), Codes: cloneRecords(r.codes), Grants: map[string]storedGrant{}, UsedRefresh: map[string]string{}}
 	for id, g := range r.grants {
-		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.approved, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments, Capabilities: g.capabilities, Renewable: g.renewable, CredentialIssued: g.credentialIssued, Org: g.org, OrgName: g.orgName}
+		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.approved, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments, Capabilities: g.capabilities, Renewable: g.renewable, CredentialIssued: g.credentialIssued, Org: g.org, OrgName: g.orgName, Projects: g.projects}
 	}
 	for hash, grant := range r.usedRefresh {
 		snapshot.UsedRefresh[hash] = grant.id
@@ -133,7 +135,7 @@ func (r *remoteServer) restoreOAuth() error {
 		g := &oauthGrant{id: id, clientID: record.ClientID, accountID: record.AccountID, scopes: record.Scopes, client: client, expires: record.Expires, credentialExpires: record.CredentialExpires, accessExpires: record.AccessExpires, accessHash: record.AccessHash, refreshHash: record.RefreshHash, allowedApps: record.AllowedApps, availableApps: record.AvailableApps}
 		g.environments, g.availableEnvironments = record.Environments, record.AvailableEnvironments
 		g.capabilities, g.renewable, g.credentialIssued = record.Capabilities, record.Renewable, record.CredentialIssued
-		g.org, g.orgName = record.Org, record.OrgName
+		g.org, g.orgName, g.projects = record.Org, record.OrgName, record.Projects
 		// Journals written before environment consent had default release access;
 		// restoring them must never grant named environments implicitly.
 		if g.environments == nil {

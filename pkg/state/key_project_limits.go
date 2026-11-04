@@ -85,7 +85,10 @@ func (s *PgStore) CliAuthCodeProjects(ctx context.Context, tokenHash []byte) ([]
 		if err != nil {
 			return limit{}, mapErr(err)
 		}
-		return limit{ids: pgUUIDStrings(ids), limited: ids != nil}, nil
+		if ids == nil {
+			return limit{}, nil
+		}
+		return limit{ids: pgUUIDStrings(ids), limited: true}, nil
 	})
 	return got.ids, got.limited, err
 }

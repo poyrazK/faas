@@ -34,6 +34,9 @@ type AgentConnectionResponse struct {
 	// Member is the email of the person who connected the agent, in an
 	// organization's list.
 	Member string `json:"member,omitempty"`
+	// Projects are the slugs of the projects the connection is limited to;
+	// absent when it reaches every project (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // AgentConnectionsResponse lists the account's connected agents, newest

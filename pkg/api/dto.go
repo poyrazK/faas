@@ -4261,6 +4261,9 @@ type AccountResponse struct {
 	// KeyOrg is the shared organization that key acts in; absent for a
 	// personal key or a session (ADR-20261101225122).
 	KeyOrg *KeyOrg `json:"key_org,omitempty"`
+	// KeyProjects are the slugs of the projects that key is limited to;
+	// absent for an unlimited key or a session (ADR-20261104085712).
+	KeyProjects []string `json:"key_projects,omitempty"`
 }
 
 // KeyOrg names the shared organization an API key acts in.

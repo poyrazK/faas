@@ -161,6 +161,27 @@ The API is `GET`/`PUT /v1/orgs/{slug}/agent-policy` and
 `/v1/orgs/{slug}/agent-connections`, with `DELETE .../{id}` and
 `POST .../revoke_all`.
 
+### Limit an agent to projects
+
+A connection can reach only some projects of the account or organization it
+acts in. On the approval page, tick the projects under **Limit the agent to
+projects**; leave every box clear to give it all of them. A headless agent
+key takes the same limit:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --projects api,web
+gregale org keys add --org acme --label ci-agent --scopes agent --projects api
+```
+
+A limited agent reaches the apps of those projects, including apps added to
+them later, and the projects themselves. Every other app and project answers
+as if it did not exist, account-wide routes answer 403, and the app and
+project lists show only what the limit allows. Databases belong to the
+account or organization rather than a project, so a limited agent cannot
+manage them. The limit is fixed when the agent connects; to change it,
+connect again. `gregale mcp connection list` and `GET /v1/account`
+(`key_projects`) name a connection's projects.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes

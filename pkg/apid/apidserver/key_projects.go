@@ -72,6 +72,18 @@ func (s *server) limitKeyToProjects(ctx context.Context, acct state.Account, key
 	return api.ErrCapacity("could not limit the key to its projects; it was revoked, try again")
 }
 
+// projectSlugsByID names a limit's projects; a deleted project, still in the
+// limit but matching nothing, is left out.
+func (s *server) projectSlugsByID(ctx context.Context, ids []string) []string {
+	out := []string{}
+	for _, id := range ids {
+		if project, err := s.store.ProjectByID(ctx, id); err == nil {
+			out = append(out, project.Slug)
+		}
+	}
+	return out
+}
+
 func projectSlugs(projects []state.Project) []string {
 	out := make([]string, 0, len(projects))
 	for _, project := range projects {

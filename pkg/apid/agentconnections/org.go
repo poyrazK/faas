@@ -79,6 +79,7 @@ func OrgList(d OrgDeps) httpkit.AccountHandler {
 		for _, k := range keys {
 			item := response(k, clients[k.ID], prefixes[k.ID])
 			item.Member = members[k.AccountID]
+			item.Projects = d.projects(r.Context(), k.ID)
 			out.Items = append(out.Items, item)
 		}
 		httpkit.WriteJSON(w, http.StatusOK, out)

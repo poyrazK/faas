@@ -42,5 +42,9 @@ export type AgentConnectionResponse = {
    * Email of the member who connected the agent, in an organization's list.
    */
   member?: string;
+  /**
+   * Slugs of the projects the agent is limited to; absent when it reaches every project.
+   */
+  projects?: Array<string>;
 };
 
