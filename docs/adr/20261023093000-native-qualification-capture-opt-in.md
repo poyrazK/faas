@@ -433,7 +433,10 @@ ADR-568 requires.
     and its qualification was still running when the wait ended. On this host
     the phase needs either a longer activation wait or a longer qualification
     lease; both are unchanged.
-- Pending: the n2 native GitOps journey through the resilience phases.
+- Accepted 2026-11-04 (owner decision): on n2 the native GitOps journey is
+  verified through `baseline_serving` and `source_outage_restart` for both
+  providers. `held_revision_supersession` is an n2 time-budget limitation, and
+  the later resilience phases are not verified on n2.
 
 ## Rejected alternatives
 
