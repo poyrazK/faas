@@ -42,6 +42,13 @@ type RequestIDJournalReader interface {
 	FindRequestIDJournalByAppAndIdentifier(context.Context, string, string, string, time.Time, time.Time, time.Time) (RequestIDJournalEntry, error)
 }
 
+// RequestTelemetryTraceResolver picks, among the rows of one trace, the
+// request that started nearest a journaled start time. A store without it
+// falls back to the trace's newest row.
+type RequestTelemetryTraceResolver interface {
+	GetRequestTelemetryByAppTraceNearest(context.Context, sqlc.GetRequestTelemetryByAppTraceNearestParams) (sqlc.GetRequestTelemetryByAppTraceNearestRow, error)
+}
+
 type RequestIDJournalStore interface {
 	RequestIDJournalWriter
 	RequestIDJournalReader
