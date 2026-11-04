@@ -666,11 +666,11 @@ var LiftErr = liftErr
 // NewVMMWakeNotStarted is the error liftErr returns for a pre-start failure.
 func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{p} }
 
-func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
-func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
-func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
-func (r *fakeVMM) Destroys() *int                   { return &r.destroys }
-func (r *fakeVMM) LastColdBootSpec() *AppSpec       { return &r.lastColdBootSpec }
+func (r *fakeVMM) ColdBootHook() *func()      { return &r.coldBootHook }
+func (r *fakeVMM) ColdBoots() *int            { return &r.coldBoots }
+func (r *fakeVMM) DestroyErr() *error         { return &r.destroyErr }
+func (r *fakeVMM) Destroys() *int             { return &r.destroys }
+func (r *fakeVMM) LastColdBootSpec() *AppSpec { return &r.lastColdBootSpec }
 
 // AckEnvironmentBranchContainment makes cold boots acknowledge a requested
 // contained environment branch profile (ADR-20261031193635).
