@@ -659,6 +659,12 @@ type server struct {
 	projectReleaseSecretsEnabled     bool
 	atomicServiceAdditionsEnabled    bool
 	appTaskAPIEnabled                bool
+	// releasePhaseOff refuses deployments that declare a release command and
+	// hides the release-commands capability while the release phase is off
+	// (FAAS_RELEASE_PHASE_ENABLED on apid, imaged and, with
+	// FAAS_APP_TASK_DISPATCH, schedd). The zero value keeps it on for tests;
+	// production wiring decides it from the environment.
+	releasePhaseOff bool
 	// ADR-435: keep standards intent/exception mutations disabled until
 	// consumer convergence, rollout recovery and native acceptance pass.
 	applicationStandardMutationsEnabled bool
@@ -1145,6 +1151,11 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 // admission. Scheduler dispatch remains independently gated.
 func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	s.appTaskAPIEnabled = enabled
+	return s
+}
+
+func (s *server) WithReleasePhaseEnabled(enabled bool) *server {
+	s.releasePhaseOff = !enabled
 	return s
 }
 

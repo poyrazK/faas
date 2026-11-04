@@ -902,6 +902,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		dep.ID = publishedImageDeploymentID(app.ID, dep.Scope, req.Image)
 		dep.ReleaseCommand = append([]string(nil), publishedPrevious.ReleaseCommand...)
 		dep.ReleaseCommandShell = publishedPrevious.ReleaseCommandShell
+		if s.releasePhaseOff && len(dep.ReleaseCommand) > 0 {
+			api.WriteProblem(w, releasePhaseOffProblem())
+			return
+		}
 	}
 	if !s.admitCanaryDeployment(w, r, dep) {
 		return

@@ -781,7 +781,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest)
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(row.PartPath, manifestApp, manifest, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return
