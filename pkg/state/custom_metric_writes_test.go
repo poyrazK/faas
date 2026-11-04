@@ -6,6 +6,7 @@ package state_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -71,10 +72,10 @@ func checkCustomMetricWrites(t *testing.T, ctx context.Context, s customMetricWr
 			t.Fatal(err)
 		}
 	}
-	if err := s.AddCustomMetricCounter(ctx, appID, "f", 1, at, 5); err != state.ErrCustomMetricLimit {
+	if err := s.AddCustomMetricCounter(ctx, appID, "f", 1, at, 5); !errors.Is(err, state.ErrCustomMetricLimit) {
 		t.Fatalf("a sixth name = %v; want ErrCustomMetricLimit", err)
 	}
-	if err := s.PutCustomMetricOfKind(ctx, appID, "f", state.CustomMetricKindGauge, 1, at, 5); err != state.ErrCustomMetricLimit {
+	if err := s.PutCustomMetricOfKind(ctx, appID, "f", state.CustomMetricKindGauge, 1, at, 5); !errors.Is(err, state.ErrCustomMetricLimit) {
 		t.Fatalf("a sixth gauge = %v; want ErrCustomMetricLimit", err)
 	}
 }
