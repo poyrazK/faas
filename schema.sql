@@ -73001,7 +73001,7 @@ CREATE INDEX custom_domains_cert_failed_idx ON public.custom_domains USING btree
 -- Name: custom_domains_cert_retry_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX custom_domains_cert_retry_due_idx ON public.custom_domains USING btree ((COALESCE(cert_retry_at, 'epoch'::timestamp with time zone)), domain) WHERE ((verified_at IS NOT NULL) AND (domain ~~ '*.%'::public.citext));
+CREATE INDEX custom_domains_cert_retry_due_idx ON public.custom_domains USING btree (COALESCE(cert_retry_at, '1970-01-01 00:00:00+00'::timestamp with time zone), domain) WHERE ((verified_at IS NOT NULL) AND (domain OPERATOR(public.~~) '*.%'::public.citext));
 
 
 --
