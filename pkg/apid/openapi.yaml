@@ -338,6 +338,81 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/sales/inquiries/challenge:
+    get:
+      x-internal: true
+      tags: [auth]
+      operationId: salesInquiryChallenge
+      security: []
+      summary: Prepare an anonymous website sales inquiry
+      description: Requires the default-off sales intake flag. This opaque one-hour form token must be at least two seconds old when submitted. The challenge and submission share a separate ten-requests-per-minute IP budget.
+      responses:
+        '200':
+          description: Form check prepared
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge, ready_after_ms, expires_in_seconds]
+                properties:
+                  challenge: { type: string }
+                  ready_after_ms: { type: integer }
+                  expires_in_seconds: { type: integer }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/sales/inquiries:
+    post:
+      x-internal: true
+      tags: [auth]
+      operationId: submitSalesInquiry
+      security: []
+      summary: Submit a contact or demo request from the website
+      description: |
+        Enabled only by FAAS_SALES_INTAKE_ENABLED and FAAS_SALES_ENABLED.
+        Browser writes must come from a trusted control-plane origin. A token
+        is consumed atomically with intake; retrying that token is idempotent
+        until expiry, including when a changed body is presented. Active emails
+        are deduplicated without overwriting staff data or ownership. Unknown,
+        paused, customer or unavailable salesperson codes enter manager review;
+        the response never reveals code validity or ownership. These messages
+        are unverified and grant no referral attribution, rewards or account access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, email, intent, message, challenge]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+                email: { type: string, format: email, maxLength: 254 }
+                company: { type: string, maxLength: 200, default: '' }
+                intent: { type: string, enum: [contact, demo] }
+                message: { type: string, minLength: 1, maxLength: 1500, description: UTF-8 byte limit; other text limits are also measured in bytes. }
+                salesperson_code: { type: string, pattern: '^([A-Za-z0-9]{6})?$', default: '' }
+                challenge: { type: string }
+                website: { type: string, default: '', description: Leave blank. }
+      responses:
+        '202':
+          description: Inquiry accepted without disclosing routing details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: { type: boolean }
+        '400':
+          description: Invalid form input or sales_challenge_invalid; refresh the form check before resubmitting an expired challenge.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/project-migrations:
     post:
       operationId: createProjectMigration
@@ -13319,6 +13394,38 @@ paths:
                 $ref: '#/components/schemas/ProgrammaticAuthResponse'
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/InvalidCredentials' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/referrals/selection:
+    post:
+      tags: [auth]
+      x-internal: true
+      operationId: selectReferralCode
+      summary: Preserve an explicitly entered referral code for OAuth signup.
+      description: Rate limited pre-signup request. An empty code clears the pending selection; no customer identity is returned. The host-only selection expires in 15 minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [referral_code]
+              properties:
+                referral_code: { type: string, pattern: '^([A-Za-z0-9]{6})?$' }
+      responses:
+        '200':
+          description: Selection accepted; it grants no account access.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/auth/signup/magic-link:
@@ -85929,10 +86036,14 @@ components:
         enabled: { type: boolean }
 
     PasswordSignupRequest:
-      description: "Email + password for signup. Same shape as PasswordLoginRequest so the create-or-claim race detection reuses the verifier."
+      description: "Email + password for signup. Same shape as PasswordLoginRequest with an optional referral code."
       type: object
       required: [email, password]
       properties:
+        referral_code:
+          type: string
+          pattern: '^([A-Za-z0-9]{6})?$'
+          description: Optional six-character customer or salesperson referral code; case-insensitive. Requires the referral program to be enabled.
         email: { type: string, format: email }
         password: { type: string, minLength: 12, maxLength: 256 }
 
@@ -85987,6 +86098,7 @@ components:
         accounts.
       type: object
       properties:
+        referral_code: { type: string, pattern: '^([A-Za-z0-9]{6})?$' }
         email: { type: string, format: email }
 
     PasswordResetRequest:
