@@ -14,9 +14,17 @@
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE instances ADD COLUMN IF NOT EXISTS booked_cpu_millicores integer;
 -- New rows are checked now; existing rows are all NULL. A later migration
--- validates it.
-ALTER TABLE instances ADD CONSTRAINT instances_booked_cpu_millicores_check
-    CHECK (booked_cpu_millicores IS NULL OR booked_cpu_millicores BETWEEN 1 AND 2000) NOT VALID;
+-- validates it. Guarded so the migration is re-runnable.
+-- +goose StatementBegin
+DO $booked$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'instances'::regclass AND conname = 'instances_booked_cpu_millicores_check') THEN
+    ALTER TABLE instances ADD CONSTRAINT instances_booked_cpu_millicores_check
+      CHECK (booked_cpu_millicores IS NULL OR booked_cpu_millicores BETWEEN 1 AND 2000) NOT VALID;
+  END IF;
+END
+$booked$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer, p_reservation_percent integer, p_vcpu integer, p_quiet_vcpu integer, p_cpu_millicores integer, p_quiet_cpu_millicores integer, p_default_cpu_millicores integer, p_cpu_overcommit integer) RETURNS void
