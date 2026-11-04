@@ -374,6 +374,15 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 	`, org.ID, acct.ID); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, mapErr(err)
 	}
+	if params.InitialPasswordHash != "" {
+		changed, err := sqlc.New().SetAccountPassword(ctx, tx, sqlc.SetAccountPasswordParams{ID: mustPgUUID(acct.ID), Hash: params.InitialPasswordHash})
+		if err != nil {
+			return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: initialize account password: %w", mapErr(err))
+		}
+		if changed != 1 {
+			return CreateAccountWithPersonalOrgResult{}, ErrNotFound
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: commit: %w", err)
@@ -1470,7 +1479,12 @@ func (s *PgStore) UpsertBillingIdentity(ctx context.Context, identity BillingIde
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := sqlc.New().LockBillingIdentityAccount(ctx, tx, identity.AccountID); err != nil {
+	q := sqlc.New()
+	_, err = q.LockBillingIdentityAccount(ctx, tx, identity.AccountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		_, err = q.LockBillingIdentityOrg(ctx, tx, mustPgUUID(identity.AccountID))
+	}
+	if err != nil {
 		return mapErr(err)
 	}
 	_, err = tx.Exec(ctx,
@@ -1968,9 +1982,15 @@ func (s *PgStore) GetAccountKeyGraceWindow(ctx context.Context, accountID string
 //
 // Issue #189 / IAM-5.
 func (s *PgStore) SetAccountKeyGraceWindow(ctx context.Context, accountID string, days *int) error {
-	_, err := s.pool.Exec(ctx,
+	changed, err := s.pool.Exec(ctx,
 		`update accounts set key_grace_window_days = $1 where id = $2`, days, accountID)
-	return err
+	if err != nil {
+		return err
+	}
+	if changed.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // GetAccountEgressAllowlistExtra returns the per-account

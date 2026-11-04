@@ -295,7 +295,8 @@ const doctorPermissionsSQL = `WITH required(name,privilege) AS (VALUES
  ('changes','SELECT'),('changes','INSERT'),('changes','UPDATE'),('plans','SELECT'),('plans','INSERT'),('plans','UPDATE'))
 SELECT 'gregale_repair: USAGE',has_schema_privilege(n.oid,'USAGE') FROM pg_namespace n WHERE n.nspname='gregale_repair'
 UNION ALL SELECT 'gregale_repair.'||r.name||': '||r.privilege,has_table_privilege(c.oid,r.privilege)
-FROM required r JOIN pg_namespace n ON n.nspname='gregale_repair' JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=r.name`
+FROM required r JOIN pg_namespace n ON n.nspname='gregale_repair' JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=r.name
+UNION ALL SELECT 'pg_catalog.pg_locks: SELECT',has_table_privilege('pg_catalog.pg_locks','SELECT')`
 
 func doctorPrivileges(ctx context.Context, tx pgx.Tx, r *DoctorReport, missing []string) (bool, error) {
 	rows, err := tx.Query(ctx, doctorPermissionsSQL)

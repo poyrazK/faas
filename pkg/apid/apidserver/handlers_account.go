@@ -398,6 +398,9 @@ func (s *server) cancelDeletion(ctx context.Context, acct state.Account, via str
 			"this deletion was scheduled for non-payment; paying the outstanding balance cancels it: "+wire.DashboardBillingURL)
 	}
 	if err := s.store.RestoreAccount(ctx, acct.ID); err != nil {
+		if !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) {
+			return acct, api.ErrCapacity("could not restore account; try again")
+		}
 		return acct, api.NewProblem(http.StatusConflict, api.CodeAccountNotRestorable,
 			"Grace expired",
 			"the 30-day grace window has lapsed; restore is no longer possible")
@@ -1082,7 +1085,10 @@ func (s *server) setGraceWindow(w http.ResponseWriter, r *http.Request, acct sta
 	// Read the prior value for the audit row. The cache may
 	// short-circuit this — invalidated-or-stale cache is fine.
 	oldDays, _ := s.resolveGraceWindow(r.Context(), acct.ID) // best-effort
-	_ = s.store.SetAccountKeyGraceWindow(r.Context(), acct.ID, req.Days)
+	if err := s.store.SetAccountKeyGraceWindow(r.Context(), acct.ID, req.Days); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not save key rotation grace window; try again"))
+		return
+	}
 	if s.graceWindowCache != nil {
 		s.graceWindowCache.Invalidate(acct.ID)
 	}

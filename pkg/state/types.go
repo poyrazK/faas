@@ -8210,6 +8210,10 @@ type CreateAccountWithPersonalOrgParams struct {
 	// preserves the historical trusted-creation behavior used by OAuth,
 	// operator, migration, and test call sites.
 	RequireEmailVerification bool
+	// InitialPasswordHash is an optional precomputed PHC hash. Password signup
+	// commits it with the account, personal organization and owner membership.
+	// The credential is never included when creation parameters are serialized.
+	InitialPasswordHash string `json:"-"`
 }
 
 // CreateAccountWithPersonalOrgResult bundles the freshly minted
