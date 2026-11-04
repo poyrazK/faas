@@ -281,6 +281,34 @@ func (s *server) waitingReleaseApprovals(ctx context.Context, app state.App) ([]
 			out = append(out, status)
 		}
 	}
+	held, err := s.releasesWaitingBeforeReleaseCommand(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, held...), nil
+}
+
+// releasesWaitingBeforeReleaseCommand lists the app's releases waiting for
+// approval before their release command runs (ADR-20261020085706 amendment
+// 12): they are not live yet, but they wait for the same people.
+func (s *server) releasesWaitingBeforeReleaseCommand(ctx context.Context, app state.App) ([]api.ReleaseApprovalStatus, error) {
+	rows, err := s.store.ListDeploymentsForOperator(ctx, state.OperatorDeploymentFilter{
+		AppID: app.ID, Statuses: []state.DeploymentStatus{state.DeploySnapshotting}, OldestFirst: true, Limit: 50,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list releases in their release phase: %w", err)
+	}
+	out := []api.ReleaseApprovalStatus{}
+	now := time.Now()
+	for _, d := range rows {
+		wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now)
+		if err != nil {
+			return nil, fmt.Errorf("read release approvals: %w", err)
+		}
+		if wait.Waits && (wait.Status.State == api.ReleaseApprovalStateWaiting || wait.Status.State == api.ReleaseApprovalStateExpired) {
+			out = append(out, wait.Status)
+		}
+	}
 	return out, nil
 }
 
@@ -481,6 +509,13 @@ func (s *server) releaseApprovalState(ctx context.Context, app state.App, d stat
 	}
 	if err != nil {
 		return nil, api.ReleaseApprovalStatus{}, fmt.Errorf("read release approval policy: %w", err)
+	}
+	// A release waiting before its release command waits from its release
+	// phase, for the policy's timeout (ADR-20261020085706 amendment 12).
+	if wait, err := approval.LoadReleaseCommandWait(ctx, s.store, app, d, now); err != nil {
+		return nil, api.ReleaseApprovalStatus{}, err
+	} else if wait.Waits {
+		return wait.Policy, wait.Status, nil
 	}
 	var decisions []state.ReleaseApproval
 	if approval.Gated(&policy, app, d) {
