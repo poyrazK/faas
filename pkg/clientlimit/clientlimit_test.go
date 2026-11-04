@@ -196,6 +196,34 @@ func TestListenerLimitsOpenConnections(t *testing.T) {
 	}
 }
 
+// A proxy's connections each carry many clients, so its addresses are
+// neither limited nor tracked.
+func TestListenerExemptsProxyAddresses(t *testing.T) {
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refused refusals
+	ln := NewListener(inner, ConnLimits{MaxOpenPerAddr: 1, NewPerSecond: 1, NewBurst: 1, TrackedAddrsMax: 10,
+		Exempt: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}, refused.add, nil)
+	conns := acceptAll(t, ln)
+	for range 5 {
+		c, err := net.Dial("tcp", inner.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+		select {
+		case <-conns:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a connection from an exempt address was not served")
+		}
+	}
+	if got := len(ln.table.entries); got != 0 {
+		t.Fatalf("exempt address tracked: %d entries", got)
+	}
+}
+
 func TestListenerLimitsConnectionRate(t *testing.T) {
 	inner, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
