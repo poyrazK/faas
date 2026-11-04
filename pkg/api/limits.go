@@ -309,29 +309,37 @@ const (
 
 // Product Control internal contract bounds. Customer quotas are explicit grants.
 const (
-	ProductControlMaxFeatures                             = 32
-	ProductControlAccessMaxRoles                          = 32
-	ProductControlAccessRoleMaxBytes                      = 32
-	ProductControlAccessMaxPermissions                    = 6
-	ProductControlTeamMaxMembers                          = 500
-	ProductControlTeamMaxInvitations                      = 500
-	ProductControlTeamMaxAuthRoles                        = 64
-	ProductControlTeamMaxAuthPermissions                  = 64
-	ProductControlTeamAuthPermissionMaxBytes              = 64
-	ProductControlTeamResponseMaxBytes                    = 1 << 20
-	ProductControlTeamEmailMaxBytes                       = 320
-	ProductControlTeamContextMaxBytes                     = 4096
-	ProductControlTeamInvitationMinSeconds                = 300
-	ProductControlTeamInvitationMaxSeconds                = 14 * 24 * 60 * 60
-	ProductControlTeamInvitationDefaultSeconds            = 7 * 24 * 60 * 60
-	ProductControlTeamHistoryPageSize                     = 100
-	ProductControlPlanPolicyMaxSources                    = 32
-	ProductControlPlanPolicyMaxTargets                    = 32
-	ProductControlAuthBodyBytes                           = 16 << 10
-	ProductControlCookieTokenMaxBytes                     = 3500
-	ProductControlAuthResponseBytes                       = 256 << 10
-	ProductControlAuthMaxOrganizations                    = 100
-	ProductControlAuthTimeoutSeconds                      = 10
+	ProductControlMaxFeatures                  = 32
+	ProductControlAccessMaxRoles               = 32
+	ProductControlAccessRoleMaxBytes           = 32
+	ProductControlAccessMaxPermissions         = 6
+	ProductControlTeamMaxMembers               = 500
+	ProductControlTeamMaxInvitations           = 500
+	ProductControlTeamMaxAuthRoles             = 64
+	ProductControlTeamMaxAuthPermissions       = 64
+	ProductControlTeamAuthPermissionMaxBytes   = 64
+	ProductControlTeamResponseMaxBytes         = 1 << 20
+	ProductControlTeamEmailMaxBytes            = 320
+	ProductControlTeamContextMaxBytes          = 4096
+	ProductControlTeamInvitationMinSeconds     = 300
+	ProductControlTeamInvitationMaxSeconds     = 14 * 24 * 60 * 60
+	ProductControlTeamInvitationDefaultSeconds = 7 * 24 * 60 * 60
+	ProductControlTeamHistoryPageSize          = 100
+	ProductControlPlanPolicyMaxSources         = 32
+	ProductControlPlanPolicyMaxTargets         = 32
+	ProductControlAuthBodyBytes                = 16 << 10
+	ProductControlCookieTokenMaxBytes          = 3500
+	ProductControlAuthResponseBytes            = 256 << 10
+	ProductControlAuthMaxOrganizations         = 100
+	ProductControlAuthTimeoutSeconds           = 10
+	// ProductPortalSignInFailuresPerEmail failed sign-ins for one email
+	// address on one product's portal within ProductPortalSignInFailureWindow
+	// refuse the next with 429 before the product's login service is asked;
+	// ProductPortalSignInFailureKeysMax bounds the addresses tracked (bug hunt
+	// H81).
+	ProductPortalSignInFailuresPerEmail                   = 10
+	ProductPortalSignInFailureWindow                      = 15 * time.Minute
+	ProductPortalSignInFailureKeysMax                     = 50_000
 	ProductControlSessionMaxSeconds                       = 7 * 24 * 60 * 60
 	ProductControlReceiptMaxBytes                         = 8192
 	ProductControlRecoveryMaxEntries                      = 64
@@ -13880,6 +13888,13 @@ const (
 	// without chaos for ServiceDNSChaosBackoff instead of retrying per question.
 	ServiceDNSChaosLookupTimeout = 250 * time.Millisecond
 	ServiceDNSChaosBackoff       = 5 * time.Second
+	// ServiceDNSChaosCacheTTL is how long a node keeps one caller address and
+	// name's chaos policy, found or not, and ServiceDNSChaosCacheMax how many
+	// it keeps: every guest *.svc.gregale question read the control plane
+	// for a test-only feature almost no app uses (bug hunt H33). A new or
+	// ended scenario run takes effect within the TTL.
+	ServiceDNSChaosCacheTTL = 2 * time.Second
+	ServiceDNSChaosCacheMax = 4096
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
