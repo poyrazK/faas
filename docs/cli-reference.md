@@ -17405,7 +17405,7 @@ Pin the candidate catalog, verify MCP discovery and promote
 | `--access-audit-algorithms <LIST>` | reviewed gateway algorithms for --access-audit (default RS256,ES256) |  |
 | `--idempotency-key <KEY>` | retry identity printed by a failed submission |  |
 | `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
-| `--timeout <SECONDS>` | deployment wait timeout in seconds (default 1200) |  |
+| `--timeout <SECONDS>` | deployment and verification wait timeout in seconds (default 1200) |  |
 
 Examples:
 

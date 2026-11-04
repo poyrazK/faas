@@ -48,12 +48,3 @@ func mcpAuthorizationChecksPassed(checks []mcphosting.Check) bool {
 	}
 	return true
 }
-
-func mcpReleaseRequiresAuthorization(roles []mcpReleaseRole) bool {
-	for _, role := range roles {
-		if role.Authorization != nil {
-			return true
-		}
-	}
-	return false
-}

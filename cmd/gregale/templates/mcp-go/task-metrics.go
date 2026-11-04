@@ -224,8 +224,8 @@ func (runtime *mcpTaskRuntime) queueMetrics(ctx context.Context) (mcpTaskQueueMe
 		       (SELECT LEAST(COUNT(*),1000000000000::bigint)::bigint
 		          FROM gregale_mcp_tasks AS queued
 		         WHERE queued.namespace=$1 AND queued.expires_at>clock_timestamp()
-		           AND (queued.status='queued' OR (queued.status='running' AND queued.lease_expires_at<=clock_timestamp()))
-		           AND (queued.attempt_count<3 OR (queued.status='queued' AND queued.resume_pending AND queued.attempt_count=3))
+		           AND ((queued.status='queued' AND (queued.next_attempt_at IS NULL OR queued.next_attempt_at<=clock_timestamp())) OR (queued.status='running' AND queued.lease_expires_at<=clock_timestamp()))
+		           AND (queued.attempt_count<$2 OR (queued.status='queued' AND queued.resume_pending))
 		           AND NOT EXISTS (
 		             SELECT 1 FROM gregale_mcp_task_worker_handlers AS handler
 		              WHERE handler.namespace=queued.namespace AND handler.tool_name=queued.tool_name
@@ -236,7 +236,7 @@ func (runtime *mcpTaskRuntime) queueMetrics(ctx context.Context) (mcpTaskQueueMe
 		 WHERE namespace = $1
 		   AND expires_at > clock_timestamp()
 		   AND status IN ('queued', 'running')
-	`, runtime.namespace).Scan(&metrics.outstandingTasks, &metrics.oldestAgeSeconds, &metrics.withoutCompatibleWorkerTasks)
+	`, runtime.namespace, runtime.execution.maxAttempts).Scan(&metrics.outstandingTasks, &metrics.oldestAgeSeconds, &metrics.withoutCompatibleWorkerTasks)
 	if err != nil {
 		return mcpTaskQueueMetrics{}, err
 	}
@@ -363,20 +363,22 @@ func (runtime *mcpTaskRuntime) assertReadOnly(ctx context.Context) error {
 	if !tableExists || canInsert || canUpdate || canDelete || canTruncate || canReference || canCreateTrigger || canCreateSchemas || canCreateInTaskSchema {
 		return errors.New("MCP task observer requires read-only PostgreSQL access")
 	}
-	var handlersTableExists, handlersCanWrite bool
-	err = runtime.pool.QueryRow(ctx, `
+	for _, table := range []string{taskWorkerHandlersTable, "gregale_mcp_task_owners"} {
+		var handlersTableExists, handlersCanWrite bool
+		err = runtime.pool.QueryRow(ctx, `
 		SELECT pg_catalog.to_regclass($1)::oid IS NOT NULL,
 		       COALESCE(pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'INSERT') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass($1)::oid,'INSERT') OR
 		                pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'UPDATE') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass($1)::oid,'UPDATE') OR
 		                pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'DELETE') OR pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'TRUNCATE') OR
 		                pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'REFERENCES') OR pg_catalog.has_any_column_privilege(current_user,pg_catalog.to_regclass($1)::oid,'REFERENCES') OR
 		                pg_catalog.has_table_privilege(current_user,pg_catalog.to_regclass($1)::oid,'TRIGGER'),false)
-	`, taskWorkerHandlersTable).Scan(&handlersTableExists, &handlersCanWrite)
-	if err != nil {
-		return err
-	}
-	if !handlersTableExists || handlersCanWrite {
-		return errors.New("MCP task observer requires read-only PostgreSQL access")
+	`, table).Scan(&handlersTableExists, &handlersCanWrite)
+		if err != nil {
+			return err
+		}
+		if !handlersTableExists || handlersCanWrite {
+			return errors.New("MCP task observer requires read-only PostgreSQL access")
+		}
 	}
 	return nil
 }
