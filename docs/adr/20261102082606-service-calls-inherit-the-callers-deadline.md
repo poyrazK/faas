@@ -99,7 +99,35 @@ call latency is negligible. No CP Postgres call is added to the request path.
 2. Measure added service call latency on production with the switch on one
    node; then default it on.
 3. SDK and runner helpers that forward `X-Faas-Deadline-Ms` on service calls,
-   which extends the bound to concurrent instances.
+   which extends the bound to concurrent instances (amendment 1: the SDKs;
+   runners unchanged).
+
+## Amendment 1 (2026-11-04): step 3 in the SDKs
+
+- The SDKs' existing request-context helpers carry it, so apps already
+  forwarding the release get it without new wiring: Go
+  `GregaleReleaseMiddleware` + `NewGregaleReleaseTransport`, Node
+  `withGregaleRequestContext` + `createGregaleFetch`, Python
+  `GregaleReleaseMiddleware` / `with_gregale_request_context` + the HTTPX
+  transports.
+- Inbound, the helper reads one valid `X-Faas-Deadline-Ms` (a positive whole
+  number up to a day; otherwise nothing) and keeps the absolute time it runs
+  out. It never cancels the handler's own context.
+- Outbound, only on the managed service hosts each SDK already forwards the
+  release to (`*.svc.gregale`; Node and Python also declared `*.internal`),
+  it sets the header to the time left, keeping a smaller valid value the
+  caller set itself. With no time left it sends 1 ms, so the proxy answers 504
+  `request_budget_exceeded` without waking the target, as it would for an
+  inferred deadline. External hosts get nothing added.
+- Handlers can read the time left: Go `GregaleDeadlineFromContext`, Node
+  `gregaleRequestTimeRemainingMs()`, Python
+  `gregale_request_time_remaining_ms()`.
+- The function runners are unchanged: they do not run handlers inside the
+  SDK's request context. A function that calls services wraps its handler in
+  the helper as an app does.
+- Nothing changes until `FAAS_SERVICE_CALL_DEADLINES` is on: with it off the
+  proxy ignores the header and its forwarder drops customer `x-faas-*`
+  headers.
 
 ## Alternatives considered
 

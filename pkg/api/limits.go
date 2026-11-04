@@ -2768,10 +2768,17 @@ const (
 	ObjectStorageInventorySweepBatch       = 50
 	ObjectStorageInventorySweepConcurrency = 8
 	ObjectStorageInventorySweepBudget      = 40 * time.Second
-	ObjectCapacityReconciliationLease      = 2 * time.Minute
-	ObjectCapacityReconciliationTimeout    = time.Hour
-	ObjectCapacityReconciliationRetry      = 30 * time.Second
-	ObjectCapacityInventoryTimeout         = 45 * time.Second
+	// The inventory sweep runs on its own loop, apart from billing: gateway
+	// reads and writes need an inventory no older than 900 s, so a slow month
+	// close or progress delivery must not delay it. Each billing step stops
+	// after ObjectStorageBillingStepTimeout, and a failed month close is
+	// retried after ObjectStorageFinalizeRetry rather than every minute.
+	ObjectStorageBillingStepTimeout     = 5 * time.Minute
+	ObjectStorageFinalizeRetry          = 15 * time.Minute
+	ObjectCapacityReconciliationLease   = 2 * time.Minute
+	ObjectCapacityReconciliationTimeout = time.Hour
+	ObjectCapacityReconciliationRetry   = 30 * time.Second
+	ObjectCapacityInventoryTimeout      = 45 * time.Second
 	// After claiming a bucket, inventory waits up to
 	// ObjectInventoryDeletionDrain for deletions admitted before the claim to
 	// settle. New deletions in the bucket wait while the claim is younger than

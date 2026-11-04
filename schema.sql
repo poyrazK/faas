@@ -1619,6 +1619,7 @@ CREATE TABLE public.apps (
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     github_production_trigger text,
     github_preview_enabled boolean,
+    scaling_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -6125,6 +6126,23 @@ BEGIN
  END IF;
  IF TG_OP='DELETE' AND (NOT EXISTS(SELECT 1 FROM builds WHERE id=OLD.build_id) OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id)) THEN RETURN OLD;END IF;
  RAISE EXCEPTION 'build export is immutable' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
+END;
+$$;
+
+
+--
+-- Name: bump_app_scaling_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bump_app_scaling_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF ROW(NEW.ram_mb, NEW.cpu_millicores, NEW.max_concurrency, NEW.min_instances)
+     IS DISTINCT FROM ROW(OLD.ram_mb, OLD.cpu_millicores, OLD.max_concurrency, OLD.min_instances) THEN
+    NEW.scaling_revision := OLD.scaling_revision + 1;
+  END IF;
+  RETURN NEW;
 END;
 $$;
 
@@ -31633,6 +31651,19 @@ CREATE TABLE public.app_scaling_policy_scheduler_status (
     observed_revision bigint NOT NULL,
     observed_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_scaling_policy_scheduler_status_observed_revision_check CHECK ((observed_revision >= 0))
+);
+
+
+--
+-- Name: app_scaling_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_scaling_receipts (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    request_id uuid NOT NULL,
+    request_hash bytea NOT NULL,
+    response jsonb NOT NULL
 );
 
 
@@ -59021,6 +59052,14 @@ ALTER TABLE ONLY public.app_scaling_policy_scheduler_status
 
 
 --
+-- Name: app_scaling_receipts app_scaling_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_scaling_receipts
+    ADD CONSTRAINT app_scaling_receipts_pkey PRIMARY KEY (app_id, scope, request_id);
+
+
+--
 -- Name: app_secret_revocation_targets app_secret_revocation_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -82663,6 +82702,13 @@ CREATE TRIGGER apps_reserved_slug_allocation_guard BEFORE INSERT OR UPDATE OF sl
 
 
 --
+-- Name: apps apps_scaling_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_scaling_revision BEFORE UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.bump_app_scaling_revision();
+
+
+--
 -- Name: apps apps_slug_hold_check; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -90235,6 +90281,14 @@ ALTER TABLE ONLY public.app_scaling_policy_scheduler_status
 
 ALTER TABLE ONLY public.app_scaling_policy_scheduler_status
     ADD CONSTRAINT app_scaling_policy_scheduler_status_scheduler_node_id_fkey FOREIGN KEY (scheduler_node_id) REFERENCES public.compute_nodes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_scaling_receipts app_scaling_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_scaling_receipts
+    ADD CONSTRAINT app_scaling_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

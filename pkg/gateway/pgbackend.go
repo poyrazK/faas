@@ -907,6 +907,15 @@ func (b *PGBackend) ObserveEdgeListenerHeartbeat(at time.Time) {
 	}
 }
 
+// ForgetDeletedAppRequestCounts drops a deleted app's request counters
+// (ADR 20261104091530).
+func (b *PGBackend) ForgetDeletedAppRequestCounts(appID string) {
+	if b == nil || b.metrics == nil || appID == "" {
+		return
+	}
+	b.metrics.ForgetAppRequestCounts(appID)
+}
+
 // PreInstantiateAppMetrics publishes the aggregate app/class histogram rows at
 // zero. app_changed calls this before invalidating routing so a newly created
 // app is visible to Prometheus before its first request completes.

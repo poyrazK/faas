@@ -3569,7 +3569,10 @@ WHERE app_id = $1
   AND (sqlc.arg('cursor_received_at')::timestamptz IS NULL
        OR (received_at, id) < (sqlc.arg('cursor_received_at')::timestamptz,
                                sqlc.arg('cursor_id')::uuid))
-  AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text)
+  -- Route labels carry their method ("GET /checkout"). A filter that is a
+  -- bare path ("/checkout") matches the path under every method.
+  AND (sqlc.arg('route')::text = '' OR route = sqlc.arg('route')::text
+       OR (left(sqlc.arg('route')::text, 1) = '/' AND split_part(route, ' ', 2) = sqlc.arg('route')::text))
   -- Filters are explicit query parameters so sqlc keeps the generated
   -- params stable. The cursor stores the same values and the handler
   -- rejects a page walk when they change.
@@ -3728,6 +3731,28 @@ WHERE app_id = sqlc.arg(app_id)
   AND received_at >= sqlc.arg(received_from)
   AND received_at <  sqlc.arg(received_until)
 ORDER BY (id::text = sqlc.arg(identifier)::text) DESC, received_at DESC
+LIMIT 1;
+
+-- name: GetRequestTelemetryByAppTraceNearest :one
+-- Resolves a public x-faas-request-id after the request-ID journal mapped it
+-- to its trace and start time. Several requests can share one trace (a
+-- propagated traceparent, retries), so the newest row of the trace may be
+-- another request: take the row whose start (received_at minus latency) is
+-- nearest the journaled start instead. Same columns as
+-- GetRequestTelemetryByAppAndIdentifier, so callers convert the row.
+SELECT id, deployment_id, route, method, status, latency_ms, count,
+       cold_boot, trace_id, received_at, spans_summary, wake_id, instance_id,
+       guest_duration_ms, guest_runtime, guest_outcome, guest_error_class,
+       consumer_id, node_id, region, commit_sha, deployment_tag,
+       deployment_created_at, image_digest, trace_inferred
+FROM request_telemetry
+WHERE app_id = sqlc.arg(app_id)
+  AND trace_id = sqlc.arg(trace_id)::text
+  AND received_at >= sqlc.arg(received_from)
+  AND received_at <  sqlc.arg(received_until)
+ORDER BY abs(extract(epoch FROM (received_at - make_interval(secs => latency_ms / 1000.0)))
+             - extract(epoch FROM sqlc.arg(started_at)::timestamptz)),
+         received_at DESC
 LIMIT 1;
 
 -- name: ListRequestTelemetryByAccountTrace :many
@@ -13925,12 +13950,19 @@ INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rul
 ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules;
 
 -- name: ObjectNotificationsCapture :execrows
-UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot || sqlc.arg(recipients)::jsonb
+-- Notification recipients meet the same company reach as subscriptions
+-- (ADR-20261025211616): a rule cannot route a company bucket's events past it.
+UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot ||
+ event_recipients_in_producer_reach(account_id, payload->>'producer', sqlc.arg(recipients)::jsonb)
 WHERE account_id=sqlc.arg(account_id)::uuid AND source='gregale.storage' AND event_id=sqlc.arg(event_id)::text
 AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification');
 
 -- name: ObjectNotificationTargetApp :one
 SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';
+
+-- name: ObjectNotificationTargetInReach :one
+-- Whether a bucket app's events may reach the target app (ADR-20261025211616).
+SELECT event_app_in_producer_reach(sqlc.arg(account_id)::uuid, sqlc.arg(producer)::text, sqlc.arg(target_app_id)::text)::boolean AS in_reach;
 
 -- name: ObjectNotificationTargetQueue :one
 SELECT id, retry_policy FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled;

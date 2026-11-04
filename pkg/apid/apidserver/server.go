@@ -2690,6 +2690,9 @@ func (s *server) handler() http.Handler {
 	// on apps.account_id = $1 in the pgstore helper.
 	mux.HandleFunc("GET /v1/account/slo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getAccountSLO))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateApp))))
+	mux.HandleFunc("GET /v1/apps/{slug}/scaling", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appScalingHandler())))
+	mux.HandleFunc("GET /v1/apps/{slug}/scaling/requests/{request_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.appScalingHandler())))
+	mux.HandleFunc("POST /v1/apps/{slug}/scaling", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appScalingHandler()))))
 	mux.HandleFunc("GET /v1/apps/{slug}/resource-inventory", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentinspect.Inventory(s.agentInspection()))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operation-preview", s.authLimited(s.requireScope(api.ScopesDeployTargetReadSurface...)(agentinspect.Preview(s.agentInspection()))))
 	mux.HandleFunc("GET /v1/apps/{slug}/costs", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(agentinspect.Costs(s.agentInspection()))))
