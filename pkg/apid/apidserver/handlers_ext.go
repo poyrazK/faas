@@ -2497,8 +2497,24 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	response := s.deploymentResponse(r.Context(), target, app)
 	response.RollbackOperation = operation
+	s.revalidateRolledBackSignature(r.Context(), app)
 	s.warnRollbackCrons(r.Context(), w, app, target)
 	writeJSON(w, http.StatusAccepted, response)
+}
+
+// revalidateRolledBackSignature asks imaged to verify the app's live signed
+// images again after a rollback (ADR-20261020085706 amendment 14). A rollback
+// target was verified when it was built, against the trusted signers of the
+// time; a signer removed since (a leaked key) or signing turned on since must
+// not bring it back into service. imaged's revalidation reads the trust table
+// and quarantines an image that no longer verifies; its periodic sweep is the
+// durable fallback when this wake-up is lost.
+func (s *server) revalidateRolledBackSignature(ctx context.Context, app state.App) {
+	if s.notif == nil || (!app.RequireSigned && !app.SecurityPolicy.RequiresSignedImage()) {
+		return
+	}
+	_ = s.notif.Notify(ctx, db.NotifyTrustedSignerChanged,
+		fmt.Sprintf(`{"kind":"rollback","app_id":"%s"}`, app.ID))
 }
 
 // warnRollbackCrons tells the caller which crons outlive a rollback

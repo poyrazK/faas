@@ -287,6 +287,9 @@ SELECT EXISTS (
     SELECT 1 FROM deployments
     WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text
       AND revision > sqlc.arg(revision)::bigint
+      -- A newer revision that failed or was cancelled ships nothing, so it
+      -- does not outpace an older release (ADR-20261020085706 amendment 14).
+      AND status NOT IN ('failed', 'cancelled')
 );
 
 -- name: ReadDeploySettingsLatest :one
