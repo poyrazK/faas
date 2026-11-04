@@ -14765,6 +14765,9 @@ const (
 	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
 	// app health counts the guest's reports within it (ADR-20261102124306).
 	AppHealthMemoryPressureWindow = 24 * time.Hour
+	// MemoryRightSizeStepMB rounds app health's suggested ram_mb for an app
+	// under memory pressure (ADR-20261102124306 step 3).
+	MemoryRightSizeStepMB = 64
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
