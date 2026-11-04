@@ -2125,6 +2125,11 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		if !h.releasePhaseEnabled {
 			return h.failReleasePhaseUnavailable(ctx, dep)
 		}
+		// ADR-20261020085706 amendment 12: a release its app's approvals
+		// gate runs its release command only once approved.
+		if held, err := h.holdReleaseCommandForApproval(ctx, app, dep); err != nil || held {
+			return err
+		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
 		if errors.Is(err, errReleaseDeploymentClosed) {
 			return nil

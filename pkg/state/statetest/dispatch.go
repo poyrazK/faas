@@ -27,6 +27,8 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"ListEdgeRulesForApp":                    true,
+	"ApplyConfigRestore":                     true,
 	"EvaluateAutomationFailurePolicies":      true,
 	"GetAutomationFailurePolicy":             true,
 	"DefaultCustomDomain":                    true,
@@ -113,6 +115,7 @@ var memDispatched = map[string]bool{
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
 	"ListAllAccounts":                                         true,
+	"ListReleaseFreezes":                                      true,
 	"MarkDunningStep":                                         true,
 	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
@@ -293,6 +296,24 @@ var memDispatched = map[string]bool{
 	"ListConsumerKeysForApp":                        true,
 	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
+}
+
+func (s *Mem) ListEdgeRulesForApp(ctx context.Context, app string) ([]state.EdgeRule, error) {
+	if over, ok := s.over.(interface {
+		ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRule, error)
+	}); ok {
+		return over.ListEdgeRulesForApp(ctx, app)
+	}
+	return s.MemStore.ListEdgeRulesForApp(ctx, app)
+}
+
+func (s *Mem) ApplyConfigRestore(ctx context.Context, restore state.ConfigRestore) (state.ConfigRevision, error) {
+	if over, ok := s.over.(interface {
+		ApplyConfigRestore(context.Context, state.ConfigRestore) (state.ConfigRevision, error)
+	}); ok {
+		return over.ApplyConfigRestore(ctx, restore)
+	}
+	return s.MemStore.ApplyConfigRestore(ctx, restore)
 }
 
 func (s *Mem) EvaluateAutomationFailurePolicies(ctx context.Context, owner, after string, limit int, now time.Time) (string, error) {
@@ -694,6 +715,15 @@ func (s *Mem) CreateCheckedRollback(p0 context.Context, p1 string, p2 string, p3
 		return o.CreateCheckedRollback(p0, p1, p2, p3, p4, p5)
 	}
 	return s.MemStore.CreateCheckedRollback(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) ListReleaseFreezes(ctx context.Context, owner state.ReleaseFreezeOwner, now time.Time) ([]state.ReleaseFreeze, error) {
+	if o, ok := s.over.(interface {
+		ListReleaseFreezes(context.Context, state.ReleaseFreezeOwner, time.Time) ([]state.ReleaseFreeze, error)
+	}); ok {
+		return o.ListReleaseFreezes(ctx, owner, now)
+	}
+	return s.MemStore.ListReleaseFreezes(ctx, owner, now)
 }
 
 func (s *Mem) CreateInstance(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string, p6 string) (state.Instance, error) {

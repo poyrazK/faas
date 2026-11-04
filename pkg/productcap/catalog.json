@@ -261,6 +261,9 @@
       "routes": [
         "/dashboard/apps/{}/alert-rollbacks",
         "/v1/apps/{}/alert-rollbacks"
+      ],
+      "cli": [
+        "alerts actions"
       ]
     },
     {
@@ -461,6 +464,11 @@
       "routes": [
         "/dashboard/apps/{}/tasks",
         "/v1/apps/{}/tasks"
+      ],
+      "cli": [
+        "app cp",
+        "app exec",
+        "app port-forward"
       ]
     },
     {

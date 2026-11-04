@@ -2,7 +2,6 @@
 package apidserver
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -166,70 +165,60 @@ func (s *server) rollbackConfig(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	out := api.ConfigRollbackResponse{RestoredRevision: target.Revision, Set: []string{}, Deleted: []string{},
 		SecretsNotRestored: secretDifferences(target.Secrets, secrets)}
-	writes := configguard.VariablesToward(target.Variables, variables)
-	if len(writes) > 0 {
-		change := s.beginConfigChange(r, acct, app, scope, "")
-		applyErr := s.applyVariableWrites(r.Context(), acct, app, scope, writes, &out)
-		revision := s.finishRestore(r.Context(), change, target.Revision)
-		if applyErr != nil {
-			if !writeEnvironmentGitOpsOwnershipProblem(w, applyErr) {
-				api.WriteProblem(w, api.ErrCapacity("could not restore config"))
-			}
-			return
-		}
-		out.Change = configChangeReceipt(change, revision)
-		s.audit.Emit(r.Context(), "config.rollback", &acct.ID, map[string]any{"app_id": app.ID, "scope": scope,
-			"restored_revision": target.Revision, "set": out.Set, "deleted": out.Deleted})
+	restore := state.ConfigRestore{Finish: state.ConfigChangeFinish{AccountID: acct.ID, AppID: app.ID, Scope: scope,
+		Source: state.ConfigSourceRollback, RestoredRevision: target.Revision},
+		ExpectedVariables: variables, ExpectedSecrets: secrets,
+		Variables: configVariableRestores(configguard.VariablesToward(target.Variables, variables))}
+	if len(restore.Variables) > 0 && !s.applyConfigRollback(w, r, acct, app, restore, &out) {
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// finishRestore records a config.rollback revision for a guarded rollback.
-func (s *server) finishRestore(ctx context.Context, c *configChange, restored int64) *state.ConfigRevision {
-	if c == nil {
-		return nil
+func (s *server) applyConfigRollback(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, restore state.ConfigRestore, out *api.ConfigRollbackResponse) bool {
+	restoreStore, ok := s.store.(state.ConfigRestoreStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("atomic config restoration is unavailable"))
+		return false
 	}
-	revision, err := c.store.FinishConfigChange(ctx, state.ConfigChangeFinish{AccountID: c.acct.ID, AppID: c.app.ID,
-		Scope: c.scope, Actor: c.actor, Source: state.ConfigSourceRollback, GuardID: c.ticket.GuardID,
-		RestoredRevision: restored, Now: time.Now().UTC()})
+	change := s.beginConfigChange(r, acct, app, restore.Finish.Scope, "")
+	if change == nil {
+		api.WriteProblem(w, api.ErrCapacity("could not begin config restoration"))
+		return false
+	}
+	restore.Finish.Actor, restore.Finish.GuardID = change.actor, change.ticket.GuardID
+	restore.Finish.Now = time.Now().UTC()
+	revision, err := restoreStore.ApplyConfigRestore(r.Context(), restore)
 	if err != nil {
-		s.configRevisionFailed(ctx, c.acct, c.app, c.scope, "finish", err)
-		return nil
+		if errors.Is(err, state.ErrConfigRestoreChanged) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Configuration changed", "Refresh configuration history and retry the rollback."))
+		} else if !writeEnvironmentGitOpsOwnershipProblem(w, err) {
+			api.WriteProblem(w, api.ErrCapacity("could not restore config"))
+		}
+		return false
 	}
-	return &revision
-}
-
-// applyVariableWrites applies a restore's variable writes, invalidates the
-// scope's snapshots and tells the runtime, as the env handlers do.
-func (s *server) applyVariableWrites(ctx context.Context, acct state.Account, app state.App, scope string, writes []configguard.VariableWrite, out *api.ConfigRollbackResponse) error {
-	for _, write := range writes {
-		var err error
-		if write.Delete {
-			err = s.store.DeleteAppEnvInScope(ctx, acct.ID, app.ID, scope, write.Key)
-			if errors.Is(err, state.ErrNotFound) {
-				err = nil
-			}
-		} else {
-			err = s.store.UpsertAppEnvInScope(ctx, acct.ID, app.ID, scope, write.Key, write.Value)
-		}
-		if err != nil {
-			return err
-		}
+	for _, write := range restore.Variables {
 		kind := "set"
 		if write.Delete {
+			out.Deleted = append(out.Deleted, write.Key)
 			kind = "delete"
+		} else {
+			out.Set = append(out.Set, write.Key)
 		}
-		if out != nil {
-			if write.Delete {
-				out.Deleted = append(out.Deleted, write.Key)
-			} else {
-				out.Set = append(out.Set, write.Key)
-			}
-		}
-		s.notifyRuntimeConfigChange(ctx, db.NotifyAppEnvChanged, acct, app, kind, scope, write.Key)
+		s.notifyRuntimeConfigChange(r.Context(), db.NotifyAppEnvChanged, acct, app, kind, restore.Finish.Scope, write.Key)
 	}
-	_, err := state.InvalidateAppSnapshotsInScope(ctx, s.store, app.ID, scope)
-	return err
+	out.Change = configChangeReceipt(change, &revision)
+	s.audit.Emit(r.Context(), "config.rollback", &acct.ID, map[string]any{"app_id": app.ID, "scope": restore.Finish.Scope,
+		"restored_revision": restore.Finish.RestoredRevision, "set": out.Set, "deleted": out.Deleted})
+	return true
+}
+
+func configVariableRestores(writes []configguard.VariableWrite) []state.ConfigVariableRestore {
+	out := make([]state.ConfigVariableRestore, 0, len(writes))
+	for _, write := range writes {
+		out = append(out, state.ConfigVariableRestore{Key: write.Key, Value: write.Value, Delete: write.Delete})
+	}
+	return out
 }
 
 func secretDifferences(target, current map[string]state.ConfigSecretFingerprint) []api.ConfigSecretDifference {
