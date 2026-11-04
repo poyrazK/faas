@@ -85,8 +85,8 @@ func (s *PgStore) AdmitExclusiveCommandCronFireNow(ctx context.Context, requestI
 		}
 	}
 	var deploymentAvailable bool
-	if err := tx.QueryRow(ctx, `select exists(select 1 from deployments where app_id=$1::uuid and status='live'
-		and rootfs_key is not null and rootfs_key<>'' and image_digest<>'')`, appID).Scan(&deploymentAvailable); err != nil {
+	if err := tx.QueryRow(ctx, `select exists(select 1 from deployments d where d.app_id=$1::uuid and d.status='live'
+		and d.rootfs_key is not null and d.rootfs_key<>'' and d.image_digest<>'' and `+cronScopeDeploymentSQL("$2")+`)`, appID, cronID).Scan(&deploymentAvailable); err != nil {
 		return ExclusiveOperation{}, false, fmt.Errorf("state: check exclusive command cron deployment: %w", err)
 	}
 	if !deploymentAvailable {
@@ -209,10 +209,10 @@ func (s *PgStore) CreateExclusiveCommandCronAppTask(ctx context.Context, account
 	if activeCronTask {
 		return AppTask{}, ErrAppTaskCronOverlap
 	}
-	if err := tx.QueryRow(ctx, `select id::text,coalesce(nullif(scope,''),'default'),rootfs_key,image_digest
-		from deployments where app_id=$1::uuid and status='live'
-		  and rootfs_key is not null and rootfs_key<>'' and image_digest<>''
-		order by (traffic_percent > 0) desc,created_at desc,id desc limit 1 for update`, appID).
+	if err := tx.QueryRow(ctx, `select d.id::text,coalesce(nullif(d.scope,''),'default'),d.rootfs_key,d.image_digest
+		from deployments d where d.app_id=$1::uuid and d.status='live'
+		  and d.rootfs_key is not null and d.rootfs_key<>'' and d.image_digest<>'' and `+cronScopeDeploymentSQL("$2")+`
+		order by (d.traffic_percent > 0) desc,d.created_at desc,d.id desc limit 1 for update of d`, appID, cronID).
 		Scan(&deploymentID, &scope, &artifactKey, &imageDigest); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return AppTask{}, ErrAppTaskDeploymentUnavailable

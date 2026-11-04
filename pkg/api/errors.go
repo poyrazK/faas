@@ -3785,6 +3785,23 @@ func ErrAPIContractComparisonIncomplete(detail string) *Problem {
 		WithDocs(docsBase + "/api-hosting#contract-diff")
 }
 
+// ErrCronEnvironmentHTTPUnavailable is the 400 for an HTTP request cron in a
+// non-production environment: only command crons run in a stage until stage
+// HTTP crons ship (ADR-20261104120000).
+func ErrCronEnvironmentHTTPUnavailable(environment string) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeCronInvalid, "Environment HTTP cron unavailable",
+		"environment "+environment+" can run command crons only; HTTP request crons run in production for now").
+		WithDocs(docsBase + "/crons#environments")
+}
+
+// ErrCronEnvironmentRequiresProject is the 400 for an environment cron on an
+// app outside a project.
+func ErrCronEnvironmentRequiresProject() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeCronInvalid, "Cron environment requires a project",
+		"only an app in a project has environments; omit environment for this app").
+		WithDocs(docsBase + "/crons#environments")
+}
+
 // ErrCronInvalid is returned for malformed cron expressions.
 func ErrCronInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeCronInvalid,
