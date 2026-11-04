@@ -15,21 +15,34 @@ import (
 )
 
 type doctorFunction struct {
-	Name        string `json:"name"`
-	Args        string `json:"args"`
-	Result      string `json:"result"`
-	Language    string `json:"language"`
-	Body        string `json:"body"`
-	Volatile    string `json:"volatile"`
-	Definer     bool   `json:"definer"`
-	Defaults    int    `json:"defaults"`
-	DefaultExpr string `json:"default_expr"`
-	Runtime     bool   `json:"runtime"`
+	Name        string   `json:"name"`
+	Args        string   `json:"args"`
+	Result      string   `json:"result"`
+	Language    string   `json:"language"`
+	Body        string   `json:"body"`
+	Volatile    string   `json:"volatile"`
+	Definer     bool     `json:"definer"`
+	Defaults    int      `json:"defaults"`
+	DefaultExpr string   `json:"default_expr"`
+	Runtime     bool     `json:"runtime"`
+	Config      []string `json:"config"`
 }
 
 // Definitions come from this binary's owner-install SQL, never the database.
 // The last CREATE OR REPLACE wins, as it does in Schema().
+// This is immutable installation wiring. Each caller gets its own copy because
+// writer probes filter the list and adjust their runtime privilege profile.
+var installedDoctorFunctions, installedDoctorFingerprint = buildDoctorFunctions()
+
 func doctorFunctions() ([]doctorFunction, string) {
+	functions := slices.Clone(installedDoctorFunctions)
+	for i := range functions {
+		functions[i].Config = slices.Clone(functions[i].Config)
+	}
+	return functions, installedDoctorFingerprint
+}
+
+func buildDoctorFunctions() ([]doctorFunction, string) {
 	pattern := regexp.MustCompile(`(?s)CREATE(?: OR REPLACE)? FUNCTION gregale_repair\.([a-z_]+)\((.*?)\) RETURNS ([^\n]+)\nLANGUAGE (.*?) AS \$\$(.*?)\$\$;`)
 	byName := map[string]doctorFunction{}
 	fingerprint := ""
@@ -40,6 +53,19 @@ func doctorFunctions() ([]doctorFunction, string) {
 			continue
 		}
 		f := doctorFunction{Name: m[1], Result: doctorType(m[3]), Language: strings.Fields(m[4])[0], Body: fmt.Sprintf("%x", sha256.Sum256([]byte(m[5]))), Volatile: "v", Definer: strings.Contains(m[4], "SECURITY DEFINER"), Runtime: true}
+		f.Config = []string{"search_path=pg_catalog"}
+		if strings.Contains(m[4], "SET extra_float_digits = '3'") {
+			f.Config = append(f.Config, "extra_float_digits=3")
+		}
+		if strings.Contains(m[4], "SET TimeZone = 'UTC'") {
+			f.Config = append(f.Config, "TimeZone=UTC")
+		}
+		for _, setting := range []string{"DateStyle=ISO, YMD", "IntervalStyle=postgres", "lc_monetary=C", "jit=off"} {
+			key, value, _ := strings.Cut(setting, "=")
+			if strings.Contains(m[4], "SET "+key+" = '"+value+"'") {
+				f.Config = append(f.Config, setting)
+			}
+		}
 		if strings.Contains(m[4], "IMMUTABLE") {
 			f.Volatile = "i"
 		} else if strings.Contains(m[4], "STABLE") {
@@ -95,7 +121,7 @@ func doctorType(t string) string {
 }
 
 const doctorFunctionSQL = `WITH expected AS (
- SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(name text,args text,result text,language text,body text,volatile text,definer boolean,defaults integer,default_expr text,runtime boolean)
+ SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(name text,args text,result text,language text,body text,volatile text,definer boolean,defaults integer,default_expr text,runtime boolean,config text[])
 ), installed AS (
  SELECT p.*,l.lanname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_language l ON l.oid=p.prolang WHERE n.nspname='gregale_repair'
 )
@@ -103,7 +129,7 @@ SELECT e.name,
  count(p.oid)=1 AND coalesce(bool_and(
   oidvectortypes(p.proargtypes)=e.args AND format_type(p.prorettype,NULL)=e.result AND p.lanname=e.language AND
   encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=e.body AND p.provolatile::text=e.volatile AND p.prosecdef=e.definer AND
-  p.proconfig=ARRAY['search_path=pg_catalog'] AND NOT p.proisstrict AND NOT p.proleakproof AND NOT p.proretset AND
+  p.proconfig=e.config AND NOT p.proisstrict AND NOT p.proleakproof AND NOT p.proretset AND
   p.prokind='f' AND p.proparallel='u' AND p.prosupport=0 AND p.provariadic=0 AND p.proargmodes IS NULL AND p.pronargdefaults=e.defaults AND
   coalesce(pg_get_expr(p.proargdefaults,0),'')=e.default_expr),false),
  NOT e.runtime OR coalesce(bool_and(has_function_privilege(p.oid,'EXECUTE')),false)
@@ -117,8 +143,8 @@ type doctorColumn struct {
 
 func doctorColumns() []doctorColumn {
 	tables := map[string]string{
-		"enrollments":    "relation:regclass qualified_name:text enrollment_id:uuid fields:text[] keys:text[] fingerprint:text",
-		"operations":     "id:uuid scope:jsonb release:text enrollment_id:uuid schema_fingerprint:text transaction_id:text finalized:boolean repair_of:uuid created_at:timestamptz payload_purged_at:timestamptz",
+		"enrollments":    "relation:regclass qualified_name:text enrollment_id:uuid fields:text[] keys:text[] fingerprint:text fingerprint_timezone:text fingerprint_datestyle:text fingerprint_intervalstyle:text type_fingerprint:text",
+		"operations":     "id:uuid scope:jsonb release:text enrollment_id:uuid schema_fingerprint:text transaction_id:text finalized:boolean repair_of:uuid created_at:timestamptz payload_purged_at:timestamptz capture_relation_filenode:oid capture_contract_version:integer type_fingerprint:text capture_type_state:text",
 		"changes":        "operation_id:uuid row_identity:uuid key:jsonb before_values:jsonb after_values:jsonb before_version:bigint after_version:bigint",
 		"plans":          "id:uuid source_operation_id:uuid scope:jsonb document:jsonb digest:text created_at:timestamptz expires_at:timestamptz rehearsed_at:timestamptz rehearsal:jsonb approved_at:timestamptz approved_by:text applied_at:timestamptz repair_operation_id:uuid payload_purged_at:timestamptz retained_digest:text check_failure:jsonb apply_checks:jsonb apply_resolution:jsonb replacement_plan_id:uuid",
 		"retention_runs": "id:uuid scope:jsonb document:jsonb digest:text expires_at:timestamptz applied_at:timestamptz applied_by:text applied_role:text",
@@ -303,19 +329,22 @@ func doctorPrivileges(ctx context.Context, tx pgx.Tx, r *DoctorReport, missing [
 	return registry, nil
 }
 
-const doctorEnrollmentSQL = `SELECT e.relation::oid,e.enrollment_id::text,
+var doctorEnrollmentSQL = strings.NewReplacer("__CASCADING_FIELDS__", cascadingFieldsSQL("c.oid", "e.fields"), "__TYPE_CONTRACT_CHANGED__", typeContractMismatchSQL("e.relation", "e.type_fingerprint"), "__UNSUPPORTED_EXPRESSIONS__", unsupportedExpressionsSQL("c.oid"), "__LOSSY_TYPES__", lossyValueTypesSQL("c.oid", "e.fields||e.keys")).Replace(`SELECT e.relation::oid,e.enrollment_id::text,
  (SELECT array_agg(left(f,current_setting('max_identifier_length')::int)) FROM unnest(e.fields[1:$2]) f),
  (SELECT array_agg(left(f,current_setting('max_identifier_length')::int)) FROM unnest(e.keys[1:$2]) f),
  CASE WHEN octet_length(e.fingerprint)=64 THEN e.fingerprint ELSE '' END,
- coalesce(c.relkind='r' AND NOT c.relispartition AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND
+ coalesce(e.fingerprint_datestyle IS NOT NULL AND e.fingerprint_intervalstyle IS NOT NULL AND e.fingerprint_timezone IS NOT NULL AND c.relkind='r' AND NOT c.relispartition AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity AND
  format('%I.%I',n.nspname,c.relname)=e.qualified_name AND
  NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=c.oid OR inhparent=c.oid) AND
+ NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attnum>0 AND NOT attisdropped AND attgenerated<>'') AND
+ NOT __UNSUPPORTED_EXPRESSIONS__ AND
+ NOT __LOSSY_TYPES__ AND NOT __CASCADING_FIELDS__ AND NOT __TYPE_CONTRACT_CHANGED__ AND
  cardinality(e.fields)>0 AND cardinality(e.keys)>0 AND cardinality(e.fields)+cardinality(e.keys)<=$2 AND
  NOT EXISTS(SELECT 1 FROM unnest(e.fields||e.keys) f LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname=f AND a.attnum>0 AND NOT a.attisdropped
- WHERE a.attnum IS NULL OR a.attgenerated<>'' OR a.attidentity<>'') AND
+ WHERE a.attnum IS NULL OR a.attgenerated<>'' OR (a.attidentity<>'' AND f=ANY(e.fields))) AND
  EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attname='gregale_row_identity' AND atttypid='uuid'::regtype AND attnotnull AND NOT attisdropped) AND
  EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=c.oid AND attname='gregale_row_version' AND atttypid='int8'::regtype AND attnotnull AND NOT attisdropped),false)
-FROM gregale_repair.enrollments e LEFT JOIN pg_class c ON c.oid=e.relation LEFT JOIN pg_namespace n ON n.oid=c.relnamespace WHERE e.qualified_name=$1`
+FROM gregale_repair.enrollments e LEFT JOIN pg_class c ON c.oid=e.relation LEFT JOIN pg_namespace n ON n.oid=c.relnamespace WHERE e.qualified_name=$1`)
 
 func doctorEnrollment(ctx context.Context, tx pgx.Tx, r *DoctorReport, fingerprint string, missing []string) error {
 	registry, err := doctorPrivileges(ctx, tx, r, missing)

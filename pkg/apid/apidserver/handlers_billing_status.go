@@ -33,7 +33,7 @@ func (s *server) getBillingStatus(w http.ResponseWriter, r *http.Request, acct s
 	if !enabled {
 		reconciliation = false
 	}
-	writeJSON(w, http.StatusOK, api.BillingStatusResponse{
+	out := api.BillingStatusResponse{
 		Mode:                       string(mode),
 		Enabled:                    enabled,
 		Provider:                   name,
@@ -42,5 +42,13 @@ func (s *server) getBillingStatus(w http.ResponseWriter, r *http.Request, acct s
 		CustomerConfigured:         resolved.ProviderCustomerID != "",
 		SubscriptionConfigured:     resolved.StripeSubscriptionItem != "",
 		UsageReconciliationEnabled: reconciliation,
-	})
+	}
+	// A scheduled cancellation or downgrade is visible before it applies
+	// (ADR-20261103131742 amendment 1); a failed read leaves it out.
+	if enabled {
+		if current, ok := s.subscriptionState(r.Context(), resolved); ok {
+			scheduledChangeFields(&out, current)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }

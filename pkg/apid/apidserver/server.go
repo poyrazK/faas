@@ -180,6 +180,8 @@ type server struct {
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore
+	configGuardSweepMu   sync.Mutex
+	configGuardCursor    state.ConfigGuardCursor
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
 	postReleaseTelemetry rollbackOn5xxTelemetry
@@ -2142,8 +2144,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOverageCap))))
 	// Raising or clearing the spend cap is a billing change: admin, like
 	// the plan and billing routes, so a deploy-scoped CI key or MCP
-	// connection cannot remove the account's spending ceiling.
-	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.raiseOverageCap)))))
+	// connection cannot remove the account's spending ceiling. A session
+	// also needs a recent step-up, as the dashboard and organization cap
+	// routes do (ADR-20261103131742 amendment 1).
+	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.raiseOverageCap))))))
 	// IAM-5 (issue #189): per-account rotation grace-window
 	// override. Admin-only because the rotation primitive is
 	// admin-only (POST /v1/keys/{id}/rotate mirrors the same
@@ -2864,12 +2868,13 @@ func (s *server) handler() http.Handler {
 	// PR-1 of the deploy-diff cluster — server-side pre-deploy
 	// preview. Read-only (no DB writes, no audit row, no deployment
 	// row), so the auth chain matches GET /v1/apps/{slug}/metrics
-	// (server.go:785): authLimited → requireScope(ScopesReadSurface)
-	// with NO requireMFA. A CI key with `apps:read` is sufficient;
-	// typical deploy-write keys also pass (ScopeAdmin covers the
-	// read surface). Cross-account isolation is via loadApp at
+	// (server.go:785): authLimited with NO requireMFA. A CI key with
+	// `apps:read` is sufficient, and so is deploy:write: a deploy token
+	// previews the deploy it may make (rc.318 field report). The diff
+	// names env keys, never values, and a deploy token stays bound to its
+	// app (ADR-20261031162858). Cross-account isolation is via loadApp at
 	// handlers_diff.go:diffApp.
-	mux.HandleFunc("POST /v1/apps/{slug}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.diffApp)))
+	mux.HandleFunc("POST /v1/apps/{slug}/diff", s.authLimited(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.diffApp)))
 	// ADR-126 / issue #975 item #2 — OpenAPI Import + Auto-Generation.
 	// Five app-scoped routes keyed on {slug}, distinct from the
 	// deployment-keyed getOpenAPIDoc / patchOpenAPIDoc / openAPIDocDelete
@@ -4828,14 +4833,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/invoices/{id}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceRefresh))))
 	mux.HandleFunc("POST /v1/invoices/backfill", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceHistoryBackfill))))
 
-	// Billing portal link (issue #253). Read-only — the URL itself
-	// does not mutate anything; the customer-facing mutations live
-	// inside the provider-hosted portal that the URL points to. Same
-	// access tier as usage/invoices (usage:read scope) but NO MFA
-	// gate: the portal is a read in HTTP terms, but it creates an
-	// authenticated Stripe session where the customer can mutate billing.
-	// Email verification therefore applies before the redirect leaves Gregale.
-	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.getBillingPortal))))
+	// Billing portal link (issue #253). The URL is a signed-in provider
+	// session where the holder cancels the subscription, replaces the card
+	// and reads invoices, so it takes what cancelling takes: an admin
+	// credential, MFA, a verified email and a recent step-up for a session
+	// (ADR-20261103131742 amendment 1). A usage:read key handed it out
+	// before. authLimited keeps it open to suspended accounts, which pay
+	// through it.
+	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.requireStepUp(5*time.Minute)(s.getBillingPortal))))))
 	// Customer billing status is a read-only account projection. It must not
 	// depend on operator allowlists or provider-specific catalog APIs.
 

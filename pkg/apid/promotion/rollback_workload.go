@@ -2,6 +2,7 @@ package promotion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/apid/durable"
@@ -83,6 +84,9 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 			return "", "", fmt.Errorf("%w: previous target deployment is not a restorable target", state.ErrConflict)
 		}
 		if hasCurrent && current.ID == previous.ID {
+			if current.TrafficPercent != 100 || state.IsServiceRollout(current) {
+				return "", "", fmt.Errorf("%w: previous target is not the sole serving release", state.ErrConflict)
+			}
 			return "restored", previous.ID, nil
 		}
 		if candidate.ID == "" || !hasCurrent || current.ID != candidate.ID || candidate.Status != state.DeployLive {
@@ -91,21 +95,15 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 		if err := durable.TransferPromotionValidator(ctx, previous, previous.ID); err != nil {
 			return "", "", err
 		}
-		if previous.Status == state.DeployLive {
-			// Retained live revisions can carry zero traffic. Marking them
-			// live again is a no-op, so restore weights with an atomic guard
-			// against a newer serving deployment or split.
-			if _, err := store.UpdateDeploymentTraffic(ctx, previous.ID, 100, candidate.ID); err != nil {
-				return "", "", fmt.Errorf("could not restore previous target traffic: %w", err)
+		restore, ok := store.(state.RollbackTrafficStore)
+		if !ok {
+			return "", "", fmt.Errorf("guarded project rollback is unavailable")
+		}
+		if err := restore.RestoreDeploymentTrafficIfCurrent(ctx, appID, previous.ID, candidate.ID); err != nil {
+			if errors.Is(err, state.ErrCheckedRollbackChanged) {
+				return "", "", fmt.Errorf("%w: target changed after promotion", state.ErrConflict)
 			}
-		} else {
-			guarded, ok := store.(state.DeploymentActivationGuardStore)
-			if !ok {
-				return "", "", fmt.Errorf("%w: guarded deployment activation is unavailable", state.ErrConflict)
-			}
-			if err := guarded.MarkDeploymentLiveIfServing(ctx, previous.ID, candidate.ID); err != nil {
-				return "", "", fmt.Errorf("could not restore previous target deployment: %w", err)
-			}
+			return "", "", fmt.Errorf("could not restore previous target deployment: %w", err)
 		}
 		return "restored", previous.ID, nil
 	}

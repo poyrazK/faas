@@ -2677,6 +2677,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
+		if errors.Is(err, state.ErrCheckedRollbackChanged) {
+			return state.Deployment{}, nil, api.NewProblem(http.StatusConflict, "rollback_deployment_changed", "Serving release changed", "The release whose health was checked no longer serves all traffic; this rollback was not applied.")
+		}
 		if errors.Is(err, state.ErrLayerArtifactRetired) {
 			return state.Deployment{}, nil, rollbackTargetArtifactsReclaimed()
 		}
@@ -2821,7 +2824,7 @@ func (s *server) planRollback(r *http.Request, acct state.Account, app state.App
 		if err != nil {
 			return rollbackPlan{}, api.ErrCapacity("could not read rollback release policy")
 		}
-		if policy.Mode == "enforce" {
+		if policy.Mode == "enforce" && !req.RestoreDatabases {
 			return rollbackPlan{}, api.NewProblem(http.StatusConflict, api.CodeBindingReleaseRequired, "Exact rollback required", "Use target_deployment_id and expected_current_deployment_id to start a checked historical rollback.")
 		}
 	}
@@ -5459,6 +5462,12 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 			return
 		}
 		s.scheduleProviderPlanChange(w, r, acct, billingAcct, changer, plan)
+		return
+	}
+	// Asking for the plan already paid for keeps the subscription: a
+	// scheduled cancellation or downgrade is undone (ADR-20261103131742
+	// amendment 1).
+	if s.keepSubscriptionPlan(w, r, acct) {
 		return
 	}
 	if err := s.setAccountPlan(r.Context(), acct, plan); err != nil {

@@ -245,6 +245,43 @@ func (d functionSetDeploy) run(ctx context.Context, client functionSetClient) in
 	return 0
 }
 
+// functionSetPlan is `deploy --plan` for a functions manifest: what each
+// function deploys as, read from local files only.
+type functionSetPlan struct {
+	Inference     string                `json:"inference"`
+	Functions     []functionSetPlanItem `json:"functions"`
+	DeployCommand string                `json:"deploy_command"`
+}
+
+type functionSetPlanItem struct {
+	Name    string `json:"name"`
+	App     string `json:"app"`
+	Runtime string `json:"runtime"`
+	Handler string `json:"handler"`
+	Root    string `json:"root"`
+}
+
+// printPlan shows the function set without login, upload or remote state.
+func (d functionSetDeploy) printPlan() int {
+	planned, err := d.plan()
+	if err != nil {
+		return printErr("Invalid functions manifest", err)
+	}
+	plan := functionSetPlan{Inference: "local", DeployCommand: "gregale deploy", Functions: make([]functionSetPlanItem, 0, len(planned))}
+	for _, fn := range planned {
+		plan.Functions = append(plan.Functions, functionSetPlanItem{Name: fn.spec.Name, App: fn.slug, Runtime: fn.runtime, Handler: fn.handler, Root: fn.root})
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(plan))
+	}
+	_, _ = fmt.Fprintf(d.out, "Plan (local inference; no login, upload or remote state)\n\nFunctions (%d) from %s:\n", len(plan.Functions), displayPath(d.cwd, d.projectDir))
+	for _, fn := range plan.Functions {
+		_, _ = fmt.Fprintf(d.out, "  %-20s %-28s %-10s %s\n", fn.Name, fn.App, fn.Runtime, fn.Root)
+	}
+	_, _ = fmt.Fprintf(d.out, "\nDeploy them: %s\nCompare with remote state: gregale deploy --dry-run\n", plan.DeployCommand)
+	return 0
+}
+
 func (d functionSetDeploy) summarize(done []string, failed plannedFunction, skipped []plannedFunction) {
 	verb := "Deployed"
 	if d.planOnly {

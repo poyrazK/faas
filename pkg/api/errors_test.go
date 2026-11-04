@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAsProblem(t *testing.T) {
@@ -405,6 +406,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeOrgLastOwner, CodeOrgPersonalImmutable, CodeOrgAPIKeyRequiresOrg,
 		CodeOrgFreeLimitExceeded,
 		CodeBillingEmailInUse, CodeBillingContactMember,
+		CodeBillingSubscriptionEnding, CodePaymentAuthenticationRequired,
 	}
 	seen := make(map[string]bool)
 	for _, c := range codes {
@@ -1200,6 +1202,32 @@ func TestErrTrafficPolicyTooComplexHintByUnit(t *testing.T) {
 				t.Fatalf("TrafficPolicyCheckTimedOut = %v, want %v", !tc.wantRetryFirst, tc.wantRetryFirst)
 			}
 		})
+	}
+}
+
+// A plan change refused because the subscription is ending is a 409 that
+// names the request keeping the subscription; an upgrade the bank asked to
+// confirm is a 402 that says nothing was charged.
+// adr: 20261103131742
+func TestBillingPlanChangeProblems(t *testing.T) {
+	ending := ErrBillingSubscriptionEnding(PlanPro, time.Date(2026, 12, 3, 10, 0, 0, 0, time.UTC), false)
+	if ending.Status != http.StatusConflict || StatusForCode(ending.Code) != http.StatusConflict {
+		t.Fatalf("ending: status %d, StatusForCode %d; want 409", ending.Status, StatusForCode(ending.Code))
+	}
+	for _, want := range []string{"2026-12-03", `PATCH /v1/account/plan {"plan": "pro"}`} {
+		if !strings.Contains(ending.Detail, want) {
+			t.Fatalf("ending detail %q lacks %q", ending.Detail, want)
+		}
+	}
+	if org := ErrBillingSubscriptionEnding(PlanPro, time.Time{}, true); !strings.Contains(org.Detail, "PATCH /v1/orgs/{slug}/plan") || !strings.Contains(org.Detail, "end of the billing period") {
+		t.Fatalf("organization ending detail %q", org.Detail)
+	}
+	auth := ErrPaymentAuthenticationRequired(PlanScale)
+	if auth.Status != http.StatusPaymentRequired || StatusForCode(auth.Code) != http.StatusPaymentRequired {
+		t.Fatalf("authentication: status %d, StatusForCode %d; want 402", auth.Status, StatusForCode(auth.Code))
+	}
+	if !strings.Contains(auth.Detail, "nothing was charged") {
+		t.Fatalf("authentication detail %q", auth.Detail)
 	}
 }
 

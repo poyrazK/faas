@@ -116,7 +116,8 @@ func cmdAlertPresetEnable(args []string) int {
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
 	cooldown := fs.Int(flagNameCooldownMinutes, 0, fmt.Sprintf("cooldown override in minutes (%d..%d); 0 means use preset default", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	enabled := fs.Bool(flagNameEnabled, true, "whether the instantiated rule is enabled")
-	if err := fs.Parse(args); err != nil {
+	// The preset name may come before the flags (rc.318 field report).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *interactive {

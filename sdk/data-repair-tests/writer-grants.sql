@@ -5,4 +5,4 @@ GRANT UPDATE ON public.products TO __WRITER_ROLE__;
 GRANT SELECT,INSERT,UPDATE ON gregale_repair.operations,gregale_repair.changes TO __WRITER_ROLE__;
 GRANT SELECT,INSERT ON public.gregale_operation_inbox,public.gregale_customer_operation_inbox TO __WRITER_ROLE__;
 GRANT EXECUTE ON FUNCTION gregale_repair.begin_operation(uuid,jsonb,text,regclass,uuid),
- gregale_repair.finish_operation(uuid),gregale_repair.check_enrollment(uuid),gregale_repair.fingerprint(regclass) TO __WRITER_ROLE__;
+ gregale_repair.finish_operation(uuid),gregale_repair.check_enrollment(uuid),gregale_repair.fingerprint(regclass),gregale_repair.type_fingerprint(regclass,boolean) TO __WRITER_ROLE__;

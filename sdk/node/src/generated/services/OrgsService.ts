@@ -3064,6 +3064,9 @@ export class OrgsService {
    * when the upgrade charge of an existing subscription is declined. The
    * first checkout bills the acting owner's email until
    * `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+   * Asking for the organization's current plan keeps its subscription,
+   * undoing a scheduled cancellation or downgrade; while a cancellation is
+   * scheduled any other plan answers 409 `billing_subscription_ending`.
    *
    * @returns OrgPlanResponse The confirmed organization plan.
    * @throws ApiError

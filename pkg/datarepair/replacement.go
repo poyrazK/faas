@@ -21,7 +21,7 @@ type Replacement struct {
 
 func (r Replacement) Valid(p Plan) bool {
 	if !validID(p.ID) || !validID(p.SourceOperationID) || p.Scope.Validate() != nil || !digestPattern.MatchString(p.Digest) || p.ExpiresAt.IsZero() ||
-		!validID(r.ParentPlanID) || r.ParentPlanID == p.ID || r.ParentPlanID == p.SourceOperationID || !digestPattern.MatchString(r.ParentPlanDigest) ||
+		!validID(r.ParentPlanID) || r.ParentPlanID == p.ID || !digestPattern.MatchString(r.ParentPlanDigest) ||
 		r.PreviousCandidates < 1 || r.PreviousCandidates > api.DataRepairMaxRows || r.PreviousExcluded < 0 ||
 		r.PreviousExcluded > api.DataRepairMaxRows-r.PreviousCandidates || r.RetainedCandidates < 0 || r.RetainedCandidates > r.PreviousCandidates ||
 		r.RemovedCandidates < 0 || r.RemovedCandidates > r.PreviousCandidates || r.RetainedCandidates+r.RemovedCandidates != r.PreviousCandidates ||

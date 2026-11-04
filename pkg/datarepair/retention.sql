@@ -176,7 +176,8 @@ BEGIN
   INTO held,holds FROM groups;
  expiry:=now_at+make_interval(secs=>__PURGE_PLAN_TTL__);
  doc:=jsonb_build_object('scope',expected_scope,'before',cutoff,'created_at',now_at,'expires_at',expiry,
-  'entries',entries,'estimated_payload_bytes',total_bytes,'held_approved_plans',held,'holds',holds,'requested_by_role',session_user);
+  'entries',entries,'estimated_payload_bytes',total_bytes,'held_approved_plans',held,'holds',holds,'requested_by_role',session_user,
+  'render_timezone',current_setting('TimeZone'));
  IF octet_length(doc::text)>__PURGE_MAX_PLAN_BYTES__ THEN RAISE EXCEPTION 'repair_retention_limit' USING ERRCODE='54000'; END IF;
  INSERT INTO gregale_repair.retention_runs(id,scope,document,digest,expires_at)
  VALUES(plan,expected_scope,doc,encode(sha256(convert_to(doc::text,'UTF8')),'hex'),expiry);
@@ -186,6 +187,7 @@ END $$;
 CREATE OR REPLACE FUNCTION gregale_repair.apply_retention(plan uuid, expected_scope jsonb, expected_digest text, actor text) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE r gregale_repair.retention_runs; item jsonb; current_item jsonb; cutoff timestamptz; at timestamptz:=clock_timestamp(); retained jsonb;
+ caller_timezone text:=current_setting('TimeZone'); result jsonb;
 BEGIN
  IF actor IS NULL OR octet_length(actor) NOT BETWEEN 1 AND __ACTOR_MAX_BYTES__ THEN RAISE EXCEPTION 'repair_invalid_retention_actor' USING ERRCODE='22023'; END IF;
  IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'repair_retention_requires_read_committed' USING ERRCODE='22023'; END IF;
@@ -201,6 +203,9 @@ BEGIN
   (r.document->>'estimated_payload_bytes')::bigint>__PURGE_MAX_BYTES__ THEN RAISE EXCEPTION 'repair_invalid_retention_policy' USING ERRCODE='22023'; END IF;
  -- Validate the whole frozen set before changing anything. A newly created
  -- plan pins its source, and any changed entry rejects the entire batch.
+ -- New previews freeze their rendering timezone. Older previews retain their
+ -- original same-timezone behavior; never rewrite a reviewed digest.
+ PERFORM set_config('TimeZone',coalesce(r.document->>'render_timezone',caller_timezone),true);
  FOR item IN SELECT v FROM jsonb_array_elements(r.document->'entries') v LOOP
   current_item:=gregale_repair.retention_item(item->>'kind',(item->>'id')::uuid,expected_scope,cutoff);
   IF current_item IS DISTINCT FROM item THEN RAISE EXCEPTION 'repair_retention_selection_changed' USING ERRCODE='40001'; END IF;
@@ -217,5 +222,7 @@ BEGIN
  END LOOP;
  PERFORM set_config('gregale.repair_purge','',true);
  UPDATE gregale_repair.retention_runs SET applied_at=at,applied_by=actor,applied_role=session_user WHERE id=plan;
- RETURN gregale_repair.get_retention_plan(plan,expected_scope);
+ result:=gregale_repair.get_retention_plan(plan,expected_scope);
+ PERFORM set_config('TimeZone',caller_timezone,true);
+ RETURN result;
 END $$;

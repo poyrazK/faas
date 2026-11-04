@@ -17,6 +17,9 @@ const DefaultMaxVerificationAge = api.DefaultBindingVerificationAge
 // Scope selects the inventory's verification scope. Unsupported probes require
 // an explicit waiver; their coverage never becomes passed.
 type Policy struct {
+	// AllowPreparedRollback is an internal database-switch evaluation. It
+	// permits only a prepared target with no resident or starting instances.
+	AllowPreparedRollback     bool
 	App                       string
 	DeploymentID              string
 	Scope                     string
@@ -68,7 +71,7 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 	for _, item := range bindings {
 		report.checkBinding(item, policy, probesUnavailable)
 	}
-	report.checkRuntime(inventory.RuntimeFreshness)
+	report.checkRuntime(inventory.RuntimeFreshness, policy.AllowPreparedRollback)
 	active := 0
 	for _, item := range report.Bindings {
 		if item.Status != "skipped" {
