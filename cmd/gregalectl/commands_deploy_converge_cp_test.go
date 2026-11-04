@@ -123,6 +123,8 @@ func TestDeployConvergeControlPlaneValidate(t *testing.T) {
 		{name: "missing vars file", mutate: func(o *deployConvergeControlPlaneOptions) { o.AnsibleVarsFile = filepath.Join(dir, "missing") }, want: "--ansible-vars-file"},
 		{name: "missing key", mutate: func(o *deployConvergeControlPlaneOptions) { o.SSHKey = filepath.Join(dir, "missing") }, want: "--ssh-key"},
 		{name: "empty user", mutate: func(o *deployConvergeControlPlaneOptions) { o.SSHUser = "" }, want: "--ssh-user"},
+		{name: "full release without roles", mutate: func(o *deployConvergeControlPlaneOptions) { o.FullRelease = true }, want: "--full-release needs --roles"},
+		{name: "full release with roles", mutate: func(o *deployConvergeControlPlaneOptions) { o.FullRelease, o.Roles = true, []string{"grafana"} }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -291,7 +293,9 @@ func TestControlPlaneConvergePlaybookRecordsContractOnlyAfterBootstrap(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(bootstrap), "when: faas_join_bootstrap_contract_current | default(false) | bool") {
+	// The node_join.yml prepare clause (ADR-20261025095348) is false here: the converge
+	// playbook never sets faas_join_rollout_phase.
+	if !strings.Contains(string(bootstrap), "(faas_join_bootstrap_contract_current | default(false) | bool) or") {
 		t.Fatal("bootstrap.yml no longer honors faas_join_bootstrap_contract_current; an unchanged control-plane contract would reconverge every rollout")
 	}
 }

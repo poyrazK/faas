@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One self-serve platform preview (ADR 20261021080640).
+ * One self-serve platform preview.
  */
 export type Preview = {
   key: string;

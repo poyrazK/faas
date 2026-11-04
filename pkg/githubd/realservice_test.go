@@ -427,6 +427,8 @@ func TestRealService_ExchangeOAuthCode_AlreadyInstalledUpserts(t *testing.T) {
 		switch r.URL.Path {
 		case "/login/oauth/access_token":
 			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "user-tok"})
+		case "/user":
+			_ = json.NewEncoder(w).Encode(map[string]string{"login": "octocat"})
 		case "/user/installations":
 			// atomic counter is incremented on every request so the
 			// handler's read races safely with the test goroutine's
@@ -880,6 +882,9 @@ type fakeGithubOpts struct {
 	// verifyBranch is the default_branch the verify endpoint
 	// echoes back. Defaults to defaultProductionBranch ("main").
 	verifyBranch string
+	// userLogin is GET /user's login (default "octocat"); orgRole is the
+	// user's organization role, "" for no membership (H49).
+	userLogin, orgRole string
 }
 
 type fakeGithubServer struct {
@@ -913,6 +918,23 @@ func newFakeGithubServer(t *testing.T, opts fakeGithubOpts) *fakeGithubServer {
 			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": opts.accessToken})
 		case r.URL.Path == "/user/installations" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"installations": opts.installs})
+		case r.URL.Path == "/user" && r.Method == http.MethodGet:
+			login := opts.userLogin
+			if login == "" {
+				login = "octocat"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"login": login})
+		case strings.HasPrefix(r.URL.Path, "/user/memberships/orgs/") && r.Method == http.MethodGet:
+			role := opts.orgRole
+			if role == "" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if role == "forbidden" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "active", "role": role})
 		case r.URL.Path == "/installation/repositories" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{"repositories": opts.repos})
 		case strings.HasPrefix(r.URL.Path, "/repos/") && r.Method == http.MethodGet:

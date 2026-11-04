@@ -60,10 +60,12 @@ type Service struct {
 	MFARecoveryAlertOutboxEnabled     func() bool
 	MFADisabledAlertOutboxEnabled     func() bool
 	DeploymentFailedOutboxEnabled     func() bool
+	AgentRunDeliveredOutboxEnabled    func() bool
 	SubscriptionEndedOutboxEnabled    func() bool
 	QuotaWarningOutboxEnabled         func() bool
 	NonpaymentDeletionOutboxEnabled   func() bool
 	AccountSuspendedOutboxEnabled     func() bool
+	ManagedPostgresCapOutboxEnabled   func() bool
 	AccountRestoredOutboxEnabled      func() bool
 	PaymentFailedOutboxEnabled        func() bool
 	MFAEnabledAlertOutboxEnabled      func() bool
@@ -78,6 +80,8 @@ type Service struct {
 	Metrics                           http.Handler
 	Monitoring                        http.Handler
 	OnTick                            func()
+
+	ManagedPostgresRestoreSlotOutboxEnabled func() bool
 }
 
 func (s *Service) enabled() bool { return s != nil && s.Enabled != nil && s.Enabled() }
@@ -589,6 +593,20 @@ func (s *Service) prepareAndSubmit(ctx context.Context, r Recipient) (string, st
 		}
 		return "deferred", "submission_not_started"
 	}
+	submissionCtx, err = s.managedPostgresCapSubmissionContext(submissionCtx, m.Message)
+	if err != nil {
+		if errors.Is(err, ErrDisabled) {
+			return "queued", "producer_unavailable"
+		}
+		return "deferred", "submission_not_started"
+	}
+	submissionCtx, err = s.managedPostgresRestoreSlotSubmissionContext(submissionCtx, m.Message)
+	if err != nil {
+		if errors.Is(err, ErrDisabled) {
+			return "queued", "producer_unavailable"
+		}
+		return "deferred", "submission_not_started"
+	}
 	submissionCtx, err = s.accountRestoredSubmissionContext(submissionCtx, m.Message)
 	if err != nil {
 		if errors.Is(err, ErrDisabled) {
@@ -610,6 +628,12 @@ func (s *Service) prepareAndSubmit(ctx context.Context, r Recipient) (string, st
 			return "cancelled", "account_changed"
 		}
 		if errors.Is(err, errAccountSuspensionObsolete) {
+			return "cancelled", "account_changed"
+		}
+		if errors.Is(err, errManagedPostgresCapObsolete) {
+			return "cancelled", "account_changed"
+		}
+		if errors.Is(err, errManagedPostgresRestoreSlotObsolete) {
 			return "cancelled", "account_changed"
 		}
 		if errors.Is(err, errAccountRestorationObsolete) {

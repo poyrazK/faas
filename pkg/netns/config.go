@@ -209,6 +209,14 @@ type Config struct {
 	// is already there, instead of having to create the set, the counter and
 	// the rule inside a latency-sensitive transition.
 	EgressCircuitEnabled bool
+	// Quarantine (ADR-732) isolates a production fork: the guest may not
+	// open any flow, and only the platform (via VethPeer) may open flows to
+	// it. The rules live in their own base chains at QuarantinePriority on
+	// the forward and input hooks, in both the ip and ip6 tables, so
+	// nothing added to or inserted into the regular forward chain later
+	// (allowlist, private-network or operator patches) can override them:
+	// a drop in any base chain is final. False renders nothing.
+	Quarantine bool
 	// EgressPorts is the set of TCP destination ports the guest may open
 	// connections to (ADR-361): api.TenantEgressBasePorts plus any ports
 	// the app declares. Everything else the guest originates is dropped,
@@ -234,6 +242,12 @@ type Config struct {
 	// resolver reports an answer. ADR-031 allowlisted destinations are
 	// exempt; they are accepted before the gate.
 	DNSGated bool
+	// DatabaseEgress (ADR 20261026150000) declares the egress_db set and
+	// accepts guest TCP to its address and port pairs before the ADR-361
+	// port policy: the endpoints of the app's own managed databases, added
+	// by vmmd when the guest resolves their names. It is part of Config so
+	// a prepared namespace built without the set is never reused.
+	DatabaseEgress bool
 	// ServiceAddressCIDR admits guest TCP to private service addresses
 	// (ADR-576). The host DNATs that traffic onto the tenant-bridge service
 	// listeners. The zero prefix admits nothing.
@@ -534,6 +548,7 @@ func (c Config) NftCommands() [][]string {
 	cmds := make([][]string, 0, 16)
 	add := func(argv ...string) { cmds = append(cmds, nft(argv...)) }
 	add("add", "table", "ip", "faas")
+	cmds = append(cmds, c.quarantineRules(nft, "ip")...)
 	// Chain policy (ADR-031). Empty EgressAllowlist → keep the
 	// historical `policy accept` (every non-deny-listed destination
 	// reaches the public internet, same as today). Non-empty → flip
@@ -796,8 +811,10 @@ func (c Config) NftCommands() [][]string {
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
 	// ADR-361 port policy: everything not accepted above must be TCP to an
 	// egress_ports port. Allowlisted destinations were accepted above and
-	// keep ADR-031's any-port-but-25 semantics.
+	// keep ADR-031's any-port-but-25 semantics; bound managed databases are
+	// accepted just before it on their own port.
 	if !c.QualificationOnly {
+		cmds = append(cmds, c.egressDatabaseRule(nft, "ip")...)
 		cmds = append(cmds, c.egressPortRule(nft, "ip"))
 	}
 	if len(c.EgressAllowlist) > 0 {
@@ -811,6 +828,7 @@ func (c Config) NftCommands() [][]string {
 	// per-netns `inet faas` table is a follow-up if we want to collapse the
 	// two; see ADR-023 "rejected alternatives" for the trade-off.
 	add("add", "table", "ip6", "faas")
+	cmds = append(cmds, c.quarantineRules(nft, "ip6")...)
 	cmds = append(cmds, c.egressPolicyObjects(nft, "ip6")...)
 	// Same counter object for the v6 chain — faas_cap is scoped per table,
 	// so ip faas.faas_cap and ip6 faas.faas_cap are independent (ADR-023).
@@ -833,6 +851,9 @@ func (c Config) NftCommands() [][]string {
 	// Accept reply traffic first (mirrors the v4 chain above) so a published
 	// request's IPv6 reply isn't dropped by the lateral-movement deny.
 	add("add", "rule", "ip6", "faas", "forward", "ct", "state", "established,related", "accept")
+	// Circuit updates replace both families in one transaction; declare the
+	// IPv6 set and rule as well, after accepting established connections.
+	cmds = append(cmds, c.egressCircuitRules(nft, "ip6")...)
 	// §7 cap mirrored on the v6 chain: spec mandates one per-instance budget
 	// without distinguishing v4 vs v6 entries. Without this sibling a guest
 	// could flood only IPv6 to exhaust the conntrack table separately. Placed
@@ -881,6 +902,7 @@ func (c Config) NftCommands() [][]string {
 		cmds = append(cmds, rule)
 	}
 	if !c.QualificationOnly {
+		cmds = append(cmds, c.egressDatabaseRule(nft, "ip6")...)
 		cmds = append(cmds, c.egressPortRule(nft, "ip6"))
 	}
 	if len(c.EgressAllowlist) > 0 {
@@ -931,6 +953,13 @@ const (
 	// after EgressFlowTimeout of silence.
 	EgressFlowSet     = "egress_flows"
 	EgressFlowTimeout = "10m"
+	// EgressDatabaseSet holds address . port pairs of the app's bound managed
+	// databases (ADR 20261026150000), each with the answer's timeout, so the
+	// database port opens only to those addresses on every plan.
+	EgressDatabaseSet = "egress_db"
+	// egressDatabaseSetSize bounds the set: a database host answers with a
+	// handful of addresses and an app binds a few databases.
+	egressDatabaseSetSize = 1024
 )
 
 // egressPolicyObjects declares the policy counters and the egress_ports set
@@ -964,6 +993,10 @@ func (c Config) egressPolicyObjects(nft func(...string) []string, family string)
 			nft("add", "counter", family, "faas", EgressUnresolvedCounter, "{}"),
 			nft("add", "set", family, "faas", EgressResolvedSet, "{", "type", addrType, ";", "flags", "timeout", ";",
 				"size", strconv.Itoa(egressDstSetSize), ";", "}"))
+	}
+	if c.DatabaseEgress {
+		cmds = append(cmds, nft("add", "set", family, "faas", EgressDatabaseSet, "{", "type", addrType, ".", "inet_service", ";", "flags", "timeout", ";",
+			"size", strconv.Itoa(egressDatabaseSetSize), ";", "}"))
 	}
 	if elems := c.EgressPortElements(); elems != "" {
 		cmds = append(cmds, nft("add", "element", family, "faas", EgressPortsSet, "{", elems, "}"))
@@ -1097,6 +1130,44 @@ func (c Config) ResolvedEgressAddCommands(addrs []netip.Addr, ttl time.Duration)
 func (c Config) egressFlowRule(nft func(...string) []string, family string) []string {
 	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
 		"update", "@"+EgressFlowSet, "{", family, "daddr", ".", "tcp", "dport", "}")
+}
+
+// egressDatabaseRule accepts guest TCP to a bound managed database's address
+// and port (ADR 20261026150000). It runs just before the port policy, after
+// the DNS gate and the SMTP drop, so it widens only egress_ports and only for
+// those pairs.
+func (c Config) egressDatabaseRule(nft func(...string) []string, family string) [][]string {
+	if !c.DatabaseEgress {
+		return nil
+	}
+	return [][]string{nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
+		family, "daddr", ".", "tcp", "dport", "@"+EgressDatabaseSet, "accept")}
+}
+
+// DatabaseEgressAddCommands adds address . port pairs to the egress_db sets,
+// each expiring after ttl. v4 and v6 addresses go to their family's set. Run
+// them as one nft -f transaction.
+func (c Config) DatabaseEgressAddCommands(addrs []netip.Addr, port uint16, ttl time.Duration) [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	secs := int(max(ttl, time.Second) / time.Second)
+	var v4, v6 []string
+	for _, a := range addrs {
+		elem := fmt.Sprintf("%s . %d timeout %ds", a.Unmap(), port, secs)
+		if a.Unmap().Is4() {
+			v4 = append(v4, elem)
+		} else {
+			v6 = append(v6, elem)
+		}
+	}
+	var cmds [][]string
+	if len(v4) > 0 {
+		cmds = append(cmds, nft("add", "element", "ip", "faas", EgressDatabaseSet, "{", strings.Join(v4, ", "), "}"))
+	}
+	if len(v6) > 0 {
+		cmds = append(cmds, nft("add", "element", "ip6", "faas", EgressDatabaseSet, "{", strings.Join(v6, ", "), "}"))
+	}
+	return cmds
 }
 
 // egressPortRule drops guest-originated TCP to any port outside egress_ports.
@@ -1251,6 +1322,54 @@ func (c Config) forwardConnlimitRule6(nft func(...string) []string) []string {
 // instead of being duplicated in two argv builders.
 //
 // Internal to NftCommands — do not invoke from anywhere else.
+// QuarantinePriority runs the quarantine base chains before the regular
+// filter chains (priority 0). Order does not change the outcome, because a
+// drop in any base chain is final, but running first keeps the drop counter
+// honest: a quarantined guest's packets are counted here, not by a later
+// deny rule.
+const QuarantinePriority = "-10"
+
+// QuarantineDropCounter counts packets a quarantine chain dropped.
+const QuarantineDropCounter = "quarantine_drop"
+
+// quarantineRules renders the ADR-732 isolation for one table family:
+//
+//   - forward: replies to flows the platform opened (established/related)
+//     pass; every other packet from the guest drops; a new flow to the guest
+//     is admitted only from VethPeer, the platform's path, so a private
+//     network side-link cannot reach the fork.
+//   - input: replies to connections the namespace opened (vmmd's bridge to
+//     the guest) pass; nothing the guest starts reaches the namespace.
+//
+// Each chain's policy is accept so packets the chain does not match fall
+// through to the regular chains unchanged.
+func (c Config) quarantineRules(nft func(parts ...string) []string, family string) [][]string {
+	if !c.Quarantine {
+		return nil
+	}
+	chain := func(name, hook string) []string {
+		return nft("add", "chain", family, "faas", name, "{", "type", "filter", "hook", hook,
+			"priority", QuarantinePriority, ";", "policy", nftPolicyAccept, ";", "}")
+	}
+	rule := func(parts ...string) []string {
+		return nft(append([]string{"add", "rule", family, "faas"}, parts...)...)
+	}
+	drop := []string{"counter", "name", QuarantineDropCounter, "drop"}
+	return [][]string{
+		nft("add", "counter", family, "faas", QuarantineDropCounter, "{}"),
+		chain("quarantine_forward", "forward"),
+		rule("quarantine_forward", "ct", "state", "established,related", "accept"),
+		rule(append([]string{"quarantine_forward", "iifname", c.Tap}, drop...)...),
+		rule(append([]string{"quarantine_forward", "oifname", c.Tap, "iifname", "!=", c.VethPeer}, drop...)...),
+		chain("quarantine_input", "input"),
+		// vmmd's per-instance bridge reaches the guest from inside this
+		// namespace, so the guest's replies arrive on the input hook. Accept
+		// those; drop anything the guest itself starts toward the namespace.
+		rule("quarantine_input", "ct", "state", "established,related", "accept"),
+		rule(append([]string{"quarantine_input", "iifname", c.Tap}, drop...)...),
+	}
+}
+
 func (c Config) forwardChainPolicy() string {
 	if c.QualificationOnly {
 		return nftPolicyDrop
@@ -1421,12 +1540,21 @@ func (c Config) NftResetCommands() [][]string {
 	}
 }
 
-// TcCommands returns the argv list that applies the per-plan egress
-// bandwidth cap on the host-side veth (spec §7: per-instance egress cap
-// 10 / 25 / 100 / 250 Mbit via tc). VethHost is the host-side end of the
-// pair (root-ns, enslaved to br-tenants); the qdisc lives there so it
-// caps bytes regardless of which direction the kernel attributes them.
-// No ip netns exec prefix — tc runs in the root namespace.
+// TcCommands returns the argv list that applies the per-plan bandwidth
+// cap (spec §7: per-instance egress cap 10 / 25 / 100 / 250 Mbit via
+// tc). A root qdisc shapes only the packets its device transmits, so
+// each direction needs its own:
+//
+//   - VethPeer, the instance namespace's end, transmits what the guest
+//     sends toward the host and the internet. That is guest egress, the
+//     cap the spec and the abuse desk rely on, and the same bytes ADR-046
+//     meters as VethHost rx_bytes (#4382: the cap used to sit only on
+//     VethHost, leaving egress unshaped). It runs inside the namespace,
+//     which teardown deletes with the qdisc. The private side-link
+//     carries only the account's own network and stays unshaped.
+//   - VethHost, the root-namespace end, transmits traffic toward the
+//     guest. That qdisc predates the egress one and keeps inbound
+//     throughput as it was.
 //
 // tbf is the simplest single-rate shaper; an htb class hierarchy is
 // unnecessary for a per-veth root cap where every instance gets its own
@@ -1439,10 +1567,12 @@ func (c Config) NftResetCommands() [][]string {
 // empty slice here would silently swallow a misconfigured cap; refusing
 // to run the argv when zero is the clearer behaviour.
 func (c Config) TcCommands() [][]string {
+	rate := fmt.Sprintf("%dmbit", c.EgressMbit)
 	return [][]string{
 		{"tc", "qdisc", "add", "dev", c.VethHost, "root", "tbf",
-			"rate", fmt.Sprintf("%dmbit", c.EgressMbit),
-			"burst", "32kbit", "latency", "400ms"},
+			"rate", rate, "burst", "32kbit", "latency", "400ms"},
+		{"ip", "netns", "exec", c.Netns, "tc", "qdisc", "add", "dev", c.VethPeer, "root", "tbf",
+			"rate", rate, "burst", "32kbit", "latency", "400ms"},
 	}
 }
 
@@ -1456,9 +1586,11 @@ func (c Config) TcCommands() [][]string {
 // win. Mirrors the NftResetCommands pattern (PR #36).
 //
 // No teardown is needed: ip link del VethHost in TeardownCommands
-// drops the qdisc when it drops the link.
+// drops the host qdisc when it drops the link, and ip netns del drops
+// the egress qdisc with VethPeer.
 func (c Config) TcResetCommands() [][]string {
 	return [][]string{
 		{"tc", "qdisc", "del", "dev", c.VethHost, "root"},
+		{"ip", "netns", "exec", c.Netns, "tc", "qdisc", "del", "dev", c.VethPeer, "root"},
 	}
 }

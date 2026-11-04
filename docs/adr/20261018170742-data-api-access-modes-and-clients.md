@@ -271,3 +271,21 @@ type-level union, so TypeScript rejects a nullable token source without it.
   into public endpoints by default.
 - **Rendering Python/Go clients inside the runtime.** It would tie client
   languages to runtime upgrades and add no information the snapshot lacks.
+
+## Amendment 1 (2026-10-27): IPv6 visitors group by /48 under pressure
+
+**Context.** Anonymous budgets key IPv6 visitors by /64 in a table of at most
+`DataAPIRateLimitMaxSubjects` (4,096) subjects, and refuse new visitors with
+`tracking_capacity` while it is full. One /48 holds 65,536 /64s, so a single
+allocation rotating addresses could keep the table full and lock every other
+visitor out.
+
+**Decision.** Once the anonymous rate table or the per-user concurrency table
+tracks `DataAPIAnonymousCoarseSubjects` (three quarters of the cap) subjects,
+new anonymous IPv6 requests are keyed by /48 instead of /64. Below that,
+keys stay /64. IPv4 keys are unchanged. The bound lives in `pkg/api/limits.go`
+and is mirrored in `config.mjs` under the parity test.
+
+**Consequences.** Under pressure, legitimate visitors who share a /48 with an
+abusive one share its budget until the table drains. An attacker with many
+/48s can still fill the table; the edge WAF remains the defence against that.

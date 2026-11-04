@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -33,7 +35,7 @@ func TestIssueReporterCapturesExceptionAndBoundedContext(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", HTTPClient: srv.Client(),
 	})
 	if err != nil {
@@ -41,7 +43,7 @@ func TestIssueReporterCapturesExceptionAndBoundedContext(t *testing.T) {
 	}
 	defer reporter.Close(context.Background())
 
-	eventID := reporter.CaptureException(errors.New("invalid format"), faas.IssueContext{
+	eventID := reporter.CaptureException(errors.New("invalid format"), preview.IssueContext{
 		RequestID: "request-123", TraceID: strings.Repeat("a", 32), Route: "/exports",
 		SourceKind: "worker", InvocationID: "c4f3d348-8842-4eec-b6e4-9666096e5d48",
 	})
@@ -101,14 +103,14 @@ func TestIssueReporterRetriesIdenticalPayload(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", RetryDelay: 10 * time.Millisecond,
 		GroupingStrategy: "failure-site-v1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID := reporter.CaptureException(errors.New("temporary outage"), faas.IssueContext{
+	eventID := reporter.CaptureException(errors.New("temporary outage"), preview.IssueContext{
 		ErrorCode: "PROVIDER_503", FingerprintOverride: strings.Repeat("é", 200),
 	})
 	if eventID == "" {
@@ -155,7 +157,7 @@ func TestIssueReporterBoundsQueueAndReportsOverflow(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", MaxQueue: 1,
 	})
 	if err != nil {
@@ -196,7 +198,7 @@ func TestIssueReporterRecoverAndRepanicPreservesValue(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{BaseURL: srv.URL, App: "exports", Token: "g_issue_test"})
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{BaseURL: srv.URL, App: "exports", Token: "g_issue_test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +209,7 @@ func TestIssueReporterRecoverAndRepanicPreservesValue(t *testing.T) {
 				t.Fatalf("recovered value = %#v, want %#v", got, panicValue)
 			}
 		}()
-		defer reporter.RecoverAndRepanic(faas.IssueContext{RequestID: "panic-request"})
+		defer reporter.RecoverAndRepanic(preview.IssueContext{RequestID: "panic-request"})
 		panic(panicValue)
 	}()
 
@@ -246,7 +248,7 @@ func TestIssueReporterDoesNotFollowRedirects(t *testing.T) {
 	}))
 	defer redirect.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: redirect.URL, App: "exports", Token: "g_issue_test",
 	})
 	if err != nil {
@@ -277,7 +279,7 @@ func TestIssueReporterCloseDeadlineLeavesQueuedEventVisible(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", RetryDelay: time.Second,
 	})
 	if err != nil {
@@ -301,13 +303,13 @@ func TestIssueReporterCloseDeadlineLeavesQueuedEventVisible(t *testing.T) {
 	}
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), time.Second)
 	defer flushCancel()
-	if err := reporter.Flush(flushCtx); !errors.Is(err, faas.ErrIssueReporterStopped) {
+	if err := reporter.Flush(flushCtx); !errors.Is(err, preview.ErrIssueReporterStopped) {
 		t.Fatalf("Flush after stopped worker = %v, want ErrIssueReporterStopped", err)
 	}
 }
 
 func TestIssueReporterContainsCustomTransportPanic(t *testing.T) {
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: "https://api.example.test", App: "exports", Token: "g_issue_test",
 		HTTPClient: &http.Client{Transport: panicRoundTripper{}},
 	})
@@ -328,7 +330,7 @@ func TestIssueReporterContainsCustomTransportPanic(t *testing.T) {
 }
 
 func TestIssueReporterContainsPanickingErrorFormatter(t *testing.T) {
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 		BaseURL: "https://api.example.test", App: "exports", Token: "g_issue_test",
 	})
 	if err != nil {
@@ -346,7 +348,7 @@ func TestIssueReporterContainsPanickingErrorFormatter(t *testing.T) {
 }
 
 func TestNewIssueReporterRejectsUnsafeConfiguration(t *testing.T) {
-	cases := []faas.IssueReporterOptions{
+	cases := []preview.IssueReporterOptions{
 		{BaseURL: "ftp://api.example.test", App: "exports", Token: "g_issue_test"},
 		{BaseURL: "https://user:pass@api.example.test", App: "exports", Token: "g_issue_test"},
 		{BaseURL: "https://api.example.test/path", App: "exports", Token: "g_issue_test"},
@@ -355,7 +357,7 @@ func TestNewIssueReporterRejectsUnsafeConfiguration(t *testing.T) {
 		{BaseURL: "https://api.example.test", App: "exports", Token: "g_issue_test", GroupingStrategy: "unknown"},
 	}
 	for _, options := range cases {
-		if reporter, err := faas.NewIssueReporter(options); err == nil {
+		if reporter, err := preview.NewIssueReporter(options); err == nil {
 			_ = reporter.Close(context.Background())
 			t.Errorf("NewIssueReporter(%+v) unexpectedly succeeded", options)
 		}
@@ -387,7 +389,7 @@ func TestIssueReporterCopiesOperationalContext(t *testing.T) {
 	var got faas.IssueEvent
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { json.NewDecoder(r.Body).Decode(&got); w.WriteHeader(202) }))
 	defer srv.Close()
-	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{BaseURL: srv.URL, App: "worker", Token: "g_issue_test", GroupingStrategy: "failure-site-v1", SymbolicationStrategy: "deployment-source-maps-v1"})
+	reporter, err := preview.NewIssueReporter(preview.IssueReporterOptions{BaseURL: srv.URL, App: "worker", Token: "g_issue_test", GroupingStrategy: "failure-site-v1", SymbolicationStrategy: "deployment-source-maps-v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +398,7 @@ func TestIssueReporterCopiesOperationalContext(t *testing.T) {
 		entries = append(entries, faas.IssueBreadcrumb{OccurredAt: time.Now(), Category: "workflow", Level: "info", Message: strings.Repeat("x", 300)})
 	}
 	tags := map[string]string{"component": "payments", "email": "private@example.com"}
-	if reporter.CaptureException(errors.New("failed"), faas.IssueContext{Breadcrumbs: entries, Tags: tags}) == "" {
+	if reporter.CaptureException(errors.New("failed"), preview.IssueContext{Breadcrumbs: entries, Tags: tags}) == "" {
 		t.Fatal("not queued")
 	}
 	tags["component"] = "later"

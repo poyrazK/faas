@@ -134,9 +134,8 @@ An existing binding may be updated; already admitted records keep their
 captured policy revision and lane. The batch-create trigger endpoint expects
 the named policy to exist before it applies a trigger declaration.
 
-Kafka uses topic, partition, and offset as a durable record identity; SQS
-uses `MessageId`; NATS and Redis Streams use stream sequence or entry ID.
-AMQP publishers must provide a unique `message_id`. A delivery without a
+Kafka uses topic, partition, and offset as a durable record identity; NATS
+and Redis Streams use stream sequence or entry ID. A delivery without a
 stable identity or scalar work key goes to the trigger dead-letter ledger.
 Gregale acknowledges a terminal broker redelivery without invoking the app
 again. Superseding or cancelling a **pending** broker record leaves its

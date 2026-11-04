@@ -7,7 +7,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from faas_sdk.postgres_pool_runtime import PostgresPoolBinding, PostgresPoolBindingError
+from faas_sdk.preview.postgres_pool_runtime import PostgresPoolBinding, PostgresPoolBindingError
 from faas_sdk.secret_reload_runtime import SecretConsumer, SecretReloadCoordinator, SecretReloadError, SecretReloadIO
 
 

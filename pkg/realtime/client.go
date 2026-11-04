@@ -86,6 +86,8 @@ func (c *Client) RegisterEndpoint(ctx context.Context, endpoint Endpoint) error 
 		MaxMessageBytes:            endpoint.MaxMessageBytes,
 		MaxConnectionAgeSeconds:    int64(endpoint.MaxConnectionAge / time.Second),
 		AccountMaxConnections:      endpoint.AccountMaxConnections,
+		Preview:                    endpoint.Preview,
+		ChannelRules:               append([]api.RealtimeChannelRule(nil), endpoint.ChannelRules...),
 		LiveRoutes:                 append([]LiveRoute(nil), endpoint.LiveRoutes...),
 		Previews:                   clonePreviews(endpoint.Previews),
 	}

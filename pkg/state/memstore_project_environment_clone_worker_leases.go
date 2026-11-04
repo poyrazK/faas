@@ -100,3 +100,15 @@ func (m *MemStore) clearCloneWorkerLeaseLocked(operationID string) {
 	lease.token, lease.until = "", time.Time{}
 	m.projectEnvironmentCloneWorkerLeases[operationID] = lease
 }
+
+func (m *MemStore) UnfinishedProjectEnvironmentClones(context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var count int64
+	for _, op := range m.projectEnvironmentCloneOperations {
+		if cloneOperationWorkerEligible(op.Status) {
+			count++
+		}
+	}
+	return count, nil
+}

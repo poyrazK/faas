@@ -34,6 +34,12 @@ func (s *server) writeDevSession(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrCapacity("store developer watch mode"))
 		return
 	}
+	app, err = devloop.SaveGoCommand(r.Context(), s.store, app, request.GoCommand)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("store developer go command"))
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, status, api.DevSessionResponse{App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: *app.PreviewExpiresAt, Postgres: postgres, Buckets: buckets, Watch: request.Watch})
+	writeJSON(w, status, api.DevSessionResponse{App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: *app.PreviewExpiresAt, Postgres: postgres, Buckets: buckets, Watch: request.Watch,
+		GoCommand: app.Manifest.BuildGoCommand})
 }

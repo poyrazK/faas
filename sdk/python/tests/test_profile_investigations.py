@@ -1,5 +1,5 @@
-from faas_sdk.models.profile_investigation_response import ProfileInvestigationResponse
-from faas_sdk.models.save_profile_investigation_request import SaveProfileInvestigationRequest
+from faas_sdk.preview.models.profile_investigation_response import ProfileInvestigationResponse
+from faas_sdk.preview.models.save_profile_investigation_request import SaveProfileInvestigationRequest
 
 
 def test_saved_investigation_keeps_expired_notes_and_complete_path():
@@ -71,9 +71,9 @@ def test_unselected_call_path_stays_absent():
 def test_regression_check_defaults_and_historical_assessment():
     from uuid import UUID
 
-    from faas_sdk.api.apps.check_profile_regression import _get_kwargs
-    from faas_sdk.models.check_profile_regression_request import CheckProfileRegressionRequest
-    from faas_sdk.models.profile_regression_assessment import ProfileRegressionAssessment
+    from faas_sdk.preview.api.apps.check_profile_regression import _get_kwargs
+    from faas_sdk.preview.models.check_profile_regression_request import CheckProfileRegressionRequest
+    from faas_sdk.preview.models.profile_regression_assessment import ProfileRegressionAssessment
 
     request = CheckProfileRegressionRequest(expected_revision=3)
     kwargs = _get_kwargs("demo", UUID("33333333-3333-4333-8333-333333333333"), body=request)

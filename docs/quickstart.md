@@ -10,6 +10,10 @@ gregale start ./my-api
 
 Run `gregale start` inside your project, or pass its directory as shown above.
 An unambiguous app is selected automatically; multiple candidates offer a picker.
+When the directory holds two or more services (a Compose file or a workspace),
+Start first offers to deploy all of them as one project: it then shows the
+project plan from `gregale deploy --project` and creates nothing until you
+confirm it. See [Deploy a multi-service app](multi-service-apps.md).
 Review the launch and confirm. It handles browser login when needed, picks the app name and access
 defaults, checks the source, shows compact launch progress, and automatically tests
 the first response. It finishes with the response, elapsed time, useful follow-up
@@ -20,7 +24,7 @@ through `gregale logs`.
 
 After you finish, Start remembers the app in the selected source directory.
 From there, `gregale logs --follow`, `gregale metrics`, `gregale inspect`, and
-`gregale deploy` reuse that target. Use `gregale context` to see or change your
+`gregale deploy` reuse that target. Use `gregale config context get` to see or change your
 defaults. For an isolated edit-and-reload loop, run `gregale dev`; see
 [reusable development setup](gregale-dev.md#save-setup-for-the-next-session-or-a-teammate).
 
@@ -85,9 +89,9 @@ Useful follow-ups:
 
 ```bash
 gregale logs my-api --follow
-gregale metrics my-api
+gregale metric my-api
 gregale open my-api
-gregale capabilities
+gregale feature list
 ```
 
 Apps park when idle and wake on the next request; this saves idle cost but the

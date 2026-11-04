@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -1182,21 +1183,58 @@ func defaultRealtimeNodeOperator(node state.ComputeNode) (RealtimeNodeOperator, 
 	if node.GatewayTargetURL == nil || strings.TrimSpace(*node.GatewayTargetURL) == "" {
 		return nil, fmt.Errorf("%w: node %s has no gateway_target_url", errManagedRealtimeOwnerUnavailable, node.Name)
 	}
-	base, err := realtimeGatewayBaseURL(*node.GatewayTargetURL)
+	base, dataHost, err := realtimeGatewayBaseURL(*node.GatewayTargetURL)
 	if err != nil {
 		return nil, err
 	}
-	client := &realtime.Client{BaseURL: base, HTTPClient: &http.Client{Timeout: 10 * time.Second}}
+	client := &realtime.Client{BaseURL: base, HTTPClient: &http.Client{Timeout: 10 * time.Second,
+		Transport: dataListenerFallback{base: http.DefaultTransport, dataHost: dataHost}}}
 	return remoteRealtimeNodeOperator{client: client}, nil
 }
 
-func realtimeGatewayBaseURL(raw string) (string, error) {
+// realtimeGatewayBaseURL is the realtimed control proxy on the node's
+// private control listener (api.GatewaydPrivateControlPort), which only the
+// control plane reaches, and the host of its data listener, where a node
+// whose gatewayd-internal predates the private route still serves it.
+func realtimeGatewayBaseURL(raw string) (base, dataHost string, err error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme != "tcp" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return "", fmt.Errorf("%w: invalid gateway_target_url %q", errManagedRealtimeOwnerUnavailable, raw)
+		return "", "", fmt.Errorf("%w: invalid gateway_target_url %q", errManagedRealtimeOwnerUnavailable, raw)
 	}
-	if _, _, err := net.SplitHostPort(u.Host); err != nil {
-		return "", fmt.Errorf("%w: invalid gateway_target_url %q: %w", errManagedRealtimeOwnerUnavailable, raw, err)
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: invalid gateway_target_url %q: %w", errManagedRealtimeOwnerUnavailable, raw, err)
 	}
-	return "http://" + u.Host + "/v1/internal/realtime", nil
+	return "http://" + net.JoinHostPort(host, api.GatewaydPrivateControlPort) + "/v1/internal/realtime", u.Host, nil
+}
+
+// dataListenerFallback repeats a control request on the node's data
+// listener when its private control listener is closed or does not route
+// the realtime proxy yet (a mux 404, not realtimed's own JSON one). Nodes
+// run release N-1 beside N, and the control plane upgrades first.
+type dataListenerFallback struct {
+	base     http.RoundTripper
+	dataHost string
+}
+
+func (t dataListenerFallback) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	switch {
+	case err != nil && !errors.Is(err, syscall.ECONNREFUSED):
+		return nil, err
+	case err == nil && (resp.StatusCode != http.StatusNotFound || strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json")):
+		return resp, nil
+	case err == nil:
+		_ = resp.Body.Close()
+	}
+	retry := req.Clone(req.Context())
+	retry.URL.Host, retry.Host = t.dataHost, ""
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		retry.Body = body
+	}
+	return t.base.RoundTrip(retry)
 }

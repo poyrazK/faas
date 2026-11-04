@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type invoicePDFRequesterStub struct {
@@ -66,6 +67,73 @@ func TestBillingWebhooksRejectInactiveProvider(t *testing.T) {
 				t.Fatalf("status = %d, want 503; body=%s", rec.Code, rec.Body)
 			}
 		})
+	}
+}
+
+// Every Polar webhook answer is counted by status class, so an alert fires
+// before Polar disables an endpoint that keeps answering non-2xx.
+// adr: 20261029180000
+func TestPolarWebhookCountsOutcome(t *testing.T) {
+	ops := wire.NewOpsMetrics("apid")
+	srv := &server{
+		billingProvider: &fakeBillingProvider{},
+		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ops:             ops,
+	}
+	for range 2 {
+		srv.polarWebhook(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/webhooks/polar", nil))
+	}
+	families, err := ops.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "apid_ops_total" {
+			continue
+		}
+		for _, m := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range m.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			if labels["op"] == "polar_webhook" {
+				got[labels["code"]] += m.GetCounter().GetValue()
+			}
+		}
+	}
+	if got["unavailable"] != 2 || len(got) != 1 {
+		t.Fatalf("apid_ops_total{op=polar_webhook} = %v, want unavailable=2 only", got)
+	}
+}
+
+func TestWebhookOutcomeWriterClassifiesStatus(t *testing.T) {
+	for status, want := range map[int]string{http.StatusOK: "ok", http.StatusBadRequest: "rejected", http.StatusServiceUnavailable: "unavailable"} {
+		ops := wire.NewOpsMetrics("apid")
+		w := &webhookOutcomeWriter{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK}
+		w.WriteHeader(status)
+		w.WriteHeader(http.StatusTeapot) // a later header never changes the outcome
+		w.observe(ops, "polar_webhook", time.Now())
+		families, err := ops.Registry().Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, family := range families {
+			for _, m := range family.GetMetric() {
+				if family.GetName() != "apid_ops_total" {
+					continue
+				}
+				for _, l := range m.GetLabel() {
+					if l.GetName() == "code" && l.GetValue() == want && m.GetCounter().GetValue() == 1 {
+						found = true
+					}
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("status %d: no apid_ops_total{code=%q} sample", status, want)
+		}
 	}
 }
 

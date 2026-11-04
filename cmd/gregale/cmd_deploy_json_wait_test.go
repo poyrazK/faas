@@ -114,7 +114,7 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	if !validDeploySessionID(receipt.SessionID) {
 		t.Fatalf("timeout receipt missing valid session ID: %q", receipt.SessionID)
 	}
-	if got, want := receipt.ResumeCommand, "gregale deploy resume "+receipt.SessionID; got != want {
+	if got, want := receipt.ResumeCommand, "gregale release resume "+receipt.SessionID; got != want {
 		t.Fatalf("timeout receipt resume_command = %q, want %q", got, want)
 	}
 }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, ProjectsService, type ProjectPromotionControl } from '../src/index.js';
+import { FaaSClient, ProjectsService, type ProjectPromotionControl } from '../src/preview.js';
 
 test('promotion abort and recovery preserve generation and durable receipts', async (t) => {
   const request = { request_id: 'a'.repeat(32), expected_generation: 7 };

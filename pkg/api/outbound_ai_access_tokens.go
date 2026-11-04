@@ -85,5 +85,5 @@ func ErrOutboundAIAccessTokenLimit(observed int64) *Problem {
 	return NewProblem(http.StatusConflict, "outbound_ai_access_token_limit", "AI access token limit reached",
 		"An app can hold at most 20 live AI gateway access tokens; revoke one first.").
 		WithLimit(OutboundAIAccessTokensPerApp, observed).
-		WithDocs(docsBase + "/outbound-integrations#ai-access-tokens")
+		WithDocs(docsBase + "/cli#outbound")
 }

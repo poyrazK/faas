@@ -14,12 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
-	faas "github.com/poyrazK/faas/sdk/go"
 )
 
-func repairableDatabase(t *testing.T) (*sql.DB, *sql.DB, context.Context, faas.DataRepairCapture, string) {
+func repairableDatabase(t *testing.T) (*sql.DB, *sql.DB, context.Context, preview.DataRepairCapture, string) {
 	t.Helper()
 	path := os.Getenv("GREGALE_DATA_REPAIR_SCHEMA")
 	if path == "" {
@@ -67,10 +68,10 @@ func repairableDatabase(t *testing.T) (*sql.DB, *sql.DB, context.Context, faas.D
 	cfg.Database = database
 	writer := stdlib.OpenDB(*cfg, stdlib.OptionAfterConnect(func(ctx context.Context, c *pgx.Conn) error { _, err := c.Exec(ctx, "SET ROLE "+quoted); return err }))
 	t.Cleanup(func() { _ = writer.Close() })
-	return owner, writer, ctx, faas.DataRepairCapture{Table: "public.products", Environment: "production", Release: "repairable-go-v1"}, quoted
+	return owner, writer, ctx, preview.DataRepairCapture{Table: "public.products", Environment: "production", Release: "repairable-go-v1"}, quoted
 }
 
-func repairableCustomerInput(t *testing.T, input faas.OperationRequest) faas.CustomerOperationRequest {
+func repairableCustomerInput(t *testing.T, input preview.OperationRequest) preview.CustomerOperationRequest {
 	t.Helper()
 	r := httptest.NewRequest(input.Method, input.Path, bytes.NewReader(input.Body))
 	for name, value := range map[string]string{
@@ -81,7 +82,7 @@ func repairableCustomerInput(t *testing.T, input faas.OperationRequest) faas.Cus
 	} {
 		r.Header.Set(name, value)
 	}
-	out, err := faas.CustomerOperationRequestFromHTTP(r, input.Body)
+	out, err := preview.CustomerOperationRequestFromHTTP(r, input.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,20 +98,20 @@ func TestDataRepairRepairableTransactions(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			owner, writer, ctx, config, role := repairableDatabase(t)
 			input := operationInput(t)
-			call := func(request faas.OperationRequest, cfg faas.DataRepairCapture, handler func(faas.OperationSQLTransaction) (faas.OperationOutcome, error), databases ...*sql.DB) (faas.OperationTransactionResult, error) {
+			call := func(request preview.OperationRequest, cfg preview.DataRepairCapture, handler func(preview.OperationSQLTransaction) (preview.OperationOutcome, error), databases ...*sql.DB) (preview.OperationTransactionResult, error) {
 				selected := writer
 				if len(databases) > 0 {
 					selected = databases[0]
 				}
 				if !customer {
-					return faas.WithRepairableOperationTransaction(ctx, selected, request, cfg, handler)
+					return preview.WithRepairableOperationTransaction(ctx, selected, request, cfg, handler)
 				}
-				return faas.WithRepairableCustomerOperationTransaction(ctx, selected, repairableCustomerInput(t, request), cfg, func(tx faas.OperationSQLTransaction) (json.RawMessage, error) {
+				return preview.WithRepairableCustomerOperationTransaction(ctx, selected, repairableCustomerInput(t, request), cfg, func(tx preview.OperationSQLTransaction) (json.RawMessage, error) {
 					out, err := handler(tx)
 					return out.Result, err
 				})
 			}
-			fresh := func() faas.OperationRequest {
+			fresh := func() preview.OperationRequest {
 				out := input
 				if err := owner.QueryRowContext(ctx, `SELECT gen_random_uuid()::text`).Scan(&out.OperationID); err != nil {
 					t.Fatal(err)
@@ -124,9 +125,9 @@ func TestDataRepairRepairableTransactions(t *testing.T) {
 				}
 				return value
 			}
-			edit := func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+			edit := func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 				_, err := tx.ExecContext(ctx, `UPDATE products SET category='new'`)
-				return faas.OperationOutcome{Result: json.RawMessage(`{"changed":2}`)}, err
+				return preview.OperationOutcome{Result: json.RawMessage(`{"changed":2}`)}, err
 			}
 			first, err := call(input, config, edit)
 			if err != nil || first.Replayed {
@@ -136,9 +137,9 @@ func TestDataRepairRepairableTransactions(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := facts()
-			replay, err := call(input, config, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+			replay, err := call(input, config, func(preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 				t.Fatal("committed handler reran")
-				return faas.OperationOutcome{}, nil
+				return preview.OperationOutcome{}, nil
 			})
 			if err != nil || !replay.Replayed || !bytes.Equal(first.Body, replay.Body) || facts() != before {
 				t.Fatal("unsafe replay", err)
@@ -156,29 +157,29 @@ func TestDataRepairRepairableTransactions(t *testing.T) {
 			if json.Unmarshal(plan, &counts) != nil || counts.Candidates != 1 || counts.Conflicts != 1 {
 				t.Fatal("human edit was not a conflict", string(plan))
 			}
-			for _, change := range []func(*faas.DataRepairCapture){func(c *faas.DataRepairCapture) { c.Release += "-other" }, func(c *faas.DataRepairCapture) { c.Environment = "staging" }, func(c *faas.DataRepairCapture) { c.Table = "public.other" }} {
+			for _, change := range []func(*preview.DataRepairCapture){func(c *preview.DataRepairCapture) { c.Release += "-other" }, func(c *preview.DataRepairCapture) { c.Environment = "staging" }, func(c *preview.DataRepairCapture) { c.Table = "public.other" }} {
 				changed := config
 				change(&changed)
-				if _, err := call(input, changed, edit); !errors.Is(err, faas.ErrDataRepairCaptureMismatch) {
+				if _, err := call(input, changed, edit); !errors.Is(err, preview.ErrDataRepairCaptureMismatch) {
 					t.Fatal("mismatched replay accepted", err)
 				}
 			}
 			before = facts()
 			aborted := errors.New("business validation failed")
-			if _, err := call(fresh(), config, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+			if _, err := call(fresh(), config, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 				_, _ = edit(tx)
-				return faas.OperationOutcome{}, aborted
+				return preview.OperationOutcome{}, aborted
 			}); !errors.Is(err, aborted) || facts() != before {
 				t.Fatal("callback failure did not roll back", err)
 			}
-			if _, err := call(fresh(), config, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+			if _, err := call(fresh(), config, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 				out, err := edit(tx)
 				if err != nil {
 					return out, err
 				}
 				_, err = owner.ExecContext(ctx, "REVOKE INSERT ON gregale_repair.capture_receipts FROM "+role)
 				return out, err
-			}); !errors.Is(err, faas.ErrDataRepairCaptureUnavailable) {
+			}); !errors.Is(err, preview.ErrDataRepairCaptureUnavailable) {
 				t.Fatal("late capture failure was committed", err)
 			}
 			if _, err := owner.ExecContext(ctx, "GRANT INSERT ON gregale_repair.capture_receipts TO "+role); err != nil {
@@ -188,19 +189,19 @@ func TestDataRepairRepairableTransactions(t *testing.T) {
 				t.Fatal("capture guard failure changed rows or receipts")
 			}
 			incomplete := fresh()
-			if _, err := call(incomplete, config, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+			if _, err := call(incomplete, config, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 				out, err := edit(tx)
 				if err != nil {
 					return out, err
 				}
 				_, err = tx.ExecContext(ctx, `SELECT gregale_repair.finish_operation($1)`, incomplete.OperationID)
 				return out, err
-			}); !errors.Is(err, faas.ErrDataRepairCaptureIncomplete) || facts() != before {
+			}); !errors.Is(err, preview.ErrDataRepairCaptureIncomplete) || facts() != before {
 				t.Fatal("incomplete capture changed rows or receipts", err)
 			}
 			zero := fresh()
-			if _, err := call(zero, config, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
-				return faas.OperationOutcome{Result: json.RawMessage(`{"changed":0}`)}, nil
+			if _, err := call(zero, config, func(preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
+				return preview.OperationOutcome{Result: json.RawMessage(`{"changed":0}`)}, nil
 			}); err != nil {
 				t.Fatal("zero-row capture rejected", err)
 			}
@@ -210,19 +211,19 @@ func TestDataRepairRepairableTransactions(t *testing.T) {
 			}
 			legacy := fresh()
 			if customer {
-				_, err = faas.WithCustomerOperationTransaction(ctx, writer, repairableCustomerInput(t, legacy), func(faas.OperationSQLTransaction) (json.RawMessage, error) {
+				_, err = preview.WithCustomerOperationTransaction(ctx, writer, repairableCustomerInput(t, legacy), func(preview.OperationSQLTransaction) (json.RawMessage, error) {
 					return json.RawMessage(`{"old":true}`), nil
 				})
 			} else {
-				_, err = faas.WithOperationTransaction(ctx, writer, legacy, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
-					return faas.OperationOutcome{Result: json.RawMessage(`{"old":true}`)}, nil
+				_, err = preview.WithOperationTransaction(ctx, writer, legacy, func(preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
+					return preview.OperationOutcome{Result: json.RawMessage(`{"old":true}`)}, nil
 				})
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			before = facts()
-			if _, err := call(legacy, config, edit); !errors.Is(err, faas.ErrDataRepairCaptureMissing) || facts() != before {
+			if _, err := call(legacy, config, edit); !errors.Is(err, preview.ErrDataRepairCaptureMissing) || facts() != before {
 				t.Fatal("legacy receipt fabricated capture", err)
 			}
 			var database string
@@ -238,13 +239,13 @@ func TestDataRepairRepairableTransactions(t *testing.T) {
 			lostDB := sql.OpenDB(receiptLossConnector{base: base})
 			t.Cleanup(func() { _ = lostDB.Close() })
 			lost := fresh()
-			if _, err := call(lost, config, edit, lostDB); !errors.Is(err, faas.ErrOperationCommitUnknown) {
+			if _, err := call(lost, config, edit, lostDB); !errors.Is(err, preview.ErrOperationCommitUnknown) {
 				t.Fatal("lost COMMIT was not unknown", err)
 			}
 			before = facts()
-			if replay, err := call(lost, config, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+			if replay, err := call(lost, config, func(preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 				t.Fatal("unknown COMMIT reran callback")
-				return faas.OperationOutcome{}, nil
+				return preview.OperationOutcome{}, nil
 			}); err != nil || !replay.Replayed || facts() != before {
 				t.Fatal("unknown COMMIT did not replay", err)
 			}

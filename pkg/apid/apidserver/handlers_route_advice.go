@@ -60,7 +60,7 @@ func (s *server) getRouteAdvice(w http.ResponseWriter, r *http.Request, acct sta
 	in, err := s.routeAdviceInputs(r.Context(), reader, acct, app, window, maxAge)
 	if err != nil {
 		s.log.Warn("route advice read failed", "app_id", app.ID, "err", err)
-		api.WriteProblem(w, api.ErrCapacity("route advice"))
+		api.WriteProblem(w, routeAnalyticsProblem(err, "route advice"))
 		return
 	}
 	suggestions := append(routeadvisor.Advise(in), s.routeAdviceSettings(r.Context(), acct, app, in.Routes)...)
@@ -83,7 +83,7 @@ func (s *server) routeAdviceSettings(ctx context.Context, acct state.Account, ap
 	if err != nil {
 		return nil
 	}
-	in.WakeAheadEnabled = setting.Enabled
+	in.WakeAheadEnabled = state.EffectiveServiceWakeAhead(setting, app)
 	source, _, err := state.EffectiveRoutePriorities(ctx, s.store, acct.ID, app.ID)
 	if err != nil {
 		return nil

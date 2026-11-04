@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -194,7 +195,7 @@ func (s *server) setPlatformTenantStatus(w http.ResponseWriter, r *http.Request,
 	}
 	updated, err := store.SetPlatformTenantStatus(r.Context(), acct.ID, tenant.ID, req.Status)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not update platform tenant"))
+		api.WriteProblem(w, trafficproblem.TenantBinding(err, api.ErrInternal("could not update platform tenant")))
 		return
 	}
 	if tenant.Status != updated.Status {
@@ -276,7 +277,7 @@ func (s *server) platformTenantLinkError(w http.ResponseWriter, err error) bool 
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Resource already linked", "the resource belongs to another platform tenant"))
 	default:
-		api.WriteProblem(w, api.ErrInternal("could not link platform tenant resource"))
+		api.WriteProblem(w, trafficproblem.TenantBinding(err, api.ErrInternal("could not link platform tenant resource")))
 	}
 	return false
 }

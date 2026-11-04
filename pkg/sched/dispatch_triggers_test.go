@@ -108,7 +108,7 @@ func TestDispatchTriggerOpensSealedKafkaCredentialsForFactory(t *testing.T) {
 	}
 	sealed, err := triggerconfig.Seal(api.TriggerKindKafka,
 		json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password":"runtime-secret"}}`),
-		identity.Recipient())
+		[]*age.X25519Recipient{identity.Recipient()})
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}

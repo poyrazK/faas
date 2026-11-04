@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -27,7 +29,7 @@ func TestRouteInvestigationSDKPreservesSelectionAndEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.GetRouteHealthInvestigation(context.Background(), "demo", "candidate", faas.RouteHealthInvestigationOptions{Method: "POST", Path: "/checkout", StatusCode: 403, CustomerGroupBy: "consumer", CustomerID: customer})
+	out, err := preview.Wrap(client).GetRouteHealthInvestigation(context.Background(), "demo", "candidate", preview.RouteHealthInvestigationOptions{Method: "POST", Path: "/checkout", StatusCode: 403, CustomerGroupBy: "consumer", CustomerID: customer})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +56,7 @@ func TestRouteLatencyInvestigationSDKPreservesMeasuredZeroAndComparisons(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := client.GetRouteHealthInvestigation(context.Background(), "demo", "candidate", faas.RouteHealthInvestigationOptions{Method: "POST", Path: "/checkout", Signal: "latency", CustomerGroupBy: "consumer", CustomerID: customer})
+	r, err := preview.Wrap(client).GetRouteHealthInvestigation(context.Background(), "demo", "candidate", preview.RouteHealthInvestigationOptions{Method: "POST", Path: "/checkout", Signal: "latency", CustomerGroupBy: "consumer", CustomerID: customer})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,11 +2,11 @@ import json
 
 import httpx
 
-from faas_sdk.api.workflows import delete_automation, publish_automation, save_automation_draft
+from faas_sdk.preview.api.workflows import delete_automation, publish_automation, save_automation_draft
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.publish_automation_request import PublishAutomationRequest
-from faas_sdk.models.save_automation_draft_request import SaveAutomationDraftRequest
-from faas_sdk.models.workflow_spec import WorkflowSpec
+from faas_sdk.preview.models.publish_automation_request import PublishAutomationRequest
+from faas_sdk.preview.models.save_automation_draft_request import SaveAutomationDraftRequest
+from faas_sdk.preview.models.workflow_spec import WorkflowSpec
 
 
 def test_authoring_requests_preserve_revision_ownership_and_draft():

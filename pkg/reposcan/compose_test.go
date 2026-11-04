@@ -478,6 +478,42 @@ func TestDetectCompose_RejectsUnknownServiceBindingPolicy(t *testing.T) {
 	}
 }
 
+func TestScanCompose_TopLevelServicePolicyIsTheProjectDefault(t *testing.T) {
+	t.Parallel()
+	result, err := Scan(fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`x-gregale-service-policy: ${POLICY:-project}
+services:
+  api:
+    build: ./api
+  web:
+    build: ./web
+    x-gregale-service-policy: declared
+  db:
+    image: postgres:17
+`)},
+		"api/Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+		"web/Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := map[string]ServiceBindingPolicy{}
+	for _, w := range result.Workloads {
+		policies[w.Name] = w.ServiceBindingPolicy
+	}
+	if policies["api"] != ServiceBindingPolicyProject || policies["web"] != ServiceBindingPolicyDeclared || len(policies) != 2 {
+		t.Fatalf("policies = %v, want api project (top level) and web declared (its own)", policies)
+	}
+
+	_, err = Scan(fstest.MapFS{
+		"compose.yaml":   &fstest.MapFile{Data: []byte("x-gregale-service-policy: open\nservices:\n  api:\n    build: ./api\n")},
+		"api/Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+	})
+	if err == nil || !strings.Contains(err.Error(), "must be project, declared or account") {
+		t.Fatalf("Scan error = %v, want closed validation of the top-level policy", err)
+	}
+}
+
 func TestScanCompose_AcceptsProjectServiceBindingPolicy(t *testing.T) {
 	t.Parallel()
 	result, err := Scan(fstest.MapFS{

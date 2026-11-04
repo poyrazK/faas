@@ -1,0 +1,5 @@
+---
+- name: daemon-reload postgres metrics
+  ansible.builtin.systemd:
+    daemon_reload: true
+  failed_when: false

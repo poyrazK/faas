@@ -56,11 +56,27 @@ func (notInPlanError) Error() string {
 
 func (notInPlanError) Unwrap() error { return ErrQuotaExceeded }
 
+// ErrRestoreSlotInUse refuses a restore past the plan's database limit while
+// another copy already holds the restore slot (ADR-20261031123259). It unwraps
+// to ErrQuotaExceeded.
+var ErrRestoreSlotInUse error = restoreSlotInUseError{}
+
+type restoreSlotInUseError struct{}
+
+func (restoreSlotInUseError) Error() string {
+	return "another restored database already holds the restore slot past the plan's database limit; purge it first"
+}
+
+func (restoreSlotInUseError) Unwrap() error { return ErrQuotaExceeded }
+
 // QuotaProblem names an ErrQuotaExceeded refusal for API problems, telling a
 // plan entitlement apart from a usage quota.
 func QuotaProblem(err error) (status int, code, title string) {
 	if errors.Is(err, ErrNotInPlan) {
 		return 403, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan"
+	}
+	if errors.Is(err, ErrRestoreSlotInUse) {
+		return 403, "managed_postgres_restore_slot_in_use", "Another restored database holds the restore slot"
 	}
 	return 403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
 }
@@ -68,8 +84,8 @@ func QuotaProblem(err error) (status int, code, title string) {
 // ProvisioningClosedDetail and UnavailableDetail are the customer-facing
 // explanations for ErrProvisioningClosed and a real provider outage.
 const (
-	ProvisioningClosedDetail = "Managed PostgreSQL is an operator preview and provisioning is not open for this account right now. Existing databases and bindings keep working; ask the platform operator to open provisioning."
-	UnavailableDetail        = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
+	ProvisioningClosedDetail = "New managed PostgreSQL databases, bindings, restores and resizes are not open for this account right now. Existing databases and bindings keep working; retry later or contact support."
+	UnavailableDetail        = "The managed PostgreSQL provider is temporarily unavailable. Existing databases keep running; retry later or contact support."
 )
 
 // UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
@@ -711,6 +727,11 @@ type Capabilities struct {
 	MaxRestoreWindowSeconds      int64
 	MaxStorageBytes              int64
 	UsageMeters                  []Meter
+	// RetiringMajors are majors that existing databases keep (restore, resize
+	// and maintenance still work) but new databases may not choose: their
+	// upstream end of life is near or past, and no provider upgrades a major in
+	// place. Each is also in PostgresMajors.
+	RetiringMajors []int
 }
 
 func (c Capabilities) Validate() error {
@@ -728,6 +749,14 @@ func (c Capabilities) Validate() error {
 	}
 	hasRestoreUsageAccounting := c.RestoreUsageIsolated || c.RestoreUsageIncludedInSource
 	if (c.RestoreUsageIsolated && c.RestoreUsageIncludedInSource) || (hasRestoreUsageAccounting && !c.PointInTimeRestore) {
+		return ErrInvalid
+	}
+	for _, major := range c.RetiringMajors {
+		if !contains(c.PostgresMajors, major) {
+			return ErrInvalid
+		}
+	}
+	if len(c.NewDatabaseMajors()) == 0 || hasDuplicates(c.RetiringMajors) {
 		return ErrInvalid
 	}
 	if hasDuplicates(c.PostgresMajors) || hasDuplicates(c.ServiceClasses) || hasDuplicates(c.Availability) || hasDuplicates(c.CredentialAccess) || hasDuplicates(c.UsageMeters) {
@@ -771,6 +800,31 @@ func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
 	}
 	if !contains(c.CredentialAccess, access) {
 		return ErrUnsupported
+	}
+	return nil
+}
+
+// NewDatabaseMajors are the majors a new database may choose: every offered
+// major except the retiring ones.
+func (c Capabilities) NewDatabaseMajors() []int {
+	var majors []int
+	for _, major := range c.PostgresMajors {
+		if !contains(c.RetiringMajors, major) {
+			majors = append(majors, major)
+		}
+	}
+	return majors
+}
+
+// SupportsNewDatabase is Supports for a database being created: a retiring
+// major stays supported for the databases that have it, but no new database
+// may choose it.
+func (c Capabilities) SupportsNewDatabase(spec Spec) error {
+	if err := c.Supports(spec); err != nil {
+		return err
+	}
+	if contains(c.RetiringMajors, spec.PostgresMajor) {
+		return fmt.Errorf("%w: postgres major %d is retiring and no longer offered for new databases (offered: %s)", ErrUnsupported, spec.PostgresMajor, joinOffered(c.NewDatabaseMajors(), strconv.Itoa))
 	}
 	return nil
 }
@@ -911,6 +965,34 @@ type Database struct {
 	CreatedAt                   time.Time
 	UpdatedAt                   time.Time
 	DeletedAt                   *time.Time
+	// PurgeAfter is when a scheduled delete's undo window ends
+	// (ADR-20261029174950); zero unless the database is deleting on a
+	// schedule. An immediate delete clears it.
+	PurgeAfter time.Time
+	// RestoreSlotUntil is set while a restored database holds the restore
+	// slot past its owner's database limit (ADR-20261031123259): when it
+	// passes with no room, the database's delete is scheduled.
+	RestoreSlotUntil time.Time
+}
+
+// RestoreRange is the span a point-in-time restore from d can target at now:
+// from the later of its creation and the start of its restore window, up to
+// now (exclusive). Restore applies the same bounds; ok is false while d
+// cannot be restored from.
+func (d Database) RestoreRange(now time.Time) (earliest, latest time.Time, ok bool) {
+	if d.State != StateReady || d.ProviderResourceID == "" || d.Spec.RestoreWindowSeconds <= 0 || !d.CreatedAt.Before(now) {
+		return time.Time{}, time.Time{}, false
+	}
+	earliest = now.Add(-time.Duration(d.Spec.RestoreWindowSeconds) * time.Second)
+	if earliest.Before(d.CreatedAt) {
+		earliest = d.CreatedAt
+	}
+	return earliest, now, true
+}
+
+// Restorable reports whether a scheduled delete can still be undone at now.
+func (d Database) Restorable(now time.Time) bool {
+	return d.State == StateDeleting && !d.PurgeAfter.IsZero() && d.PurgeAfter.After(now)
 }
 
 type BindingState string

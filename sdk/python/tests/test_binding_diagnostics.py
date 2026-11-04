@@ -1,9 +1,9 @@
 from uuid import UUID
 
-from faas_sdk.api.apps import get_binding_verification_run_diagnostics
-from faas_sdk.api.projects import get_project_binding_verification_run_diagnostics
-from faas_sdk.models.binding_verification_run_diagnostics import BindingVerificationRunDiagnostics
-from faas_sdk.models.project_binding_verification_run_diagnostics import ProjectBindingVerificationRunDiagnostics
+from faas_sdk.preview.api.apps import get_binding_verification_run_diagnostics
+from faas_sdk.preview.api.projects import get_project_binding_verification_run_diagnostics
+from faas_sdk.preview.models.binding_verification_run_diagnostics import BindingVerificationRunDiagnostics
+from faas_sdk.preview.models.project_binding_verification_run_diagnostics import ProjectBindingVerificationRunDiagnostics
 
 
 def test_diagnostic_read_routes_and_public_models():

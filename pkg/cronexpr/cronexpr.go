@@ -54,10 +54,10 @@ func Parse(raw, timezone string) (cron.Schedule, error) {
 		return nil, fmt.Errorf("%w: %q never fires", ErrInvalidSchedule, raw)
 	}
 	spec, ok := parsed.(*cron.SpecSchedule)
-	if !ok || !fixedWallTime(raw) {
+	if !ok {
 		return parsed, nil
 	}
-	return dstSchedule{spec: spec}, nil
+	return newDSTSchedule(spec, fixedWallTime(raw)), nil
 }
 
 // NominalOccurrence reports whether at is a wall-clock match of the cron
@@ -71,7 +71,11 @@ func NominalOccurrence(raw, timezone string, at time.Time) (bool, error) {
 	if err != nil {
 		return false, errors.Join(ErrInvalidSchedule, err)
 	}
-	return schedule.Next(at.UTC().Add(-time.Minute)).Equal(at.UTC()), nil
+	spec, ok := schedule.(*cron.SpecSchedule)
+	if !ok {
+		return schedule.Next(at.UTC().Add(-time.Minute)).Equal(at.UTC()), nil
+	}
+	return matchesWallTime(spec, at.In(dstSchedule{spec: spec}.location(at))), nil
 }
 
 // fixedWallTime reports whether the expression names specific wall-clock
@@ -95,39 +99,107 @@ func DSTPolicy(raw string) (string, string, string) {
 	return "interval", "follow_cron_interval", "repeat_as_clock_falls_back"
 }
 
-// dstSchedule gives fixed-time schedules the daylight-saving behaviour of
-// Vixie cron. robfig matches wall-clock fields literally, so in a zone with
-// DST a daily "30 2 * * *" never ran on the spring-forward day (02:30 does
-// not exist) and ran twice on the fall-back day (02:30 happens twice) — a
-// once-a-day job with side effects silently doubled once a year.
+// dstSchedule computes fire times in wall-clock space and applies DSTPolicy.
 //
+// robfig matches the wall-clock fields by stepping absolute time and assumes
+// offsets change by whole hours. Two things followed. A daily "30 2 * * *"
+// in a whole-hour DST zone never ran on the spring-forward day (02:30 does
+// not exist) and ran twice on the fall-back day. And in Australia/Lord_Howe,
+// whose DST moves 30 minutes, robfig skipped whole days around each change
+// and invented fires such as 02:45 for "45 1 * * *".
+//
+// Within one stretch of constant UTC offset, wall time and absolute time
+// differ by that offset, so the next wall-clock match is robfig's answer in
+// UTC. At each offset change the search restarts from the new wall time.
+//
+// Fixed wall-time schedules follow Vixie cron:
 //   - A wall time skipped by a spring-forward gap runs at the first instant
 //     after the gap.
-//   - The second pass through a repeated fall-back hour does not re-run a
+//   - The second pass through a repeated fall-back period does not re-run a
 //     wall time that already fired.
+//
+// Interval schedules follow the clock: a skipped wall time does not run and a
+// repeated one runs on both passes.
 type dstSchedule struct {
-	spec *cron.SpecSchedule
+	spec  *cron.SpecSchedule
+	wall  *cron.SpecSchedule
+	fixed bool
 }
 
+func newDSTSchedule(spec *cron.SpecSchedule, fixed bool) dstSchedule {
+	wall := *spec
+	wall.Location = time.UTC
+	return dstSchedule{spec: spec, wall: &wall, fixed: fixed}
+}
+
+// dstScheduleMaxSteps bounds the offset changes and repeated wall times one
+// Next may cross. Five years of transitions and a fully repeated fall-back
+// period per year stay far below it.
+const dstScheduleMaxSteps = 10000
+
 func (s dstSchedule) Next(t time.Time) time.Time {
-	n := s.spec.Next(t)
-	if n.IsZero() {
-		return n
-	}
-	if gap, ok := s.skippedGapFire(t, n); ok {
-		return gap
-	}
-	// A fixed minute range or list can contain every minute in the repeated
-	// hour. Advance past all of them; a fixed iteration count can return a
-	// later duplicate from the same clock change.
-	for s.repeatsEarlierWallTime(n) {
-		next := s.spec.Next(n)
-		if next.IsZero() {
-			return next
+	loc := s.location(t)
+	limit := t.AddDate(5, 0, 0) // robfig's search horizon
+	x := t
+	_, off := x.In(loc).Zone()
+	from := wallClock(x, off)
+	for range dstScheduleMaxSteps {
+		if !x.Before(limit) {
+			break
 		}
-		n = next
+		match := s.wall.Next(from)
+		if match.IsZero() {
+			return match
+		}
+		at := match.Add(-time.Duration(off) * time.Second)
+		change, changed := firstOffsetChange(x, at, loc, off)
+		if !changed {
+			if s.fixed && s.repeatsEarlierWallTime(at) {
+				x, from = at, match
+				continue
+			}
+			return at.In(t.Location())
+		}
+		_, next := change.In(loc).Zone()
+		if s.fixed && next > off && change.After(t) && s.matchesSkippedWallTime(change, off, next, loc) {
+			return change.In(t.Location())
+		}
+		// Resume at the change, one second before its new wall time, so a
+		// match at the first wall minute after the change is found.
+		x, off = change, next
+		from = wallClock(change, off).Add(-time.Second)
 	}
-	return n
+	return time.Time{}
+}
+
+// wallClock returns x's wall-clock reading under offset off as a UTC time.
+func wallClock(x time.Time, off int) time.Time {
+	return x.Add(time.Duration(off) * time.Second).UTC()
+}
+
+// firstOffsetChange returns the first instant in (from, to] whose offset in
+// loc differs from off. Offsets change at most a few times a year; walk day
+// boundaries and bisect a change.
+func firstOffsetChange(from, to time.Time, loc *time.Location, off int) (time.Time, bool) {
+	for lo := from; lo.Before(to); {
+		hi := lo.Add(24 * time.Hour)
+		if hi.After(to) {
+			hi = to
+		}
+		if _, o := hi.In(loc).Zone(); o != off {
+			for hi.Sub(lo) > time.Second {
+				mid := lo.Add(hi.Sub(lo) / 2)
+				if _, o := mid.In(loc).Zone(); o == off {
+					lo = mid
+				} else {
+					hi = mid
+				}
+			}
+			return hi.Truncate(time.Second), true
+		}
+		lo = hi
+	}
+	return time.Time{}, false
 }
 
 func (s dstSchedule) location(t time.Time) *time.Location {
@@ -151,62 +223,25 @@ func (s dstSchedule) repeatsEarlierWallTime(n time.Time) bool {
 	return sameWallMinute(earlier.In(loc), n.In(loc))
 }
 
-// skippedGapFire finds a spring-forward gap in (t, n) that swallowed a
-// matching wall time and returns the first instant after that gap.
-func (s dstSchedule) skippedGapFire(t, n time.Time) (time.Time, bool) {
-	loc := s.location(t)
-	// Offsets change at most a few times a year; walk day boundaries and
-	// bisect any change. Bounded so a sparse schedule cannot make Next slow.
-	const maxDays = 400
-	day := t
-	for i := 0; i < maxDays && day.Before(n); i++ {
-		next := day.Add(24 * time.Hour)
-		if next.After(n) {
-			next = n
-		}
-		_, offA := day.In(loc).Zone()
-		_, offB := next.In(loc).Zone()
-		if offB > offA {
-			gap := firstInstantWithOffset(day, next, loc, offB)
-			if gap.After(t) && gap.Before(n) && s.matchesSkippedWallTime(gap, offA, offB, loc) {
-				return gap, true
-			}
-		}
-		day = next
-	}
-	return time.Time{}, false
-}
-
-// firstInstantWithOffset bisects (lo, hi] for the first instant whose offset
-// in loc is off; offsets change on whole seconds.
-func firstInstantWithOffset(lo, hi time.Time, loc *time.Location, off int) time.Time {
-	for hi.Sub(lo) > time.Second {
-		mid := lo.Add(hi.Sub(lo) / 2)
-		if _, o := mid.In(loc).Zone(); o == off {
-			hi = mid
-		} else {
-			lo = mid
-		}
-	}
-	return hi.Truncate(time.Second)
-}
-
 // matchesSkippedWallTime reports whether any wall-clock minute swallowed by
 // the gap starting at gap (offset offA before, offB after) matches the spec.
 func (s dstSchedule) matchesSkippedWallTime(gap time.Time, offA, offB int, loc *time.Location) bool {
 	// The skipped wall times are [gap as read under offA, gap as read under offB).
-	start := gap.In(time.FixedZone("", offA))
+	start := gap.In(time.FixedZone("", offA)).Truncate(time.Minute)
 	for m := 0; m < (offB-offA)/60; m++ {
-		w := start.Add(time.Duration(m) * time.Minute)
-		if s.spec.Month&(1<<uint(w.Month())) == 0 ||
-			s.spec.Hour&(1<<uint(w.Hour())) == 0 ||
-			s.spec.Minute&(1<<uint(w.Minute())) == 0 ||
-			!dayMatches(s.spec, w) {
-			continue
+		if matchesWallTime(s.spec, start.Add(time.Duration(m)*time.Minute)) {
+			return true
 		}
-		return true
 	}
 	return false
+}
+
+// matchesWallTime reports whether the wall-clock reading w matches every
+// field of the spec, to the second.
+func matchesWallTime(s *cron.SpecSchedule, w time.Time) bool {
+	return w.Nanosecond() == 0 && s.Second&(1<<uint(w.Second())) != 0 &&
+		s.Minute&(1<<uint(w.Minute())) != 0 && s.Hour&(1<<uint(w.Hour())) != 0 &&
+		s.Month&(1<<uint(w.Month())) != 0 && dayMatches(s, w)
 }
 
 // dayMatches mirrors robfig's day-of-month / day-of-week rule: when either

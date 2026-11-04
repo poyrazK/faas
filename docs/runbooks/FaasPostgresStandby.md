@@ -69,7 +69,8 @@ systemctl status 'postgresql@*-main' --no-pager
 sudo -u postgres psql -X -c "SELECT status, sender_host, last_msg_receipt_time,
   latest_end_lsn FROM pg_stat_wal_receiver"
 sudo -u postgres psql -X -Atc "SELECT pg_is_in_recovery(), now() - pg_last_xact_replay_timestamp()"
-journalctl -u 'postgresql@*-main' --since '-30m' --no-pager | tail -40
+journalctl -u 'postgresql@*-main' --since '-30m' --no-pager | tail -40   # start/stop only
+sudo tail -40 /var/log/postgresql/postgresql-16-main.log                  # the server's own log
 ```
 
 ## Act

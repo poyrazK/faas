@@ -470,12 +470,17 @@ func TestApplyProject_NoTriggersPreservesExistingCron(t *testing.T) {
 	if len(first.Crons) != 1 {
 		t.Fatalf("initial crons=%v want one", first.Crons)
 	}
+	// Declared crons now activate with their deployment (#4806), which this
+	// apid-only harness never brings live. Seed the row activation would
+	// write, as TestApplyProject_OnlyRetainsSiblingAndCron does.
+	declared := first.Crons[0]
 	var originalID, originalSchedule string
 	if err := pool.QueryRow(context.Background(), `
-		select c.id, c.schedule from crons c
-		join apps a on a.id = c.app_id
-		where a.project_id = $1`, first.ProjectID).Scan(&originalID, &originalSchedule); err != nil {
-		t.Fatal(err)
+		insert into crons (app_id, schedule, path, enabled)
+		select a.id, $3, $4, true from apps a
+		where a.project_id = $1 and a.workload_name = $2
+		returning id, schedule`, first.ProjectID, declared.WorkloadName, declared.Schedule, declared.Path).Scan(&originalID, &originalSchedule); err != nil {
+		t.Fatalf("seed declared cron %+v: %v", declared, err)
 	}
 
 	second := applyProjectMultipartWithOptions(t, h, key, "no-triggers", "", "", true,

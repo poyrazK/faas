@@ -1,0 +1,25 @@
+---
+# platform_logs_pki (ADR-20261023124955 §2). The platform log pipeline's mTLS
+# leaves are fleet-PKI feature leaves (pkg/pki FeaturePlatformLogs): no host
+# role requires them, so they never block a rollout, and only the CA's host
+# issues them. The control plane issues its own; a compute node has its
+# Promtail leaf issued into a per-node staging directory on the control plane
+# and copies it in, the way realtimed's live-query leaf arrives. A run keeps a
+# leaf valid for 30 more days, so pki_renew.yml runs this role as renewal.
+faas_platform_logs_pki_root: /etc/faas/tls
+faas_platform_logs_pki_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
+faas_platform_logs_pki_stage_root: /var/lib/faas/pki-features
+
+# Each leaf, the system group whose service reads its key, and the unit to
+# restart when the leaf changes. A group that does not exist yet (its role
+# has not run on this host) is skipped; that role grants the read itself.
+faas_platform_logs_leaves:
+  - { path: loki/server, group: loki, unit: loki.service }
+  # The journal shipper's leaf: Alloy, or Promtail while it stays selectable
+  # (ADR-20261023185953). The path keeps Promtail's name; renaming it would
+  # be a PKI migration for no benefit.
+  - path: promtail/loki-client
+    group: "{{ 'promtail' if faas_obs_log_shipper | default('alloy') == 'promtail' else 'alloy' }}"
+    unit: "{{ 'promtail.service' if faas_obs_log_shipper | default('alloy') == 'promtail' else 'alloy.service' }}"
+  - { path: prometheus/loki-client, group: prometheus, unit: prometheus.service }
+  - { path: grafana/loki-client, group: grafana, unit: grafana-server.service }

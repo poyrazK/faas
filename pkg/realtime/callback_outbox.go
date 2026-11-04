@@ -54,7 +54,26 @@ type CallbackOutboxConfig struct {
 	RetryInterval time.Duration
 	// MaxRetryInterval caps persisted callback retry delays and Retry-After hints.
 	MaxRetryInterval time.Duration
+	// MaxEndpointBytes caps one endpoint's share of the pending backlog. The
+	// spool is node-wide; without a share, one endpoint whose callback stays
+	// slow fills it and every other tenant's callbacks on the node fail with
+	// ErrCallbackOutboxFull. Zero means MaxBytes/callbackOutboxEndpointShare.
+	MaxEndpointBytes int64
+	// MaxAccountBytes caps the share of all of one account's endpoints
+	// together, so an account cannot fill the spool by spreading its slow
+	// callbacks over several endpoints. Zero means
+	// MaxBytes/callbackOutboxAccountShare.
+	MaxAccountBytes int64
 }
+
+// callbackOutboxEndpointShare is the default number of endpoints that can
+// each fill their share before the node-wide spool is full.
+const callbackOutboxEndpointShare = 8
+
+// callbackOutboxAccountShare is the default number of accounts that can each
+// fill their share before the node-wide spool is full. An account with one
+// endpoint keeps the whole endpoint share.
+const callbackOutboxAccountShare = 8
 
 // CallbackOutboxStats is a point-in-time view of the pending callback backlog,
 // replay progress, and retained dead letters. The queue is intentionally
@@ -255,6 +274,10 @@ type CallbackOutbox struct {
 	root                 string
 	deadRoot             string
 	maxBytes             int64
+	maxEndpointBytes     int64
+	endpointBytes        map[string]int64
+	maxAccountBytes      int64
+	accountBytes         map[string]int64
 	deadMaxBytes         int64
 	maxAttempts          int
 	replayWorkers        int
@@ -278,6 +301,36 @@ type CallbackOutbox struct {
 	callbackAuthTokens   map[string]string
 }
 
+// fitsLocked reports whether size more bytes for endpointID fit both the
+// node-wide spool and the endpoint's share of it.
+// fitsLocked reports whether size more bytes fit the spool, the endpoint's
+// share and the account's share. Records from before events carried an
+// account (empty AccountID) are held to the endpoint share only.
+func (q *CallbackOutbox) fitsLocked(event Event, size int64) bool {
+	if q.bytes+size > q.maxBytes {
+		return false
+	}
+	if q.maxEndpointBytes > 0 && q.endpointBytes[event.EndpointID]+size > q.maxEndpointBytes {
+		return false
+	}
+	return event.AccountID == "" || q.maxAccountBytes <= 0 || q.accountBytes[event.AccountID]+size <= q.maxAccountBytes
+}
+
+// chargeLocked adds delta to the pending total and to the item's endpoint
+// and account.
+func (q *CallbackOutbox) chargeLocked(item *callbackOutboxItem, delta int64) {
+	q.bytes += delta
+	endpointID := item.record.Event.EndpointID
+	if q.endpointBytes[endpointID] += delta; q.endpointBytes[endpointID] <= 0 {
+		delete(q.endpointBytes, endpointID)
+	}
+	if accountID := item.record.Event.AccountID; accountID != "" {
+		if q.accountBytes[accountID] += delta; q.accountBytes[accountID] <= 0 {
+			delete(q.accountBytes, accountID)
+		}
+	}
+}
+
 // NewCallbackOutbox opens or creates a node-local callback spool.
 func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 	if strings.TrimSpace(cfg.Root) == "" {
@@ -285,6 +338,12 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 	}
 	if cfg.MaxBytes <= 0 {
 		cfg.MaxBytes = DefaultCallbackOutboxMaxBytes
+	}
+	if cfg.MaxEndpointBytes <= 0 || cfg.MaxEndpointBytes > cfg.MaxBytes {
+		cfg.MaxEndpointBytes = cfg.MaxBytes / callbackOutboxEndpointShare
+	}
+	if cfg.MaxAccountBytes <= 0 || cfg.MaxAccountBytes > cfg.MaxBytes {
+		cfg.MaxAccountBytes = max(cfg.MaxBytes/callbackOutboxAccountShare, cfg.MaxEndpointBytes)
 	}
 	if cfg.DeadLetterMaxBytes <= 0 {
 		cfg.DeadLetterMaxBytes = DefaultCallbackDeadLetterMaxBytes
@@ -321,6 +380,10 @@ func NewCallbackOutbox(cfg CallbackOutboxConfig) (*CallbackOutbox, error) {
 		root:               cfg.Root,
 		deadRoot:           deadRoot,
 		maxBytes:           cfg.MaxBytes,
+		maxEndpointBytes:   cfg.MaxEndpointBytes,
+		endpointBytes:      make(map[string]int64),
+		maxAccountBytes:    cfg.MaxAccountBytes,
+		accountBytes:       make(map[string]int64),
 		deadMaxBytes:       cfg.DeadLetterMaxBytes,
 		maxAttempts:        cfg.MaxAttempts,
 		replayWorkers:      cfg.ReplayWorkers,
@@ -383,7 +446,7 @@ func (q *CallbackOutbox) load() error {
 		}
 		q.items[id] = item
 		heap.Push(&q.pendingAge, item)
-		q.bytes += info.Size()
+		q.chargeLocked(item, info.Size())
 	}
 	q.rebuildConnectionIndexLocked()
 	deadEntries, err := os.ReadDir(q.deadRoot)
@@ -488,7 +551,7 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("realtime: encode callback outbox item: %w", err)
 	}
-	if q.bytes+int64(len(payload)) > q.maxBytes {
+	if !q.fitsLocked(event, int64(len(payload))) {
 		return false, ErrCallbackOutboxFull
 	}
 	path := filepath.Join(q.root, event.ID+".json")
@@ -502,7 +565,7 @@ func (q *CallbackOutbox) EnqueueAndClaim(event Event) (bool, error) {
 	q.items[event.ID] = item
 	heap.Push(&q.pendingAge, item)
 	q.addConnectionItemLocked(item)
-	q.bytes += int64(len(payload))
+	q.chargeLocked(item, int64(len(payload)))
 	queue := q.connections[item.connectionKey]
 	if queue.inFlightID != "" || queue.head != item {
 		// The replay loop will deliver this after earlier events for the
@@ -787,7 +850,7 @@ func (q *CallbackOutbox) ack(id string, replay bool) error {
 	if item.pendingAgeIndex >= 0 {
 		heap.Remove(&q.pendingAge, item.pendingAgeIndex)
 	}
-	q.bytes -= item.size
+	q.chargeLocked(item, -item.size)
 	delete(q.items, id)
 	delete(q.inFlight, id)
 	q.removeConnectionItemLocked(item)
@@ -841,7 +904,7 @@ func (q *CallbackOutbox) FailWithRetryAfter(id string, retryAfter time.Duration)
 			q.releaseLocked(id)
 			return fmt.Errorf("realtime: move callback dead letter: %w", err)
 		}
-		q.bytes -= item.size
+		q.chargeLocked(item, -item.size)
 		q.deadBytes += int64(len(payload))
 		heap.Push(&q.dead, callbackDeadLetter{id: id, size: int64(len(payload)), modified: modified})
 		q.deadIDs[id] = struct{}{}
@@ -863,7 +926,7 @@ func (q *CallbackOutbox) FailWithRetryAfter(id string, retryAfter time.Duration)
 		q.releaseLocked(id)
 		return fmt.Errorf("realtime: persist callback retry: %w", err)
 	}
-	q.bytes += int64(len(payload)) - item.size
+	q.chargeLocked(item, int64(len(payload))-item.size)
 	item.size = int64(len(payload))
 	q.releaseLocked(id)
 	return nil
@@ -1025,7 +1088,7 @@ func (q *CallbackOutbox) ReplayDeadLetter(id string) error {
 	if err != nil {
 		return fmt.Errorf("realtime: encode callback dead-letter replay %q: %w", id, err)
 	}
-	if q.bytes+int64(len(payload)) > q.maxBytes {
+	if !q.fitsLocked(record.Event, int64(len(payload))) {
 		return ErrCallbackOutboxFull
 	}
 	if err := writeCallbackOutboxFile(deadPath, payload); err != nil {
@@ -1044,7 +1107,7 @@ func (q *CallbackOutbox) ReplayDeadLetter(id string) error {
 	q.items[id] = item
 	heap.Push(&q.pendingAge, item)
 	q.addConnectionItemLocked(item)
-	q.bytes += item.size
+	q.chargeLocked(item, item.size)
 	var syncErr error
 	if err := syncCallbackOutboxDir(q.root); err != nil {
 		syncErr = errors.Join(syncErr, fmt.Errorf("realtime: sync callback outbox after replay: %w", err))

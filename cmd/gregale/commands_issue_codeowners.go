@@ -30,7 +30,7 @@ func readIssueCodeownersFile(file string) ([]byte, error) {
 }
 
 func cmdIssueCodeowners(args []string) int {
-	usage := "usage: gregale issues codeowners <preview|apply> --file CODEOWNERS --bindings-file owners.json --source-root /app [--app SLUG --replace]"
+	usage := "usage: gregale debug issue codeowners <preview|apply> --file CODEOWNERS --bindings-file owners.json --source-root /app [--app SLUG --replace]"
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
 		return 1

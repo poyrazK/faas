@@ -205,12 +205,14 @@ func (s *server) enqueueNodeIntent(w http.ResponseWriter, r *http.Request, acct 
 	}
 	rawMetadata, err := json.Marshal(metadata)
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "encode operator intent failed", err.Error()))
+		logCustomerFailure(s.log, "encode operator intent failed", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "encode operator intent failed", api.DetailServerFailure))
 		return
 	}
 	intentID, err := s.store.InsertOperatorIntent(r.Context(), spec.kind, node.ID, nil, acct.ID, reason, rawMetadata, middleware.TraceIDFrom(r))
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "insert operator intent failed", err.Error()))
+		logCustomerFailure(s.log, "insert operator intent failed", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "insert operator intent failed", api.DetailServerFailure))
 		return
 	}
 	s.notifyNodeIntent(r, intentID, spec.kind, node.ID)

@@ -3,7 +3,7 @@ import datetime
 import httpx
 import pytest
 
-from faas_sdk.api.workflows import get_automation_health
+from faas_sdk.preview.api.workflows import get_automation_health
 from faas_sdk.client import AuthenticatedClient
 from faas_sdk.types import UNSET
 

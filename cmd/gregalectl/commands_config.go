@@ -37,6 +37,8 @@ type operatorConfigPatchRequest struct {
 	Value           json.RawMessage `json:"value"`
 	Reason          string          `json:"reason"`
 	ExpectedVersion *int64          `json:"expected_version"`
+	// Force confirms turning a core capability flag off (ADR-20261023115741).
+	Force bool `json:"force,omitempty"`
 }
 
 type operatorConfigMutationOutput struct {

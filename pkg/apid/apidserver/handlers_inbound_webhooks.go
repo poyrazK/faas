@@ -26,7 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const inboundWebhookSecretSealLabel = "inbound_webhook"
+const inboundWebhookSecretSealLabel = api.InboundWebhookSecretNamespace
 
 var inboundWebhookNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 var genericWebhookTimestampPattern = regexp.MustCompile(`^[0-9]{1,12}$`)
@@ -115,14 +115,9 @@ func (s *server) createInboundWebhookEndpointValidated(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrCapacity("inbound webhook store unavailable"))
 		return
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host identity not loaded — refusing to seal webhook secret"))
-		return
-	}
-	sealed, err := secretbox.SealBytes(recipient, inboundWebhookSecretSealLabel, []byte(req.SigningSecret), api.InboundWebhookSigningSecretMaxBytes)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not seal inbound webhook secret"))
+	sealed, prob := sealInboundWebhookSigningSecret(req.SigningSecret)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	token, tokenHash, err := generateInboundWebhookToken()
@@ -243,11 +238,18 @@ func sealInboundWebhookSecret(plaintext string, provider state.InboundWebhookPro
 	if provider == state.InboundWebhookProviderGeneric && len(plaintext) < api.InboundWebhookGenericSecretMinBytes {
 		return nil, inboundWebhookProblem(http.StatusBadRequest, "generic signing_secret must contain at least 32 bytes")
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
+	return sealInboundWebhookSigningSecret(plaintext)
+}
+
+// sealInboundWebhookSigningSecret seals an inbound webhook endpoint's
+// signing secret, an account value apid opens to verify deliveries (ADR
+// 20261022111812).
+func sealInboundWebhookSigningSecret(plaintext string) ([]byte, *api.Problem) {
+	recipients, err := accountRecipients(hostSecretRecipient())
+	if err != nil {
 		return nil, api.ErrCapacity("host identity not loaded — refusing to seal webhook secret")
 	}
-	sealed, err := secretbox.SealBytes(recipient, inboundWebhookSecretSealLabel, []byte(plaintext), api.InboundWebhookSigningSecretMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, inboundWebhookSecretSealLabel, []byte(plaintext), api.InboundWebhookSigningSecretMaxBytes)
 	if err != nil {
 		return nil, api.ErrCapacity("could not seal inbound webhook secret")
 	}
@@ -295,7 +297,7 @@ func inboundWebhookEndpointResponse(endpoint state.InboundWebhookEndpoint) api.I
 }
 
 func (s *server) inboundWebhookURL(token string) string {
-	domain := strings.TrimPrefix(strings.TrimSpace(s.domain), ".")
+	domain := strings.TrimPrefix(strings.TrimSpace(s.platformHost()), ".")
 	return "https://api." + domain + "/v1/hooks/" + token
 }
 
@@ -389,14 +391,14 @@ func readInboundWebhookBody(w http.ResponseWriter, r *http.Request) ([]byte, *ap
 
 // inboundWebhookUnsealCause describes why the endpoint's secret cannot be
 // unsealed: the identity count and the error, never secret material.
-func inboundWebhookUnsealCause(ctx context.Context, endpoint state.InboundWebhookEndpoint) string {
-	identities := hostIdentitiesForUnseal(ctx)
+func inboundWebhookUnsealCause(_ context.Context, endpoint state.InboundWebhookEndpoint) string {
+	identities := accountIdentities()
 	namespace, _, err := secretbox.OpenBytesMulti(identities, endpoint.SigningSecretSealed)
 	return fmt.Sprintf("identities=%d sealed_bytes=%d namespace=%q err=%v", len(identities), len(endpoint.SigningSecretSealed), namespace, err)
 }
 
-func verifyInboundWebhook(ctx context.Context, endpoint state.InboundWebhookEndpoint, headers http.Header, body []byte, now time.Time) (string, string, *api.Problem) {
-	identities := hostIdentitiesForUnseal(ctx)
+func verifyInboundWebhook(_ context.Context, endpoint state.InboundWebhookEndpoint, headers http.Header, body []byte, now time.Time) (string, string, *api.Problem) {
+	identities := accountIdentities()
 	if len(identities) == 0 {
 		return "", "", api.ErrCapacity("host identity not loaded — refusing to verify webhook")
 	}

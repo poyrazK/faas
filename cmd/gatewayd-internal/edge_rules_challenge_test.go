@@ -44,6 +44,16 @@ func TestCompileChallengeRules(t *testing.T) {
 	if rules[1].Difficulty != 16 || rules[1].PassTTLSeconds != 3600 {
 		t.Errorf("second = %+v, want difficulty 16 and a one-hour pass", rules[1])
 	}
+	if rules[0].AttackMode || rules[1].AttackMode {
+		t.Error("an ordinary challenge rule compiled as attack mode")
+	}
+	// adr: 20261021220456 — amendment 1: the attack-mode rule is marked so
+	// the gateway can gate it on edge_attack_mode.
+	attack := challengeStateRule("attack", 0, "/**", valid)
+	attack.ManifestKey = state.EdgeRuleAttackModeKey
+	if compiled, _ := compileChallengeRules([]state.EdgeRule{attack}); len(compiled) != 1 || !compiled[0].AttackMode {
+		t.Fatalf("attack-mode rule compiled = %+v, want AttackMode set", compiled)
+	}
 }
 
 func TestMatchChallenge(t *testing.T) {

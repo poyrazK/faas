@@ -84,8 +84,7 @@ func (s *server) driveManagedExecutionWorkflow(ctx context.Context, claim state.
 	if !jobsOK || !runsOK || !workflowOK {
 		return fmt.Errorf("managed workflow stores are unavailable")
 	}
-	identities := mfaIdentities()
-	planBytes, err := executionpayload.DecodeWorkflowPlan(ctx, identities, job.SealedPlan, job.PayloadKID)
+	planBytes, err := executionpayload.DecodeWorkflowPlan(ctx, accountIdentities(), job.SealedPlan, job.PayloadKID)
 	if err != nil {
 		return s.completeManagedWorkflowClaim(ctx, jobs, claim, api.ManagedExecutionWorkflowFailed, job.NextStep, "encrypted plan could not be opened")
 	}
@@ -414,14 +413,11 @@ func (s *server) admitManagedExecutionWorkflowStep(ctx context.Context, runs sta
 	if err != nil {
 		return managedWorkflowPermanentStepError("step has invalid integration ids")
 	}
-	if setSecretRecipient == nil {
-		return fmt.Errorf("host age recipient is not loaded")
+	recipients, kid, err := executionPayloadRecipients()
+	if err != nil {
+		return fmt.Errorf("execution payload recipient is not loaded: %w", err)
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return fmt.Errorf("host age recipient is not loaded")
-	}
-	sealed, err := executionpayload.SealRequest(recipient, resolved)
+	sealed, err := executionpayload.SealRequestTo(recipients, resolved)
 	if err != nil {
 		return fmt.Errorf("step payload could not be sealed")
 	}
@@ -431,7 +427,7 @@ func (s *server) admitManagedExecutionWorkflowStep(ctx context.Context, runs sta
 		OutboundIntegrationIDs: integrationIDs, RunsPrincipalID: job.RunsPrincipalID,
 		Request: resolved, SourceBytes: resolved.SourceBytes(), InputBytes: len(resolved.Input),
 		AdmittedAt: now, DeadlineAt: now.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
-		SealedPayload: sealed, PayloadKID: recipient.String(),
+		SealedPayload: sealed, PayloadKID: kid,
 	})
 	if err != nil {
 		return err

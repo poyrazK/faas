@@ -52,6 +52,62 @@ func (q *Queries) CountApps(ctx context.Context, db DBTX, arg CountAppsParams) (
 	return count, err
 }
 
+const countOpenPreviewEnvironmentMembers = `-- name: CountOpenPreviewEnvironmentMembers :one
+SELECT count(*) FROM apps
+WHERE account_id = $1::uuid
+  AND project_id = $2::uuid
+  AND preview_pr_number = $3::integer
+  AND preview_of_slug IS NOT NULL
+  AND status IN ('active', 'evicted_cold')
+  AND coalesce(preview_pr_state, 'open') = 'open'
+  AND id IS DISTINCT FROM $4::uuid
+`
+
+type CountOpenPreviewEnvironmentMembersParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	PrNumber  int32
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) CountOpenPreviewEnvironmentMembers(ctx context.Context, db DBTX, arg CountOpenPreviewEnvironmentMembersParams) (int64, error) {
+	row := db.QueryRow(ctx, countOpenPreviewEnvironmentMembers,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.PrNumber,
+		arg.AppID,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countOpenPreviewEnvironments = `-- name: CountOpenPreviewEnvironments :one
+SELECT count(DISTINCT coalesce(project_id::text, id::text) || '/' || preview_pr_number::text) FROM apps
+WHERE (org_id = $1::uuid OR
+       (org_id IS NULL AND account_id = $2::uuid AND $3::boolean))
+  AND status IN ('active', 'evicted_cold')
+  AND preview_of_slug IS NOT NULL AND preview_pr_number > 0
+  AND coalesce(preview_pr_state, 'open') = 'open'
+`
+
+type CountOpenPreviewEnvironmentsParams struct {
+	OrgID     pgtype.UUID
+	AccountID pgtype.UUID
+	Personal  bool
+}
+
+// PreviewApps caps open PR preview environments: the open previews of one
+// project and pull request. A legacy preview without a project is its own
+// environment. A closed preview in its grace window holds no allowance; a
+// preview without a recorded state holds one.
+func (q *Queries) CountOpenPreviewEnvironments(ctx context.Context, db DBTX, arg CountOpenPreviewEnvironmentsParams) (int64, error) {
+	row := db.QueryRow(ctx, countOpenPreviewEnvironments, arg.OrgID, arg.AccountID, arg.Personal)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countPersonalApps = `-- name: CountPersonalApps :one
 SELECT count(*) FROM apps
 WHERE account_id = $1::uuid
@@ -99,9 +155,13 @@ func (q *Queries) LockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgt
 }
 
 const lockOwner = `-- name: LockOwner :exec
-SELECT pg_advisory_xact_lock(hashtextextended('org-app-quota:' || $1::uuid::text, 0))
+INSERT INTO org_app_quota_fences (org_id) VALUES ($1::uuid)
+ON CONFLICT (org_id) DO UPDATE SET generation = org_app_quota_fences.generation + 1
 `
 
+// A row write, not an advisory lock: it serializes admissions and makes a
+// repeatable-read admission whose snapshot predates another's commit fail
+// with 40001 instead of counting a stale snapshot (ADR-570).
 func (q *Queries) LockOwner(ctx context.Context, db DBTX, orgID pgtype.UUID) error {
 	_, err := db.Exec(ctx, lockOwner, orgID)
 	return err
@@ -109,12 +169,20 @@ func (q *Queries) LockOwner(ctx context.Context, db DBTX, orgID pgtype.UUID) err
 
 const markDeletion = `-- name: MarkDeletion :execrows
 UPDATE accounts SET status = 'deleted_pending',
-       deletion_requested_at = coalesce(deletion_requested_at, now())
-WHERE id = $1 AND status IN ('active', 'deleted_pending')
+       deletion_requested_at = coalesce(deletion_requested_at, now()),
+       deletion_includes_managed_postgres = deletion_includes_managed_postgres OR $1::boolean
+WHERE id = $2 AND status IN ('active', 'deleted_pending')
 `
 
-func (q *Queries) MarkDeletion(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
-	result, err := db.Exec(ctx, markDeletion, id)
+type MarkDeletionParams struct {
+	IncludeManagedPostgres bool
+	ID                     pgtype.UUID
+}
+
+// A repeat request never withdraws an inclusion already recorded for this
+// pending deletion (ADR-20261024150500).
+func (q *Queries) MarkDeletion(ctx context.Context, db DBTX, arg MarkDeletionParams) (int64, error) {
+	result, err := db.Exec(ctx, markDeletion, arg.IncludeManagedPostgres, arg.ID)
 	if err != nil {
 		return 0, err
 	}

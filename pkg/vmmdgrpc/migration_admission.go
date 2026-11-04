@@ -36,6 +36,7 @@ func (s *Server) adoptMigrationAdmission(ctx context.Context, req *vmmdpb.AdoptM
 			return nil, status.Error(codes.FailedPrecondition, "durable local native migration ownership unavailable")
 		}
 	}
+	ctx = withIncomingCorrelation(ctx)
 	fields, _ := wire.FromContext(ctx)
 	fields.WakeID = req.GetWakeId()
 	ctx = wire.WithContext(ctx, fields)
@@ -47,6 +48,7 @@ func (s *Server) adoptMigrationAdmission(ctx context.Context, req *vmmdpb.AdoptM
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	wake.NodeID = s.nodeID
 	a, execute, err := s.migrationAdmissions.StartMigrationAdoption(ctx, req.GetAdmissionId(), s.nodeID, digest)
 	if err != nil {
 		return nil, status.Error(codes.FailedPrecondition, err.Error())

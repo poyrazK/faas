@@ -4,7 +4,7 @@ Node.js 24 LTS on the function surface (prewarmed persistent adapter with a
 legacy per-request subprocess fallback, §4.9
 envelope contract). Built by Railpack v0.31.1 with `--plan node`; the
 underlying Node version is bound by the OCI base image
-(`node:24-bookworm-slim` from `images/runner-node24.Dockerfile`). No
+(`node:24-trixie-slim` from `images/runner-node24.Dockerfile`). No
 new dispatch logic — Railpack's `--plan node` is version-agnostic, so
 detection priority (`docker > node > python > go` in
 `pkg/builderd/detect.go`) treats `node22` and `node24` identically.
@@ -148,7 +148,7 @@ the contract separately.
 
 - Base ref: `ghcr.io/onebox-faas/runner-node24:latest`
 - Source: `images/runner-node24.Dockerfile`
-  (`FROM node:24-bookworm-slim@sha256:REPLACE_ME_AT_MERGE_TIME`)
+  (`FROM node:24-trixie-slim`, digest-pinned in `images/Dockerfile.lock`)
 - Disk: ~150 MB uncompressed, amortized across all `node24` apps via
   the two-drive scheme (drive0 = shared base, drive1 = per-app layer).
   Per-app cost is just the customer's `node_modules` + handler.

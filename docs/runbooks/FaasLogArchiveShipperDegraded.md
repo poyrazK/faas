@@ -13,9 +13,21 @@ Metrics use the daemon prefix (`apid_` or `vmmd_`):
 `<daemon>_log_archive_upload_duration_seconds`.
 For control-plane checks use the `apid` prefix and `apid` service below; on a
 compute host substitute the `vmmd` prefix and `faas-vmmd` service.
-Issue: #562.
+Issue: #562. Ownership, kill switches and recovery: [FaasLogs](FaasLogs.md).
 Severity: warn, including when the local spool approaches
 `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX` (ADR-1236 demoted that page).
+All three log-archive alerts are judged per scrape target.
+
+## FaasLogArchiveNodeDisabled
+
+`<daemon>_log_archive_enabled` is 0 on one target while others report 1: that
+daemon started without archiving (no `archive-creds.json`, the `{}`
+placeholder, an unreadable envelope, or a client or shipper that failed to
+start). On vmmd its parked instances' logs are not archived; on apid account
+erasure cannot reach the bucket (the grace sweep logs `log archive erasure
+skipped`). Check the daemon's startup warnings and the envelope on that host,
+re-run the `log_archive` role with the manifest's `log_archive` settings, then
+restart the daemon.
 
 ## Symptom
 
@@ -153,6 +165,37 @@ so the *visible* retention stays plan-correct. The bucket
 is over-storing, not under-deleting. Tune `Days` up if
 you onboard an Enterprise tier with a longer floor.
 
+The rule is required, not advisory: the DPA (section 4,
+application logs) promises the archive deletes logs 90 days
+after they are written. Check it on every archive bucket, for
+example `gcloud storage buckets describe gs://<bucket>
+--format='yaml(lifecycle_config,soft_delete_policy)'`. The DPA
+also states that deleted objects stay recoverable for 7 days,
+which is GCS's default soft-delete window; keep the bucket's
+soft-delete retention at or below 7 days.
+
+### Account erasure
+
+Archive objects are keyed by instance only, so deleting an
+account's rows does not reach them. When an account's
+deletion grace ends, apid's grace sweep snapshots the
+account's instances (`log_archive_erasures`,
+`log_archive_erasure_instances`), deletes every object
+under `faas-logs/{instance}/` for 200 instances per tick,
+and deletes the account row only once none remain. apid's
+archive identity therefore needs list and delete on the
+bucket (GCS: `storage.objects.list` and
+`storage.objects.delete`). While the bucket is unreachable
+or refuses, apid logs `grace: external cleanup deferred`
+with `log archive: account logs are not erased yet` and
+retries every tick; the account stays in `deleted_pending`.
+Progress:
+
+```sql
+SELECT account_id, count(*) FILTER (WHERE erased_at IS NULL) AS pending
+FROM log_archive_erasure_instances GROUP BY account_id;
+```
+
 ## Silence
 
 ```bash
@@ -225,7 +268,7 @@ In order — each step assumes the previous didn't help:
    and the spool has filled. Two options:
 
    a. **Raise the cap** by editing the apid unit's
-      drop-in to set `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX=20G`
+      drop-in to set `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX=20GiB` (plain bytes or a K/M/G/T binary unit; anything else falls back to 10 GiB with a warning)
       (or similar). This buys time but does not fix the
       root cause; the spool will keep growing.
 

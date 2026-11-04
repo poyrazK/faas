@@ -52,8 +52,9 @@ func (s *server) getOperatorIntent(w http.ResponseWriter, r *http.Request, acct 
 				"operator_intent_not_found", "no operator intent with that id"))
 			return
 		}
+		logCustomerFailure(s.log, "read operator intent failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			api.CodeInternal, "read operator intent failed", err.Error()))
+			api.CodeInternal, "read operator intent failed", api.DetailServerFailure))
 		return
 	}
 	writeJSON(w, http.StatusOK, toOperatorIntentResponse(intent))

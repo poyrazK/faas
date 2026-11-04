@@ -3,7 +3,7 @@
 
 <title>Data connections — Gregale</title>
 <style nonce="{{.Nonce}}">:root{color-scheme:light dark}body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}nav{display:flex;gap:1rem}section{margin:2rem 0;padding:1rem;border:1px solid #aaa;border-radius:.5rem}table{border-collapse:collapse;width:100%}th,td{padding:.6rem;text-align:left;vertical-align:top;border-bottom:1px solid #aaa}code{overflow-wrap:anywhere}label{display:block;margin:.8rem 0}input,select,button{font:inherit;padding:.5rem;max-width:100%;box-sizing:border-box}input[type=password]{width:100%}.status{padding:1rem;border-left:4px solid #888}.muted{opacity:.75}details{margin:.5rem 0}form.controls{display:inline-block;margin:.25rem}.controls button{padding:.3rem}.issue{margin:.4rem 0}</style>
-</head><body><nav><a href="/dashboard/">Overview</a><a href="/dashboard/postgres">PostgreSQL</a><a href="/dashboard/data">Refresh connections</a></nav>
+</head><body><nav><a href="/dashboard/">Overview</a>{{if $.On "managed-postgres"}}<a href="/dashboard/postgres">PostgreSQL</a>{{end}}{{if $.On "data-pipelines"}}<a href="/dashboard/data">Refresh connections</a>{{end}}</nav>
 <main>{{template "email-verification-banner" .}}<h1>Connect your data</h1>
 <p>Copy selected Postgres tables into a Gregale mirror and keep them synchronized.</p>
 {{if .Data.Message}}<p role="status">{{.Data.Message}}</p>{{end}}

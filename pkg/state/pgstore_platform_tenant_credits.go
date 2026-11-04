@@ -115,12 +115,10 @@ func (s *PgStore) PlatformTenantCreditPosition(ctx context.Context, accountID, t
 		coalesce((select sum(remaining_millicents) from platform_tenant_credit_grants
 		           where account_id = $1::uuid and platform_tenant_id = $2::uuid and currency = $3
 		             and remaining_millicents > 0 and voided_at is null and (expires_at is null or expires_at > $4)), 0)::bigint,
-		coalesce((select sum(a.amount_millicents) from platform_tenant_credit_applications a
-		            join platform_tenant_credit_grants g on g.id = a.grant_id
-		            join platform_tenant_statements st on st.id = a.statement_id
-		           where g.account_id = $1::uuid and g.platform_tenant_id = $2::uuid and g.currency = $3
-		             and st.period_start >= $5 and st.period_start < $6), 0)::bigint`,
-		accountID, tenantID, currency, at.UTC(), monthStart, monthEnd).Scan(&pos.AvailableMillicents, &pos.AppliedInMonthMillicents)
+		coalesce((select sum(`+creditAppliedToUsageSQL+`) from platform_tenant_statements st
+		           where st.account_id = $1::uuid and st.platform_tenant_id = $2::uuid and st.currency = $3
+		             and st.credit_applied_millicents > 0 and st.period_start >= $5 and st.period_start < $6), 0)::bigint`,
+		accountID, tenantID, currency, at.UTC(), monthStart, monthEnd).Scan(&pos.AvailableMillicents, &pos.AppliedToUsageInMonthMillicents)
 	if err != nil {
 		return APIConsumerCreditPosition{}, fmt.Errorf("tenant credit position: %w", err)
 	}

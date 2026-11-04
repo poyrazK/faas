@@ -35,7 +35,9 @@ type Service struct {
 	quotaWarningUnsubscribe   string
 	nonpaymentDeletion        *credentialConfig
 	accountSuspended          *credentialConfig
+	managedPostgresCap        *credentialConfig
 	deploymentFailed          *credentialConfig
+	agentRunDelivered         *credentialConfig
 	deploymentDashboardOrigin string
 	subscriptionEnded         *credentialConfig
 	accountRestored           *credentialConfig
@@ -43,6 +45,8 @@ type Service struct {
 	mfaEnabledAlert           *credentialConfig
 	passwordChangedAlert      *credentialConfig
 	requested, enabled        func() bool
+
+	managedPostgresRestoreSlot *credentialConfig
 }
 
 // NewFromEnv performs no DB, credential or socket configuration reads with

@@ -5,12 +5,17 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"time"
 )
 
 type nativeSnapshotCaptureContextKey struct{}
 
+// Exactly one authority is set: a qualification incoming record, or a runtime
+// park/warm authority (ADR 20261022184951). Both bind the same capture record
+// shape and physical owner, so every producer check is shared.
 type nativeSnapshotCapturePermit struct {
 	Incoming nativeQualificationRecord
+	Runtime  nativeRuntimeCaptureAuthority
 	Capture  nativeQualificationCaptureRecord
 	Physical nativeLaunchRecord
 }
@@ -19,6 +24,137 @@ type nativeSnapshotCapturePermit struct {
 // durable capture start. Boot's incoming capability cannot authorize outputs.
 func nativeSnapshotCaptureContext(ctx context.Context, incoming nativeQualificationRecord, capture nativeQualificationCaptureRecord, physical nativeLaunchRecord) context.Context {
 	return context.WithValue(ctx, nativeSnapshotCaptureContextKey{}, nativeSnapshotCapturePermit{Incoming: incoming, Capture: capture, Physical: physical})
+}
+
+// The runtime capture caller holds the runtime capture lock after its durable
+// start, as qualification holds the incoming lock.
+func nativeRuntimeSnapshotCaptureContext(ctx context.Context, authority nativeRuntimeCaptureAuthority, capture nativeQualificationCaptureRecord, physical nativeLaunchRecord) context.Context {
+	return context.WithValue(ctx, nativeSnapshotCaptureContextKey{}, nativeSnapshotCapturePermit{Runtime: authority, Capture: capture, Physical: physical})
+}
+
+func (p nativeSnapshotCapturePermit) runtime() bool { return p.Runtime.Version != 0 }
+
+func (p nativeSnapshotCapturePermit) instanceID() string {
+	if p.runtime() {
+		return p.Runtime.InstanceID
+	}
+	return p.Incoming.Execution.InstanceID
+}
+
+func (p nativeSnapshotCapturePermit) nativeLease() Lease {
+	if p.runtime() {
+		return p.Runtime.NativeLease
+	}
+	return p.Incoming.NativeLease
+}
+
+func (p nativeSnapshotCapturePermit) nativeGeneration() string {
+	if p.runtime() {
+		return p.Runtime.NativeGeneration
+	}
+	return p.Incoming.NativeGeneration
+}
+
+func (p nativeSnapshotCapturePermit) kernelBootID() string {
+	if p.runtime() {
+		return p.Runtime.KernelBootID
+	}
+	return p.Incoming.KernelBootID
+}
+
+func (p nativeSnapshotCapturePermit) deadline() time.Time {
+	if p.runtime() {
+		return p.Runtime.Deadline
+	}
+	return p.Incoming.Deadline
+}
+
+func (p nativeSnapshotCapturePermit) keys() nativeSnapshotPublicationObjectKeys {
+	if p.runtime() {
+		return p.Runtime.Keys
+	}
+	return nativeSnapshotIntentKeys(p.Incoming)
+}
+
+// validateCapture checks the capture record against its own authority only.
+func (p nativeSnapshotCapturePermit) validateCapture() error {
+	if p.runtime() {
+		if p.Incoming != (nativeQualificationRecord{}) {
+			return errors.New("native snapshot capture: one capture cannot carry two authorities")
+		}
+		return p.Capture.validateRuntime(p.Runtime)
+	}
+	return p.Capture.validate(p.Incoming)
+}
+
+// validateStarted additionally requires a live, unrevoked and incomplete start.
+func (p nativeSnapshotCapturePermit) validateStarted() error {
+	if err := p.validateCapture(); err != nil {
+		return err
+	}
+	if p.runtime() {
+		if err := p.Runtime.validate(); err != nil {
+			return err
+		}
+	} else {
+		if err := p.Incoming.validate(p.Incoming.Execution.NodeID); err != nil {
+			return err
+		}
+		if !p.Incoming.CreateStarted || p.Incoming.Revoked {
+			return errors.New("native snapshot capture: original incoming capture is revoked or unstarted")
+		}
+	}
+	if !p.Capture.CompletedAt.IsZero() {
+		return errors.New("native snapshot capture: original incomplete capture is required")
+	}
+	return nil
+}
+
+func (p nativeSnapshotCapturePermit) sameAuthority(other nativeSnapshotCapturePermit) bool {
+	return p.Incoming == other.Incoming && p.Runtime == other.Runtime && p.Capture.Equal(other.Capture)
+}
+
+// requireCurrent re-reads the durable authority and capture start. A cleanup
+// check passes deadline=false: returning the memory fence outlives the effect
+// deadline but never a changed or replaced capture.
+func (p nativeSnapshotCapturePermit) requireCurrent(owner *nativeLaunchJournal, deadline bool) error {
+	if p.runtime() {
+		j := owner.runtimeCaptures()
+		record, err := j.read(p.Runtime.InstanceID)
+		if err != nil {
+			return err
+		}
+		if record.Authority != p.Runtime || deadline && !j.clock().Before(record.Authority.Deadline) {
+			return errors.New("native snapshot capture: original runtime capture authority changed")
+		}
+		if !record.Capture.Equal(p.Capture) {
+			return errors.New("native snapshot capture: original capture start changed")
+		}
+		return nil
+	}
+	q := owner.qualifications(p.Incoming.Execution.NodeID)
+	incoming, err := q.read(p.Incoming.Execution.InstanceID)
+	if err != nil {
+		return err
+	}
+	if incoming != p.Incoming || deadline && !q.clock().Before(incoming.Deadline) {
+		return errors.New("native snapshot capture: original incoming capture authority changed")
+	}
+	capture, err := q.readCapture(incoming)
+	if err != nil {
+		return err
+	}
+	if !capture.Equal(p.Capture) {
+		return errors.New("native snapshot capture: original capture start changed")
+	}
+	return nil
+}
+
+func (p nativeSnapshotCapturePermit) writeBackings(owner *nativeLaunchJournal, record nativeSnapshotBackingRecord) error {
+	if p.runtime() {
+		return owner.runtimeCaptures().writeBackings(record)
+	}
+	return owner.qualifications(p.Incoming.Execution.NodeID).writeBackings(record)
 }
 
 type nativeSnapshotOutputBackend interface {
@@ -51,13 +187,13 @@ func nativeSnapshotOutputName(captureID, kind string) (string, error) {
 func (v *JailerVMM) stageNativeSnapshotOutput(ctx context.Context, lease Lease, directory, kind string) (string, error) {
 	r := v.nativeRecovery
 	permit, ok := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit)
-	if r == nil || r.journal == nil || !ok || permit.Incoming.Execution.InstanceID != lease.Instance || !sameNativePhysicalLease(permit.Incoming.NativeLease, lease) {
+	if r == nil || r.journal == nil || !ok || permit.instanceID() != lease.Instance || !sameNativePhysicalLease(permit.nativeLease(), lease) {
 		return "", errors.New("native snapshot output: original capture capability is required")
 	}
 	r.mu.Lock()
 	generation, daemonLock := r.owned[lease.Instance], r.daemonLock
 	r.mu.Unlock()
-	if generation == "" || generation != permit.Incoming.NativeGeneration || daemonLock == nil {
+	if generation == "" || generation != permit.nativeGeneration() || daemonLock == nil {
 		return "", errors.New("native snapshot output: original daemon producer is required")
 	}
 	if err := r.checkDaemonOwnership(); err != nil {
@@ -99,29 +235,14 @@ func (j *nativeImageSourceJournal) stageCaptureOutput(ctx context.Context, expec
 // The incoming lock remains held by the Manager; take no second incoming lock
 // after the physical lock. Every check precedes anonymous file production.
 func (j *nativeImageSourceJournal) captureOutputAuthority(ctx context.Context, expected, owner nativeLaunchRecord, permit nativeSnapshotCapturePermit) error {
-	if !sameNativeSnapshotProcess(owner, permit.Physical) || owner.PID != expected.PID || owner.StartTime != expected.StartTime || owner.Generation != permit.Incoming.NativeGeneration || owner.KernelBootID != permit.Incoming.KernelBootID || !sameNativePhysicalLease(owner.Lease, permit.Incoming.NativeLease) {
+	if !sameNativeSnapshotProcess(owner, permit.Physical) || owner.PID != expected.PID || owner.StartTime != expected.StartTime || owner.Generation != permit.nativeGeneration() || owner.KernelBootID != permit.kernelBootID() || !sameNativePhysicalLease(owner.Lease, permit.nativeLease()) || owner.Lease.Instance != permit.instanceID() {
 		return errors.New("native snapshot output: original live physical authority changed")
 	}
-	if err := permit.Capture.validate(permit.Incoming); err != nil {
+	if err := permit.validateStarted(); err != nil {
 		return err
 	}
-	if !permit.Capture.CompletedAt.IsZero() || !permit.Incoming.CreateStarted || permit.Incoming.Revoked {
-		return errors.New("native snapshot output: capture is completed, revoked or unstarted")
-	}
-	q := j.owner.qualifications(permit.Incoming.Execution.NodeID)
-	incoming, err := q.read(owner.Lease.Instance)
-	if err != nil {
+	if err := permit.requireCurrent(j.owner, true); err != nil {
 		return err
-	}
-	if incoming != permit.Incoming || !q.clock().Before(incoming.Deadline) {
-		return errors.New("native snapshot output: original incoming capture authority changed")
-	}
-	capture, err := q.readCapture(incoming)
-	if err != nil {
-		return err
-	}
-	if !capture.Equal(permit.Capture) {
-		return errors.New("native snapshot output: original capture start changed")
 	}
 	return ctx.Err()
 }

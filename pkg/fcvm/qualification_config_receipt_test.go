@@ -239,7 +239,7 @@ func TestPrepareSidecarEnvFilesPreservesQualificationProjection(t *testing.T) {
 	wantJSON := []byte(`{"TOKEN":"secret"}`)
 	wantGrants := []string{"TOKEN"}
 	request := WakeRequest{Sidecars: []WorkloadSpec{{Name: "worker", GrantedEnvNames: append([]string(nil), wantGrants...), preparedEnvJSON: append([]byte(nil), wantJSON...)}}}
-	if err := m.prepareSidecarEnvFiles(&request); err != nil {
+	if err := m.prepareSidecarEnvFiles(context.Background(), &request); err != nil {
 		t.Fatal(err)
 	}
 	if string(request.Sidecars[0].preparedEnvJSON) != string(wantJSON) || !slices.Equal(request.Sidecars[0].GrantedEnvNames, wantGrants) {

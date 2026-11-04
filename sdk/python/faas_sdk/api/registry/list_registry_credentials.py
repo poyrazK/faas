@@ -73,7 +73,7 @@ def sync_detailed(
     """List sealed private-registry credentials on an app.
 
      Returns every (registry, username, timestamps) triple on the app.
-    Plaintext passwords are never returned — imaged transiently
+    Plaintext passwords are never returned — the image service transiently
     unseals the ciphertext in the pull path. Quota metadata
     (`quota_max`, `count`) is included so the CLI can render a
     progress bar without a second call.
@@ -108,7 +108,7 @@ def sync(
     """List sealed private-registry credentials on an app.
 
      Returns every (registry, username, timestamps) triple on the app.
-    Plaintext passwords are never returned — imaged transiently
+    Plaintext passwords are never returned — the image service transiently
     unseals the ciphertext in the pull path. Quota metadata
     (`quota_max`, `count`) is included so the CLI can render a
     progress bar without a second call.
@@ -138,7 +138,7 @@ async def asyncio_detailed(
     """List sealed private-registry credentials on an app.
 
      Returns every (registry, username, timestamps) triple on the app.
-    Plaintext passwords are never returned — imaged transiently
+    Plaintext passwords are never returned — the image service transiently
     unseals the ciphertext in the pull path. Quota metadata
     (`quota_max`, `count`) is included so the CLI can render a
     progress bar without a second call.
@@ -171,7 +171,7 @@ async def asyncio(
     """List sealed private-registry credentials on an app.
 
      Returns every (registry, username, timestamps) triple on the app.
-    Plaintext passwords are never returned — imaged transiently
+    Plaintext passwords are never returned — the image service transiently
     unseals the ciphertext in the pull path. Quota metadata
     (`quota_max`, `count`) is included so the CLI can render a
     progress bar without a second call.

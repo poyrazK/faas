@@ -391,7 +391,7 @@ func TestStartAcceptanceSaveFailureStopsWaiting(t *testing.T) {
 		}
 		return 130
 	}
-	if code, _ := runner.reviewAndDeploy(); code == 0 || !strings.Contains(stderr(), "could not be saved") || !strings.Contains(stdout.String(), "deployment wait d-accepted") {
+	if code, _ := runner.reviewAndDeploy(); code == 0 || !strings.Contains(stderr(), "could not be saved") || !strings.Contains(stdout.String(), "release wait d-accepted") {
 		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr(), stdout)
 	}
 }
@@ -517,9 +517,23 @@ func TestStartSelectsWorkspaceService(t *testing.T) {
 		}
 	}
 	withCwd(t, root)
-	runner := startTestRunner(t, root, "2\n")
-	if code := runner.selectSource(); code != 0 || runner.session.SourcePath != filepath.Join(root, "packages", "web") {
+	// Two services: start first offers the whole project, then one service.
+	runner := startTestRunner(t, root, "2\n2\n")
+	if code := runner.selectSource(); code != 0 || runner.projectSource != "" || runner.session.SourcePath != filepath.Join(root, "packages", "web") {
 		t.Fatalf("code=%d selected=%s stderr=%s stdout=%s", code, runner.session.SourcePath, stderr(), stdout)
+	}
+
+	runner = startTestRunner(t, root, "1\n")
+	if code := runner.selectSource(); code != 0 || runner.projectSource != root {
+		t.Fatalf("project choice: code=%d project=%s source=%s stderr=%s", code, runner.projectSource, runner.session.SourcePath, stderr())
+	}
+	var deployed []string
+	runner.deploy = func(_ context.Context, args []string, existing bool, _ ...deployExecution) int {
+		deployed = append([]string(nil), args...)
+		return 0
+	}
+	if code := runner.deployProject(); code != 0 || strings.Join(deployed, " ") != "--project --path "+root {
+		t.Fatalf("project deploy args = %q, code %d", deployed, code)
 	}
 }
 

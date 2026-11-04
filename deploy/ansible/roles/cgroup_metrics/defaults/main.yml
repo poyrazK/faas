@@ -1,0 +1,22 @@
+---
+# cgroup_metrics (ADR-20261023124955 §1, §7). Exports CPU, memory, IO and
+# pressure-stall time per slice and per service to node_exporter's textfile
+# collector, so operators can see which part of a host is using it (for
+# example PostgreSQL vs the observability stack on the 2-vCPU control plane).
+#
+# Glob patterns relative to the cgroup v2 root. Tenant VM scopes are never
+# listed: per-VM numbers come from vmmd, and a per-VM label would grow with
+# tenants. A pattern that matches nothing on a host is skipped.
+faas_cgroup_metrics_paths:
+  - system.slice
+  - system.slice/system-postgresql.slice
+  - system.slice/faas-*.service
+  - system.slice/*github-runner*.service
+  - faas-cp.slice
+  - faas-cp.slice/*.service
+  - faas-cp-build.slice
+  - faas-obs.slice
+  - faas-obs.slice/*.service
+  - faas-tenant.slice
+  - user.slice
+faas_cgroup_metrics_interval: 30s

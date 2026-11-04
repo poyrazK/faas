@@ -11,8 +11,8 @@ T = TypeVar("T", bound="UpdateDeploymentRequest")
 
 @_attrs_define
 class UpdateDeploymentRequest:
-    """Body for PATCH /v1/deployments/{id} (issue #557 closure / ADR-072). The only mutable field post-create is the per-
-    deployment cold-wake floor; image / digest / overrides / sidecars stay immutable.
+    """Body for PATCH /v1/deployments/{id} (closure). The only mutable field post-create is the per-deployment cold-wake
+    floor; image / digest / overrides / sidecars stay immutable.
 
     """
 

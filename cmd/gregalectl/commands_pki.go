@@ -355,22 +355,32 @@ func cmdPKIFingerprint(args []string) int {
 // (pkg/pki feature leaves), which no host role requires. It runs where the CA
 // key is: --ca-dir is the issuer's PKI root, and --root-dir is where the
 // leaves are written, either the issuer's own active root or a staging
-// directory a playbook copies to another host. It prints the leaves it issued
-// as JSON, so a playbook restarts only the daemons whose leaf changed.
+// directory a playbook copies to another host. A compute node's
+// node-identity leaf takes its CN from --cn, the node's compute_nodes.name. It
+// prints the leaves it issued as JSON, so a playbook restarts only the
+// daemons whose leaf changed.
 func cmdPKIIssueFeature(args []string) int {
 	fs := flag.NewFlagSet("pki issue-feature", flag.ContinueOnError)
 	feature := fs.String("feature", "", "feature whose leaves to issue: "+strings.Join(pki.Features(), ", "))
 	boxRole := fs.String("box-role", "", "host role the leaves are for: control-plane, compute-only or single-box")
 	caDir := fs.String("ca-dir", pki.DefaultRootDir, "PKI root holding the CA (ca/ca.crt and ca/ca.key)")
 	rootDir := fs.String("root-dir", pki.DefaultRootDir, "PKI root the leaves are written under")
+	nodeCN := fs.String("cn", "", "compute node name for node-identity leaves (compute-only); .faas is appended when missing")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *feature == "" || *boxRole == "" {
-		PrintUsage(os.Stderr, "usage: gregalectl pki issue-feature --feature FEATURE --box-role ROLE [--ca-dir DIR] [--root-dir DIR]", "pki")
+		PrintUsage(os.Stderr, "usage: gregalectl pki issue-feature --feature FEATURE --box-role ROLE [--cn NODE] [--ca-dir DIR] [--root-dir DIR]", "pki")
 		return 1
 	}
-	issued, err := pki.EnsureFeatureLeaves(*caDir, *rootDir, *feature, *boxRole)
+	cn := strings.TrimSpace(*nodeCN)
+	if cn != "" && *boxRole != "compute-only" {
+		return printErr("pki issue-feature", errors.New("--cn requires --box-role=compute-only"))
+	}
+	if cn != "" && !strings.HasSuffix(cn, ".faas") {
+		cn += ".faas"
+	}
+	issued, err := pki.EnsureFeatureLeavesForNode(*caDir, *rootDir, *feature, *boxRole, cn)
 	if err != nil {
 		return printErr("pki issue-feature", err)
 	}

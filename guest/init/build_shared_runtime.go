@@ -9,13 +9,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/sharedruntime"
 )
 
-// buildSharedRuntimeVerdict classifies a successful Node source build of an
-// app for the shared runner base (H10-140). Functions already run on it and
-// Dockerfiles own their FROM chain, so neither is classified; neither is an
-// auto-detected build without a package.json. Like buildDevPatchSourceMap it
-// reads only what Railpack wrote inside this builder VM.
+// buildSharedRuntimeVerdict classifies a successful Node or Python source
+// build of an app for the shared runner base (H10-140, ADR-1500 amendment 2).
+// Functions already run on it and Dockerfiles own their FROM chain, so
+// neither is classified; neither is an auto-detected build without a
+// package.json. Like buildDevPatchSourceMap it reads only what Railpack wrote
+// inside this builder VM.
 func buildSharedRuntimeVerdict(m api.BuildManifest, readFile func(string) ([]byte, error)) *api.SharedRuntimeVerdict {
-	if m.Function || (m.Framework != api.FrameworkRailpackNode && m.Framework != api.FrameworkAuto) {
+	if m.Function {
+		return nil
+	}
+	if m.Framework == api.FrameworkRailpackPython {
+		plan, err := readFile(railpackPlanPath(m))
+		if err != nil {
+			v := api.SharedRuntimeVerdict{Reason: sharedruntime.ReasonPlanUnreadable}
+			return &v
+		}
+		v := sharedruntime.ClassifyPython(plan)
+		return &v
+	}
+	if m.Framework != api.FrameworkRailpackNode && m.Framework != api.FrameworkAuto {
 		return nil
 	}
 	pkg, err := readFile(filepath.Join(m.Workdir, "package.json"))

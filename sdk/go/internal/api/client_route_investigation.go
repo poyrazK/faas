@@ -49,7 +49,7 @@ func (o RouteHealthInvestigationOptions) Selection() RouteHealthInvestigationSel
 	return s
 }
 
-func (c *Client) GetRouteHealthInvestigation(ctx context.Context, slug, deploymentID string, opts RouteHealthInvestigationOptions) (RouteHealthInvestigation, error) {
+func (c *PreviewClient) GetRouteHealthInvestigation(ctx context.Context, slug, deploymentID string, opts RouteHealthInvestigationOptions) (RouteHealthInvestigation, error) {
 	var out RouteHealthInvestigation
 	if err := opts.Validate(); err != nil {
 		return out, err

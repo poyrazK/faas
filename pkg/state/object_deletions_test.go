@@ -85,7 +85,7 @@ func objectDeletionSuite(t *testing.T, st accountingStore, advance func()) {
 	if _, e = d.GetObjectDeletion(ctx, uuid.NewString(), b.ID, j.ID); !errors.Is(e, state.ErrNotFound) {
 		t.Fatal(e)
 	}
-	if e = cap.BeginObjectWrite(ctx, b.AccountID, b.ID, uuid.NewString(), "new", 1, accountingPolicy()); !errors.Is(e, state.ErrConflict) {
+	if e = cap.BeginObjectWrite(ctx, b.AccountID, b.ID, uuid.NewString(), "key", 1, accountingPolicy()); !errors.Is(e, state.ErrConflict) {
 		t.Fatal("write passed fence", e)
 	}
 	if _, e = v.RequestObjectBucketVersioning(ctx, b.AccountID, b.AppID, b.ID, "Enabled"); !errors.Is(e, state.ErrConflict) {
@@ -127,7 +127,7 @@ func objectDeletionSuite(t *testing.T, st accountingStore, advance func()) {
 	if _, e = d.FinishObjectDeletion(ctx, failed); !errors.Is(e, state.ErrConflict) {
 		t.Fatal("recovery rejection erased earlier uncertain dispatch", e)
 	}
-	if e = cap.BeginObjectWrite(ctx, b.AccountID, b.ID, uuid.NewString(), "new", 1, accountingPolicy()); !errors.Is(e, state.ErrConflict) {
+	if e = cap.BeginObjectWrite(ctx, b.AccountID, b.ID, uuid.NewString(), "key", 1, accountingPolicy()); !errors.Is(e, state.ErrConflict) {
 		t.Fatal("expiry released fence", e)
 	}
 	j.State = "completed"
@@ -136,7 +136,7 @@ func objectDeletionSuite(t *testing.T, st accountingStore, advance func()) {
 	if e != nil {
 		t.Fatal(j, e)
 	}
-	if e = cap.BeginObjectWrite(ctx, b.AccountID, b.ID, uuid.NewString(), "new", 1, accountingPolicy()); e != nil {
+	if e = cap.BeginObjectWrite(ctx, b.AccountID, b.ID, uuid.NewString(), "key", 1, accountingPolicy()); e != nil {
 		t.Fatal("completed intent retained fence", e)
 	}
 	// A prepared intent can be cancelled after lease expiry, without dispatch.

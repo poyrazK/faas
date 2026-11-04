@@ -674,6 +674,18 @@ func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) 
 	if _, err := store.SetDeploymentFailed(ctx, failed.ID, api.CodeDeploymentSmokeFailed, "platform route returned 404"); err != nil {
 		t.Fatal(err)
 	}
+	// A breach needs platform failures from two accounts (H14-22).
+	otherAcct, _ := store.CreateAccount(ctx, "deployment-status-other@example.com", api.PlanPro)
+	other, _ := store.CreateApp(ctx, state.App{
+		AccountID: otherAcct.ID, Slug: "deployment-status-other", RAMMB: 256,
+		IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	otherFailed, _ := store.CreateDeployment(ctx, state.Deployment{
+		AppID: other.ID, Kind: state.DeploymentKindImage, CreatedAt: queuedAt,
+	})
+	if _, err := store.SetDeploymentFailed(ctx, otherFailed.ID, api.CodeDeploymentSmokeFailed, "platform route returned 404"); err != nil {
+		t.Fatal(err)
+	}
 	userFailed, _ := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindTarball, CreatedAt: queuedAt,
 	})
@@ -702,8 +714,8 @@ func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if math.Abs(snap.BuildSuccessPct-50) > 0.001 || !snap.Degraded {
-		t.Fatalf("status = %+v, want 50%% and degraded", snap)
+	if want := float64(1) / 3 * 100; math.Abs(snap.BuildSuccessPct-want) > 0.001 || !snap.Degraded {
+		t.Fatalf("status = %+v, want %.3f%% and degraded", snap, want)
 	}
 	if !strings.Contains(snap.Source, "deployment success target breached") {
 		t.Fatalf("source = %q", snap.Source)
@@ -719,7 +731,7 @@ func TestStatusUsesTerminalDeploymentOutcomesAcrossPipelineStages(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantAfterSuccess := float64(2) / 3 * 100
+	wantAfterSuccess := float64(2) / 4 * 100
 	if math.Abs(clearedSnap.BuildSuccessPct-wantAfterSuccess) > 0.001 || !clearedSnap.Degraded {
 		t.Fatalf("status after later success = %+v, want %.3f%% and degraded", clearedSnap, wantAfterSuccess)
 	}

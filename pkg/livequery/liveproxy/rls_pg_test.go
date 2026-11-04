@@ -178,7 +178,7 @@ func TestRealtimeCarriesRLSQueries(t *testing.T) {
 	defer proxy.Close()
 	m := realtime.NewManager(realtime.Config{JWTAuthorizer: userJWT{role: role}, ResumePreview: true, HistoryReader: noHistory{}, Live: ForRealtime(proxy)}, hooks{})
 	defer func() { _ = m.Close() }()
-	if err := m.RegisterEndpoint(realtime.Endpoint{
+	if err := m.RegisterEndpoint(realtime.Endpoint{Preview: true,
 		ID: "ep", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: realtime.AuthPolicy{Mode: realtime.AuthModeOIDCJWT, Issuer: "https://issuer.example",

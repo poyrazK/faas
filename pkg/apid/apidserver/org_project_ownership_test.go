@@ -100,6 +100,23 @@ func orgProjectHTTP(t *testing.T, store state.Store, creator state.Account, do f
 			t.Fatalf("%s %s: %d %s; want %d", tc.method, tc.path, rec.Code, rec.Body, tc.want)
 		}
 	}
+	// A company project's promotion could be started and rolled back, but
+	// aborting or recovering it, recovering its migration and previewing it
+	// with release secrets were unreviewed routes that answered 403 to every
+	// member. Developers reach the handlers (which refuse these bodies on
+	// their own terms); viewers still may not.
+	for _, path := range []string{
+		base + "/environments/production/promotions/missing/abort",
+		base + "/environments/production/promotions/missing/recover-migration",
+		base + "/environments/production/promotion-preview",
+	} {
+		if rec := do(t, "POST", path, map[string]string{}, developerHeaders); rec.Code == 403 || strings.Contains(rec.Body.String(), "no such API route") {
+			t.Fatalf("developer POST %s: %d %s; want the handler's answer", path, rec.Code, rec.Body)
+		}
+		if rec := do(t, "POST", path, map[string]string{}, viewerHeaders); rec.Code != 403 {
+			t.Fatalf("viewer POST %s: %d %s; want 403", path, rec.Code, rec.Body)
+		}
+	}
 	// Same key with a different actor must execute a distinct configuration write.
 	for i, headers := range []map[string]string{developerHeaders, adminHeaders} {
 		headers["Idempotency-Key"] = "same-project-configuration-key"

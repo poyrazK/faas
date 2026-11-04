@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/vmmd/failureoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -69,8 +71,100 @@ func wireFailureReports(sourceNodeID string, mgr *fcvm.Manager, cfg *Config, dep
 	mgr.WithWorkloadOOMSink(func(_ context.Context, instanceID string, peakMB, planMB int) {
 		enqueue(failureoutbox.Report{InstanceID: instanceID, Kind: failureoutbox.WorkloadOOM, PeakMB: uint32(peakMB), PlanMB: uint32(planMB)})
 	})
+	mgr.WithMemoryPressureSink(memoryPressureRelay(sourceNodeID, deps.scheddTarget, scheddClientTLS, log))
 	log.Info("vmmd: durable failure reports wired", "target", deps.scheddTarget, "pending", outbox.Pending())
 	return outbox, nil
+}
+
+// memoryPressureLimiter bounds the relays a guest's memory-pressure frames
+// start. guest-init reports once per episode, but the guest writes the frame:
+// without a bound, a tenant looping on it made vmmd open a goroutine and a
+// TLS connection to schedd per frame.
+type memoryPressureLimiter struct {
+	mu       sync.Mutex
+	last     map[string]time.Time
+	interval time.Duration
+	slots    chan struct{}
+}
+
+func newMemoryPressureLimiter(interval time.Duration, inFlight int) *memoryPressureLimiter {
+	return &memoryPressureLimiter{last: map[string]time.Time{}, interval: interval, slots: make(chan struct{}, inFlight)}
+}
+
+// admit reserves a relay slot for instanceID's report at now, or reports
+// false when the instance reported within the interval or every slot is
+// busy. An admitted caller calls done when its relay finishes.
+func (l *memoryPressureLimiter) admit(instanceID string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if prev, ok := l.last[instanceID]; ok && now.Sub(prev) < l.interval {
+		return false
+	}
+	select {
+	case l.slots <- struct{}{}:
+	default:
+		return false
+	}
+	l.last[instanceID] = now
+	if len(l.last) > 4096 {
+		for id, at := range l.last {
+			if now.Sub(at) >= l.interval {
+				delete(l.last, id)
+			}
+		}
+	}
+	return true
+}
+
+func (l *memoryPressureLimiter) done() { <-l.slots }
+
+// memoryPressureRelay forwards guest memory-pressure reports to schedd
+// (ADR-1155). They are advisory: a lost or rate-limited report only means no
+// automatic heap capture, and nothing is spooled.
+func memoryPressureRelay(sourceNodeID, target string, tlsConfig func() *tls.Config, log *slog.Logger) fcvm.MemoryPressureSink {
+	limiter := newMemoryPressureLimiter(api.ProfileMemoryPressureRelayMinInterval, api.ProfileMemoryPressureRelayInFlight)
+	return func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+		if !limiter.admit(instanceID, time.Now()) {
+			return
+		}
+		// The relay outlives the report's caller.
+		ctx = context.WithoutCancel(ctx)
+		go func() {
+			defer limiter.done()
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			var cfg *tls.Config
+			if tlsConfig != nil {
+				cfg = tlsConfig()
+			}
+			conn, err := wire.DialContext(ctx, target, cfg)
+			if err != nil {
+				log.Warn("vmmd: memory pressure relay dial failed", "instance_id", instanceID, "err", err)
+				return
+			}
+			defer func() { _ = conn.Close() }()
+			ack, err := scheddpb.NewScheddClient(conn).ReportMemoryPressure(ctx, &scheddpb.ReportMemoryPressureRequest{
+				InstanceId: instanceID, SourceNodeId: sourceNodeID,
+				AvailableMb: clampMB(availableMB), TotalMb: clampMB(totalMB), AnonMb: clampMB(anonMB),
+			})
+			if err != nil {
+				log.Warn("vmmd: memory pressure relay failed", "instance_id", instanceID, "err", err)
+				return
+			}
+			log.Info("vmmd: memory pressure reported", "instance_id", instanceID, "available_mb", availableMB,
+				"total_mb", totalMB, "capture_queued", ack.GetQueued(), "reason", ack.GetReason())
+		}()
+	}
+}
+
+func clampMB(v int) uint32 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1<<20 {
+		return 1 << 20
+	}
+	return uint32(v)
 }
 
 // Remember reconciliation for this Manager lifetime: after a confirmed destroy

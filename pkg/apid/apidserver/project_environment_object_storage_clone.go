@@ -152,8 +152,11 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 	if err != nil {
 		return "", 0, fmt.Errorf("generate isolated object storage credential: %w", err)
 	}
-	recipient := hostSecretRecipient()
-	sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
+	recipients, kid, recipientErr := storageCredentialRecipients()
+	if recipientErr != nil {
+		return "", 0, fmt.Errorf("object storage credential sealing: %w", recipientErr)
+	}
+	sealed, err := secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
 	if err != nil {
 		return "", 0, fmt.Errorf("seal isolated object storage credential: %w", err)
 	}
@@ -169,7 +172,7 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 	}
 	credential, err := store.CreateObjectS3ComputeBinding(r.Context(), state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
 		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
-		SecretSealed: sealed, KID: recipient.String(), Label: plan.objectCred.Label,
+		SecretSealed: sealed, KID: kid, Label: plan.objectCred.Label,
 		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
 		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
 	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})

@@ -24,6 +24,23 @@ type wakeSnapshotReads struct {
 	readWarm         bool
 	warm, init       state.Snapshot
 	warmErr, initErr error
+	// warmAll and initAll are every live row of the tier, one per CPU
+	// platform, newest first; warm and init are their first rows
+	// (ADR-20261024225612 amendment 1).
+	warmAll, initAll []state.Snapshot
+}
+
+// liveTier lists a tier's live rows and reports the newest as the single row
+// callers before per-platform slots expected, with ErrNotFound when none.
+func (e *Engine) liveTier(ctx context.Context, deploymentID, tier string) ([]state.Snapshot, state.Snapshot, error) {
+	rows, err := state.LiveSnapshotsForTier(ctx, e.store, deploymentID, tier)
+	if err != nil {
+		return nil, state.Snapshot{}, err
+	}
+	if len(rows) == 0 {
+		return nil, state.Snapshot{}, state.ErrNotFound
+	}
+	return rows, rows[0], nil
 }
 
 // readWakeSnapshotInputs reads the backoff gate (when gated), the
@@ -34,7 +51,7 @@ func (e *Engine) readWakeSnapshotInputs(ctx context.Context, deploymentID, plan 
 	fns := []func(){
 		func() { reads.sidecarMBs, reads.sidecarErr = e.store.DeploymentSidecarRAMs(ctx, deploymentID) },
 		func() {
-			reads.init, reads.initErr = e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
+			reads.initAll, reads.init, reads.initErr = e.liveTier(ctx, deploymentID, state.SnapshotTierInit)
 		},
 	}
 	if gated {
@@ -44,7 +61,7 @@ func (e *Engine) readWakeSnapshotInputs(ctx context.Context, deploymentID, plan 
 	}
 	if reads.readWarm {
 		fns = append(fns, func() {
-			reads.warm, reads.warmErr = e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierWarm)
+			reads.warmAll, reads.warm, reads.warmErr = e.liveTier(ctx, deploymentID, state.SnapshotTierWarm)
 		})
 	}
 	concurrently(fns...)
@@ -82,9 +99,17 @@ func (e *Engine) chooseWakeSnapshotFrom(ctx context.Context, r wakeSnapshotReads
 		)
 		return reason, receipt, locality
 	}
+	// ADR-20261024225612 amendment 1: each tier may hold one live row per CPU
+	// platform. Take the newest row that passes; the rows not taken stay as
+	// fallbacks for when every node that can restore the chosen one is full.
+	var warmRows []state.Snapshot
 	if r.readWarm && r.warmErr == nil {
-		if reason, receipt, locality := check(r.warm); reason == "" {
-			return wakeSnapshotChoice{snap: r.warm, ok: true, tier: wakeTierWarm, receipt: receipt, locality: locality}
+		warmRows = r.warmAll
+		for i, snap := range warmRows {
+			if reason, receipt, locality := check(snap); reason == "" {
+				return wakeSnapshotChoice{snap: snap, ok: true, tier: wakeTierWarm, receipt: receipt, locality: locality,
+					fallbacks: snapshotFallbacks(warmRows, i, r.initAll)}
+			}
 		}
 	}
 	switch {
@@ -93,9 +118,28 @@ func (e *Engine) chooseWakeSnapshotFrom(ctx context.Context, r wakeSnapshotReads
 	case r.initErr != nil:
 		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: ColdReasonLookupFailed}
 	}
-	reason, receipt, locality := check(r.init)
-	if reason != "" {
-		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: reason, rejected: r.init}
+	rejected, firstReason := state.Snapshot{}, ""
+	for i, snap := range r.initAll {
+		reason, receipt, locality := check(snap)
+		if reason == "" {
+			return wakeSnapshotChoice{snap: snap, ok: true, tier: wakeTierInit, receipt: receipt, locality: locality,
+				fallbacks: snapshotFallbacks(nil, -1, r.initAll[i+1:])}
+		}
+		if i == 0 {
+			rejected, firstReason = snap, reason
+		}
 	}
-	return wakeSnapshotChoice{snap: r.init, ok: true, tier: wakeTierInit, receipt: receipt, locality: locality}
+	return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: firstReason, rejected: rejected}
+}
+
+// snapshotFallbacks is the rows a wake may restore instead of the chosen
+// one, in preference order: the tier's other rows, then the init rows.
+func snapshotFallbacks(tierRows []state.Snapshot, chosen int, initRows []state.Snapshot) []state.Snapshot {
+	out := make([]state.Snapshot, 0, len(tierRows)+len(initRows))
+	for i, snap := range tierRows {
+		if i != chosen {
+			out = append(out, snap)
+		}
+	}
+	return append(out, initRows...)
 }

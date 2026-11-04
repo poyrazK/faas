@@ -16,6 +16,8 @@ die() { echo "native Dev Bridge acceptance: $*" >&2; exit 1; }
 command -v go >/dev/null || die "Go is missing"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
+# Capability flags (ADR-20261023115741) must release what this run exercises.
+python3 scripts/ci/require-capabilities.py --api "${FAAS_API}" --token-env FAAS_TOKEN dev-bridge projects environments
 export FAAS_DEV_BRIDGE_ACCEPTANCE=native-x86
 export FAAS_BRIDGE_EVIDENCE="${FAAS_BRIDGE_EVIDENCE:-dev-bridge-native-evidence.json}"
 FAAS_BRIDGE_SOURCE_COMMIT="$(git rev-parse HEAD)"

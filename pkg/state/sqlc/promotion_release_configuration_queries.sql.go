@@ -51,6 +51,31 @@ func (q *Queries) LockPromotionReleaseConfigurationDeployments(ctx context.Conte
 	return items, nil
 }
 
+const projectServiceGraphCallerPinned = `-- name: ProjectServiceGraphCallerPinned :one
+SELECT EXISTS(
+  SELECT 1 FROM project_environment_workload_deployment_specs pin
+  JOIN deployments d ON d.id=pin.deployment_id
+  WHERE d.id=$1::text::uuid AND d.app_id=$2::text::uuid
+  AND d.environment_workload_runtime IS NULL
+)::boolean AS pinned
+`
+
+type ProjectServiceGraphCallerPinnedParams struct {
+	CallerDeploymentID string
+	CallerAppID        string
+}
+
+// ReadProjectServiceGraph's owner requires this pin; without it the graph is
+// unmanaged and the call routes normally. The graph query took 230-310 ms to
+// plan on every project service call through the transaction pooler while no
+// deployment on production-us was pinned (Hunt 14 H14-35).
+func (q *Queries) ProjectServiceGraphCallerPinned(ctx context.Context, db DBTX, arg ProjectServiceGraphCallerPinnedParams) (bool, error) {
+	row := db.QueryRow(ctx, projectServiceGraphCallerPinned, arg.CallerDeploymentID, arg.CallerAppID)
+	var pinned bool
+	err := row.Scan(&pinned)
+	return pinned, err
+}
+
 const readProjectServiceGraph = `-- name: ReadProjectServiceGraph :one
 WITH owner AS MATERIALIZED (
  SELECT a.id,a.account_id,a.project_id,d.scope FROM apps a JOIN deployments d ON d.app_id=a.id

@@ -29,8 +29,21 @@ func (s *Service) authenticateRealtimePublisher(r *http.Request) (string, error)
 	if !ok {
 		return "", state.ErrRealtimePublisherCredentialDenied
 	}
-	_, err := store.AuthenticateRealtimePublisherCredential(r.Context(), r.PathValue("endpoint_id"), parts[1])
-	return parts[1], err
+	if _, err := store.AuthenticateRealtimePublisherCredential(r.Context(), r.PathValue("endpoint_id"), parts[1]); err != nil {
+		return parts[1], err
+	}
+	endpoints, ok := realtimeEndpointStore(s)
+	if !ok {
+		return "", state.ErrRealtimePublisherCredentialDenied
+	}
+	ep, err := endpoints.ManagedRealtimeEndpointByID(r.Context(), r.PathValue("endpoint_id"))
+	if err != nil {
+		return "", err
+	}
+	if !s.PreviewVisible(ep.AccountID) {
+		return "", state.ErrRealtimePublisherCredentialDenied
+	}
+	return parts[1], nil
 }
 func (s *Service) RealtimePublisherLimited(next http.HandlerFunc) http.HandlerFunc {
 	cfg := middleware.AuthLimitConfig{CountStatuses: []int{http.StatusUnauthorized}, Log: s.Host.Logger()}

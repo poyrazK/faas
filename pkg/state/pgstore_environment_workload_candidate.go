@@ -70,11 +70,18 @@ func (s *PgStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, l
 }
 
 func (s *PgStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, artifacts map[string]EnvironmentWorkloadSourceArtifact) ([]EnvironmentWorkloadCandidate, error) {
-	tx, err := s.gitOpsEffectTx(ctx, lease)
+	return retryTrafficSerialization(ctx, func() ([]EnvironmentWorkloadCandidate, error) {
+		return s.prepareEnvironmentGitOpsCandidatesOnce(ctx, lease, reviewed, artifacts)
+	})
+}
+
+// Each new candidate takes its app's next revision URL.
+func (s *PgStore) prepareEnvironmentGitOpsCandidatesOnce(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, artifacts map[string]EnvironmentWorkloadSourceArtifact) ([]EnvironmentWorkloadCandidate, error) {
+	tx, err := s.gitOpsBindingEffectTx(ctx, lease)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
 	inputs, snapshot, revision, err := s.environmentCandidateInputsTx(ctx, tx, lease, reviewed)
 	if err != nil {

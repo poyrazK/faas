@@ -1,0 +1,386 @@
+package main
+
+// adr: 20261023115741 — the CLI hides the commands of a capability whose
+// platform flag is off for the account. The product catalog says which
+// command paths each capability owns (`cli`); GET /v1/capabilities says
+// which capabilities are hidden for the account, and the completion cache
+// keeps that answer for an hour.
+//
+// Help, completion, man pages and suggestions follow the account's view, or
+// the catalog's tier defaults (GA and beta shown) when no account view is
+// known. Running a command is refused only when the server said its
+// capability is hidden, after asking again, so an offline or logged-out CLI
+// never blocks a command it cannot judge. The apid gate still refuses the
+// API calls of a hidden capability; hiding is discovery, not enforcement.
+
+import (
+	"context"
+	"io"
+	"os"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/capflags"
+	"github.com/onebox-faas/faas/pkg/productcap"
+)
+
+const (
+	// capabilityViewTTL is how long a cached account view is used before
+	// discovery reads it again.
+	capabilityViewTTL = time.Hour
+	// capabilityViewTimeout bounds the read, so help never waits long on a
+	// slow or unreachable API.
+	capabilityViewTimeout = 2 * time.Second
+)
+
+// cliCapabilityIndex maps command paths to the capability that owns them.
+type cliCapabilityIndex struct {
+	owner map[string]string
+	// tierHidden are the capabilities hidden by tier default: preview or
+	// internal, themselves or through an ancestor.
+	tierHidden map[string]bool
+}
+
+var cliCapabilities = sync.OnceValue(func() cliCapabilityIndex {
+	index := cliCapabilityIndex{owner: map[string]string{}, tierHidden: map[string]bool{}}
+	catalog, err := productcap.Load()
+	if err != nil {
+		return index
+	}
+	byID := make(map[string]productcap.Capability, len(catalog.Capabilities))
+	for _, capability := range catalog.Capabilities {
+		byID[capability.ID] = capability
+		for _, path := range capability.CLI {
+			index.owner[path] = capability.ID
+		}
+	}
+	for _, capability := range catalog.Capabilities {
+		for id, depth := capability.ID, 0; id != "" && depth < 8; id, depth = byID[id].Parent, depth+1 {
+			if maturity := byID[id].Maturity; maturity == productcap.MaturityPreview || maturity == productcap.MaturityInternal {
+				index.tierHidden[capability.ID] = true
+			}
+		}
+	}
+	return index
+})
+
+// cliPathCapability returns the capability owning the longest prefix of a
+// command path ("bucket lifecycle rules" → "bucket lifecycle" → "bucket").
+func cliPathCapability(path string) string {
+	index := cliCapabilities()
+	for path != "" {
+		if capability, ok := index.owner[path]; ok {
+			return capability
+		}
+		cut := strings.LastIndexByte(path, ' ')
+		if cut < 0 {
+			return ""
+		}
+		path = path[:cut]
+	}
+	return ""
+}
+
+// capabilityView decides which capabilities are hidden. A view with all set
+// hides nothing; otherwise hidden decides, falling back to tier defaults
+// when tier is set.
+type capabilityView struct {
+	all    bool
+	tier   bool
+	hidden map[string]bool
+}
+
+func (v capabilityView) hides(capability string) bool {
+	switch {
+	case capability == "" || v.all:
+		return false
+	case v.tier:
+		return cliCapabilities().tierHidden[capability]
+	}
+	return v.hidden[capability]
+}
+
+func (v capabilityView) hidesPath(path string) bool { return v.hides(cliPathCapability(path)) }
+
+func accountCapabilityView(hidden []string) capabilityView {
+	set := make(map[string]bool, len(hidden))
+	for _, id := range hidden {
+		set[id] = true
+	}
+	return capabilityView{hidden: set}
+}
+
+// capabilityViewMemo holds the discovery view for one run.
+var capabilityViewMemo struct {
+	sync.Mutex
+	set  bool
+	view capabilityView
+}
+
+// resetCapabilityView forgets the discovery view; run calls it first.
+func resetCapabilityView() {
+	capabilityViewMemo.Lock()
+	capabilityViewMemo.set = false
+	capabilityViewMemo.Unlock()
+}
+
+func capabilityReleaseAll() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(capflags.ReleaseAllEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// discoveryCapabilityView is the view help, completion, man pages and
+// suggestions use: the account's, read again once it is an hour old, or the
+// tier defaults when logged out or never read.
+func discoveryCapabilityView() capabilityView {
+	capabilityViewMemo.Lock()
+	defer capabilityViewMemo.Unlock()
+	if capabilityViewMemo.set {
+		return capabilityViewMemo.view
+	}
+	capabilityViewMemo.view, capabilityViewMemo.set = computeDiscoveryView(), true
+	return capabilityViewMemo.view
+}
+
+// offlineCapabilityView is the run's discovery view when it is known, else
+// the cached account view, else the tier defaults. It never asks the API, so
+// an error path that lists verbs does not wait on it (Hunt 14 H14-89).
+func offlineCapabilityView() capabilityView {
+	capabilityViewMemo.Lock()
+	defer capabilityViewMemo.Unlock()
+	if capabilityViewMemo.set {
+		return capabilityViewMemo.view
+	}
+	if capabilityReleaseAll() {
+		return capabilityView{all: true}
+	}
+	token := loadTokenWithDiagnostics(io.Discard)
+	if token == "" {
+		return capabilityView{tier: true}
+	}
+	if hidden, _, ok := cachedHiddenCapabilities(token); ok {
+		return accountCapabilityView(hidden)
+	}
+	return capabilityView{tier: true}
+}
+
+func computeDiscoveryView() capabilityView {
+	if capabilityReleaseAll() {
+		return capabilityView{all: true}
+	}
+	token := loadTokenWithDiagnostics(io.Discard)
+	if token == "" {
+		return capabilityView{tier: true}
+	}
+	hidden, savedAt, ok := cachedHiddenCapabilities(token)
+	if ok && time.Since(savedAt) < capabilityViewTTL {
+		return accountCapabilityView(hidden)
+	}
+	if fresh, read := readHiddenCapabilities(token); read {
+		return accountCapabilityView(fresh)
+	}
+	if ok {
+		return accountCapabilityView(hidden) // stale beats tier defaults
+	}
+	return capabilityView{tier: true}
+}
+
+func cachedHiddenCapabilities(token string) ([]string, time.Time, bool) {
+	return NewClient(apiBase(), token).CompletionCache().HiddenCapabilities()
+}
+
+// readHiddenCapabilities asks the API; the client stores the answer in the
+// completion cache on the way.
+func readHiddenCapabilities(token string) ([]string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), capabilityViewTimeout)
+	defer cancel()
+	response, err := NewClient(apiBase(), token).GetCapabilities(ctx)
+	if err != nil {
+		return nil, false
+	}
+	return response.HiddenCapabilities, true
+}
+
+// commandCapabilityPath is the manifest path of an invocation: the command
+// and up to two verbs ("bucket lifecycle", "app tcp list" for
+// `app SLUG tcp list`).
+func commandCapabilityPath(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	command, ok := lookupCliCommand(args[0])
+	if !ok {
+		return args[0]
+	}
+	path, rest := command.Name, args[1:]
+	if command.SubcommandsAfterPositionals && command.hasSlugFirst() && len(rest) > 0 {
+		rest = rest[1:]
+	}
+	subs := command.Subcommands
+	for depth := 0; depth < 2 && len(rest) > 0 && !strings.HasPrefix(rest[0], "-"); depth++ {
+		sub, ok := findCliSubcommand(subs, rest[0])
+		if !ok {
+			break
+		}
+		path += " " + sub.Name
+		subs, rest = sub.Subcommands, rest[1:]
+		if sub.SubcommandsAfterPositionals && len(rest) > 0 {
+			rest = rest[1:]
+		}
+	}
+	return path
+}
+
+// localCommands never call the platform. A hidden capability leaves them out
+// of help like its other commands but does not refuse to run them.
+var localCommands = map[string]bool{"data-api dev": true}
+
+// hiddenCommand reports an invocation whose command is hidden, with its
+// path. A help request follows the discovery view. Running a command is
+// refused only when the cached account view hides it and a fresh read
+// agrees, so a capability released a minute ago runs at once.
+func hiddenCommand(args []string, helpRequest bool) (string, bool) {
+	path := commandCapabilityPath(args)
+	if !helpRequest && localCommands[path] {
+		return path, false
+	}
+	return path, capabilityHiddenForRun(cliPathCapability(path), helpRequest)
+}
+
+// capabilityHiddenForRun reports whether capability is hidden for the
+// account: by the discovery view for help, and for a run only when the
+// cached view hides it and a fresh read agrees.
+func capabilityHiddenForRun(capability string, helpRequest bool) bool {
+	if capability == "" || capabilityReleaseAll() {
+		return false
+	}
+	if helpRequest {
+		return discoveryCapabilityView().hides(capability)
+	}
+	token := loadTokenWithDiagnostics(io.Discard)
+	if token == "" {
+		return false
+	}
+	cached, _, ok := cachedHiddenCapabilities(token)
+	if !ok || !slices.Contains(cached, capability) {
+		return false
+	}
+	fresh, read := readHiddenCapabilities(token)
+	if !read {
+		return true
+	}
+	return slices.Contains(fresh, capability)
+}
+
+// hiddenFlagArg returns the first flag in args whose manifest capability is
+// hidden for the account, for a refusal that reads like an unknown flag.
+func hiddenFlagArg(flags []cliFlag, args []string) (string, bool) {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if !strings.HasPrefix(arg, "-") || name == "" {
+			continue
+		}
+		for _, flag := range flags {
+			if flag.Name == name && flag.Capability != "" && capabilityHiddenForRun(flag.Capability, false) {
+				return "--" + name, true
+			}
+		}
+	}
+	return "", false
+}
+
+// discoverableFlags drops flags whose capability the view hides.
+func (v capabilityView) discoverableFlags(flags []cliFlag) []cliFlag {
+	if flags == nil {
+		return nil
+	}
+	kept := make([]cliFlag, 0, len(flags))
+	for _, flag := range flags {
+		if flag.Capability == "" || !v.hides(flag.Capability) {
+			kept = append(kept, flag)
+		}
+	}
+	return kept
+}
+
+// withoutHiddenFlags drops the examples or notes that use a flag the view
+// hides, so help does not show what it no longer lists.
+func (v capabilityView) withoutHiddenFlags(lines []string, flags []cliFlag) []string {
+	var hidden []*regexp.Regexp
+	for _, flag := range flags {
+		if flag.Capability != "" && v.hides(flag.Capability) {
+			hidden = append(hidden, regexp.MustCompile(`--`+regexp.QuoteMeta(flag.Name)+`([^a-z0-9-]|$)`))
+		}
+	}
+	if len(hidden) == 0 || lines == nil {
+		return lines
+	}
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !slices.ContainsFunc(hidden, func(pattern *regexp.Regexp) bool { return pattern.MatchString(line) }) {
+			kept = append(kept, line)
+		}
+	}
+	return kept
+}
+
+// discoverableCliCommands is the manifest discovery surfaces read: the
+// released commands without those, or the verbs, the capability view hides.
+func discoverableCliCommands() []cliCommand {
+	commands := visibleCliCommands()
+	view := discoveryCapabilityView()
+	if view.all {
+		return commands
+	}
+	discoverable := make([]cliCommand, 0, len(commands))
+	for _, command := range commands {
+		if view.hidesPath(command.Name) {
+			continue
+		}
+		command.Examples = view.withoutHiddenFlags(command.Examples, command.Flags)
+		command.HelpNotes = view.withoutHiddenFlags(command.HelpNotes, command.Flags)
+		command.Flags = view.discoverableFlags(command.Flags)
+		command.Subcommands = view.discoverableSubcommands(command.Name, command.Subcommands)
+		discoverable = append(discoverable, command)
+	}
+	return discoverable
+}
+
+func (v capabilityView) discoverableSubcommands(parent string, subs []cliSub) []cliSub {
+	if subs == nil {
+		return nil
+	}
+	kept := make([]cliSub, 0, len(subs))
+	for _, sub := range subs {
+		path := parent + " " + sub.Name
+		if v.hidesPath(path) {
+			continue
+		}
+		sub.Examples = v.withoutHiddenFlags(sub.Examples, sub.Flags)
+		sub.Notes = v.withoutHiddenFlags(sub.Notes, sub.Flags)
+		sub.Flags = v.discoverableFlags(sub.Flags)
+		sub.Subcommands = v.discoverableSubcommands(path, sub.Subcommands)
+		kept = append(kept, sub)
+	}
+	return kept
+}
+
+// lookupDiscoverableCommand is lookupCliCommand over the discoverable
+// manifest, for help and man pages.
+func lookupDiscoverableCommand(name string) (cliCommand, bool) {
+	for _, command := range discoverableCliCommands() {
+		if command.Name == name {
+			return command, true
+		}
+	}
+	return cliCommand{}, false
+}

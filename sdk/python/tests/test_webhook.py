@@ -16,7 +16,7 @@ from faas_sdk import (
     WebhookVerificationError,
     verify_webhook,
 )
-from faas_sdk.models import CreateAppWebhookRequest, WorkflowFinishedWebhookPayload
+from faas_sdk.preview.models import CreateAppWebhookRequest, WorkflowFinishedWebhookPayload
 
 SECRET = "whsec_test_123"
 TIMESTAMP = 1_712_345_678
@@ -148,7 +148,7 @@ def test_generated_sdk_supports_workflow_finished_subscription_and_payload() -> 
 def test_tracker_sync_notification_event_filters_round_trip() -> None:
     from typing import get_args
 
-    from faas_sdk.models.create_app_webhook_request_event_filter_item import (
+    from faas_sdk.preview.models.create_app_webhook_request_event_filter_item import (
         CreateAppWebhookRequestEventFilterItem,
     )
 

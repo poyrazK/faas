@@ -1,0 +1,198 @@
+# Firing and quiet coverage for the per-route series budget and apid's route
+# workers (ADR-20261024154324). All are warn.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: "a gateway declining per-route series fires"
+    input_series:
+      - series: 'gateway_route_metrics_rejected_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '0+5x40'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: GatewayRouteMetricsBudgetExhausted
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "route_metrics"
+              public_status: "internal"
+            exp_annotations:
+              summary: "fsn-2.gregale.dev:9092 has no room for more per-route series"
+              description: "fsn-2.gregale.dev:9092 holds its full budget of live (app, route) pairs and has declined new ones for 15m, so some apps' route lists and throttle suggestions miss routes. Raise FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES if Prometheus has headroom."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GatewayRouteMetricsBudget.md"
+
+  - interval: 10m
+    name: "no successful route insights run for 13h fires"
+    input_series:
+      - series: 'apid_route_insights_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 12h
+        alertname: FaasRouteInsightsStalled
+        exp_alerts: []
+      - eval_time: 14h
+        alertname: FaasRouteInsightsStalled
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "apid"
+              family: "route_workers"
+              public_status: "internal"
+            exp_annotations:
+              summary: "No route insights evaluation has finished in 13h"
+              description: "No apid replica has finished a route insights run without error for more than two six-hour intervals, so customers' route insights and their webhooks are going stale."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+
+  - interval: 1h
+    name: "repeated failed route insights runs fire"
+    input_series:
+      - series: 'apid_route_insights_runs_total{job="apid",instance="127.0.0.1:9101",outcome="failed"}'
+        values: '0 0 1 1 2 2 2'
+      - series: 'apid_route_insights_apps_total{job="apid",instance="127.0.0.1:9101",outcome="evaluated"}'
+        values: '0+100x6'
+      - series: 'apid_route_insights_apps_total{job="apid",instance="127.0.0.1:9101",outcome="failed"}'
+        values: '0x6'
+    alert_rule_test:
+      - eval_time: 6h
+        alertname: FaasRouteInsightsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "apid"
+              family: "route_workers"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Route insights evaluations are failing"
+              description: "More than one route insights run failed, or more than a quarter of the apps evaluated failed, in the last 13h. Read apid's 'route insights' warnings for the failing query."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+
+  - interval: 1h
+    name: "a high share of failed app evaluations fires"
+    input_series:
+      - series: 'apid_route_insights_runs_total{job="apid",instance="127.0.0.1:9101",outcome="failed"}'
+        values: '0x6'
+      - series: 'apid_route_insights_apps_total{job="apid",instance="127.0.0.1:9101",outcome="evaluated"}'
+        values: '0+10x6'
+      - series: 'apid_route_insights_apps_total{job="apid",instance="127.0.0.1:9101",outcome="failed"}'
+        values: '0+10x6'
+    alert_rule_test:
+      - eval_time: 6h
+        alertname: FaasRouteInsightsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "apid"
+              family: "route_workers"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Route insights evaluations are failing"
+              description: "More than one route insights run failed, or more than a quarter of the apps evaluated failed, in the last 13h. Read apid's 'route insights' warnings for the failing query."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+
+  - interval: 1m
+    name: "overdue production route monitors fire"
+    input_series:
+      - series: 'apid_route_monitor_lag_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '400x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasRouteMonitorLagging
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "apid"
+              family: "route_workers"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Production route monitors are more than 5m overdue"
+              description: "The oldest due production route monitor waited 6m 40s at the latest drain. Budget incidents and opt-in automatic rollbacks are delayed until the monitors catch up."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+
+  - interval: 1m
+    name: "an unreadable route worker queue fires"
+    input_series:
+      - series: 'apid_route_worker_queue_unavailable_total{job="apid",instance="127.0.0.1:9101",worker="monitor"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: FaasRouteWorkersFailing
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "apid"
+              family: "route_workers"
+              public_status: "internal"
+            exp_annotations:
+              summary: "apid's route monitor or route check workers are failing"
+              description: "A route worker cannot read its queue, more than 10% of production route monitor evaluations fail, or more than half of automatic route checks are being retried."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+
+  - interval: 1m
+    name: "failing monitor evaluations and retried route checks fire"
+    input_series:
+      - series: 'apid_route_monitor_evaluations_total{job="apid",instance="127.0.0.1:9101",outcome="evaluated"}'
+        values: '0+10x40'
+      - series: 'apid_route_monitor_evaluations_total{job="apid",instance="127.0.0.1:9101",outcome="failed"}'
+        values: '0+5x40'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: FaasRouteWorkersFailing
+        exp_alerts:
+          - exp_labels:
+              severity: "warn"
+              component: "apid"
+              family: "route_workers"
+              public_status: "internal"
+            exp_annotations:
+              summary: "apid's route monitor or route check workers are failing"
+              description: "A route worker cannot read its queue, more than 10% of production route monitor evaluations fail, or more than half of automatic route checks are being retried."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+
+  - interval: 1m
+    name: "healthy route workers and a gateway within budget stay quiet"
+    input_series:
+      - series: 'gateway_route_metrics_rejected_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '3x60'
+      - series: 'apid_route_insights_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '0+60x60'
+      - series: 'apid_route_insights_runs_total{job="apid",instance="127.0.0.1:9101",outcome="failed"}'
+        values: '1x60'
+      - series: 'apid_route_insights_apps_total{job="apid",instance="127.0.0.1:9101",outcome="evaluated"}'
+        values: '0+100x60'
+      - series: 'apid_route_insights_apps_total{job="apid",instance="127.0.0.1:9101",outcome="failed"}'
+        values: '0+1x60'
+      - series: 'apid_route_monitor_lag_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '20x60'
+      - series: 'apid_route_worker_queue_unavailable_total{job="apid",instance="127.0.0.1:9101",worker="check"}'
+        values: '1x60'
+      - series: 'apid_route_monitor_evaluations_total{job="apid",instance="127.0.0.1:9101",outcome="evaluated"}'
+        values: '0+40x60'
+      - series: 'apid_route_monitor_evaluations_total{job="apid",instance="127.0.0.1:9101",outcome="failed"}'
+        values: '0+1x60'
+      - series: 'apid_route_checks_total{job="apid",instance="127.0.0.1:9101",outcome="completed"}'
+        values: '0+4x60'
+      - series: 'apid_route_checks_total{job="apid",instance="127.0.0.1:9101",outcome="retried"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: GatewayRouteMetricsBudgetExhausted
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: FaasRouteInsightsStalled
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: FaasRouteInsightsFailing
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: FaasRouteMonitorLagging
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: FaasRouteWorkersFailing
+        exp_alerts: []

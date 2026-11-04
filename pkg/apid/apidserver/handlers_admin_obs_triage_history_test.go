@@ -42,7 +42,7 @@ func TestObsAlertTriageHistoryPagesAndEvidence(t *testing.T) {
 	if rec.Code != 200 || second.SnapshotRevision != 3 || second.CurrentRevision != 4 || len(second.Items) != 2 || second.Items[0].Revision != 2 || second.Items[1].Revision != 1 || second.Truncated {
 		t.Fatalf("next: %d %s", rec.Code, rec.Body)
 	}
-	rec = e.Do(t, "GET", base+"/evidence?limit=1", nil, nil)
+	rec = e.DoOperator(t, "GET", base+"/evidence?limit=1", nil, nil)
 	var evidence api.ObsIncidentEvidenceResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &evidence); err != nil {
 		t.Fatal(err)

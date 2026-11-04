@@ -13,6 +13,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type fakeTraceIdentities map[string]fcvm.TraceInstanceIdentity
@@ -37,16 +39,25 @@ func (f fakeTraceApps) AppByID(_ context.Context, id string) (state.App, error) 
 
 type fakeGuestSpansClient struct {
 	got     *apidpb.IngestGuestSpansRequest
+	rpc     string
 	outcome string
 	err     error
 }
 
 func (f *fakeGuestSpansClient) IngestGuestSpans(_ context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestSpansResponse, error) {
-	f.got = req
+	f.got, f.rpc = req, "spans"
 	if f.err != nil {
 		return nil, f.err
 	}
 	return &apidpb.IngestGuestSpansResponse{Outcome: f.outcome}, nil
+}
+
+func (f *fakeGuestSpansClient) IngestGuestLogs(_ context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestLogsResponse, error) {
+	f.got, f.rpc = req, "logs"
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &apidpb.IngestGuestLogsResponse{Outcome: f.outcome}, nil
 }
 
 func (f *fakeGuestSpansClient) Close() error { return nil }
@@ -100,6 +111,31 @@ func TestTraceBrokerForwardsWithHostIdentity(t *testing.T) {
 	}
 	if got.GetCodec() != uint32(api.TraceCodecGzipJSON) || string(got.GetPayload()) != "otlp" {
 		t.Fatalf("payload altered: codec=%d payload=%q", got.GetCodec(), got.GetPayload())
+	}
+}
+
+// adr: 213 — a log frame goes to IngestGuestLogs with the logs bit cleared
+// and the same host-owned identity.
+func TestTraceBrokerRoutesLogFrames(t *testing.T) {
+	client := &fakeGuestSpansClient{outcome: api.TraceIngestRateLimited}
+	b := newTestTraceBroker(client, &api.TracingConfig{Enabled: true})
+	ack, reason := runTraceBroker(t, b, "vm", traceTestFrame(api.TraceCodecProtobuf|api.TraceCodecLogsSignal, []byte("logs")))
+	if ack != api.TraceAckLimited || reason != api.TraceIngestRateLimited || client.rpc != "logs" {
+		t.Fatalf("ack=%d reason=%q rpc=%q", ack, reason, client.rpc)
+	}
+	if got := client.got; got.GetCodec() != uint32(api.TraceCodecProtobuf) || got.GetInstanceId() != "vm" || string(got.GetPayload()) != "logs" {
+		t.Fatalf("log request = %+v", got)
+	}
+	client.rpc = ""
+	if _, _ = runTraceBroker(t, b, "vm", traceTestFrame(api.TraceCodecProtobuf, []byte("spans"))); client.rpc != "spans" {
+		t.Fatalf("trace frame went to %q", client.rpc)
+	}
+
+	// Version skew: an apid without IngestGuestLogs refuses permanently so
+	// the app's SDK stops retrying, instead of looping on unavailable.
+	client.err = status.Error(codes.Unimplemented, "unknown method IngestGuestLogs")
+	if ack, reason := runTraceBroker(t, b, "vm", traceTestFrame(api.TraceCodecProtobuf|api.TraceCodecLogsSignal, []byte("logs"))); ack != api.TraceAckRejected || reason != "unsupported" {
+		t.Fatalf("old apid: ack=%d reason=%q", ack, reason)
 	}
 }
 

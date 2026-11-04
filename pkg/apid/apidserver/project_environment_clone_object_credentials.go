@@ -89,17 +89,20 @@ func (s *server) newCapturedCloneObjectCredential(ctx context.Context, op state.
 	if !s.object.ObjectStorageEnabled() || hostSecretRecipient() == nil {
 		return request, objectstorage.ErrUnavailable
 	}
-	recipient := hostSecretRecipient()
+	recipients, kid, recipientErr := storageCredentialRecipients()
+	if recipientErr != nil {
+		return request, fmt.Errorf("stage object credential sealing: %w", recipientErr)
+	}
 	accessKey, secretKey, err := api.GenerateObjectS3Credential()
 	if err != nil {
 		return request, fmt.Errorf("generate stage object credential: %w", err)
 	}
-	sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretKey), 64)
+	sealed, err := secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(secretKey), 64)
 	if err != nil {
 		return request, fmt.Errorf("seal stage object credential: %w", err)
 	}
 	credential := state.ObjectS3Credential{ID: uuid.NewString(), AccountID: op.AccountID, BucketID: bucket.ID, AccessKeyID: accessKey,
-		SecretSealed: sealed, KID: recipient.String(), Label: source.Label, Permission: source.Permission, Status: state.ObjectS3CredentialStatusActive,
+		SecretSealed: sealed, KID: kid, Label: source.Label, Permission: source.Permission, Status: state.ObjectS3CredentialStatusActive,
 		ManagedAppID: source.ManagedAppID, ManagedPrefix: source.ManagedPrefix}
 	request.Target = state.ObjectS3ComputeBindingCreateRequest{Credential: credential, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket}
 	if source.ManagedAppID == "" {

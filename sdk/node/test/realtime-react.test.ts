@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { Component, createElement, type ReactNode } from 'react';
 import TestRenderer, { act, type ReactTestRenderer } from 'react-test-renderer';
 
-import { createRealtimeClient, REALTIME_RESUME_SUBPROTOCOL, type RealtimeSocket } from '../src/index.js';
+import { createRealtimeClient, REALTIME_RESUME_SUBPROTOCOL, type RealtimeSocket } from '../src/preview.js';
 import { RealtimeProvider, useOccupancy, usePresence, useRealtimeChannel, useRealtimeClient } from '../src/react.js';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

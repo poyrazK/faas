@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 )
 
@@ -53,11 +52,11 @@ func helloServerBinary() ([]byte, error) {
 // buildHelloServer compiles the fixture server for goos/goarch to out with
 // CGO disabled, so the result runs in an image that has no libc.
 func buildHelloServer(goos, goarch, out string) error {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return fmt.Errorf("helloserver: cannot locate source")
+	dir, err := CallerDir()
+	if err != nil {
+		return fmt.Errorf("helloserver: %w", err)
 	}
-	src := filepath.Join(filepath.Dir(thisFile), helloServerSource)
+	src := filepath.Join(dir, helloServerSource)
 	cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", out, ".")
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)

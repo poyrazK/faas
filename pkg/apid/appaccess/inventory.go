@@ -1,6 +1,7 @@
 package appaccess
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -11,17 +12,24 @@ import (
 // VisibleApps keeps creator-account inventories from revealing company apps
 // after the creator has left that company. Accounting ownership is unchanged.
 func VisibleApps(r *http.Request, store Store, actor state.Account, apps []state.App) ([]state.App, error) {
-	_, key, _ := authmw.AccountFromContext(r)
+	return VisibleAppsContext(r.Context(), store, actor, apps)
+}
+
+// VisibleAppsContext is VisibleApps for account views that resolve apps from
+// the request's context: dashboards and incidents read app data without
+// addressing the app in their URL, so Wrap never decides for them.
+func VisibleAppsContext(ctx context.Context, store Store, actor state.Account, apps []state.App) ([]state.App, error) {
+	_, key, _ := authmw.AccountFromCtx(ctx)
 	visible := make([]state.App, 0, len(apps))
 	for _, app := range apps {
 		if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID) {
 			continue
 		}
-		if app.OrgID == "" && (app.AccountID != actor.ID || key != nil && key.OrgID != "" && !personalKey(r.Context(), store, key.OrgID, actor.ID)) {
+		if app.OrgID == "" && (app.AccountID != actor.ID || key != nil && key.OrgID != "" && !personalKey(ctx, store, key.OrgID, actor.ID)) {
 			continue
 		}
 		if app.OrgID != "" {
-			org, err := store.OrgByID(r.Context(), app.OrgID)
+			org, err := store.OrgByID(ctx, app.OrgID)
 			if err != nil {
 				return nil, err
 			}
@@ -29,7 +37,7 @@ func VisibleApps(r *http.Request, store Store, actor state.Account, apps []state
 				continue
 			}
 			if !org.Personal {
-				member, err := store.OrgAccessSnapshot(r.Context(), org.ID, actor.ID)
+				member, err := store.OrgAccessSnapshot(ctx, org.ID, actor.ID)
 				if errors.Is(err, state.ErrNotFound) {
 					continue
 				}
@@ -49,6 +57,26 @@ func VisibleApps(r *http.Request, store Store, actor state.Account, apps []state
 		visible = append(visible, app)
 	}
 	return visible, nil
+}
+
+// HiddenApps names the apps of an account's own list that VisibleApps
+// withholds from the request's principal, for a view whose store pages or
+// counts per-app rows itself: the view passes them down so hidden rows are
+// neither shown nor counted. Apps absent from the list (deleted ones) are not
+// hidden.
+func HiddenApps(r *http.Request, store Store, actor state.Account, apps []state.App) (map[string]bool, error) {
+	visible, err := VisibleApps(r, store, actor, apps)
+	if err != nil {
+		return nil, err
+	}
+	hidden := make(map[string]bool, len(apps)-len(visible))
+	for _, app := range apps {
+		hidden[app.ID] = true
+	}
+	for _, app := range visible {
+		delete(hidden, app.ID)
+	}
+	return hidden, nil
 }
 
 func VisibleBuilds(r *http.Request, store Store, actor state.Account, builds []state.Build) ([]state.Build, error) {

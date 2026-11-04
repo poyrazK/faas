@@ -80,8 +80,17 @@ func TestMCPServeStdioUsesSelectedProfile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	tools, err := session.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 49 || requests.Load() != 0 {
+	// 49 read tools, the local deploy and env plans (ADR-20261026141841), and
+	// the provisioning plans and domain check (ADR-20261026174727).
+	if err != nil || len(tools.Tools) != 56 || requests.Load() != 0 {
 		t.Fatalf("discovery=%+v error=%v requests=%d", tools, err, requests.Load())
+	}
+	listed := map[string]bool{}
+	for _, tool := range tools.Tools {
+		listed[tool.Name] = true
+	}
+	if !listed["gregale_plan_local_deploy"] || !listed["gregale_plan_env_change"] {
+		t.Fatal("a local stdio connection did not list the local deploy and env plans")
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "gregale_context", Arguments: map[string]any{}})
 	if err != nil || result.IsError {

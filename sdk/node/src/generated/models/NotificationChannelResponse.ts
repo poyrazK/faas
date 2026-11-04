@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One alert notification channel (ADR-749).
+ * One alert notification channel.
  */
 export type NotificationChannelResponse = {
   id: string;

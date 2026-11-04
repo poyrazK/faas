@@ -211,13 +211,13 @@ func (s *server) setRegistryCredential(w http.ResponseWriter, r *http.Request, a
 // unseals under the same namespace string and refuses blobs
 // sealed under any other namespace (defence in depth).
 func (s *server) sealAndPersistRegistryCredential(c stdctx, acct state.Account, app state.App, host, username, password string) *api.Problem {
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		// Apid started without a host.age.pub; refuse to
-		// accept plaintext.
+	recipients, err := registryCredentialRecipients()
+	if err != nil {
+		// Apid started without a host.age.pub (or the build domain's
+		// recipient its write mode needs); refuse to accept plaintext.
 		return api.ErrCapacity("host age recipient not loaded — refusing to seal")
 	}
-	ciphertext, err := secretbox.SealBytes(recipient, "registry_creds", []byte(password), api.MaxRegistryPasswordBytes)
+	ciphertext, err := secretbox.SealBytesTo(recipients, "registry_creds", []byte(password), api.MaxRegistryPasswordBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			return prob

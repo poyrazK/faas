@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -102,7 +103,7 @@ func cmdInvoke(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(resp))
 		}
-		PrintOK(os.Stdout, "Async invocation %s queued. Poll with `gregale invocations get %s` or via %s", resp.ID, resp.ID, resp.StatusURL)
+		PrintOK(os.Stdout, "Async invocation %s queued. Poll with `gregale invocation get %s` or via %s", resp.ID, resp.ID, resp.StatusURL)
 		return 0
 	}
 	resp, err := client.InvokeApp(context.Background(), slug, req)
@@ -120,6 +121,11 @@ func cmdInvoke(args []string) int {
 		}
 		if resp.Error != "" {
 			_, _ = fmt.Fprintln(os.Stderr, resp.Error)
+			// `invoke h14-py --path /` sent POST to a GET-only route and
+			// answered only the app's 405 page (Hunt 14 H14-64).
+			if *method == "" && strings.Contains(resp.Error, "HTTP 405") {
+				_, _ = fmt.Fprintln(os.Stderr, "invoke: the route refused the method; invoke sends POST unless --method is given (for example --method GET)")
+			}
 		}
 	}
 	// A synchronous invoke that came back `failed` is a failed smoke
@@ -131,7 +137,7 @@ func cmdInvoke(args []string) int {
 	// app reported success. Result (if any) is still printed above so
 	// the operator sees the handler's own error body.
 	if !invokeStatusOK(resp.Status) {
-		_, _ = fmt.Fprintf(os.Stderr, "invoke: terminal state %q — see `gregale invocations get %s` for the error\n", resp.Status, resp.ID)
+		_, _ = fmt.Fprintf(os.Stderr, "invoke: terminal state %q — see `gregale invocation get %s` for the error\n", resp.Status, resp.ID)
 		return 1
 	}
 	return 0

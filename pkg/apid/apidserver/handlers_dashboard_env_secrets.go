@@ -50,7 +50,7 @@ func parseAppEnvSecretsPath(rest string) (string, bool) {
 func (s *server) renderAppEnvSecrets(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -160,7 +160,7 @@ func projectDashboardSecrets(rows []state.AppSecret, selectedScope string) []das
 		if scope == "" {
 			scope = selectedScope
 		}
-		prefix := row.ValueHash
+		prefix := displayValueHash(row.AccountID, row.ValueHash)
 		if len(prefix) > 8 {
 			prefix = prefix[:8]
 		}

@@ -5,12 +5,15 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"golang.org/x/net/http2"
 )
 
@@ -32,7 +35,7 @@ func TestStreamBridgeManagerSharesConcurrentStartup(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			lease, err := manager.acquire(context.Background(), req, "fc-instance-a")
+			lease, err := manager.acquire(context.Background(), req, "fc-instance-a", bridgeIdentity{})
 			if err != nil {
 				errs <- err
 				return
@@ -81,7 +84,7 @@ func TestStreamBridgeManagerPrewarmSharesStartupWithFirstAcquire(t *testing.T) {
 		Instance: "instance-prewarm", Port: 9090, AppProtocol: "http2",
 	}
 	wakeCtx, cancelWake := context.WithCancel(t.Context())
-	manager.prewarm(wakeCtx, req, "fc-instance-prewarm")
+	manager.prewarm(wakeCtx, req, "fc-instance-prewarm", bridgeIdentity{})
 	cancelWake() // The persistent bridge outlives the RPC that requested it.
 	select {
 	case <-started:
@@ -95,7 +98,7 @@ func TestStreamBridgeManagerPrewarmSharesStartupWithFirstAcquire(t *testing.T) {
 	}
 	acquired := make(chan acquireResult, 1)
 	go func() {
-		lease, acquireErr := manager.acquire(t.Context(), req, "fc-instance-prewarm")
+		lease, acquireErr := manager.acquire(t.Context(), req, "fc-instance-prewarm", bridgeIdentity{})
 		acquired <- acquireResult{lease: lease, err: acquireErr}
 	}()
 	select {
@@ -145,7 +148,7 @@ func TestStreamBridgeManagerRestartsWhenProtocolChanges(t *testing.T) {
 	for _, protocol := range []string{"http1", "grpc"} {
 		lease, acquireErr := manager.acquire(context.Background(), &vmmdpb.ForwardHTTPRequestInit{
 			Instance: "instance-protocol", Port: 8080, AppProtocol: protocol,
-		}, "fc-instance-protocol")
+		}, "fc-instance-protocol", bridgeIdentity{})
 		if acquireErr != nil {
 			t.Fatal(acquireErr)
 		}
@@ -153,6 +156,40 @@ func TestStreamBridgeManagerRestartsWhenProtocolChanges(t *testing.T) {
 	}
 	if got := starts.Load(); got != 2 {
 		t.Fatalf("bridge starts after protocol change = %d, want two", got)
+	}
+}
+
+// An instance ID can come back on a different slot after park and wake. Its
+// new lease has another bridge uid, so the old bridge must not serve it.
+func TestStreamBridgeManagerRestartsWhenBridgeUIDChanges(t *testing.T) {
+	bridgePath, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(streamBridgePathEnv, bridgePath)
+	saved, savedChown := bridgeRunRoot, chownBridgeDir
+	t.Cleanup(func() { bridgeRunRoot, chownBridgeDir = saved, savedChown })
+	bridgeRunRoot = filepath.Join(t.TempDir(), "ibridge")
+	chownBridgeDir = func(string, int, int) error { return nil }
+
+	var starts atomic.Int32
+	var uids []int
+	manager := newTestStreamBridgeManager(t, func() { starts.Add(1) })
+	spawn := manager.spawn
+	manager.spawn = func(ctx context.Context, path, netnsName string, id bridgeIdentity, sock, ip string, port uint32, deadline string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
+		uids = append(uids, id.uid)
+		return spawn(ctx, path, netnsName, id, sock, ip, port, deadline, env)
+	}
+	req := &vmmdpb.ForwardHTTPRequestInit{Instance: "instance-uid", Port: 8080}
+	for _, uid := range []int{fcvm.BridgeUIDBase + 1, fcvm.BridgeUIDBase + 1, fcvm.BridgeUIDBase + 2} {
+		lease, acquireErr := manager.acquire(context.Background(), req, "fc-instance-uid", bridgeIdentity{uid: uid, gid: uid})
+		if acquireErr != nil {
+			t.Fatal(acquireErr)
+		}
+		lease.release()
+	}
+	if got := starts.Load(); got != 2 || !slices.Equal(uids, []int{fcvm.BridgeUIDBase + 1, fcvm.BridgeUIDBase + 2}) {
+		t.Fatalf("bridge starts = %d as uids %v, want one per bridge uid", got, uids)
 	}
 }
 
@@ -166,7 +203,7 @@ func TestStreamBridgeManagerBridgeContextOutlivesRequest(t *testing.T) {
 	manager := newTestStreamBridgeManager(t, func() {})
 	spawnContextDone := make(chan struct{})
 	spawned := make(chan *exec.Cmd, 1)
-	manager.spawn = func(ctx context.Context, _, _, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
+	manager.spawn = func(ctx context.Context, _, _ string, _ bridgeIdentity, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
 		go func() {
 			<-ctx.Done()
 			close(spawnContextDone)
@@ -181,7 +218,7 @@ func TestStreamBridgeManagerBridgeContextOutlivesRequest(t *testing.T) {
 
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
 	req := &vmmdpb.ForwardHTTPRequestInit{Instance: "instance-context", Port: 8080}
-	lease, err := manager.acquire(requestCtx, req, "fc-instance-context")
+	lease, err := manager.acquire(requestCtx, req, "fc-instance-context", bridgeIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +255,7 @@ func TestStreamBridgeManagerRemovesExitedEntry(t *testing.T) {
 	manager := newTestStreamBridgeManager(t, func() {})
 	var starts atomic.Int32
 	var first *exec.Cmd
-	manager.spawn = func(_ context.Context, _, _, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
+	manager.spawn = func(_ context.Context, _, _ string, _ bridgeIdentity, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
 		cmd := exec.Command("sleep", "60")
 		if err := cmd.Start(); err != nil {
 			return nil, nil, err
@@ -230,7 +267,7 @@ func TestStreamBridgeManagerRemovesExitedEntry(t *testing.T) {
 	}
 
 	req := &vmmdpb.ForwardHTTPRequestInit{Instance: "instance-exit", Port: 8080}
-	lease, err := manager.acquire(context.Background(), req, "fc-instance-exit")
+	lease, err := manager.acquire(context.Background(), req, "fc-instance-exit", bridgeIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +296,7 @@ func TestStreamBridgeManagerRemovesExitedEntry(t *testing.T) {
 		t.Fatal("exited bridge entry was retained")
 	}
 
-	secondLease, err := manager.acquire(context.Background(), req, "fc-instance-exit")
+	secondLease, err := manager.acquire(context.Background(), req, "fc-instance-exit", bridgeIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +318,7 @@ func TestStreamBridgeManagerReapsIdleEntry(t *testing.T) {
 	manager.now = func() time.Time { return now }
 	manager.idleTimeout = time.Minute
 	req := &vmmdpb.ForwardHTTPRequestInit{Instance: "instance-b", Port: 8080}
-	lease, err := manager.acquire(context.Background(), req, "fc-instance-b")
+	lease, err := manager.acquire(context.Background(), req, "fc-instance-b", bridgeIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +338,7 @@ func newTestStreamBridgeManager(t *testing.T, onStart func()) *streamBridgeManag
 	t.Helper()
 	manager := newStreamBridgeManager(nil)
 	manager.reapInterval = time.Hour
-	manager.spawn = func(_ context.Context, _, _, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
+	manager.spawn = func(_ context.Context, _, _ string, _ bridgeIdentity, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
 		onStart()
 		cmd := exec.Command("sleep", "60")
 		if err := cmd.Start(); err != nil {
@@ -310,7 +347,7 @@ func newTestStreamBridgeManager(t *testing.T, onStart func()) *streamBridgeManag
 		return cmd, &bytes.Buffer{}, nil
 	}
 	manager.waitSocket = func(string, time.Duration) error { return nil }
-	manager.newTransport = func(string) *http2.Transport { return &http2.Transport{} }
+	manager.newTransport = func(string, bridgeIdentity) *http2.Transport { return &http2.Transport{} }
 	manager.stop = func(_ context.Context, cmd *exec.Cmd, _ *bytes.Buffer) error {
 		if cmd.Process == nil {
 			return nil
@@ -331,7 +368,7 @@ func BenchmarkStreamBridgeManagerAcquireReuse(b *testing.B) {
 	b.Setenv(streamBridgePathEnv, bridgePath)
 	manager := newStreamBridgeManager(nil)
 	manager.reapInterval = time.Hour
-	manager.spawn = func(_ context.Context, _, _, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
+	manager.spawn = func(_ context.Context, _, _ string, _ bridgeIdentity, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
 		cmd := exec.Command("sleep", "60")
 		if err := cmd.Start(); err != nil {
 			return nil, nil, err
@@ -339,7 +376,7 @@ func BenchmarkStreamBridgeManagerAcquireReuse(b *testing.B) {
 		return cmd, &bytes.Buffer{}, nil
 	}
 	manager.waitSocket = func(string, time.Duration) error { return nil }
-	manager.newTransport = func(string) *http2.Transport { return &http2.Transport{} }
+	manager.newTransport = func(string, bridgeIdentity) *http2.Transport { return &http2.Transport{} }
 	manager.stop = func(_ context.Context, cmd *exec.Cmd, _ *bytes.Buffer) error {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -348,14 +385,14 @@ func BenchmarkStreamBridgeManagerAcquireReuse(b *testing.B) {
 	b.Cleanup(func() { _ = manager.close(context.Background()) })
 
 	req := &vmmdpb.ForwardHTTPRequestInit{Instance: "benchmark-instance", Port: 8080}
-	lease, err := manager.acquire(context.Background(), req, "fc-benchmark-instance")
+	lease, err := manager.acquire(context.Background(), req, "fc-benchmark-instance", bridgeIdentity{})
 	if err != nil {
 		b.Fatal(err)
 	}
 	lease.release()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		lease, err := manager.acquire(context.Background(), req, "fc-benchmark-instance")
+		lease, err := manager.acquire(context.Background(), req, "fc-benchmark-instance", bridgeIdentity{})
 		if err != nil {
 			b.Fatal(err)
 		}

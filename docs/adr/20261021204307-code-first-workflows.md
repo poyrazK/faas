@@ -64,6 +64,8 @@ or `failed` with an error).
   `asyncio.gather` over steps runs them concurrently in one invocation.
 - Operation names come from the code. A repeated name gets a deterministic
   `#n` suffix, so `step("charge")` in a loop records `charge`, `charge#2`, …
+  The SDKs refuse `#` in a name the code passes, so an explicit `charge#2`
+  cannot collide with a generated one (amended 2026-10-24, Hunt 13).
 - **Determinism is checked on both sides.** The SDK refuses to replay when the
   code asks for a different name or kind at a recorded sequence number. The
   engine refuses a response whose operations skip a sequence number, rename a
@@ -82,18 +84,26 @@ new tables. A row's `input` holds its operation descriptor
   output. A failure is retried under the step's policy (per-step override,
   else `code.retry`, else 3 attempts with exponential back-off, the declarative
   `EvaluateWorkflowRetry` delays). The engine schedules the retry and calls the
-  entry handler when it is due; the SDK runs the step again. When attempts are
+  entry handler when it is due; the SDK runs the step again. A call made
+  earlier, because another operation settled, sends the step as `scheduled`
+  and the SDK leaves it suspended (amended 2026-10-24, Hunt 13: SDKs used to
+  run it at once, skipping its back-off). The engine still accepts an early
+  attempt from an older SDK. When attempts are
   exhausted the row is `failed` and the next invocation throws the step error
   into the workflow function, which may catch it.
 - **sleep**: a duration from 1 s to the plan's `WorkflowMaxWaitDays`. The row
   parks with `ParkWorkflowTimer`; its first `started_at` fixes the deadline.
 - **waitForEvent**: an event name and timeout (1 s to the plan maximum,
-  default the plan maximum). The k-th wait for an event name in journal order
-  is satisfied by the k-th event of that name the run received, so a wait in a
-  loop consumes one event per iteration and an event that arrives before its
-  wait is not lost. Matching, parking and timing out happen under the run
-  lock, the same rule declarative waits follow. A timed-out wait resolves to
-  `null` in the SDK.
+  default the plan maximum). A wait takes the run's earliest event of that
+  name, received before the wait's deadline, that no other wait of the run
+  consumed, and records that event's ID in its descriptor. A wait in a loop
+  therefore consumes one event per iteration, an event that arrives before
+  its wait is not lost, and a wait that times out consumes nothing. Matching,
+  parking and timing out happen under the run lock, the same rule
+  declarative waits follow. A timed-out wait resolves to `null` in the SDK.
+  (Amended 2026-10-24, Hunt 13 H13-1: the k-th wait used to take the k-th
+  event, so after one timed-out wait every later wait for that name skipped
+  the event it was owed.)
 - The **entry invocation** itself is recorded as the reserved row `$driver`:
   one attempt per call, with its HTTP status. Transport errors, non-2xx
   answers and malformed envelopes retry with back-off (5 s doubling to 5

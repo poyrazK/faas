@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, McpService, type SetMCPReadinessPagerDutyAcknowledgementsRequest, type MCPReadinessPagerDutyAcknowledgementPolicy, type MCPReadinessPagerDutyAcknowledgementEvent, type MCPReadinessAttentionReceipt, type MCPReadinessPagerDutyAcknowledgementHold } from '../src/index.js';
+import { FaaSClient, McpService, type SetMCPReadinessPagerDutyAcknowledgementsRequest, type MCPReadinessPagerDutyAcknowledgementPolicy, type MCPReadinessPagerDutyAcknowledgementEvent, type MCPReadinessAttentionReceipt, type MCPReadinessPagerDutyAcknowledgementHold } from '../src/preview.js';
 
 test('signed PagerDuty acknowledgement settings and receipt contracts', { timeout: 10000 }, async (t) => {
   const rule = '00000000-0000-0000-0000-000000000001';

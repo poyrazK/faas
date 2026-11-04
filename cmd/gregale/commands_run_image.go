@@ -171,10 +171,13 @@ type imageRunOptions struct {
 	// credentials; the password is read later, never from a flag value.
 	registryUsername string
 	passwordStdin    bool
+	// dockerConfig names a Docker config whose credentials for the image's
+	// registry are used instead (ADR-20261025110000).
+	dockerConfig string
 }
 
 const imageRunUsage = "usage: gregale run [-i [-t]] [-u USER] [-w DIR] [-e KEY[=VALUE]]... [--env-file FILE]... " +
-	"[--registry-username USER [--registry-password-stdin]] [--entrypoint CMD] [--ram MB] [--timeout D] " +
+	"[--registry-username USER [--registry-password-stdin] | --docker-config PATH] [--entrypoint CMD] [--ram MB] [--timeout D] " +
 	"[--pull missing|always] [--detach] (--image IMAGE | IMAGE) [ARG...]"
 
 func parseImageRunArgs(args []string) (imageRunOptions, bool) {
@@ -191,6 +194,7 @@ func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 	fs.StringVar(workdir, "w", "", "shorthand for --workdir")
 	registryUsername := fs.String("registry-username", "", "username for a private registry")
 	passwordStdin := fs.Bool("registry-password-stdin", false, "read the registry password or token from stdin")
+	dockerConfig := fs.String("docker-config", "", "use the image registry's credentials from this Docker config.json or its directory")
 	ram := fs.Int("ram", 0, "memory in MB (0 = Job default)")
 	timeout := fs.Duration("timeout", 0, "task deadline (0 = the plan's Job ceiling)")
 	pull := fs.String("pull", api.ImageRunPullMissing, "pull policy: missing|always")
@@ -220,6 +224,10 @@ func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 		PrintFail(osStderr, "--interactive cannot be combined with --detach or --json")
 		return imageRunOptions{}, false
 	}
+	if *dockerConfig != "" && *registryUsername != "" {
+		PrintFail(osStderr, "--docker-config cannot be combined with --registry-username: choose one source of registry credentials")
+		return imageRunOptions{}, false
+	}
 	if interactive && *passwordStdin {
 		PrintFail(osStderr, "--registry-password-stdin cannot be combined with --interactive: stdin is the session; use "+imageRunEnvPasswordVar)
 		return imageRunOptions{}, false
@@ -240,7 +248,7 @@ func parseImageRunArgs(args []string) (imageRunOptions, bool) {
 	if len(rest) > 0 {
 		req.Args = &rest
 	}
-	return imageRunOptions{request: req, detach: *detach, registryUsername: *registryUsername, passwordStdin: *passwordStdin}, true
+	return imageRunOptions{request: req, detach: *detach, registryUsername: *registryUsername, passwordStdin: *passwordStdin, dockerConfig: *dockerConfig}, true
 }
 
 // osStdinIsTerminal reports whether the CLI's stdin is a terminal that can
@@ -250,10 +258,14 @@ func osStdinIsTerminal() bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
-// imageRunRegistryAuth reads the registry password for --registry-username:
-// from stdin with --registry-password-stdin, else from
-// $GREGALE_REGISTRY_PASSWORD, else from a terminal prompt.
+// imageRunRegistryAuth reads the registry credentials: from a Docker config
+// with --docker-config, or for --registry-username the password from stdin
+// with --registry-password-stdin, else from $GREGALE_REGISTRY_PASSWORD, else
+// from a terminal prompt.
 func imageRunRegistryAuth(opts imageRunOptions) (*api.ImageRunRegistryAuth, error) {
+	if opts.dockerConfig != "" {
+		return dockerConfigRegistryAuth(context.Background(), opts.dockerConfig, opts.request.Image, runDockerCredentialHelper)
+	}
 	if opts.registryUsername == "" {
 		return nil, nil
 	}

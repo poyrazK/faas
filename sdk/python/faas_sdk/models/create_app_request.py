@@ -70,29 +70,29 @@ class CreateAppRequest:
     slug: str
     """The tag- prefix is reserved for stable deployment-alias hostnames."""
     profiling: ProfilingConfig | Unset = UNSET
-    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
+    """Opt-in sampled CPU profiling baked into each deployment."""
     tracing: TracingConfig | Unset = UNSET
-    """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
-    cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
-    OTel exporter are left untouched."""
+    """Opt-in zero-config request tracing baked into each deployment. Managed runtimes export database, cache and
+    HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel
+    exporter are left untouched."""
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
     """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""
     allowed_service_callers: list[str] | Unset = UNSET
-    """Standalone target-side service allowlist (ADR-267). Omit for same-account access; [] denies all. Names are
-    normalized to lowercase, sorted, and deduplicated."""
+    """Standalone target-side service allowlist. Omit for same-account access; [] denies all. Names are normalized
+    to lowercase, sorted, and deduplicated."""
     allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
     """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
     prefixes. When present, callers missing from the map are denied."""
     service_binding_targets: list[str] | Unset = UNSET
-    """Standalone outbound target app slugs (ADR-269). Names are normalized, sorted, and deduplicated; the platform
-    derives read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first
+    """Standalone outbound target app slugs. Names are normalized, sorted, and deduplicated; the platform derives
+    read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first
     canonical URL. Targets may be declared before they exist. Omit or [] for no bindings."""
     service_reliability: ServiceReliabilityPolicies | Unset = UNSET
     """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
     bindings may appear."""
     service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
-    """Standalone caller authorization (ADR-269). Omit for legacy same-account reachability; declared permits only
+    """Standalone caller authorization. Omit for legacy same-account reachability; declared permits only
     service_binding_targets."""
     service_binding_transport: ServiceBindingTransport | Unset = UNSET
     """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
@@ -113,8 +113,8 @@ class CreateAppRequest:
     """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform
     ceiling is 30 seconds."""
     function_concurrency: int | Unset = UNSET
-    """Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request
-    per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads."""
+    """Requests one Node or Python function worker may serve at once. Omitted, 0 or 1 keeps one request per worker;
+    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads."""
     execution_mode: CreateAppRequestExecutionMode | Unset = UNSET
     """Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."""
     restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
@@ -126,10 +126,10 @@ class CreateAppRequest:
     """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
     warm snapshots; snapshot reuse skips the callback."""
     pause: CreateAppRequestPause | Unset = UNSET
-    """When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes
-    it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the
-    default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution
-    modes accept only never."""
+    """When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the
+    idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default:
+    between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept
+    only never."""
     startup_deadline_s: int | Unset = UNSET
     """Upper bound on time-to-ready in seconds. 0 uses the plan default."""
     stop_grace_period_s: int | Unset = UNSET
@@ -141,19 +141,17 @@ class CreateAppRequest:
     max_retries: int | Unset = UNSET
     """Maximum consecutive restart attempts. 0 uses the plan default."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
-    """ADR-134 PR-B. Wire shape for dispatch.RetryPolicy. max_attempts
+    """Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
     account plan and never means unlimited. Durable invocation
     producers materialize the effective plan-capped value, and the
     scheduler re-clamps it at dispatch time to account for later plan
-    downgrades. Lives in pkg/api so the SDK can type the policy
-    without importing pkg/dispatch directly.
+    downgrades.
     """
     service_replicas: ServiceReplicas | Unset = UNSET
-    """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
-    Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
-    the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
-    image-digest pinning semantics land in M-4."""
+    """Per-deployment replica scaffold for execution_mode='service'. Replica count is bounded by ServiceReplicasMax
+    per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit the app's max_concurrency ceiling. min ≤ desired
+    ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land."""
     worker_replicas: WorkerScaling | Unset = UNSET
     """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
     min=0."""
@@ -187,47 +185,47 @@ class CreateAppRequest:
     revision_pin_ttl_seconds: int | Unset = 0
     """Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."""
     release_policy: CreateAppRequestReleasePolicy | Unset = UNSET
-    """Default rollout for production releases that name no rollout policy (ADR-1446, ADR-1450). Omit for safe."""
+    """Default rollout for production releases that name no rollout policy. Omit for safe."""
     release_probe_paths: list[str] | Unset = UNSET
-    """Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449)."""
+    """Up to 3 concrete GET paths the default rollout probe checks instead of /."""
     streaming_enabled: bool | Unset = UNSET
-    """Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471)."""
+    """Per-app streaming flag. Omitted at create-time → the API applies the plan default."""
     websocket_enabled: bool | Unset = UNSET
-    """Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Omitted → apid applies the plan default;
-    PATCH-true on Free is rejected by apid with 403 plan_websocket_not_allowed."""
+    """Per-app raw-bytes Upgrade bridge flag. Omitted → the API applies the plan default; PATCH-true on Free is
+    rejected by the API with 403 plan_websocket_not_allowed."""
     route_metrics_enabled: bool | Unset = UNSET
-    """Per-app per-route observability flag (ADR-093). Omitted → apid applies the plan default (Free = false;
-    Hobby/Pro/Scale = true). PATCH-true on Free is rejected by apid with 403 plan_route_metrics_not_allowed."""
+    """Per-app per-route observability flag. Omitted → the API applies the plan default (Free = false;
+    Hobby/Pro/Scale = true). PATCH-true on Free is rejected by the API with 403 plan_route_metrics_not_allowed."""
     maintenance_mode: bool | Unset = UNSET
-    """Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → apid applies the default (false). Free-tier
-    allowed; no plan gate. Flipping this on at create time pins the app for maintenance from the first request."""
+    """Coarse per-app maintenance toggle. Omitted → the API applies the default (false). Free-tier allowed; no plan
+    gate. Flipping this on at create time pins the app for maintenance from the first request."""
     app_protocol: CreateAppRequestAppProtocol | Unset = UNSET
-    """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit to use the per-plan default
-    ('http1'); set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403
+    """Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Omit to use the per-plan default ('http1');
+    set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403
     plan_app_protocol_grpc_not_allowed."""
     warm_snapshot_enabled: bool | Unset = UNSET
-    """Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted at create-time → apid applies the plan
-    default. Free/Hobby PATCH-true is rejected."""
+    """Per-app two-tier snapshot flag. Omitted at create-time → the API applies the plan default. Free/Hobby PATCH-
+    true is rejected."""
     warm_snapshot_min_requests: int | Unset = UNSET
-    """Optional create-time override for the warm-tier request-count threshold (issue #470 / ADR-055). Range [1,
-    100]. Omitted → apid applies the plan default."""
+    """Optional create-time override for the warm-tier request-count threshold. Range [1, 100]. Omitted → the API
+    applies the plan default."""
     warm_snapshot_min_ms: int | Unset = UNSET
-    """Optional create-time override for the warm-tier time-since-first-ready threshold, milliseconds (issue #470 /
-    ADR-055). Range [100, 60000]. Omitted → apid applies the plan default."""
+    """Optional create-time override for the warm-tier time-since-first-ready threshold, milliseconds. Range [100,
+    60000]. Omitted → the API applies the plan default."""
     warm_pool_size: int | Unset = UNSET
-    """Desired paused warm-pool size (issue #1056 / ADR-074). Omit for the default of zero; non-zero values require
-    Hobby+ and may not exceed max_concurrency."""
+    """Desired paused warm-pool size. Omit for the default of zero; non-zero values require Hobby+ and may not
+    exceed max_concurrency."""
     eviction_priority: CreateAppRequestEvictionPriority | Unset = UNSET
-    """Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper
-    behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction. Omitted at create-time → apid
-    applies the schema default 'best_effort'."""
+    """Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour;
+    'reserved' protects the app from cross-account RAM-pressure eviction. Omitted at create-time → the API applies
+    the schema default 'best_effort'."""
     overflow_node: str | Unset = UNSET
-    """Per-app preferred spill target for cross-node pressure rebalance (Tier A10 / ADR-088). Wire form is
-    compute_nodes.name (resolved server-side). Omitted → no preference; empty string at create-time is rejected with
-    422 invalid_overflow_node because the column starts NULL and there is no 'clear' path at create-time."""
+    """Per-app preferred spill target for cross-node pressure rebalance. Wire form is compute_nodes.name (resolved
+    server-side). Omitted → no preference; empty string at create-time is rejected with 422 invalid_overflow_node
+    because the column starts NULL and there is no 'clear' path at create-time."""
     require_authn: bool | Unset = UNSET
-    """Per-deployment token-gate flag (issue #560). Omitted at create-time → apid applies the plan default (false).
-    Pro/Scale only."""
+    """Per-deployment token-gate flag. Omitted at create-time → the API applies the plan default (false). Pro/Scale
+    only."""
     platform_tenant_required: bool | Unset = UNSET
     """Require verified platform tenant identity on app traffic from creation. Omitted or false leaves the policy
     disabled. Available on Hobby and above."""

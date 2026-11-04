@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, replace
 
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentAdoptRetryBudgetOptions,
     EventAcknowledgmentIntentRetryBudget,
     EventAcknowledgmentIntentRetryPolicy,

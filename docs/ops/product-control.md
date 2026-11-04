@@ -815,6 +815,51 @@ A catalog can let new customers sign up through the portal
   Checkout Sessions and read access to SetupIntents and PaymentMethods. A Paddle
   key needs customer read and write.
 
+### Trial to paid
+
+A plan with a trial can keep the customer after it only with a payment method on
+file ([ADR-20261022180921](../adr/20261022180921-product-control-trial-conversion.md)):
+
+```json
+"free": {"label": "Free", "features": {"export": {"unit_price_millicents": 20000, "monthly_starts": 10}}},
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "trial_days": 14, "requires_payment_method": true, "fallback_plan": "free", "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Offering.** `requires_payment_method` needs `trial_days` and a
+  `fallback_plan` naming another plan of the catalog. That plan has no monthly
+  fee, no trial and no payment method requirement. A Paddle signup cannot offer
+  such a plan, because Paddle keeps no card on file. The fields need the
+  `product_control_plan_pricing_enabled` setting, as trials do.
+- **Card on file.** The customer records `payment_method_at`, when a card was
+  last seen on file. Completing the portal's card Checkout records it. Each read
+  of the portal's payment method refreshes it: it is recorded when Stripe has a
+  default card and cleared when it has none. Gregale stores no card data.
+- **Trial end.** Every minute, apid resolves up to 100 ended trials, each once,
+  and records `trial_resolved_at`. A customer on such a plan, in their own
+  catalog revision, with no card on file moves to the fallback plan. The move is
+  recorded in the plan history effective at the trial's end, so the month's fee
+  never charges the paid plan after the trial. A customer whose plan changed
+  after the trial ended keeps it, as do customers with a card on file. Moves are
+  audited as `product.customer.trial_fell_back` and kept plans as
+  `product.customer.trial_converted`.
+- **Until resolved.** Between the trial's end and its resolution, a customer
+  without a card is refused new starts with 402
+  `product_payment_method_required`. Saving a card lifts it at once. Work
+  already admitted keeps running.
+- **Self-service.** A self-service change to such a plan is refused with 409
+  `product_payment_method_required` when the customer has no card on file and
+  would not be in a trial after it: neither one running nor one the change
+  starts. Owner assignments are not checked.
+- **Where it shows.** During the trial the portal says when it ends, that a card
+  keeps the plan and which plan follows. Billing managers get a link to the card
+  page, other members are told to ask one, and a workspace not billed through
+  Stripe is told to contact the product team. After the trial, a customer
+  awaiting a card sees why new runs wait. The plan comparison and the owner's
+  plan review name the requirement and the fallback. Customers show
+  `payment_method_at` and `trial_resolved_at`.
+- **Paddle and Lago.** No payment method is recorded for them, so a customer the
+  owner places on such a plan always falls back.
+
 ## Deployment bindings
 
 A feature selects exactly one binding form:

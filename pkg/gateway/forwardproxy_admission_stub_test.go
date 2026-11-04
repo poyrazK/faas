@@ -79,4 +79,12 @@ func (*stubVmmdClient) RetireMigrationAdoption(context.Context, *vmmdpb.RetireMi
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not retire migration adoptions")
 }
 
+func (*stubVmmdClient) AdoptionReport(context.Context, *vmmdpb.AdoptionReportRequest, ...grpc.CallOption) (*vmmdpb.AdoptionReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not report vmmd restart adoption")
+}
+
+func (*stubVmmdClient) AdoptionInventory(context.Context, *vmmdpb.AdoptionInventoryRequest, ...grpc.CallOption) (*vmmdpb.AdoptionInventoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not list adoption inventory")
+}
+
 var _ vmmdpb.VmmdClient = (*stubVmmdClient)(nil)

@@ -5,8 +5,8 @@ preparation followed by a short business transaction. Each claim belongs to one
 account, app, subscription and durable acceptance, independently of other consumers.
 Original request bytes remain bound to that identity through expiry and takeover.
 
-Install both `faas.EventConsumerReceiptSchema` and
-`faas.EventConsumerProcessingSchema` explicitly in the application database.
+Install both `preview.EventConsumerReceiptSchema` and
+`preview.EventConsumerProcessingSchema` explicitly in the application database.
 The SDK does not install schemas, run workers or delete abandoned rows. Expired
 rows can be taken over in place. Do not prune outstanding claims or receipts while
 delivery retries and historical replays remain possible.
@@ -14,7 +14,7 @@ delivery retries and historical replays remain possible.
 After authenticating delivery and constructing `EventConsumerRequest`:
 
 ```go
-lease, err := faas.ClaimEventConsumerProcessing(ctx, db, input, 30*time.Second)
+lease, err := preview.ClaimEventConsumerProcessing(ctx, db, input, 30*time.Second)
 if err != nil {
     // Busy, database failure and invalid input are not successful delivery.
     return err
@@ -27,7 +27,7 @@ if !lease.Completed() {
     }
 }
 result, err := lease.Complete(ctx, db,
-    func(tx faas.EventConsumerSQLTransaction) (json.RawMessage, error) {
+    func(tx preview.EventConsumerSQLTransaction) (json.RawMessage, error) {
         // Apply business writes and optional Commit outbox inserts using tx.
         // No external effects and no transaction lifecycle calls here.
         return json.RawMessage(`{"processed":true}`), nil

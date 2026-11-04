@@ -102,14 +102,13 @@ def sync_detailed(
     opaque (base64-url-of-JSON) compound key `(created_at,
     id)`; `?before=<cursor>` partitions the next page so
     the row at the boundary is visited exactly once even
-    under random UUIDs (PR-9 cursor upgrade). Default limit
-    25, max 100 (per the strict-mode pagination contract at
-    issue #393). Every role may read (gated by `org.view`,
+    under random UUIDs. Default limit
+    25, max 100 (the strict-mode pagination contract).
+    Every role may read (gated by `org.view`,
     the same access model as GET /v1/orgs/{slug}/members).
-    PR-8 ships the surface so the dashboard can render a
-    \"Pending invitations\" table next to the \"Members\"
-    table. Each render emits one `org.invitation.viewed`
-    audit row (success-only, per ADR-035).
+    The dashboard renders it as a \"Pending invitations\" table
+    next to the \"Members\" table. Each successful render emits one
+    `org.invitation.viewed` audit row.
 
     Args:
         slug (str):
@@ -152,14 +151,13 @@ def sync(
     opaque (base64-url-of-JSON) compound key `(created_at,
     id)`; `?before=<cursor>` partitions the next page so
     the row at the boundary is visited exactly once even
-    under random UUIDs (PR-9 cursor upgrade). Default limit
-    25, max 100 (per the strict-mode pagination contract at
-    issue #393). Every role may read (gated by `org.view`,
+    under random UUIDs. Default limit
+    25, max 100 (the strict-mode pagination contract).
+    Every role may read (gated by `org.view`,
     the same access model as GET /v1/orgs/{slug}/members).
-    PR-8 ships the surface so the dashboard can render a
-    \"Pending invitations\" table next to the \"Members\"
-    table. Each render emits one `org.invitation.viewed`
-    audit row (success-only, per ADR-035).
+    The dashboard renders it as a \"Pending invitations\" table
+    next to the \"Members\" table. Each successful render emits one
+    `org.invitation.viewed` audit row.
 
     Args:
         slug (str):
@@ -197,14 +195,13 @@ async def asyncio_detailed(
     opaque (base64-url-of-JSON) compound key `(created_at,
     id)`; `?before=<cursor>` partitions the next page so
     the row at the boundary is visited exactly once even
-    under random UUIDs (PR-9 cursor upgrade). Default limit
-    25, max 100 (per the strict-mode pagination contract at
-    issue #393). Every role may read (gated by `org.view`,
+    under random UUIDs. Default limit
+    25, max 100 (the strict-mode pagination contract).
+    Every role may read (gated by `org.view`,
     the same access model as GET /v1/orgs/{slug}/members).
-    PR-8 ships the surface so the dashboard can render a
-    \"Pending invitations\" table next to the \"Members\"
-    table. Each render emits one `org.invitation.viewed`
-    audit row (success-only, per ADR-035).
+    The dashboard renders it as a \"Pending invitations\" table
+    next to the \"Members\" table. Each successful render emits one
+    `org.invitation.viewed` audit row.
 
     Args:
         slug (str):
@@ -245,14 +242,13 @@ async def asyncio(
     opaque (base64-url-of-JSON) compound key `(created_at,
     id)`; `?before=<cursor>` partitions the next page so
     the row at the boundary is visited exactly once even
-    under random UUIDs (PR-9 cursor upgrade). Default limit
-    25, max 100 (per the strict-mode pagination contract at
-    issue #393). Every role may read (gated by `org.view`,
+    under random UUIDs. Default limit
+    25, max 100 (the strict-mode pagination contract).
+    Every role may read (gated by `org.view`,
     the same access model as GET /v1/orgs/{slug}/members).
-    PR-8 ships the surface so the dashboard can render a
-    \"Pending invitations\" table next to the \"Members\"
-    table. Each render emits one `org.invitation.viewed`
-    audit row (success-only, per ADR-035).
+    The dashboard renders it as a \"Pending invitations\" table
+    next to the \"Members\" table. Each successful render emits one
+    `org.invitation.viewed` audit row.
 
     Args:
         slug (str):

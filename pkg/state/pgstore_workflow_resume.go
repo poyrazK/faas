@@ -105,7 +105,7 @@ func resumeWorkflowRunTx(ctx context.Context, tx pgx.Tx, opts WorkflowResumeOpti
 		}
 		return nil, nil, 0, err
 	}
-	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(opts.AppID)})
+	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(opts.AppID), ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
 	if err != nil {
 		return nil, nil, 0, err
 	}

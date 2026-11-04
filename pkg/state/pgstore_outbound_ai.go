@@ -24,6 +24,27 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 	if !policy.valid() {
 		return ErrInvalidArgument
 	}
+	var judge *pgtype.UUID
+	if policy.OnlineEvalPercent != nil {
+		// ADR 20261021171712: the judge is one of the account's enabled AI
+		// integrations, as for evaluations (ADR-1431).
+		if _, err := uuid.Parse(policy.OnlineEvalJudgeIntegrationID); err != nil {
+			return ErrInvalidArgument
+		}
+		id := mustPgUUID(policy.OnlineEvalJudgeIntegrationID)
+		var exists bool
+		if err := s.pool.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM outbound_integrations integration
+			                WHERE integration.account_id = $1 AND integration.id = $2 AND integration.enabled
+			                  AND integration.ai_provider IS NOT NULL AND integration.owner_kind = 'customer')`,
+			mustPgUUID(accountID), id).Scan(&exists); err != nil {
+			return mapErr(err)
+		}
+		if !exists {
+			return ErrInvalidArgument
+		}
+		judge = &id
+	}
 	command, err := s.pool.Exec(ctx, `
 		UPDATE outbound_integrations
 		   SET ai_provider = NULLIF($3, ''), ai_daily_token_limit = $4,
@@ -31,6 +52,9 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		       ai_request_log_enabled = $7, ai_user_daily_token_limit = $8,
 		       ai_user_daily_cost_limit_millicents = $9, ai_request_log_content = $10, ai_log_export = $11,
 		       ai_allow_unmetered = $12, ai_auto_prompt_cache = $13,
+		       ai_trace_max_calls = $14, ai_trace_max_cost_millicents = $15, ai_trace_max_repeated_tool_calls = $16,
+		       ai_online_eval_percent = $17, ai_online_eval_judge_integration_id = $18,
+		       ai_online_eval_model = NULLIF($19, ''), ai_online_eval_rubric = NULLIF($20, ''), ai_quality_alerts = $21,
 		       -- ADR-997: turning AI handling off also clears the content policy,
 		       -- its moderation check (ADR-1340) and its response checks (ADR-1435).
 		       ai_moderation_action = CASE WHEN $3 = '' THEN 'off' ELSE ai_moderation_action END,
@@ -55,7 +79,8 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		mustPgUUID(accountID), mustPgUUID(integrationID), policy.Provider, policy.DailyTokenLimit,
 		policy.DailyCostLimit, policy.MonthlyCostLimit, policy.RequestLogEnabled,
 		policy.UserDailyTokenLimit, policy.UserDailyCostLimit, policy.RequestLogContent, policy.LogExport,
-		policy.AllowUnmetered, policy.AutoPromptCache)
+		policy.AllowUnmetered, policy.AutoPromptCache, policy.TraceMaxCalls, policy.TraceMaxCost, policy.TraceMaxRepeatedToolCalls,
+		policy.OnlineEvalPercent, judge, policy.OnlineEvalModel, policy.OnlineEvalRubric, policy.QualityAlerts)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -108,7 +133,9 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 		SELECT caller, model, requests, error_requests, usage_unknown_requests,
 		       input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
 		       images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb,
-		       cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens
+		       cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens,
+		       truncated_requests, refused_requests, empty_requests, invalid_json_requests, tool_error_requests,
+		       good_feedback, bad_feedback, evaluated_requests, evaluation_score_sum, evaluation_errors
 		  FROM outbound_ai_usage_daily
 		 WHERE integration_id = $1 AND usage_date = $2::date
 		 ORDER BY caller, model
@@ -124,7 +151,9 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 			&item.InputTokens, &item.CachedInputTokens, &item.CacheWriteTokens, &item.OutputTokens, &item.CostMillicents,
 			&item.Images, &item.AudioSeconds, &item.Characters, &item.VideoSeconds, &item.WebSearches, &item.FileSearches,
 			&item.CodeSessionGB, &item.CachedRequests, &item.CacheSavedMillicents, &item.PromptCacheSavedMillicents,
-			&item.InputAudioTokens, &item.OutputAudioTokens); err != nil {
+			&item.InputAudioTokens, &item.OutputAudioTokens, &item.TruncatedRequests, &item.RefusedRequests, &item.EmptyRequests,
+			&item.InvalidJSONRequests, &item.ToolErrorRequests, &item.GoodFeedback, &item.BadFeedback, &item.EvaluatedRequests,
+			&item.EvaluationScoreSum, &item.EvaluationErrors); err != nil {
 			return OutboundAIUsage{}, mapErr(err)
 		}
 		rollupTokens += item.InputTokens + item.OutputTokens

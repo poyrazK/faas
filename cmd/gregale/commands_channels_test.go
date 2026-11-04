@@ -54,7 +54,7 @@ func TestCmdChannelsJSONOutput(t *testing.T) {
 	defer func() { main.ResetJSONOutput() }()
 
 	if code := main.CmdChannels([]string{"list"}); code != 0 {
-		t.Fatalf("gregale channels list --json = %d", code)
+		t.Fatalf("gregale alert channel list --json = %d", code)
 	}
 	var list []api.NotificationChannelResponse
 	if err := json.Unmarshal(buf.Bytes(), &list); err != nil || len(list) != 2 || list[1].LastError == "" {
@@ -63,7 +63,7 @@ func TestCmdChannelsJSONOutput(t *testing.T) {
 
 	buf.Reset()
 	if code := main.CmdChannels([]string{"test", "ch-1"}); code != 0 {
-		t.Fatalf("gregale channels test --json = %d", code)
+		t.Fatalf("gregale alert channel test --json = %d", code)
 	}
 	var res api.TestNotificationChannelResponse
 	if err := json.Unmarshal(buf.Bytes(), &res); err != nil || !res.Delivered {
@@ -76,7 +76,7 @@ func TestCmdChannelsListText(t *testing.T) {
 	channelsTestServer(t)
 	buf := captureChannelsStdout(t)
 	if code := main.CmdChannels([]string{"list"}); code != 0 {
-		t.Fatalf("gregale channels list = %d", code)
+		t.Fatalf("gregale alert channel list = %d", code)
 	}
 	out := buf.String()
 	for _, want := range []string{"ok 2026-10-13T09:00:00Z", "FAILED 2026-10-13T09:30:00Z: destination rejected the notification (404)"} {

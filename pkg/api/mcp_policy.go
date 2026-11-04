@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // MCPResourcePolicy adds resource-server behavior to an existing JWT edge rule.
@@ -112,11 +113,7 @@ func MCPResourceAllowed(policy map[string][]string, uri string, granted []string
 	// a literal URI's stronger scope requirement.
 	matched := false
 	for template, required := range policy {
-		pattern := regexp.QuoteMeta(template)
-		for _, variable := range mcpSimpleVariable.FindAllString(template, -1) {
-			pattern = strings.ReplaceAll(pattern, regexp.QuoteMeta(variable), `[^/?#]+`)
-		}
-		if ok, _ := regexp.MatchString("^"+pattern+"$", uri); ok {
+		if re := mcpTemplateMatcher(template); re != nil && re.MatchString(uri) {
 			matched = true
 			if !MCPHasScopes(required, granted) {
 				return false
@@ -124,4 +121,43 @@ func MCPResourceAllowed(policy map[string][]string, uri string, granted []string
 		}
 	}
 	return matched
+}
+
+// mcpTemplateMatchers caches each resource template's compiled matcher. The
+// gateway checks every MCP request against the deployed policy, so the same
+// templates repeat; compiling them per request cost a regex compile per
+// template per call. The cache is dropped when full, so distinct templates
+// cannot grow it without bound.
+var mcpTemplateMatchers struct {
+	sync.Mutex
+	byTemplate map[string]*regexp.Regexp
+}
+
+const mcpTemplateMatcherCacheMax = 4096
+
+// mcpTemplateMatcher returns the anchored matcher for template, in which each
+// {name} variable matches one path segment. It returns nil when the template
+// cannot compile, which matches nothing.
+func mcpTemplateMatcher(template string) *regexp.Regexp {
+	mcpTemplateMatchers.Lock()
+	re, cached := mcpTemplateMatchers.byTemplate[template]
+	mcpTemplateMatchers.Unlock()
+	if cached {
+		return re
+	}
+	pattern := regexp.QuoteMeta(template)
+	for _, variable := range mcpSimpleVariable.FindAllString(template, -1) {
+		pattern = strings.ReplaceAll(pattern, regexp.QuoteMeta(variable), `[^/?#]+`)
+	}
+	re, err := regexp.Compile("^" + pattern + "$")
+	if err != nil {
+		re = nil
+	}
+	mcpTemplateMatchers.Lock()
+	if mcpTemplateMatchers.byTemplate == nil || len(mcpTemplateMatchers.byTemplate) >= mcpTemplateMatcherCacheMax {
+		mcpTemplateMatchers.byTemplate = make(map[string]*regexp.Regexp)
+	}
+	mcpTemplateMatchers.byTemplate[template] = re
+	mcpTemplateMatchers.Unlock()
+	return re
 }

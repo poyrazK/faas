@@ -63,12 +63,12 @@ func (c *Client) GetMCPReadinessPagerDutyAcknowledgements(ctx context.Context, a
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/alerts/"+url.PathEscape(rule)+"/mcp-readiness-pagerduty-acknowledgements"+query, nil, &out)
 	return out, err
 }
-func (c *Client) SetMCPReadinessPagerDutyAcknowledgements(ctx context.Context, app, rule string, r SetMCPReadinessPagerDutyAcknowledgementsRequest) (MCPReadinessPagerDutyAcknowledgementPolicy, error) {
+func (c *PreviewClient) SetMCPReadinessPagerDutyAcknowledgements(ctx context.Context, app, rule string, r SetMCPReadinessPagerDutyAcknowledgementsRequest) (MCPReadinessPagerDutyAcknowledgementPolicy, error) {
 	var out MCPReadinessPagerDutyAcknowledgementPolicy
 	err := c.do(ctx, "PUT", "/v1/apps/"+url.PathEscape(app)+"/alerts/"+url.PathEscape(rule)+"/mcp-readiness-pagerduty-acknowledgements", r, &out)
 	return out, err
 }
-func (c *Client) ListMCPReadinessPagerDutyAcknowledgementEvents(ctx context.Context, app, rule, before string, limit int) (MCPReadinessPagerDutyAcknowledgementEvents, error) {
+func (c *PreviewClient) ListMCPReadinessPagerDutyAcknowledgementEvents(ctx context.Context, app, rule, before string, limit int) (MCPReadinessPagerDutyAcknowledgementEvents, error) {
 	q := url.Values{}
 	if before != "" {
 		q.Set("before", before)

@@ -87,8 +87,8 @@ func TestResourceLinksDurableOrderingAndFailures(t *testing.T) {
 			}
 			f := installNamespaceFixture(m)
 			injected := errors.New("veth journal fsync fixture")
-			syncDir := j.directorySync
-			j.directorySync = func() error {
+			syncDir := j.commitSync
+			j.commitSync = func(durable bool) error {
 				for _, a := range j.records[idLive].Assets {
 					if a.Kind != "veth" {
 						continue
@@ -101,7 +101,7 @@ func TestResourceLinksDurableOrderingAndFailures(t *testing.T) {
 						return injected
 					}
 				}
-				return syncDir()
+				return syncDir(durable)
 			}
 			f.before = func(argv []string) {
 				if len(argv) >= 4 && argv[0] == "ip" && argv[1] == "link" && argv[2] == "set" {
@@ -126,7 +126,7 @@ func TestResourceLinksDurableOrderingAndFailures(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				j.directorySync = func() error { return injected }
+				j.commitSync = func(durable bool) error { return injected }
 				if err := m.Destroy(t.Context(), idLive); !errors.Is(err, injected) || m.LeasedCount() != 1 {
 					t.Fatalf("uncertain retirement released lease: %v", err)
 				}
@@ -134,7 +134,7 @@ func TestResourceLinksDurableOrderingAndFailures(t *testing.T) {
 					t.Fatal("uncertain retirement lost creator observation")
 				}
 			}
-			j.directorySync = syncDir
+			j.commitSync = syncDir
 			if err := m.Destroy(t.Context(), idLive); err != nil || m.LeasedCount() != 0 || len(f.links) != 0 {
 				t.Fatalf("cleanup retry: %v", err)
 			}

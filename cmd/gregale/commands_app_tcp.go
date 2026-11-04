@@ -21,7 +21,7 @@ const subTCPListeners = "tcp"
 //	gregale apps tcp <slug> rm NAME
 func cmdAppsTCP(slug string, args []string) int {
 	if slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> [list|add|tls|tls-status|enable|disable|rm]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app list tcp <slug> [list|add|tls|tls-status|enable|disable|rm]", "apps")
 		return 1
 	}
 	verb := "list"
@@ -39,7 +39,7 @@ func cmdAppsTCP(slug string, args []string) int {
 		return cmdAppsTCPTLSStatus(client, slug, args)
 	case "list":
 		if len(args) != 0 {
-			PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> list", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list tcp <slug> list", "apps")
 			return 1
 		}
 		listeners, err := client.ListAppTCPListeners(context.Background(), slug)
@@ -70,7 +70,7 @@ func cmdAppsTCP(slug string, args []string) int {
 			return 1
 		}
 		if *name == "" || *guestPort == 0 || fs.NArg() != 0 {
-			PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> add --name NAME --guest-port PORT [--public-port PORT] [--tls-mode terminate --tls-hostname HOST]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list tcp <slug> add --name NAME --guest-port PORT [--public-port PORT] [--tls-mode terminate --tls-hostname HOST]", "apps")
 			return 1
 		}
 		policy, err := (api.TCPListenerTLSConfig{Mode: api.TCPListenerTLSMode(*tlsMode), Hostname: *tlsHostname}).Normalize()
@@ -96,7 +96,7 @@ func cmdAppsTCP(slug string, args []string) int {
 
 	case "tls":
 		if len(args) < 2 {
-			PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> tls NAME --tls-mode passthrough|terminate [--tls-hostname HOST]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list tcp <slug> tls NAME --tls-mode passthrough|terminate [--tls-hostname HOST]", "apps")
 			return 1
 		}
 		fs := newFlagSet("apps tcp tls", flag.ContinueOnError)
@@ -124,7 +124,7 @@ func cmdAppsTCP(slug string, args []string) int {
 
 	case "enable", "disable":
 		if len(args) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> "+verb+" NAME", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list tcp <slug> "+verb+" NAME", "apps")
 			return 1
 		}
 		enabled := verb == "enable"
@@ -144,7 +144,7 @@ func cmdAppsTCP(slug string, args []string) int {
 
 	case "rm", "delete":
 		if len(args) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> rm NAME", "apps")
+			PrintUsage(os.Stderr, "usage: gregale app list tcp <slug> rm NAME", "apps")
 			return 1
 		}
 		if err := client.DeleteAppTCPListener(context.Background(), slug, args[0]); err != nil {
@@ -156,7 +156,7 @@ func cmdAppsTCP(slug string, args []string) int {
 		PrintOK(osStdout, "Deleted TCP listener %s", args[0])
 		return 0
 	default:
-		PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> [list|add|tls|tls-status|enable|disable|rm]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app list tcp <slug> [list|add|tls|tls-status|enable|disable|rm]", "apps")
 		return 1
 	}
 }

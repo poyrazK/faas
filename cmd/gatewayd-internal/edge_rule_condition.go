@@ -11,8 +11,9 @@ import (
 // compileEdgeRuleCondition compiles a rule's ADR-962 match condition once,
 // at host load. apid validates conditions on write, so a stored condition
 // that no longer compiles (a direct-database edit, or a bound tightened
-// since) makes the rule never match — the same posture as an unparseable
-// match_path, which drops the rule — and is logged for the operator.
+// since) makes the rule never match, and edgeRuleConditionError reports the
+// same rule as a compile error so its host fails closed, as an unparseable
+// match_path does.
 //
 // lists are the account lists the condition references (ADR-963), resolved
 // at the same host load; an unresolved reference fails to compile.
@@ -26,4 +27,15 @@ func compileEdgeRuleCondition(ruleID, appID, mode string, expr *api.EdgeRuleMatc
 	}
 	cond.Match = program
 	return cond
+}
+
+// edgeRuleConditionError reports why a rule's match condition does not
+// compile against the lists resolved for it, or nil when it has none or it
+// compiles.
+func edgeRuleConditionError(rule state.EdgeRule) error {
+	if rule.Match == nil {
+		return nil
+	}
+	_, err := api.CompileEdgeRuleMatchWithLists(rule.Match, rule.MatchLists)
+	return err
 }

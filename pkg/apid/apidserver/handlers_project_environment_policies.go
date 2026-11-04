@@ -8,9 +8,10 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // updateProjectEnvironmentPolicies replaces only the headers/CORS policy for
@@ -41,7 +42,7 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 		api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("rules must be a complete list of at most %d headers/CORS rules on this plan", maxRules)))
 		return
 	}
-	host := gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, environment.ID, app.ID)
+	host := gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), environment.ID, app.ID)
 	if host == "" {
 		api.WriteProblem(w, api.ErrCapacity("environment URL is unavailable"))
 		return
@@ -100,7 +101,7 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environment.Slug))
 		} else {
-			api.WriteProblem(w, api.ErrCapacity("could not store environment policies"))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not store environment policies")))
 		}
 		return
 	}

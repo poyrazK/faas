@@ -6,7 +6,7 @@ import {
   createServiceCallerVerifier,
   SERVICE_CALLER_ASSERTION_HEADER,
   ServiceCallerVerificationError,
-} from '../src/index.js';
+} from '../src/preview.js';
 
 const audience = 'target-app-id';
 

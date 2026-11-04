@@ -70,7 +70,7 @@ func cmdJobsArtifacts(args []string) int {
 		args = append(args, taskFlag)
 	}
 	if !jobSlugPattern.MatchString(args[0]) || (args[1] != "latest" && !jobRunIDPattern.MatchString(args[1])) {
-		return printErr("Invalid artifact listing target", fmt.Errorf("usage: gregale jobs artifacts JOB RUN_ID|latest TASK_INDEX [--attempt N] [--include GLOB ...]"))
+		return printErr("Invalid artifact listing target", fmt.Errorf("usage: gregale job artifacts JOB RUN_ID|latest TASK_INDEX [--attempt N] [--include GLOB ...]"))
 	}
 	index, err := strconv.Atoi(args[2])
 	if err != nil || index < 0 {

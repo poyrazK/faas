@@ -22,8 +22,10 @@ func (s objectStorageBillingAccounts) ListAllAccounts(context.Context) ([]state.
 type objectStorageLineItemRecorder struct {
 	records []state.ObjectStorageBillingRecord
 	charges []int64
-	err     error
-	policy  ObjectStorageLineItemPolicy
+	// steps is every publish attempt, failed ones included.
+	steps  []ObjectStorageChargeStep
+	err    error
+	policy ObjectStorageLineItemPolicy
 }
 
 func (s *objectStorageLineItemRecorder) ObjectStorageLineItemPolicy() (ObjectStorageLineItemPolicy, bool) {
@@ -37,12 +39,15 @@ func (s *objectStorageLineItemRecorder) ObjectStorageLineItemPolicy() (ObjectSto
 	return s.policy, true
 }
 
-func (s *objectStorageLineItemRecorder) PublishObjectStorageLineItem(_ context.Context, record state.ObjectStorageBillingRecord, chargeMillicents int64) error {
+func (s *objectStorageLineItemRecorder) PublishObjectStorageCharge(_ context.Context, step ObjectStorageChargeStep) error {
+	s.steps = append(s.steps, step)
 	if s.err != nil {
 		return s.err
 	}
-	s.records = append(s.records, record)
-	s.charges = append(s.charges, chargeMillicents)
+	if step.Record != nil {
+		s.records = append(s.records, *step.Record)
+	}
+	s.charges = append(s.charges, step.TargetMillicents-step.DeliveredMillicents)
 	return nil
 }
 
@@ -54,6 +59,60 @@ type objectStorageBillingStore struct {
 	// carry their hour in Month.
 	caps  map[string]int64
 	usage map[string][]state.Usage
+	// progress is the charge ledger (ADR-20261027093220), written at now.
+	progress map[string]state.ObjectStorageBillingProgress
+	now      time.Time
+	// beforeSave, when set, runs before each progress write.
+	beforeSave func(state.ObjectStorageBillingProgress)
+	// reservedAtCapRead is the account's live reservation each usage read saw.
+	reservedAtCapRead []int64
+}
+
+func objectStorageProgressKey(provider, account string, period time.Time, mode string) string {
+	return provider + "/" + account + "/" + period.UTC().Format(time.RFC3339) + "/" + mode
+}
+
+func (s *objectStorageBillingStore) GetObjectStorageBillingProgress(_ context.Context, provider, account string, period time.Time, mode string) (state.ObjectStorageBillingProgress, error) {
+	p, ok := s.progress[objectStorageProgressKey(provider, account, period, mode)]
+	if !ok {
+		return state.ObjectStorageBillingProgress{}, state.ErrNotFound
+	}
+	return p, nil
+}
+
+func (s *objectStorageBillingStore) SaveObjectStorageBillingProgress(_ context.Context, p state.ObjectStorageBillingProgress) (state.ObjectStorageBillingProgress, error) {
+	if s.beforeSave != nil {
+		s.beforeSave(p)
+	}
+	if s.progress == nil {
+		s.progress = map[string]state.ObjectStorageBillingProgress{}
+	}
+	key := objectStorageProgressKey(p.Provider, p.AccountID, p.PeriodStart, p.Mode)
+	stored, exists := s.progress[key]
+	if stored.Version != p.Version || exists != (p.Version != 0) || p.DeliveredMillicents < stored.DeliveredMillicents {
+		return state.ObjectStorageBillingProgress{}, state.ErrConflict
+	}
+	p.CreditedMillicents = stored.CreditedMillicents
+	p.Version++
+	p.UpdatedAt = s.now
+	s.progress[key] = p
+	return p, nil
+}
+
+func (s *objectStorageBillingStore) LiveObjectStorageMillicents(_ context.Context, account string, period time.Time) (int64, int64, error) {
+	var delivered, pending int64
+	for _, p := range s.progress {
+		if p.AccountID == account && p.Mode == state.ObjectStorageDeliveryLive && p.PeriodStart.Equal(period) {
+			delivered += p.DeliveredMillicents
+			pending += p.PendingMillicents
+		}
+	}
+	return delivered, pending, nil
+}
+
+func (s *objectStorageBillingStore) liveReserved(ctx context.Context, account string, period time.Time) int64 {
+	delivered, pending, _ := s.LiveObjectStorageMillicents(ctx, account, period)
+	return delivered + pending
 }
 
 func (s *objectStorageBillingStore) GetAccountOverageCapCents(_ context.Context, account string) (int64, bool, error) {
@@ -61,7 +120,8 @@ func (s *objectStorageBillingStore) GetAccountOverageCapCents(_ context.Context,
 	return capCents, capped, nil
 }
 
-func (s *objectStorageBillingStore) UsageByHour(_ context.Context, account string, start, end time.Time) ([]state.Usage, error) {
+func (s *objectStorageBillingStore) UsageByHour(ctx context.Context, account string, start, end time.Time) ([]state.Usage, error) {
+	s.reservedAtCapRead = append(s.reservedAtCapRead, s.liveReserved(ctx, account, state.ObjectStoragePeriod(start)))
 	var out []state.Usage
 	for _, row := range s.usage[account] {
 		if !row.Month.Before(start) && row.Month.Before(end) {
@@ -125,6 +185,15 @@ func objectStorageBillingSnapshot(account, backend string, period time.Time) sta
 	}
 }
 
+// billableObjectStorageSnapshot is a month of Hobby's included storage
+// (ADR-1430) plus gibMonths GiB-months, which a 1000-millicent rate card
+// prices at 1000 millicents each.
+func billableObjectStorageSnapshot(account string, period time.Time, gibMonths int64) state.ObjectUsageSnapshot {
+	snapshot := objectStorageBillingSnapshot(account, "backend", period)
+	snapshot.Reports[0].StoredByteHours = api.MustLimitsFor(api.PlanHobby).ObjectStorage.Allowance().StoredByteHours + gibMonths*int64(1<<30)*api.ObjectStorageBillingHoursPerMonth
+	return snapshot
+}
+
 func TestFinalizeObjectStoragePeriodIsClosedAndIdempotent(t *testing.T) {
 	store := state.NewMemStore()
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
@@ -184,7 +253,7 @@ func TestFinalizeObjectStoragePeriodsPublishesOnlyActiveAccounts(t *testing.T) {
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
 	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{
-		"active": objectStorageBillingSnapshot("active", "backend", period),
+		"active": billableObjectStorageSnapshot("active", period, 3),
 		"empty":  {},
 	}}
 	sink := &objectStorageLineItemRecorder{}
@@ -205,7 +274,7 @@ func TestFinalizeObjectStoragePeriodsPublishesOnlyActiveAccounts(t *testing.T) {
 func TestFinalizeObjectStoragePeriodsPublishesExistingRecordOnRetry(t *testing.T) {
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
-	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
+	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": billableObjectStorageSnapshot("active", period, 3)}}
 	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
 	sink := &objectStorageLineItemRecorder{}
 	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}
@@ -277,7 +346,7 @@ func TestFinalizeObjectStoragePeriodsNeverBillsIneligiblePlan(t *testing.T) {
 func TestFinalizeObjectStoragePeriodsRetriesFailedLiveDelivery(t *testing.T) {
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
-	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": objectStorageBillingSnapshot("active", "backend", period)}}
+	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"active": billableObjectStorageSnapshot("active", period, 3)}}
 	accounts := objectStorageBillingAccounts{accounts: []state.Account{{ID: "active", Plan: api.PlanHobby}}}
 	sink := &objectStorageLineItemRecorder{err: errors.New("provider unavailable")}
 	pricing := api.ObjectStoragePricing{Currency: "USD", StorageMillicentsPerGiBMonth: 1000}

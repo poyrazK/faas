@@ -171,6 +171,46 @@ func TestCmdPostgresUsageHumanOutputHasReadableUnits(t *testing.T) {
 	}
 }
 
+// adr: 20261025094915 — the usage output shows the allowance, ceiling and cap
+// state, which old servers omit.
+func TestCmdPostgresUsageShowsTheComputeCap(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want, not  []string
+	}{
+		{name: "capped", body: `{"period_start":"2026-10-01T00:00:00Z","policy_enabled":true,"fresh":true,"guardrail_state":"reached","ready_databases":1,"database_limit":1,"compute_unit_seconds":90000,"storage_byte_seconds":0,"storage_byte_seconds_limit":1,"storage_byte_seconds_remaining":1,"history_byte_seconds":0,"egress_bytes":0,"compute_allowance_unit_seconds":90000,"compute_ceiling_unit_seconds":90000,"compute_cap_state":"suspended"}`,
+			want: []string{"compute_allowance:            25.00 CU-hours", "compute_ceiling:              25.00 CU-hours", "compute_cap_state:            suspended"}},
+		{name: "old server", body: `{"period_start":"2026-10-01T00:00:00Z","policy_enabled":false,"fresh":false,"guardrail_state":"disabled","ready_databases":0,"database_limit":1,"compute_unit_seconds":0,"storage_byte_seconds":0,"storage_byte_seconds_limit":0,"storage_byte_seconds_remaining":0,"history_byte_seconds":0,"egress_bytes":0}`,
+			not: []string{"compute_allowance", "compute_ceiling", "compute_cap_state"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_test")
+			var out bytes.Buffer
+			previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+			(*main.OsStdout), (*main.JsonOutput) = &out, false
+			t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
+			if code := main.CmdPostgresUsage(nil); code != 0 {
+				t.Fatalf("exit = %d", code)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("output lacks %q:\n%s", want, out.String())
+				}
+			}
+			for _, not := range tc.not {
+				if strings.Contains(out.String(), not) {
+					t.Errorf("output has %q:\n%s", not, out.String())
+				}
+			}
+		})
+	}
+}
+
 func TestRunDispatchesPostgresJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/postgres/bindings/binding-1" {

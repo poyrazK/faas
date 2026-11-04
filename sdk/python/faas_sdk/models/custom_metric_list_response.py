@@ -15,10 +15,7 @@ T = TypeVar("T", bound="CustomMetricListResponse")
 
 @_attrs_define
 class CustomMetricListResponse:
-    """The app's ADR-202 gauges, plus the two limits needed to interpret them so debugging does not require reading the
-    docs.
-
-    """
+    """The app's gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."""
 
     metrics: list[CustomMetricResponse]
     freshness_seconds: int

@@ -3,32 +3,26 @@
 `bootstrap.yml` is the only production host bootstrap playbook. It has
 separate control-plane and compute-only plays and refuses a single-box role.
 
-The observability overlay is `site.yml`. It expects a dedicated
-`[observability]` inventory group for Loki, installs Promtail on the
-control-plane and compute groups, and re-converges the `postgres_backup` role
-on the control plane so backup and restore verification remains wired when
-the overlay is run independently. This separation keeps a Gregale host loss
-from also deleting its incident logs:
+Platform logs (ADR-20261023124955 §2, amending ADR-143) are part of
+`bootstrap.yml`:
 
-```
-make ANSIBLE_INVENTORY=/path/to/inventory.ini bootstrap-observability
-```
+- Loki runs on the control plane, with its chunks in an object-storage bucket.
+- A journal shipper runs on every control-plane and compute host: Grafana
+  Alloy (ADR-20261023185953), or Promtail with `faas_obs_log_shipper:
+  promtail` for one release as the rollback.
+- Both are off until the operator variables set `faas_obs_logs_enabled: true`
+  and `faas_obs_loki_address`, the control plane's private address that the
+  compute nodes reach.
+- The Loki and shipper URLs, Prometheus's Loki meta-monitoring target and
+  Grafana's Loki datasource are all derived from those two variables and
+  `faas_obs_loki_server_name`, the name in the Loki server certificate.
 
-Set `promtail_loki_url` and the Loki/Promtail mTLS file paths in provider-owned
-inventory variables. For backend meta-monitoring, also set
-`prom_loki_metrics_target`, `prom_loki_metrics_server_name`, and the three
-`prom_loki_metrics_*_file` paths on the control plane. The Prometheus role then
-scrapes Loki's `/metrics` endpoint over mTLS and enables the Loki backend
-alerts.
+`docs/ops/logs.md` lists the bucket, credential and TLS files to provision
+first. `site.yml` keeps the restore-drill and TLS-drill conveniences only.
 
-To enable Grafana log queries, set `gv_loki_url`, `gv_loki_server_name`, and
-`gv_loki_tenant_id`. Provision the provider-owned
-`/etc/grafana/secrets/loki.env` as mode `0400` or `0440` before the Grafana
-role runs. It must provide the PEM values as `FAAS_LOKI_TLS_CA_CERT`,
-`FAAS_LOKI_TLS_CLIENT_CERT`, and `FAAS_LOKI_TLS_CLIENT_KEY`; the role passes
-these to Grafana through its systemd environment without reading or storing
-the certificate contents. Secret contents are never stored in this
-repository.
+The log pipeline's mTLS leaves come from the fleet CA: the
+`platform_logs_pki` role issues them as `pkg/pki` feature leaves, and
+`pki_renew.yml` renews them. Grafana reads its client leaf with `$__file{}`.
 
 ## What it does
 

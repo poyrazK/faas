@@ -764,11 +764,19 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 }
 
 func (s *PgStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (ProjectReleaseSet, error) {
+		return s.publishProjectEnvironmentPromotionReleaseSetOnce(ctx, accountID, promotionID, ttlSeconds, members)
+	})
+}
+
+// A production promotion can change an app's visibility, which publishes or
+// withdraws its hostnames, so it joins the binding guard (ADR-570).
+func (s *PgStore) publishProjectEnvironmentPromotionReleaseSetOnce(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
 	if err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: begin promotion release publish: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	promotion, err := scanProjectEnvironmentPromotion(tx.QueryRow(ctx, `
 		select `+projectEnvironmentPromotionSelectColumns+`
 		  from project_environment_promotions where id = $1 and account_id = $2`, promotionID, accountID))
@@ -899,11 +907,19 @@ func validatePromotionFallbackTx(ctx context.Context, tx pgx.Tx, promotion Proje
 }
 
 func (s *PgStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (ProjectReleaseSet, error) {
+		return s.rollbackProjectEnvironmentPromotionReleaseSetOnce(ctx, accountID, promotionID, ttlSeconds, members)
+	})
+}
+
+// A production promotion can change an app's visibility, which publishes or
+// withdraws its hostnames, so it joins the binding guard (ADR-570).
+func (s *PgStore) rollbackProjectEnvironmentPromotionReleaseSetOnce(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
 	if err != nil {
 		return ProjectReleaseSet{}, fmt.Errorf("state: begin promotion release rollback: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	promotion, err := scanProjectEnvironmentPromotion(tx.QueryRow(ctx, `
 		select `+projectEnvironmentPromotionSelectColumns+`
 		  from project_environment_promotions where id = $1 and account_id = $2`, promotionID, accountID))

@@ -1,0 +1,87 @@
+{
+ "turns": [
+  {
+   "command": "echo MARK-1 && tail -c +51201 big.txt | head -c 51200",
+   "mark": "MARK-1"
+  },
+  {
+   "command": "echo MARK-2 && tail -c +102401 big.txt | head -c 51200",
+   "mark": "MARK-2"
+  },
+  {
+   "command": "echo MARK-3 && tail -c +153601 big.txt | head -c 51200",
+   "mark": "MARK-3"
+  },
+  {
+   "command": "echo MARK-4 && tail -c +204801 big.txt | head -c 51200",
+   "mark": "MARK-4"
+  },
+  {
+   "command": "echo MARK-5 && tail -c +256001 big.txt | head -c 51200",
+   "mark": "MARK-5"
+  },
+  {
+   "command": "echo MARK-6 && tail -c +307201 big.txt | head -c 51200",
+   "mark": "MARK-6"
+  },
+  {
+   "command": "echo MARK-7 && tail -c +358401 big.txt | head -c 51200",
+   "mark": "MARK-7"
+  },
+  {
+   "command": "echo MARK-8 && tail -c +409601 big.txt | head -c 51200",
+   "mark": "MARK-8"
+  },
+  {
+   "command": "echo MARK-9 && tail -c +460801 big.txt | head -c 51200",
+   "mark": "MARK-9"
+  },
+  {
+   "command": "echo MARK-10 && tail -c +512001 big.txt | head -c 51200",
+   "mark": "MARK-10"
+  },
+  {
+   "command": "echo MARK-11 && tail -c +563201 big.txt | head -c 51200",
+   "mark": "MARK-11"
+  },
+  {
+   "command": "echo MARK-12 && tail -c +614401 big.txt | head -c 51200",
+   "mark": "MARK-12"
+  },
+  {
+   "command": "echo MARK-13 && tail -c +665601 big.txt | head -c 51200",
+   "mark": "MARK-13"
+  },
+  {
+   "command": "echo MARK-14 && tail -c +716801 big.txt | head -c 51200",
+   "mark": "MARK-14"
+  },
+  {
+   "command": "echo MARK-15 && tail -c +768001 big.txt | head -c 51200",
+   "mark": "MARK-15"
+  },
+  {
+   "command": "echo MARK-16 && tail -c +819201 big.txt | head -c 51200",
+   "mark": "MARK-16"
+  },
+  {
+   "command": "echo MARK-17 && tail -c +870401 big.txt | head -c 51200",
+   "mark": "MARK-17"
+  },
+  {
+   "command": "echo MARK-18 && tail -c +921601 big.txt | head -c 51200",
+   "mark": "MARK-18"
+  },
+  {
+   "command": "echo MARK-19 && tail -c +972801 big.txt | head -c 51200",
+   "mark": "MARK-19"
+  },
+  {
+   "command": "echo MARK-20 && tail -c +1024001 big.txt | head -c 51200",
+   "mark": "MARK-20"
+  },
+  {
+   "text": "Read all twenty sections. AGENT-MEM-DONE"
+  }
+ ]
+}

@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 func TestOperationDeliveryReceiptWireContract(t *testing.T) {
@@ -22,7 +22,7 @@ func TestOperationDeliveryReceiptWireContract(t *testing.T) {
 			}
 			writeOperationJSON(w, 200, `{"operation_id":"operation","delivery_id":"delivery","attempts":[],"next_cursor":"next"}`)
 		case "POST /v1/apps/exports/operations/operation/delivery-retries":
-			var req faas.OperationDeliveryRetryRequest
+			var req preview.OperationDeliveryRetryRequest
 			if json.NewDecoder(r.Body).Decode(&req) != nil || req.ExpectedReplayGeneration == nil || *req.ExpectedReplayGeneration != 0 || req.RetryID != "stable" || req.DeliveryID != "delivery" {
 				t.Error("explicit zero or retry identity lost")
 			}
@@ -35,7 +35,7 @@ func TestOperationDeliveryReceiptWireContract(t *testing.T) {
 	defer server.Close()
 	client := operationClient(t, server)
 	report, err := client.GetOperationDelivery(context.Background(), "exports", "operation")
-	if err != nil || report.BusinessState != faas.OperationSucceeded || report.State != "dead" || report.ReplayGeneration == nil || *report.ReplayGeneration != 0 {
+	if err != nil || report.BusinessState != preview.OperationSucceeded || report.State != "dead" || report.ReplayGeneration == nil || *report.ReplayGeneration != 0 {
 		t.Fatalf("report %+v %v", report, err)
 	}
 	page, err := client.GetOperationDeliveryAttempts(context.Background(), "exports", "operation", 1, "opaque+/=")
@@ -43,7 +43,7 @@ func TestOperationDeliveryReceiptWireContract(t *testing.T) {
 		t.Fatalf("page %+v %v", page, err)
 	}
 	generation := 0
-	r, err := client.RetryOperationDeliveryWithReceipt(context.Background(), "exports", "operation", faas.OperationDeliveryRetryRequest{RetryID: "stable", DeliveryID: "delivery", ExpectedReplayGeneration: &generation})
+	r, err := client.RetryOperationDeliveryWithReceipt(context.Background(), "exports", "operation", preview.OperationDeliveryRetryRequest{RetryID: "stable", DeliveryID: "delivery", ExpectedReplayGeneration: &generation})
 	if err != nil || r.State != "queued" || r.ReplayGeneration != 1 {
 		t.Fatalf("receipt %+v %v", r, err)
 	}

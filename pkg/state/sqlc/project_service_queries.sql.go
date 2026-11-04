@@ -15,7 +15,7 @@ const projectServiceAppIDs = `-- name: ProjectServiceAppIDs :many
 SELECT id FROM apps
 WHERE account_id = $1 AND project_id = $2
   AND preview_of_slug IS NULL AND status <> 'deleted'
-  AND lower(workload_name) = lower($3::text)
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($3::text), '_.', '--')
 ORDER BY id
 LIMIT 2
 `
@@ -44,4 +44,28 @@ func (q *Queries) ProjectServiceAppIDs(ctx context.Context, db DBTX, arg Project
 		return nil, err
 	}
 	return items, nil
+}
+
+const projectServiceHasDeletedApp = `-- name: ProjectServiceHasDeletedApp :one
+SELECT EXISTS (
+  SELECT 1 FROM apps
+  WHERE account_id = $1 AND project_id = $2
+    AND preview_of_slug IS NULL AND status = 'deleted'
+    AND translate(lower(workload_name), '_.', '--') = translate(lower($3::text), '_.', '--')
+)::boolean AS deleted
+`
+
+type ProjectServiceHasDeletedAppParams struct {
+	AccountID    pgtype.UUID
+	ProjectID    pgtype.UUID
+	WorkloadName string
+}
+
+// A deleted production member keeps its service name until it is purged, so
+// the name does not fall back to an app slug elsewhere (ErrProjectServiceDeleted).
+func (q *Queries) ProjectServiceHasDeletedApp(ctx context.Context, db DBTX, arg ProjectServiceHasDeletedAppParams) (bool, error) {
+	row := db.QueryRow(ctx, projectServiceHasDeletedApp, arg.AccountID, arg.ProjectID, arg.WorkloadName)
+	var deleted bool
+	err := row.Scan(&deleted)
+	return deleted, err
 }

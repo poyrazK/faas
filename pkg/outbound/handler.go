@@ -6,16 +6,19 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/trace"
 )
@@ -42,6 +45,8 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
+	// Log, when set, records failures the caller only sees as a generic 503.
+	Log                       *slog.Logger
 	SimulationHandler         http.Handler
 	Resolver                  Resolver
 	Backend                   Backend
@@ -54,9 +59,13 @@ type Handler struct {
 	IdentityVerifier          IdentityVerifier
 	ExecutionIdentityVerifier ExecutionIdentityVerifier
 	ExecutionAuthorizer       ExecutionAuthorizer
-	WorkflowAuthorizer        WorkflowAuthorizer
-	workflowClient            *http.Client
-	CredentialResolver        ManagedCredentialResolver
+	// AgentRunAuthorizer and AgentRunSpend serve agent run relays (ADR-20261027090010
+	// §7); without them agent run calls are refused.
+	AgentRunAuthorizer AgentRunAuthorizer
+	AgentRunSpend      AgentRunSpendLedger
+	WorkflowAuthorizer WorkflowAuthorizer
+	workflowClient     *http.Client
+	CredentialResolver ManagedCredentialResolver
 	// Routes resolves AI fallback routes (ADR-990); nil disables /r/.
 	Routes               RouteResolver
 	managedAuthorization map[string]string
@@ -272,7 +281,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var workflowIdentity *WorkflowIdentity
 	var executionIdentity ExecutionIdentity
 	var isExecution bool
-	if !isReplay && !isInternal && !isQualification {
+	agentRun, isAgentRun := relayAgentRunFromContext(r.Context())
+	if !isReplay && !isInternal && !isQualification && !isAgentRun {
 		if workflowIdentity, ok = h.callerWorkflowIdentity(w, r, integration, path); !ok {
 			return
 		}
@@ -280,12 +290,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var agentRunGrant AgentRunGrant
 	appID := ""
+	// callerInstance is the calling app instance a verified workload
+	// identity names, which attributes AI calls to its deployment (ADR
+	// 20261022153155).
+	callerInstance := ""
 	principalID := ""
 	if isReplay {
 		principalID = "replay:" + replay.replayID
 	} else if isInternal {
 		principalID = internal.caller + ":" + internal.accountID
+	} else if isAgentRun {
+		if agentRunGrant, ok = h.authorizeAgentRun(w, r, agentRun, integration); !ok {
+			return
+		}
+		principalID = AgentRunPrincipalPrefix + agentRun.RunID
 	} else if isQualification {
 		appID = qualification.appID
 		principalID = "qualification:" + qualification.requestID
@@ -308,7 +328,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		appID = workflowIdentity.AppID
 		principalID = "workflow:" + workflowIdentity.RunID
 	} else {
-		appID, ok = h.callerAppID(w, r, integration)
+		appID, callerInstance, ok = h.callerAppID(w, r, integration)
 		if !ok {
 			return
 		}
@@ -318,8 +338,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		principalID = appID
 	}
+	if integration.AIProvider != "" && path == AIFeedbackPath && !isReplay && !isInternal {
+		h.serveAIFeedback(w, r, integration, appID)
+		return
+	}
 	var allowedRoute bool
-	if isExecution || isReplay || isInternal {
+	if isExecution || isAgentRun || isReplay || isInternal {
 		allowedRoute = integration.AllowsRequest(r.Method, path)
 	} else {
 		allowedRoute = integration.AllowsAppRequest(appID, r.Method, path)
@@ -342,6 +366,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"X-Gregale-AI-Tags must be one header of at most 5 key=value tags with distinct keys: keys of 1 to 32 lowercase "+
 				"letters, digits, _ . or - starting with a letter, values of 1 to 64 letters, digits or . _ : @ + / -", "")
 		return
+	}
+	// ADR 20261020202035: the call's AI trace, kept when the integration
+	// records traces.
+	aiTrace, ok := aiCallTrace(r, integration)
+	if !ok {
+		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_trace_invalid")
+		writeProblem(w, http.StatusBadRequest, "outbound_ai_trace_invalid",
+			"X-Gregale-AI-Trace must be one ID of 1 to 64 letters, digits or . _ : @ + = / | -", "")
+		return
+	}
+	if !integration.recordsAITraces() {
+		aiTrace = ""
 	}
 	// ADR 20261019072722: a WebSocket upgrade on an AI integration is a
 	// realtime session, metered or let through unmetered, or refused.
@@ -439,6 +475,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		UserDailyAICostLimit:           copyInt64Pointer(integration.AIUserDailyCostLimit),
 		AITags:                         aiTags,
 		AITagDailyCostLimits:           tagDailyCostLimits(integration, aiTags),
+		AITraceID:                      aiTrace,
+		AITraceLimits:                  integration.traceLimits(),
+		AITraceNamed:                   aiTrace != "" && r.Header.Get(api.OutboundAITraceHeader) != "",
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,
@@ -446,9 +485,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RetryBudgetPerMinute:           integration.RetryBudgetPerMinute,
 		LeaseTTL:                       integration.RequestTimeout,
 		PolicyRevision:                 integration.PolicyRevision,
+		AgentRun:                       isAgentRun,
 	}
 	decision, err := h.Backend.Admit(r.Context(), spec)
 	if err != nil {
+		if h.Log != nil {
+			h.Log.Warn("outbound: admission failed", "integration_id", metricIntegrationID, "principal", principalID, "err", err)
+		}
 		h.Metrics.ObserveAdmission(metricIntegrationID, "error")
 		h.Metrics.ObserveRejection(metricIntegrationID, "backend_unavailable")
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_admission_unavailable", "Outbound admission is temporarily unavailable", "1")
@@ -462,12 +505,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		retry := retryAfterSeconds(decision.RetryAfter)
+		if traceRejection(decision.Reason) {
+			retry = ""
+		}
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
 		writeProblem(w, http.StatusTooManyRequests, "outbound_budget_exhausted", "Outbound integration budget is exhausted", retry)
 		return
 	}
 	h.Metrics.ObserveAdmission(metricIntegrationID, "granted")
 	h.Metrics.IncInFlight(metricIntegrationID)
+	var aiCallID string
+	if aiPlan != nil {
+		// ADR 20261021171712: the call's ID, which feedback names.
+		aiCallID = uuid.NewString()
+		w.Header().Set(api.OutboundAICallHeader, aiCallID)
+	}
 
 	ctx := r.Context()
 	requestTimeout := decision.RequestTimeout
@@ -483,6 +535,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Metrics.DecInFlight(metricIntegrationID)
 		_ = h.Backend.Release(context.WithoutCancel(ctx), integration.ID, decision.LeaseID)
 	}()
+	if isAgentRun {
+		if !h.reserveAgentRunSpend(ctx, w, agentRun, agentRunGrant, integration, aiPlan, decision.LeaseID, requestTimeout, metricIntegrationID) {
+			return
+		}
+		// Settlement, deferred later, runs first and turns the reservation
+		// into spend; this frees it when nothing settled.
+		defer h.releaseAgentRunSpend(context.WithoutCancel(ctx), decision.LeaseID, metricIntegrationID)
+	}
 	if batch != nil {
 		// The batch's reservation is stored before the provider sees the
 		// batch, so no batch the provider runs is ever uncounted.
@@ -583,8 +643,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if realtime != realtimeNone {
 		// The upgrade itself was admitted like a call, with no reservation;
 		// each response is admitted with its own (ADR 20261019072722).
-		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, metricID: metricIntegrationID,
-			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags,
+		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, instanceID: callerInstance, metricID: metricIntegrationID,
+			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags, traceID: aiTrace,
 			model: realtimeURLModel(r.URL.Query()), live: livePath(integration.AIProvider, path)}, upstreamReq)
 		return
 	}
@@ -740,8 +800,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Deferred so an aborted stream still settles the tokens it used.
 		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
-			endUser: aiEndUser, tags: aiTags, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()), moderation: moderation,
-			response: responseCheck, cacheHit: cacheHit,
+			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, callID: aiCallID,
+			instanceID: callerInstance,
+			route:      routeAttemptFromContext(r.Context()),
+			moderation: moderation,
+			response:   responseCheck, cacheHit: cacheHit,
 		}
 		if aiPlan != nil {
 			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
@@ -796,41 +859,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, bool) {
+// callerAppID returns the calling app and, when a verified workload
+// identity names it, the calling instance.
+func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integration Integration) (string, string, bool) {
 	if token, ok := accessTokenFromContext(r.Context()); ok {
 		// ADR-1431: an access token acts as its app, on AI integrations only.
 		if !token.allows(integration) {
 			writeProblem(w, http.StatusForbidden, "outbound_access_token_not_allowed", "This access token cannot use this outbound integration", "")
-			return "", false
+			return "", "", false
 		}
-		return token.AppID, true
+		return token.AppID, "", true
 	}
 	if identity, ok := relayIdentityFromContext(r.Context()); ok {
 		// ADR-989: the relay connection's platform identity is the caller.
 		// Token-authenticated integrations stay unreachable through it.
 		if integration.ProviderAuthMode != ProviderAuthManaged {
 			writeProblem(w, http.StatusForbidden, "outbound_relay_not_supported", "This outbound integration is not available through the app relay", "")
-			return "", false
+			return "", "", false
 		}
-		return identity.AppID, true
+		return identity.AppID, identity.InstanceID, true
 	}
 	if integration.ProviderAuthMode == ProviderAuthManaged {
 		if h.IdentityVerifier == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_identity_unavailable", "Outbound workload identity is unavailable", "1")
-			return "", false
+			return "", "", false
 		}
 		identity, err := h.IdentityVerifier.Verify(r.Header.Get(WorkloadIdentityHeader), integration.ID)
 		if err != nil {
 			writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound workload identity is invalid", "")
-			return "", false
+			return "", "", false
 		}
-		return identity.AppID, true
+		return identity.AppID, identity.InstanceID, true
 	}
-	if !validToken(r.Header.Get(TokenHeader), integration.TokenHash) {
+	if !validToken(r.Header.Get(TokenHeader), integration) {
 		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound token is invalid", "")
-		return "", false
+		return "", "", false
 	}
-	return r.Header.Get(AppHeader), true
+	return r.Header.Get(AppHeader), "", true
 }
 
 func (h *Handler) callerExecutionIdentity(w http.ResponseWriter, r *http.Request, integration Integration) (ExecutionIdentity, bool, bool) {
@@ -957,9 +1022,15 @@ func targetURL(origin *url.URL, path, rawQuery string) (string, error) {
 	return u.String(), nil
 }
 
-func validToken(token string, expected [32]byte) bool {
+// validToken reports whether token is the integration's: against the hash
+// the database holds, plain or keyed, or the configured hash of a static
+// integration.
+func validToken(token string, integration Integration) bool {
 	got := sha256.Sum256([]byte(token))
-	return subtle.ConstantTimeCompare(got[:], expected[:]) == 1
+	if len(integration.StoredTokenHash) != 0 {
+		return credhash.For(credhash.FamilyOutbound).Matches(IntegrationTokenColumn, got[:], integration.StoredTokenHash)
+	}
+	return subtle.ConstantTimeCompare(got[:], integration.TokenHash[:]) == 1
 }
 
 func forwardedHeaders(in http.Header) http.Header {

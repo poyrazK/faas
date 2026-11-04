@@ -103,7 +103,7 @@ func TestPreview_E2E_HappyPath_PreviewAppsByParent(t *testing.T) {
 	// would do). Insert directly via SQL because the public API
 	// has no preview-provisioning endpoint — that's the githubd
 	// webhook's job and exercising it requires GitHub network.
-	previewSlug := prodSlug + "-pr-7"
+	previewSlug := "pr-7-" + prodSlug
 	if err := insertPreviewApp(t, pool, accountID, previewSlug, prodSlug, 7, state.PreviewPrStateOpen); err != nil {
 		t.Fatalf("seed preview: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestPreview_E2E_TTLExpiry_JanitorSweep(t *testing.T) {
 	accountID := accountIDFromKey(t, context.Background(), pool, key)
 	_ = prodApp // preview_app seeded by account_id, not by prodApp.ID
 
-	previewSlug := "ttl-prod-pr-9"
+	previewSlug := "pr-9-ttl-prod"
 	previewID, err := insertPreviewAppWithExpiry(t, pool, accountID,
 		previewSlug, "ttl-prod", 9, state.PreviewPrStateOpen,
 		time.Now().Add(-time.Hour)) // TTL elapsed an hour ago
@@ -225,7 +225,7 @@ func TestPreview_E2E_OpenPreviewSurvivesJanitorTick(t *testing.T) {
 	}
 	accountID := accountIDFromKey(t, context.Background(), pool, key)
 
-	previewSlug := "survive-prod-pr-3"
+	previewSlug := "pr-3-survive-prod"
 	previewID, err := insertPreviewAppWithExpiry(t, pool, accountID,
 		previewSlug, "survive-prod", 3, state.PreviewPrStateOpen,
 		time.Now().Add(7*24*time.Hour)) // TTL 7 days away

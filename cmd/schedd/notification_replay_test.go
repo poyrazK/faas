@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 func TestDurablePrimeHandoffSurvivesDeliveryCompletion(t *testing.T) {
@@ -27,6 +30,27 @@ func TestDurablePrimeHandoffSurvivesDeliveryCompletion(t *testing.T) {
 	stopDaemon()
 	if queuedCtx.Err() != context.Canceled {
 		t.Fatal("queued prime lost daemon shutdown cancellation")
+	}
+}
+
+// A peer's replay of another node's wake steps aside instead of failing it,
+// so the row keeps its retry budget for the owner; other errors still fail.
+func TestDurableReplayDefersAnotherNodesWake(t *testing.T) {
+	for _, channel := range []string{db.NotifyAppWake, db.NotifyRuntimeConfigRestart} {
+		t.Run(channel, func(t *testing.T) {
+			foreign := fmt.Errorf("sched: EnsureWake: app owned by node n2: %w", sched.ErrAppOwnedByAnotherNode)
+			replay := durableReplayHandler(context.Background(), func(context.Context, db.Notification) error { return foreign })
+			err := replay(t.Context(), db.Notification{Channel: channel})
+			var deferred *db.DeferredNotificationError
+			if !errors.As(err, &deferred) || deferred.Delay <= 0 || !errors.Is(err, sched.ErrAppOwnedByAnotherNode) {
+				t.Fatalf("replay of another node's wake = %v, want a deferral", err)
+			}
+			boom := errors.New("vmmd unavailable")
+			replay = durableReplayHandler(context.Background(), func(context.Context, db.Notification) error { return boom })
+			if err := replay(t.Context(), db.Notification{Channel: channel}); !errors.Is(err, boom) || errors.As(err, &deferred) {
+				t.Fatalf("replay failure = %v, want the handler's error unchanged", err)
+			}
+		})
 	}
 }
 

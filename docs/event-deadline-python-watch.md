@@ -12,7 +12,7 @@ matching recipient identities. It derives filters and reads one bounded page
 without modifying checkpoints or delivery state.
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     EventDeadlineTarget,
     EventDeadlineWatchOptions,
     awatch_event_subscription_deadlines,
@@ -125,7 +125,7 @@ detached `.result` and `stop_reason="interrupted"`. Persist its checkpoint using
 your application's cancellation-safe shutdown path, then re-raise if appropriate:
 
 ```python
-from faas_sdk import EventDeadlineWatchCancelled
+from faas_sdk.preview import EventDeadlineWatchCancelled
 
 try:
     result = await awatch_event_subscription_deadlines(client.inner, target, options)
@@ -185,7 +185,7 @@ completion. See [deadline coverage and triage](event-subscription-deadline-windo
 ## Expired backlog ratio conditions
 
 ```python
-from faas_sdk import EventDeadlineRatioOptions, EventDeadlineWatchOptions
+from faas_sdk.preview import EventDeadlineRatioOptions, EventDeadlineWatchOptions
 
 options = EventDeadlineWatchOptions(
     within_ms=300000,

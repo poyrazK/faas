@@ -1116,7 +1116,7 @@ func TestDeployZeroConfig_ReceiptContainsProvenance(t *testing.T) {
 	if out, err := archiveCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git archive: %v\n%s", err, out)
 	}
-	filteredPath, _, _, err := packGitArchive(archivePath, defaultZeroConfigSourceCapMB, modeOff, nil)
+	filteredPath, _, _, err := packGitArchive(archivePath, defaultZeroConfigSourceCapMB, modeOff, nil, false)
 	if err != nil {
 		t.Fatalf("filter expected tarball: %v", err)
 	}

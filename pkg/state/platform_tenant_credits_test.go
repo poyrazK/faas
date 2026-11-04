@@ -77,7 +77,8 @@ func checkTenantCredits(t *testing.T, ctx context.Context, st state.Store, accou
 		t.Fatalf("remaining after finalize = %v (expiring %s, lasting %s)", remaining, expiring.ID, lasting.ID)
 	}
 	pos, err := credits.PlatformTenantCreditPosition(ctx, accountID, tenant.ID, "EUR", now)
-	if err != nil || pos.AvailableMillicents != 150 || pos.AppliedInMonthMillicents != 200 {
+	// The credit paid the base fee, so none of it counts against usage.
+	if err != nil || pos.AvailableMillicents != 150 || pos.AppliedToUsageInMonthMillicents != 0 {
 		t.Fatalf("position = %+v, %v", pos, err)
 	}
 

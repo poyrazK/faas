@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,18 +47,22 @@ func cmdRoutes(args []string) int {
 		case "migration":
 			return cmdRoutesMigration(args[1:])
 		case "status":
-			return cmdRoutesStatus(args[1:])
+			return cmdRoutesStatus(routesAppFlagAsPositional(args[1:]))
 		case "advise":
-			return cmdRoutesAdvise(args[1:])
+			return cmdRoutesAdvise(routesAppFlagAsPositional(args[1:]))
 		case "awake":
-			return cmdRoutesAwake(args[1:])
+			return cmdRoutesAwake(routesAppFlagAsPositional(args[1:]))
 		case "insights":
-			return cmdRoutesInsights(args[1:])
+			return cmdRoutesInsights(routesAppFlagAsPositional(args[1:]))
 		case "priority":
-			return cmdRoutesPriority(args[1:])
+			return cmdRoutesPriority(routesAppFlagAsPositional(args[1:]))
+		}
+		if !strings.HasPrefix(args[0], "-") {
+			printCommandValidation(osStderr, "unknown routes subcommand %q\n", args[0])
+			return unknownSubcommandChoices(osStderr, "routes", nestedCliCommand("routes"), args[0])
 		}
 	}
-	PrintUsage(osStderr, "usage: gregale routes <status|advise|awake|insights|priority|requirements|gate|health|monitor|check|results|plan|apply|impact|contract|lifecycle|sunsets|migration> [slug] [flags]", "cli")
+	PrintUsage(osStderr, "usage: gregale api route <status|advise|awake|insights|priority|requirements|gate|health|monitor|check|results|plan|apply|impact|contract|lifecycle|sunsets|migration> [slug] [flags]", "cli")
 	return 1
 }
 
@@ -76,7 +81,7 @@ func cmdRoutesPlan(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) || *saved == (*requirements != "") || *burst < 0 {
-		PrintUsage(osStderr, "usage: gregale routes plan <slug> (--requirements PATH | --saved) [--deployment ID] [--expected-revision N] [--consolidate-budgets] [--out PATH] [--throttle-burst N] [--fail-on-unresolved]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route plan <slug> (--requirements PATH | --saved) [--deployment ID] [--expected-revision N] [--consolidate-budgets] [--out PATH] [--throttle-burst N] [--fail-on-unresolved]", "cli")
 		return 1
 	}
 	request := api.RoutePolicyPlanRequest{Saved: *saved, ThrottleBurst: *burst, DeploymentID: *deployment, ConsolidateBudgets: *consolidate}

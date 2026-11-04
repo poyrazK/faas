@@ -195,6 +195,36 @@ service Githubd {
   // updates for one account-owned app. The customer-facing action returns
   // counts only; queue identifiers, payloads, and worker errors stay private.
   rpc RetryAppActivity(RetryAppActivityRequest) returns (RetryAppActivityResponse);
+
+  // UpsertIssueComment keeps one comment per marker on an issue or pull
+  // request: it finds the comment carrying the marker and updates it, or
+  // creates one (ADR-20261027090010 §8). agentd's delivery worker calls it on the
+  // local socket. Because it reads the issue before writing, repeating it
+  // after a lost answer reconciles instead of adding a second comment.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT when the request is malformed or the body is over
+  //     GitHub's limit.
+  //   - NOT_FOUND when the account has no such installation.
+  //   - FAILED_PRECONDITION when GitHub refuses the write for good (no
+  //     access, a missing or locked issue, an invalid body).
+  //   - UNAVAILABLE when nothing was written and a retry may succeed.
+  //   - UNKNOWN when a write may have landed and could not be confirmed.
+  rpc UpsertIssueComment(UpsertIssueCommentRequest) returns (UpsertIssueCommentResponse);
+
+  // PublishGitHubEvent is served by apid's bridge, not by githubd (ADR-20261027090010
+  // §9). githubd's delivery worker hands it each pull_request delivery it
+  // forwards; apid publishes the event as a gregale.github platform event of
+  // the installation's account, so workflow event triggers start from it.
+  // Repeating a delivery publishes nothing twice: the delivery ID is the
+  // event ID.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT when the request or event is malformed; retrying
+  //     cannot help.
+  //   - ALREADY_EXISTS when the delivery ID names a different event.
+  //   - UNAVAILABLE when nothing was published and a retry may succeed.
+  rpc PublishGitHubEvent(PublishGitHubEventRequest) returns (PublishGitHubEventResponse);
 }
 
 message ListRecoveryQueueItemsRequest {
@@ -639,6 +669,48 @@ message GetCIChangedFilesResponse {
   string merge_base_sha = 3;
   bool complete = 4;
   repeated CIChangedFile files = 5;
+}
+
+message UpsertIssueCommentRequest {
+  string account_id = 1;
+  int64 installation_id = 2;
+  string repo_full_name = 3;
+  // number is the issue or pull request number.
+  int64 number = 4;
+  // marker_key names the comment ([a-z0-9-], at most 100 bytes). githubd
+  // hides it in the body as an HTML comment and finds the comment by it.
+  string marker_key = 5;
+  string body = 6;
+}
+
+message UpsertIssueCommentResponse {
+  int64 comment_id = 1;
+  string html_url = 2;
+  // created is false when an existing comment was updated.
+  bool created = 3;
+}
+
+message PublishGitHubEventRequest {
+  // delivery_id is GitHub's X-GitHub-Delivery GUID; it becomes the event ID.
+  string delivery_id = 1;
+  int64 installation_id = 2;
+  // event_type is pull_request.<action>.
+  string event_type = 3;
+  // data is the JSON of the bounded event githubd built from the delivery
+  // (api.GitHubPullRequestEvent).
+  bytes data = 4;
+}
+
+message PublishGitHubEventResponse {
+  // account_id is empty when the event was not published.
+  string account_id = 1;
+  bool published = 2;
+  // duplicate is true when the delivery was already published.
+  bool duplicate = 3;
+  // skipped says why nothing was published: no_account when no account has
+  // the installation, not_enabled when its account is outside the agent
+  // rollout or inactive.
+  string skipped = 4;
 }
 
 message GetProtectedBranchEvidenceRequest {

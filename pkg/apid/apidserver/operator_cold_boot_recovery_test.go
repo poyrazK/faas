@@ -20,13 +20,6 @@ func TestGetOperatorIntentColdBootRecoveryGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, hash, err := api.GenerateAPIKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.CreateAPIKey(t.Context(), account.ID, hash, "cold-boot", api.ScopesAdminOnly); err != nil {
-		t.Fatal(err)
-	}
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "cold-boot-api", RAMMB: 512, MaxConcurrency: 5})
 	if err != nil {
 		t.Fatal(err)
@@ -47,9 +40,10 @@ func TestGetOperatorIntentColdBootRecoveryGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithAdminAllowlist(account.Email)
+	cookie := operatorSessionCookie(t, store, server.Sessions(), account.ID)
 	for range 2 {
 		request := httptest.NewRequest(http.MethodGet, "/v1/admin/operator-intents/"+i.ID, nil)
-		request.Header.Set("Authorization", "Bearer "+key)
+		request.AddCookie(cookie)
 		recorder := httptest.NewRecorder()
 		server.Handler().ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusOK {

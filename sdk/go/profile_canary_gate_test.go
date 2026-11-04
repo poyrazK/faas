@@ -3,10 +3,12 @@ package faas_test
 import (
 	"context"
 	"encoding/json"
-	faas "github.com/poyrazK/faas/sdk/go"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 func TestProfileCanaryGateClientAndOverride(t *testing.T) {
@@ -15,13 +17,13 @@ func TestProfileCanaryGateClientAndOverride(t *testing.T) {
 			t.Fatal("auth missing")
 		}
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(faas.ProfileCanaryGateDecision{Status: "regressed", PolicyRevision: 7, CanaryStep: 1})
+			json.NewEncoder(w).Encode(preview.ProfileCanaryGateDecision{Status: "regressed", PolicyRevision: 7, CanaryStep: 1})
 			return
 		}
 		var request struct {
-			ExpectedStep int                       `json:"expected_step"`
-			Override     *faas.ProfileGateOverride `json:"profile_gate_override"`
-			Rollback     bool                      `json:"profile_gate_rollback"`
+			ExpectedStep int                          `json:"expected_step"`
+			Override     *preview.ProfileGateOverride `json:"profile_gate_override"`
+			Rollback     bool                         `json:"profile_gate_rollback"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ExpectedStep != 1 || request.Override == nil || request.Override.ExpectedPolicyRevision != 7 || request.Override.Reason != "Accepted cost after reviewing checkout profiles." || request.Rollback {
 			t.Errorf("invalid override: %+v %v", request, err)
@@ -34,11 +36,11 @@ func TestProfileCanaryGateClientAndOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate, err := client.GetProfileCanaryGate(context.Background(), "candidate")
+	gate, err := preview.Wrap(client).GetProfileCanaryGate(context.Background(), "candidate")
 	if err != nil || gate.Status != "regressed" || gate.PolicyRevision != 7 {
 		t.Fatal(gate, err)
 	}
-	out, err := client.AdvanceCanaryWithProfileOverride(context.Background(), "candidate", 1, faas.ProfileGateOverride{ExpectedPolicyRevision: 7, Reason: "Accepted cost after reviewing checkout profiles."})
+	out, err := client.AdvanceCanaryWithProfileOverride(context.Background(), "candidate", 1, preview.ProfileGateOverride{ExpectedPolicyRevision: 7, Reason: "Accepted cost after reviewing checkout profiles."})
 	if err != nil || out.AuditID != "42" || out.ProfileGate == nil || out.ProfileGate.Status != "overridden" {
 		t.Fatal(out, err)
 	}

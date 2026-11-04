@@ -130,6 +130,8 @@ func TestFormatStageDurationPinsAllBranches(t *testing.T) {
 	}{
 		{"completed with dur", 1200, "completed", "", "1.2s", ""},
 		{"completed zero dur", 0, "completed", "", "0.0s", ""},
+		// Hunt 12 H12-5: the builder-slot wait booked to source_download.
+		{"completed with note", 192300, "completed", "waited 3m12s for a builder slot", "", "192.3s (waited 3m12s for a builder slot)"},
 		{"in_progress", 0, "in_progress", "", "…", ""},
 		{"failed with reason", 0, "failed", "oom in build", "failed: oom in build", ""},
 		{"failed no reason", 0, "failed", "", "", "failed"},

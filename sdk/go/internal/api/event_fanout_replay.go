@@ -29,7 +29,7 @@ type ReplayEventFanoutFailureResponse struct {
 	State          string `json:"state"`
 }
 
-func (c *Client) ReplayEventFanoutFailure(ctx context.Context, slug string, req ReplayEventFanoutFailureRequest) (ReplayEventFanoutFailureResponse, error) {
+func (c *PreviewClient) ReplayEventFanoutFailure(ctx context.Context, slug string, req ReplayEventFanoutFailureRequest) (ReplayEventFanoutFailureResponse, error) {
 	var out ReplayEventFanoutFailureResponse
 	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/event-deliveries:replay-fanout-failure", req, &out)
 	return out, err

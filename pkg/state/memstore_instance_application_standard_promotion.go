@@ -23,7 +23,8 @@ func (m *MemStore) lockNativePromotionLocked(id string, allowRunning bool) (Inst
 		return Instance{}, capture, runtimeadmission.Receipt{}, ErrApplicationStandardRuntimeStale
 	}
 	parent := boot.Receipt.Clone()
-	if validateStandardBootBinding(parent.Binding, capture, m.computeNodeRuntimeIncarnations[ins.NodeID], m.computeNodeRuntimeProtocols[ins.NodeID], time.Unix(0, parent.CompletedAtUnixNano)) != nil {
+	held := m.heldStandardIncarnationLocked(ins.ID, ins.NodeID, parent.Binding.Incarnation)
+	if validateStandardBootBinding(parent.Binding, capture, held, m.computeNodeRuntimeProtocols[ins.NodeID], time.Unix(0, parent.CompletedAtUnixNano)) != nil {
 		return Instance{}, capture, runtimeadmission.Receipt{}, ErrApplicationStandardRuntimeStale
 	}
 	return ins, capture, parent, nil
@@ -47,16 +48,20 @@ func (m *MemStore) IssueInstanceApplicationStandardPromotion(ctx context.Context
 	if err := ctx.Err(); err != nil {
 		return runtimeadmission.Promotion{}, err
 	}
-	if p.Validate(time.Now()) != nil {
+	// Well-formed, whether or not the parent turns out to be held (ADR-595
+	// extension); the lock decides which.
+	if p.Held(p.Parent.Binding.Incarnation).Validate(time.Now()) != nil {
 		return runtimeadmission.Promotion{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, capture, parent, err := m.lockNativePromotionLocked(p.Binding.InstanceID, false)
+	ins, capture, parent, err := m.lockNativePromotionLocked(p.Binding.InstanceID, false)
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
 	}
-	if !p.Parent.Equal(parent) {
+	current := m.computeNodeRuntimeIncarnations[ins.NodeID]
+	p = p.Held(heldPromotionIssuer(parent, current))
+	if !p.Parent.Equal(parent) || p.Binding.Incarnation != current || p.Validate(time.Now()) != nil {
 		return runtimeadmission.Promotion{}, ErrApplicationStandardRuntimeStale
 	}
 	deadline, err := m.standardNativeArtifactDeadlineLocked(ctx, capture)
@@ -67,7 +72,7 @@ func (m *MemStore) IssueInstanceApplicationStandardPromotion(ctx context.Context
 	if old, ok := m.instanceApplicationStandardPromotions[p.Binding.Token]; ok {
 		copy := p
 		copy.Binding.IssuedAtUnixNano, copy.Binding.ExpiresAtUnixNano = old.Grant.Binding.IssuedAtUnixNano, old.Grant.Binding.ExpiresAtUnixNano
-		if !copy.Equal(old.Grant) || old.Grant.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, deadline) {
+		if !copy.Equal(old.Grant) || old.Grant.Held(heldPromotionIssuer(parent, current)).Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, deadline) {
 			return runtimeadmission.Promotion{}, ErrConflict
 		}
 		return old.Grant.Clone(), nil
@@ -110,6 +115,9 @@ func (m *MemStore) publishStandardPromotionLocked(ctx context.Context, r runtime
 		return Instance{}, err
 	}
 	p, ok := m.instanceApplicationStandardPromotions[r.Binding.Token]
+	if ok {
+		p.Grant = p.Grant.Held(heldPromotionIssuer(parent, m.computeNodeRuntimeIncarnations[ins.NodeID]))
+	}
 	if !ok || !p.Grant.Parent.Equal(parent) || p.Grant.CheckReceipt(r, time.Unix(0, r.CompletedAtUnixNano)) != nil {
 		return Instance{}, ErrApplicationStandardRuntimeStale
 	}

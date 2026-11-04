@@ -2,9 +2,9 @@ import json
 
 import httpx
 
-from faas_sdk.api.alert_rules import enable_alert_preset
+from faas_sdk.preview.api.alert_rules import enable_alert_preset
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import EnableAlertPresetRequest
+from faas_sdk.preview.models import EnableAlertPresetRequest
 
 
 def test_automation_backlog_preset_decodes_due_age_and_keeps_notification_defaults():

@@ -66,6 +66,7 @@ func detectConventionImpl(fsys fs.FS) ([]workloadSeed, []string, error) {
 			seeds = append(seeds, seed)
 		}
 	}
+	seeds = append(seeds, detectGoModuleCommands(fsys)...)
 	// Also handle the bare-repo Tier-4 floor; pushed into Scan()
 	// itself rather than this detector because the floor is a
 	// tier-wide concern.

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be applied as a live source patch to the deployment that was live at upload time (ADR-740) and, when it was published as one, whether its build waits for the developer to stop saving (ADR-20261021221906).
+ * Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be applied as a live source patch to the deployment that was live at upload time and, when it was published as one, whether its build waits for the developer to stop saving.
  */
 export type DevPatchPreview = {
   eligible: boolean;
@@ -24,7 +24,7 @@ export type DevPatchPreview = {
    */
   generation?: number;
   /**
-   * Set when this sync's build waits behind its live patch (ADR-20261021221906). The build starts at this time unless a later sync replaces it first; a patch that fails to apply starts it at once.
+   * Set when this sync's build waits behind its live patch. The build starts at this time unless a later sync replaces it first; a patch that fails to apply starts it at once.
    */
   build_deferred_until?: string;
 };

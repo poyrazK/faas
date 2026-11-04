@@ -24,7 +24,7 @@ func parseCopySource(value string) (gatewayCopySource, error) {
 		return source, objectstorage.ErrInvalid
 	}
 	source.Bucket, source.Key, _ = strings.Cut(strings.TrimPrefix(path, "/"), "/")
-	if source.Bucket == "" || !objectstorage.ValidKey(source.Key) {
+	if source.Bucket == "" || !objectstorage.ValidRequestKey(source.Key) {
 		return source, objectstorage.ErrInvalid
 	}
 	if selected {

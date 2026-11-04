@@ -2,7 +2,11 @@
 package gateway
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,6 +49,48 @@ func TestWriteWakeErrorHidesStartupFailureDetailFromVisitors(t *testing.T) {
 			}
 			if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "hunter2") || strings.Contains(rec.Body.String(), "vmm") || strings.Contains(rec.Body.String(), "instance=") {
 				t.Fatalf("visitor response = %d %s, want a generic 503", rec.Code, rec.Body)
+			}
+		})
+	}
+}
+
+// Container qualification 2026-10-27: a public-routing wake answered 503
+// "wake failed" in 17 ms and no daemon logged why. Every error writeWakeError
+// answers with that generic detail must leave its cause in the gateway log;
+// the errors it classifies, and a caller that went away, must not.
+func TestLogWakeFailureRecordsTheCauseOfAGenericWakeFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		logged bool
+	}{
+		{"plain error", errors.New("resolve owner schedd: no client for node n-1"), true},
+		{"deadline", context.DeadlineExceeded, true},
+		{"caller went away", context.Canceled, false},
+		{"queue full", ErrQueueFull, false},
+		{"wake queue wait", ErrWakeQueueWaitTimeout, false},
+		{"admission busy", ErrWakeAdmissionQueueFull, false},
+		{"bootstrap aborted", ErrBootstrapAborted, false},
+		{"concurrency queue full", ErrConcurrencyQueueFull, false},
+		{"concurrency queue wait", ErrConcurrencyQueueWaitTimeout, false},
+		{"concurrency admission unavailable", ErrConcurrencyQueueAdmissionUnavailable, false},
+		{"concurrency drop", &WakeConcurrencyDropError{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			writeWakeError(rec, tc.err)
+			generic := strings.Contains(rec.Body.String(), `"wake failed"`)
+			if unclassifiedWakeError(tc.err) != generic {
+				t.Fatalf("unclassifiedWakeError = %v, but writeWakeError's generic answer = %v (body %s)", !generic, generic, rec.Body)
+			}
+			var buf bytes.Buffer
+			h := &Handler{log: slog.New(slog.NewJSONHandler(&buf, nil))}
+			h.logWakeFailure("app-1", tc.err)
+			if logged := strings.Contains(buf.String(), "gateway: wake failed"); logged != tc.logged {
+				t.Fatalf("logged = %v, want %v: %s", logged, tc.logged, buf.String())
+			}
+			if tc.logged && !strings.Contains(buf.String(), tc.err.Error()) {
+				t.Fatalf("log lacks the cause %q: %s", tc.err, buf.String())
 			}
 		})
 	}

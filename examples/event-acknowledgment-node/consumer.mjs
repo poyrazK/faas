@@ -1,7 +1,7 @@
 // Integration functions for an application-owned durable queue. See README for
 // the adapter's persistence and exclusive-ownership requirements.
 import { randomUUID } from 'node:crypto';
-import { eventAcknowledgmentWorkerFromHeaders, recoverNextEventAcknowledgmentIntent, recoverEventAcknowledgmentIntents, getEventAcknowledgmentIntentHealth, watchEventAcknowledgmentIntentHealth, watchEventAcknowledgmentIntentHealthWithCheckpoint, EventAcknowledgmentIntentError } from '@gregale/sdk-node';
+import { eventAcknowledgmentWorkerFromHeaders, recoverNextEventAcknowledgmentIntent, recoverEventAcknowledgmentIntents, getEventAcknowledgmentIntentHealth, watchEventAcknowledgmentIntentHealth, watchEventAcknowledgmentIntentHealthWithCheckpoint, EventAcknowledgmentIntentError } from '@gregale/sdk-node/preview';
 
 const names = new Set([
   'x-gregale-event-source', 'x-gregale-event-id', 'x-gregale-event-subscription-id',

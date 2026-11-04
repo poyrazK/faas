@@ -66,3 +66,35 @@ preserves both original roots. The owner hosts the production Manager and native
 backends, rather than the serving vmmd/gRPC process. Actual KVM execution and leak
 qualification on the designated native host remain pending before rollout;
 serving-daemon restart and physical-node failure exercises remain separate.
+
+## Amendment 1 (2026-10-24): ordinary launches name their vmmd owner
+
+Ordinary native generations kept their cleanup guard only because their
+records named no daemon. So after a vmmd crash, its replacement refused to retire any
+of the old VMs ("recovered host helper ownership is not yet attested"). Their
+netns, jails and cgroups leaked, and every native owner-kill recovery test
+(egress, job and crash recovery, the financial DaemonRecovery suite) failed,
+along with the tests that ran after them on the same host.
+
+With `native_launch_owner_records = true` (vmmd; requires
+`native_process_recovery`), ordinary launches publish a version-three record.
+It carries an `owner` field with the same PID, UID and kernel start time as
+a repair producer, under the protocol `vmmd-launch-owner-v1`, written
+atomically with the physical generation and its replacements. The field set
+is strict: `producer` only with version two, `owner` only with version three,
+never both. Repair enrollment, its task binding and its gates are unchanged;
+an owner identity cannot enroll as a repair producer.
+
+Cleanup of an earlier generation's version-three record follows the repair
+rule: hold the daemon ownership lock, prove the named incarnation exited with
+a pidfd (a different start time proves it without authority over the reused
+PID), and never signal it. A live, unreadable or changed incarnation keeps the
+resources. The vmmd that owns a generation checks that the record names its
+own identity. Version-one records keep the earlier guard. Out-of-process
+helpers stay on their own journals; the proof covers in-process writers,
+which end with their daemon.
+
+vmmd binaries without a version-three reader refuse such a journal. The
+setting is off by default and is enabled only once every compute node and any
+rollback target can read it. Native acceptance enables it in the e2e harness
+and the financial owner fixture.

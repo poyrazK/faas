@@ -207,8 +207,7 @@ func (m *MemStore) markDefaultScopeSnapshotsStaleLocked(appID string, at time.Ti
 		if deployment.AppID != appID || normalizedDeploymentScope(deployment.Scope) != "default" || snapshot.Stale || snapshot.CreatedAt.After(at) {
 			continue
 		}
-		snapshot.Stale = true
-		m.snapshots[id] = snapshot
+		m.markSnapshotStaleLocked(id)
 	}
 }
 

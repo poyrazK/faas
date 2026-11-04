@@ -270,16 +270,10 @@ func (m *MemStore) appendManagedRealtimeChannel(ctx context.Context, endpointID,
 			return ManagedRealtimeChannelMessage{}, err
 		}
 	}
+	if err := m.checkRetainedChannelMem(endpointID, channel); err != nil {
+		return ManagedRealtimeChannelMessage{}, err
+	}
 	if state == nil {
-		channels := 0
-		for existing := range m.managedRealtimeHistory {
-			if existing.endpointID == endpointID {
-				channels++
-			}
-		}
-		if channels >= ManagedRealtimeHistoryMaxChannels {
-			return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryLimit
-		}
 		state = &managedRealtimeHistoryState{next: 1, oldest: 1}
 		m.managedRealtimeHistory[key] = state
 	}

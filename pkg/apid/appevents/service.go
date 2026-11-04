@@ -14,6 +14,7 @@ import (
 	"log/slog"
 
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,6 +27,9 @@ type Host interface {
 	EmitAudit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	// Notify sends a pg_notify wake-up.
 	Notify(ctx context.Context, channel, payload string) error
+	// PublishLimiter is the per-account event publish rate; nil admits
+	// everything.
+	PublishLimiter() *events.PublishLimiter
 }
 
 // Service is the app events surface.

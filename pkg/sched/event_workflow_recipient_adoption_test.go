@@ -16,7 +16,7 @@ import (
 
 // adr: 606
 // adr: 648 — workflow-only and mixed receipts use recipient ownership.
-func TestEventWorkflowRoutingWithRecipientAdoptionEnabled(t *testing.T) {
+func TestEventWorkflowRoutingWithRecipientAdoptionEnabledIntegratedRouting(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
 			var store recipientRoutingTestStore = state.NewMemStore()
@@ -94,5 +94,44 @@ func testEventWorkflowRoutingWithRecipientAdoptionEnabled(t *testing.T, store re
 		if err != nil || len(invocations) != 1 {
 			t.Fatalf("application handoff = %d, %v", len(invocations), err)
 		}
+	}
+}
+
+func TestEventWorkflowRoutingWithRecipientAdoptionEnabled(t *testing.T) {
+	store, ctx := state.NewMemStore(), t.Context()
+	account, err := store.CreateAccount(ctx, "workflow-adoption@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "workflow-adoption"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive,
+		Workflows: json.RawMessage(`[{"name":"paid","trigger":{"type":"event","source":"billing.*","event_type":"invoice.paid"},"steps":[{"name":"main","path":"/paid"}]}]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	envelope := events.Envelope{SpecVersion: "1.0", ID: uuid.NewString(), Source: "billing.stripe", Type: "invoice.paid",
+		AccountID: accountID, Time: time.Now().UTC(), DataContentType: "application/json", Data: json.RawMessage(`{}`)}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
+		t.Fatal(err)
+	}
+	loop := (&Loop{engine: &Engine{store: store}, workflowsDispatched: true}).WithEventRecipientClaims(true)
+	loop.runEventFanoutSweep(ctx)
+	if _, total, err := store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10}); err != nil || total != 1 {
+		t.Fatalf("workflow recipient did not start: runs=%d err=%v", total, err)
+	}
+	if work, err := store.ClaimDuePublishedEventRecipient(ctx, time.Now().UTC()); err == nil {
+		t.Fatalf("workflow recipient was incorrectly adopted: %+v", work)
+	}
+	loop.runEventFanoutSweep(ctx)
+	if _, total, err := store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10}); err != nil || total != 1 {
+		t.Fatalf("workflow handoff was duplicated: runs=%d err=%v", total, err)
 	}
 }

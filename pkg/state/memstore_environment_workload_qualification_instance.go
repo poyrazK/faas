@@ -64,7 +64,7 @@ func (m *MemStore) CreateEnvironmentWorkloadQualificationInstance(ctx context.Co
 		}
 		return EnvironmentWorkloadQualificationAdmission{Instance: prior, Execution: status.Execution}, nil
 	}
-	if err := m.checkNodeReservationLocked(placement.NodeID, string(StateColdBooting), placement.RAMMB); err != nil {
+	if err := m.checkNodeAdmissionReservationLocked(ctx, placement.NodeID, string(StateColdBooting), placement.RAMMB); err != nil {
 		return EnvironmentWorkloadQualificationAdmission{}, err
 	}
 	if current.ExecutionMode == api.ExecutionModeWorker {

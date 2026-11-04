@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"filippo.io/age"
@@ -102,6 +103,16 @@ func SealRequest(recipient *age.X25519Recipient, request api.ResolvedExecutionRe
 	if recipient == nil {
 		return nil, fmt.Errorf("%w: recipient is nil", ErrInvalid)
 	}
+	return SealRequestTo([]*age.X25519Recipient{recipient}, request)
+}
+
+// SealRequestTo is SealRequest for several recipients: the delivery seal
+// domain and the fleet recipient while the domain rolls out (ADR
+// 20261022111812). Any one of them opens the payload.
+func SealRequestTo(recipients []*age.X25519Recipient, request api.ResolvedExecutionRequest) ([]byte, error) {
+	if len(recipients) == 0 || slices.Contains(recipients, nil) {
+		return nil, fmt.Errorf("%w: recipient is nil", ErrInvalid)
+	}
 	input := request.Input
 	if input == nil {
 		input = json.RawMessage("null")
@@ -125,7 +136,7 @@ func SealRequest(recipient *age.X25519Recipient, request api.ResolvedExecutionRe
 	if err != nil {
 		return nil, fmt.Errorf("%w: marshal envelope: %w", ErrInvalid, err)
 	}
-	sealed, err := secretbox.SealBytes(recipient, Namespace, plaintext, api.ExecutionSealedPayloadMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, Namespace, plaintext, api.ExecutionSealedPayloadMaxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("executionpayload: seal envelope: %w", err)
 	}
@@ -135,10 +146,20 @@ func SealRequest(recipient *age.X25519Recipient, request api.ResolvedExecutionRe
 // SealWorkflowPlan encrypts the complete bounded plan before it is persisted.
 // Plan plaintext contains customer source and input and must never be logged.
 func SealWorkflowPlan(recipient *age.X25519Recipient, plan []byte) ([]byte, error) {
-	if recipient == nil || len(plan) == 0 || len(plan) > api.ExecutionWorkflowManagedPlanMaxBytes || !json.Valid(plan) {
+	if recipient == nil {
+		return nil, fmt.Errorf("%w: workflow plan recipient is nil", ErrInvalid)
+	}
+	return SealWorkflowPlanTo([]*age.X25519Recipient{recipient}, plan)
+}
+
+// SealWorkflowPlanTo is SealWorkflowPlan for several recipients: the account
+// seal domain and the fleet recipient while the domain rolls out (ADR
+// 20261022111812).
+func SealWorkflowPlanTo(recipients []*age.X25519Recipient, plan []byte) ([]byte, error) {
+	if len(recipients) == 0 || slices.Contains(recipients, nil) || len(plan) == 0 || len(plan) > api.ExecutionWorkflowManagedPlanMaxBytes || !json.Valid(plan) {
 		return nil, fmt.Errorf("%w: workflow plan is invalid or outside hard bounds", ErrInvalid)
 	}
-	sealed, err := secretbox.SealBytes(recipient, WorkflowPlanNamespace, plan, api.ExecutionWorkflowManagedPlanMaxBytes+64*1024)
+	sealed, err := secretbox.SealBytesTo(recipients, WorkflowPlanNamespace, plan, api.ExecutionWorkflowManagedPlanMaxBytes+64*1024)
 	if err != nil {
 		return nil, fmt.Errorf("executionpayload: seal workflow plan: %w", err)
 	}

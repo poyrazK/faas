@@ -54,11 +54,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -111,6 +114,23 @@ type Authenticator interface {
 // Authenticator lets existing embedders adopt deploy tokens incrementally.
 type DeployTokenAuthenticator interface {
 	AuthenticateDeployToken(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
+}
+
+// DeploymentAppResolver is an optional extension that names the app a
+// deployment belongs to, so a deploy token can follow the deployments of its
+// own app (ADR-20261031162858). Without it a deploy token reads no
+// /v1/deployments route.
+type DeploymentAppResolver interface {
+	DeploymentAppID(ctx context.Context, deploymentID string) (string, error)
+}
+
+// deployTokenDeploymentReads are the routes outside /v1/apps/{slug} a deploy
+// token may read, for a deployment of its own app: the ones
+// api.ScopesDeploymentReadSurface admits for deploy:write, which every CLI
+// deploy polls after it submits (ADR-20261031162858).
+var deployTokenDeploymentReads = map[string]bool{
+	"GET /v1/deployments/{id}":        true,
+	"GET /v1/deployments/{id}/status": true,
 }
 
 // PlatformTenantAccessTokenAuthenticator resolves a tenant-bound, explicitly
@@ -192,8 +212,10 @@ type Middleware struct {
 	// (host-only cookie; dev/test default).
 	CookieDomain string
 
-	// SessionCookieName is the cookie name RequireSession reads
-	// (and clearSessionCookie writes). Empty = "faas_sid".
+	// SessionCookieName overrides the cookie RequireSession reads (and
+	// ClearSessionCookie writes). Empty or the default reads
+	// pkg/sessioncookie's __Host-faas_sid, then the legacy faas_sid
+	// (ADR-20261026112500).
 	SessionCookieName string
 
 	// keyDebounce gates per-key last_used_at touches to one
@@ -214,12 +236,41 @@ type Middleware struct {
 	keyTouchWindowForTest time.Duration
 	// sessionTouchWindowForTest: same override for sessions.
 	sessionTouchWindowForTest time.Duration
+	// Honeytokens, when set, is asked about a well-formed API key that
+	// matches no key (ADR 20261024014500). On a match OnHoneytoken runs and
+	// the request still gets the ordinary 401, so the caller learns nothing.
+	Honeytokens  HoneytokenMatcher
+	OnHoneytoken func(r *http.Request, h state.Honeytoken)
+
 	// BindingKeyFn is the IAM-hardening-mega-PR (logical change 5,
 	// ADR-076) HMAC key source. nil disables binding-hash
 	// computation (the envelope's `binding_hash` field is omitted;
 	// the cross-check is skipped). Production wires this to the
 	// first 32 bytes of the session-key AEAD secret.
 	BindingKeyFn func() []byte
+}
+
+// HoneytokenMatcher looks a presented credential up in the honeytoken
+// registry (ADR 20261024014500); state.ErrNotFound means no match. It gets
+// the plaintext because the registry is keyed by an HMAC the daemon holds.
+type HoneytokenMatcher interface {
+	MatchHoneytoken(ctx context.Context, token string) (state.Honeytoken, error)
+}
+
+// reportHoneytoken checks a bearer key that matched no API key against the
+// honeytoken registry. A failed lookup is logged and otherwise ignored: the
+// request is being refused either way.
+func (m *Middleware) reportHoneytoken(r *http.Request, token string) {
+	if m.Honeytokens == nil || m.OnHoneytoken == nil {
+		return
+	}
+	h, err := m.Honeytokens.MatchHoneytoken(r.Context(), token)
+	switch {
+	case err == nil:
+		m.OnHoneytoken(r, h)
+	case !errors.Is(err, state.ErrNotFound) && m.Log != nil:
+		m.Log.Warn("auth: honeytoken lookup failed", "err", err)
+	}
 }
 
 // keyTouchWindow returns the production 30s window unless an
@@ -353,7 +404,15 @@ func New(authn Authenticator, sessions Sessions, lookups SessionLookup,
 	}
 }
 
-const defaultSessionCookieName = "faas_sid"
+const defaultSessionCookieName = sessioncookie.LegacyName
+
+// sessionCookie returns the request's session cookie.
+func (m *Middleware) sessionCookie(r *http.Request) (*http.Cookie, error) {
+	if m.SessionCookieName == "" || m.SessionCookieName == defaultSessionCookieName {
+		return sessioncookie.Get(r)
+	}
+	return r.Cookie(m.SessionCookieName)
+}
 
 // keyTouchWindow is the per-key debounce window for last_used_at
 // touches. 30s matches cmd/apid's server.touchDebounce. Hot keys
@@ -476,7 +535,8 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			return
 		}
 		if api.ValidAPIKeyFormat(tok) {
-			acct, key, err := m.Authn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+			keyHash := api.HashAPIKey(tok)
+			acct, key, err := m.Authn.AuthenticateKey(r.Context(), keyHash)
 			// IAM-5 (issue #189): translate the IAM-5 sentinels
 			// to RFC 7807 + emit the audit row. The store
 			// already lazily marked the key status='revoked'
@@ -504,6 +564,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					m.credentialStoreUnavailable(w, r, err)
 					return
 				}
+				m.reportHoneytoken(r, tok)
 				// Fall through to the session-cookie branch —
 				// the key may have been deleted or the hash is
 				// simply unknown; both surface as "invalid
@@ -648,21 +709,43 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
-					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") {
+					// The resumable upload routes are the CLI's default source
+					// deploy path. They name their app in the request body or the
+					// stored session, so the app binding is enforced where the
+					// handlers resolve it (appaccess.Authorize refuses a token
+					// bound to another app) instead of from the path here.
+					uploadRoute := IsUploadSessionPath(r.URL.Path)
+					// A deploy follows the deployment it created; the route
+					// is bound by the deployment's app, not a path slug.
+					deploymentRead := deployTokenDeploymentReads[r.Pattern]
+					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute && !deploymentRead {
 						api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
+							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug} and /v1/uploads, and read its app's deployments"))
 						return
 					}
-					bound, bindErr := m.deployTokenBoundTo(r, key)
+					var bound bool
+					var bindErr error
+					switch {
+					case uploadRoute:
+						bound = key.AppID != ""
+					case deploymentRead:
+						bound, bindErr = m.deployTokenBoundToDeployment(r, key)
+					default:
+						bound, bindErr = m.deployTokenBoundTo(r, key)
+					}
 					if bindErr != nil {
 						m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
 						return
 					}
 					if !bound {
-						// Same 404 shape LoadApp returns for a cross-app or
-						// cross-account slug probe.
+						// Same 404 shape LoadApp and the deployment reads return
+						// for a cross-app or cross-account probe.
+						detail := "no such app"
+						if deploymentRead {
+							detail = "no such deployment"
+						}
 						api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-							"Not found", "no such app"))
+							"Not found", detail))
 						return
 					}
 					if !acct.Active() {
@@ -704,7 +787,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		// (2) Session-cookie branch — verify AEAD, cross-check
 		//     live row, stamp principal.
 		if m.Sessions != nil && m.Lookups != nil {
-			if c, err := r.Cookie(m.SessionCookieName); err == nil && c.Value != "" {
+			if c, err := m.sessionCookie(r); err == nil && c.Value != "" {
 				env, err := m.Sessions.Verify(c.Value)
 				if err == nil {
 					sess, handled, cookieErr := m.RequireSessionCookie(w, r, env)
@@ -1541,6 +1624,21 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 // handlers resolve the app with a direct store lookup and never reach
 // LoadApp's AppID check. A route without a {slug} (the account-wide
 // /v1/apps/metrics) is outside a deploy token's reach.
+// IsUploadSessionPath reports whether path is one of the resumable upload
+// routes: POST /v1/uploads and /v1/uploads/{id}[/commit].
+func IsUploadSessionPath(path string) bool {
+	const root = "/v1/uploads"
+	if path == root {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, root+"/")
+	if !ok || rest == "" {
+		return false
+	}
+	id, tail, _ := strings.Cut(rest, "/")
+	return id != "" && (tail == "" || tail == "commit")
+}
+
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {
 	slug := r.PathValue("slug")
 	if slug == "" || key.AppID == "" {
@@ -1554,6 +1652,26 @@ func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool
 		return false, err
 	}
 	return app.ID == key.AppID, nil
+}
+
+// deployTokenBoundToDeployment reports whether the {id} of a deployment read
+// names a deployment of the app the deploy token is bound to.
+func (m *Middleware) deployTokenBoundToDeployment(r *http.Request, key state.APIKey) (bool, error) {
+	resolver, ok := m.Authn.(DeploymentAppResolver)
+	id := r.PathValue("id")
+	// A malformed id names no deployment: 404, never a store error.
+	wellFormed := uuid.Validate(id) == nil
+	if !ok || key.AppID == "" || !wellFormed {
+		return false, nil
+	}
+	appID, err := resolver.DeploymentAppID(r.Context(), id)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return appID == key.AppID, nil
 }
 
 // --- scope helpers -------------------------------------------------------
@@ -1694,8 +1812,9 @@ func (m *Middleware) clearSessionCookie(w http.ResponseWriter) {
 // session-revoke).
 func (m *Middleware) ClearSessionCookie(w http.ResponseWriter) {
 	name := m.SessionCookieName
-	if name == "" {
-		name = defaultSessionCookieName
+	if name == "" || name == defaultSessionCookieName {
+		sessioncookie.Clear(w, m.CookieDomain)
+		return
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,

@@ -25,7 +25,7 @@ func TestEdgeRuleHitCounterSamplesEvents(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "http://api.example.com/login?token=secret", nil)
 	req.Header.Set("User-Agent", "curl/8")
 	req.Header.Set(api.RequestIDHeader, "req-1")
-	routes := []gateway.EdgeRuleRedirectResolved{{EdgeRuleCondition: gateway.EdgeRuleCondition{RuleID: rule, AppID: "app-1"}, ID: rule, AccountID: "acct", To: "/x"}}
+	routes := []gateway.EdgeRuleRedirectResolved{{EdgeRuleCondition: gateway.EdgeRuleCondition{RuleID: rule, AppID: fixtureApp}, ID: rule, AccountID: "acct", To: "/x"}}
 
 	serve := func() {
 		m := gateway.NewEdgeRuleMatchContext(req, net.ParseIP("203.0.113.9"), func(net.IP) string { return "DE" }, c)
@@ -36,7 +36,7 @@ func TestEdgeRuleHitCounterSamplesEvents(t *testing.T) {
 		serve()
 	}
 	c.flush(context.Background(), store, nil)
-	events, err := store.ListEdgeRuleEvents(context.Background(), state.EdgeRuleEventQuery{AppID: "app-1", Limit: 100})
+	events, err := store.ListEdgeRuleEvents(context.Background(), state.EdgeRuleEventQuery{AppID: fixtureApp, Limit: 100})
 	if err != nil || len(events) != edgeRuleEventsPerRule {
 		t.Fatalf("events = %d, %v; want %d", len(events), err, edgeRuleEventsPerRule)
 	}
@@ -45,14 +45,14 @@ func TestEdgeRuleHitCounterSamplesEvents(t *testing.T) {
 		e.Path != "/login" || e.ClientIP != "203.0.113.9" || e.Country != "DE" || e.UserAgent != "curl/8" || e.RequestID != "req-1" {
 		t.Fatalf("event = %+v", e)
 	}
-	stats, _ := store.EdgeRuleHitStatsForApp(context.Background(), "app-1", time.Time{})
+	stats, _ := store.EdgeRuleHitStatsForApp(context.Background(), fixtureApp, time.Time{})
 	if len(stats) != 1 || stats[0].Matched != int64(edgeRuleEventsPerRule+5) {
 		t.Fatalf("hit counts must still cover every match: %+v", stats)
 	}
 
 	serve()
 	c.flush(context.Background(), store, nil)
-	events, _ = store.ListEdgeRuleEvents(context.Background(), state.EdgeRuleEventQuery{AppID: "app-1", Limit: 100})
+	events, _ = store.ListEdgeRuleEvents(context.Background(), state.EdgeRuleEventQuery{AppID: fixtureApp, Limit: 100})
 	if len(events) != edgeRuleEventsPerRule+1 {
 		t.Fatalf("sampling budget did not reset after flush: %d events", len(events))
 	}

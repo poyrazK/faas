@@ -38,7 +38,14 @@ func resourceNetworkNamespaceAt(name string) (*resourceAsset, error) {
 		return nil, err
 	}
 	if fs.Type != unix.NSFS_MAGIC {
-		return nil, errors.New("network namespace marker is not nsfs")
+		// Only an empty regular file with nothing mounted on it is the
+		// placeholder of an interrupted `ip netns add`.
+		if info, err := f.Stat(); err == nil && info.Mode().IsRegular() && info.Size() == 0 {
+			if mount, err := resourceMountAt(path); err == nil && mount == nil {
+				return nil, errNamespacePlaceholder
+			}
+		}
+		return nil, errors.New("network namespace marker is not nsfs and not an unmounted placeholder")
 	}
 	typeID, err := unix.IoctlRetInt(int(f.Fd()), unix.NS_GET_NSTYPE)
 	if err != nil || typeID != unix.CLONE_NEWNET {

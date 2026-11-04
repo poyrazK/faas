@@ -32,7 +32,7 @@ func (s *server) dashboardPreviewEnvironment(ctx context.Context, log *slog.Logg
 		log.Warn("dashboard: load PR preview environment", "app_id", app.ID, "err", err)
 		return nil
 	}
-	result := previewset.Evaluate(environment.Set.PRNumber, app.ID, environment.Members)
+	result := previewset.EvaluateSet(environment.Set.PRNumber, app.ID, environment.Members, environment.Set.SetupError)
 	view := &dashboard.PRPreviewEnvironmentView{
 		RepoFullName: environment.Set.RepoFullName,
 		PRNumber:     environment.Set.PRNumber,

@@ -532,3 +532,49 @@ func (p *fakeObjectProvider) CompleteConditionalMultipartUpload(ctx context.Cont
 	p.multipartConditions = append(p.multipartConditions, c)
 	return p.CompleteMultipartUpload(ctx, b, r)
 }
+
+// Production-us rc.294: every bucket since 10-14 stalled on a provider that
+// refused the platform's credentials (error_code configuration), while
+// capabilities kept advertising object storage and each create left another
+// row stuck in provisioning (Hunt 14 H14-14).
+func TestObjectStorageProviderCredentialRefusalWithdrawsTheCapability(t *testing.T) {
+	e := setup(t, api.PlanHobby)
+	setS3Flag(t, e, true)
+	createApp(t, e, "storage-creds")
+	provider := &fakeObjectProvider{createErr: objectstorage.ErrConfiguration}
+	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	path := "/v1/apps/storage-creds/buckets"
+	objectCapability := func() bool {
+		t.Helper()
+		var capabilities api.CapabilitiesResponse
+		response := e.do(t, "GET", "/v1/capabilities", nil, nil)
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &capabilities) != nil {
+			t.Fatalf("capabilities = %d %s", response.Code, response.Body.String())
+		}
+		return capabilityByKey(t, capabilities, "object-storage").Enabled
+	}
+	if !objectCapability() {
+		t.Fatal("object storage should be advertised before the provider refuses credentials")
+	}
+	if r := e.do(t, "POST", path, map[string]any{"name": "first"}, nil); r.Code != 503 {
+		t.Fatalf("create on refused credentials = %d %s", r.Code, r.Body.String())
+	}
+	if objectCapability() {
+		t.Fatal("capabilities still advertise object storage after the provider refused credentials")
+	}
+	r := e.do(t, "POST", path, map[string]any{"name": "second"}, nil)
+	if r.Code != 503 || !strings.Contains(r.Body.String(), "refusing the platform's credentials") || len(provider.created) != 1 {
+		t.Fatalf("second create = %d %s (provider calls %d)", r.Code, r.Body.String(), len(provider.created))
+	}
+	var catalog api.ObjectBucketList
+	if err := json.Unmarshal(e.do(t, "GET", path, nil, nil).Body.Bytes(), &catalog); err != nil || len(catalog.Items) != 1 {
+		t.Fatalf("buckets after a refused create = %v %+v; want only the first row", err, catalog.Items)
+	}
+	provider.createErr = nil
+	if r := e.do(t, "DELETE", path+"/"+catalog.Items[0].ID, nil, nil); r.Code != 204 {
+		t.Fatalf("cleanup = %d %s", r.Code, r.Body.String())
+	}
+	if !objectCapability() {
+		t.Fatal("a successful provider operation should restore the capability")
+	}
+}

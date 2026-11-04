@@ -57,6 +57,7 @@ func (s *server) applyRouteMonitorRollback(ctx context.Context, target state.Rou
 	})
 	if problem != nil {
 		s.log.Warn("route monitor rollback not requested", "app_id", app.ID, "incident_id", claim.IncidentID, "code", problem.Code)
+		outcome.RefusalCode = problem.Code
 		return
 	}
 	outcome = api.RouteMonitorIncidentRollback{Status: "requested", OperationID: operation.ID, DecidedAt: time.Now().UTC()}

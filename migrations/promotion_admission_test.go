@@ -5,7 +5,6 @@ package migrations_test
 import (
 	"encoding/json"
 	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +13,7 @@ import (
 )
 
 func TestPromotionAdmissionMigrationRoundTripAndFencing(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigrated(t)
 	ctx := t.Context()
 	files, err := filepath.Glob("*_promotion_admission.sql")
 	if err != nil || len(files) != 1 {
@@ -35,6 +34,8 @@ func TestPromotionAdmissionMigrationRoundTripAndFencing(t *testing.T) {
 		t.Fatal("reinstall", err)
 	}
 	account := seedAccount(t, ctx, pool)
+	// Projects bind to the account's personal org (ADR-202610171908).
+	seedPersonalOrg(t, ctx, pool, account)
 	project, id := uuid.NewString(), uuid.NewString()
 	if _, err = pool.Exec(ctx, "INSERT INTO projects(id,account_id,slug) VALUES($1,$2,'admission-roundtrip')", project, account); err != nil {
 		t.Fatal(err)

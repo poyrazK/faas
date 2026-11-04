@@ -22,6 +22,7 @@ import (
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 // fakeLogStream yields scripted lines, then end (io.EOF unless set). Like
@@ -109,12 +110,18 @@ func (s *scriptedTargets) JobTaskLogTarget(_ context.Context, _, job, run string
 }
 
 type jobLogsFixture struct {
-	server *httptest.Server
-	key    string
-	vmmd   *fakeLogsVmmd
+	server  *httptest.Server
+	key     string
+	vmmd    *fakeLogsVmmd
+	account string
 }
 
 func newJobLogsFixture(t *testing.T, plan api.Plan, targets *scriptedTargets, nodes *fakeLogsNodes) *jobLogsFixture {
+	t.Helper()
+	return newJobLogsFixtureWith(t, plan, targets, nodes, nil)
+}
+
+func newJobLogsFixtureWith(t *testing.T, plan api.Plan, targets *scriptedTargets, nodes *fakeLogsNodes, traffic *trafficrevocation.Registry) *jobLogsFixture {
 	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -130,12 +137,12 @@ func newJobLogsFixture(t *testing.T, plan api.Plan, targets *scriptedTargets, no
 	auth := mwauth.New(store, nil, nil, nil, log, middleware.NewLimiter(middleware.AuthLimitConfig{}), nil)
 	mux := http.NewServeMux()
 	mux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream", &JobTaskLogsHandler{
-		Auth: auth, Targets: targets, Nodes: nodes, Log: log,
+		Auth: auth, Targets: targets, Nodes: nodes, Log: log, Traffic: traffic,
 		Poll: 5 * time.Millisecond, Heartbeat: time.Hour, Backstop: 10 * time.Second,
 	})
 	srv := httptest.NewServer(jobTaskLogsCarveOut{logs: mux, next: http.NotFoundHandler()})
 	t.Cleanup(srv.Close)
-	return &jobLogsFixture{server: srv, key: key, vmmd: nodes.vmmd}
+	return &jobLogsFixture{server: srv, key: key, vmmd: nodes.vmmd, account: acct.ID}
 }
 
 func (f *jobLogsFixture) get(t *testing.T, path string) (int, string) {

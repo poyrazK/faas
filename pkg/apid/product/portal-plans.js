@@ -102,6 +102,8 @@
       const fees = node('tr'); fees.append(node('th', 'Monthly fee'), node('td', fee(preview.before)), node('td', fee(preview.after))); table.append(fees);
       // A workspace gets one free trial (ADR-20261021195901).
       if (preview.after.trial_days > 0) { const trial = node('tr'); trial.append(node('th', 'Free trial'), node('td', ''), node('td', `${preview.after.trial_days} days free if this workspace has not had a trial`)); table.append(trial); }
+      // A card on file keeps such a plan after its trial (ADR-20261022180921).
+      if (preview.after.requires_payment_method) { const card = node('tr'); card.append(node('th', 'Card on file'), node('td', ''), node('td', `Needed to keep this plan after the trial; without one, the ${preview.after.fallback_plan} plan follows`)); table.append(card); }
       const feeNote = preview.before.monthly_fee_millicents > 0 || preview.after.monthly_fee_millicents > 0 ? ' This month is charged the higher of the two monthly fees; a lower fee applies from next month.' : '';
       container.append(table, node('p', `The change applies immediately to future starts. Existing runs retain their agreed prices. A lower allowance can leave no starts remaining until the next UTC month.${feeNote}`));
     }

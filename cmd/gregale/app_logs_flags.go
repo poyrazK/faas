@@ -32,7 +32,7 @@ func appLogsDegradedMessage(data string) string {
 		Code string `json:"code"`
 	}
 	if json.Unmarshal([]byte(data), &event) == nil && event.Code == "not_found" {
-		return "No running instance is available for these logs; wake the app (`gregale wake <slug>`) or read a parked instance's retained logs with `gregale logs <slug> --archive --instance <id> --date YYYY-MM-DD` (instance ids: `gregale ps <slug> --all`)."
+		return "No running instance is available for these logs; wake the app (`gregale app wake <slug>`) or read a parked instance's retained logs with `gregale logs <slug> --archive --instance <id> --date YYYY-MM-DD` (instance ids: `gregale app instances <slug> --all`)."
 	}
 	return "Log stream degraded: the scheduler is temporarily unavailable"
 }
@@ -81,7 +81,7 @@ func formatRuntimeLogLine(data string) string {
 		WrittenAt string  `json:"written_at"`
 	}
 	if json.Unmarshal([]byte(data), &event) != nil || event.Line == nil {
-		return data
+		return terminalSafe(data)
 	}
 	stamp := event.WrittenAt
 	if t, err := time.Parse(time.RFC3339Nano, event.WrittenAt); err == nil {
@@ -95,5 +95,5 @@ func formatRuntimeLogLine(data string) string {
 	if event.Level != "" {
 		prefix += " " + strings.ToUpper(event.Level)
 	}
-	return prefix + " " + strings.TrimRight(*event.Line, "\r\n")
+	return prefix + " " + terminalSafe(strings.TrimRight(*event.Line, "\r\n"))
 }

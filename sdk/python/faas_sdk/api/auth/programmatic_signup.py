@@ -77,11 +77,11 @@ def sync_detailed(
 ) -> Response[Problem | ProgrammaticAuthResponse]:
     """Programmatic signup (JSON-only, bearer-key CLI path).
 
-     Issue #311 / `gregale signup` — JSON-only endpoint that
+     `gregale signup` — JSON-only endpoint that
     creates an account (or signs the caller in idempotently),
     mints a fresh programmatic API key, and returns the
     `ProgrammaticAuthResponse` payload. The CLI persists the
-    plaintext via `saveToken()` without a dashboard round-trip.
+    plaintext via `saveToken` without a dashboard round-trip.
 
     Anti-enumeration posture mirrors `/signup`:
       - email unbound: create + set password + mint key.
@@ -119,11 +119,11 @@ def sync(
 ) -> Problem | ProgrammaticAuthResponse | None:
     """Programmatic signup (JSON-only, bearer-key CLI path).
 
-     Issue #311 / `gregale signup` — JSON-only endpoint that
+     `gregale signup` — JSON-only endpoint that
     creates an account (or signs the caller in idempotently),
     mints a fresh programmatic API key, and returns the
     `ProgrammaticAuthResponse` payload. The CLI persists the
-    plaintext via `saveToken()` without a dashboard round-trip.
+    plaintext via `saveToken` without a dashboard round-trip.
 
     Anti-enumeration posture mirrors `/signup`:
       - email unbound: create + set password + mint key.
@@ -156,11 +156,11 @@ async def asyncio_detailed(
 ) -> Response[Problem | ProgrammaticAuthResponse]:
     """Programmatic signup (JSON-only, bearer-key CLI path).
 
-     Issue #311 / `gregale signup` — JSON-only endpoint that
+     `gregale signup` — JSON-only endpoint that
     creates an account (or signs the caller in idempotently),
     mints a fresh programmatic API key, and returns the
     `ProgrammaticAuthResponse` payload. The CLI persists the
-    plaintext via `saveToken()` without a dashboard round-trip.
+    plaintext via `saveToken` without a dashboard round-trip.
 
     Anti-enumeration posture mirrors `/signup`:
       - email unbound: create + set password + mint key.
@@ -196,11 +196,11 @@ async def asyncio(
 ) -> Problem | ProgrammaticAuthResponse | None:
     """Programmatic signup (JSON-only, bearer-key CLI path).
 
-     Issue #311 / `gregale signup` — JSON-only endpoint that
+     `gregale signup` — JSON-only endpoint that
     creates an account (or signs the caller in idempotently),
     mints a fresh programmatic API key, and returns the
     `ProgrammaticAuthResponse` payload. The CLI persists the
-    plaintext via `saveToken()` without a dashboard round-trip.
+    plaintext via `saveToken` without a dashboard round-trip.
 
     Anti-enumeration posture mirrors `/signup`:
       - email unbound: create + set password + mint key.

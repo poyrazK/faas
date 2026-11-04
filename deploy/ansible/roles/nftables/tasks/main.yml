@@ -206,6 +206,15 @@
     fail_msg: Cloudflare-only origin ingress requires non-empty pinned IPv4 and IPv6 ranges.
   when: faas_cloudflare_origin_only | bool
 
+# The input chain's br-tenants rules let guests reach only the bridge
+# services (the per-netns chain narrows the ports), the public edge for
+# hairpin calls, and ICMP; the drop keeps bridge traffic from the rules below
+# (spec §11, ADR-20261020123000). That rationale lives here, not as a Jinja
+# comment in the template: ansible.builtin.template renders with
+# trim_blocks, so a `{#- ... #}` line there joined `iif lo accept` to the
+# next rule and the rc.291 control-plane converge failed `nft -c`
+# (2026-10-24). scripts/egress-render-cross-check.sh renders with the same
+# trim_blocks setting.
 - name: nftables — render faas ruleset into /etc/nftables.conf (per-host, ADR-055)
   ansible.builtin.template:
     src: policy_nftables.conf.j2

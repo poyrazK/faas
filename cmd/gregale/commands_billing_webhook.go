@@ -43,7 +43,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
-	stripewebhook "github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/billing/stripe/webhooksig"
 )
 
 const billingSubWebhookTest = "webhook-test"
@@ -122,9 +122,8 @@ func cmdBillingWebhookTestPaddle(args []string) int {
 
 // cmdBillingWebhookTestStripe sends a signed Stripe payload. Stripe's
 // signing format is `t=<unix>,v1=<hmac-sha256-hex>` where the hmac is
-// over `<t>.<body>`. We use the production-side helper
-// pkg/billing/stripe::SignForTest so the operator's local sign
-// matches what the verifier on the server side accepts.
+// over `<t>.<body>`. pkg/billing/stripe/webhooksig is the same
+// function the server-side verifier uses, without linking stripe-go.
 func cmdBillingWebhookTestStripe(args []string) int {
 	cfg, err := parseWebhookTestFlags(args, "https://api.stripe.com")
 	if err != nil {
@@ -135,7 +134,7 @@ func cmdBillingWebhookTestStripe(args []string) int {
 	if err != nil {
 		return printErr("Could not load payload", err)
 	}
-	header := stripewebhook.SignForTest(body, cfg.secret, time.Now())
+	header := webhooksig.Header(body, cfg.secret, time.Now())
 	return postSignedWebhook(cfg.url, "Stripe-Signature", header, body, cfg.timeout)
 }
 

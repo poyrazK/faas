@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">
+body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5rem} a {color:#2563eb} table {width:100%;border-collapse:collapse} td,th {text-align:left;padding:.5rem;border-bottom:1px solid #ddd} code {overflow-wrap:anywhere} .notice {padding:1rem;background:#fef3c7;color:#92400e} .muted {color:#64748b} .grew {color:#b91c1c} .shrank {color:#1d4ed8} svg {width:100%;font-size:12px} svg rect {stroke:white;stroke-width:1;cursor:pointer} svg text {pointer-events:none} svg g:focus rect {stroke:#0f172a;stroke-width:2} .legend span {display:inline-block;width:1em;height:1em;vertical-align:middle;margin:0 .25em 0 .75em} .legend .up {background:#ef4444} .legend .down {background:#3b82f6} .legend .same {background:#d1d5db}
+</style></head><body>
+{{$d := .Data}}{{$x := $d.Diff}}
+<nav><a href="/dashboard/apps/{{$d.AppSlug}}">{{$d.AppSlug}}</a> · <a href="/dashboard/apps/{{$d.AppSlug}}/profiles#profile-captures">Profiles</a>{{if $x.Candidate.ID}} · <a href="{{$d.CandidateURL}}">Capture</a>{{end}}</nav>
+<h1>Compare captures</h1>
+{{if $d.Error}}<p class="notice">{{$d.Error}}</p>{{else}}
+<table aria-label="Compared captures"><thead><tr><th></th><th>Started</th><th>Trigger</th><th>Duration</th><th>{{$x.Kind}} total</th></tr></thead><tbody>
+<tr><th>Baseline</th><td><a href="{{$d.BaselineURL}}">{{$x.Baseline.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}</a></td><td>{{if eq $x.Baseline.Trigger "memory_pressure"}}memory pressure{{else if eq $x.Baseline.Trigger "slow_request"}}slow request{{else if eq $x.Baseline.Trigger "cpu_saturation"}}CPU saturation{{else}}manual{{end}}{{if $x.Baseline.OOMKilledAt}} · OOM-killed after{{end}}</td><td>{{$x.Baseline.DurationSeconds}}s</td><td>{{$d.BaselineTotal}}</td></tr>
+<tr><th>Candidate</th><td><a href="{{$d.CandidateURL}}">{{$x.Candidate.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}</a></td><td>{{if eq $x.Candidate.Trigger "memory_pressure"}}memory pressure{{else if eq $x.Candidate.Trigger "slow_request"}}slow request{{else if eq $x.Candidate.Trigger "cpu_saturation"}}CPU saturation{{else}}manual{{end}}{{if $x.Candidate.OOMKilledAt}} · OOM-killed after{{end}}</td><td>{{$x.Candidate.DurationSeconds}}s</td><td>{{$d.CandidateTotal}} <strong class="{{if gt $x.Delta 0}}grew{{else}}shrank{{end}}">{{$d.Delta}}</strong></td></tr>
+</tbody></table>
+{{range $x.Warnings}}<p class="notice">{{.}}</p>{{end}}
+<section aria-label="Largest changes"><h2>Largest changes</h2>
+<table><thead><tr><th>Change</th><th>Baseline</th><th>Candidate</th><th>Function</th><th>Location</th></tr></thead><tbody>
+{{range $d.Rows}}<tr><td class="{{if .Grew}}grew{{else}}shrank{{end}}">{{.Delta}}</td><td>{{.Baseline}}</td><td>{{.Candidate}}</td><td><code>{{.Name}}</code></td><td>{{if .SourceURL}}<a href="{{.SourceURL}}" target="_blank" rel="noopener noreferrer"><code>{{.Location}}</code></a>{{else}}<code>{{.Location}}</code>{{end}}</td></tr>
+{{else}}<tr><td colspan="5">Neither capture has samples of this kind.</td></tr>{{end}}</tbody></table></section>
+{{if $d.Flamegraph}}<section aria-label="Differential flamegraph"><h2>Differential flamegraph</h2>
+<p class="muted">Frame width is the path's cost in both captures together. <span class="legend"><span class="up"></span>grew<span class="down"></span>shrank<span class="same"></span>unchanged</span> Click a frame to focus it.</p>
+<button type="button" id="diff-reset">Reset zoom</button> <label>Search functions <input id="diff-search" placeholder="Function name"></label>
+<p id="diff-source" aria-live="polite">Select a frame to inspect it.</p><svg id="diff-flamegraph" role="group" aria-label="Differential flamegraph"></svg></section>{{end}}
+{{end}}
+<script nonce="{{.Nonce}}">
+const diffTree = {{$d.Flamegraph}}, diffUnit = {{$x.Unit}};
+const ns='http://www.w3.org/2000/svg';
+function amount(v,unit){const s=v<0?'−':'';v=Math.abs(v);if(unit==='count')return s+v+(v===1?' thread':' threads');if(unit==='bytes'){if(v>=1073741824)return s+(v/1073741824).toFixed(2)+' GiB';if(v>=1048576)return s+(v/1048576).toFixed(2)+' MiB';if(v>=1024)return s+(v/1024).toFixed(1)+' KiB';return s+v+' B'}if(v>=1e9)return s+(v/1e9).toFixed(3)+' s';return s+(v/1e6).toFixed(2)+' ms'}
+function width(n){return n.baseline+n.candidate}
+function fill(n){const w=width(n);if(w<=0||n.delta===0)return '#d1d5db';const share=Math.min(1,Math.abs(n.delta)/w);const light=88-share*38;return n.delta>0?'hsl(0,85%,'+light+'%)':'hsl(217,90%,'+light+'%)'}
+if (diffTree) {
+ const svg=document.getElementById('diff-flamegraph'),search=document.getElementById('diff-search'),panel=document.getElementById('diff-source');let focus=diffTree;
+ function describe(n){return n.name+' — '+amount(n.baseline,diffUnit)+' → '+amount(n.candidate,diffUnit)+' ('+(n.delta>=0?'+':'')+amount(n.delta,diffUnit)+')'}
+ function show(n){panel.replaceChildren();panel.append(describe(n));if(n.source){const link=document.createElement('a');link.href=n.source.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent=' · open source';panel.append(link)}}
+ function draw(){svg.replaceChildren();let height=24;const term=search.value.toLowerCase();
+  function frame(node,x,w,depth){height=Math.max(height,(depth+1)*24);const group=document.createElementNS(ns,'g'),rect=document.createElementNS(ns,'rect'),title=document.createElementNS(ns,'title');
+   rect.setAttribute('x',x);rect.setAttribute('y',depth*24);rect.setAttribute('width',w);rect.setAttribute('height',23);
+   rect.setAttribute('fill',term&&node.name.toLowerCase().includes(term)?'#fbbf24':fill(node));title.textContent=describe(node);group.append(rect,title);
+   if(w>50){const text=document.createElementNS(ns,'text');text.setAttribute('x',x+4);text.setAttribute('y',depth*24+16);text.textContent=node.name.slice(0,Math.floor(w/7));group.append(text)}
+   group.setAttribute('tabindex','0');group.setAttribute('role','button');group.setAttribute('aria-label','Focus '+node.name);
+   const select=()=>{focus=node;show(node);draw()};group.addEventListener('click',select);group.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select()}});svg.append(group);
+   let offset=x;const total=width(node);for(const child of node.children||[]){const cw=total>0?w*width(child)/total:0;if(cw>0){frame(child,offset,cw,depth+1);offset+=cw}}
+  }frame(focus,0,1100,0);svg.setAttribute('viewBox','0 0 1100 '+height)}
+ document.getElementById('diff-reset').addEventListener('click',()=>{focus=diffTree;panel.textContent='Select a frame to inspect it.';draw()});search.addEventListener('input',draw);draw();
+}
+</script>
+</body></html>

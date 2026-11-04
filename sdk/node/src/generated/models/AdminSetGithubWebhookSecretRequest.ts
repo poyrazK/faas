@@ -3,9 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Body shape for POST /v1/admin/github-webhook-secrets
- * (PR-D / ADR-012 §7 amendment). The CLI takes hex so the
- * plaintext never has to be a binary argv value; the apid
+ * Body shape for POST /v1/admin/github-webhook-secrets. The CLI takes hex so the
+ * plaintext never has to be a binary argv value; the API
  * handler hex-decodes before the INSERT.
  *
  */

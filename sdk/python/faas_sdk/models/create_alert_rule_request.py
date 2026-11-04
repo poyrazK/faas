@@ -44,10 +44,10 @@ class CreateAlertRuleRequest:
     oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.
    """
     comparison: CreateAlertRuleRequestComparison
-    """above_baseline and below_baseline (ADR-744, preview behind FAAS_ANOMALY_ALERTS_ENABLED) compare against the
-    median of the same metric at the same time of day over the previous 7 days; threshold is then a multiplier
-    (1.5-20 above, 0.05-0.67 below). Supported for error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct
-    and request_count (below_baseline: request_count only)."""
+    """above_baseline and below_baseline (preview behind FAAS_ANOMALY_ALERTS_ENABLED) compare against the median of
+    the same metric at the same time of day over the previous 7 days; threshold is then a multiplier (1.5-20 above,
+    0.05-0.67 below). Supported for error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct and request_count
+    (below_baseline: request_count only)."""
     threshold: float
     window_spec: CreateAlertRuleRequestWindowSpec
     mcp_readiness_scope: str | Unset = UNSET
@@ -65,19 +65,27 @@ class CreateAlertRuleRequest:
     """Event subscription id in the create alert rule request: immutable subscription selector. Required only for
     event consumer metrics; webhook action and windows up to 24h are required."""
     edge_rule_id: UUID | Unset = UNSET
-    """ADR-1192. Edge rule to count for edge_rule_hits (enforced matches), edge_rule_log_hits (log-mode matches) or
+    """Edge rule to count for edge_rule_hits (enforced matches), edge_rule_log_hits (log-mode matches) or
     edge_rule_activity (matches in either mode, so the alert survives a switch from log mode to enforce); omit to
     count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or
     7d (hourly hit buckets, kept 14 days)."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires
     action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify."""
+    notify_resolved: bool | Unset = UNSET
+    """Also send the webhook a signed alert.resolved event when the rule recovers. Requires webhook_url;
+    notification channels always receive resolves. Defaults to false, because receivers that predate it count every
+    delivery as a fire."""
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
     custom_metric_name: str | Unset = UNSET
     """Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window
     and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h."""
+    log_query: str | Unset = UNSET
+    """Required when metric is log_search_matches; omit otherwise. URL query string of log search filters (source,
+    level, status, route, deployment_id, request_id, trace_id, q); the rule counts matching log events in its
+    window. Webhook action only, windows up to 24h."""
     slo_id: UUID | Unset = UNSET
     """Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and
     slo_budget_remaining_pct (percent of the error budget left); names one of this app's SLOs. The rule window_spec
@@ -88,8 +96,8 @@ class CreateAlertRuleRequest:
     webhook_url: str | Unset = UNSET
     """Signed webhook destination. Required with webhook_secret unless channel_ids is set."""
     channel_ids: list[UUID] | Unset = UNSET
-    """Notification channels (ADR-749) to deliver fires and resolves to. With at least one, webhook_url and
-    webhook_secret may be omitted."""
+    """Notification channels to deliver fires and resolves to. With at least one, webhook_url and webhook_secret
+    may be omitted."""
     webhook_secret: str | Unset = UNSET
     """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
     cooldown_minutes: int | Unset = UNSET
@@ -125,6 +133,8 @@ class CreateAlertRuleRequest:
 
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
+        notify_resolved = self.notify_resolved
+
         enabled = self.enabled
 
         failure_source: str | Unset = UNSET
@@ -132,6 +142,8 @@ class CreateAlertRuleRequest:
             failure_source = self.failure_source
 
         custom_metric_name = self.custom_metric_name
+
+        log_query = self.log_query
 
         slo_id: str | Unset = UNSET
         if not isinstance(self.slo_id, Unset):
@@ -181,12 +193,16 @@ class CreateAlertRuleRequest:
             field_dict["edge_rule_id"] = edge_rule_id
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
+        if notify_resolved is not UNSET:
+            field_dict["notify_resolved"] = notify_resolved
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
         if custom_metric_name is not UNSET:
             field_dict["custom_metric_name"] = custom_metric_name
+        if log_query is not UNSET:
+            field_dict["log_query"] = log_query
         if slo_id is not UNSET:
             field_dict["slo_id"] = slo_id
         if synthetic_check_id is not UNSET:
@@ -239,6 +255,8 @@ class CreateAlertRuleRequest:
 
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
+        notify_resolved = d.pop("notify_resolved", UNSET)
+
         enabled = d.pop("enabled", UNSET)
 
         _failure_source = d.pop("failure_source", UNSET)
@@ -249,6 +267,8 @@ class CreateAlertRuleRequest:
             failure_source = check_create_alert_rule_request_failure_source(_failure_source)
 
         custom_metric_name = d.pop("custom_metric_name", UNSET)
+
+        log_query = d.pop("log_query", UNSET)
 
         _slo_id = d.pop("slo_id", UNSET)
         slo_id: UUID | Unset
@@ -298,9 +318,11 @@ class CreateAlertRuleRequest:
             event_subscription_id=event_subscription_id,
             edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
+            notify_resolved=notify_resolved,
             enabled=enabled,
             failure_source=failure_source,
             custom_metric_name=custom_metric_name,
+            log_query=log_query,
             slo_id=slo_id,
             synthetic_check_id=synthetic_check_id,
             webhook_url=webhook_url,

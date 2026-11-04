@@ -1,4 +1,4 @@
-// adr: 192
+// adr: 192, 20261025090100
 // spec: §6.3
 package fcvm
 
@@ -12,7 +12,7 @@ import (
 func TestPreBootStageTimings_SkipLearnAndChangedEnv(t *testing.T) {
 	for _, kind := range []string{"known identical", "learn identical", "changed env"} {
 		t.Run(kind, func(t *testing.T) {
-			sessions, mountRoot := fakeLoopMounts(t)
+			sessions, mountRoot := fakeDriveImages(t)
 			v := newStagingVMM(t, "captured")
 			oldEnv := []byte(`{"FAAS_INSTANCE_ID":"captured"}`)
 			if err := v.stagePreBootFiles("captured", nil, nil, oldEnv, learnInputs.resolver, false); err != nil {
@@ -29,7 +29,7 @@ func TestPreBootStageTimings_SkipLearnAndChangedEnv(t *testing.T) {
 				// A new instance identity alone no longer forces a write
 				// (TestStagePreBootFilesUnless_IgnoresPlacementIdentity);
 				// any other env change does.
-				sessions, mountRoot = fakeLoopMounts(t)
+				sessions, mountRoot = fakeDriveImages(t)
 				env = []byte(`{"FAAS_INSTANCE_ID":"restored","K":"changed"}`)
 			}
 			v2 := newStagingVMMFrom(t, v, "restored")
@@ -48,7 +48,7 @@ func TestPreBootStageTimings_SkipLearnAndChangedEnv(t *testing.T) {
 				}
 			} else {
 				if *sessions-before != 1 || timings.Check <= 0 {
-					t.Fatalf("mounted check not measured: %+v", timings)
+					t.Fatalf("drive check not measured: %+v", timings)
 				}
 				if kind == "learn identical" && (timings.Write != 0 || timings.FilesWritten != 0) {
 					t.Fatalf("identical files were charged to writes: %+v", timings)
@@ -68,24 +68,26 @@ func TestPreBootStageTimings_SkipLearnAndChangedEnv(t *testing.T) {
 func TestPreBootStageTimings_EarlyReturnClearsPriorWork(t *testing.T) {
 	for _, resolver := range []string{"", "8.8.8.8"} {
 		t.Run("resolver="+resolver, func(t *testing.T) {
-			sessions, _ := fakeLoopMounts(t)
+			sessions, _ := fakeDriveImages(t)
 			v := NewJailerVMM(t.TempDir(), 0) // neither case may resolve a drive
-			timings := preBootStageTimings{loopMountTimings: loopMountTimings{Mount: time.Hour, Unmount: time.Hour}, Check: time.Hour, Write: time.Hour, FilesWritten: 100}
+			timings := preBootStageTimings{Replay: time.Hour, Check: time.Hour, Write: time.Hour, FilesWritten: 100}
 			skipped, err := v.stagePreBootFilesUnless("empty", "", nil, nil, nil, resolver, false, &timings)
 			if skipped || (err != nil) != (resolver != "") || *sessions != 0 {
 				t.Fatalf("unexpected early return: skip=%v err=%v sessions=%d", skipped, err, *sessions)
 			}
-			if timings.Mount != 0 || timings.Unmount != 0 || timings.Check != 0 || timings.Write != 0 || timings.FilesTotal != 0 || timings.FilesWritten != 0 {
+			if timings.Replay != 0 || timings.Check != 0 || timings.Write != 0 || timings.FilesTotal != 0 || timings.FilesWritten != 0 {
 				t.Fatalf("early return retained stale work: %+v", timings)
 			}
 		})
 	}
 }
 
-func TestPreBootStageTimings_CountsOnlyCompletedWrites(t *testing.T) {
-	_, mountRoot := fakeLoopMounts(t)
+// A drive session writes its files as one batch: a failure leaves no file
+// counted as written.
+func TestPreBootStageTimings_FailedBatchCountsNoWrites(t *testing.T) {
+	_, mountRoot := fakeDriveImages(t)
 	v := newStagingVMM(t, "partial")
-	// Prevent resolver replacement after the env writer succeeds.
+	// A directory where the resolver goes fails the batch.
 	blocked := filepath.Join(*mountRoot, serviceDiscoveryResolverPath)
 	if err := os.MkdirAll(blocked, 0o755); err != nil {
 		t.Fatal(err)
@@ -95,7 +97,7 @@ func TestPreBootStageTimings_CountsOnlyCompletedWrites(t *testing.T) {
 	}
 	var timings preBootStageTimings
 	_, err := v.stagePreBootFilesUnless("partial", "", nil, nil, []byte(`{"K":"v"}`), learnInputs.resolver, false, &timings)
-	if err == nil || timings.FilesTotal != 2 || timings.FilesWritten != 1 || timings.Write <= 0 || timings.Check != 0 {
+	if err == nil || timings.FilesTotal != 2 || timings.FilesWritten != 0 || timings.Write <= 0 || timings.Check <= 0 {
 		t.Fatalf("partial write attribution: %+v, %v", timings, err)
 	}
 }

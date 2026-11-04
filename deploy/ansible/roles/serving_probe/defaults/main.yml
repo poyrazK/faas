@@ -1,0 +1,18 @@
+---
+# serving_probe (ADR-20261023124955 §5). Probes the public serving path from
+# each compute node and alerts through a chat webhook, so a serving outage is
+# reported even when the control plane (Prometheus, Alertmanager) is down.
+#
+# Off until an operator lists probe URLs. An empty list removes the timer.
+# Each URL must be an https URL of a platform-owned probe app whose idle
+# timeout is shorter than the probe interval, so every probe exercises a
+# wake and the app parks between probes (an app kept warm blocks node
+# drains; see the rc.290 fsn-3 outage).
+faas_serving_probe_urls: []
+faas_serving_probe_interval: 5min
+faas_serving_probe_timeout_seconds: 20
+faas_serving_probe_retry_delay_seconds: 30
+# Operator-provisioned, root:root 0400. webhook_url is required (a
+# Slack-compatible incoming webhook; for Discord append /slack). heartbeat_url
+# is optional: an external check that alerts when the pings stop.
+faas_serving_probe_secrets_dir: /etc/faas/secrets/serving-probe

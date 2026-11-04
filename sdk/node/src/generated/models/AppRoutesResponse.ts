@@ -3,14 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Fleet-wide per-route label snapshot (ADR-093). The control-plane
+ * Fleet-wide per-route label snapshot. The control-plane
  * Prometheus instance aggregates every active, scrape-ready compute
  * gateway; collector counts distinguish complete, partial, and
  * unavailable observations from a healthy no-traffic result.
  * Each item is `"<METHOD> <PATH>"` (pre-edge-rule-rewrite) for
  * an admitted route, or the reserved `"__route_other__"` overflow
  * bucket label. The fleet union is bounded again at 50 distinct real
- * routes plus the reserved overflow bucket (ADR-093 D2).
+ * routes plus the reserved overflow bucket.
  *
  * `cap_hit` is true when a compute collector emitted the overflow
  * bucket or the fleet union reached the 50-route bound. It is false

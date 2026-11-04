@@ -61,7 +61,7 @@ func TestRehearsalPostgresAPIGatesProvisioningAndKeepsCleanupAvailable(t *testin
 	request := rehearsalpg.CreateRequest{AppSlug: session.App.Slug, SQL: fixture, Spec: rehearsalpg.Spec{Version: 1, FixtureSHA256: rehearsalpg.HashBytes([]byte(fixture)), Tables: []rehearsalpg.Table{{Schema: "public", Name: "imports", Columns: []string{"item"}}}, MaxLockWaitMS: 50}}
 	path := "/v1/dev/test-runs/" + run + "/postgres"
 	r = e.Do(t, "POST", path, request, nil)
-	if r.Code != http.StatusServiceUnavailable || driver.created != 0 {
+	if r.Code != http.StatusNotImplemented || driver.created != 0 {
 		t.Fatalf("disabled adapter allocated: %d", r.Code)
 	}
 	s.SetRehearsalPostgresForTest(service, true)

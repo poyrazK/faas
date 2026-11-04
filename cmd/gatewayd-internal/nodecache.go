@@ -188,12 +188,15 @@ func (n *nodeCache) WithEgressSink(sink *egresssink.EgressSink) *nodeCache {
 // targets must come with mTLS; the wire helper refuses a nil TLS on a
 // non-unix scheme (issue #95).
 //
+// local, when non-nil, routes this gateway's own node to vmmd's local data
+// socket without TLS (ADR-20261030230157).
+//
 // m may be nil in tests (WatchEvictions + TouchComputeNodeChangedSubscriber
 // are nil-safe). Production passes deps.metrics which is always non-nil
 // after NewMetrics.
 //
 // PR scale-out readiness: m parameter added in 4-PR #2.
-func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m *gateway.Metrics) *nodeCache {
+func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m *gateway.Metrics, local *localVmmd) *nodeCache {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -214,6 +217,9 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 		if !nodeAllowsForwarding(n) {
 			return "", false
 		}
+		if target, ok := local.target(n); ok {
+			return target, true
+		}
 		return n.TargetURL, true
 	})
 	cache := gateway.NewNodeClientCache(
@@ -221,10 +227,14 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 			// Issue #120: route through pkg/overlay so the cross-box
 			// dial primitive lives in one place. The cache above is
 			// unrelated; only the underlying wire dial is swapped.
-			return overlay.Dial(ctx, overlay.New(target), vmmdTLS)
+			return overlay.Dial(ctx, overlay.New(target), local.tlsFor(target, vmmdTLS))
 		},
 		log,
 	)
+	if store != nil {
+		// vmmd restart adoption ADR: forwards wait out a planned restart.
+		cache.WithRestartNotices(store)
+	}
 	return &nodeCache{cache: cache, log: log, metrics: m, subscribe: db.SubscribeWithReconnect}
 }
 
@@ -372,16 +382,16 @@ func (n *nodeCache) watchEvictionsWithInterval(ctx context.Context, pool *pgxpoo
 				n.log.Warn("gatewayd-internal: bad compute_node_changed payload", "payload", got.Payload)
 				continue
 			}
-			// Evict on every mutation: the resolver re-reads the row
-			// (active / target_url / overlay_ip) on the next ClientFor,
-			// so a re-activation transparently re-dials with the fresh
-			// state. We don't try to be clever and selectively evict
-			// only on active=false — the dial cost on a Tailscale
-			// overlay is sub-100 ms and the simpler invariant is worth
-			// the occasional extra dial.
-			n.cache.Evict(p.NodeID)
-			n.log.Info("gatewayd-internal: evicted node client cache",
-				"node", p.NodeID, "active", p.Active)
+			// Evict when the node went inactive or its dial target
+			// changed. Every heartbeat re-registration fires this
+			// notification, so evicting on each one re-dialed every node
+			// hundreds of times an hour (bug hunt 2026-10-28 B17); the
+			// resolver re-reads the row on the next ClientFor after an
+			// eviction, so a re-activation re-dials with the fresh state.
+			if n.cache.EvictIfChanged(ctx, p.NodeID, p.Active) {
+				n.log.Info("gatewayd-internal: evicted node client cache",
+					"node", p.NodeID, "active", p.Active)
+			}
 		}
 	}
 }

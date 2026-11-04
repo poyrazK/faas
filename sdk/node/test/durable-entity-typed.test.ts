@@ -7,7 +7,7 @@ import test from 'node:test';
 import {
   FaaSClient, decodeDurableEntityCall, durableEntityHandle, DurableEntityResultDecodeError,
   decodeDurableEntityHandlerRequest,
-} from '../src/index.js';
+} from '../src/preview.js';
 
 function fixture() { return decodeDurableEntityHandlerRequest(readFileSync('../go/testdata/durable-entity-handler-request.json')); }
 function decodeCounter(value: unknown): { count: number } {

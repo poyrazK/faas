@@ -54,7 +54,7 @@ func TestEdgeRulesThrottle_E2E_429Contract(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-throttle.apps.test.example"
+	synthHost := "edgectl-throttle.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
@@ -179,7 +179,7 @@ func TestEdgeRulesThrottle_E2E_ConsumerDimensionsAreIndependent(t *testing.T) {
 	consumerAKey := createConsumerKey("customer-a")
 	consumerBKey := createConsumerKey("customer-b")
 
-	synthHost := "edgectl-throttle-consumers.apps.test.example"
+	synthHost := "edgectl-throttle-consumers.edge-e2e.example"
 	seedRouteSubstitute(t, context.Background(), pool, accountID, app.ID, synthHost, slug)
 	action, err := json.Marshal(api.EdgeRuleThrottleAction{
 		RequestsPerSecond: 0.01,

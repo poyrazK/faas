@@ -26,6 +26,9 @@ type ProjectWorkloadResponse struct {
 	DeploymentStatus string `json:"deployment_status,omitempty"`
 	RolloutState     string `json:"rollout_state,omitempty"`
 	BuildStatus      string `json:"build_status,omitempty"`
+	// DependsOn are the project services this one declares it calls
+	// (Compose depends_on), sorted (ADR-20261026193018).
+	DependsOn []string `json:"depends_on,omitempty"`
 }
 
 // ProjectResponse contains durable project metadata and recovery context.

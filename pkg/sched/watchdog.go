@@ -7,6 +7,12 @@
 //
 // The watchdog itself only logs+continues on a per-row KillStuck
 // failure; one wedged row must never stall the rest of the sweep.
+//
+// Each scheduler sweeps only the rows of apps it owns (ADR-20261028200212):
+// KillStuck relies on the process-local appMu to keep a kill from racing the
+// owner's own wake or park, and N schedulers killing one row emitted every
+// stall event and teardown N times. Loop runs the sweep on its work pool, so
+// a node whose destroys time out cannot stall the main loop.
 
 package sched
 
@@ -152,6 +158,9 @@ func (w *Watchdog) runOne(ctx context.Context, now time.Time, st state.State, bu
 			if extra := w.primeWatchdogExtension(ctx, ins); extra > 0 && now.Sub(ins.StartedAt) < budget+extra {
 				continue
 			}
+		}
+		if !w.engine.ownsInstanceApp(ctx, ins.AppID) {
+			continue
 		}
 		// ADR-1525: an interrupted operator park needs its own physical receipt.
 		// Ordinary watchdog cleanup cannot prove that operation's outcome.

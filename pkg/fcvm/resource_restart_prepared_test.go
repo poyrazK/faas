@@ -41,12 +41,12 @@ func TestResourceRestartPreparedRetiresBeforeAllocation(t *testing.T) {
 	if err := m.WithResourceJournal(j); err != nil {
 		t.Fatal(err)
 	}
-	syncDir := j.directorySync
-	j.directorySync = func() error {
+	syncDir := j.commitSync
+	j.commitSync = func(durable bool) error {
 		if !m.alloc.pristine() || m.restartInventoryDone {
 			t.Fatal("allocation opened before retirement fsync")
 		}
-		return syncDir()
+		return syncDir(durable)
 	}
 	rep, err := m.recoverRestartQuarantine(t.Context(), restartFixture(t))
 	if err != nil || rep != (RestartQuarantineReport{ReclaimedPreparedRecords: 1}) {
@@ -201,7 +201,7 @@ func TestResourceRestartPreparedFailsClosed(t *testing.T) {
 			if err := m.WithResourceJournal(j); err != nil {
 				t.Fatal(err)
 			}
-			syncDir := j.directorySync
+			syncDir := j.commitSync
 			switch failure {
 			case "boot_absent":
 				if err := os.Remove(filepath.Join(opts.procRoot, "sys/kernel/random/boot_id")); err != nil {
@@ -231,7 +231,7 @@ func TestResourceRestartPreparedFailsClosed(t *testing.T) {
 					}
 				}
 			case "fsync":
-				j.directorySync = func() error { return errors.New("retirement fsync unavailable") }
+				j.commitSync = func(durable bool) error { return errors.New("retirement fsync unavailable") }
 			case "cancelled":
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
@@ -251,7 +251,7 @@ func TestResourceRestartPreparedFailsClosed(t *testing.T) {
 				t.Fatal("uncertain retirement lost cache reservation")
 			}
 			if failure == "fsync" {
-				j.directorySync = syncDir
+				j.commitSync = syncDir
 				rep, err := m.recoverRestartQuarantine(t.Context(), opts)
 				if err != nil || rep.ReclaimedPreparedRecords != 1 || !m.alloc.pristine() {
 					t.Fatal("confirmed retirement retry failed", rep, err)
@@ -273,15 +273,15 @@ func TestResourceRestartPreparedCancellationAfterRetirement(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	syncDir := j.directorySync
-	j.directorySync = func() error {
+	syncDir := j.commitSync
+	j.commitSync = func(durable bool) error {
 		cancel()
-		return syncDir()
+		return syncDir(durable)
 	}
 	if _, err := m.recoverRestartQuarantine(ctx, restartFixture(t)); !errors.Is(err, context.Canceled) || !m.alloc.pristine() || m.restartInventoryDone {
 		t.Fatal("cancelled recovery opened admission", err)
 	}
-	j.directorySync = syncDir
+	j.commitSync = syncDir
 	rep, err := m.recoverRestartQuarantine(t.Context(), restartFixture(t))
 	if err != nil || rep != (RestartQuarantineReport{}) || !m.alloc.pristine() {
 		t.Fatal("confirmed retirement replay failed", rep, err)

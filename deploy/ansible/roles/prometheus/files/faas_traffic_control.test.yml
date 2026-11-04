@@ -1,0 +1,62 @@
+rule_files:
+  - faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a fail-closed traffic control pages; customer limits do not
+    interval: 15s
+    input_series:
+      # 30 refusals per 15 s = 2/s, sustained.
+      - series: 'gateway_traffic_refusals_total{job="gatewayd-internal",instance="gw-a",path="public_http",reason="policy_unavailable"}'
+        values: '0+30x60'
+      - series: 'gateway_traffic_refusals_total{job="gatewayd-internal",instance="gw-a",path="public_http",reason="rate_limited"}'
+        values: '0+30x60'
+      - series: 'gateway_traffic_refusals_total{job="gatewayd-internal",instance="gw-a",path="public_http",reason="node_capacity"}'
+        values: '0+30x60'
+      # One refusal per 15 s = 0.07/s, below the threshold.
+      - series: 'gateway_traffic_refusals_total{job="gatewayd-internal",instance="gw-b",path="managed_service",reason="security_unavailable"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasTrafficControlRefusing
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasTrafficControlRefusing
+        exp_alerts:
+          - exp_labels:
+              reason: policy_unavailable
+              severity: page
+              component: gatewayd-internal
+              family: traffic_control
+              public_status: internal
+            exp_annotations:
+              summary: "Traffic controls are refusing requests (policy_unavailable)"
+              description: "Gateways have refused more than 0.2 requests per second with policy_unavailable for five minutes. These refusals come from a fail-closed traffic control, not from the customer's app or limits."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"
+
+  - name: an edge that stays unverified warns; a rollout window does not
+    interval: 1m
+    input_series:
+      - series: 'gatewayd_public_traffic_security_enforced{job="gatewayd",instance="cp:9092"}'
+        values: '0x45'
+      - series: 'gatewayd_public_traffic_security_enforced{job="gatewayd-public-edge",instance="fsn-2:9093"}'
+        values: '0x10 1x35'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasPublicTrafficSecurityUnverified
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: FaasPublicTrafficSecurityUnverified
+        exp_alerts:
+          - exp_labels:
+              job: gatewayd
+              instance: cp:9092
+              severity: warn
+              component: gatewayd-public
+              family: traffic_control
+              public_status: internal
+            exp_annotations:
+              summary: "A public edge is passing responses without the revocation check"
+              description: "cp:9092 has not enforced the traffic security fence for 30 minutes, so a revoked account, app or deployment can still receive responses through it. A gateway it dials lacks the fence wiring or has no fresh observation."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficControl.md"

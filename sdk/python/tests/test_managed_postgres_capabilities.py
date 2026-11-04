@@ -1,8 +1,8 @@
 import httpx
 
-from faas_sdk.api.managed_postgres import get_managed_postgres_capabilities
+from faas_sdk.preview.api.managed_postgres import get_managed_postgres_capabilities
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.managed_postgres_capabilities import ManagedPostgresCapabilities
+from faas_sdk.preview.models.managed_postgres_capabilities import ManagedPostgresCapabilities
 
 
 def test_capabilities_keep_reader_support_separate_from_rollout() -> None:

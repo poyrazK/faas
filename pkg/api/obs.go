@@ -355,6 +355,27 @@ type ObsAppDetailResponse struct {
 	Instances   []ObsInstanceRow   `json:"instances"`
 	Invocations []ObsInvocationRow `json:"invocations"`
 	Health      ObsAppHealth       `json:"health"`
+	// Snapshots says whether the next wake restores or cold boots: the
+	// freshest usable snapshot of each tier for each live deployment.
+	Snapshots []ObsAppSnapshot `json:"snapshots"`
+	// Wakes is the app's last 24 hours of wakes, the same rows as the
+	// customer's GET /v1/apps/{slug}/wake-timeline.
+	Wakes *AppWakeTimelineResponse `json:"wakes,omitempty"`
+}
+
+// ObsAppSnapshot is one (live deployment, tier) pair. Present=false means
+// no usable snapshot of that tier: wakes fall through to the next tier, and
+// cold boot when none is present (ADR-005).
+type ObsAppSnapshot struct {
+	DeploymentID string     `json:"deployment_id"`
+	Tier         string     `json:"tier"`
+	Present      bool       `json:"present"`
+	ID           string     `json:"id,omitempty"`
+	FCVersion    string     `json:"fc_version,omitempty"`
+	MemBytes     int64      `json:"mem_bytes,omitempty"`
+	DiskBytes    int64      `json:"disk_bytes,omitempty"`
+	StoredBytes  int64      `json:"stored_bytes,omitempty"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
 }
 
 type ObsAppHealth struct {
@@ -363,6 +384,9 @@ type ObsAppHealth struct {
 	Errors            []AppErrorSummaryItem `json:"errors"`
 	ErrorsWindowStart time.Time             `json:"errors_window_start"`
 	ErrorsWindowEnd   time.Time             `json:"errors_window_end"`
+	// ErrorsUnavailable is set when the error groups could not be read;
+	// Errors is then empty and means "unknown", not "none".
+	ErrorsUnavailable bool `json:"errors_unavailable,omitempty"`
 }
 
 type ObsAppDetail struct {
@@ -402,6 +426,9 @@ type ObsInstanceRow struct {
 	StartedAt     time.Time  `json:"started_at"`
 	LastRequestAt time.Time  `json:"last_request_at"`
 	ParkedAt      *time.Time `json:"parked_at,omitempty"`
+	// WakeID is the wake that started the instance, for
+	// `gregalectl obs wake <wake_id>`.
+	WakeID string `json:"wake_id,omitempty"`
 }
 
 // ObsNodeDetailResponse is the node-to-workload drill-down. It is designed

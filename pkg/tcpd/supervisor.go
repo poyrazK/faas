@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -57,10 +58,19 @@ type supervisedListener struct {
 	route    Route
 	listener net.Listener
 	cancel   context.CancelFunc
+	stopping *atomic.Bool
 	// done closes when the port's Server stops serving. A server that
 	// stops on its own (an accept error it cannot recover from) is rebound
 	// on the next refresh instead of leaving the port dead.
 	done chan struct{}
+}
+
+func (l supervisedListener) stop() {
+	l.stopping.Store(true)
+	// TLS and forwarding cancellation can close sessions immediately. Release
+	// the accepting socket first so a closed session also proves port release.
+	_ = l.listener.Close()
+	l.cancel()
 }
 
 // Serve runs the listener reconciliation loop until ctx is canceled.
@@ -126,8 +136,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 		}
 		mu.Unlock()
 		for _, entry := range current {
-			entry.cancel()
-			_ = entry.listener.Close()
+			entry.stop()
 		}
 	}
 	defer func() {
@@ -190,8 +199,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 			}
 			if route, keep := desired[port]; !keep || route != entry.route || stopped {
 				delete(listeners, port)
-				entry.cancel()
-				_ = entry.listener.Close()
+				entry.stop()
 			}
 		}
 		mu.Unlock()
@@ -213,6 +221,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				continue
 			}
 			childCtx, cancel := context.WithCancel(serveCtx)
+			stopping := new(atomic.Bool)
 			server := &Server{
 				Listener:        listener,
 				BoundRoute:      &route,
@@ -225,20 +234,20 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				MaxConnections:  s.MaxConnections,
 				connectionSlots: connectionSlots,
 				OnError: func(err error) {
-					if s.OnError != nil && !isDraining() {
+					if s.OnError != nil && !isDraining() && !stopping.Load() {
 						s.OnError(fmt.Errorf("TCP port %d: %w", port, err))
 					}
 				},
 			}
 			done := make(chan struct{})
 			mu.Lock()
-			listeners[port] = supervisedListener{listener: listener, cancel: cancel, route: route, done: done}
+			listeners[port] = supervisedListener{listener: listener, cancel: cancel, route: route, stopping: stopping, done: done}
 			mu.Unlock()
 			servers.Add(1)
 			go func(port int, route Route, srv *Server, childCtx context.Context) {
 				defer servers.Done()
 				defer close(done)
-				if err := srv.Serve(childCtx); err != nil && childCtx.Err() == nil && s.OnError != nil && !isDraining() {
+				if err := srv.Serve(childCtx); err != nil && childCtx.Err() == nil && s.OnError != nil && !isDraining() && !stopping.Load() {
 					s.OnError(fmt.Errorf("serve TCP port %d (%s): %w", port, route.ListenerName, err))
 				}
 			}(port, route, server, childCtx)

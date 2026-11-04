@@ -18,12 +18,16 @@
 package apidserver
 
 import (
+	"io/fs"
 	"net/http"
 	"sort"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 // templateView is the wire shape — one row in the response. Kept
@@ -131,9 +135,15 @@ func (s *server) listTemplates(w http.ResponseWriter, r *http.Request) {
 			"Unauthorized", "sign in to list templates"))
 		return
 	}
-	_ = acct // not used today; logged for the audit trail parity.
 	_ = op
+	writeJSON(w, http.StatusOK, s.templateRows(flagSubject(r, acct)))
+}
 
+// templateRows lists the catalog templates for subject, ordered by category
+// then name. A template whose gregale.yaml declares a capability that is not
+// released to the subject is left out: deploying it would answer 403
+// capability_not_released (the events preview's event-worker starter).
+func (s *server) templateRows(subject platformflags.Subject) []templateView {
 	rows := make([]templateView, 0, len(templates.Names))
 	for _, name := range templates.ListedNames() {
 		cat := templates.CategoryFor(name)
@@ -143,6 +153,9 @@ func (s *server) listTemplates(w http.ResponseWriter, r *http.Request) {
 			// wired into CategoryFor or templateDescription would
 			// 500 the dropdown. Skip it; the wizard renders the
 			// remaining templates cleanly.
+			continue
+		}
+		if !s.templateReleased(name, subject) {
 			continue
 		}
 		rows = append(rows, templateView{
@@ -164,7 +177,26 @@ func (s *server) listTemplates(w http.ResponseWriter, r *http.Request) {
 		}
 		return rows[i].Name < rows[j].Name
 	})
-	writeJSON(w, http.StatusOK, rows)
+	return rows
+}
+
+// templateReleased reports whether every capability a template's gregale.yaml
+// declares is released to subject. A template without a readable manifest
+// declares nothing; without a gate (unit tests) every template is released.
+func (s *server) templateReleased(name string, subject platformflags.Subject) bool {
+	if s.capGate == nil {
+		return true
+	}
+	raw, err := fs.ReadFile(templates.FS, name+"/gregale.yaml")
+	if err != nil {
+		return true
+	}
+	manifest, err := gregalemanifest.ParseBytes(raw)
+	if err != nil {
+		return true
+	}
+	_, _, refused := s.capGate.RefusedSetting(capgate.ManifestSettings(manifest), subject)
+	return !refused
 }
 
 // projectAppsNewTemplates converts the wire templateView slice into

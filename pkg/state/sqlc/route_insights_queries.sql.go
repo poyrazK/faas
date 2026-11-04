@@ -11,6 +11,36 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimRouteInsightEvaluation = `-- name: ClaimRouteInsightEvaluation :execrows
+INSERT INTO route_insight_evaluations (app_id, account_id, evaluated_at)
+VALUES ($1, $2, $3)
+ON CONFLICT (app_id) DO UPDATE SET account_id = EXCLUDED.account_id, evaluated_at = EXCLUDED.evaluated_at
+WHERE route_insight_evaluations.evaluated_at < $4
+`
+
+type ClaimRouteInsightEvaluationParams struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	EvaluatedAt pgtype.Timestamptz
+	DueBefore   pgtype.Timestamptz
+}
+
+// Take an app for this evaluation unless another evaluation took it since
+// due_before; one affected row means this caller evaluates it
+// (ADR-20261024154324).
+func (q *Queries) ClaimRouteInsightEvaluation(ctx context.Context, db DBTX, arg ClaimRouteInsightEvaluationParams) (int64, error) {
+	result, err := db.Exec(ctx, claimRouteInsightEvaluation,
+		arg.AppID,
+		arg.AccountID,
+		arg.EvaluatedAt,
+		arg.DueBefore,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRouteInsight = `-- name: GetRouteInsight :one
 SELECT id, kind, method, route, state, message, evidence, first_detected_at, last_detected_at, resolved_at, fixed_at, fix_action
 FROM route_insights
@@ -196,20 +226,62 @@ func (q *Queries) ResolveStaleRouteInsights(ctx context.Context, db DBTX, arg Re
 	return result.RowsAffected(), nil
 }
 
+const resolveStaleRouteInsightsBatch = `-- name: ResolveStaleRouteInsightsBatch :execrows
+UPDATE route_insights
+SET state = 'resolved', resolved_at = $1
+WHERE id IN (
+    SELECT stale.id
+    FROM route_insights stale
+    WHERE stale.state = 'active'
+      AND stale.last_detected_at < $2
+    ORDER BY stale.last_detected_at
+    LIMIT $3::int
+    FOR UPDATE SKIP LOCKED
+)
+`
+
+type ResolveStaleRouteInsightsBatchParams struct {
+	ResolvedAt  pgtype.Timestamptz
+	StaleBefore pgtype.Timestamptz
+	RowLimit    int32
+}
+
+// Resolve up to row_limit active insights of any app that no evaluation has
+// observed since stale_before: an app that stopped running or left a plan
+// with request telemetry is no longer evaluated (ADR-20261024154324).
+func (q *Queries) ResolveStaleRouteInsightsBatch(ctx context.Context, db DBTX, arg ResolveStaleRouteInsightsBatchParams) (int64, error) {
+	result, err := db.Exec(ctx, resolveStaleRouteInsightsBatch, arg.ResolvedAt, arg.StaleBefore, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const routeInsightCandidateApps = `-- name: RouteInsightCandidateApps :many
 
-SELECT DISTINCT um.app_id::uuid AS app_id, um.account_id
-FROM usage_minutes um
-WHERE um.meter_kind = 'app'
-  AND um.minute >= $1
-  AND um.mb_seconds > 0
-ORDER BY 1
-LIMIT $2::int
+SELECT a.id AS app_id, a.account_id
+FROM apps a
+JOIN accounts acc ON acc.id = a.account_id
+LEFT JOIN route_insight_evaluations e ON e.app_id = a.id
+WHERE a.id IN (
+        SELECT um.app_id
+        FROM usage_minutes um
+        WHERE um.meter_kind = 'app'
+          AND um.minute >= $1
+          AND um.mb_seconds > 0
+    )
+  AND a.status <> 'deleted'
+  AND acc.plan = ANY($2::text[])
+  AND (e.evaluated_at IS NULL OR e.evaluated_at < $3)
+ORDER BY e.evaluated_at NULLS FIRST, a.id
+LIMIT $4::int
 `
 
 type RouteInsightCandidateAppsParams struct {
-	SinceAt pgtype.Timestamptz
-	MaxApps int32
+	SinceAt   pgtype.Timestamptz
+	Plans     []string
+	DueBefore pgtype.Timestamptz
+	MaxApps   int32
 }
 
 type RouteInsightCandidateAppsRow struct {
@@ -220,10 +292,17 @@ type RouteInsightCandidateAppsRow struct {
 // Route insights (ADR-1198): findings apid's evaluator derives from the
 // awake report and learned cacheability. A trigger on route_insights enqueues
 // the customer webhooks for each detected/resolved transition.
-// Apps that ran in the window, with their account; an app that stayed parked
-// has nothing to report.
+// Apps on the given plans that ran in the window and that no evaluation has
+// taken since due_before, least recently evaluated first, with their
+// account (ADR-20261024154324). An app that stayed parked has nothing to
+// report.
 func (q *Queries) RouteInsightCandidateApps(ctx context.Context, db DBTX, arg RouteInsightCandidateAppsParams) ([]RouteInsightCandidateAppsRow, error) {
-	rows, err := db.Query(ctx, routeInsightCandidateApps, arg.SinceAt, arg.MaxApps)
+	rows, err := db.Query(ctx, routeInsightCandidateApps,
+		arg.SinceAt,
+		arg.Plans,
+		arg.DueBefore,
+		arg.MaxApps,
+	)
 	if err != nil {
 		return nil, err
 	}

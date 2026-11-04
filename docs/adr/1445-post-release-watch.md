@@ -1,6 +1,6 @@
 # ADR-1445 · Post-release watch
 
-- **Status:** proposed; verified on n2 2026-10-17 (safe-release drill post-release case)
+- **Status:** accepted (shipped in PR 4872, 2026-10-18); verified on n2 2026-10-17 (safe-release drill post-release case)
 - **Date:** 2026-10-17
 - **Amends:** [ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md) (automatic rollback after a release completes), [ADR-1446](1446-safe-releases-by-default.md) (rollback triggers)
 - **Follows:** [ADR-1447](1447-explained-rollout-decisions.md) (explained decisions), [ADR-1448](1448-releases-that-change-the-database.md) (automation never crosses a release)
@@ -58,3 +58,23 @@ On by default for every release that keeps automatic rollback. Tests cover:
 - the release guard skip.
 
 The safe-release drill on n2 adds a case: a release that answers slowly at full traffic is rolled back by the watch.
+
+## Amendment 1 (2026-10-28): the predecessor is the plain rollback's target
+
+The watch, like the first-wake 5xx guard (ADR-625), took the newest superseded
+deployment created before the release as its predecessor. That row can be a
+canary candidate aborted before it completed (a completed release retires it
+as superseded) or a build superseded before it went live. The watch then
+compared the release with a deployment that never served and rolled back to
+it. Both now use the target a plain `gregale rollback` returns to
+(`LatestRetainedRollbackDeployment`, the H5-62 rule): the deployment that
+served most recently (`serving_ended_at`), never a canary aborted before it
+completed, created before the release.
+
+## Amendment 2 (2026-10-31): a regression the watch cannot roll back is recorded
+
+When the rollback to the predecessor would cross a release command ([ADR-1448](1448-releases-that-change-the-database.md)), the watch keeps the release serving, as automation never acknowledges crossed releases. It used to only log that, on every sweep, and the release timeline then reported "Post-release watch passed". Now the watch records its abort decision on the release with `rollback_skipped: "rollback_crosses_release"` and emits `app.post_release_rollback_skipped`; a release with such a decision is not judged again. The timeline shows a `watch_regressed` event and the release's summary names the regression; the decision on `GET /v1/deployments/{id}` says how to roll back (`--acknowledge-releases`) or ship a fix.
+
+## Amendment 3 (2026-11-01): the first-wake 5xx guard records its skipped rollbacks too
+
+The first-wake 5xx guard ([ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md)) had the same gap amendment 2 closed for the watch: a breach it could not roll back without crossing a release command was only logged, every sweep. It now records an `abort_post_release_5xx` decision with `rollback_skipped` on the release and emits `app.auto_rollback_on_5xx_skipped`; neither the guard nor the watch judges the release again, and the timeline shows the regression.

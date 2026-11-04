@@ -11,9 +11,11 @@ import (
 
 // A release command or app task gets a writable HOME like the app process;
 // with HOME=/ mise logged "Permission denied" in every release log (SB-10).
+// That is the user's passwd home when the user can write there, as under
+// Docker (ADR-20261025111339), else /tmp.
 func TestPrepareAppTaskCommandHasWritableHome(t *testing.T) {
 	t.Setenv("HOME", "/")
-	cmd, _, result := prepareAppTaskCommand(apptaskproto.Request{Command: []string{"/bin/true"}}, api.AppManifest{}, nil, nil)
+	cmd, credential, result := prepareAppTaskCommand(apptaskproto.Request{Command: []string{"/bin/true"}}, api.AppManifest{}, nil, nil)
 	if result != nil {
 		t.Fatalf("prepareAppTaskCommand: %+v", *result)
 	}
@@ -23,7 +25,15 @@ func TestPrepareAppTaskCommandHasWritableHome(t *testing.T) {
 			home = v
 		}
 	}
-	if home != defaultWorkloadHome {
-		t.Fatalf("task HOME = %q, want %q", home, defaultWorkloadHome)
+	var uid, gid uint32 // a nil credential keeps root's identity
+	if credential != nil {
+		uid, gid = credential.Uid, credential.Gid
+	}
+	want := workloadHome(uid, gid)
+	if want == "" {
+		want = defaultWorkloadHome
+	}
+	if home == "/" || home != want {
+		t.Fatalf("task HOME = %q, want %q", home, want)
 	}
 }

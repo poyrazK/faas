@@ -6,6 +6,20 @@ import type { AppLogDrainAnalyticsResponse } from '../models/AppLogDrainAnalytic
 import type { AppLogDrainHealthResponse } from '../models/AppLogDrainHealthResponse.js';
 import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
 import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
+import type { Dashboard } from '../models/Dashboard.js';
+import type { DashboardData } from '../models/DashboardData.js';
+import type { DashboardRequest } from '../models/DashboardRequest.js';
+import type { DashboardsResponse } from '../models/DashboardsResponse.js';
+import type { IncidentDetail } from '../models/IncidentDetail.js';
+import type { IncidentNote } from '../models/IncidentNote.js';
+import type { IncidentNoteRequest } from '../models/IncidentNoteRequest.js';
+import type { IncidentsResponse } from '../models/IncidentsResponse.js';
+import type { LogEventFacetsResponse } from '../models/LogEventFacetsResponse.js';
+import type { LogEventsResponse } from '../models/LogEventsResponse.js';
+import type { LogSavedSearch } from '../models/LogSavedSearch.js';
+import type { LogSavedSearchesResponse } from '../models/LogSavedSearchesResponse.js';
+import type { LogSavedSearchRequest } from '../models/LogSavedSearchRequest.js';
+import type { Problem } from '../models/Problem.js';
 import type { ServiceMapResponse } from '../models/ServiceMapResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { Trace } from '../models/Trace.js';
@@ -15,6 +29,570 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ObservabilityService {
+  /**
+   * Search an app's log events.
+   * Internal preview, enabled by
+   * `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+   * Requires apps:read or admin.
+   *
+   * Returns one newest-first page of the app's log ledger. Filters
+   * combine with AND. A text search (`q`) covers at most 24 hours and
+   * answers 400 `log_search_window_too_large` beyond that; every search
+   * runs under a 5 second statement timeout and answers 503
+   * `log_search_timeout` when it trips. An account runs at most 2 log
+   * reads at once; a read that waits over 2 seconds for one answers 429
+   * `log_reads_busy` with Retry-After. Pass `next_cursor` back as
+   * `cursor` for the following page.
+   *
+   * @returns LogEventsResponse One page of matching events.
+   * @returns Problem Invalid filters, a window over its bound, a timeout, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static searchAppLogEvents({
+    slug,
+    since,
+    until,
+    source,
+    level,
+    route,
+    status,
+    deploymentId,
+    requestId,
+    traceId,
+    q,
+    saved,
+    limit = 100,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Window start, as a lookback duration (15m, 6h, 3d) or RFC 3339. Defaults to one hour before until and is clamped to the plan's log retention.
+     */
+    since?: string,
+    /**
+     * Exclusive window end (RFC 3339). Defaults to and is clamped to now.
+     */
+    until?: string,
+    /**
+     * Keep one ledger source.
+     */
+    source?: 'runtime' | 'build' | 'deploy' | 'http' | 'network' | 'dns',
+    /**
+     * Comma list of severities to keep (trace, debug, info, warn, error, fatal).
+     */
+    level?: string,
+    /**
+     * Exact route template without the method, such as /checkout/{id}.
+     */
+    route?: string,
+    /**
+     * Exact HTTP status (502) or a status class (5xx).
+     */
+    status?: string,
+    /**
+     * Keep events from one deployment.
+     */
+    deploymentId?: string,
+    /**
+     * Keep events whose request id or trace id equals this value.
+     */
+    requestId?: string,
+    /**
+     * Keep events carrying this W3C trace id.
+     */
+    traceId?: string,
+    /**
+     * Case-insensitive literal substring of the message, 2 to 256 characters. Text searches cover at most 24 hours.
+     */
+    q?: string,
+    /**
+     * Name of one of the app's saved log searches. Its filters apply unless the request sets the same parameter.
+     */
+    saved?: string,
+    /**
+     * Page size.
+     */
+    limit?: number,
+    /**
+     * The next_cursor of the previous page.
+     */
+    cursor?: string,
+  }): CancelablePromise<LogEventsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-events',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+        'source': source,
+        'level': level,
+        'route': route,
+        'status': status,
+        'deployment_id': deploymentId,
+        'request_id': requestId,
+        'trace_id': traceId,
+        'q': q,
+        'saved': saved,
+        'limit': limit,
+        'cursor': cursor,
+      },
+    });
+  }
+  /**
+   * Count an app's log events by facet.
+   * Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+   * Takes the same filters as the search and counts the matches by
+   * source, level, status class, and the ten busiest routes. Counts sum
+   * each event's occurrences. The window is at most 7 days.
+   *
+   * @returns LogEventFacetsResponse Facet counts for the window.
+   * @returns Problem Invalid filters, a window over 7 days, a timeout, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getAppLogEventFacets({
+    slug,
+    since,
+    until,
+    source,
+    level,
+    route,
+    status,
+    deploymentId,
+    requestId,
+    traceId,
+    q,
+    saved,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Window start, as a lookback duration (15m, 6h, 3d) or RFC 3339. Defaults to one hour before until and is clamped to the plan's log retention.
+     */
+    since?: string,
+    /**
+     * Exclusive window end (RFC 3339). Defaults to and is clamped to now.
+     */
+    until?: string,
+    /**
+     * Keep one ledger source.
+     */
+    source?: 'runtime' | 'build' | 'deploy' | 'http' | 'network' | 'dns',
+    /**
+     * Comma list of severities to keep (trace, debug, info, warn, error, fatal).
+     */
+    level?: string,
+    /**
+     * Exact route template without the method, such as /checkout/{id}.
+     */
+    route?: string,
+    /**
+     * Exact HTTP status (502) or a status class (5xx).
+     */
+    status?: string,
+    /**
+     * Keep events from one deployment.
+     */
+    deploymentId?: string,
+    /**
+     * Keep events whose request id or trace id equals this value.
+     */
+    requestId?: string,
+    /**
+     * Keep events carrying this W3C trace id.
+     */
+    traceId?: string,
+    /**
+     * Case-insensitive literal substring of the message, 2 to 256 characters. Text searches cover at most 24 hours.
+     */
+    q?: string,
+    /**
+     * Name of one of the app's saved log searches. Its filters apply unless the request sets the same parameter.
+     */
+    saved?: string,
+  }): CancelablePromise<LogEventFacetsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-events/facets',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+        'source': source,
+        'level': level,
+        'route': route,
+        'status': status,
+        'deployment_id': deploymentId,
+        'request_id': requestId,
+        'trace_id': traceId,
+        'q': q,
+        'saved': saved,
+      },
+    });
+  }
+  /**
+   * List the account's custom dashboards.
+   * Internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+   * Returns the account's saved dashboards by name.
+   *
+   * @returns DashboardsResponse The account's dashboards.
+   * @returns Problem The preview is disabled.
+   * @throws ApiError
+   */
+  public static listDashboards(): CancelablePromise<DashboardsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dashboards',
+    });
+  }
+  /**
+   * Create a custom dashboard.
+   * Saves a named dashboard of up to 24 widgets. Each widget references a
+   * signal by kind (app_metric, log_count, custom_metric, slo) and an app
+   * the account owns. An account keeps at most 20 dashboards.
+   *
+   * @returns Problem Invalid widgets, a taken name (dashboard_name_taken), the per-account limit (dashboard_quota_exceeded), or the preview is disabled.
+   * @returns Dashboard The created dashboard, with widget defaults applied.
+   * @throws ApiError
+   */
+  public static createDashboard({
+    requestBody,
+  }: {
+    requestBody: DashboardRequest,
+  }): CancelablePromise<Problem | Dashboard> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dashboards',
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Get a custom dashboard.
+   * Returns one of the account's dashboards with its widgets.
+   * @returns Dashboard The dashboard.
+   * @returns Problem No such dashboard (dashboard_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getDashboard({
+    id,
+  }: {
+    /**
+     * Dashboard id.
+     */
+    id: string,
+  }): CancelablePromise<Dashboard | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dashboards/{id}',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Replace a custom dashboard.
+   * Replaces the dashboard's name and widgets.
+   * @returns Dashboard The replaced dashboard.
+   * @returns Problem Invalid widgets, a taken name, no such dashboard, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static replaceDashboard({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Dashboard id.
+     */
+    id: string,
+    requestBody: DashboardRequest,
+  }): CancelablePromise<Dashboard | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/dashboards/{id}',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Delete a custom dashboard.
+   * Deletes one of the account's dashboards.
+   * @returns Problem No dashboard to delete (dashboard_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static deleteDashboard({
+    id,
+  }: {
+    /**
+     * Dashboard id.
+     */
+    id: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/dashboards/{id}',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Read a custom dashboard's widgets.
+   * Resolves every widget for its window through the code behind the
+   * per-app endpoints: request metrics, log search counts, pushed custom
+   * metrics and SLO status. A widget that cannot be read carries `error`
+   * and no value; the rest still resolve.
+   *
+   * @returns DashboardData The resolved widgets.
+   * @returns Problem No dashboard to read widgets for (dashboard_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getDashboardData({
+    id,
+  }: {
+    /**
+     * Dashboard id.
+     */
+    id: string,
+  }): CancelablePromise<DashboardData | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dashboards/{id}/data',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * List the account's incidents.
+   * Internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+   * One list of alert rule firing periods, route monitor incidents and
+   * platform incidents from the status page: everything open plus what
+   * resolved since `since`, open first, then newest first, at most 100.
+   * Each entry says who in the account acknowledged it. A source that
+   * cannot be read (including `acknowledgements`) is named in
+   * `unavailable_sources`.
+   *
+   * @returns IncidentsResponse The incidents.
+   * @returns Problem An invalid query, an unknown app, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static listIncidents({
+    app,
+    status,
+    since,
+  }: {
+    /**
+     * Keep one app's incidents (platform incidents always show).
+     */
+    app?: string,
+    /**
+     * `open` lists open incidents only; `all` (the default) adds resolved ones.
+     */
+    status?: 'open' | 'all',
+    /**
+     * RFC 3339; resolved incidents from here on. Default 7 days ago, at most 30.
+     */
+    since?: string,
+  }): CancelablePromise<IncidentsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/incidents',
+      query: {
+        'app': app,
+        'status': status,
+        'since': since,
+      },
+    });
+  }
+  /**
+   * Read an incident and its evidence.
+   * The incident with what the platform has for it: an alert's
+   * notifications and the log context its newest one carried, a platform
+   * incident's status updates, for an app incident the app's change
+   * timeline from an hour before it opened until it resolved, and the
+   * account's acknowledgement and notes.
+   *
+   * @returns IncidentDetail The incident.
+   * @returns Problem No such incident (incident_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static getIncident({
+    id,
+  }: {
+    /**
+     * Incident id, prefixed with its source (`alert-`, `route-`, `platform-`).
+     */
+    id: string,
+  }): CancelablePromise<IncidentDetail | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/incidents/{id}',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Acknowledge an open incident.
+   * Records that someone in the account took the incident on. An
+   * account acknowledges an incident once; acknowledging again returns
+   * the first acknowledgement with 200. Acknowledging does not change
+   * what an alert rule sends.
+   *
+   * @returns IncidentNote The account's existing acknowledgement.
+   * @returns Problem No such incident (incident_not_found), a resolved incident (incident_resolved), the per-incident note limit (incident_notes_limit), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static acknowledgeIncident({
+    id,
+  }: {
+    /**
+     * Incident id, prefixed with its source (`alert-`, `route-`, `platform-`).
+     */
+    id: string,
+  }): CancelablePromise<IncidentNote | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/incidents/{id}/acknowledge',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Add a note to an incident.
+   * Appends a note to an open or resolved incident. Notes cannot be
+   * edited or deleted. A note is at most 2000 characters, and an
+   * incident holds at most 100 notes from an account, its
+   * acknowledgement included.
+   *
+   * @returns Problem An empty or too long note, no such incident (incident_not_found), the per-incident note limit (incident_notes_limit), or the preview is disabled.
+   * @returns IncidentNote The note.
+   * @throws ApiError
+   */
+  public static addIncidentNote({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Incident id, prefixed with its source (`alert-`, `route-`, `platform-`).
+     */
+    id: string,
+    requestBody: IncidentNoteRequest,
+  }): CancelablePromise<Problem | IncidentNote> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/incidents/{id}/notes',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * List an app's saved log searches.
+   * Internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+   * Returns the app's saved searches by name. Each holds filters only;
+   * a search, the dashboard or an alert brings its own window.
+   *
+   * @returns LogSavedSearchesResponse The app's saved searches.
+   * @returns Problem Unknown app, or the preview is disabled.
+   * @throws ApiError
+   */
+  public static listAppLogSavedSearches({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<LogSavedSearchesResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-searches',
+      path: {
+        'slug': slug,
+      },
+    });
+  }
+  /**
+   * Create a saved log search or replace its filters.
+   * Stores the query canonically: only source, level, status, route,
+   * deployment_id, request_id, trace_id and q, one value each. An app
+   * keeps at most 25 saved searches; replacing one never counts.
+   *
+   * @returns LogSavedSearch The stored saved search.
+   * @returns Problem Invalid name or filters, the per-app limit (log_saved_search_quota_exceeded), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static putAppLogSavedSearch({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved log search name, 1 to 63 lowercase letters, digits and dashes.
+     */
+    name: string,
+    requestBody: LogSavedSearchRequest,
+  }): CancelablePromise<LogSavedSearch | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/log-searches/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Delete a saved log search.
+   * Deletes the app's saved search by name.
+   * @returns Problem No such saved search (log_saved_search_not_found), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static deleteAppLogSavedSearch({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Saved log search name, 1 to 63 lowercase letters, digits and dashes.
+     */
+    name: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/log-searches/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+    });
+  }
   /**
    * List runtime log destinations for this app.
    * @returns AppLogDrainResponse The configured log destinations. Authentication headers are always masked.
@@ -302,7 +880,7 @@ export class ObservabilityService {
   }
   /**
    * Account service map of caller → target app edges.
-   * ADR-1131 internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
+   * Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
    * otherwise 503 `service_map_unavailable`.
    *
    * Built from the unsampled service-proxy edge series. Both the
@@ -338,7 +916,7 @@ export class ObservabilityService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -374,7 +952,7 @@ export class ObservabilityService {
    * `wake_id` without adding wake IDs as metric labels.
    *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
-   * auth and rate-limit share the §12 per-app budget with
+   * auth and rate-limit share the per-app budget with
    * logs/metrics/wake. Cross-account access 404s the
    * same way unknown slugs do (forge-proof: every row's
    * `data.app_id` is verified to match the resolved app).
@@ -397,11 +975,10 @@ export class ObservabilityService {
      */
     slug: string,
     /**
-     * The per-wake correlation handle minted by the schedd
+     * The per-wake correlation handle minted by the scheduler
      * engine (UUID v4 in production). The endpoint returns
      * every `wake.*` events row whose `data.wake_id`
-     * matches — the partial index `events_wake_id_idx`
-     * (migrations/00113) serves the read in O(frames)
+     * matches — the partial index `events_wake_id_idx` serves the read in O(frames)
      * regardless of the events table size.
      *
      */
@@ -513,9 +1090,9 @@ export class ObservabilityService {
   }
   /**
    * Retrieve a stored OpenTelemetry trace.
-   * Issue #555. Returns the full span tree for a single trace_id
+   * Returns the full span tree for a single trace_id
    * (32-hex, the same as the request's `wake_id`). The trace is
-   * sourced from the gatewayd-public in-memory ring (24h
+   * sourced from the public edge in-memory ring (24h
    * retention, 100k default cap). When no OTLP endpoint is set
    * the ring is the only source — when OTLP is set, the ring
    * still operates as the customer-facing query layer.

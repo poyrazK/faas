@@ -214,6 +214,8 @@ func healthEvidenceReason(reason string) string {
 		return "too few observed requests on at least one deployment in this window"
 	case "latency_evidence_unavailable", "telemetry_unavailable", "telemetry_not_entitled":
 		return "required telemetry evidence was unavailable"
+	case "telemetry_incomplete":
+		return "a gateway may have lost request telemetry in this window; the release waits for complete evidence"
 	case "observation_window_not_elapsed":
 		return "the window began before the current stage or configuration anchor"
 	case "stable_deployment_ambiguous_or_missing":

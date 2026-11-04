@@ -67,11 +67,11 @@ func (h *Handler) verifiedPagerDutyWebhook(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return nil, nil, empty, false
 	}
-	if h.Identities == nil {
+	if h.AccountIdentities == nil {
 		api.WriteProblem(w, api.ErrCapacity("PagerDuty webhook decryption unavailable"))
 		return nil, nil, empty, false
 	}
-	ns, key, err := secretbox.OpenBytesMulti(h.Identities(r.Context()), receiver.SigningSecretSealed)
+	ns, key, err := secretbox.OpenBytesMulti(h.AccountIdentities(r.Context()), receiver.SigningSecretSealed)
 	if err != nil || ns != api.MCPReadinessPagerDutyWebhookSecretNamespace || !api.ValidMCPReadinessPagerDutySigningSecret(string(key)) {
 		api.WriteProblem(w, api.ErrCapacity("PagerDuty webhook decryption unavailable"))
 		return nil, nil, empty, false

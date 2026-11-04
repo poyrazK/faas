@@ -34,6 +34,7 @@ func (m *MemStore) CreateOrgInvitationWithActivity(ctx context.Context, invitati
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return OrgInvitation{}, 0, err
 	}
+	invitation.TokenHash = storedCredential(credTagOrgInvitation, invitation.TokenHash)
 	hashKey := hex.EncodeToString(invitation.TokenHash)
 	if _, exists := m.invitations[hashKey]; exists {
 		return OrgInvitation{}, 0, ErrConflict
@@ -46,8 +47,7 @@ func (m *MemStore) ConsumeOrgInvitationWithActivity(_ context.Context, hash []by
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	hashKey := hex.EncodeToString(hash)
-	invitation, ok := m.invitations[hashKey]
+	invitation, hashKey, ok := credentialEntry(m.invitations, credTagOrgInvitation, hash)
 	if !ok || invitation.ConsumedAt != nil || invitation.RevokedAt != nil {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgInvitationInvalid
 	}
@@ -206,7 +206,9 @@ func (m *MemStore) RemoveOrgMemberWithActivity(ctx context.Context, orgID, accou
 	now := time.Now().UTC()
 	removed := current
 	removed.RemovedAt = &now
-	activity, err := withOrgActivityData(activity, map[string]any{"role": string(removed.Role)})
+	data := m.pauseDepartedMemberIntegrationsLocked(orgID, accountID).activityData()
+	data["role"] = string(removed.Role)
+	activity, err := withOrgActivityData(activity, data)
 	if err != nil {
 		return OrgMembership{}, 0, err
 	}

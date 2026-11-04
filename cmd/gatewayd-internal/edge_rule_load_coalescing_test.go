@@ -102,13 +102,19 @@ func TestEdgeLoadCanceledWaiterDoesNotCancelLeader(t *testing.T) {
 }
 
 func TestEdgeLoadCanceledLeaderAllowsRetry(t *testing.T) {
-	entered := make(chan struct{})
+	entered, retry := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	releaseRetry := func() { once.Do(func() { close(retry) }) }
+	defer releaseRetry()
 	s := &concurrentEdgeStore{load: func(ctx context.Context, _ string, n int32) ([]state.EdgeRule, error) {
 		if n == 1 {
 			close(entered)
 			<-ctx.Done()
 			return nil, ctx.Err()
 		}
+		// The retry finishes only after the leader has answered: a canceled
+		// leader serves the last-known set, which a finished retry would be.
+		<-retry
 		return nil, nil
 	}}
 	g := newConcurrentEdgeMatcher(s)
@@ -123,6 +129,7 @@ func TestEdgeLoadCanceledLeaderAllowsRetry(t *testing.T) {
 	if err := <-leader; !errors.Is(err, context.Canceled) {
 		t.Fatalf("leader error=%v", err)
 	}
+	releaseRetry()
 	select {
 	case err := <-follower:
 		if err != nil {

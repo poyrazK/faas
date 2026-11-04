@@ -196,7 +196,7 @@ func renderPreviewWaitTimeout(state api.PreviewStatusResponse, timeout time.Dura
 	receipt.TimedOut = true
 	receipt.ResumeCommand = fmt.Sprintf("gregale preview wait %s --timeout %d", state.App.Slug, int(timeout/time.Second))
 	if receipt.Deployment == nil {
-		receipt.NextAction = fmt.Sprintf("gregale preview show %s", state.App.Slug)
+		receipt.NextAction = fmt.Sprintf("gregale preview get %s", state.App.Slug)
 	} else {
 		receipt.NextAction = fmt.Sprintf("gregale logs %s --deployment %s --follow", state.App.Slug, receipt.Deployment.ID)
 	}

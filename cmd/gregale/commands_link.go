@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	linkUsage    = "usage: gregale link [<project-slug>] [--interactive] [--app <slug>] [--environment <environment>] [--no-gitignore]"
-	contextUsage = "usage: gregale context [--check] [--verify [--timeout 10s]] | gregale context --local-config [--problems-only]"
+	linkUsage    = "usage: gregale link [<project-slug>] [--interactive] [--app <slug>] [--env <environment>] [--no-gitignore]"
+	contextUsage = "usage: gregale config context get [--check] [--verify [--timeout 10s]] | gregale config context get --local-config [--problems-only]"
 )
 
 func cmdLink(args []string) int {
@@ -180,6 +180,9 @@ func cmdContext(args []string) int {
 	problemsOnly := fs.Bool("problems-only", false, "show only local configuration problems; requires --local-config")
 	timeout := fs.Duration("timeout", 10*time.Second, "overall verification deadline; requires --verify")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	timeoutSet := false

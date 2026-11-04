@@ -17,7 +17,7 @@ export type FinancialBudgetSpec = {
    */
   currency: 'USD' | 'EUR';
   /**
-   * Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only. object_storage (ADR-20261020160000) is priced from the live object-storage estimate and only monitored account budgets may select it.
+   * Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only. object_storage is priced from the live object-storage estimate and only monitored account budgets may select it.
    */
   meters: Array<'compute' | 'egress' | 'object_storage'>;
   /**

@@ -51,7 +51,9 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 	if err := validateCloneCaptureRequest(request); err != nil {
 		return ProjectEnvironmentCloneOperation{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	// Share the environment writer's session guard before the snapshot starts.
+	// Waiting for only the project row would retain a stale reservation view.
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(request.AccountID))
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, err
 	}
@@ -111,8 +113,17 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 		return op, mapErr(err)
 	}
 	records, err := captureCloneConfigurationWorkloadsTx(ctx, tx, op)
+	if request.RequireCompleteInventory && errors.Is(err, ErrProjectEnvironmentCloneRestoreWindowUnavailable) {
+		return ProjectEnvironmentCloneOperation{}, &ProjectEnvironmentCloneInventoryError{Blockers: []ProjectEnvironmentCloneCoverageBlocker{
+			{Table: "managed_postgres_bindings", Code: CloneBlockerPointInTimeRestoreUnavailable}}}
+	}
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, mapProjectCloneSnapshotErr(err)
+	}
+	if request.RequireCompleteInventory {
+		if err := requireCloneSourceInventoryTx(ctx, tx, op, records); err != nil {
+			return ProjectEnvironmentCloneOperation{}, err
+		}
 	}
 	capture, raw, err := cloneConfigurationRoot(op, records)
 	if err != nil {
@@ -316,7 +327,7 @@ func (s *PgStore) ValidateProjectEnvironmentCloneSourceConfigurationForLease(ctx
 		return zero, err
 	}
 	if live != capture {
-		return zero, ErrConflict
+		return zero, ErrProjectEnvironmentCloneSourceChanged
 	}
 	if err := authorizeCloneObjectMutationTx(ctx, tx, op, &lease); err != nil {
 		return zero, err

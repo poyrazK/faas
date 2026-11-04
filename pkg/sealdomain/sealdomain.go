@@ -33,10 +33,12 @@ const (
 	Account  Domain = "account"
 
 	// Dedicated identities that predate the registry (ADR-1737, ADR
-	// 20261016151947). They are listed so every sealed column has an owner.
+	// 20261016151947, ADR-1591). They are listed so every sealed column has
+	// an owner.
 	Mail             Domain = "mail"
 	MailVerification Domain = "mail-verification"
 	LiveQuery        Domain = "livequery"
+	Pipeline         Domain = "pipeline"
 )
 
 // Node roles, as pkg/daemonunitspec names them.
@@ -101,51 +103,79 @@ var computeOnly = []string{RoleCompute}
 var bothRoles = []string{RoleControlPlane, RoleCompute}
 
 var registry = []Spec{
-	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Columns: join(
+	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_secrets", "ciphertext"),
 		cols("project_environment_secrets", "ciphertext"),
 		cols("app_config_guard_secrets", "ciphertext"),
 		cols("managed_postgres_cutover_credentials", "ciphertext"),
 		cols("deployment_release_secret_snapshots", "values_json"),
 		cols("project_release_secret_bundles", "values_json"),
+		// Runtime-domain copies of the sidecar env sealed inside
+		// deployments.sidecars, which stays as apid wrote it.
+		cols("deployment_sidecar_env_reseals", "ciphertext"),
+		// ADR-733: a crash capture's per-capture age key. vmmd seals every
+		// capture at the source (schedd always asks it to), to the runtime
+		// domain once staged, and opens the key to restore a fork. imaged's
+		// at-rest pass seals and opens a key with the fleet identity only
+		// for a capture taken in plaintext, which no schedd produces; the
+		// build domain's contract check waits for any such capture to
+		// expire.
+		cols("crash_captures", "sealed_key"),
 	)},
 	{Domain: Outbound, Readers: []string{"outboundd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("outbound_integration_credentials", "authorization_sealed"),
 		cols("outbound_integration_credential_keys", "authorization_sealed"),
 	)},
-	{Domain: Build, Readers: []string{"imaged"}, Roles: computeOnly, Columns: join(
+	{Domain: Build, Readers: []string{"imaged", "vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_registry_credentials", "password_encrypted"),
 		cols("job_registry_credentials", "password_encrypted"),
 	)},
-	{Domain: Source, Readers: []string{"githubd"}, Roles: cpOnly, Columns: join(
+	{Domain: Source, Readers: []string{"githubd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("github_installations", "sealed_install_token"),
 		cols("github_webhook_secrets", "secret_sealed"),
 	)},
-	{Domain: Edge, Readers: []string{"gatewayd-internal", "gatewayd-public"}, Roles: bothRoles, Columns: join(
+	// gatewayd-internal on compute opens basic-auth credentials and log
+	// drain headers. gatewayd-public's DNS-provider token is not stored in
+	// these columns, so it is not a reader.
+	{Domain: Edge, Readers: []string{"gatewayd-internal"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("apps", "public_auth_basic"),
 		cols("app_log_drains", "auth_header_sealed"),
 		cols("application_standard_log_destinations", "auth_header_sealed"),
 	)},
-	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Columns: join(
+	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("alert_rules", "webhook_secret_sealed"),
 		cols("notification_channels", "target_sealed"),
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
 	)},
-	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Columns: join(
+	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),
 	)},
-	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
+	// Trigger config envelopes (jsonb leaves, not listed here) belong to
+	// delivery too. apid merges an update without opening the stored config
+	// and seals new credentials to the domain and, for now, the fleet key:
+	// a schedd of the previous release opens them with the fleet key alone.
+	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
-		cols("agent_execution_workflows", "sealed_plan"),
 		cols("app_webhooks", "secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
-	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
+	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("cluster_signing_keys", "sealed_blob"),
 	)},
-	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Columns: join(
+	// Account values are wired a group at a time (ADR 20261022111812):
+	// apid seals and opens the TOTP secrets, inbound webhook secrets,
+	// billing keys, workflow plans, PagerDuty acknowledgement secrets,
+	// GitLab, Slack and Linear credentials, product email values and managed
+	// realtime credentials through the domain, and apid and its clone worker
+	// seal project clone values to it once it is domain-only. Data pipeline
+	// values were never on the fleet key: they have their own identity
+	// (Pipeline).
+	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("accounts", "mfa_secret_encrypted"),
+		// apid seals a managed workflow's plan and its workflow worker
+		// opens it; schedd never reads it.
+		cols("agent_execution_workflows", "sealed_plan"),
 		cols("account_billing_connections", "sealed_secret"),
 		cols("inbound_webhook_endpoints", "signing_secret_sealed"),
 		cols("gitlab_oauth_connections", "credentials_sealed"),
@@ -159,8 +189,6 @@ var registry = []Spec{
 		cols("managed_realtime_push_devices", "sealed"),
 		cols("managed_realtime_push_providers", "sealed"),
 		cols("mcp_readiness_pagerduty_acknowledgements", "signing_secret_sealed"),
-		cols("data_pipeline_alerts", "ciphertext"),
-		cols("data_pipeline_connections", "ciphertext"),
 		cols("product_control_email_deliveries", "recipient_sealed", "unsubscribe_sealed"),
 		cols("product_control_email_subscriptions", "grant_sealed", "pause_recipient_sealed"),
 		cols("project_environment_clone_checkpoint_pg_connection_values", "ciphertext"),
@@ -187,6 +215,14 @@ var registry = []Spec{
 	{Domain: LiveQuery, Readers: []string{"livequeryd"}, Roles: cpOnly, Dedicated: true, File: "/etc/faas/secrets/livequeryd/keys.age", Columns: join(
 		cols("managed_postgres_live_keys", "sealed_secret"),
 		cols("managed_postgres_live_logins", "sealed_login"),
+	)},
+	// ADR-1591: apid seals data pipeline credentials and alert targets to
+	// the pipeline recipient (apid.toml [data_pipelines] recipient_path) and
+	// only the pipeline workers hold the identity (identity_path; this is
+	// its documented location).
+	{Domain: Pipeline, Readers: []string{"apid-data-pipeline-worker", "apid-data-pipeline-alert-worker"}, Roles: cpOnly, Dedicated: true, File: "/etc/faas/secrets/pipeline.age", Columns: join(
+		cols("data_pipeline_alerts", "ciphertext"),
+		cols("data_pipeline_connections", "ciphertext"),
 	)},
 }
 

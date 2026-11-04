@@ -27,18 +27,26 @@
 //   - real routes are admitted up to `cap - reservedCount`;
 //   - overflow collapses to "__route_other__" without ever
 //     inserting into the map (so it never resizes past cap);
-//   - the map is non-evicting (deliberately a plain map+mutex, not
-//     an LRU) — daemon restart is the only path that resets it.
-//     An evicting LRU would let evicted routes re-admit later and
-//     grow the Prometheus TSDB series set unbounded over the
-//     daemon's lifetime (the same reasoning as
-//     account_label_set.go:19-22).
+//   - the map is not an LRU. A full set only gives up a label that
+//     has gone api.RouteLabelReuseAfterIdle without a request, and
+//     never a declared route (ADR-20261026143210 amendment 1): an
+//     app that answers every path would otherwise keep the first 50
+//     probed paths for the daemon's lifetime and label every real
+//     route __route_other__. The evicted label's series are deleted
+//     with it (onEvict), so live series stay within the cap and the
+//     gateway's series budget; churn is bounded by one replacement
+//     per label per idle window.
 //
 // The Prometheus increment happens at the call site AFTER admit()
 // returns so it is outside the critical section.
 package gateway
 
-import "sync"
+import (
+	"sync"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // reservedRouteLabel is the empty-string sentinel used by the
 // pre-existing `gateway_requests_total{app="-"}` series when the
@@ -81,8 +89,20 @@ const routeLabelSetCap = 50
 // single request.
 type routeLabelSet struct {
 	mu       sync.Mutex
-	admitted map[string]struct{}
+	admitted map[string]routeLabelEntry
 	cap      int
+	// now and reuseAfter decide when an idle label may be replaced;
+	// onEvict (nil-safe) deletes a replaced label's series.
+	now        func() time.Time
+	reuseAfter time.Duration
+	onEvict    func(route string)
+}
+
+// routeLabelEntry is one admitted label: when a request last carried it
+// and whether it is a declared route, which is never replaced.
+type routeLabelEntry struct {
+	lastSeen int64 // unix nanoseconds
+	declared bool
 }
 
 // newRouteLabelSet constructs an admission set with the default
@@ -102,12 +122,15 @@ func newRouteLabelSetWithCap(capacity int) *routeLabelSet {
 		panic("gateway: routeLabelSet capacity must be positive")
 	}
 	s := &routeLabelSet{
-		admitted: make(map[string]struct{}, capacity+2), // +2 for the reserved labels
-		cap:      capacity,
+		admitted:   make(map[string]routeLabelEntry, capacity+2), // +2 for the reserved labels
+		cap:        capacity,
+		now:        time.Now,
+		reuseAfter: api.RouteLabelReuseAfterIdle,
 	}
 	// Pre-admit reserved labels so admit() doesn't need a special branch.
-	s.admitted[reservedRouteLabelEmpty] = struct{}{}
-	s.admitted[otherRouteLabel] = struct{}{}
+	// They are declared so a full set never offers them for replacement.
+	s.admitted[reservedRouteLabelEmpty] = routeLabelEntry{declared: true}
+	s.admitted[otherRouteLabel] = routeLabelEntry{declared: true}
 	return s
 }
 
@@ -126,6 +149,16 @@ func newRouteLabelSetWithCap(capacity int) *routeLabelSet {
 // The Prometheus increment at the call site happens AFTER admit
 // returns, so it is outside the critical section.
 func (s *routeLabelSet) admit(route string) string {
+	return s.admitEntry(route, false)
+}
+
+// admitDeclared admits a declared route (OpenAPI, gregale.yaml), which a
+// full set never replaces.
+func (s *routeLabelSet) admitDeclared(route string) string {
+	return s.admitEntry(route, true)
+}
+
+func (s *routeLabelSet) admitEntry(route string, declared bool) string {
 	// Reserved values (empty + otherRouteLabel) are always admitted
 	// without consuming capacity. The empty case is folded into the
 	// multi-value branch because reservedRouteLabelEmpty == "" —
@@ -136,8 +169,11 @@ func (s *routeLabelSet) admit(route string) string {
 		return route
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.admitted[route]; ok {
+	now := s.now().UnixNano()
+	if entry, ok := s.admitted[route]; ok {
+		entry.lastSeen, entry.declared = now, entry.declared || declared
+		s.admitted[route] = entry
+		s.mu.Unlock()
 		return route
 	}
 	// Reserved labels are pre-admitted at construction — they count
@@ -149,11 +185,40 @@ func (s *routeLabelSet) admit(route string) string {
 	// account_label_set.go:122-123 caught this same flaw via
 	// TestFailedLoginTotal_OverflowCollapsesToOtherSlow.
 	const reservedCount = 2
+	evicted := ""
 	if len(s.admitted)-reservedCount >= s.cap {
-		return otherRouteLabel
+		evicted = s.idlestLocked(now)
+		if evicted == "" {
+			s.mu.Unlock()
+			return otherRouteLabel
+		}
+		delete(s.admitted, evicted)
 	}
-	s.admitted[route] = struct{}{}
+	s.admitted[route] = routeLabelEntry{lastSeen: now, declared: declared}
+	onEvict := s.onEvict
+	s.mu.Unlock()
+	// Series deletion takes the metric vectors' locks; keep it outside mu.
+	if evicted != "" && onEvict != nil {
+		onEvict(evicted)
+	}
 	return route
+}
+
+// idlestLocked returns the least recently seen undeclared label that has
+// been idle for reuseAfter, or "" when every label is live or declared.
+// Caller holds mu; the scan is bounded by the set's capacity.
+func (s *routeLabelSet) idlestLocked(now int64) string {
+	cutoff := now - int64(s.reuseAfter)
+	idlest, oldest := "", int64(0)
+	for route, entry := range s.admitted {
+		if entry.declared || entry.lastSeen > cutoff {
+			continue
+		}
+		if idlest == "" || entry.lastSeen < oldest || entry.lastSeen == oldest && route < idlest {
+			idlest, oldest = route, entry.lastSeen
+		}
+	}
+	return idlest
 }
 
 // AdmitForTest is the test-only seam that inserts a route
@@ -164,5 +229,5 @@ func (s *routeLabelSet) admit(route string) string {
 func (s *routeLabelSet) AdmitForTest(route string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.admitted[route] = struct{}{}
+	s.admitted[route] = routeLabelEntry{lastSeen: s.now().UnixNano()}
 }

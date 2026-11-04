@@ -11,7 +11,7 @@ T = TypeVar("T", bound="MirrorCleanCondition")
 
 @_attrs_define
 class MirrorCleanCondition:
-    """Mirror quality gate for a canary stage (issue #1395 B1)."""
+    """Mirror quality gate for a canary stage."""
 
     min_invocations: int
     """Minimum completed mirror comparisons required in the window."""

@@ -30,7 +30,7 @@ from faas_sdk import (
     FaaSClient,
     is_faas_error,
 )
-from faas_sdk.models import (
+from faas_sdk.preview.models import (
     CancelDeploymentRequest,
     ClearObsoleteDeploymentsBody,
     CreateAppRequest,
@@ -52,7 +52,7 @@ def test_healthz(fakeapid) -> None:
 def test_account_round_trip(fakeapid) -> None:
     """`GET /v1/account` reaches the generated service function and
     returns a parsed `AccountResponse` with a `plan` field."""
-    from faas_sdk.api.account import get_account
+    from faas_sdk.preview.api.account import get_account
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -68,7 +68,7 @@ def test_create_and_list_apps(fakeapid) -> None:
     """`POST /v1/apps` echoes the slug from the request body, and
     `GET /v1/apps` returns a list with the just-created app in it.
     """
-    from faas_sdk.api.apps import create_app, list_apps
+    from faas_sdk.preview.api.apps import create_app, list_apps
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -94,7 +94,7 @@ def test_get_usage_returns_array(fakeapid) -> None:
     `getusage-wire-shape-mismatch.md` documents the wire shape and the
     SDK must respect it.
     """
-    from faas_sdk.api.usage import get_usage
+    from faas_sdk.preview.api.usage import get_usage
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -110,7 +110,7 @@ def test_unknown_slug_raises_err_not_found(fakeapid) -> None:
     it and raises `ErrNotFound` (the canonical sentinel for
     `code: "not_found"`).
     """
-    from faas_sdk.api.apps import get_app
+    from faas_sdk.preview.api.apps import get_app
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -133,7 +133,7 @@ def test_idempotency_auto_mints_on_mutating_call(fakeapid) -> None:
     (which had a real bug; the fix landed in PR 3.5 and is mirrored
     here at the smoke level).
     """
-    from faas_sdk.api.apps import create_app
+    from faas_sdk.preview.api.apps import create_app
 
     captured: dict[str, str | None] = {}
 
@@ -180,7 +180,7 @@ def test_get_skips_idempotency_header(fakeapid) -> None:
     contract; mirrors `pkg/api/client.go::do`'s
     `method != GET && method != HEAD` guard).
     """
-    from faas_sdk.api.apps import list_apps
+    from faas_sdk.preview.api.apps import list_apps
 
     real_client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -209,7 +209,7 @@ def test_with_idempotency_key_scopes_explicit_key(fakeapid) -> None:
     the auto-mint for the duration of the `with` block.
     """
     from faas_sdk import with_idempotency_key
-    from faas_sdk.api.apps import create_app
+    from faas_sdk.preview.api.apps import create_app
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -250,7 +250,7 @@ def test_cancel_deployment_happy_path(fakeapid) -> None:
     """`POST /v1/apps/{slug}/deployments/{id}/cancel` returns a
     parsed CancelDeploymentResponse with status=cancelled.
     """
-    from faas_sdk.api.deployments import cancel_deployment
+    from faas_sdk.preview.api.deployments import cancel_deployment
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -272,7 +272,7 @@ def test_cancel_deployment_happy_path(fakeapid) -> None:
 
 def test_reorder_deployment_happy_path(fakeapid) -> None:
     """`POST /v1/deployments/{id}/reorder` echoes the priority."""
-    from faas_sdk.api.deployments import reorder_deployment
+    from faas_sdk.preview.api.deployments import reorder_deployment
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -295,7 +295,7 @@ def test_clear_deployment_happy_path(fakeapid) -> None:
     (the OpenAPI spec describes a 200 with body but no $ref) so we
     assert only that no exception is raised.
     """
-    from faas_sdk.api.deployments import clear_deployment
+    from faas_sdk.preview.api.deployments import clear_deployment
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -308,7 +308,7 @@ def test_clear_obsolete_deployments_happy_path(fakeapid) -> None:
     """`POST /v1/apps/{slug}/deployments/clear-obsolete` returns a
     parsed ClearObsoleteReport with count=3.
     """
-    from faas_sdk.api.deployments import clear_obsolete_deployments
+    from faas_sdk.preview.api.deployments import clear_obsolete_deployments
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -330,7 +330,7 @@ def test_cancel_deployment_unknown_slug_raises_err_not_found(fakeapid) -> None:
     """`POST /v1/apps/missing-app-404/deployments/{id}/cancel`
     returns a 404 RFC 7807 envelope; the wrapper surfaces ErrNotFound.
     """
-    from faas_sdk.api.deployments import cancel_deployment
+    from faas_sdk.preview.api.deployments import cancel_deployment
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -355,7 +355,7 @@ def test_reorder_deployment_out_of_range_returns_409(fakeapid) -> None:
     conflict only; the per-op 409 codes aren't typed).
     """
     from faas_sdk import FaasProblemError
-    from faas_sdk.api.deployments import reorder_deployment
+    from faas_sdk.preview.api.deployments import reorder_deployment
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -377,7 +377,7 @@ def test_clear_deployment_live_returns_409(fakeapid) -> None:
     "deployment_cancel_live_forbidden".
     """
     from faas_sdk import FaasProblemError
-    from faas_sdk.api.deployments import clear_deployment
+    from faas_sdk.preview.api.deployments import clear_deployment
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -397,7 +397,7 @@ def test_cancel_deployment_live_returns_409(fakeapid) -> None:
     409 path on both ops so the SDK error surface stays consistent.
     """
     from faas_sdk import FaasProblemError
-    from faas_sdk.api.deployments import cancel_deployment
+    from faas_sdk.preview.api.deployments import cancel_deployment
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:
@@ -419,7 +419,7 @@ def test_clear_obsolete_deployments_unknown_slug_raises_err_not_found(fakeapid) 
     """`POST /v1/apps/missing-app-404/deployments/clear-obsolete`
     returns 404; the wrapper surfaces ErrNotFound.
     """
-    from faas_sdk.api.deployments import clear_obsolete_deployments
+    from faas_sdk.preview.api.deployments import clear_obsolete_deployments
 
     client = FaaSClient(base_url=fakeapid.base_url, token="test-token")
     try:

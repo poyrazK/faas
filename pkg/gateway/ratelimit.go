@@ -26,22 +26,32 @@ import (
 // rather than O(n) when every bucket is mid-drain.
 const LimiterEvictScan = 32
 
-// centralConsultTimeout bounds the authoritative central-mode token consume
-// before falling back to the local bucket during a Postgres outage. Central
-// mode performs this operation for every request so replicas share one burst.
+// centralConsultTimeout bounds the pre-auth consults and the return of unspent
+// lease tokens. Central mode requires a successful consume for every admitted
+// request so replicas share one burst. The consult breaker refuses requests
+// during an outage.
 const centralConsultTimeout = 250 * time.Millisecond
 
-// centralBreakerWindow is how long a limiter decides locally after a central
-// consult failed, before it consults Postgres again. Without it every request
-// paid the full centralConsultTimeout while the shared counter was
+// centralConsumeTimeout bounds the authoritative app, account and rule
+// consume, and each lease statement (ADR-570 amendment 2026-10-28,
+// ADR-20261027173012 amendment 2). A committed counter write occasionally
+// takes longer than 250 ms (a checkpoint or fsync stall, a row-lock wait),
+// and refusing then turned one slow commit into a customer 503. The
+// PostgreSQL backend still bounds connection acquisition by 250 ms, so a
+// saturated pool fails fast and opens the breaker.
+const centralConsumeTimeout = time.Second
+
+// centralBreakerWindow is how long a limiter refuses unverified admission
+// after connection acquisition failed, before it consults Postgres again. Without it
+// every request paid the full centralConsultTimeout while the shared counter was
 // unavailable: on production-us gatewayd's 8-connection pool was saturated
 // by per-request writes, every consult timed out, and app and account
 // limiters together added up to 500 ms to each request.
 const centralBreakerWindow = time.Second
 
-// errCentralBreakerOpen marks a request decided locally because a recent
-// central consult failed.
-var errCentralBreakerOpen = errors.New("ratelimit central: recent consult failed; deciding locally")
+// errCentralBreakerOpen marks admission unavailable because a recent central
+// consult failed.
+var errCentralBreakerOpen = errors.New("ratelimit central: recent consult failed; admission unavailable")
 
 // Limiter is a per-app token-bucket rate limiter (spec §4.1). Each app refills at
 // its plan's rps with a plan burst; an over-limit request is rejected (the caller
@@ -103,19 +113,28 @@ type Limiter struct {
 	// noopCentralBackend{} — every existing constructor sets it,
 	// so behaviour is unchanged for callers that don't thread the
 	// new NewLimiterWithCentral constructor. Central mode consumes from the
-	// shared counter on every request; local state is a degraded fallback and
-	// supplies response-header state.
+	// shared counter for every admitted request; local state is a response-header
+	// mirror. An open consult breaker refuses unverified admission.
 	central CentralBackend
 	// centralErrorObserver is called whenever an authoritative central consume
-	// fails and the limiter falls back to its process-local decision. The
-	// callback is installed by Handler.WithCentralBackend so the fallback is
+	// fails or its breaker is open and the limiter refuses unverified admission. The
+	// callback is installed by Handler.WithCentralBackend so the outage is
 	// visible without coupling this token-bucket primitive to Prometheus,
 	// logging, or the gateway audit sink.
 	centralErrorObserver func(context.Context, string, error)
+	// centralFallbackObserver is called for a request decided by the local
+	// bucket because the central counter failed inside the outage grace.
+	centralFallbackObserver func(context.Context, string, error)
 	// centralOpenUntil (unix nanoseconds, from now) is set when a central
-	// consult fails; until then requests use the local decision without
-	// waiting on Postgres.
+	// consult fails; until then requests are decided without waiting on
+	// Postgres: locally inside the outage grace, refused after it.
 	centralOpenUntil atomic.Int64
+	// centralVerifiedAt (unix nanoseconds) is when the shared counter last
+	// decided an admission, the start of the outage grace.
+	centralVerifiedAt atomic.Int64
+	// centralOutageGrace overrides api.TrafficRateLimitOutageGrace when
+	// positive; negative disables the grace. Set before serving.
+	centralOutageGrace time.Duration
 	// coalescer batches concurrent consults for one central counter when the
 	// backend implements CentralBatchBackend.
 	coalescer centralCoalescer
@@ -235,12 +254,12 @@ func (l *Limiter) AllowWithCentralConsumerKey(
 		return false
 	}
 	centralSubjectID := dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID, cap)
-	remaining, admitted, err := l.consumeCentral(ctx, scope, centralSubjectID, plan, rps, burst)
+	remaining, admitted, _, err := l.consumeCentral(ctx, scope, centralSubjectID, plan, rps, burst)
 	if err != nil {
-		l.observeCentralError(ctx, scope, err)
-		return localAllowed
+		l.refuseUnverifiedCentral(ctx, scope, err, bucketKey, localAllowed)
+		return false
 	}
-	// Keep headers and the degraded fallback aligned with the authoritative
+	// Keep headers aligned with the authoritative
 	// balance of the deterministic central shard.
 	l.mu.Lock()
 	if current := l.buckets[bucketKey]; current != nil {
@@ -502,8 +521,7 @@ func NewLimiterWithClock(now func() time.Time) *Limiter {
 // (cmd/gatewayd-internal/config.go) keep today's byte-for-byte
 // behaviour. Production wiring lives in cmd/gatewayd-internal/run.go.
 //
-// The in-process decision remains available only as a bounded degraded-mode
-// fallback if the central store cannot be reached.
+// Central-store errors refuse admission. Selecting local mode is explicit.
 func NewLimiterWithCentral(central CentralBackend) *Limiter {
 	l := NewLimiter()
 	if central != nil {
@@ -667,8 +685,9 @@ func (l *Limiter) AllowAccount(ctx context.Context, accountID string, plan api.P
 //
 // When the limiter was built with NewLimiterWithCentral, the
 // noop default is replaced with the production CentralBackend.
-// Every request calls central.ConsumeToken so the shared counter, rather than
-// one bucket per process, is authoritative across gateway replicas.
+// Every admitted request calls central.ConsumeToken so the shared counter,
+// rather than one bucket per process, is authoritative across gateway replicas.
+// An open consult breaker refuses admission without waiting on Postgres.
 //
 // scope / subjectID / plan are caller-supplied via
 // allowTokenWithCentralKey when the call site knows them
@@ -682,7 +701,7 @@ func (l *Limiter) allowToken(ctx context.Context, id string, rps, burst float64)
 // allowTokenWithCentralKey is the central-aware variant of
 // allowToken. When centralKey is empty, the local bucket is the only source
 // of truth. When it is set, the central counter is authoritative and the local
-// result is used only if the central backend returns an error.
+// result is used only when central mode is explicitly disabled.
 func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, burst float64, centralKey string) bool {
 	l.mu.Lock()
 	now := l.now()
@@ -724,9 +743,8 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	}
 	l.mu.Unlock()
 
-	// Central mode makes the shared counter authoritative for every request.
-	// The local decision is retained only as a bounded fallback if Postgres is
-	// temporarily unavailable. This prevents one full burst per gateway replica.
+	// Central mode makes the shared counter authoritative for every admission.
+	// A Postgres error rejects unverified admission. This prevents one full burst per gateway replica.
 	if centralKey == "" || l.isNoopBackend() {
 		return localAllowed
 	}
@@ -734,12 +752,26 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	if !ok {
 		return false
 	}
-	remaining, admitted, err := l.consumeCentral(ctx, scope, subjectID, plan, rps, burst)
+	remaining, admitted, verified, err := l.consumeCentral(ctx, scope, subjectID, plan, rps, burst)
 	if err != nil {
-		l.observeCentralError(ctx, scope, err)
-		return localAllowed
+		// A counter that answered within the outage grace keeps its limit on
+		// this gateway's own bucket (ADR-20261027173012); past the grace,
+		// unverified admission is refused.
+		if l.centralWithinOutageGrace(now) {
+			l.observeCentralFallback(ctx, scope, err)
+			return localAllowed
+		}
+		l.refuseUnverifiedCentral(ctx, scope, err, id, localAllowed)
+		return false
 	}
-	// Keep response headers and degraded fallback aligned with the latest
+	// Only a real shared-counter decision arms the grace. A lease allowance
+	// admit on a never-fetched counter admits without consulting Postgres, so
+	// it must not let a never-verified gateway later fall back to its full
+	// local bucket during a central outage.
+	if verified {
+		l.centralVerifiedAt.Store(l.now().UnixNano())
+	}
+	// Keep response headers aligned with the latest
 	// authoritative balance. Remaining==0 is a valid final-token admit.
 	l.mu.Lock()
 	if current := l.buckets[id]; current != nil {
@@ -752,10 +784,18 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 
 // consumeCentral performs one authoritative consume, bounded by
 // centralConsultTimeout and skipped while the breaker is open. A failure opens
-// the breaker for centralBreakerWindow; a success closes it. A caller that
-// gave up (client disconnect) does not open it. Concurrent consults for one
-// counter are batched when the backend supports it (centralCoalescer).
-func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
+// the breaker for centralBreakerWindow when connection acquisition failed or
+// the backend cannot classify the error. Statement errors allow the next
+// request to verify recovery immediately. A successful consume closes the
+// breaker; a caller that gave up (client disconnect) does not open it.
+// Concurrent consults for one counter use centralCoalescer when supported.
+
+// consumeCentral returns verified=true when the decision reflects a real
+// shared-counter result, so only such a decision arms the outage grace. The
+// non-lease path always consults the counter, so every success is verified; the
+// lease path reports it per leaseConsume (an allowance admit on a never-fetched
+// counter is NOT verified).
+func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, bool, error) {
 	if l.lease != nil {
 		if batch, ok := l.central.(CentralBatchBackend); ok {
 			return l.leaseConsume(ctx, batch, scope, subjectID, plan, rps, burst)
@@ -763,7 +803,7 @@ func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan str
 	}
 	now := l.now()
 	if l.centralBreakerOpen(now) {
-		return 0, false, errCentralBreakerOpen
+		return 0, false, false, errCentralBreakerOpen
 	}
 	var (
 		remaining int
@@ -773,25 +813,67 @@ func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan str
 	if batch, ok := l.central.(CentralBatchBackend); ok {
 		remaining, admitted, err = l.coalescer.consume(ctx, l.central, batch, scope, subjectID, plan, rps, burst)
 	} else {
-		consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+		consultCtx, cancel := context.WithTimeout(ctx, centralConsumeTimeout)
 		remaining, admitted, err = l.central.ConsumeToken(consultCtx, scope, subjectID, plan, rps, burst)
 		cancel()
 	}
 	if err != nil {
-		if ctx.Err() == nil {
+		var backoff CentralConsultBackoffError
+		if ctx.Err() == nil && (!errors.As(err, &backoff) || backoff.CanBackoffCentralConsult()) {
 			l.centralOpenUntil.Store(now.Add(centralBreakerWindow).UnixNano())
 		}
-		return remaining, admitted, err
+		return remaining, admitted, false, err
 	}
 	l.centralOpenUntil.Store(0)
-	return remaining, admitted, nil
+	return remaining, admitted, true, nil
 }
 
-func (l *Limiter) observeCentralError(ctx context.Context, scope string, err error) {
-	if l == nil || l.centralErrorObserver == nil || err == nil {
+// refuseUnverifiedCentral refuses a request the shared counter could not
+// decide outside the outage grace (ADR-20261027173012 amendment 1). The
+// request's local token is returned, so this gateway's bucket counts only
+// requests the counter admitted and can never hold fewer tokens than the
+// counter. A request that bucket already refuses is therefore over the limit
+// whatever the counter holds, and gets the ordinary 429; only one the bucket
+// would admit is marked unverified (503 rate_limit_unavailable).
+func (l *Limiter) refuseUnverifiedCentral(ctx context.Context, scope string, err error, bucketKey string, localAllowed bool) {
+	if err == nil {
 		return
 	}
-	l.centralErrorObserver(ctx, scope, err)
+	if localAllowed {
+		l.mu.Lock()
+		if b := l.buckets[bucketKey]; b != nil {
+			if b.tokens++; b.tokens > b.burst {
+				b.tokens = b.burst
+			}
+		}
+		l.mu.Unlock()
+		markRateAdmissionUnavailable(ctx)
+	}
+	if l.centralErrorObserver != nil {
+		l.centralErrorObserver(ctx, scope, err)
+	}
+}
+
+// centralWithinOutageGrace reports whether the shared counter last decided
+// an admission on this limiter no longer than api.TrafficRateLimitOutageGrace
+// ago. A limiter that never reached the counter has no grace.
+func (l *Limiter) centralWithinOutageGrace(now time.Time) bool {
+	grace := api.TrafficRateLimitOutageGrace
+	if l.centralOutageGrace != 0 {
+		grace = l.centralOutageGrace
+	}
+	verified := l.centralVerifiedAt.Load()
+	return grace > 0 && verified != 0 && now.UnixNano()-verified <= int64(grace)
+}
+
+// observeCentralFallback reports a request decided by this gateway's bucket
+// because the shared counter failed inside the outage grace. The request is
+// not marked unavailable: an over-limit one gets the ordinary 429.
+func (l *Limiter) observeCentralFallback(ctx context.Context, scope string, err error) {
+	if l == nil || l.centralFallbackObserver == nil {
+		return
+	}
+	l.centralFallbackObserver(ctx, scope, err)
 }
 
 // isNoopBackend reports whether the central field is the default

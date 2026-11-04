@@ -27,7 +27,7 @@ func TestPgPlatformTenantOffboardingApplyRevokesAndPersistsReceipt(t *testing.T)
 		t.Fatal(err)
 	}
 	keyResult, err := store.ApplyPlatformTenantCredentials(ctx, state.ApplyPlatformTenantCredentialsParams{
-		AccountID: accountID, TenantID: created.Tenant.ID, AppLimit: 100, AccountLimit: 100,
+		AccountID: accountID, TenantID: created.Tenant.ID,
 		Keys: []state.PlatformTenantCredentialIntent{{ConsumerID: created.Consumers[0].Consumer.ID, Name: "customer-key",
 			Prefix: prefix, Hash: hash, Scopes: []string{"read"}}},
 	})

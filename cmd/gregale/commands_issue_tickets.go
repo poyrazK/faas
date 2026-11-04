@@ -16,7 +16,7 @@ import (
 
 func cmdIssueTickets(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "usage: gregale issues tickets <create|sync|auto-sync|linear-connection> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: gregale debug issue tickets <create|sync|auto-sync|linear-connection> [flags]")
 		if len(args) == 0 {
 			return 1
 		}
@@ -35,7 +35,7 @@ func cmdIssueTickets(args []string) int {
 }
 
 func runIssueTickets(args []string, external issuetracker.Provider) int {
-	usage := "usage: gregale issues tickets create --app SLUG --issue UUID --provider github|linear --target OWNER/REPO|TEAM_UUID --title TEXT --request-id UUID [--description TEXT --token-env NAME --journal-dir PATH --recover-url URL --native]"
+	usage := "usage: gregale debug issue tickets create --app SLUG --issue UUID --provider github|linear --target OWNER/REPO|TEAM_UUID --title TEXT --request-id UUID [--description TEXT --token-env NAME --journal-dir PATH --recover-url URL --native]"
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		fmt.Fprintln(os.Stderr, usage)
 		return 0

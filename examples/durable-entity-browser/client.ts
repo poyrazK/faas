@@ -1,4 +1,4 @@
-import {connectDurableEntityBrowserSession, type DurableEntityBrowserGrant} from '@gregale/sdk-node/durable-entities/browser';
+import {connectDurableEntityBrowserSession, type DurableEntityBrowserGrant} from '@gregale/sdk-node/preview/durable-entities/browser';
 
 // Your application backend authenticates this request, authorizes document:123,
 // and mints a grant using its server-side Gregale API credential. The response

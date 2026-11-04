@@ -64,9 +64,13 @@ func diagnosticProblem(p api.Problem) api.Problem {
 		case p.Status == 401:
 			p.Hint = authenticationHint()
 		case p.Status == 403 && authorizationRefusal(p.Code):
-			p.Hint = "Check the selected profile, account membership, and credential permissions with gregale profile check."
+			p.Hint = "Check the selected profile, account membership, and credential permissions with gregale config profile check."
 		case p.Status == 429:
 			p.Hint = "Wait for Retry-After when provided, then retry."
+		case api.EdgeRuleChangeConverging(p):
+			// The 503 came after the write: resending would repeat a change
+			// that already happened (#2683).
+			p.Hint = "The change is saved; some serving gateways have not applied it yet and will within seconds. Don't resend it: check the current rules with gregale edge rule list."
 		case p.Code == "long_poll_timeout":
 			// The server stopped waiting, not working: a sync invoke past its
 			// wait keeps running, so a retry would run it twice.
@@ -77,7 +81,7 @@ func diagnosticProblem(p api.Problem) api.Problem {
 			// networks); retrying or checking service status cannot help.
 			p.Hint = "This feature is not enabled on this Gregale installation; ask its operator to enable it."
 		case p.Status >= 500:
-			p.Hint = "Check Gregale's service status and run gregale profile check. Inspect deployment status before retrying a deploy."
+			p.Hint = "Check Gregale's service status and run gregale config profile check. Inspect deployment status before retrying a deploy."
 		}
 	} else if p.Status == 401 && loginErrorCredential == "" && os.Getenv("FAAS_TOKEN") != "" && !strings.Contains(p.Hint, "FAAS_TOKEN") {
 		p.Hint += " " + authenticationHint()

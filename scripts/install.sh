@@ -8,9 +8,12 @@
 # has, including dash on Debian images and the ancient bash 3.2 that ships
 # as /bin/sh on macOS. No arrays, no [[, no local, no process substitution.
 #
-# The version is resolved at run time from the GitHub API rather than baked
-# in, so a new release tag is live in this installer the moment its assets
-# exist — there is no publish step for this channel (ADR-172 "Why").
+# The version is resolved at run time rather than baked in. release.yml
+# publishes one-line CLI-STABLE and CLI-LATEST pointers on the cli-channel
+# release once a tag's assets exist; they are read through releases/download,
+# which GitHub does not count against the anonymous API limit of 60 requests
+# an hour per address (ADR-20261025092617). The GitHub API resolution of
+# ADR-172 remains the fallback when no pointer is usable.
 #
 # Every download is verified against the release's own CLI-SHA256SUMS before
 # anything is placed on PATH. A checksum failure aborts with no install.
@@ -20,6 +23,7 @@ set -eu
 REPO="${GREGALE_REPO:-poyrazK/faas}"
 API="${GREGALE_API_BASE:-https://api.github.com}"
 DOWNLOAD_BASE="${GREGALE_DOWNLOAD_BASE:-https://github.com/${REPO}/releases/download}"
+CHANNEL_BASE="${GREGALE_CHANNEL_BASE:-${DOWNLOAD_BASE}/cli-channel}"
 BIN_NAME="gregale"
 
 version="${GREGALE_VERSION:-}"
@@ -139,7 +143,40 @@ has_cli_assets() {
 	}
 }
 
+# channel_tag <pointer> prints the tag a cli-channel pointer names, if it is
+# a well-formed release tag whose CLI-SHA256SUMS lists this host's archive.
+# Both reads go through releases/download, never the API.
+channel_tag() {
+	tag="$(fetch_stdout "${CHANNEL_BASE}/$1" | head -n 1 | tr -d '[:space:]')"
+	case "$tag" in
+	v[0-9]*.[0-9]*.[0-9]*) ;;
+	*) return 1 ;;
+	esac
+	case "$tag" in
+	*[!0-9A-Za-z.-]*) return 1 ;;
+	esac
+	fetch_stdout "${DOWNLOAD_BASE}/${tag}/CLI-SHA256SUMS" |
+		awk -v a="${BIN_NAME}_${tag#v}_${os}_${arch}.tar.gz" \
+			'{ n = $2; sub(/^\*/, "", n) } n == a { found = 1 } END { exit !found }' ||
+		return 1
+	printf '%s' "$tag"
+}
+
 resolve_version() {
+	# The channel pointers keep ADR-172's order: stable first, a prerelease
+	# only while no stable release lists this platform.
+	if tag="$(channel_tag CLI-STABLE)"; then
+		printf '%s' "$tag"
+		return 0
+	fi
+	if tag="$(channel_tag CLI-LATEST)"; then
+		case "$tag" in
+		*-*) log "warning: installing prerelease ${tag}" ;;
+		esac
+		printf '%s' "$tag"
+		return 0
+	fi
+
 	# Older stable releases predate the archive format. A release can also
 	# become visible while its assets are still being uploaded. Resolve only
 	# tags with this host's archive and a checksum asset; download verification

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A tenant's spend cap and its last check (ADR-20261019100331).
+ * A tenant's spend cap and its last check.
  */
 export type PlatformTenantSpendCapResponse = {
   tenant_id: string;

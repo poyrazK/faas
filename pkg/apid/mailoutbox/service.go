@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	q "github.com/onebox-faas/faas/pkg/apid/mailoutbox/sqlc"
 	"github.com/onebox-faas/faas/pkg/internalmail"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 var ErrAccountUnavailable = errors.New("notification account cannot enter deletion")
@@ -33,7 +34,7 @@ func (s *Service) recovery(ctx context.Context, tx pgx.Tx) (q.RecoveryRow, error
 // ScheduleDeletion makes the business transition and notification intent one
 // commit. The admission fence bounds pending work across all apid instances.
 // Repeating a previously saved transition leaves its original intent intact.
-func (s *Service) ScheduleDeletion(ctx context.Context, id string) error {
+func (s *Service) ScheduleDeletion(ctx context.Context, id string, opts ...state.AccountDeletionOption) error {
 	if !s.Enabled() {
 		return internalmail.ErrDisabled
 	}
@@ -88,7 +89,7 @@ func (s *Service) ScheduleDeletion(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	scheduled, err := s.queries.ScheduleDeletion(ctx, tx, account.ID)
+	scheduled, err := s.queries.ScheduleDeletion(ctx, tx, q.ScheduleDeletionParams{ID: account.ID, IncludeManagedPostgres: state.DeletionIncludesManagedPostgres(opts...)})
 	if err != nil {
 		return err
 	}

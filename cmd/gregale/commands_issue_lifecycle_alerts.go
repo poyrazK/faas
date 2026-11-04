@@ -13,7 +13,7 @@ import (
 )
 
 func cmdIssueLifecycleAlerts(args []string) int {
-	usage := "usage: gregale issues lifecycle-alerts <get|save|preview> --app SLUG [--environments production,staging --cooldown-seconds N --expected-revision N --issue UUID --event created|regressed]"
+	usage := "usage: gregale debug issue lifecycle-alerts <get|save|preview> --app SLUG [--environments production,staging --cooldown-seconds N --expected-revision N --issue UUID --event created|regressed]"
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
 		return 1

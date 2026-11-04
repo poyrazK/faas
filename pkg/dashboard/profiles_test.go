@@ -24,6 +24,7 @@ func TestCPUProfilesRenderEscapesSymbolsAndShowsMissingData(t *testing.T) {
 		Investigations  *ProfileInvestigationsView
 		Automatic       *ProfileDeploymentChecksView
 		CPUChart        *ProfileCPUChart
+		Captures        *ProfileCapturesView
 	}{AppSlug: "profile-app", Query: query}
 	data.Profile = &api.ProfileResponse{Query: query, Empty: true}
 	data.CPUChart = &ProfileCPUChart{Points: []ProfileCPUPoint{{URL: "/dashboard/apps/profile-app/profiles?deployment_id=candidate&runtime=node24", Cores: 1, Height: 140, Width: 30}}}

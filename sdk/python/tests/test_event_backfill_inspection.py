@@ -1,5 +1,5 @@
-from faas_sdk.models.event_receipt_response import EventReceiptResponse
-from faas_sdk.models.event_replay_backfill_item_response import EventReplayBackfillItemResponse
+from faas_sdk.preview.models.event_receipt_response import EventReceiptResponse
+from faas_sdk.preview.models.event_replay_backfill_item_response import EventReplayBackfillItemResponse
 
 
 def test_receipt_preserves_acceptance_counts_and_backfill_handler_outcome():

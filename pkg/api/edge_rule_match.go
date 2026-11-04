@@ -5,6 +5,9 @@ package api
 // and the trace simulator share a single implementation.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -55,6 +58,14 @@ type EdgeRuleMatchInput struct {
 	// (ADR-973), or "". It is called only when a verified_bot leaf is
 	// evaluated, because verification can cost a DNS lookup; nil is absent.
 	VerifiedBot func() string
+	// VerifiedAICrawler returns the AI crawler the User-Agent claims when
+	// the client IP is in that operator's published ranges
+	// (ADR-20261022083601), or ""; nil is absent.
+	VerifiedAICrawler func() string
+	// AICrawlersUnreleased makes ai_crawler, ai_crawler_purpose and
+	// verified_ai_crawler absent: the edge_ai_crawlers platform flag leaves
+	// the account out (ADR-20261022083601 amendment 1).
+	AICrawlersUnreleased bool
 }
 
 type matchFieldKind int
@@ -71,12 +82,60 @@ const (
 	fieldASN
 	fieldUAFamily
 	fieldVerifiedBot
+	fieldAICrawler
+	fieldAICrawlerPurpose
+	fieldVerifiedAICrawler
 )
 
 // EdgeRuleMatchProgram is a validated, compiled condition. It is immutable
 // and safe for concurrent evaluation. A nil program always matches.
 type EdgeRuleMatchProgram struct {
 	root matchNode
+	// source identifies the condition: its validated expression and a digest
+	// of every list it references. JSON encodes only this, so a sealed
+	// traffic-policy copy (ADR-570) is digest-complete and stays small.
+	source edgeRuleMatchSource
+	// unbound marks a program decoded from JSON. It never matches; the
+	// policy seal rebinds the original compiled program or fails closed.
+	unbound bool
+}
+
+type edgeRuleMatchSource struct {
+	Never bool               `json:"never,omitempty"`
+	Expr  *EdgeRuleMatchExpr `json:"expr,omitempty"`
+	Lists map[string]string  `json:"lists,omitempty"`
+}
+
+// MarshalJSON encodes the condition's identity, not its compiled form.
+func (p *EdgeRuleMatchProgram) MarshalJSON() ([]byte, error) {
+	return json.Marshal(p.source)
+}
+
+// UnmarshalJSON restores the identity only. The result never matches until
+// the caller rebinds the compiled program it was encoded from.
+func (p *EdgeRuleMatchProgram) UnmarshalJSON(raw []byte) error {
+	var source edgeRuleMatchSource
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return err
+	}
+	*p = EdgeRuleMatchProgram{source: source, unbound: true}
+	return nil
+}
+
+// Bound reports whether the program can evaluate requests. Only programs
+// decoded from JSON are unbound; nil (always match) is bound.
+func (p *EdgeRuleMatchProgram) Bound() bool {
+	return p == nil || !p.unbound
+}
+
+func edgeRuleListDigest(list *EdgeRuleList) string {
+	hash := sha256.New()
+	hash.Write([]byte(list.Kind))
+	for _, item := range list.items {
+		hash.Write([]byte{0})
+		hash.Write([]byte(item))
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 type matchNode struct {
@@ -97,6 +156,7 @@ type matchNode struct {
 type matchCompiler struct {
 	nodes int
 	lists EdgeRuleLists
+	used  EdgeRuleLists
 	// shapeOnly accepts unresolved list references (ValidateEdgeRuleMatch);
 	// such a program is never evaluated.
 	shapeOnly bool
@@ -121,13 +181,20 @@ func CompileEdgeRuleMatchWithLists(expr *EdgeRuleMatchExpr, lists EdgeRuleLists)
 	if err != nil {
 		return nil, err
 	}
-	return &EdgeRuleMatchProgram{root: root}, nil
+	source := edgeRuleMatchSource{Expr: expr}
+	if len(c.used) > 0 {
+		source.Lists = make(map[string]string, len(c.used))
+		for name, list := range c.used {
+			source.Lists[name] = edgeRuleListDigest(list)
+		}
+	}
+	return &EdgeRuleMatchProgram{root: root, source: source}, nil
 }
 
 // NeverMatchingEdgeRuleProgram is a condition that holds for no request. The
 // gateway uses it for a stored condition that fails to compile.
 func NeverMatchingEdgeRuleProgram() *EdgeRuleMatchProgram {
-	return &EdgeRuleMatchProgram{root: matchNode{any: []matchNode{}}}
+	return &EdgeRuleMatchProgram{root: matchNode{any: []matchNode{}}, source: edgeRuleMatchSource{Never: true}}
 }
 
 // ValidateEdgeRuleMatch reports a validation Problem for an invalid
@@ -205,7 +272,7 @@ func (c *matchCompiler) leaf(e EdgeRuleMatchExpr, at string) (matchNode, error) 
 		return matchNode{}, fmt.Errorf("%s: %w", at, err)
 	}
 	n := matchNode{op: e.Op, field: kind, name: name}
-	n.foldCase = kind == fieldMethod || kind == fieldHost || kind == fieldCountry || kind == fieldUAFamily || kind == fieldVerifiedBot
+	n.foldCase = kind == fieldMethod || kind == fieldHost || kind == fieldCountry || isBotField(kind)
 	if e.Op == "in_list" || e.List != "" {
 		return c.listLeaf(n, e, at)
 	}
@@ -280,7 +347,7 @@ func (c *matchCompiler) leaf(e EdgeRuleMatchExpr, at string) (matchNode, error) 
 			return matchNode{}, fmt.Errorf("%s: asn supports eq, ne, in, not_in, exists, missing, in_list", at)
 		}
 	}
-	if kind == fieldUAFamily || kind == fieldVerifiedBot {
+	if isBotField(kind) {
 		if err := checkBotLeaf(kind, e.Op, values); err != nil {
 			return matchNode{}, fmt.Errorf("%s: %w", at, err)
 		}
@@ -337,6 +404,10 @@ func (c *matchCompiler) listLeaf(n matchNode, e EdgeRuleMatchExpr, at string) (m
 		return matchNode{}, fmt.Errorf("%s: a %s list cannot match field %q (ip: client_ip, country: country, host: host, string: path, header:, cookie:, query:)", at, list.Kind, e.Field)
 	}
 	n.list = list
+	if c.used == nil {
+		c.used = EdgeRuleLists{}
+	}
+	c.used[e.List] = list
 	return n, nil
 }
 
@@ -358,6 +429,12 @@ func parseMatchField(field string) (matchFieldKind, string, error) {
 		return fieldUAFamily, "", nil
 	case "verified_bot":
 		return fieldVerifiedBot, "", nil
+	case "ai_crawler":
+		return fieldAICrawler, "", nil
+	case "ai_crawler_purpose":
+		return fieldAICrawlerPurpose, "", nil
+	case "verified_ai_crawler":
+		return fieldVerifiedAICrawler, "", nil
 	}
 	prefix, name, ok := strings.Cut(field, ":")
 	if ok && name != "" && len(name) <= edgeRuleMatchMaxSelectorLen {
@@ -370,13 +447,16 @@ func parseMatchField(field string) (matchFieldKind, string, error) {
 			return fieldQuery, name, nil
 		}
 	}
-	return 0, "", fmt.Errorf("unknown field %q (method, path, host, client_ip, country, asn, ua_family, verified_bot, header:<name>, cookie:<name>, query:<name>)", field)
+	return 0, "", fmt.Errorf("unknown field %q (method, path, host, client_ip, country, asn, ua_family, verified_bot, ai_crawler, ai_crawler_purpose, verified_ai_crawler, header:<name>, cookie:<name>, query:<name>)", field)
 }
 
 // Matches evaluates the condition. A nil program always matches.
 func (p *EdgeRuleMatchProgram) Matches(in EdgeRuleMatchInput) bool {
 	if p == nil {
 		return true
+	}
+	if p.unbound {
+		return false
 	}
 	return p.root.eval(in)
 }
@@ -496,6 +576,24 @@ func (n *matchNode) fieldValues(in EdgeRuleMatchInput) ([]string, bool) {
 		}
 		b := in.VerifiedBot()
 		return []string{b}, b != ""
+	case fieldAICrawler, fieldAICrawlerPurpose:
+		if in.AICrawlersUnreleased {
+			return nil, false
+		}
+		c, ok := ClaimedAICrawler(in.Headers.Get("User-Agent"))
+		if !ok {
+			return nil, false
+		}
+		if n.field == fieldAICrawlerPurpose {
+			return []string{c.Purpose}, true
+		}
+		return []string{c.Name}, true
+	case fieldVerifiedAICrawler:
+		if in.VerifiedAICrawler == nil || in.AICrawlersUnreleased {
+			return nil, false
+		}
+		c := in.VerifiedAICrawler()
+		return []string{c}, c != ""
 	case fieldClientIP:
 		if in.ClientIP == nil {
 			return nil, false
@@ -536,18 +634,41 @@ func anyMatchValue(values []string, f func(string) bool) bool {
 	return false
 }
 
-// checkBotLeaf restricts ua_family and verified_bot (ADR-973) to equality
-// ops over their closed value sets, so a typo fails at write time instead of
-// never matching.
-func checkBotLeaf(kind matchFieldKind, op string, values []string) error {
-	name, known, set := "ua_family", func(v string) bool { return containsMatchValue(UAFamilies, v) }, strings.Join(UAFamilies, ", ")
-	if kind == fieldVerifiedBot {
+// isBotField reports the fields that take a closed value set: ua_family and
+// verified_bot (ADR-973), and the AI crawler fields (ADR-20261022083601).
+func isBotField(kind matchFieldKind) bool {
+	switch kind {
+	case fieldUAFamily, fieldVerifiedBot, fieldAICrawler, fieldAICrawlerPurpose, fieldVerifiedAICrawler:
+		return true
+	}
+	return false
+}
+
+// botFieldValues is the closed value set of a bot field and its name.
+func botFieldValues(kind matchFieldKind) (string, []string) {
+	switch kind {
+	case fieldVerifiedBot:
 		names := make([]string, len(EdgeRuleKnownBots))
 		for i, b := range EdgeRuleKnownBots {
 			names[i] = b.Name
 		}
-		name, known, set = "verified_bot", knownEdgeRuleBot, strings.Join(names, ", ")
+		return "verified_bot", names
+	case fieldAICrawler:
+		return "ai_crawler", EdgeAICrawlerNames(false)
+	case fieldAICrawlerPurpose:
+		return "ai_crawler_purpose", AICrawlerPurposes
+	case fieldVerifiedAICrawler:
+		// Only crawlers that publish IP ranges can ever verify.
+		return "verified_ai_crawler", EdgeAICrawlerNames(true)
 	}
+	return "ua_family", UAFamilies
+}
+
+// checkBotLeaf restricts the bot fields to equality ops over their closed
+// value sets, so a typo fails at write time instead of never matching.
+func checkBotLeaf(kind matchFieldKind, op string, values []string) error {
+	name, set := botFieldValues(kind)
+	known := func(v string) bool { return containsMatchValue(set, v) }
 	switch op {
 	case "exists", "missing":
 		return nil
@@ -557,7 +678,13 @@ func checkBotLeaf(kind matchFieldKind, op string, values []string) error {
 	}
 	for _, v := range values {
 		if !known(strings.ToLower(v)) {
-			return fmt.Errorf("%s: unknown value %q (%s)", name, v, set)
+			if kind == fieldVerifiedAICrawler {
+				if _, ok := EdgeAICrawlerByName(strings.ToLower(v)); ok {
+					return fmt.Errorf("%s: %q publishes no IP ranges, so it can never be verified; use ai_crawler to match its User-Agent (verifiable: %s)",
+						name, v, strings.Join(set, ", "))
+				}
+			}
+			return fmt.Errorf("%s: unknown value %q (%s)", name, v, strings.Join(set, ", "))
 		}
 	}
 	return nil

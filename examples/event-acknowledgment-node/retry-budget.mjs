@@ -1,7 +1,7 @@
 import {
   getEventAcknowledgmentIntentRetryResumeCandidate,
   resumeEventAcknowledgmentIntentRetryBudget,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 // Authenticate delivery and retain exclusive ingestion-job ownership first.
 // applyBusinessSQL uses only the supplied transaction and returns exact JSON text.

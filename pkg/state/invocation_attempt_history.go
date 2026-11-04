@@ -103,11 +103,12 @@ func (s *PgStore) EventReceiptAttempts(ctx context.Context, accountID, source, e
 	if !validAttemptCursor(cursor, meta.ID) {
 		return EventReceiptAttemptHistory{}, ErrConflict
 	}
-	appID, err := q.EventReceiptReplayTarget(ctx, tx, sqlc.EventReceiptReplayTargetParams{OutboxID: meta.ID, AccountID: meta.AccountID, SubscriptionID: subscriptionID})
+	target, err := q.EventReceiptReplayTarget(ctx, tx, sqlc.EventReceiptReplayTargetParams{OutboxID: meta.ID, AccountID: meta.AccountID, SubscriptionID: subscriptionID})
 	if err != nil {
 		return EventReceiptAttemptHistory{}, mapErr(err)
 	}
-	root := PublishedEventInvocationID(meta.InvocationAccountID, source, eventID, subscriptionID)
+	appID := target.AppID
+	root := PublishedEventDeliveryID(PublishedEventRecipientProgress{DeliveryID: target.DeliveryID}, meta.InvocationAccountID, source, eventID, subscriptionID)
 	rows, err := q.EventReceiptAttemptHistory(ctx, tx, sqlc.EventReceiptAttemptHistoryParams{
 		AccountID: meta.AccountID, AppID: appID, RootInvocationID: mustPgUUID(root), AcceptedAt: meta.CreatedAt,
 		AfterID: cursor.AfterID, PageLimit: int32(receiptLimit(limit) + 1),
@@ -161,7 +162,7 @@ func (m *MemStore) EventReceiptAttempts(ctx context.Context, accountID, source, 
 	if !ok || !sameMemUUID(app.AccountID, accountID) {
 		return EventReceiptAttemptHistory{}, ErrNotFound
 	}
-	root := PublishedEventInvocationID(receipt.invocationAccountID, source, eventID, subscriptionID)
+	root := PublishedEventDeliveryID(work.RecipientProgress[subscriptionID], receipt.invocationAccountID, source, eventID, subscriptionID)
 	history := EventReceiptAttemptHistory{OutboxID: work.ID, EventSource: source, EventID: eventID, SubscriptionID: subscriptionID, OriginalInvocationID: root, Attempts: make([]InvocationAttempt, 0)}
 	for _, row := range m.invocationAttemptHistory {
 		if sameMemUUID(row.accountID, accountID) && sameMemUUID(row.appID, appID) && sameMemUUID(row.rootID, root) && !row.rootCreatedAt.Before(receipt.AcceptedAt) && (cursor.AfterID == 0 || row.ID < cursor.AfterID) {

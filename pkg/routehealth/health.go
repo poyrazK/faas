@@ -63,6 +63,24 @@ func Windows(now time.Time) []api.RouteHealthWindowEvidence {
 	return out
 }
 
+// TelemetryIncomplete is the window reason when a gateway may have lost the
+// request telemetry the window reads (ADR-20261028110044 amendment 1).
+const TelemetryIncomplete = "telemetry_incomplete"
+
+// EvidenceLost reports whether report's windows were unavailable because a
+// gateway may have lost telemetry: the platform's gap, not the customer's
+// traffic, so it never starts a customer-visible hold or ends a release.
+func EvidenceLost(report api.RouteHealthReport) bool {
+	for _, f := range report.Routes {
+		for _, w := range f.Windows {
+			if w.ErrorReason == TelemetryIncomplete || w.Reason == TelemetryIncomplete {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // LatencyEnabled preserves prior selectors' 5xx-only behavior.
 func LatencyEnabled(check bool, budget int64) bool { return check || budget > 0 }
 

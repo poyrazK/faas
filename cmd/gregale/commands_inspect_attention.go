@@ -52,6 +52,11 @@ func inspectAttention(summary inspectSummary) (state, reason, command string) {
 			return "Review recommended", recommendation.Message, inspectAttentionCommand(summary, recommendation.Code)
 		}
 	}
+	for _, recommendation := range summary.Recommendations {
+		if recommendation.Code == "app_parked" {
+			return "Parked", recommendation.Message, inspectAttentionCommand(summary, recommendation.Code)
+		}
+	}
 	return "No urgent issues reported", "This snapshot has no error or warning recommendations; it does not verify every route or workload.", recoveryCLI() + " app " + recoveryArgument(summary.App.Slug) + " health"
 }
 

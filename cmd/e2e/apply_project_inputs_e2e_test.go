@@ -825,15 +825,34 @@ func TestApplyProject_Inputs_AuditAccountScoped(t *testing.T) {
 	_ = pool.QueryRow(context.Background(),
 		`select count(*) from projects where slug = 'scope-a'`).Scan(&projCount)
 	// The project exists exactly once (under account A's
-	// scope), and account B's apply to a different slug must
-	// not see it. We verify by applying from B with the same
-	// slug — that should fail with 409 slug_taken (the slug
-	// uniqueness scope is global, not per-account, to avoid
-	// impersonation).
+	// scope), and account B's apply must not see it. We verify
+	// by applying from B with the same slug: it either fails or
+	// stays entirely inside B's namespace.
 	_ = projCount
-	status, _ := applyProjectAs(t, h, "Bearer "+keyB, "", "scope-a", inputsFixture(t, "faas-scope-b"))
-	if status != http.StatusConflict && status != http.StatusUnprocessableEntity {
-		t.Fatalf("cross-account slug replay status=%d want 409/422", status)
+	status, body := applyProjectAs(t, h, "Bearer "+keyB, "", "scope-a", inputsFixture(t, "faas-scope-b"))
+	switch status {
+	case http.StatusConflict, http.StatusUnprocessableEntity:
+	case http.StatusOK:
+		// Project slugs are unique per namespace, and an app name another
+		// account holds gets the project-prefixed app slug
+		// (ADR-20261022120205). B's apply may succeed, but only inside B's
+		// own namespace: a second project row, and no app that crosses
+		// accounts.
+		var owners, crossed int
+		if err := pool.QueryRow(context.Background(),
+			`select count(distinct account_id) from projects where slug = 'scope-a'`).Scan(&owners); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(context.Background(),
+			`select count(*) from apps a join projects p on p.id = a.project_id
+			 where p.slug = 'scope-a' and a.account_id <> p.account_id`).Scan(&crossed); err != nil {
+			t.Fatal(err)
+		}
+		if owners != 2 || crossed != 0 {
+			t.Fatalf("cross-account apply shared a namespace: project owners=%d crossed apps=%d body=%s", owners, crossed, body)
+		}
+	default:
+		t.Fatalf("cross-account slug replay status=%d body=%s", status, body)
 	}
 	// Silence unused warnings — path import is referenced by
 	// the path-canonicalisation logic elsewhere in this file.

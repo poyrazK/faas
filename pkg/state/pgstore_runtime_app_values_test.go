@@ -15,6 +15,11 @@ func TestPgRuntimeAppValuesScopeGrantsAndLifetime(t *testing.T) {
 	testRuntimeAppValuesScopeGrantsAndLifetime(t, store)
 }
 
+func TestPgRuntimeAppValuesPreviewSkipsProjectEnvironment(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testRuntimeAppValuesPreviewSkipsProjectEnvironment(t, store)
+}
+
 func TestPgRuntimeAppValuesReadOneSnapshot(t *testing.T) {
 	store, ctx, pool := pgWithPool(t)
 	f := seedRuntimeAppEnv(t, store)

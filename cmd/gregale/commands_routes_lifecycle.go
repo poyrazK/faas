@@ -177,7 +177,7 @@ func cmdRoutesLifecycle(args []string) int {
 	if len(args) > 0 && args[0] == "review" {
 		return cmdRoutesLifecycleReview(args[1:])
 	}
-	PrintUsage(osStderr, "usage: gregale routes lifecycle <review|declarations|prepare-approval|approve|receipt|history> <slug> [options]; declarations requires --from-deployment UUID --to-deployment UUID", "cli")
+	PrintUsage(osStderr, "usage: gregale api route lifecycle <review|declarations|prepare-approval|approve|receipt|history> <slug> [options]; declarations requires --from-deployment UUID --to-deployment UUID", "cli")
 	return 1
 }
 
@@ -194,7 +194,7 @@ func cmdRoutesLifecycleReview(args []string) int {
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) || !canonicalRouteHealthID(*deploymentID) ||
 		!validRouteHealthSuggestionSince(*since) || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes lifecycle review <slug> --deployment ID [--since 14d] [--source-impact PATH] [--out PATH] [--fail-on-incomplete] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route lifecycle review <slug> --deployment ID [--since 14d] [--source-impact PATH] [--out PATH] [--fail-on-incomplete] [--json]", "cli")
 		return 1
 	}
 	if *output != "" {

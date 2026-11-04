@@ -3,16 +3,19 @@ package securitytxt
 
 import "net/http"
 
-// Content is the public security contact document. Keep the canonical URL
+// Content is the public security contact document. Keep the canonical URLs
 // stable: security tooling discovers this document before any product API.
+// It is served on the platform hosts and, through the web console's proxy,
+// at the apex; .well-known/security.txt in the repository is the same text.
+// Every URL here must resolve (issue #2518): add Encryption and
+// Acknowledgments only once a public key and an acknowledgments page exist.
 const Content = "Contact: mailto:security@gregale.dev\n" +
 	"Contact: https://github.com/poyrazK/faas/security/advisories/new\n" +
 	"Expires: 2027-12-31T23:59:59z\n" +
 	"Preferred-Languages: en\n" +
-	"Canonical: https://gregale.dev/docs/.well-known/security.txt\n" +
-	"Encryption: https://gregale.dev/docs/security/pgp.asc\n" +
-	"Acknowledgments: https://gregale.dev/docs/security/acknowledgments\n" +
-	"Policy: https://gregale.dev/docs/security\n"
+	"Canonical: https://gregale.dev/.well-known/security.txt\n" +
+	"Canonical: https://api.gregale.dev/.well-known/security.txt\n" +
+	"Policy: https://gregale.dev/docs/responsible-disclosure\n"
 
 // Handler returns the anonymous GET/HEAD handler for /.well-known/security.txt.
 // The response is deliberately static so it remains available while the

@@ -2,15 +2,15 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.outbound import (
+from faas_sdk.preview.api.outbound import (
     delete_outbound_binding_probe_policy,
     get_outbound_binding_probe_policy,
     set_outbound_binding_probe_policy,
 )
 from faas_sdk.client import Client
-from faas_sdk.models.app_binding_inventory_item import AppBindingInventoryItem
-from faas_sdk.models.outbound_binding_probe_policy import OutboundBindingProbePolicy
-from faas_sdk.models.problem import Problem
+from faas_sdk.preview.models.app_binding_inventory_item import AppBindingInventoryItem
+from faas_sdk.preview.models.outbound_binding_probe_policy import OutboundBindingProbePolicy
+from faas_sdk.preview.models.problem import Problem
 
 
 def test_outbound_probe_policy_wire_and_inventory_roundtrip() -> None:

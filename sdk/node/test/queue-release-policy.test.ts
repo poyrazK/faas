@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AppsService, OpenAPI } from '../src/index.js';
-import type { SetQueueBindingReleasePolicyRequest } from '../src/index.js';
+import { AppsService, OpenAPI } from '../src/preview.js';
+import type { SetQueueBindingReleasePolicyRequest } from '../src/preview.js';
 
 test('queue policy preserves explicit readiness, storage requirements and clearing without fallback', async () => {
   const oldFetch = globalThis.fetch;

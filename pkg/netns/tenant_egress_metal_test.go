@@ -305,6 +305,29 @@ func TestMetalTenantEgressDNSGated(t *testing.T) {
 	}
 }
 
+// TestMetalTenantEgressDatabaseEgress: a port outside egress_ports opens only
+// to an address . port pair vmmd adds to egress_db, for a bound managed
+// database (ADR-20261026150000). 8080 stands in for 5432.
+func TestMetalTenantEgressDatabaseEgress(t *testing.T) {
+	topo := newEgressTopology(t, "dbe", func(c *Config) { c.DNSGated, c.DatabaseEgress = true, true })
+	addr := netip.MustParseAddr("198.51.100.10")
+	for _, argv := range topo.cfg.ResolvedEgressAddCommands([]netip.Addr{addr}, 10*time.Minute) {
+		runIn(t, argv...)
+	}
+	if reply, ok := topo.try("tcp", "198.51.100.10", 8080); ok {
+		t.Fatalf("a resolved address must not open a port outside egress_ports, got %q", reply)
+	}
+	for _, argv := range topo.cfg.DatabaseEgressAddCommands([]netip.Addr{addr}, 8080, 10*time.Minute) {
+		runIn(t, argv...)
+	}
+	if reply, ok := topo.try("tcp", "198.51.100.10", 8080); !ok || reply != "ok" {
+		t.Fatalf("the database pair must pass: ok=%v reply=%q", ok, reply)
+	}
+	if reply, ok := topo.try("tcp", "198.51.100.10", 443); !ok || reply != "ok" {
+		t.Fatalf("egress_ports still apply: ok=%v reply=%q", ok, reply)
+	}
+}
+
 // TestMetalTenantEgressFlowsRecorded opens a real flow and reads it back
 // through the egress_flows set vmmd polls (ADR-371).
 func TestMetalTenantEgressFlowsRecorded(t *testing.T) {

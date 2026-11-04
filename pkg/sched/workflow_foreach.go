@@ -44,18 +44,24 @@ func (o *WorkflowOrchestrator) executeForEach(ctx context.Context, run *state.Wo
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(items))
-	for _, item := range items {
-		item := item
-		wg.Go(func() {
-			action := spec.ForEach.Action.Step(item.StepName)
-			if _, err := o.executeStep(ctx, run, item, action, stepMap, workflowSpecs); err != nil &&
-				!errors.Is(err, state.ErrWorkflowGuardNotReady) &&
-				!errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
-				errCh <- err
-			}
-		})
-	}
-	wg.Wait()
+	// Each item runs with its own dispatch DB-phase token; this goroutine
+	// gives its own back while it waits for them.
+	outsideDBPhase(ctx, func() {
+		for _, item := range items {
+			item := item
+			wg.Go(func() {
+				itemCtx, leave := o.childDBPhase(ctx)
+				defer leave()
+				action := spec.ForEach.Action.Step(item.StepName)
+				if _, err := o.executeStep(itemCtx, run, item, action, stepMap, workflowSpecs); err != nil &&
+					!errors.Is(err, state.ErrWorkflowGuardNotReady) &&
+					!errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) {
+					errCh <- err
+				}
+			})
+		}
+		wg.Wait()
+	})
 	close(errCh)
 	for err := range errCh {
 		return false, err

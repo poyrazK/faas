@@ -535,11 +535,15 @@ func TestRenderCliAuthPage_Happy(t *testing.T) {
 	if strings.Contains(body, `name="email"`) {
 		t.Errorf("body must not contain an email identity field: %s", body)
 	}
-	// The hidden code field carries the normalized (dash-less) code
-	// so the POST handler can hash it directly.
+	// The code is typed from the terminal, never pre-filled from the link:
+	// a link someone sent must not be enough to authorize their terminal
+	// (bug hunt 2026-10-27 H9).
 	normalized := strings.ReplaceAll(strings.ToUpper(minted.Code), "-", "")
-	if !strings.Contains(body, `value="`+normalized+`"`) {
-		t.Errorf("body missing hidden code input with value %q: %s", normalized, body)
+	if strings.Contains(body, normalized) {
+		t.Errorf("page pre-fills or shows the code %q from the link: %s", normalized, body)
+	}
+	if !strings.Contains(body, `name="code"`) || !strings.Contains(body, "required") {
+		t.Errorf("page has no required code input to type: %s", body)
 	}
 }
 

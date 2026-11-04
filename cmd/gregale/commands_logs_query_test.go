@@ -81,6 +81,38 @@ func TestCmdLogsHTTPFiltersUseRequestDatabase(t *testing.T) {
 	}
 }
 
+// #5709: on an account without the production debugger, apid answers the
+// request telemetry routes as absent and `logs --source http` printed only
+// "Not found: no such API route". It now names what is missing.
+func TestCmdLogsHTTPExplainsHiddenProductionDebugger(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/myapp/debug/requests" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"type":"about:blank","title":"Not found","status":404,"code":"not_found","detail":"no such API route"}`)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	var stderr bytes.Buffer
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
+
+	for _, args := range [][]string{{"myapp", "--source", "http"}, {"myapp", "--status", "500"}} {
+		stderr.Reset()
+		if code := main.CmdLogs(args); code != 2 {
+			t.Fatalf("%v exit = %d, want 2; stderr=%s", args, code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "production debugger, which is not enabled for this account") {
+			t.Fatalf("%v stderr = %q", args, stderr.String())
+		}
+	}
+}
+
 func TestCmdLogsRelativeSinceReachesRuntimeAsTimestamp(t *testing.T) {
 	var gotSince string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

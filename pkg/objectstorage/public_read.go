@@ -13,10 +13,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
-
-const publicImmutableCacheControl = "public, max-age=31536000, immutable"
 
 var publicReadPathRE = regexp.MustCompile(`^/[A-Za-z0-9][A-Za-z0-9._~/-]*$`)
 
@@ -34,12 +33,16 @@ type PublicReadConfig struct {
 	Registry       *Registry
 	RequestMetrics state.ObjectStorageProviderUsageStore
 	Accounting     state.ObjectStorageAccountingStore
-	Enabled        func() bool
-	AppsDomain     string
-	Next           http.Handler
-	HTTPClient     *http.Client
-	Now            func() time.Time
-	Log            *slog.Logger
+	// ReadAdmitter, when set, admits gateway-safety reads from cached
+	// decisions and batches their counts (ADR-20261030075301 step 2). Build
+	// it with the registry's AnonymousReadPolicy.
+	ReadAdmitter *ReadAdmitter
+	Enabled      func() bool
+	AppsDomain   string
+	Next         http.Handler
+	HTTPClient   *http.Client
+	Now          func() time.Time
+	Log          *slog.Logger
 }
 
 type publicReadHandler struct {
@@ -47,6 +50,7 @@ type publicReadHandler struct {
 	registry       *Registry
 	requestMetrics state.ObjectStorageProviderUsageStore
 	accounting     state.ObjectStorageAccountingStore
+	readAdmitter   *ReadAdmitter
 	enabled        func() bool
 	appsDomain     string
 	next           http.Handler
@@ -54,6 +58,7 @@ type publicReadHandler struct {
 	now            func() time.Time
 	log            *slog.Logger
 	mounts         *publicMountCache
+	limiters       *publicReadLimiters
 }
 
 // NewPublicReadHandler mounts ready public buckets on app hostnames. A route
@@ -96,10 +101,10 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 	}
 	return &publicReadHandler{
 		store: c.Store, registry: c.Registry, requestMetrics: c.RequestMetrics,
-		accounting: c.Accounting, enabled: c.Enabled,
+		accounting: c.Accounting, readAdmitter: c.ReadAdmitter, enabled: c.Enabled,
 		appsDomain: appsDomain, next: c.Next,
 		client: c.HTTPClient, now: c.Now, log: c.Log,
-		mounts: newPublicMountCache(),
+		mounts: newPublicMountCache(), limiters: newPublicReadLimiters(),
 	}, nil
 }
 
@@ -156,8 +161,15 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if err := h.accounting.AdmitObjectURL(r.Context(), bucket.AccountID, bucket.ID, key, 0, false, h.registry.Accounting); err != nil {
-		http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
+	if !h.limiters.allow(bucket.ID) {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "too many requests for this public bucket", http.StatusTooManyRequests)
+		return
+	}
+	// Strangers spend at most a share of the account's monthly budget.
+	policy := h.registry.Accounting.AnonymousReadPolicy()
+	read, admitted := h.admit(w, r, bucket, key, policy)
+	if !admitted {
 		return
 	}
 	backend, err := h.registry.Resolve(bucket.BackendID, bucket.BackendFingerprint)
@@ -183,9 +195,9 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			upstream.Header.Set(name, value)
 		}
 	}
-	if h.requestMetrics != nil {
-		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket.ID, h.now(), h.registry.Accounting); err != nil {
-			http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
+	if h.requestMetrics != nil && read == nil {
+		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket.ID, h.now(), policy); err != nil {
+			writePublicReadRefusal(w, err)
 			return
 		}
 	}
@@ -197,7 +209,7 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = response.Body.Close() }() // best effort; the provider response is already accounted
 	if response.StatusCode == http.StatusNotModified {
 		copyPublicObjectHeaders(w.Header(), response.Header)
-		w.Header().Set("Cache-Control", publicImmutableCacheControl)
+		w.Header().Set("Cache-Control", publicCacheControl)
 		w.Header().Del("Content-Disposition")
 		w.WriteHeader(response.StatusCode)
 		return
@@ -217,14 +229,14 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method == http.MethodGet && h.registry.Accounting.GatewaySafety() {
-		if err := ReserveGatewayRead(r.Context(), h.requestMetrics, bucket.ID, response, h.registry.Accounting, h.now()); err != nil {
+		if err := h.reserveEgress(r.Context(), bucket, response, policy, read); err != nil {
 			w.Header().Del("Content-Length")
-			http.Error(w, "object storage egress budget is unavailable or exhausted", http.StatusServiceUnavailable)
+			writePublicReadRefusal(w, err)
 			return
 		}
 	}
 	copyPublicObjectHeaders(w.Header(), response.Header)
-	w.Header().Set("Cache-Control", publicImmutableCacheControl)
+	w.Header().Set("Cache-Control", publicCacheControl)
 	w.Header().Del("Content-Disposition")
 	w.WriteHeader(response.StatusCode)
 	if r.Method != http.MethodGet {
@@ -240,6 +252,39 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.log.Warn("public object egress metric write failed", "bucket_id", bucket.ID)
 		}
 	}
+}
+
+// admit admits an anonymous read. Under gateway safety with a read admitter
+// it is admitted from the cached decision and its counts are batched
+// (ADR-20261030075301 step 2); the returned read then carries its egress
+// reservation. Otherwise it takes the locking admission and read is nil.
+func (h *publicReadHandler) admit(w http.ResponseWriter, r *http.Request, bucket state.ObjectBucket, key string, policy api.ObjectStoragePolicy) (*AdmittedRead, bool) {
+	if h.readAdmitter != nil && h.registry.Accounting.GatewaySafety() {
+		read, err := h.readAdmitter.AdmitRead(r.Context(), bucket)
+		if err != nil {
+			writePublicReadRefusal(w, err)
+			return nil, false
+		}
+		return &read, true
+	}
+	if err := h.accounting.AdmitObjectURL(r.Context(), bucket.AccountID, bucket.ID, key, 0, false, policy); err != nil {
+		writePublicReadRefusal(w, err)
+		return nil, false
+	}
+	return nil, true
+}
+
+// reserveEgress reserves a gateway-safety GET's body against the egress
+// ceiling: in the admitter for a cached admission, otherwise in the
+// database. An unknown length fails closed.
+func (h *publicReadHandler) reserveEgress(ctx context.Context, bucket state.ObjectBucket, response *http.Response, policy api.ObjectStoragePolicy, read *AdmittedRead) error {
+	if read == nil {
+		return ReserveGatewayRead(ctx, h.requestMetrics, bucket.ID, response, policy, h.now())
+	}
+	if response.ContentLength < 0 || response.Uncompressed {
+		return state.ErrObjectUsageStale
+	}
+	return h.readAdmitter.ReserveEgress(*read, response.ContentLength)
 }
 
 func (h *publicReadHandler) lookup(r *http.Request) (state.ObjectBucket, string, bool, error) {

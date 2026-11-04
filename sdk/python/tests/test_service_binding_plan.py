@@ -2,10 +2,10 @@ import json
 
 import httpx
 
-from faas_sdk.api.apps import update_app
+from faas_sdk.preview.api.apps import update_app
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.problem import Problem
-from faas_sdk.models.update_app_request import UpdateAppRequest
+from faas_sdk.preview.models.problem import Problem
+from faas_sdk.preview.models.update_app_request import UpdateAppRequest
 
 
 def test_guard_is_optional_and_preserves_explicit_resets():

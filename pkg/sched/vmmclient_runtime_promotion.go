@@ -14,6 +14,13 @@ func (c *VMMClient) PromoteAdmittedRuntime(ctx context.Context, req *vmmdpb.Prom
 	if err != nil {
 		return runtimeadmission.Receipt{}, err
 	}
+	// A grant naming another incarnation than its parent is a re-bound
+	// admission's (ADR-595 extension). This check is structural: the store
+	// issued the grant only through the instance's re-binds, and vmmd
+	// accepts it only for a guest it adopted with that exact parent.
+	if p.Binding.Incarnation != p.Parent.Binding.Incarnation {
+		p = p.Held(p.Parent.Binding.Incarnation)
+	}
 	if err := p.Validate(time.Now()); err != nil {
 		return runtimeadmission.Receipt{}, err
 	}

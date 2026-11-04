@@ -14,11 +14,18 @@ import (
 var _ EnvironmentGitOpsWorkloadCreationStore = (*PgStore)(nil)
 
 func (s *PgStore) PrepareEnvironmentGitOpsWorkloads(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentGitOpsStep, error) {
-	tx, err := s.gitOpsEffectTx(ctx, lease)
+	return retryTrafficSerialization(ctx, func() ([]EnvironmentGitOpsStep, error) {
+		return s.prepareEnvironmentGitOpsWorkloadsOnce(ctx, lease, reviewed)
+	})
+}
+
+// Each created workload app publishes its primary hostname.
+func (s *PgStore) prepareEnvironmentGitOpsWorkloadsOnce(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentGitOpsStep, error) {
+	tx, err := s.gitOpsBindingEffectTx(ctx, lease)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
 	if _, err := q.LockEnvironmentGitOpsIntentApps(ctx, tx, mustPgUUID(lease.Source.ID)); err != nil {
 		return nil, mapErr(err)

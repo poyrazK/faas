@@ -63,13 +63,6 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pt, hash, err := api.GenerateAPIKey()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.CreateAPIKey(context.Background(), opsAcct.ID, hash, "intent-test", api.ScopesAdminOnly); err != nil {
-			t.Fatal(err)
-		}
 		tenant, err := store.CreateAccount(context.Background(), "tenant@example.com", api.PlanHobby)
 		if err != nil {
 			t.Fatal(err)
@@ -82,7 +75,7 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 			WithAdminAllowlist("ops@example.com")
 
 		req := httptest.NewRequest(http.MethodGet, "/v1/admin/operator-intents/"+intentID, nil)
-		req.Header.Set("Authorization", "Bearer "+pt)
+		req.AddCookie(operatorSessionCookie(t, store, srv.Sessions(), opsAcct.ID))
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, req)
 
@@ -119,13 +112,6 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pt, hash, err := api.GenerateAPIKey()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.CreateAPIKey(context.Background(), opsAcct.ID, hash, "intent-test", api.ScopesAdminOnly); err != nil {
-			t.Fatal(err)
-		}
 		ops := wire.NewOpsMetrics("apid_intent_test")
 		srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 			WithOpsMetrics(context.Background(), ops).
@@ -136,7 +122,7 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 		// shape as wrong-owner case below.
 		req := httptest.NewRequest(http.MethodGet,
 			"/v1/admin/operator-intents/00000000-0000-0000-0000-000000000000", nil)
-		req.Header.Set("Authorization", "Bearer "+pt)
+		req.AddCookie(operatorSessionCookie(t, store, srv.Sessions(), opsAcct.ID))
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, req)
 
@@ -161,13 +147,6 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pt, hash, err := api.GenerateAPIKey()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.CreateAPIKey(context.Background(), opsAcct.ID, hash, "intent-test", api.ScopesAdminOnly); err != nil {
-			t.Fatal(err)
-		}
 		ops := wire.NewOpsMetrics("apid_intent_test")
 		srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).
 			WithOpsMetrics(context.Background(), ops).
@@ -179,7 +158,7 @@ func TestGetOperatorIntent_TableDriven(t *testing.T) {
 		// a valid uuid but missing" — same IDOR concern.
 		req := httptest.NewRequest(http.MethodGet,
 			"/v1/admin/operator-intents/not-a-uuid", nil)
-		req.Header.Set("Authorization", "Bearer "+pt)
+		req.AddCookie(operatorSessionCookie(t, store, srv.Sessions(), opsAcct.ID))
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, req)
 

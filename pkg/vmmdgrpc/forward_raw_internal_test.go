@@ -62,9 +62,6 @@ func TestReadUntilBlankLine(t *testing.T) {
 			input:     "X-Filler: " + strings.Repeat("A", 65*1024) + "\n\n",
 			wantHead:  "",
 			wantErrIs: nil, // custom string-typed error, see below
-			// The terminator '\n' remains on the reader because
-			// readUntilBlankLine returns before consuming it.
-			wantRest: "\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,6 +78,9 @@ func TestReadUntilBlankLine(t *testing.T) {
 				if !strings.Contains(err.Error(), "exceeds") {
 					t.Fatalf("cap error text unexpected: %v", err)
 				}
+				// The read stops at the cap, mid-line; the rest is
+				// discarded with the connection.
+				return
 			} else if err != nil {
 				t.Fatalf("readUntilBlankLine: %v", err)
 			}
@@ -117,4 +117,29 @@ func TestReadUntilBlankLine_DoesNotConsumeBodyBytes(t *testing.T) {
 	if string(rest) != "5\r\nhello\r\n0\r\n\r\n" {
 		t.Errorf("body bytes mangled: %q", string(rest))
 	}
+}
+
+// The bridge's head reaches vmmd itself on the raw path. One endless
+// header line must not make vmmd buffer it: the read stops near the cap.
+func TestReadUntilBlankLineBoundsOneLongLine(t *testing.T) {
+	src := &headCountingReader{r: io.MultiReader(strings.NewReader("HTTP/1.1 101 Switching Protocols\nX-Filler: "),
+		strings.NewReader(strings.Repeat("a", 8<<20)), strings.NewReader("\n\n"))}
+	_, err := readUntilBlankLine(bufio.NewReader(src))
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("err = %v, want the head cap", err)
+	}
+	if limit := 64*1024 + 2*4096; src.read > limit {
+		t.Fatalf("read %d bytes of one header line, want at most %d", src.read, limit)
+	}
+}
+
+type headCountingReader struct {
+	r    io.Reader
+	read int
+}
+
+func (c *headCountingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.read += n
+	return n, err
 }

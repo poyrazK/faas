@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundAIReplayTarget } from './OutboundAIReplayTarget.js';
 /**
- * Replay a captured call on up to 5 targets (ADR-997).
+ * Replay a captured call on up to 5 targets.
  */
 export type CreateOutboundAIReplayRequest = {
   targets: Array<OutboundAIReplayTarget>;

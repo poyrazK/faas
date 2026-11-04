@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // CorsPresetChange is one durable mutation of an account-scoped shared CORS
@@ -103,38 +107,17 @@ func (s *PgStore) PruneCorsPresetChangeLog(ctx context.Context, before time.Time
 	if before.IsZero() {
 		return 0, fmt.Errorf("state: CORS preset change log prune requires cutoff")
 	}
-	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM cors_preset_change_log
-		WHERE created_at < $1
-		  AND (
-		      NOT EXISTS (
-		          SELECT 1 FROM accounts a
-		          WHERE a.id = cors_preset_change_log.account_id
-		      )
-		      OR id < (
-		          SELECT max(current.id)
-		          FROM cors_preset_change_log current
-		          WHERE current.account_id = cors_preset_change_log.account_id
-		      )
-		  )
-		  AND id <= COALESCE((
-		      SELECT MIN(COALESCE(w.last_change_id, 0))
-		      FROM compute_nodes n
-		      LEFT JOIN gateway_cors_preset_watermarks w ON w.node_name = n.name
-		      WHERE n.active = true
-		        AND n.role IN ('compute-only', 'compute-node')
-		        AND n.gateway_target_url IS NOT NULL
-		        AND btrim(n.gateway_target_url) <> ''
-		  ), 9223372036854775807::bigint)
-	`, before.UTC())
+	n, err := sqlc.New().PruneFencedCorsPresetChangeLog(ctx, s.pool, sqlc.PruneFencedCorsPresetChangeLogParams{
+		Before: pgtype.Timestamptz{Time: before.UTC(), Valid: true}, FreshnessSeconds: api.TrafficRuntimeObservationFreshness.Seconds(),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("state: prune CORS preset change log: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return n, nil
 }
 
-// UpsertGatewayCorsPresetWatermark is called after local preset/cache repair.
-// A new process boot resets a prior cursor; within a boot it only advances.
+// UpsertGatewayCorsPresetWatermark preserves the legacy writer API.
+// These rows do not authorize convergence status or pruning.
 func (s *PgStore) UpsertGatewayCorsPresetWatermark(ctx context.Context, nodeName, bootID string, lastChangeID int64) error {
 	if s == nil || s.pool == nil {
 		return fmt.Errorf("state: CORS preset policy status has nil pool")

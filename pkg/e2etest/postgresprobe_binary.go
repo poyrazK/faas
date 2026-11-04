@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 )
@@ -27,9 +26,9 @@ func PostgresProbeExecutable() ([]byte, error) {
 			return
 		}
 		defer func() { _ = os.RemoveAll(dir) }()
-		_, source, _, ok := runtime.Caller(0)
-		if !ok {
-			postgresProbeErr = fmt.Errorf("cannot locate PostgreSQL probe source")
+		source, err := CallerDir()
+		if err != nil {
+			postgresProbeErr = fmt.Errorf("locate PostgreSQL probe source: %w", err)
 			return
 		}
 		output := filepath.Join(dir, "postgres-probe")
@@ -39,7 +38,7 @@ func PostgresProbeExecutable() ([]byte, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
 		command := exec.CommandContext(ctx, "go", "build", "-p", "1", "-trimpath", "-buildvcs=false", "-ldflags=-s -w", "-o", output, ".")
-		command.Dir = filepath.Join(filepath.Dir(source), "testdata", "postgresprobe")
+		command.Dir = filepath.Join(source, "testdata", "postgresprobe")
 		command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 		buildOutput, err := command.CombinedOutput()
 		if err != nil {

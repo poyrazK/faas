@@ -1,6 +1,6 @@
-import {decodeDurableSessionCommand, decodeDurableSessionLifecycleCommand} from '@gregale/sdk-node/durable-entities/session';
+import {decodeDurableSessionCommand, decodeDurableSessionLifecycleCommand} from '@gregale/sdk-node/preview/durable-entities/session';
 // Caller-only contracts: no handlers, registry, server or simulator imports.
-import {defineDurableEntityClientContract} from '@gregale/sdk-node/durable-entities/client';
+import {defineDurableEntityClientContract} from '@gregale/sdk-node/preview/durable-entities/client';
 import {counterState, reservationState, sessionState, record} from './state.mjs';
 export const counterContract = defineDurableEntityClientContract({namespace: 'counters',
   decodePayload(value) {

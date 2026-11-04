@@ -4,7 +4,8 @@ Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`, group
 `faas_compute_edge`. Each compute node runs the app edge when the manifest
 sets `public_edge.compute_nodes`:
 - **`faas-gatewayd-public-edge`:** gatewayd-public in compute edge mode, on
-  `127.0.0.1:8090`, with its control port on 9092.
+  `127.0.0.1:8090`, with its control port on 9109 (9092 on a compute node is gatewayd-internal's
+  egress listener).
 - **`faas-cloudflared`:** the Cloudflare Tunnel connector, with metrics on 20241.
 
 Prometheus discovers both per node through apid HTTP-SD, as the
@@ -42,9 +43,9 @@ On the node:
 ```bash
 systemctl status faas-gatewayd-public-edge faas-cloudflared --no-pager
 journalctl -u faas-gatewayd-public-edge -u faas-cloudflared --since -30m --no-pager | tail -60
-curl -fsS http://127.0.0.1:9092/readyz
+curl -fsS http://127.0.0.1:9109/readyz
 curl -fsS http://127.0.0.1:20241/ready
-curl -fsS http://127.0.0.1:9092/metrics | grep gatewayd_public_edge_
+curl -fsS http://127.0.0.1:9109/metrics | grep gatewayd_public_edge_
 ```
 
 ## Recover

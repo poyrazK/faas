@@ -20,7 +20,7 @@ func cmdEventsRetention(args []string) int {
 		return 1
 	}
 	if len(positional) != 0 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events retention [--source SOURCE] [--app APP] [--window 24h] [--limit 100]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event retention [--source SOURCE] [--app APP] [--window 24h] [--limit 100]", "events")
 		return 1
 	}
 	q := api.EventRetentionQuery{Source: *source, App: *app, Window: *window, Limit: *limit}

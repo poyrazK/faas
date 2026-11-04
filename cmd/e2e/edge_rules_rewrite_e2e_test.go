@@ -48,7 +48,7 @@ func TestEdgeRulesRewrite_E2E(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-rewrite.apps.test.example"
+	synthHost := "edgectl-rewrite.edge-e2e.example"
 
 	// Precondition: kind=route substitute (synthetic host → real test app).
 	seedRouteSubstitute(t, context.Background(), pool,

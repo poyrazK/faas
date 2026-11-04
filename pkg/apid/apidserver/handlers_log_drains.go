@@ -182,6 +182,10 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.datadogIntegrationProblem(appFlagSubject(acct, app), req.Kind == api.AppLogDrainKindDatadog); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateDatadogAppLogDrain(req.Kind, req.TargetURL, &req.AuthHeader, true); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -202,6 +206,7 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 	row, err := s.store.CreateAppLogDrainIfUnderQuota(r.Context(), state.AppLogDrain{
 		AppID: app.ID, AccountID: acct.ID, Kind: state.AppLogDrainKind(req.Kind),
 		TargetURL: req.TargetURL, AuthHeaderSealed: sealed, Enabled: enabled,
+		CreatedByAccountID: actorAccount(r, acct).ID,
 	}, limits)
 	if err != nil {
 		var quotaErr *state.AppLogDrainQuotaError
@@ -317,6 +322,14 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 			api.WriteProblem(w, prob)
 			return
 		}
+		// The stored Authorization header never follows the drain to another
+		// host: anyone who could edit the drain could otherwise read it off
+		// their own server (bug hunt 2026-10-28 H107).
+		if req.AuthHeader == nil && len(existing.AuthHeaderSealed) > 0 && !api.SameURLOrigin(existing.TargetURL, targetURL) {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Credential required",
+				"supply auth_header again to send this drain to a different host"))
+			return
+		}
 		params.TargetURL = &targetURL
 	}
 	if req.AuthHeader != nil {
@@ -330,6 +343,11 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 			return
 		}
 		params.AuthHeaderSealed = &sealed
+	}
+	switching := params.Kind != nil && string(*params.Kind) == api.AppLogDrainKindDatadog && string(existing.Kind) != api.AppLogDrainKindDatadog
+	if prob := s.datadogIntegrationProblem(appFlagSubject(acct, app), switching); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	if prob := validateUpdatedDatadogAppLogDrain(existing, params, req.AuthHeader); prob != nil {
 		api.WriteProblem(w, prob)
@@ -381,18 +399,18 @@ func (s *server) deleteAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// sealAppLogDrainAuthHeader seals a log drain's authentication header to the
+// edge domain (and the fleet recipient until it is in domain mode, ADR
+// 20261022111812); gatewayd-internal opens it to deliver logs.
 func sealAppLogDrainAuthHeader(plaintext string) ([]byte, error) {
 	if plaintext == "" {
 		return nil, nil
 	}
-	if setSecretRecipient == nil {
-		return nil, errors.New("host age recipient not loaded")
+	recipients, err := edgeCredentialRecipients()
+	if err != nil {
+		return nil, fmt.Errorf("seal log drain credential: %w", err)
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return nil, errors.New("host age recipient not loaded")
-	}
-	return secretbox.SealBytes(recipient, appLogDrainSecretSealLabel, []byte(plaintext), api.AppLogDrainAuthHeaderMaxBytes)
+	return secretbox.SealBytesTo(recipients, appLogDrainSecretSealLabel, []byte(plaintext), api.AppLogDrainAuthHeaderMaxBytes)
 }
 
 func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHealthResponse {

@@ -264,7 +264,7 @@ func RenderAppLogGap(w http.ResponseWriter, flusher http.Flusher, f scheddgrpc.L
 // ("timeout|deadline", "request_id=[a-f0-9]+", etc.) while
 // foreclosing the pathological case. The CLI's --grep is
 // typically 8-32 bytes; 256 leaves headroom for power users.
-const MaxGrepPatternBytes = 256
+const MaxGrepPatternBytes = api.MaxLogGrepPatternBytes
 
 // ValidateLogFilters enforces the issue #309 filter contract on
 // the `--level`, `--grep`, `--since`, and `--deployment` query

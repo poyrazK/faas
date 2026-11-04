@@ -15,7 +15,7 @@ class CreateOrgRequest:
     (lowercase alphanumeric + dashes, 3..32 chars); name is
     trimmed-non-empty, capped at 256 chars. Personal orgs
     cannot be created via this endpoint — every account
-    already owns an immutable personal org (PR 3 backfill).
+    already owns an immutable personal org (backfill).
 
     """
 

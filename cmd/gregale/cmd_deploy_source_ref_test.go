@@ -607,7 +607,7 @@ func TestCmdDeployRepoSourceRef_NoWait(t *testing.T) {
 		"runtime:       detected remotely after checkout",
 		"resources:     preserve existing · plan default for new app",
 		"environment:   default",
-		"release:       standard · 100% after readiness",
+		"release:       app release policy (default: health-gated canary when a release is live)",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("stdout missing %q in:\n%s", want, stdout.String())

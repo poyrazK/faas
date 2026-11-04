@@ -63,6 +63,11 @@ daemons:
     # The control-plane schedd reaches the local edge; compute schedds use
     # their node-local gatewayd-internal socket after host rendering.
     gateway_synth_target: tcp://127.0.0.1:8080
+    # ADR-20261021215353 early freeze. Releases re-render schedd.toml from
+    # this manifest, so a value set by hand on a node is lost at the next
+    # rollout. Set it here only after a release whose gregalectl and imaged
+    # parse the key is live on every node: older ones reject unknown keys.
+    # frozen_tier_early_freeze_after_s: 10
   vmmd:
     bind: tcp://0.0.0.0:50051
     tls:
@@ -85,6 +90,11 @@ daemons:
     bind: tcp://0.0.0.0:443
   gatewayd_internal:
     bind: tcp://0.0.0.0:8080
+    # ADR-1520: spend the central rate-limit counters from local leases, so a
+    # request within its limit never waits on the control plane's Postgres.
+    # On by hand on fsn-2/fsn-3 since 2026-10-25 (owner); this keeps it on
+    # through releases, which re-render gatewayd-internal.toml.
+    ratelimit_lease: true
     apid_loopback: http://fsn-1.gregale.dev:8081
     schedd_tls:
       cert_path: /etc/faas/tls/gatewayd/schedd-client.crt
@@ -130,6 +140,32 @@ egress:
   danger_accept_rfc1918_lateral_movement: true
   overlay_exceptions:
     - 10.10.0.0/20
+
+# Branded S3 gateway (ADR 20261025111015). `managed` installs and health-gates
+# s3-gatewayd on the control-plane node from these operator-local files; leave
+# it unset only when no backend is configured. Strict `verify-fleet` fails when
+# the gateway runs without this.
+# object_storage:
+#   gateway: managed
+#   config_src: /operator/config/object-storage.json
+#   # S3/R2/OVH only; GCS with attached ADC has no provider env file.
+#   provider_env_src: /operator/secrets/object-storage.env
+
+# ADR-1343: every compute node runs the app edge (faas-gatewayd-public-edge
+# and the faas-cloudflared tunnel connector) and holds back 1,000 millicores
+# and 256 MB from tenants for it. No app traffic moves until an operator
+# stages the tunnel token and the public-timeout Worker routes a host to the
+# tunnel: docs/runbooks/AppEdgeCutover.md.
+public_edge:
+  compute_nodes: true
+
+# Customer log archive (pkg/logarchive). Keyless: every node's attached
+# service account holds roles/storage.objectUser on the bucket, whose
+# lifecycle rule deletes faas-logs/ objects after 90 days.
+log_archive:
+  bucket: gregale-prod-280686321025-log-archive
+  endpoint: https://storage.googleapis.com
+  auth: gcp_metadata
 
 dns:
   apps_domain: gregale.dev
@@ -185,6 +221,13 @@ storage:
 cgroups:
   slice: faas-cp.slice
   controllers: "memory,cpu,io,pids"
+
+# Workload-identity tokens for queue workers (ADR-1141). Off until an
+# operator runs `gregalectl workload-identity init --out DIR` on the
+# controller and uncomments this with that DIR; converge the control plane
+# first. See deploy/manifest/README.md.
+# workload_identity:
+#   source_dir: /path/on/controller/workload-identity
 
 pki:
   root_dir: /etc/faas/tls

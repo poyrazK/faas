@@ -81,6 +81,8 @@ type GitHubDeploymentPolicy struct {
 	IgnoredPaths         []string `json:"ignored_paths"`
 	PreviewEnabled       bool     `json:"preview_enabled"`
 	PreviewTTLHours      int      `json:"preview_ttl_hours"`
+	PreviewBotPRs        bool     `json:"preview_bot_prs"`
+	PreviewDraftPRs      bool     `json:"preview_draft_prs"`
 	PreviewServicePolicy string   `json:"preview_service_policy"`
 	ProductionTrigger    string   `json:"production_trigger"`
 }
@@ -91,6 +93,8 @@ type GitHubDeploymentPolicyPatch struct {
 	IgnoredPaths         *[]string `json:"ignored_paths,omitempty"`
 	PreviewEnabled       *bool     `json:"preview_enabled,omitempty"`
 	PreviewTTLHours      *int      `json:"preview_ttl_hours,omitempty"`
+	PreviewBotPRs        *bool     `json:"preview_bot_prs,omitempty"`
+	PreviewDraftPRs      *bool     `json:"preview_draft_prs,omitempty"`
 	PreviewServicePolicy *string   `json:"preview_service_policy,omitempty"`
 	ProductionTrigger    *string   `json:"production_trigger,omitempty"`
 }

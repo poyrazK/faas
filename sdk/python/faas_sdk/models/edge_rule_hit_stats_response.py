@@ -13,7 +13,7 @@ T = TypeVar("T", bound="EdgeRuleHitStatsResponse")
 
 @_attrs_define
 class EdgeRuleHitStatsResponse:
-    """One rule's match counts over the window (ADR-960)."""
+    """One rule's match counts over the window."""
 
     rule_id: str
     matched: int
@@ -22,7 +22,7 @@ class EdgeRuleHitStatsResponse:
     """Requests a log-mode rule matched."""
     series: list[int] | Unset = UNSET
     """With series=true, matched plus logged per hour; the first value is the hour starting at since, the last the
-    current hour (ADR-20261020105001)."""
+    current hour."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

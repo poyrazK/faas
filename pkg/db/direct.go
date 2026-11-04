@@ -15,8 +15,8 @@
 //   - LISTEN. The ADR-190 notify hub, the legacy Subscribe path, and
 //     WaitFor all hold a connection open to receive pg_notify. A pooled
 //     connection would be handed to another client between notifications.
-//   - Session advisory locks. PgStore's edge-rule mutation lock and
-//     MigrateUp's migration lock both take pg_advisory_lock (NOT the
+//   - Session advisory locks. PgStore's edge-rule mutation fence and traffic
+//     policy guards, and MigrateUp's migration lock take pg_advisory_lock (NOT the
 //     _xact_ variant) on a pinned connection and hold it across statements.
 //     Under transaction pooling the lock would be released — or worse,
 //     leak to whichever client got that server connection next.
@@ -72,6 +72,14 @@ const DirectDSNEnv = "FAAS_DATABASE_URL_DIRECT"
 // across every node.
 const directHubOnMaxConns int32 = 2
 
+// ADR-570: apid holds its outer edge mutation lock, and imaged its deployment
+// activation lock, while a traffic policy guard pins a second connection
+// (imaged's MarkDeploymentLive). Each admits one outer lock at a time: apid's
+// process mutex, imaged's serial notification loop. Without the extra
+// connection imaged's guard waited behind the parked hub connection and image
+// deploys stalled in snapshotting.
+const directNestedGuardHubOnMaxConns int32 = directHubOnMaxConns + 1
+
 // directMaxConns resolves the session-scoped pool budget for the notify mode
 // this process runs in.
 //
@@ -83,10 +91,13 @@ const directHubOnMaxConns int32 = 2
 // the same coupling the ordinary pool has, so it takes the same table: the
 // kill switch stays a rollback rather than becoming a second outage.
 func directMaxConns(appName string) int32 {
+	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
 	if notifyHubEnabled() {
+		if name == "apid" || name == "imaged" {
+			return directNestedGuardHubOnMaxConns
+		}
 		return directHubOnMaxConns
 	}
-	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
 	if limit, ok := DaemonMaxConnectionsNotifyHubDisabled[name]; ok {
 		return limit
 	}
@@ -166,6 +177,9 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 	if err != nil {
 		return nil, fmt.Errorf("db: parse %s: %w", DirectDSNEnv, err)
 	}
+	if err := applyRuntimeRole(cfg.ConnConfig); err != nil {
+		return nil, err
+	}
 	cfg.MaxConns = directMaxConns(appName)
 	cfg.MinConns = 0
 	// No MaxConnIdleTime: a LISTEN connection is idle by definition between
@@ -176,6 +190,9 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 		// identifies the daemon in pg_stat_activity — which is where an
 		// operator looks when a LISTEN or an advisory lock misbehaves.
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName + "-direct"
+	}
+	if appName != MigratorAppName {
+		applyDaemonSessionTimeouts(cfg.ConnConfig.RuntimeParams)
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -208,9 +225,15 @@ func openDirect(ctx context.Context, appName, ordinaryDSN string) (*pgxpool.Pool
 // without introducing a transaction pooler, so retain pgx's typed default
 // mode: QueryExecModeExec guesses []byte JSONB parameters as bytea text.
 func applyPooledExecMode(cfg *pgxpool.Config, ordinaryDSN string) {
-	directDSN := os.Getenv(DirectDSNEnv)
-	if directDSN == "" || directDSN == ordinaryDSN {
+	if !pooledDSN(ordinaryDSN) {
 		return
 	}
 	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+}
+
+// pooledDSN reports whether ordinaryDSN reaches a transaction-mode pooler:
+// a separate direct DSN is configured beside it.
+func pooledDSN(ordinaryDSN string) bool {
+	directDSN := os.Getenv(DirectDSNEnv)
+	return directDSN != "" && directDSN != ordinaryDSN
 }

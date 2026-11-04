@@ -1,4 +1,4 @@
-from faas_sdk.models.financial_budget_runtime import FinancialBudgetRuntime
+from faas_sdk.preview.models.financial_budget_runtime import FinancialBudgetRuntime
 
 
 def test_strict_compute_retains_exact_funding_and_unconfirmed_retirement():

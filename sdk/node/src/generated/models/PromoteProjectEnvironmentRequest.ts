@@ -16,7 +16,7 @@ export type PromoteProjectEnvironmentRequest = {
    */
   approval_token?: string;
   /**
-   * Promote into production while a deploy freeze covers one of the apps; the reason is audited (ADR-20261019071733).
+   * Promote into production while a deploy freeze covers one of the apps; the reason is audited.
    */
   override_freeze?: string;
 };

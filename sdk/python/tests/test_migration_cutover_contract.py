@@ -1,14 +1,14 @@
 from uuid import UUID
 
-from faas_sdk.api.apps import (
+from faas_sdk.preview.api.apps import (
     act_on_migration_cutover,
     create_migration_cutover,
     get_migration_cutover,
     list_migration_cutovers,
 )
-from faas_sdk.models.create_migration_cutover_request import CreateMigrationCutoverRequest
-from faas_sdk.models.migration_cutover_action_request import MigrationCutoverActionRequest
-from faas_sdk.models.migration_dns_record import MigrationDNSRecord
+from faas_sdk.preview.models.create_migration_cutover_request import CreateMigrationCutoverRequest
+from faas_sdk.preview.models.migration_cutover_action_request import MigrationCutoverActionRequest
+from faas_sdk.preview.models.migration_dns_record import MigrationDNSRecord
 
 
 def test_cutover_preserves_original_dns_and_stable_plan_identity():

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -82,7 +84,7 @@ func repairDurableControlPlaneChanges(
 		if _, changed := trafficApps[appID]; changed {
 			// The target set must be hydrated before the new weight table is
 			// published, or a newly weighted deployment can briefly 503.
-			if err := inv.RefreshLiveTargets(ctx, appID); err != nil {
+			if err := refreshControlPlaneTargets(ctx, inv, appID); err != nil {
 				return 0, err
 			}
 			if err := inv.RefreshDeploymentWeights(ctx, appID); err != nil {
@@ -101,6 +103,20 @@ func repairDurableControlPlaneChanges(
 			"apps", len(apps))
 	}
 	return len(changes), nil
+}
+
+// A periodic placement refresh can win the read fence on every aligned poll.
+// Discard that stale read and try one fresh read within the same poll deadline.
+// A second collision or a source error leaves the ledger watermark unchanged.
+func refreshControlPlaneTargets(ctx context.Context, inv controlPlaneRepairInvalidator, appID string) error {
+	err := inv.RefreshLiveTargets(ctx, appID)
+	if !errors.Is(err, gateway.ErrTargetPlacementChanged) {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return inv.RefreshLiveTargets(ctx, appID)
 }
 
 // watchDurableControlPlaneChanges complements app_changed and traffic-change

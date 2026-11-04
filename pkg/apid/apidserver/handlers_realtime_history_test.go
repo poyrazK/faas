@@ -26,7 +26,7 @@ func TestManagedRealtimeRetainedMessagesPersistAndReportGap(t *testing.T) {
 	if disabled := e.Do(t, http.MethodGet, path+"?after=0", nil, nil); disabled.Code != http.StatusNotFound {
 		t.Fatalf("preview-disabled read = %d %s", disabled.Code, disabled.Body)
 	}
-	(*e.S()).WithRealtimeHistoryPreviewEnabled(true)
+	(*e.S()).WithRealtimeHistoryPreviewEnabled(true).WithRealtimePreview(apidserver.RealtimePreviewEveryone())
 	first := e.Do(t, http.MethodPost, path, request, nil)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("append = %d %s", first.Code, first.Body)
@@ -76,7 +76,7 @@ func TestManagedRealtimeHistoryUsagePreview(t *testing.T) {
 	if response := e.Do(t, http.MethodGet, path, nil, nil); response.Code != http.StatusNotFound {
 		t.Fatalf("preview disabled = %d %s", response.Code, response.Body)
 	}
-	(*e.S()).WithRealtimeHistoryPreviewEnabled(true)
+	(*e.S()).WithRealtimeHistoryPreviewEnabled(true).WithRealtimePreview(apidserver.RealtimePreviewEveryone())
 	endpointID := createRealtimeEndpointForTest(t, e)
 	if _, err := (*e.Store()).AppendManagedRealtimeChannelMessage(t.Context(), endpointID, "updates", []byte("payload"), false, ""); err != nil {
 		t.Fatal(err)

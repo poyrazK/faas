@@ -315,11 +315,11 @@ type DispatcherOptions struct {
 // per (account, rule, secret version); PR 4 calls Dispatch on every
 // alert fire.
 //
-// Dispatcher is NOT safe for concurrent use of Dispatch. The
-// per-target Signer lives on Target, but the per-call body
-// marshalling and the retry loop share d.opts — a caller that
-// fires multiple deliveries in parallel should construct one
-// Dispatcher per delivery stream (or serialise at the caller).
+// Dispatch is safe for concurrent use: the per-target Signer lives on
+// Target, and the body marshalling and retry loop only read d.opts. A
+// caller-supplied Sleeper or Now must itself be safe for concurrent use.
+// The alert evaluator dispatches for several accounts at once
+// (ADR-20261028101615).
 type Dispatcher struct {
 	opts DispatcherOptions
 	// headerNames is the (signature, id, timestamp, attempt) tuple

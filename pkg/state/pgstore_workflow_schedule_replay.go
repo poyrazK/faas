@@ -56,10 +56,7 @@ func (s *PgStore) PreviewWorkflowScheduleReplays(ctx context.Context, appID stri
 		return nil, err
 	}
 	queries := sqlc.New()
-	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID)})
-	if err != nil {
-		return nil, fmt.Errorf("state: count workflow schedule replay quota: %w", err)
-	}
+	active := int64(-1)
 	reserved := int64(0)
 	reservedNamed := make(map[string]int64)
 	results := make([]WorkflowScheduleReplayResult, 0, len(rows))
@@ -133,6 +130,12 @@ func (s *PgStore) PreviewWorkflowScheduleReplays(ctx context.Context, appID stri
 			result.Outcome = WorkflowScheduleReplayOverlapActive
 			results = append(results, result)
 			continue
+		}
+		if active < 0 {
+			active, err = queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID), ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
+			if err != nil {
+				return nil, fmt.Errorf("state: count workflow schedule replay quota: %w", err)
+			}
 		}
 		if active+reserved >= int64(plan.WorkflowMaxConcurrentRuns()) {
 			result.Outcome = WorkflowScheduleReplayQuotaFull
@@ -246,7 +249,7 @@ func (s *PgStore) replayWorkflowScheduleOccurrence(ctx context.Context, appID, o
 		result.Outcome = outcome
 		return result, nil
 	}
-	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID)})
+	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID), ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
 	if err != nil {
 		return WorkflowScheduleReplayResult{}, fmt.Errorf("state: count workflow schedule replay quota: %w", err)
 	}

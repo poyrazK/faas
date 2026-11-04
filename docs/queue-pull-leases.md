@@ -32,7 +32,7 @@ period. Inside a Gregale VM they authenticate with a workload-identity token,
 so the image needs no API key.
 
 ```js
-import { consumeQueue } from '@gregale/sdk-node/queues/runtime';
+import { consumeQueue } from '@gregale/sdk-node/preview/queues/runtime';
 
 consumeQueue({ app: 'my-worker', queue: 'jobs', concurrency: 4 }, async (message, { signal }) => {
   await resize(message.payload, { signal }); // signal aborts if the lease is lost
@@ -41,7 +41,7 @@ consumeQueue({ app: 'my-worker', queue: 'jobs', concurrency: 4 }, async (message
 
 ```python
 import asyncio
-from faas_sdk.queue_consumer import consume_queue
+from faas_sdk.preview.queue_consumer import consume_queue
 
 async def handle(message):
     await resize(message.payload)  # message.lease_lost is set if the lease is lost
@@ -91,7 +91,9 @@ separately in `succeeded` and `failed`.
   for audience `gregale:queues` from the guest's loopback token endpoint. No
   secret is stored in the image, and the platform records which instance
   holds each lease, so a worker that is mid-message is not the one stopped
-  when the pool scales in.
+  when the pool scales in. Only a worker running a production deployment can
+  lease with its token: a staging or preview deployment of the same app gets
+  `401`, so code reviewed only for a stage never touches production messages.
 - **From anywhere else:** an API key with the `queues:consume` scope
   (`deploy:write` and `admin` keys also work).
 

@@ -14,6 +14,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -196,5 +199,42 @@ func TestFullProjectEnvironmentCloneHidesInternalHostingBlockers(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// Shared organization project access never admits a full clone, even with
+// both switches on: a member must not copy the owner's values, secrets or
+// databases into a stage they control (the /environments rule).
+func TestFullProjectEnvironmentCloneRefusesSharedOrganizationAccess(t *testing.T) {
+	srv, store, actor, _, _ := apidserver.NewProjectLifecycleFixture(t)
+	ctx := context.Background()
+	for _, key := range []string{runtimeconfig.KeyFullEnvironmentClones, "full_environment_clone_admission_enabled"} {
+		if err := (*srv.RuntimeConfig()).Apply(key, json.RawMessage("true")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "clone-company", Name: "Company", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember(ctx, org.ID, actor.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: org.ID, OrgID: org.ID, Slug: "company-shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/orgs/"+org.Slug+"/projects/"+project.Slug+"/environment-clones", project.Slug,
+		[]byte(`{"slug":"stage","from_environment":"production","full":true}`))
+	req.Pattern = "POST /v1/orgs/{organization}/projects/{slug}/environment-clones"
+	req.SetPathValue("organization", org.Slug)
+	req.Header.Set("Idempotency-Key", "org-clone")
+	req = req.WithContext(authmw.WithPrincipal(ctx, actor, nil, nil))
+	projectaccess.Wrap(store, nil, srv.CreateFullProjectEnvironmentClone)(rec, req, actor)
+	if rec.Code != http.StatusForbidden && rec.Code != http.StatusConflict {
+		t.Fatalf("shared organization clone = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.ProjectEnvironmentCloneOperationByIdempotencyKey(ctx, org.ID, project.ID, "org-clone"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("shared organization access admitted a clone: %v", err)
 	}
 }

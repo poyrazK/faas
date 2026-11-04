@@ -36,7 +36,6 @@ package apidserver
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -64,8 +63,9 @@ func (s *server) getDeploymentScan(w http.ResponseWriter, r *http.Request, acct 
 			s.notFound(w, "no such deployment")
 			return
 		}
+		logCustomerFailure(s.log, "load deployment", err)
 		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("load deployment: %v", err)))
+			api.DetailServerFailure))
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), d.AppID)
@@ -185,8 +185,9 @@ func (s *server) getDeploymentSecretScan(w http.ResponseWriter, r *http.Request,
 			s.notFound(w, "no such deployment")
 			return
 		}
+		logCustomerFailure(s.log, "load deployment", err)
 		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("load deployment: %v", err)))
+			api.DetailServerFailure))
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), d.AppID)

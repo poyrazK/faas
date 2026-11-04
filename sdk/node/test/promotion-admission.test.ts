@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, ProjectsService, type ProjectPromotionHealth } from '../src/index.js';
+import { FaaSClient, ProjectsService, type ProjectPromotionHealth } from '../src/preview.js';
 
 test('promotion status preserves queued admission and its separate deadline', async (t) => {
   const queued = '2026-10-15T12:00:00Z', deadline = '2026-10-15T12:15:00Z';

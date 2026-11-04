@@ -134,7 +134,8 @@ func (s *Service) applyActions(
 				app = ApplyScannedWorkloadToApp(app, action.Workload, availableServices)
 			}
 			mutations = append(mutations, state.ProjectReconcileMutation{Op: action.Op, App: app,
-				SetPlatformTenantRequired: action.Workload.PlatformTenantRequired != nil})
+				SetPlatformTenantRequired: action.Workload.PlatformTenantRequired != nil,
+				SetResources:              !action.Workload.Resources.IsZero()})
 		}
 		var desiredCrons []state.ProjectReconcileCron
 		if cronSpecs != nil {
@@ -326,7 +327,13 @@ func (s *Service) applyUpdate(
 	manifest.Ports = portsWithInternal(manifest.Ports, a.Workload.InternalPorts)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
+	manifest.BuildGoCommand = a.Workload.GoCommand
+	releaseScanWorkerMode(&manifest, a.App.WorkloadClass, a.Workload)
 	applyProjectImage(&manifest, a.Workload)
+	resourced := a.App
+	resourced.Manifest = manifest
+	declared := applyComposeResources(&resourced, a.Workload)
+	manifest = resourced.Manifest
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
 		RootDir:                   &rootDir,
@@ -336,6 +343,9 @@ func (s *Service) applyUpdate(
 		Manifest:                  &manifest,
 		PlatformTenantRequired:    a.Workload.PlatformTenantRequired,
 		SetPlatformTenantRequired: a.Workload.PlatformTenantRequired != nil,
+	}
+	if declared {
+		params.RAMMB, params.CPUMillicores, params.MaxConcurrency = &resourced.RAMMB, &resourced.CPUMillicores, &resourced.MaxConcurrency
 	}
 	updated, err := s.Store.UpdateApp(ctx, a.App.ID, params)
 	if err != nil {
@@ -407,6 +417,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 
 			BuildDockerfile: w.Dockerfile,
 			DockerfileBuild: w.DockerfileBuild.Clone(),
+			BuildGoCommand:  w.GoCommand,
 		},
 		RequireAuthn:           plan.RequireAuthnDefault(),
 		PublicAuthMode:         plan.PublicAuthModeDefault(),
@@ -416,6 +427,10 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		Visibility: reposcan.NewWorkloadVisibility(w),
 	}
 	applyProjectImage(&app.Manifest, w)
+	applyComposeResources(&app, w)
+	if app.RAMMB == 0 {
+		app.RAMMB = api.ProjectWorkloadDefaultRAMMB
+	}
 	return app
 }
 
@@ -429,6 +444,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	}
 	app.RootDir = w.RootDir
 	app.WorkloadName = w.Name
+	releaseScanWorkerMode(&app.Manifest, app.WorkloadClass, w)
 	app.WorkloadClass = workloadClassFromScan(w)
 	app.StartCommand = resolveStartCommand(w)
 	transport := serviceBindingTransportForExistingWorkload(w, app.Manifest.ServiceBindingTransport)
@@ -444,7 +460,9 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.Ports = portsWithInternal(app.Manifest.Ports, w.InternalPorts)
 	app.Manifest.BuildDockerfile = w.Dockerfile
 	app.Manifest.DockerfileBuild = w.DockerfileBuild.Clone()
+	app.Manifest.BuildGoCommand = w.GoCommand
 	applyProjectImage(&app.Manifest, w)
+	applyComposeResources(&app, w)
 	return app
 }
 
@@ -460,7 +478,11 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	// and so do the process overrides other than entrypoint, which the scan
 	// folds into a built service's command (ADR-20261022160000).
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectReadinessCheck = w.ReadinessCheck.Clone()
 	manifest.ProjectImageProcess = w.ImageProcess.Clone()
+	// Compose secrets become files for built and prebuilt images alike
+	// (ADR-20261023090000).
+	manifest.ProjectSecretFiles = api.CloneSecretFiles(w.SecretFiles)
 	if w.Image == "" {
 		return
 	}
@@ -470,6 +492,19 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	}
 	if len(w.Ports) > 0 {
 		manifest.ProjectImagePort = w.Ports[0]
+	}
+}
+
+// releaseScanWorkerMode clears the worker mode the scan gave an app once the
+// scan no longer classifies its workload as a worker: a Compose service
+// without ports that another service now calls serves requests
+// (ADR-20261029120000). Worker mode alone would keep the app from parking
+// and refuse the wakes its callers need. An app that was not a worker keeps
+// any mode its owner set.
+func releaseScanWorkerMode(manifest *state.AppManifest, previous state.WorkloadClass, w reposcan.Workload) {
+	if previous == state.WorkloadClassWorker && workloadClassFromScan(w) != state.WorkloadClassWorker &&
+		manifest.ExecutionMode == api.ExecutionModeWorker {
+		manifest.ExecutionMode = ""
 	}
 }
 

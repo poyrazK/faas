@@ -204,8 +204,8 @@ func writeWorkflowCodeOpTx(ctx context.Context, tx pgx.Tx, runID string, op Work
 	return nil
 }
 
-func (s *PgStore) ParkWorkflowCodeEvent(ctx context.Context, runID, stepName, eventName string, occurrence int, timeout time.Duration) (*WorkflowEvent, bool, time.Time, error) {
-	if eventName == "" || occurrence < 0 || timeout <= 0 {
+func (s *PgStore) ParkWorkflowCodeEvent(ctx context.Context, runID, stepName, eventName string, timeout time.Duration) (*WorkflowEvent, bool, time.Time, error) {
+	if eventName == "" || timeout <= 0 {
 		return nil, false, time.Time{}, ErrWorkflowInvalidRecord
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -233,15 +233,24 @@ func (s *PgStore) ParkWorkflowCodeEvent(ctx context.Context, runID, stepName, ev
 		value := startedAt.Add(timeout)
 		matchDeadline = &value
 	}
-	query := fmt.Sprintf(`SELECT %s FROM workflow_events WHERE run_id = $1 AND event_name = $2 AND ($3::timestamptz IS NULL OR received_at < $3) ORDER BY received_at ASC, id ASC OFFSET $4 LIMIT 1`, workflowEventSelectCols)
-	event, err := scanWorkflowEventCols(tx.QueryRow(ctx, query, runID, eventName, matchDeadline, occurrence).Scan)
+	// Skip events other waits of the run consumed. Waits resolved before
+	// consumed IDs were recorded took the earliest events, so skip that many.
+	query := fmt.Sprintf(`SELECT %s FROM workflow_events e
+		WHERE e.run_id = $1 AND e.event_name = $2 AND ($3::timestamptz IS NULL OR e.received_at < $3)
+		AND NOT EXISTS (SELECT 1 FROM workflow_steps s WHERE s.run_id = $1 AND s.input->$4::text->>'event_id' = e.id::text)
+		ORDER BY e.received_at ASC, e.id ASC
+		OFFSET (SELECT count(*) FROM workflow_steps s WHERE s.run_id = $1 AND s.status = 'succeeded' AND s.output IS NOT NULL
+			AND s.input->$4::text->>'kind' = 'event' AND s.input->$4::text->>'event' = $2 AND NOT s.input->$4::text ? 'event_id')
+		LIMIT 1`, workflowEventSelectCols)
+	event, err := scanWorkflowEventCols(tx.QueryRow(ctx, query, runID, eventName, matchDeadline, api.WorkflowCodeOpKey).Scan)
 	switch {
 	case err == nil:
 		if _, err := tx.Exec(ctx, `
 			UPDATE workflow_steps
-			SET status = 'succeeded', output = $3, started_at = COALESCE(started_at, now()), finished_at = now()
+			SET status = 'succeeded', output = $3, started_at = COALESCE(started_at, now()), finished_at = now(),
+			    input = jsonb_set(input, ARRAY[$4::text, 'event_id'], to_jsonb($5::text))
 			WHERE run_id = $1 AND step_name = $2
-		`, runID, stepName, []byte(event.Payload)); err != nil {
+		`, runID, stepName, []byte(event.Payload), api.WorkflowCodeOpKey, event.ID); err != nil {
 			return nil, false, time.Time{}, fmt.Errorf("pgstore: complete code workflow event wait: %w", err)
 		}
 		if err := tx.Commit(ctx); err != nil {

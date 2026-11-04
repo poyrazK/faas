@@ -18,7 +18,7 @@ export type DataUpstreamHistoryResponse = {
    */
   scope?: string;
   /**
-   * Deployment scope from the ADR-098 issue #954 overlay.
+   * Deployment scope from the overlay.
    */
   deployment_scope?: string;
   region: string;

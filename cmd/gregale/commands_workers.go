@@ -152,14 +152,18 @@ func extractTriggerSource(t api.Trigger) (kind string, source string) {
 }
 
 func cmdWorkersList(args []string) int {
-	usage := "usage: gregale workers [list] [<app>] [--json]"
+	usage := "usage: gregale workers [list] [<app> | --app <app>] [--json]"
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("workers list", flag.ContinueOnError)
+	// Other list verbs take --app; `workers list --app` answered "unknown
+	// flag" on production-us rc.294 (Hunt 14 H14-64).
+	app := fs.String("app", "", "list only this app's worker pool")
 	if err := fs.Parse(flags); err != nil {
 		PrintUsage(osStderr, usage, "workers")
 		return 1
 	}
-	if len(positional) > 1 || rejectUnexpectedFlagArgs(fs) {
+	positional, mergeErr := mergeAppFlag(positional, strings.TrimSpace(*app), 1)
+	if mergeErr != nil || len(positional) > 1 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(osStderr, usage, "workers")
 		return 1
 	}
@@ -283,7 +287,7 @@ func cmdWorkersList(args []string) int {
 }
 
 func cmdWorkersStatus(args []string) int {
-	usage := "usage: gregale workers status [<app>] [--json]"
+	usage := "usage: gregale worker status [<app>] [--json]"
 	fs := newFlagSet("workers status", flag.ContinueOnError)
 	appFlag := fs.String("app", "", "app slug")
 	if err := fs.Parse(args); err != nil {
@@ -300,7 +304,7 @@ func cmdWorkersStatus(args []string) int {
 	slug, resolveErr = resolveAppFlagOrContext(slug)
 	if resolveErr != nil {
 		if errors.Is(resolveErr, errProjectContextNotFound) {
-			PrintUsage(osStderr, "usage: gregale workers status <app> (or run inside a linked project directory)", "workers")
+			PrintUsage(osStderr, "usage: gregale worker status <app> (or run inside a linked project directory)", "workers")
 			return 1
 		}
 		return printErr("Could not resolve app slug", resolveErr)
@@ -318,7 +322,7 @@ func cmdWorkersStatus(args []string) int {
 	}
 
 	if !isWorkerApp(app) {
-		return printErr("Invalid app mode", fmt.Errorf("app %q has execution_mode=%q (not a worker). Use 'gregale status' or 'gregale ps' for HTTP apps", slug, app.Manifest.EffectiveExecutionMode()))
+		return printErr("Invalid app mode", fmt.Errorf("app %q has execution_mode=%q (not a worker). Use 'gregale status' or 'gregale app instances' for HTTP apps", slug, app.Manifest.EffectiveExecutionMode()))
 	}
 
 	status := WorkerPoolStatus{
@@ -327,7 +331,7 @@ func cmdWorkersStatus(args []string) int {
 		Status:       app.Status,
 		RAMMB:        app.RAMMB,
 		VCPU:         app.VCPU,
-		Metric:       "queue_lag",
+		Metric:       workerScalingMetrics(app),
 		StopSignal:   "SIGTERM",
 		DrainTimeout: 30,
 		Restart:      "always",
@@ -338,9 +342,6 @@ func cmdWorkersStatus(args []string) int {
 	}
 	status.MinReplicas, status.MaxReplicas = workerReplicaBounds(app)
 	if app.Manifest.WorkerReplicas != nil {
-		if app.Manifest.WorkerReplicas.Metric != "" {
-			status.Metric = app.Manifest.WorkerReplicas.Metric
-		}
 		status.Target = app.Manifest.WorkerReplicas.Target
 	}
 	if app.Manifest.StopGracePeriod > 0 {
@@ -403,7 +404,7 @@ func cmdWorkersStatus(args []string) int {
 
 	_, _ = fmt.Fprintln(osStdout, "Autoscaling:")
 	_, _ = fmt.Fprintf(osStdout, "  Replicas:   %d running (min: %d, max: %d)\n", status.Replicas, status.MinReplicas, status.MaxReplicas)
-	_, _ = fmt.Fprintf(osStdout, "  Metric:     %s\n", status.Metric)
+	_, _ = fmt.Fprintf(osStdout, "  Metric:     %s\n", workerMetricLabel(status.Metric))
 	if status.Target > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  Target:     %.0f messages/worker\n", status.Target)
 	}
@@ -451,7 +452,7 @@ func cmdWorkersStatus(args []string) int {
 
 func cmdWorkersLogs(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(osStderr, "usage: gregale workers logs [<app>] [--follow] [--since RFC3339] [--grep SUBSTR] [--level info|warn|error]", "workers")
+		PrintUsage(osStderr, "usage: gregale worker logs [<app>] [--follow] [--since RFC3339] [--grep SUBSTR] [--level info|warn|error]", "workers")
 		return 1
 	}
 
@@ -469,7 +470,7 @@ func cmdWorkersLogs(args []string) int {
 	slug, resolveErr = resolveAppFlagOrContext(slug)
 	if resolveErr != nil {
 		if errors.Is(resolveErr, errProjectContextNotFound) {
-			PrintUsage(osStderr, "usage: gregale workers logs <app> [--follow] (or run inside a linked project directory)", "workers")
+			PrintUsage(osStderr, "usage: gregale worker logs <app> [--follow] (or run inside a linked project directory)", "workers")
 			return 1
 		}
 		return printErr("Could not resolve app slug", resolveErr)
@@ -493,8 +494,30 @@ func cmdWorkersLogs(args []string) int {
 	return cmdLogs(logArgs)
 }
 
+// defaultWorkerScaling is the starting point for an app without worker
+// scaling: the queue metric its scaling policy already uses, or Gregale queue
+// depth. queue_lag needs an external broker trigger and gives the scheduler
+// no signal for Gregale queues (ADR-20261018101500 amendment 2026-10-27).
+func defaultWorkerScaling(policy *api.ScalingPolicy) api.WorkerScaling {
+	scaling := api.WorkerScaling{Min: 0, Max: 10, Metric: api.ScalingMetricQueueDepth, Target: 100}
+	if policy == nil {
+		return scaling
+	}
+	for _, target := range policy.EffectiveTargets() {
+		switch target.Metric {
+		case api.ScalingMetricQueueDepth, api.ScalingMetricQueueLag, api.ScalingMetricCustom:
+			scaling.Metric, scaling.Name = target.Metric, target.Name
+			if target.Value > 0 {
+				scaling.Target = target.Value
+			}
+			return scaling
+		}
+	}
+	return scaling
+}
+
 func cmdWorkersScale(args []string) int {
-	usage := "usage: gregale workers scale <app> [--min N] [--max N] [--target N] [--metric METRIC] [--name CUSTOM_METRIC] [--drain-timeout DURATION] [--stop-signal SIG]"
+	usage := "usage: gregale worker scale <app> [--min N] [--max N] [--target N] [--metric METRIC] [--name CUSTOM_METRIC] [--drain-timeout DURATION] [--stop-signal SIG]"
 	fs := newFlagSet("workers scale", flag.ContinueOnError)
 	minFlag := fs.Int("min", -1, "min worker replicas (0 = scale to zero)")
 	maxFlag := fs.Int("max", -1, "max worker replicas")
@@ -530,7 +553,7 @@ func cmdWorkersScale(args []string) int {
 		return printErr("Could not get app details", err)
 	}
 	if !isWorkerApp(app) {
-		return printErr("Invalid app mode", fmt.Errorf("app %q has execution_mode=%q (not a worker). Use 'gregale app %s scale' for HTTP apps", slug, app.Manifest.EffectiveExecutionMode(), slug))
+		return printErr("Invalid app mode", fmt.Errorf("app %q has execution_mode=%q (not a worker). Use 'gregale app scale %s' for HTTP apps", slug, app.Manifest.EffectiveExecutionMode(), slug))
 	}
 
 	var req api.UpdateAppRequest
@@ -540,7 +563,7 @@ func cmdWorkersScale(args []string) int {
 	if existingScaling != nil {
 		newScaling = *existingScaling
 	} else {
-		newScaling = api.WorkerScaling{Min: 0, Max: 10, Metric: "queue_lag", Target: 100}
+		newScaling = defaultWorkerScaling(app.ScalingPolicy)
 	}
 
 	if *minFlag >= 0 {
@@ -605,6 +628,9 @@ func cmdWorkersScale(args []string) int {
 			policy.Targets = nil
 			policy.Target = &api.ScalingTarget{Metric: newScaling.Metric, Name: newScaling.Name, Value: newScaling.Target}
 		}
+		// An app deployed without a scaling policy has none to copy; the
+		// zero cooldowns were rejected (Hunt 14 H14-20).
+		fillScalingPolicyCooldowns(&policy)
 		req.ScalingPolicy = &policy
 	}
 
@@ -644,9 +670,12 @@ func cmdWorkersScale(args []string) int {
 	PrintOK(osStdout, "Worker scaling updated for %s", slug)
 	if updatedApp.Manifest.WorkerReplicas != nil {
 		_, _ = fmt.Fprintf(osStdout, "  Replicas: min=%d, max=%d\n", updatedApp.Manifest.WorkerReplicas.Min, updatedApp.Manifest.WorkerReplicas.Max)
-		_, _ = fmt.Fprintf(osStdout, "  Scaling:  target=%.0f, metric=%s", updatedApp.Manifest.WorkerReplicas.Target, updatedApp.Manifest.WorkerReplicas.Metric)
-		if updatedApp.Manifest.WorkerReplicas.Name != "" {
-			_, _ = fmt.Fprintf(osStdout, " (%s)", updatedApp.Manifest.WorkerReplicas.Name)
+		_, _ = fmt.Fprintf(osStdout, "  Scaling:  metric=%s", workerMetricLabel(workerScalingMetrics(updatedApp)))
+		if name := updatedApp.Manifest.WorkerReplicas.Name; name != "" {
+			_, _ = fmt.Fprintf(osStdout, " (%s)", name)
+		}
+		if target := updatedApp.Manifest.WorkerReplicas.Target; target > 0 {
+			_, _ = fmt.Fprintf(osStdout, ", target=%.0f", target)
 		}
 		_, _ = fmt.Fprintln(osStdout)
 	}
@@ -658,4 +687,34 @@ func cmdWorkersScale(args []string) int {
 	}
 
 	return 0
+}
+
+// workerScalingMetrics names the signals the scheduler scales a worker on:
+// its scaling policy's targets, else the worker manifest's metric, else "".
+// Status claimed queue_lag for h14-wk, whose policy has no target, while the
+// scale receipt printed "target=0, metric=" (Hunt 14 H14-58).
+func workerScalingMetrics(app api.AppResponse) string {
+	var metrics []string
+	if policy := app.ScalingPolicy; policy != nil {
+		if policy.Target != nil && policy.Target.Metric != "" {
+			metrics = append(metrics, policy.Target.Metric)
+		}
+		for _, target := range policy.Targets {
+			if target.Metric != "" {
+				metrics = append(metrics, target.Metric)
+			}
+		}
+	}
+	if len(metrics) == 0 && app.Manifest.WorkerReplicas != nil && app.Manifest.WorkerReplicas.Metric != "" {
+		metrics = append(metrics, app.Manifest.WorkerReplicas.Metric)
+	}
+	return strings.Join(metrics, ", ")
+}
+
+// workerMetricLabel renders workerScalingMetrics for people.
+func workerMetricLabel(metrics string) string {
+	if metrics == "" {
+		return "none (holds the minimum replicas)"
+	}
+	return metrics
 }

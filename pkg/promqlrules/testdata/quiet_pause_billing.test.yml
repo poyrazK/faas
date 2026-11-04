@@ -1,0 +1,69 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # meterd subtracts a little less than vmmd measured (per-minute flooring,
+  # missed pauses billed): healthy, no alert.
+  - interval: 1m
+    input_series:
+      - series: 'meterd_quiet_pause_unbilled_seconds_total{mode="on",plan="hobby"}'
+        values: '0+57x480'
+      - series: 'schedd_quiet_pause_measured_seconds_total{node="n1"}'
+        values: '0+40x480'
+      - series: 'schedd_quiet_pause_measured_seconds_total{node="n2"}'
+        values: '0+20x480'
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: FaasQuietPauseUnbilledExceedsMeasured
+        exp_alerts: []
+
+  # Shadow mode counts twice what the nodes measured: the ledger proves
+  # pauses that did not happen.
+  - interval: 1m
+    input_series:
+      - series: 'meterd_quiet_pause_unbilled_seconds_total{mode="shadow",plan="pro"}'
+        values: '0+60x480'
+      - series: 'schedd_quiet_pause_measured_seconds_total{node="n1"}'
+        values: '0+30x480'
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: FaasQuietPauseUnbilledExceedsMeasured
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: quiet_pause_billing
+            exp_annotations:
+              summary: "meterd counted more quiet-paused time than vmmd measured"
+              description: "In 6h meterd subtracted (or, in shadow mode, would have subtracted) more quiet-paused seconds than vmmd measured on the nodes, by over 5% plus 10 minutes. The ledger is proving pauses that did not happen, so customers are or would be under-billed. Set quiet_pause_unbilled to shadow until it is explained."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
+
+  # No schedd measures anything, yet meterd subtracts: still an alert.
+  - interval: 1m
+    input_series:
+      - series: 'meterd_quiet_pause_unbilled_seconds_total{mode="on",plan="hobby"}'
+        values: '0+10x480'
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: FaasQuietPauseUnbilledExceedsMeasured
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: quiet_pause_billing
+            exp_annotations:
+              summary: "meterd counted more quiet-paused time than vmmd measured"
+              description: "In 6h meterd subtracted (or, in shadow mode, would have subtracted) more quiet-paused seconds than vmmd measured on the nodes, by over 5% plus 10 minutes. The ledger is proving pauses that did not happen, so customers are or would be under-billed. Set quiet_pause_unbilled to shadow until it is explained."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
+
+  # Small volumes stay under the 10-minute floor.
+  - interval: 1m
+    input_series:
+      - series: 'meterd_quiet_pause_unbilled_seconds_total{mode="on",plan="hobby"}'
+        values: '0+1x480'
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: FaasQuietPauseUnbilledExceedsMeasured
+        exp_alerts: []

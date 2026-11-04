@@ -114,7 +114,7 @@ type CommitDeliveryReportChange struct {
 
 // RefreshCommitDeliveryReport rereads the saved selection from its first recipient pages.
 // Counts contain only fresh observations; a partial refresh never carries old successes forward.
-func (c *Client) RefreshCommitDeliveryReport(ctx context.Context, saved CommitDeliveryReport, pages int) (CommitDeliveryReport, error) {
+func (c *PreviewClient) RefreshCommitDeliveryReport(ctx context.Context, saved CommitDeliveryReport, pages int) (CommitDeliveryReport, error) {
 	raw, err := json.Marshal(saved)
 	if err != nil {
 		return CommitDeliveryReport{}, err
@@ -130,7 +130,7 @@ func (c *Client) RefreshCommitDeliveryReport(ctx context.Context, saved CommitDe
 	out.ReadComplete = false
 	out.Counts = map[string]int{}
 	out.RecoveryCounts = map[string]int{}
-	validationErr := error(nil)
+	var validationErr error
 	if pages < 1 || pages > CommitDeliveryReportPagesMax || len(out.Items) > CommitPublicationHistoryPageMax {
 		validationErr = ErrValidation("invalid recipient page budget or saved report")
 	} else {
@@ -192,7 +192,7 @@ func compareCommitDeliveryReports(saved, current CommitDeliveryReport) []CommitD
 
 // GetCommitDeliveryReport samples one history page and one recipient page per publication.
 // NextAfter marks incomplete recipient coverage; errors return the partial report.
-func (c *Client) GetCommitDeliveryReport(ctx context.Context, source, before, subscription string, limit int) (CommitDeliveryReport, error) {
+func (c *PreviewClient) GetCommitDeliveryReport(ctx context.Context, source, before, subscription string, limit int) (CommitDeliveryReport, error) {
 	out := CommitDeliveryReport{SourceID: source, SubscriptionID: strings.ToLower(subscription), Items: []CommitDeliveryReportItem{}, Counts: map[string]int{}}
 	if subscription != "" && (!commitSubscriberUUID.MatchString(subscription) || subscription == "00000000-0000-0000-0000-000000000000") {
 		return out, ErrValidation("invalid subscriber filter")
@@ -209,7 +209,7 @@ func (c *Client) GetCommitDeliveryReport(ctx context.Context, source, before, su
 }
 
 // GetCommitDeliveryReportWithPages bounds recipient traversal per publication.
-func (c *Client) GetCommitDeliveryReportWithPages(ctx context.Context, source, before, subscription string, limit, pages int) (CommitDeliveryReport, error) {
+func (c *PreviewClient) GetCommitDeliveryReportWithPages(ctx context.Context, source, before, subscription string, limit, pages int) (CommitDeliveryReport, error) {
 	if pages < 1 || pages > CommitDeliveryReportPagesMax {
 		return CommitDeliveryReport{}, ErrValidation("invalid recipient page budget")
 	}
@@ -231,7 +231,7 @@ func (c *Client) GetCommitDeliveryReportWithPages(ctx context.Context, source, b
 
 // ResumeCommitDeliveryReport copies a saved report and continues unfinished recipients.
 // Saved observations are local diagnostics, not signed delivery evidence.
-func (c *Client) ResumeCommitDeliveryReport(ctx context.Context, saved CommitDeliveryReport, pages int) (CommitDeliveryReport, error) {
+func (c *PreviewClient) ResumeCommitDeliveryReport(ctx context.Context, saved CommitDeliveryReport, pages int) (CommitDeliveryReport, error) {
 	raw, err := json.Marshal(saved)
 	if err != nil {
 		return saved, err
@@ -253,7 +253,7 @@ func recountCommitReport(out *CommitDeliveryReport) {
 	}
 }
 
-func (c *Client) continueCommitDeliveryReport(ctx context.Context, out CommitDeliveryReport, pages int, resume bool) (result CommitDeliveryReport, resultErr error) {
+func (c *PreviewClient) continueCommitDeliveryReport(ctx context.Context, out CommitDeliveryReport, pages int, resume bool) (result CommitDeliveryReport, resultErr error) {
 	defer func() { recountCommitRecovery(&result) }()
 	out.ReadComplete = false
 	recountCommitReport(&out)
@@ -375,7 +375,7 @@ func (c *Client) continueCommitDeliveryReport(ctx context.Context, out CommitDel
 	return out, nil
 }
 
-func (c *Client) validateCommitReportResume(ctx context.Context, out CommitDeliveryReport) error {
+func (c *PreviewClient) validateCommitReportResume(ctx context.Context, out CommitDeliveryReport) error {
 	if !commitSubscriberUUID.MatchString(out.SourceID) || (out.SubscriptionID != "" && (!commitSubscriberUUID.MatchString(out.SubscriptionID) || out.SubscriptionID == "00000000-0000-0000-0000-000000000000")) {
 		return ErrValidation("invalid saved report identity")
 	}

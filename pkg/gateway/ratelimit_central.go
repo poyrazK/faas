@@ -13,7 +13,7 @@
 //   1. Every request atomically consumes from Postgres, making one shared
 //      burst authoritative across all gateway replicas.
 //   2. The in-process limiter mirrors the returned balance for response
-//      headers and is used only during a central-store error.
+//      headers and is used only for response headers; a central-store error rejects admission.
 //   3. The local mirror is overwritten with the authoritative remaining
 //      balance after each successful consume.
 //
@@ -32,12 +32,8 @@ import "context"
 // Postgres counter row (pg_ratelimit_counters, migration 00126,
 // widened by migration 00281 to include scope='rule').
 //
-// Implementations:
-//
-//   - noopCentralBackend{} (default; matches today's behaviour
-//     byte-for-byte; the Limiter never consults Postgres).
-//   - state.PGRateLimitBackend (C3 of the Phase 4 mega-PR cluster;
-//     wired iff [ratelimit] mode = "central" in the daemon TOML).
+// Daemon startup wires state.PGRateLimitBackend by default (ADR-570).
+// Explicit local mode and library constructors use noopCentralBackend.
 //
 // ConsumeToken / PeekToken signatures use the same (scope, subject_id,
 // plan) key triple as the central SQL row; cost is always 1 token per
@@ -55,13 +51,10 @@ type CentralBackend interface {
 	//   ok bool        — true iff the consume succeeded (i.e.,
 	//                    remaining tokens >= 0 after refill + -1)
 	//   err error      — non-nil iff Postgres was unreachable or
-	//                    the advisory lock deadlocked; the caller
-	//                    MUST fall back to the in-process bucket
-	//                    in degraded mode (ADR-070 bench follow-up)
+	//                    the atomic counter operation failed; the caller
+	//                    MUST reject unverified shared admission (ADR-570)
 	//
-	// Single SQL statement (no separate transaction); serialises
-	// contending replicas via pg_advisory_xact_lock on the
-	// hashtext of (scope, subject_id, plan).
+	// A single upsert serialises contending replicas with the counter row lock.
 	ConsumeToken(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (remaining int, ok bool, err error)
 
 	// PeekToken returns the central counter's current tokens without
@@ -72,14 +65,23 @@ type CentralBackend interface {
 	//   remaining int  — tokens currently available centrally
 	//                    (>= 0; the row's tokens column)
 	//   err error      — non-nil iff Postgres was unreachable;
-	//                    the caller MUST fall back to the
-	//                    in-process bucket.
+	//                    the diagnostic result is unavailable.
 	PeekToken(ctx context.Context, scope, subjectID, plan string) (remaining int, err error)
 
 	// Invalidate drops any implementation-specific cache entry for
 	// (scope, subject_id, plan). The production Postgres backend has no cache;
 	// this method remains for compatibility and operator-triggered resets.
 	Invalidate(scope, subjectID, plan string)
+}
+
+// CentralConsultBackoffError optionally distinguishes connection acquisition
+// failures from errors executing a consume on an available connection. Pool
+// failures may open the consult breaker; statement failures refuse the current
+// request but let the next request verify recovery immediately. Unclassified
+// backend errors retain the existing bounded consult backoff.
+type CentralConsultBackoffError interface {
+	error
+	CanBackoffCentralConsult() bool
 }
 
 // CentralFailureBackend is optional because response-driven counters need a
@@ -90,24 +92,14 @@ type CentralFailureBackend interface {
 	RecordPreAuthFailure(ctx context.Context, subjectID, plan string, rps float64, burst int) error
 }
 
-// noopCentralBackend is the default CentralBackend — it never
-// reaches Postgres, so the Limiter's behaviour is identical to the
-// pre-Phase-4 in-process map (ADR-104 amendment 4 wording: "central
-// mode was rejected; in-process bucket is sufficient for single-box
-// deployments"). The default is what the existing NewLimiter /
-// NewLimiterWithLRU constructors wire; C3 of the mega-PR cluster
-// adds NewLimiterWithCentral that swaps in the production
-// implementation iff Mode = "central".
+// noopCentralBackend identifies an explicitly local library limiter. The
+// daemon must select local mode deliberately; a central error never selects it.
 type noopCentralBackend struct{}
 
 // Compile-time interface check.
 var _ CentralBackend = noopCentralBackend{}
 
-// ConsumeToken on a noop backend returns (0, true, nil) — the
-// limiter treats "noop" as "the central counter is infinite" which
-// is the conservative answer under degraded posture: the in-process
-// bucket is the only source of truth, and a noop answer never
-// flips a local-allow to a local-reject.
+// ConsumeToken is unused for local admission; the local bucket owns that mode.
 func (noopCentralBackend) ConsumeToken(context.Context, string, string, string, float64, float64) (int, bool, error) {
 	return 0, true, nil
 }

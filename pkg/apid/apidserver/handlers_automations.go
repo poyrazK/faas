@@ -379,6 +379,10 @@ func (s *server) saveAutomationDraft(w http.ResponseWriter, r *http.Request, acc
 	if !decodeAutomationBody(w, r, &body) {
 		return
 	}
+	if api.WorkflowUsesAgentSteps(body.Definition) && !s.agentStepsAllowed(account) {
+		writeAutomationError(w, fmt.Errorf("%w: %w", state.ErrAutomationInvalid, api.ErrWorkflowInvalidStepTarget))
+		return
+	}
 	raw, err := json.Marshal(body.Definition)
 	if err != nil {
 		writeAutomationError(w, state.ErrAutomationInvalid)
@@ -491,6 +495,9 @@ func (s *server) validateAutomation(w http.ResponseWriter, r *http.Request, acco
 	}
 	response := api.ValidateAutomationResponse{Issues: []string{}, StepOrder: []string{}}
 	order, err := s.checkAutomationDefinition(r.Context(), app.ID, body.Definition, account.Plan)
+	if err == nil && api.WorkflowUsesAgentSteps(body.Definition) && !s.agentStepsAllowed(account) {
+		order, err = nil, fmt.Errorf("%w: %w", state.ErrAutomationInvalid, api.ErrWorkflowInvalidStepTarget)
+	}
 	if err != nil && !errors.Is(err, state.ErrAutomationInvalid) {
 		writeAutomationError(w, err)
 		return

@@ -86,8 +86,8 @@ func (s *Service) prepareObjectURLCredential(r *http.Request, b state.ObjectBuck
 func (s *Service) prepareObjectURLCredentialWithLimit(r *http.Request, b state.ObjectBucket, req objectstorage.SignRequest, permission string, maxBytes int64) (state.ObjectS3Credential, state.ObjectUploadCompletion, string, error) {
 	c := state.ObjectS3Credential{ID: uuid.NewString(), AccountID: b.AccountID, BucketID: b.ID, Label: "signed-url", Permission: permission, Status: state.ObjectS3CredentialStatusActive}
 	receipt := state.ObjectUploadCompletion{}
-	to := s.Host.SecretRecipient()
-	if to == nil {
+	recipients, kid, err := s.Host.StorageCredentialRecipients()
+	if err != nil {
 		return c, receipt, "", objectstorage.ErrUnavailable
 	}
 	access, secret, err := api.GenerateObjectS3Credential()
@@ -95,8 +95,8 @@ func (s *Service) prepareObjectURLCredentialWithLimit(r *http.Request, b state.O
 		return c, receipt, "", objectstorage.ErrUnavailable
 	}
 	c.AccessKeyID = access
-	c.KID = to.String()
-	c.SecretSealed, err = secretbox.SealBytes(to, s3gateway.CredentialSecretNamespace, []byte(secret), 64)
+	c.KID = kid
+	c.SecretSealed, err = secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(secret), 64)
 	if err != nil {
 		return c, receipt, "", objectstorage.ErrUnavailable
 	}

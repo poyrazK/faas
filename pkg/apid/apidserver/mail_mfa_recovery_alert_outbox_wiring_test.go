@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 func mfaAlertRecoverPost(t *testing.T, handler http.Handler, manager *session.Manager, accountID, cookie, code string, csrf bool) *httptest.ResponseRecorder {
@@ -155,7 +156,8 @@ func TestMFARecoveryAlertOutboxPublicFlowAndFailureBoundaries(t *testing.T) {
 			if response.Code == http.StatusOK {
 				var recovered bool
 				for _, c := range response.Result().Cookies() {
-					if c.Name == "faas_sid" {
+					// HTTPS sign-in sets __Host-faas_sid and expires the legacy name (#5522).
+					if sessioncookie.IsName(c.Name) && c.Value != "" {
 						envelope, err := manager.Verify(c.Value)
 						if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != accountID || !envelope.StepUpAt.IsZero() {
 							t.Fatal("recovery changed existing MFA session rules", err)

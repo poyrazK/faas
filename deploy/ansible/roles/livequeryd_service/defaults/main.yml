@@ -54,6 +54,16 @@ faas_livequeryd_keys_identity_src: ""
 # live_queries_unavailable.
 faas_livequeryd_keys_recipient_src: ""
 
+# Writer signatures (ADR 20261028161502). apid signs each live key and login
+# with the private key (gregalectl live-query signing-keygen), delivered to it
+# as a credential; livequeryd verifies with the public key file, which may list
+# the old and the new key during a rotation. Empty leaves rows unsigned.
+faas_livequeryd_signing_key_src: ""
+faas_livequeryd_signing_pub_src: ""
+# The contract step: refuse unsigned keys and logins. Turn it on only after
+# `gregalectl live-query sign-existing` reports no unsigned rows.
+faas_livequeryd_require_signatures: false
+
 # Defaults for every database that does not set its own. A database's slot
 # defaults to gregale_live_<id>: slot names are unique per PostgreSQL server,
 # and databases may share one.

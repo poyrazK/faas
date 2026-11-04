@@ -14,7 +14,6 @@ language that backs the policy.
 |---|---|
 | Email (preferred) | `security@gregale.dev` |
 | PGP-encrypted email | `security@gregale.dev` — see §2 for the current fingerprint |
-| Web form | <https://docs.gregale.dev/security/report> (operator-side, post-launch) |
 | GitHub Security Advisories | <https://github.com/poyrazK/faas/security/advisories/new> |
 
 Email is preferred for sensitive reports. GitHub Security Advisories

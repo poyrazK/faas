@@ -25,6 +25,10 @@ func (s *server) prepareManagedPostgresCutover(w http.ResponseWriter, r *http.Re
 		s.notFound(w, "app not found")
 		return
 	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	c, err := s.managedPostgresCutovers.Prepare(r.Context(), managedpostgres.PrepareCutoverRequest{
 		AccountID: acct.ID, AppID: req.AppID, Scope: req.Scope, SourceDatabaseID: req.SourceDatabaseID, TargetDatabaseID: req.TargetDatabaseID,
 	})

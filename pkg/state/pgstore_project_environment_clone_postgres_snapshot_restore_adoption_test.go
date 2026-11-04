@@ -240,15 +240,16 @@ func TestPgClonePostgresSnapshotRestoreAdoptionChecksFreshLeaseAfterOwnedLocks(t
 				t.Fatal(err)
 			}
 			defer func() { _ = lock.Rollback(context.WithoutCancel(ctx)) }()
-			needle := "ReadProjectEnvironmentClonePostgresSnapshotRestore"
+			var blockerPID int32
+			if err := lock.QueryRow(ctx, "select pg_backend_pid()").Scan(&blockerPID); err != nil {
+				t.Fatal(err)
+			}
 			switch lockKind {
 			case "account":
-				needle = "LockProjectEnvironmentCloneDatabaseAccount"
 				_, err = lock.Exec(ctx, "select id from accounts where id=$1 for update", lease.Operation.AccountID)
 			case "fork":
 				_, err = lock.Exec(ctx, "select operation_id from project_environment_clone_postgres_snapshot_restores where operation_id=$1 for update", lease.Operation.ID)
 			case "catalogue":
-				needle = "LockManagedPostgresLifecycleDatabase"
 				_, err = lock.Exec(ctx, "select id from managed_postgres_databases where id=$1 for update", target.ID)
 			}
 			if err != nil {
@@ -262,7 +263,9 @@ func TestPgClonePostgresSnapshotRestoreAdoptionChecksFreshLeaseAfterOwnedLocks(t
 			deadline := time.Now().Add(2 * time.Second)
 			for {
 				var waiting bool
-				if err := pool.QueryRow(ctx, "select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like $1)", "%"+needle+"%").Scan(&waiting); err != nil {
+				// Account authority can be acquired before the later adoption
+				// query. Prove this transaction blocks the worker itself.
+				if err := pool.QueryRow(ctx, "select exists(select 1 from pg_stat_activity where datname=current_database() and $1::int=any(pg_blocking_pids(pid)))", blockerPID).Scan(&waiting); err != nil {
 					t.Fatal(err)
 				}
 				if waiting {

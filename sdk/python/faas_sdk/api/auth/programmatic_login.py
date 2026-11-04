@@ -77,7 +77,7 @@ def sync_detailed(
 ) -> Response[Problem | ProgrammaticAuthResponse]:
     """Programmatic login (JSON-only, bearer-key CLI path).
 
-     Issue #311 / `gregale login` mirror — JSON-only endpoint
+     `gregale login` mirror — JSON-only endpoint
     that authenticates an email + password and returns a
     `ProgrammaticAuthResponse` payload. Same response shape as
     `/v1/auth/signup` so the CLI can reuse its unmarshaler.
@@ -116,7 +116,7 @@ def sync(
 ) -> Problem | ProgrammaticAuthResponse | None:
     """Programmatic login (JSON-only, bearer-key CLI path).
 
-     Issue #311 / `gregale login` mirror — JSON-only endpoint
+     `gregale login` mirror — JSON-only endpoint
     that authenticates an email + password and returns a
     `ProgrammaticAuthResponse` payload. Same response shape as
     `/v1/auth/signup` so the CLI can reuse its unmarshaler.
@@ -150,7 +150,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | ProgrammaticAuthResponse]:
     """Programmatic login (JSON-only, bearer-key CLI path).
 
-     Issue #311 / `gregale login` mirror — JSON-only endpoint
+     `gregale login` mirror — JSON-only endpoint
     that authenticates an email + password and returns a
     `ProgrammaticAuthResponse` payload. Same response shape as
     `/v1/auth/signup` so the CLI can reuse its unmarshaler.
@@ -187,7 +187,7 @@ async def asyncio(
 ) -> Problem | ProgrammaticAuthResponse | None:
     """Programmatic login (JSON-only, bearer-key CLI path).
 
-     Issue #311 / `gregale login` mirror — JSON-only endpoint
+     `gregale login` mirror — JSON-only endpoint
     that authenticates an email + password and returns a
     `ProgrammaticAuthResponse` payload. Same response shape as
     `/v1/auth/signup` so the CLI can reuse its unmarshaler.

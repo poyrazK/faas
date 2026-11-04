@@ -1,6 +1,6 @@
 # ADR-1448 · Releases that change the database
 
-- **Status:** proposed; verified on n2 2026-10-15 (see Rollout)
+- **Status:** accepted (shipped in PR 4872, 2026-10-18); verified on n2 2026-10-15 (see Rollout)
 - **Date:** 2026-10-15
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) (rollback targets), [ADR-122](122-safe-releases.md) (rollback)
 - **Follows:** the release phase (release commands run as app tasks before a candidate boots), managed PostgreSQL migration bindings and restore-to-new-database

@@ -500,14 +500,7 @@ func spoolFullRootfsLayer(r io.Reader, maxBytes int64) (string, func(), error) {
 }
 
 func writeFullRootfsMarker(staging string) error {
-	path, err := fullRootfsMarkerPath(staging)
-	if err != nil {
-		return fmt.Errorf("rootfs: resolve full-rootfs marker: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("rootfs: full-rootfs marker dir: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(api.FullRootfsMarkerValue), 0o444); err != nil {
+	if _, err := writeStagingFile(staging, api.FullRootfsMarkerPath, []byte(api.FullRootfsMarkerValue), 0o444); err != nil {
 		return fmt.Errorf("rootfs: write full-rootfs marker: %w", err)
 	}
 	return nil
@@ -555,12 +548,11 @@ const passwdTablePath = "/etc/faas/app_passwd"
 // semantics: if the file is present, the most recent apply is the
 // source of truth).
 func parseStagingPasswd(staging string) (map[string]PasswdEntry, error) {
-	p := filepath.Join(staging, "etc", "passwd")
-	// p is beneath the builder-owned staging directory created by MkdirTemp;
-	// it is not a customer-supplied path.
-	f, err := os.Open(p) //nolint:forbidigo
+	// The image controls etc/passwd, including whether it is a symlink, so it
+	// is resolved inside staging: a link to a host file must not be read.
+	f, _, err := openStagingFile(staging, "etc/passwd")
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, err
@@ -613,11 +605,11 @@ func writePasswdTable(staging string, entries map[string]PasswdEntry, maxEntries
 	// container tooling may rely on. The synthetic form is only a fallback
 	// for callers that provide an entry map without an existing file.
 	if len(entries) > 0 {
-		textPath := filepath.Join(staging, "etc", "passwd")
+		textPath, err := stagingEntryPath(staging, "etc/passwd")
+		if err != nil {
+			return fmt.Errorf("rootfs: resolve /etc/passwd: %w", err)
+		}
 		if _, err := os.Lstat(textPath); errors.Is(err, os.ErrNotExist) {
-			if err := os.MkdirAll(filepath.Dir(textPath), 0o755); err != nil {
-				return fmt.Errorf("rootfs: mkdir etc: %w", err)
-			}
 			var buf strings.Builder
 			for _, n := range names {
 				e := entries[n]
@@ -626,7 +618,7 @@ func writePasswdTable(staging string, entries map[string]PasswdEntry, maxEntries
 				fmt.Fprintf(&buf, "%s:x:%d:%d::/home/%s:/sbin/nologin\n",
 					e.Name, e.Uid, e.Gid, e.Name)
 			}
-			if err := os.WriteFile(textPath, []byte(buf.String()), 0o644); err != nil {
+			if _, err := writeStagingFile(staging, "etc/passwd", []byte(buf.String()), 0o644); err != nil {
 				return fmt.Errorf("rootfs: write /etc/passwd: %w", err)
 			}
 		} else if err != nil {
@@ -675,11 +667,7 @@ func writePasswdTable(staging string, entries map[string]PasswdEntry, maxEntries
 		bin.Write([]byte(n))
 	}
 
-	binPath := filepath.Join(staging, passwdTablePath)
-	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
-		return fmt.Errorf("rootfs: mkdir /etc/faas: %w", err)
-	}
-	if err := os.WriteFile(binPath, bin.Bytes(), 0o644); err != nil {
+	if _, err := writeStagingFile(staging, passwdTablePath, bin.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("rootfs: write %s: %w", passwdTablePath, err)
 	}
 	return nil
@@ -809,7 +797,7 @@ func ensureBaseMountpoints(staging string) error {
 		"sys/fs/cgroup",
 		"tmp",
 	} {
-		if err := os.MkdirAll(filepath.Join(staging, path), 0o755); err != nil {
+		if err := mkdirStaging(staging, path, 0o755); err != nil {
 			return fmt.Errorf("rootfs: create base mountpoint %q: %w", path, err)
 		}
 	}
@@ -836,7 +824,11 @@ func (b *Builder) buildBaseFromStaging(ctx context.Context, staging string, in B
 	}
 	guestDigest := ""
 	if in.GuestInitPath != "" {
-		guest, err := artifactIdentityFromPath(ctx, filepath.Join(staging, "sbin", "init"))
+		initPath, err := stagingPath(staging, "sbin/init")
+		if err != nil {
+			return BaseBuildResult{}, err
+		}
+		guest, err := artifactIdentityFromPath(ctx, initPath)
 		if err != nil {
 			return BaseBuildResult{}, fmt.Errorf("rootfs: hash injected guest-init: %w", err)
 		}

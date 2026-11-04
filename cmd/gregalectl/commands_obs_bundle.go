@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -70,7 +69,7 @@ func cmdObsBundle(args []string) int {
 	limit := fs.Int("limit", api.ObsIncidentContextLimitDefault, "maximum related resources")
 	historyLimit := fs.Int("history-limit", api.ObsIncidentEvidenceLimitDefault, "maximum entries per history section")
 	jsonOut := fs.Bool("json", false, "emit JSON file receipt")
-	adminToken := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	adminToken := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", api.ObsIncidentBundleTimeoutDefault, "total collection timeout (maximum 1m)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -80,17 +79,13 @@ func cmdObsBundle(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs bundle: valid --incident, --output, resource/history limits, and --timeout (0..1m) required")
 		return 2
 	}
-	token := *adminToken
-	if token == "" {
-		token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs bundle: --admin-token (or $FAAS_ADMIN_TOKEN) required")
+	cred, ok := resolveObsCredential("obs bundle", *adminToken)
+	if !ok {
 		return 2
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	bundle, err := collectObsBundle(ctx, apidBase(), token, *incident, *limit, *historyLimit)
+	bundle, err := collectObsBundle(ctx, apidBase(), cred, *incident, *limit, *historyLimit)
 	if err != nil {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs bundle:", err)
 		return 1

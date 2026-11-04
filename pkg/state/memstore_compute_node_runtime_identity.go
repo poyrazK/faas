@@ -45,6 +45,13 @@ func (m *MemStore) RegisterComputeNodeRuntimeIdentity(ctx context.Context, ident
 	m.computeNodeRuntimeIncarnations[identity.NodeID] = identity.Incarnation
 	m.computeNodeRuntimeProtocols[identity.NodeID] = identity.ProtocolVersion
 	m.computeNodeRuntimeHistory[key] = identity
+	if m.computeNodeRuntimeOrder == nil {
+		m.computeNodeRuntimeOrder = map[string]uint64{}
+	}
+	if _, ordered := m.computeNodeRuntimeOrder[key]; !ordered {
+		m.computeNodeRuntimeSeq++
+		m.computeNodeRuntimeOrder[key] = m.computeNodeRuntimeSeq
+	}
 	return nil
 }
 
@@ -52,6 +59,7 @@ func (m *MemStore) eraseNativeRuntimeHistoryLocked(nodeID string) {
 	for key, identity := range m.computeNodeRuntimeHistory {
 		if identity.NodeID == nodeID {
 			delete(m.computeNodeRuntimeHistory, key)
+			delete(m.computeNodeRuntimeOrder, key)
 		}
 	}
 }

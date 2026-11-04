@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"filippo.io/age"
 	"github.com/gofrs/flock"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/logdrain"
@@ -114,6 +115,10 @@ type appLogDrainManager struct {
 	// two compute nodes, every line delivered twice). Nil keeps the
 	// single-box behaviour of delivering every drain.
 	owns func(context.Context, state.AppLogDrain) (bool, error)
+	// capabilityAllowed stops delivering the drains of an account whose
+	// log-drains capability is off (ADR-20261023115741); its running
+	// workers retire at the next reconcile. Nil delivers every drain.
+	capabilityAllowed func(capability, accountID string) bool
 
 	mu                      sync.Mutex
 	shutdownMu              sync.Mutex
@@ -236,6 +241,9 @@ func (m *appLogDrainManager) reconcile(ctx context.Context) {
 	desired := make(map[string]state.AppLogDrain, len(snapshot.Drains))
 	undecided := make(map[string]struct{})
 	for _, row := range snapshot.Drains {
+		if m.capabilityAllowed != nil && !m.capabilityAllowed(capabilityLogDrains, row.AccountID) {
+			continue
+		}
 		if m.owns != nil {
 			owned, err := m.owns(ctx, row)
 			if err != nil {
@@ -759,13 +767,11 @@ func newAppLogDrainHTTPClient() *http.Client {
 	return client
 }
 
-func newAppLogDrainUnsealer(hostKeyDir string) (func([]byte) (string, error), error) {
-	if hostKeyDir == "" {
-		return nil, nil
-	}
-	identities, err := secretbox.LoadFleetAndHostKeys(hostKeyDir)
-	if err != nil {
-		return nil, err
+// newAppLogDrainUnsealer opens drain authentication headers with the edge
+// readers (edgeReaders); nil leaves drains with a header undeliverable.
+func newAppLogDrainUnsealer(identities []*age.X25519Identity) func([]byte) (string, error) {
+	if len(identities) == 0 {
+		return nil
 	}
 	return func(sealed []byte) (string, error) {
 		namespace, plaintext, err := secretbox.OpenBytesMulti(identities, sealed)
@@ -779,5 +785,5 @@ func newAppLogDrainUnsealer(hostKeyDir string) (func([]byte) (string, error), er
 			return "", errors.New("sealed log drain credential exceeds size limit")
 		}
 		return string(plaintext), nil
-	}, nil
+	}
 }

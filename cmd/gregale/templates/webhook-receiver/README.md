@@ -53,9 +53,9 @@ gregale deploy --secrets-file ../webhook-receiver.secrets
 ## Rotate or update secrets
 
 ```sh
-gregale secrets set --app <slug> WEBHOOK_SECRET=$(openssl rand -hex 32)
+gregale env set --app <slug> WEBHOOK_SECRET=$(openssl rand -hex 32)
 # optional: pin the receiver to specific paths
-gregale secrets set --app <slug> WEBHOOK_ALLOWED_PATHS=/stripe,/github
+gregale env set --app <slug> WEBHOOK_ALLOWED_PATHS=/stripe,/github
 ```
 
 If `WEBHOOK_SECRET` is missing, the receiver still works in

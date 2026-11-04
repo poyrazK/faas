@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -287,7 +288,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	//
 	//    On any create-instance failure, release the lease + ledger slot. The
 	//    task has not been claimed yet, so it remains queued for the next tick.
-	if _, err := e.store.CreateAndClaimJobInstance(nodePlacementContext(ctx, placement), instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
+	if _, err := e.store.CreateAndClaimJobInstance(e.nodePlacementContext(ctx, placement, req), instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
 		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create and claim instance: %w", err)
 	}
@@ -1006,18 +1007,22 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 	if tok := LeaseToken(leaseTokenStr); tok != "" && e.jobLeaser != nil {
 		_ = e.jobLeaser.Release(ctx, tok, leaseOwnerNodeID)
 	}
-	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
 	// Retry-on-failure: re-queue failed/timeout/oom tasks if budget
-	// remains.
+	// remains, before the VM teardown. Until the re-queue the task reads
+	// failed, and a sibling task's recompute in that window settled the
+	// whole run as failed (PulseWatch F7). JobTaskRetry reopens the run.
+	retryAttempted := retryRequested && retryMaxKnown && jobTaskHasRetryRemaining(task.Attempt, retryMax)
+	var retryErr error
+	if retryAttempted {
+		retryErr = e.store.JobTaskRetry(ctx, runID, taskIndex, time.Now().Add(jobRetryDelay(task.Attempt)))
+	}
+	e.cleanupJobInstance(ctx, instanceID, computeNodeID, "job_exit")
+	if retryAttempted && retryErr == nil {
+		return nil
+	}
 	if retryRequested {
-		if retryMaxKnown && jobTaskHasRetryRemaining(task.Attempt, retryMax) {
-			delay := jobRetryDelay(task.Attempt)
-			next := time.Now().Add(delay)
-			if rerr := e.store.JobTaskRetry(ctx, runID, taskIndex, next); rerr == nil {
-				// Skip recompute — the task is back in 'queued',
-				// aggregate will recompute on next claim.
-				return nil
-			}
+		if retryAttempted {
+			e.settleRefusedJobRetry(ctx, runID, task, decision, retryErr)
 		}
 		// Exhausted retries → dead-letter. JobRunRecompute picks
 		// this up via the dead_letter_count column.
@@ -1031,6 +1036,32 @@ func (e *Engine) HandleJobExit(ctx context.Context, accountID, runID string, tas
 		return fmt.Errorf("sched: HandleJobExit recompute: %w", err)
 	}
 	return nil
+}
+
+// settleRefusedJobRetry handles an attempt classified retry, with budget
+// left, whose retry JobTaskRetry refused: an interactive run, a run owned by
+// an operation or CI, a job image that changed under the run, or a lost
+// exclusive lease. The task will not run again, so the attempt dead-letters
+// as one past its retry budget does: fail-fast stops the run and job replay
+// can re-run its input. Before, the attempt kept "retry", the run ended
+// failed without a dead letter, and nothing said why the retry never ran.
+func (e *Engine) settleRefusedJobRetry(ctx context.Context, runID string, task state.JobTask, decision workpolicy.Decision, cause error) {
+	store, ok := e.store.(state.JobTaskRetryRefusalStore)
+	if !ok {
+		e.log.Warn("sched: job task retry refused", "run", runID, "task", task.TaskIndex, "attempt", task.Attempt, "err", cause)
+		return
+	}
+	decision.Action, decision.Reason = "dead_letter", "retry_refused"
+	settled, err := store.SettleRefusedJobTaskRetry(ctx, runID, task.TaskIndex, task.Attempt, decision)
+	switch {
+	case err != nil:
+		e.log.Warn("sched: job task retry refused; recording its dead letter failed", "run", runID, "task", task.TaskIndex, "attempt", task.Attempt, "refusal", cause, "err", err)
+	case settled:
+		e.log.Warn("sched: job task retry refused; attempt dead-lettered", "run", runID, "task", task.TaskIndex, "attempt", task.Attempt, "refusal", cause)
+	default:
+		// A manual retry or cancellation changed the task first.
+		e.log.Info("sched: job task retry refused; task changed meanwhile", "run", runID, "task", task.TaskIndex, "attempt", task.Attempt, "refusal", cause)
+	}
 }
 
 // effectiveJobRetryMax resolves the immutable policy recorded for a run. A
@@ -1061,7 +1092,12 @@ const (
 	// after the first page goes quiet so terminal persistence does not race
 	// serial delivery.
 	jobTaskLogSettleWindow = 250 * time.Millisecond
-	jobTaskLogPollInterval = 25 * time.Millisecond
+	// A task that ran for a few milliseconds can ship its exit envelope before
+	// any of its output is in the ring, and an empty first snapshot used to end
+	// the capture with nothing. Wait this long for a first line: vmmd's console
+	// tail polls an idle console every consoleTailIdle (200 ms).
+	jobTaskLogFirstLineWindow = 500 * time.Millisecond
+	jobTaskLogPollInterval    = 25 * time.Millisecond
 )
 
 // captureJobTaskLogs copies vmmd's bounded per-instance ring before the job
@@ -1077,9 +1113,8 @@ func (e *Engine) captureJobTaskLogs(ctx context.Context, nodeID, instanceID stri
 	buf := make([]byte, 0, 4096)
 	truncated := false
 	var lastSeq int64
-	var sawLine bool
 	sequenced := true
-	settleUntil := time.Time{}
+	settleUntil := time.Now().Add(jobTaskLogFirstLineWindow)
 	for {
 		// Logs snapshots are inclusive, so advance one past the last line
 		// already persisted to avoid duplicating it on a replay.
@@ -1116,7 +1151,6 @@ func (e *Engine) captureJobTaskLogs(ctx context.Context, nodeID, instanceID stri
 				sequenced = false
 			}
 			gotLine = true
-			sawLine = true
 			buf = append(buf, line.Line...)
 			if !strings.HasSuffix(line.Line, "\n") {
 				buf = append(buf, '\n')
@@ -1137,7 +1171,7 @@ func (e *Engine) captureJobTaskLogs(ctx context.Context, nodeID, instanceID stri
 		}
 		if gotLine {
 			settleUntil = time.Now().Add(jobTaskLogSettleWindow)
-		} else if !sawLine || time.Now().After(settleUntil) {
+		} else if time.Now().After(settleUntil) {
 			return string(buf), truncated, nil
 		}
 
@@ -1289,6 +1323,14 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("sched: dispatchJobsTick resolve account: %w", err)
 		}
+		// ADR-20261023115741: jobs switched off for the account stay queued.
+		if !e.accountCapabilityAllowed(account, "jobs") {
+			e.jobDispatchMetrics.Observe(wire.JobDispatchCapability)
+			if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(capabilityDeferral)); err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("sched: defer capability-held job task: %w", err)
+			}
+			continue
+		}
 		plan := account.Plan
 		if plan == api.PlanFree {
 			// Free plans are 404 at apid; if a row sneaks through
@@ -1298,6 +1340,7 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		}
 		planIdx := plan.PlanIndex()
 		if cap := api.JobConcurrentPerAccount[planIdx]; concurrent >= cap {
+			e.jobDispatchMetrics.Observe(wire.JobDispatchAccountCapacity)
 			if run.ExecutionClass == "flexible" {
 				e.jobFlexibleMetrics.DeferredTask("account_capacity")
 			}
@@ -1312,6 +1355,7 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		// task. The task stays queued until the cap is raised or the month
 		// rolls over; it is never failed for the cap.
 		if e.spendCapReached(ctx, run.AccountID) {
+			e.jobDispatchMetrics.Observe(wire.JobDispatchSpendCap)
 			if run.ExecutionClass == "flexible" {
 				e.jobFlexibleMetrics.DeferredTask("spend_cap")
 			}
@@ -1321,8 +1365,17 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			continue
 		}
 		if _, err := e.WakeJob(ctx, run.AccountID, t.RunID, t.TaskIndex); err != nil {
+			e.jobDispatchMetrics.Observe(jobDispatchResult(err))
 			if run.ExecutionClass == "flexible" {
 				e.jobFlexibleMetrics.DeferredTask("wake_error")
+			}
+			if errors.Is(err, ErrPermanentWake) {
+				// An inactive account starts nothing; check again later rather
+				// than every tick.
+				if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(capabilityDeferral)); err != nil && !errors.Is(err, state.ErrNotFound) {
+					return fmt.Errorf("sched: defer inactive-account job task: %w", err)
+				}
+				continue
 			}
 			if errors.Is(err, state.ErrJobQuotaExceeded) || financialJobBudgetDenied(err) || errors.Is(err, financial.ErrComputeUnavailable) {
 				// Recheck capacity shortly; monetary holds use the same bounded
@@ -1341,11 +1394,36 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			// Before-claim errors leave the task queued. WakeJob settles any
 			// claimed boot failure itself, including retry backoff. Requeueing
 			// here would erase that backoff or race a successful exit.
-		} else if run.ExecutionClass == "flexible" {
-			e.jobFlexibleMetrics.StartedTask(run.CreatedAt)
+		} else {
+			e.jobDispatchMetrics.Observe(wire.JobDispatchStarted)
+			if run.ExecutionClass == "flexible" {
+				e.jobFlexibleMetrics.StartedTask(run.CreatedAt)
+			}
 		}
 	}
 	return nil
+}
+
+// jobDispatchResult names why WakeJob did not start a ready task, separating
+// customer limits and benign races from the platform failing to start it.
+func jobDispatchResult(err error) string {
+	switch {
+	case errors.Is(err, state.ErrJobQuotaExceeded):
+		return wire.JobDispatchQuota
+	case financialJobBudgetDenied(err):
+		return wire.JobDispatchBudget
+	case errors.Is(err, financial.ErrComputeUnavailable):
+		return wire.JobDispatchComputeUnavailable
+	case errors.Is(err, ErrPermanentWake):
+		return wire.JobDispatchAccountInactive
+	case errors.Is(err, ErrJobTaskAlreadyClaimed), errors.Is(err, ErrJobRetryBackoff),
+		errors.Is(err, ErrJobRunNotEligible), errors.Is(err, ErrJobNotActive), errors.Is(err, ErrJobImageNotReady):
+		return wire.JobDispatchNotReady
+	case isCapacityProblem(err), errors.Is(err, state.ErrNodeCapacity):
+		return wire.JobDispatchNodeCapacity
+	default:
+		return wire.JobDispatchWakeError
+	}
 }
 
 // ----------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 )
 
-const edgeRulesSummaryUsage = "usage: gregale edge-rules summary --app SLUG [--range 1h] [--json]"
+const edgeRulesSummaryUsage = "usage: gregale edge rule summary --app SLUG [--range 1h] [--json]"
 
 // cmdEdgeRulesSummary implements `gregale edge-rules summary`: what the edge
 // rejected for one app over a range, read from the same per-app counters the
@@ -53,6 +53,11 @@ func cmdEdgeRulesSummary(args []string) int {
 // rejection first, and says so explicitly when nothing was rejected.
 func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse) {
 	_, _ = fmt.Fprintf(w, "Edge protection for %s over %s\n", slug, s.Range)
+	// Attack mode is read from the rules, so it shows even when the counts
+	// are unavailable.
+	if a := s.AttackMode; a.Active && a.ExpiresAt != nil {
+		_, _ = fmt.Fprintf(w, "  %-28s ON until %s (every visitor is challenged)\n", "attack mode:", a.ExpiresAt.Local().Format(attackModeTimeLayout))
+	}
 	if s.Source != appmetrics.SourcePrometheus {
 		_, _ = fmt.Fprintf(w, "Note: source=%s (counts below are unavailable, not zero)\n", s.Source)
 		return
@@ -63,7 +68,7 @@ func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse
 	} else {
 		parts := make([]string, 0, len(s.ValidationFailures))
 		for _, v := range s.ValidationFailures {
-			parts = append(parts, fmt.Sprintf("%d %s", v.Count, v.Name))
+			parts = append(parts, fmt.Sprintf("%d %s", v.Count, terminalSafe(v.Name)))
 		}
 		_, _ = fmt.Fprintf(w, "  %-28s %s\n", "validation failures:", strings.Join(parts, ", "))
 	}
@@ -79,6 +84,20 @@ func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse
 	if c := s.Challenge; c.Issued+c.Solved+c.Rejected+c.Passed+c.Bypassed+c.Invalid > 0 {
 		_, _ = fmt.Fprintf(w, "  %-28s %d pages served, %d solved, %d non-browser refused, %d passed on an earlier solve, %d verified API clients, %d invalid\n",
 			"challenge:", c.Issued, c.Solved, c.Rejected, c.Passed, c.Bypassed, c.Invalid)
+		if c.Raised > 0 {
+			_, _ = fmt.Fprintf(w, "  %-28s %d pages served at a difficulty raised under attack\n", "", c.Raised)
+		}
+	}
+	if p := s.Penalty; p.Boxed+p.Rejected > 0 {
+		_, _ = fmt.Fprintf(w, "  %-28s %d clients boxed, %d requests refused while boxed\n", "penalty box:", p.Boxed, p.Rejected)
+	}
+	if len(s.AICrawlers) > 0 {
+		parts := make([]string, 0, len(s.AICrawlers))
+		for _, c := range s.AICrawlers {
+			parts = append(parts, fmt.Sprintf("%s %d (%s, %s)", c.Name, c.Count, c.Operator, c.Purpose))
+		}
+		_, _ = fmt.Fprintf(w, "  %-28s %s\n", "ai crawlers:", strings.Join(parts, ", "))
+		_, _ = fmt.Fprintf(w, "  %-28s gregale edge rule recipe apply control-ai-crawlers --app %s\n", "control them:", slug)
 	}
 }
 

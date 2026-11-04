@@ -255,3 +255,74 @@ func TestRestartQuarantineCoversInternalGuestIDs(t *testing.T) {
 		}
 	}
 }
+
+// Connection-survival ADR slice 1a: a surviving process running as a bridge
+// uid keeps its slot, so a new lease never gives another tenant's bridge the
+// same uid. Its argv proves nothing, so only the uid is read.
+func TestRestartQuarantineReservesBridgeUIDs(t *testing.T) {
+	opts := restartFixture(t)
+	writeStatus := func(pid int, status string) {
+		t.Helper()
+		path := filepath.Join(opts.procRoot, fmt.Sprint(pid))
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "cmdline"), []byte("/opt/faas/current/bin/vmmd-raw-bridge\x0010.0.0.2\x008080\x00"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if status != "" {
+			if err := os.WriteFile(filepath.Join(path, "status"), []byte(status), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	bridge := func(uids ...int) string {
+		return fmt.Sprintf("Name:\tvmmd-raw-bridge\nUid:\t%d\t%d\t%d\t%d\n", uids[0], uids[1], uids[2], uids[3])
+	}
+	writeStatus(201, bridge(BridgeUIDBase, BridgeUIDBase, BridgeUIDBase, BridgeUIDBase))
+	// A process that kept a bridge uid in only its saved uid can still signal
+	// a same-uid bridge, so it reserves that slot too.
+	writeStatus(202, bridge(0, 0, BridgeUIDBase+2, 0))
+	writeStatus(203, bridge(1000, 1000, 1000, 1000))  // not a bridge
+	writeStatus(204, bridge(BridgeUIDMax+1, 0, 0, 0)) // above the range
+	writeStatus(205, "")                              // exited during the scan
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	rep, err := m.recoverRestartQuarantine(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Slots != 2 || rep.BridgeProcesses != 2 || rep.Processes != 0 || rep.Instances != 0 {
+		t.Fatalf("inventory = %+v, want slots 0 and 2 from two bridge processes", rep)
+	}
+	for _, want := range []int{1, 3} {
+		lease, err := m.alloc.Acquire(fmt.Sprintf("fresh-%d", want))
+		if err != nil || lease.Slot != want {
+			t.Fatalf("fresh lease = %+v, %v; want slot %d", lease, err, want)
+		}
+	}
+}
+
+func TestBridgeUIDForJailUID(t *testing.T) {
+	if BridgeUIDBase <= JailUIDMax {
+		t.Fatalf("bridge range %d-%d overlaps the jail range %d-%d", BridgeUIDBase, BridgeUIDMax, JailUIDBase, JailUIDMax)
+	}
+	if BridgeUIDMax-BridgeUIDBase != JailUIDMax-JailUIDBase {
+		t.Fatal("bridge range must have one uid per slot")
+	}
+	for _, tt := range []struct {
+		jail, bridge int
+		ok           bool
+	}{
+		{JailUIDBase, BridgeUIDBase, true},
+		{JailUIDBase + 7, BridgeUIDBase + 7, true},
+		{JailUIDMax, BridgeUIDMax, true},
+		{JailUIDBase - 1, 0, false},
+		{JailUIDMax + 1, 0, false},
+		{0, 0, false},
+	} {
+		got, ok := BridgeUIDForJailUID(tt.jail)
+		if got != tt.bridge || ok != tt.ok {
+			t.Errorf("BridgeUIDForJailUID(%d) = %d, %v; want %d, %v", tt.jail, got, ok, tt.bridge, tt.ok)
+		}
+	}
+}

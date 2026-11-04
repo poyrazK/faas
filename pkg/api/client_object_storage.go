@@ -239,6 +239,25 @@ func (c *Client) CancelObjectCapacityReconciliation(ctx context.Context, slug, b
 	return out, err
 }
 
+// GetObjectBucketCORS reads a bucket's CORS rules (ADR-20261025202805).
+func (c *Client) GetObjectBucketCORS(ctx context.Context, slug, bucket string) (ObjectBucketCORS, error) {
+	var out ObjectBucketCORS
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/cors", nil, &out)
+	return out, err
+}
+
+// PutObjectBucketCORS replaces a bucket's CORS rules.
+func (c *Client) PutObjectBucketCORS(ctx context.Context, slug, bucket string, rules []ObjectBucketCORSRule) (ObjectBucketCORS, error) {
+	var out ObjectBucketCORS
+	err := c.do(ctx, http.MethodPut, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/cors", ObjectBucketCORSRequest{Rules: rules}, &out)
+	return out, err
+}
+
+// DeleteObjectBucketCORS removes a bucket's CORS rules.
+func (c *Client) DeleteObjectBucketCORS(ctx context.Context, slug, bucket string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/cors", nil, nil)
+}
+
 func (c *Client) GetObjectBucketVersioning(ctx context.Context, slug, bucket string) (ObjectBucketVersioning, error) {
 	var out ObjectBucketVersioning
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/versioning", nil, &out)

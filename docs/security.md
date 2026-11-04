@@ -76,7 +76,7 @@ If the app moves to a lower plan, the gateway clamps an existing setting to
 the new plan ceiling.
 To be notified when the guard blocks or would block a burst of requests,
 enable the webhook-only [`pre_auth_pressure` alert preset](alerts.md).
-`gregale edge-rules summary --app my-api` shows pre-auth blocks alongside
+`gregale edge rule summary --app my-api` shows pre-auth blocks alongside
 validation failures and rejections by the other edge gates.
 
 Up to 16 exact public method/path overrides can add stricter limits for
@@ -275,7 +275,7 @@ or a `Content-Security-Policy` `frame-ancestors` directive if your pages must
 not be framed, and `Permissions-Policy` to restrict browser features.
 
 ```sh
-gregale edge-rules create --app my-api --kind headers --match-host my-api.example.com \
+gregale edge rule create --app my-api --kind headers --match-host my-api.example.com \
   --headers-response-set 'X-Frame-Options:DENY'
 ```
 
@@ -283,13 +283,18 @@ Before 2026-10-09 these headers were fixed by the platform, including HSTS
 with `includeSubDomains` on custom domains. Browsers that cached that HSTS
 policy keep it until it expires (up to a year after their last visit).
 
-## Web application firewall (preview)
+## Web application firewall
 
 A `kind=waf` edge rule (Pro and above) checks matched requests against the
 OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
 command injection, scanners, and header injection. It works the same on
-`*.gregale.dev` and on your custom domains. The rule's `mode` decides what
-happens to a detection:
+`*.gregale.dev` and on your custom domains. `observe`, `warn` and `block` at
+paranoia level 1 are generally available; paranoia level 2 is in preview and
+runs in `observe` only. Warn and block reach accounts one by one as they
+launch: until they reach yours, creating a rule in either mode, or switching
+one to it, returns `422` with code `edge_feature_unavailable`, and existing
+warn and block rules only observe.
+The rule's `mode` decides what happens to a detection:
 
 | Mode | Headers and URL | Request body |
 |---|---|---|
@@ -303,24 +308,35 @@ of them under load. In `warn` and `block`, a request without a body is
 checked in-path only; it is not also sampled. To reject bad bodies, declare their shape with a
 `kind=validate` rule. Checks on headers and the URL take about 1 ms of CPU
 per matched request, and can add several milliseconds when the node is busy.
-When your app's check budget (roughly 500 requests per second) or the node's
-check capacity runs out, the rest pass unchecked and are counted as
+A node runs several checks at once, one per processor but one, and a check
+that finds them all busy waits up to 1 ms for a free one. When your app's
+check budget (roughly 500 requests per second) runs out, or no check frees
+within that wait, the rest pass unchecked and are counted as
 `inline_skipped`; the WAF never slows your app down to keep up.
 
 Start in `observe`, look for false positives, then switch to `block`:
 
 ```sh
-gregale edge-rules create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
-gregale edge-rules summary --app my-api --range 24h   # detections, categories, top CRS rule IDs
-gregale edge-rules update <rule-id> --kind waf --waf-exclude-rules 942100   # silence a false positive
-gregale edge-rules update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
+gregale edge rule create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
+gregale edge rule waf review --app my-api            # detections grouped by CRS rule and path, each assessed
+gregale edge rule waf update <rule-id> --add 942100  # silence a false positive, keeping the rest of the rule
+gregale edge rule update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
 ```
 
-`edge-rules update --kind waf` replaces the whole WAF action, so repeat every
-setting you want to keep (mode, exclusions, thresholds) in each update.
+`edge-rules waf-review` groups the last 7 days of detections (your plan's
+event window caps it) by WAF rule, CRS rule and path, with IDs in paths
+grouped together (`/orders/{id}`). Each group says `likely_false_positive`
+(a known false positive from the table below, or several unrelated clients
+flagged on one path), `likely_attack` (clients flagged across many paths, as
+scanners are), `excluded`, or `review` (too few clients to tell), with an
+example request ID to look up. The dashboard's Edge rules page shows the same
+review with an Exclude button. `edge-rules waf-exclude` adds or removes CRS
+rule IDs and keeps the rest of the rule; `edge-rules update --kind waf`
+replaces the whole WAF action, so repeat every setting you want to keep
+(mode, exclusions, thresholds) when you use it.
 
 Each detection is also a security event, so you can see which request was
-flagged and why. `gregale edge-rules events --app my-api --outcome blocked`
+flagged and why. `gregale edge rule events --app my-api --outcome blocked`
 (or `detected` for sampled requests, `warned` for warn rules) lists the
 request ID, method, path, client and user agent, plus the CRS rule IDs that
 scored, their attack categories and the anomaly score. The matched payload
@@ -349,10 +365,14 @@ produces more false positives; it is available in `observe` only. The
 `edge_waf_detections` alert preset notifies you of bursts, and blocked
 requests also count toward `edge_rejection_pressure`.
 
-## Browser challenge (preview)
+## Browser challenge
 
 A `kind=challenge` edge rule keeps scripts and scrapers off browser pages.
-An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none. A matched request without a valid pass never reaches your app:
+An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none.
+Challenge rules reach accounts one by one as they launch: until they reach
+yours, creating one or switching one on returns `422` with code
+`edge_feature_unavailable`, and existing challenge rules challenge nobody.
+A matched request without a valid pass never reaches your app:
 
 - A page load gets a short page that does a small calculation in the
   browser (a proof of work, tens to a few hundred milliseconds by default),
@@ -364,20 +384,47 @@ An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none. A matched 
   challenged, so API clients keep working.
 
 The pass lasts an hour by default and is tied to the browser's address
-range and User-Agent, so it cannot be copied to another machine. Start in
+range and User-Agent, so it cannot be copied to another machine. It covers
+the whole host: one pass lets the browser through every challenge rule on
+that host, including paths a route rule sends to another of your apps, but
+not on your other hosts. Start in
 log mode to see what the rule would challenge, and add a `verified_bot
 missing` condition so search engine crawlers still reach your pages:
 
 ```sh
-gregale edge-rules create --app my-site --kind challenge --match-host my-site.example.com \
+gregale edge rule create --app my-site --kind challenge --match-host my-site.example.com \
   --match-path '/*' --match '{"field":"verified_bot","op":"missing"}' --mode log
-gregale edge-rules update <rule-id> --mode enforce
+gregale edge rule update <rule-id> --mode enforce
 ```
 
 `--challenge-difficulty` (10 to 22, default 16) sets how much work a browser
-does; each step doubles it. `--challenge-pass-ttl` (300 to 86400 seconds)
-sets how long a pass lasts. Visitors need JavaScript; without it the page
-explains that it is required.
+does; each step doubles it. At the default, a laptop solves the page in a
+fraction of a second, and an older mid-range phone in about a second. At
+22, that phone takes 15-20 seconds, so keep high values for attacks.
+`--challenge-pass-ttl` (300 to 86400 seconds) sets how long a pass lasts.
+
+Under attack the difficulty can rise on its own. Set
+`--challenge-max-difficulty` above the difficulty, and while the rule serves
+far more challenge pages than usual (more than four times its usual rate,
+and more than 60 a minute on one gateway) the difficulty rises by 2 bits a
+minute, up to that cap, then falls back as the load eases. Visitors who
+already hold a pass are not affected. The edge-protection summary shows how
+many pages were served at a raised difficulty. An update replaces the
+whole challenge action, so pass every setting you want to keep:
+
+```sh
+gregale edge rule update <rule-id> --kind challenge --challenge-difficulty 16 \
+  --challenge-max-difficulty 20 --challenge-pass-ttl 3600
+```
+
+Visitors need JavaScript. Without it the page asks them to turn it on and
+shows a reference (the request ID) to send you. Look it up to see their
+address, then exempt it with a condition on the rule, such as
+`{"not":{"field":"client_ip","op":"in_list","list":"office-ips"}}`:
+
+```sh
+gregale edge rule events --app my-site --request-id <reference>
+```
 
 An enforced challenge rule records what it did as security events, with
 the client's address, country, User-Agent and path: `challenged` (the page
@@ -388,8 +435,149 @@ who already hold a pass or a verified credential are counted, not recorded.
 In log mode the rule's matches appear as `logged` events instead.
 
 ```sh
-gregale edge-rules events --app my-site --outcome rejected
+gregale edge rule events --app my-site --outcome rejected
 ```
+
+## Attack mode
+
+Attack mode is one switch for when an app is flooded from too many
+addresses for rules to keep up. While it is on, every request to every host
+of the app is challenged the way a `kind=challenge` rule challenges it:
+
+- Browsers solve the short check once and continue for an hour.
+- Verified search crawlers and requests with a verified API key, consumer
+  key or JWT pass straight through.
+- Every other client gets `403` with code `challenge_required`. That
+  includes scripts, uptime checks and webhooks from other services, so
+  switch it off once the attack is over.
+
+Attack mode is released account by account: until your account is
+included, switching it on returns `422` with code `edge_feature_unavailable`
+(switching it off always works), and an attack mode left on challenges
+nobody. Once released, it is available on every plan, including Free, and does not count against
+the app's edge-rule limits. It always ends on its own after the time you
+choose, from 15 minutes to 24 hours (one hour by default). Switching it on
+again while it is on moves the end.
+
+```sh
+gregale edge rule attack-mode set on --app my-site --for 1h
+gregale edge rule attack-mode set --app my-site       # is it on, and until when
+gregale edge rule attack-mode set off --app my-site
+```
+
+The dashboard's Edge protection panel has the same switch. Attack mode
+appears in the rules list as an app-wide challenge rule managed by attack
+mode. It cannot be edited there, a rule-set rollback leaves it alone, and
+deleting it switches attack mode off. Its challenges are counted in the
+edge protection summary and recorded as challenge security events. To keep
+part of an app open during an attack, use a challenge rule on the paths
+under attack instead.
+
+## AI crawlers
+
+AI companies crawl the web for three reasons, and edge rules can treat each
+differently:
+
+| Purpose | What it fetches for | Examples |
+|---|---|---|
+| `training` | pages to train models on | GPTBot, ClaudeBot, CCBot, Bytespider, meta-externalagent, Amazonbot |
+| `search` | an AI search index | OAI-SearchBot, Claude-SearchBot, PerplexityBot |
+| `assistant` | a page a user asked an assistant about | ChatGPT-User, Claude-User, Perplexity-User, MistralAI-User, DuckAssistBot |
+
+The edge protection summary (`gregale edge rule summary`, or the Edge
+protection panel) shows how many requests each AI crawler made, whatever
+your rules did with them.
+
+AI crawler conditions are released account by account: until your
+account is included, creating a rule that tests them returns `422` with
+code `edge_feature_unavailable`, and existing ones never match. The
+request counts above are shown either way.
+
+The quickest control is the **Control AI crawlers** recipe. By default it
+blocks training crawlers and leaves AI search, assistants, search engines
+and people alone. Like every recipe it starts in log mode, so you see what
+it would block first:
+
+```sh
+gregale edge rule recipe apply control-ai-crawlers --app my-site
+gregale edge rule recipe apply control-ai-crawlers --app my-site --set purposes=all --set action=challenge
+```
+
+For your own rules, conditions can use three fields:
+
+- `ai_crawler`: the AI crawler the User-Agent names, such as `gptbot` or
+  `claudebot`.
+- `ai_crawler_purpose`: `training`, `search` or `assistant`.
+- `verified_ai_crawler`: the crawler, set only when the request comes from
+  the IP ranges its operator publishes. OpenAI, Perplexity, DuckDuckGo and
+  Mistral publish ranges. Crawlers that do not, such as ClaudeBot and CCBot,
+  are never verified.
+
+Anyone can send any User-Agent. Blocking by `ai_crawler` also blocks
+scrapers that pretend to be a crawler, which is usually what you want. To
+let a crawler through, or to block only impersonators, also test
+`verified_ai_crawler`:
+
+```sh
+# Block anything that claims to be GPTBot but is not from OpenAI's ranges.
+gregale edge rule create --app my-site --kind ip --match-host @app --match-path '/**' \
+  --ip-deny 0.0.0.0/0 --ip-deny ::/0 \
+  --match '{"all":[{"field":"ai_crawler","op":"eq","value":"gptbot"},{"field":"verified_ai_crawler","op":"missing"}]}'
+```
+
+Published ranges are refreshed every 12 hours and stop counting after 7
+days without a refresh. The same ranges let Googlebot, Bingbot and
+Applebot verify as `verified_bot` without a DNS lookup.
+
+## Penalty box
+
+An edge rule judges each request on its own: a scanner refused at
+`/wp-login.php` simply tries `/.env` next. A **penalty** makes a rule keep
+refusing a client after it has caught it. Once the rule has refused the
+same client a number of times, every request from that client to your app
+is refused for a while, whatever path it asks for.
+
+Penalties work on rules that refuse clients: `ip` and `geo` rules,
+`throttle` rules (a client that keeps hitting the limit) and `waf` rules in
+block mode. They are released account by account: until your account is
+included, adding a penalty, or switching on a rule that has one, returns
+`422` with code `edge_feature_unavailable`, and existing penalties box
+nobody while the rules themselves keep refusing.
+
+```sh
+# Block anyone who probes a scanner path from the whole app for 30 minutes.
+gregale edge rule recipe apply block-scanner-paths --app my-site --set penalty_minutes=30 --enforce
+
+# A sign-in throttle that boxes a client for 15 minutes after 5 refusals in a minute.
+gregale edge rule update <rule-id> --penalty-for 15m --penalty-after 5 --penalty-within 1m
+
+# Remove the penalty; clients it holds are let go on their next request.
+gregale edge rule update <rule-id> --clear-penalty
+```
+
+A boxed client gets `403` with code `penalty_box`, naming the rule, and a
+`Retry-After` header saying when it ends. Penalties last from 1 minute to
+24 hours.
+
+Some details to know:
+
+- The client is its IP address. For IPv6 it is the whole /64, which one
+  machine can rotate through.
+- Many people can share one address (offices, mobile carriers). A threshold
+  above 1 and a short penalty keep one of them from locking out the rest.
+- A box made on one edge node holds on every node within about a second,
+  and survives a restart. Each node counts refusals toward a box on its
+  own, so a client spread over several nodes can be refused a few more
+  times before its first box.
+- Removing the penalty, disabling the rule, or switching it to log mode lets
+  its clients go. A log-mode rule never boxes anyone.
+- The edge protection summary shows how many clients were boxed and how many
+  of their requests were refused.
+- Each box is also an event, from the request that tipped the client in:
+  `gregale edge rule events --app my-site --outcome boxed` lists the
+  address, path and User-Agent, so you can tell a scanner from a customer.
+  Events are sampled (up to 10 boxes per rule per minute on each edge node)
+  and kept for 7 days.
 
 ## Outbound connections and DNS
 

@@ -198,7 +198,7 @@ func TestMemStoreCoverageInstancesAndSnapshots(t *testing.T) {
 	if err != nil || live.ID != deployment.ID {
 		t.Fatalf("live deployment = %+v, %v", live, err)
 	}
-	if _, err := m.LatestSupersededDeployment(ctx, "missing"); !errors.Is(err, state.ErrNotFound) {
+	if _, err := m.LatestSupersededDeployment(ctx, "missing", state.DefaultEnvScope); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("superseded missing = %v", err)
 	}
 	if _, err := m.ListDeploymentsForApp(ctx, app.ID, 10, 0); err != nil {

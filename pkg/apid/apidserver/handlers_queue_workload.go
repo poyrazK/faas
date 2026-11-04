@@ -39,6 +39,7 @@ func queueWorkloadProfileScalingPolicy(app state.App, targetDepth float64) *api.
 	policy.MaxQueueDepth = current.MaxQueueDepth
 	policy.WakeMaxQueueDepth = current.WakeMaxQueueDepth
 	policy.WakeMaxQueueWaitSeconds = current.WakeMaxQueueWaitSeconds
+	policy.PerInstanceConcurrency = current.PerInstanceConcurrency
 	if current.ScaleOutCooldownS > 0 {
 		policy.ScaleOutCooldownS = current.ScaleOutCooldownS
 	}
@@ -60,7 +61,8 @@ func queueWorkloadProfilePolicyEqual(app state.App, desired *api.ScalingPolicy) 
 		current.MaxQueueWaitMS != desired.MaxQueueWaitMS ||
 		current.MaxQueueDepth != desired.MaxQueueDepth ||
 		current.WakeMaxQueueDepth != desired.WakeMaxQueueDepth ||
-		current.WakeMaxQueueWaitSeconds != desired.WakeMaxQueueWaitSeconds {
+		current.WakeMaxQueueWaitSeconds != desired.WakeMaxQueueWaitSeconds ||
+		current.PerInstanceConcurrency != desired.PerInstanceConcurrency {
 		return false
 	}
 	if current.Target == nil || desired.Target == nil {

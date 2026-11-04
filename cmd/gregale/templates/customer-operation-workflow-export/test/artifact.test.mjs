@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {finishExport} from '../artifact.mjs';
 import {exportStep, createWorkflowExportServer} from '../server.mjs';
-import {GregaleWorkflowOperations} from '@gregale/sdk-node/operations/runtime';
+import {GregaleWorkflowOperations} from '@gregale/sdk-node/preview/operations/runtime';
 
 const id = '11111111-1111-4111-8111-111111111111', run = '22222222-2222-4222-8222-222222222222';
 const artifactID = '33333333-3333-4333-8333-333333333333';

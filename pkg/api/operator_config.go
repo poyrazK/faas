@@ -71,4 +71,7 @@ type RollbackOperatorRuntimeConfigRequest struct {
 	Version         int64  `json:"version"`
 	Reason          string `json:"reason"`
 	ExpectedVersion *int64 `json:"expected_version,omitempty"`
+	// Force confirms restoring a revision that turns a core capability flag
+	// off (ADR-20261023115741).
+	Force bool `json:"force,omitempty"`
 }

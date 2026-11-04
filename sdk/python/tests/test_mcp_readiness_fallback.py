@@ -2,10 +2,10 @@ from uuid import UUID
 
 
 def test_fallback_models_and_request_paths():
-    from faas_sdk.api.mcp import get_mcp_readiness_fallback, set_mcp_readiness_fallback
-    from faas_sdk.models.mcp_readiness_delivery_routing import MCPReadinessDeliveryRouting
-    from faas_sdk.models.mcp_readiness_fallback_policy import MCPReadinessFallbackPolicy
-    from faas_sdk.models.set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
+    from faas_sdk.preview.api.mcp import get_mcp_readiness_fallback, set_mcp_readiness_fallback
+    from faas_sdk.preview.models.mcp_readiness_delivery_routing import MCPReadinessDeliveryRouting
+    from faas_sdk.preview.models.mcp_readiness_fallback_policy import MCPReadinessFallbackPolicy
+    from faas_sdk.preview.models.set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 
     rule = UUID("00000000-0000-0000-0000-000000000001")
     request = dict(

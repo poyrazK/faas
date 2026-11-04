@@ -130,6 +130,7 @@ func (m *Manager) Freeze(ctx context.Context, instance string, opts FreezeOption
 		return FreezeReport{}, fmt.Errorf("freeze %s: %w", instance, err)
 	}
 	defer m.finishInstanceFlight(instance, flight)
+	defer m.beginAdoptionOp(instance, adoptionOpFreeze)()
 	gate, frozen, err := m.announceFreeze(inst)
 	if err != nil {
 		return FreezeReport{}, fmt.Errorf("freeze %s: %w", instance, err)
@@ -161,6 +162,7 @@ func (m *Manager) Freeze(ctx context.Context, instance string, opts FreezeOption
 	m.mu.Lock()
 	inst.Frozen, inst.FrozenSince = true, pausedAt
 	m.mu.Unlock()
+	m.markAdoptionDirty(instance)
 	m.freezeMetrics.observeFreeze(time.Since(started))
 	m.log.Info("frozen", "instance", instance, "reclaim", opts.Reclaim, "pause_ms", rep.Pause.Milliseconds(),
 		"reclaim_ms", rep.Reclaim.Milliseconds(), "before_bytes", rep.BeforeBytes,
@@ -334,6 +336,7 @@ func (m *Manager) ThawWith(ctx context.Context, instance string, opts ThawOption
 	if err := m.checkLiveAdmission(operationCtx, inst); err != nil {
 		return err
 	}
+	defer m.beginAdoptionOp(instance, adoptionOpThaw)()
 	// The guest runs again: its memory stays resident from here on.
 	if m.functionActivity != nil && functionlifetime.NativeNode(inst.Runtime) {
 		opts.RunResumeHook = true
@@ -357,6 +360,7 @@ func (m *Manager) clearFrozen(inst *Instance) {
 	m.mu.Lock()
 	inst.Frozen, inst.FrozenSince = false, time.Time{}
 	m.mu.Unlock()
+	m.markAdoptionDirty(inst.Lease.Instance)
 }
 
 // FrozenState reports whether an instance is frozen and since when, for
@@ -374,12 +378,14 @@ func (m *Manager) FrozenState(instance string) (frozen bool, since time.Time) {
 // AwaitFrozen reports whether a forward to instance must fail because the
 // instance is frozen. The caller has already marked the forward's activity.
 // A freeze that is still deciding either sees that activity and refuses, or
-// pauses the guest; AwaitFrozen waits until it has settled. An instance that
-// is not live is not frozen: the forward finds that out on its own.
+// pauses the guest; AwaitFrozen waits until it has settled. A terminal park
+// in progress is waited out the same way. An instance that is not live is not
+// frozen: the forward finds that out on its own.
 func (m *Manager) AwaitFrozen(ctx context.Context, instance string) (bool, error) {
 	for {
 		var frozen bool
 		var gate chan struct{}
+		var held *Instance
 		m.mu.Lock()
 		if inst := m.live[instance]; inst != nil {
 			if functionMigrationActive(inst) {
@@ -387,15 +393,30 @@ func (m *Manager) AwaitFrozen(ctx context.Context, instance string) (bool, error
 				return false, ErrInstanceBusy
 			}
 			frozen, gate = inst.Frozen, inst.freezing
+			if gate == nil && inst.parking != nil {
+				// A terminal park is running (park_hold.go). Wait it out: the
+				// VM is then gone and the forward fails as undelivered.
+				gate, held = inst.parking, inst
+				inst.parkHeld++
+			}
 		}
 		m.mu.Unlock()
 		if gate == nil {
 			return frozen, nil
 		}
+		var err error
 		select {
 		case <-gate:
 		case <-ctx.Done():
-			return false, ctx.Err()
+			err = ctx.Err()
+		}
+		if held != nil {
+			m.mu.Lock()
+			held.parkHeld--
+			m.mu.Unlock()
+		}
+		if err != nil {
+			return false, err
 		}
 	}
 }

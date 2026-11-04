@@ -52,6 +52,20 @@ changing the customer `Host` header used for app routing. Keep the origin
 hostname private and monitor Worker request quotas before enabling it for all
 customer traffic.
 
+## App edge pilot (ADR-1343)
+
+`APP_EDGE_ORIGIN_HOSTNAME` and `APP_EDGE_HOSTS` send app hosts to the
+compute-node app edge's Cloudflare Tunnel instead of `ORIGIN_HOSTNAME`.
+`APP_EDGE_HOSTS` is a list of exact hostnames (the pilot) or `*` for every app
+host: one label under `APPS_DOMAIN` (default `gregale.dev`) that is a valid,
+unreserved app name per `app-hosts.json`, which mirrors `pkg/api` and is
+checked by `pkg/api/app_hosts_worker_test.go`. `APP_EDGE_EXCLUDE_HOSTS` keeps
+exact hostnames on the control plane either way. Every other host, and every
+host while `APP_EDGE_ORIGIN_HOSTNAME` or `APP_EDGE_HOSTS` is unset, keeps the
+control-plane origin. Because this Worker picks
+the origin for `*.gregale.dev`, a DNS record alone cannot move an app host to
+the tunnel. Follow `docs/runbooks/AppEdgeCutover.md`.
+
 ## Rollback
 
 Detach the Worker from the customer routes. The origin remains unchanged and

@@ -10,7 +10,9 @@ package edgerules
 import (
 	"context"
 	"log/slog"
+	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -33,11 +35,22 @@ type Host interface {
 	Notifier() Notifier
 	// PromQL is nil when no Prometheus endpoint is configured.
 	PromQL() *promql.Client
+	// PlatformFlagEnabled decides a platform flag (ADR-1700) for acct.
+	PlatformFlagEnabled(flagKey string, acct state.Account) bool
 }
 
 // Service is the edge rules surface.
 type Service struct {
 	Host Host
+
+	// SettingCheck refuses an edge rule kind whose capability is not released
+	// to the account (ADR-20261023115741); nil allows every kind.
+	SettingCheck func(acct state.Account, kind string) *api.Problem
+
+	// AuthorizeApp applies the organization access check to an app a request
+	// changes without naming it, such as an app whose rules use an edited
+	// list (ADR-091 amendment 2026-10-30); nil allows every app.
+	AuthorizeApp func(r *http.Request, acct state.Account, app state.App) *api.Problem
 
 	// FleetRequired is true on named multi-box control planes. Those
 	// deployments must see at least one active serving gateway before a
@@ -45,4 +58,7 @@ type Service struct {
 	// compute registry and apply the same generation locally without fleet
 	// ACKs.
 	FleetRequired bool
+
+	// Metrics counts convergence skips and failures; nil records nothing.
+	Metrics *Metrics
 }

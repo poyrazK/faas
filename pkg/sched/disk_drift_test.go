@@ -1093,3 +1093,24 @@ func TestParseSnapKeySupportsAllPublishedLayouts(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261022184951 — amendment 1: an object in vmmd's private tree counts as present.
+func TestDiskDrift_NativeRuntimeSnapshotsCountAsPresent(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	seedDriftRow(ctx, t, store, "d-1")
+	seedDriftRow(ctx, t, store, "d-2")
+	shared := &fakeStorageLister{keys: []string{"snap/d-1/mem", "snap/d-1/vmstate"}}
+	native := &fakeStorageLister{keys: []string{"snap/d-2/mem", "snap/d-2/vmstate"}}
+	if drift, err := sched.NewDiskDrift(store, nil).WithStorage(shared).Tick(ctx); err != nil || drift == 0 {
+		t.Fatalf("without the native tree: drift = %d, err = %v; want d-2 reported missing", drift, err)
+	}
+	drift, err := sched.NewDiskDrift(store, nil).WithStorage(shared).WithNativeRuntimeSnapshots(native).Tick(ctx)
+	if err != nil || drift != 0 {
+		t.Fatalf("with the native tree: drift = %d, err = %v; want 0", drift, err)
+	}
+	native.err = errors.New("native tree unreadable")
+	if _, err := sched.NewDiskDrift(store, nil).WithStorage(shared).WithNativeRuntimeSnapshots(native).Tick(ctx); err == nil {
+		t.Fatal("an unreadable native tree produced a clean sweep")
+	}
+}

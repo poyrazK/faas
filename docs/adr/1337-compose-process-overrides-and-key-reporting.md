@@ -83,7 +83,7 @@ classifies its keys:
   `build.*` keys other than `context` and `dockerfile` (including `args`,
   `target` and `secrets`) are warned: the builder builds the Dockerfile's final
   stage without build arguments. ADR-20261019142544 later applies `args` and
-  `target` to Dockerfile builds.
+  `target` to Dockerfile builds, and ADR-20261022185329 `secrets`.
 - **Not resolved, with a prominent warning:** `extends` and top-level
   `include`. The scan does not merge the extended service or the included
   files. The `extends` warning names the base service and, for a base in the

@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
+	"github.com/onebox-faas/faas/pkg/guestdisk"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -1042,6 +1043,10 @@ func newTestManager(run Runner, vmm VMM) *Manager {
 // real /sys/fs/cgroup via the same helper, because the jailer writes
 // there regardless of what cgroupRoot is set to in this package.
 func TestMain(m *testing.M) {
+	// The test binary stands in for vmmd-guestdisk in real-drive tests.
+	if len(os.Args) > 1 && os.Args[1] == "--uid" {
+		os.Exit(guestdisk.SandboxMain(os.Args[1:]))
+	}
 	runNativeLaunchHelperFixture()
 	if os.Getenv("GREGALE_NATIVE_PRODUCER_FIXTURE") == "1" {
 		os.Exit(m.Run()) // The crash fixture does not touch cgroups.

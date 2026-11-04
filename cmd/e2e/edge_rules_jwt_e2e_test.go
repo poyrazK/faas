@@ -126,7 +126,7 @@ func TestEdgeRulesJWT_E2E(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-jwt.apps.test.example"
+	synthHost := "edgectl-jwt.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)

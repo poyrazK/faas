@@ -63,6 +63,12 @@ type ProductPlan struct {
 	// the plan without an earlier trial (ADR-20261021195901); omitted when
 	// zero.
 	TrialDays int64 `json:"trial_days,omitempty"`
+	// RequiresPaymentMethod keeps the plan after a customer's trial only
+	// with a payment method on file; without one the customer moves to
+	// FallbackPlan at the trial's end (ADR-20261022180921). Both omitted
+	// when unset.
+	RequiresPaymentMethod bool   `json:"requires_payment_method,omitempty"`
+	FallbackPlan          string `json:"fallback_plan,omitempty"`
 }
 
 type ProductFeatureGrant struct {
@@ -106,7 +112,24 @@ type ProductCustomer struct {
 	// previews hash as before.
 	TrialStartsAt *time.Time `json:"trial_starts_at,omitempty"`
 	TrialEndsAt   *time.Time `json:"trial_ends_at,omitempty"`
+	// PaymentMethodAt is when a payment method was last seen on file for
+	// the customer, and TrialResolvedAt when their ended trial was resolved
+	// (ADR-20261022180921). The store sets both; omitted when unset.
+	PaymentMethodAt *time.Time `json:"payment_method_at,omitempty"`
+	TrialResolvedAt *time.Time `json:"trial_resolved_at,omitempty"`
 }
+
+// AwaitsPaymentMethod reports whether a customer on plan, which requires a
+// payment method, is refused new starts at at: their trial has ended, is
+// not resolved yet and they have no payment method on file
+// (ADR-20261022180921).
+func (c ProductCustomer) AwaitsPaymentMethod(plan ProductPlan, at time.Time) bool {
+	return plan.RequiresPaymentMethod && c.TrialEndsAt != nil && !at.Before(*c.TrialEndsAt) && c.TrialResolvedAt == nil && c.PaymentMethodAt == nil
+}
+
+// CodeProductPaymentMethodRequired refuses a start or a self-service change
+// that needs a payment method on file (ADR-20261022180921).
+const CodeProductPaymentMethodRequired = "product_payment_method_required"
 
 // InTrial reports whether at falls in the customer's trial.
 func (c ProductCustomer) InTrial(at time.Time) bool {

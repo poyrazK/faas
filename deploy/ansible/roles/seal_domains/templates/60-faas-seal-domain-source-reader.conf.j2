@@ -1,0 +1,22 @@
+# Managed by the seal_domains role (ADR 20261022111812): githubd opens GitHub
+# install tokens and webhook secret copies with the source seal-domain
+# identity, and seals new install tokens under the domain's write mode. The
+# fleet identity stays in the base unit until the domain re-seal completes.
+[Service]
+{% if faas_seal_domain_source_contracted | bool %}
+# Contracted: an empty LoadCredential= drops every credential loaded before
+# this drop-in, the base unit's fleet and host identities included. The
+# GitHub App key and the public fleet recipient the base unit also loads
+# are loaded again here, so githubd holds every credential but those two
+# identities. With neither key path set githubd loads no legacy identity.
+LoadCredential=
+LoadCredential=faas_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
+LoadCredential=faas_github_app_key_unit:/etc/faas/secrets/githubd/app.pem
+UnsetEnvironment=FAAS_HOST_AGE_IDENTITY_PATH FAAS_HOST_AGE_KEY
+{% endif %}
+LoadCredential=faas_seal_domain_source:/etc/faas/secrets/domains/source.age
+{% if faas_seal_domain_source_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_source_previous:/etc/faas/secrets/domains/source.age.previous
+{% endif %}
+Environment=FAAS_SEAL_DOMAIN_SOURCE_IDENTITY_PATH=%d/faas_seal_domain_source
+Environment=FAAS_SEAL_DOMAIN_SOURCE_WRITES={{ faas_seal_domain_source_writes }}

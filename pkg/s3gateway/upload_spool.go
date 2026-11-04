@@ -14,15 +14,13 @@ import (
 )
 
 func (h *Handler) reserveUploadStage(w http.ResponseWriter, r *http.Request, req requestContext) bool {
-	select {
-	case h.putSlots <- struct{}{}:
-	default:
+	if !h.acquirePutSlot(req.bucket.AccountID) {
 		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
 		return false
 	}
 	if !h.reserveSpool(r.ContentLength) {
-		<-h.putSlots
+		h.releasePutSlot(req.bucket.AccountID)
 		closeUnreadUploadConnection(w, r)
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "The upload spool does not have enough reserved capacity.", r.URL.Path, req.requestID)
 		return false
@@ -42,7 +40,7 @@ func (h *Handler) stageUpload(w http.ResponseWriter, r *http.Request, req reques
 	if !h.reserveUploadStage(w, r, req) {
 		return nil, func() {}, false
 	}
-	release := func() { h.releaseSpool(r.ContentLength); <-h.putSlots }
+	release := func() { h.releaseSpool(r.ContentLength); h.releasePutSlot(req.bucket.AccountID) }
 	file, err := os.CreateTemp(h.spoolDir, "gregale-s3-put-*")
 	if err != nil {
 		release()

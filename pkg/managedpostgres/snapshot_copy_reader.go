@@ -43,6 +43,9 @@ func (s *Service) AdmitSnapshotCopyReaderReservation(ctx context.Context, accoun
 			return 0, err
 		}
 	}
+	if err := s.admitFleet(ctx, false); err != nil {
+		return 0, err
+	}
 	b, err := s.checkpointBackend(d)
 	if err != nil {
 		return 0, err
@@ -81,6 +84,9 @@ func (s *Service) PrepareSnapshotCopyReader(ctx context.Context, accountID strin
 		if err := s.admit(ctx, accountID); err != nil {
 			return SnapshotCopyReaderObservation{}, err
 		}
+	}
+	if err := s.admitFleet(ctx, false); err != nil {
+		return SnapshotCopyReaderObservation{}, err
 	}
 	return s.snapshotCopyReader(ctx, d, r, true)
 }

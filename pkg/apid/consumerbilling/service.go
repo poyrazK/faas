@@ -36,6 +36,11 @@ type Host interface {
 	OfferedPlans(ctx context.Context, app state.App, settings state.APIConsumerSignupSettings) ([]api.ConsumerSignupPlan, error)
 	// StripeKey opens the account's Stripe billing connection (ADR-1502).
 	StripeKey(ctx context.Context, accountID string) (key string, livemode bool, problem *api.Problem)
+	// CreatorBills reports whether app's customers may be billed through
+	// the account that created it, whose billing connection they use: always
+	// for a personal app, and for a company app only while that account is a
+	// member of the company (ADR-20261026151103 amendment 2).
+	CreatorBills(ctx context.Context, app state.App) bool
 	Audit(ctx context.Context, event, accountID string, fields map[string]any)
 }
 
@@ -111,7 +116,7 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request) (caller, 
 		return caller{}, false
 	}
 	key, err := s.Host.Store().ConsumerKeyByAppAndPrefix(ctx, app.AccountID, app.ID, prefix)
-	if err != nil || !api.ConstantTimeEqualHash(api.HashConsumerKey(token), key.Hash) || key.RevokedAt != nil ||
+	if err != nil || !state.CredentialMatches(state.CredentialColumnConsumerKey, api.HashConsumerKey(token), key.Hash) || key.RevokedAt != nil ||
 		(key.ExpiresAt != nil && !key.ExpiresAt.After(s.now())) || key.ConsumerID == "" {
 		unauthorized(w)
 		return caller{}, false
@@ -308,7 +313,7 @@ func (s *Service) Statements(w http.ResponseWriter, r *http.Request) {
 	for _, st := range finalized {
 		item := api.ConsumerBillingStatement{ID: st.ID, PeriodStart: st.PeriodStart.UTC(), PeriodEnd: st.PeriodEnd.UTC(),
 			Revision: st.Revision, Currency: st.Currency, BillableUnits: st.BillableUnits, AmountMillicents: st.AmountMillicents,
-			FinalizedAt: st.FinalizedAt}
+			CreditAppliedMillicents: st.CreditAppliedMillicents, AmountDueMillicents: st.AmountDueMillicents(), FinalizedAt: st.FinalizedAt}
 		if exports != nil {
 			if e, err := exports.GetStatementInvoiceExport(r.Context(), c.app.AccountID, state.StatementSourceAppConsumer, st.ID); err == nil &&
 				e.Status == state.StatementInvoiceExportCompleted {

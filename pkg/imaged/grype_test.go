@@ -396,3 +396,28 @@ func TestVulnPaths(t *testing.T) {
 		})
 	}
 }
+
+// An advisory for a product with several release lines lists one fix per
+// line. The finding names the fix for the installed line: node 22.23.3 was
+// reported as fixed in 11.0.0, the first line's fix.
+func TestVulnFixedInPrefersGrypeSuggestedVersion(t *testing.T) {
+	for _, tc := range []struct{ name, match, want string }{
+		{"suggested fix for the installed line",
+			`{"vulnerability":{"fix":{"versions":["11.0.0","20.19.6","22.23.4"]}},"artifact":{"name":"node","version":"22.23.3"},"matchDetails":[{"type":"cpe-match","fix":{"suggestedVersion":"22.23.4"}}]}`,
+			"22.23.4"},
+		{"no suggestion keeps the first fix",
+			`{"vulnerability":{"fix":{"versions":["1.1.1l-1"]}},"matchDetails":[{"type":"exact-direct-match"}]}`,
+			"1.1.1l-1"},
+		{"no fix", `{"vulnerability":{"fix":{"versions":[]}}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var m grypeMatch
+			if err := json.Unmarshal([]byte(tc.match), &m); err != nil {
+				t.Fatal(err)
+			}
+			if got := vulnFixedIn(m); got != tc.want {
+				t.Fatalf("vulnFixedIn = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

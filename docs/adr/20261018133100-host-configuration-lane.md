@@ -128,6 +128,9 @@ within a range changes nothing.
     the files a role names, the `deploy/grafana/` mirror of the grafana
     role's dashboards, and `deploy/cloudflare/` workers, which have their
     own workflows. A test checks that no release workflow reads those trees.
+    (Amended by ADR 20261027151755: these trees are now the `inert` class of
+    `release_units.json` `deploy_classes`, beside samples and compute
+    playbooks, and every `deploy/` path must have a class.)
 - **At deploy time, per host.** `scripts/ci/plan_host_config.py` compares
   the release commit's hashes with the host's record:
   - The roles whose hash differs are converged, plus every role whose
@@ -410,7 +413,8 @@ session, so this change does not touch it, `node_join`, `cmd/vmmd`,
 - **The full lane writes the record.** When the tag carries
   `scripts/ci/host_roles.py`, cd-controlplane's ADR-580 step should record
   the role hashes after activation, so the lane's first diff after a full
-  release is exact.
+  release is exact. Done by ADR-20261030150000, which also has the full
+  release converge only the roles whose hash differs from the record.
 - **ADR-580's contract misses role inputs outside `deploy/ansible`.** For
   example, `deploy/systemd/faas-pg-*`, `deploy/scripts/*`, the status page
   and `docs/DPA.md`. The role hashes cover them, and the contract should

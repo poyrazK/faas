@@ -26,10 +26,10 @@ import (
 
 // providerKeyMaxBytes bounds a stored provider key; real keys are ~110
 // bytes.
-const providerKeyMaxBytes = 512
+const providerKeyMaxBytes = api.BillingProviderKeyMaxBytes
 
 func keyNamespace(provider, accountID string) string {
-	return "gregale.billing." + provider + "." + accountID
+	return api.BillingProviderKeyNamespace(provider, accountID)
 }
 
 // Host is what statement invoice exports need from apid (ADR-982).
@@ -389,6 +389,13 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	}
 	if export.Livemode != conn.livemode {
 		return state.StatementInvoiceExport{}, exportConflict("the export started with a " + p.title() + " key in the other mode; reconnect that key to finish it")
+	}
+	// Reserve the handoff before the provider sees anything, so an
+	// overlapping statement cannot be invoiced meanwhile (ADR-20261020211500).
+	if err := store.ReserveStatementHandoff(ctx, acct.ID, export.ID); errors.Is(err, state.ErrConflict) {
+		return state.StatementInvoiceExport{}, exportConflict(ErrHandoffOverlapDetail)
+	} else if err != nil {
+		return state.StatementInvoiceExport{}, api.ErrInternal("could not reserve the statement handoff")
 	}
 	record := func(invoiceID string) error {
 		if err := store.SetStatementInvoiceExportInvoice(ctx, export.AccountID, export.ID, invoiceID); err != nil {

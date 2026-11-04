@@ -14,9 +14,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -27,6 +29,8 @@ import (
 //  2. $FAAS_DATABASE_URL
 //  3. default `postgres:///faas?host=/run/postgresql&user=faas` (peer auth,
 //     matches the ansible postgres role).
+//
+// FAAS_DB_ROLE, when set, replaces the DSN's user (see RuntimeRoleEnv).
 func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 	return open(ctx, dsnOverride, "")
 }
@@ -72,6 +76,9 @@ var DaemonMaxConnections = map[string]int32{
 	"outboundd":   2,
 	"s3-gatewayd": 2,
 	"maild":       2,
+	// The hosted management MCP bridge (ADR-20261026195952): lease renewal
+	// and state writes; it subscribes to nothing.
+	"mcp-bridge": 2,
 }
 
 // DaemonMaxConnectionsNotifyHubDisabled is the budget used when
@@ -119,9 +126,98 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 	"outboundd":   2,
 	"s3-gatewayd": 2,
 	"maild":       2,
+	"mcp-bridge":  2,
 }
 
 const defaultMaxConnections int32 = 4
+
+// DaemonMinConnections is the warm floor of a daemon's ordinary pool: the
+// connections pgxpool keeps open past MaxConnIdleTime. Daemons absent here
+// keep MinConns=0, so their burst connections close after a quiet minute.
+//
+// A new PostgreSQL backend compiles every PL/pgSQL function and plans every
+// statement inside it on first use. A wake's insert into instances fires
+// about thirty trigger functions: on PostgreSQL 16 it took 22-34 ms on a
+// fresh backend and 1.4 ms on a warm one, and the wake's later statements pay
+// the same first-use cost. Without a floor, schedd's first wake after a quiet
+// minute ran on new backends. pgxpool hands out the most recently released
+// idle connection, so a small floor keeps the connections wakes reuse warm.
+//
+// gatewayd-internal answers a host that misses its route cache with a store
+// read bounded by api.TrafficPublicHostReadTimeout (250 ms, ADR-570), and a
+// read that runs out of time refuses the request (traffic_policy_unavailable).
+// On PostgreSQL 16 that read took 6-15 ms on a freshly dialed backend and
+// about 1 ms on a warm one; dialing and warming a backend under that budget
+// took 348 ms on a loaded node and refused a deployment's first request.
+//
+// A floor never exceeds the daemon's maximum, which postgres_capacity already
+// provisions: it keeps sessions idle but needs no extra capacity.
+var DaemonMinConnections = map[string]int32{
+	"schedd":            4,
+	"gatewayd-internal": 2,
+}
+
+// warmFloorLifetimeJitter spreads the replacement of a floor's connections.
+// pgxpool replaces each one after MaxConnLifetime (an hour by default), and a
+// floor opened at once would otherwise go cold at once.
+const warmFloorLifetimeJitter = 10 * time.Minute
+
+// daemonMinConnections resolves appName's warm floor, capped at its maximum.
+func daemonMinConnections(appName string) int32 {
+	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
+	return min(DaemonMinConnections[name], daemonMaxConnections(appName))
+}
+
+// DaemonConnectionWarmups is a statement each new connection of a daemon's
+// ordinary pool runs before the pool hands it out. Most of a new backend's
+// first-use cost is loading the catalog of the tables a read touches; one
+// statement over those tables pays it outside the request that would
+// otherwise wait for it. A floor's connections open in the background, so
+// their warm-up never runs on a request path.
+//
+// gatewayd-internal's statement covers the tables its public host policy read
+// touches (cmd/gatewayd-internal pgRouter.resolveHost): on PostgreSQL 16 the
+// first resolution on a dialed backend fell from 6-15 ms to 2-3 ms once they
+// were touched. A table missing here only leaves that read cold.
+var DaemonConnectionWarmups = map[string]string{
+	"gatewayd-internal": `select
+		(select 1 from apps limit 0),
+		(select 1 from accounts limit 0),
+		(select 1 from orgs limit 0),
+		(select 1 from resource_namespaces limit 0),
+		(select 1 from deployments limit 0),
+		(select 1 from deployment_aliases limit 0),
+		(select 1 from custom_domains limit 0),
+		(select 1 from tenant_surfaces limit 0),
+		(select 1 from tenant_hostnames limit 0),
+		(select 1 from project_environments limit 0)`,
+}
+
+// connectionWarmupTimeout bounds a warm-up so a slow database cannot hold a
+// new connection out of the pool.
+const connectionWarmupTimeout = 2 * time.Second
+
+// warmConnection returns the AfterConnect hook for appName's warm-up, or nil.
+// A warm-up is best effort: when it fails the connection joins the pool cold,
+// unless the failure closed it.
+func warmConnection(appName string) func(context.Context, *pgx.Conn) error {
+	statement := DaemonConnectionWarmups[strings.TrimPrefix(strings.TrimSpace(appName), "faas-")]
+	if statement == "" {
+		return nil
+	}
+	return runWarmup(statement)
+}
+
+func runWarmup(statement string) func(context.Context, *pgx.Conn) error {
+	return func(ctx context.Context, conn *pgx.Conn) error {
+		warmCtx, cancel := context.WithTimeout(ctx, connectionWarmupTimeout)
+		defer cancel()
+		if _, err := conn.Exec(warmCtx, statement); err != nil && conn.IsClosed() {
+			return fmt.Errorf("db: warm connection: %w", err)
+		}
+		return nil
+	}
+}
 
 // Shared with direct.go so both pools age and probe identically.
 const (
@@ -179,27 +275,10 @@ func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*
 		dsn = "postgres:///faas?host=/run/postgresql&user=faas"
 	}
 
-	cfg, err := pgxpool.ParseConfig(dsn)
+	cfg, err := poolConfig(dsn, appName, len(readOnly) > 0 && readOnly[0])
 	if err != nil {
-		return nil, fmt.Errorf("db: parse config: %w", err)
+		return nil, err
 	}
-	// Direct pools have per-daemon budgets. MinConns=0 and the short idle
-	// lifetime keep burst capacity from becoming permanent idle ClientRead
-	// sessions; LISTEN subscribers naturally retain only the sessions they use.
-	cfg.MaxConns = daemonMaxConnections(appName)
-	cfg.MinConns = 0
-	cfg.MaxConnIdleTime = time.Minute
-	cfg.HealthCheckPeriod = healthCheckPeriod
-	if appName != "" {
-		cfg.ConnConfig.RuntimeParams["application_name"] = appName
-	}
-	if len(readOnly) > 0 && readOnly[0] {
-		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
-	}
-	// Safe under a transaction-mode pooler; a no-op without one.
-	applyPooledExecMode(cfg, dsn)
-	instrumentAcquires(cfg)
-
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("db: open pool: %w", err)
@@ -224,6 +303,81 @@ func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*
 	}
 	registerDirectPool(pool, direct)
 	return pool, nil
+}
+
+// poolConfig builds the ordinary pool's configuration for appName.
+// MigratorAppName is the application name cmd/migrate opens its pool with.
+const MigratorAppName = "faas-migrate"
+
+// Migration timeouts for the migrator's sessions (issue #579).
+const (
+	MigrationStatementTimeout = 30 * time.Second
+	MigrationLockTimeout      = 10 * time.Second
+)
+
+// Daemon session bounds. Nothing bounded a daemon's statements or open
+// transactions, and some transactions wait on network work while holding row
+// locks, so one stuck session could hold locks until an operator killed it
+// (bug hunt 2026-10-28 H59). These are backstops well above the slowest
+// statements that bound themselves with SET LOCAL; tighten them once
+// pg_stat_statements shows the fleet's longest statements. A DSN that names
+// either setting keeps its own value. LISTEN and session advisory locks are
+// idle outside a transaction, so neither bound touches them.
+const (
+	DaemonStatementTimeout                = 5 * time.Minute
+	DaemonIdleInTransactionSessionTimeout = 2 * time.Minute
+)
+
+func applyDaemonSessionTimeouts(params map[string]string) {
+	if _, set := params["statement_timeout"]; !set {
+		params["statement_timeout"] = strconv.FormatInt(DaemonStatementTimeout.Milliseconds(), 10)
+	}
+	if _, set := params["idle_in_transaction_session_timeout"]; !set {
+		params["idle_in_transaction_session_timeout"] = strconv.FormatInt(DaemonIdleInTransactionSessionTimeout.Milliseconds(), 10)
+	}
+}
+
+func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("db: parse config: %w", err)
+	}
+	if err := applyRuntimeRole(cfg.ConnConfig); err != nil {
+		return nil, err
+	}
+	// Direct pools have per-daemon budgets. Connections above the daemon's
+	// warm floor close after a quiet minute, so burst capacity never becomes
+	// permanent idle ClientRead sessions; LISTEN subscribers naturally retain
+	// only the sessions they use.
+	cfg.MaxConns = daemonMaxConnections(appName)
+	cfg.MinConns = daemonMinConnections(appName)
+	if cfg.MinConns > 0 {
+		cfg.MaxConnLifetimeJitter = warmFloorLifetimeJitter
+	}
+	cfg.MaxConnIdleTime = time.Minute
+	cfg.HealthCheckPeriod = healthCheckPeriod
+	cfg.AfterConnect = warmConnection(appName)
+	if appName != "" {
+		cfg.ConnConfig.RuntimeParams["application_name"] = appName
+	}
+	if readOnly {
+		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	}
+	if appName == MigratorAppName {
+		// Issue #579: a hung or lock-starved migration fails the deploy
+		// instead of stalling it. A migration that needs longer sets its own
+		// bound with SET LOCAL (docs/runbooks/migration-rollback.md).
+		cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(MigrationStatementTimeout.Milliseconds(), 10)
+		cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(MigrationLockTimeout.Milliseconds(), 10)
+	} else if !pooledDSN(dsn) {
+		// pgbouncer refuses unknown startup parameters; behind it the
+		// pooler's own idle_transaction_timeout applies instead.
+		applyDaemonSessionTimeouts(cfg.ConnConfig.RuntimeParams)
+	}
+	// Safe under a transaction-mode pooler; a no-op without one.
+	applyPooledExecMode(cfg, dsn)
+	instrumentAcquires(cfg)
+	return cfg, nil
 }
 
 // Close closes p and its session-scoped sibling. Daemons that call

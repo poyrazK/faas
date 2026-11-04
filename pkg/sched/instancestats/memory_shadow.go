@@ -18,8 +18,10 @@ type NodeMemoryShadow struct {
 
 // memoryShadow sums both bookings over the instances that count toward a
 // node's RAM (invariant 2). An instance without an RSS sample books its full
-// reservation in both columns.
-func memoryShadow(instances []state.Instance, rows []InstanceStat) map[string]NodeMemoryShadow {
+// reservation in both columns. bridgeMB is each node's instance bridge
+// memory (connection-survival ADR §2, the ADR-909 amendment): measured
+// admission charges it on top; it reserves nothing.
+func memoryShadow(instances []state.Instance, rows []InstanceStat, bridgeMB map[string]int) map[string]NodeMemoryShadow {
 	rss := make(map[string]float64, len(rows))
 	for _, row := range rows {
 		rss[row.InstanceID] = row.RSSMB
@@ -35,8 +37,22 @@ func memoryShadow(instances []state.Instance, rows []InstanceStat) map[string]No
 		}
 		s := out[in.NodeID]
 		s.ReservedMB += api.BillableRAMMB(in.RAMMB)
-		s.MeasuredMB += api.MeasuredChargeMB(in.RAMMB, sample)
+		if state.State(in.State) == state.StateFrozen {
+			// A paused VM cannot grow; its floor is FrozenChargeFloorMB
+			// (ADR 20261031143521).
+			s.MeasuredMB += api.FrozenChargeMB(in.RAMMB, sample)
+		} else {
+			s.MeasuredMB += api.MeasuredChargeMB(in.RAMMB, sample)
+		}
 		out[in.NodeID] = s
+	}
+	for node, mb := range bridgeMB {
+		if node == "" || mb <= 0 {
+			continue
+		}
+		s := out[node]
+		s.MeasuredMB += mb
+		out[node] = s
 	}
 	return out
 }
@@ -44,20 +60,39 @@ func memoryShadow(instances []state.Instance, rows []InstanceStat) map[string]No
 // publishMemoryShadow records the shadow for admission and metrics. asOf is
 // when the tick started, before it listed the instances.
 func (p *Poller) publishMemoryShadow(instances []state.Instance, rows []InstanceStat, asOf time.Time) {
+	p.publishMemoryShadowWithBridges(instances, rows, nil, asOf)
+}
+
+// publishMemoryShadowWithBridges is publishMemoryShadow with each node's
+// instance bridge memory.
+func (p *Poller) publishMemoryShadowWithBridges(instances []state.Instance, rows []InstanceStat, bridgeMB map[string]int, asOf time.Time) {
 	if p.rssHistory == nil {
 		p.rssHistory = newRSSHistory()
+	}
+	// A paused VM cannot grow, and a thaw re-admits its full reservation, so
+	// a frozen instance is charged its latest sample, not the window's p95:
+	// the memory a compression frees reaches admission with the next sample,
+	// not ten minutes later (ADR 20261031190030).
+	frozen := make(map[string]struct{})
+	for _, in := range instances {
+		if state.State(in.State) == state.StateFrozen {
+			frozen[in.ID] = struct{}{}
+		}
 	}
 	charged := make([]InstanceStat, len(rows))
 	live := make(map[string]struct{}, len(rows))
 	for i, row := range rows {
 		if row.RSSMB >= 0 { // false for NaN, an unmeasured instance
-			row.RSSMB = p.rssHistory.chargeSample(row.InstanceID, row.RSSMB, asOf)
+			charge := p.rssHistory.chargeSample(row.InstanceID, row.RSSMB, asOf)
+			if _, isFrozen := frozen[row.InstanceID]; !isFrozen {
+				row.RSSMB = charge
+			}
 		}
 		charged[i] = row
 		live[row.InstanceID] = struct{}{}
 	}
 	p.rssHistory.retain(live)
-	shadow := memoryShadow(instances, charged)
+	shadow := memoryShadow(instances, charged, bridgeMB)
 	if p.Reader != nil {
 		p.Reader.replaceMemoryShadow(shadow, asOf)
 	}

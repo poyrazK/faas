@@ -157,3 +157,50 @@ func TestHandlerRetryDoesNotReplayPostByDefault(t *testing.T) {
 		t.Fatal("status = 200; the POST should have surfaced its transport failure")
 	}
 }
+
+// The vmmd bridge forwards to the instance named in x-faas-instance, not to
+// the Target it is handed (forwardproxy.go builds the init frame from the
+// header). A replay onto a sibling must therefore carry the sibling's
+// identity; replaying the original instance's headers sent the retry back to
+// the failed VM, or to an instance the sibling's node does not run.
+func TestHandlerRetryRestampsIdentityForTheSibling(t *testing.T) {
+	b := &fakeBackend{
+		app:  App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro},
+		host: "jane-api.apps.dom",
+	}
+	b.AddTarget(Target{NodeID: "node-dead", InstanceID: "instance-dead"})
+	b.AddTarget(Target{NodeID: "node-live", InstanceID: "instance-live"})
+	type seen struct{ target, header, headerID, node string }
+	var attempts []seen
+	h := NewHandlerWith(b, NewMetrics(), slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h.WithForwarding(func(target Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			instance := r.Header.Get("x-faas-instance")
+			attempts = append(attempts, seen{target.InstanceID, instance, r.Header.Get(api.InstanceIDHeader), r.Header.Get("X-Faas-Node")})
+			if instance != "instance-live" {
+				markStaleTarget(r.Context())
+				http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = w.Write([]byte("served by " + instance))
+		})
+	})
+	h.WithRetryEnabled(true).WithRetryDefault(RetryPolicy{MaxAttempts: 2})
+
+	req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	req.Header.Set("X-Faas-Instance", "instance-forged")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || rec.Body.String() != "served by instance-live" {
+		t.Fatalf("status = %d body = %q, want the sibling's 200; attempts=%+v", rec.Code, rec.Body, attempts)
+	}
+	for _, a := range attempts {
+		if a.header != a.target || a.headerID != a.target {
+			t.Fatalf("attempt for %s carried x-faas-instance=%q %s=%q; attempts=%+v", a.target, a.header, api.InstanceIDHeader, a.headerID, attempts)
+		}
+	}
+	if last := attempts[len(attempts)-1]; last.node != "node-live" {
+		t.Fatalf("replay carried X-Faas-Node=%q, want node-live", last.node)
+	}
+}

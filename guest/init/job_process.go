@@ -35,11 +35,13 @@ func guestJobProcess(m JobManifest, env []string) jobProcess {
 // buildImageJobEnv layers the job's environment over the image ENV, as
 // `docker run -e` layers over the image: base (the guest's own environment)
 // < image ENV < job env < secrets < the platform job baseline. An image
-// without PATH gets Docker's default.
+// without PATH gets Docker's default. The base never supplies HOME: the
+// kernel starts PID 1 with HOME=/, which would hide the image user's
+// passwd home that withImageHome applies.
 func buildImageJobEnv(base []string, image map[string]string, m JobManifest, secrets map[string]string) []string {
 	merged := make(map[string]string, len(base)+len(image)+len(m.Env)+len(secrets)+len(jobEnvBaseline))
 	for _, kv := range base {
-		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" && k != "HOME" {
 			merged[k] = v
 		}
 	}

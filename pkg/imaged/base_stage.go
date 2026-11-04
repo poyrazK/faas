@@ -128,6 +128,9 @@ func (h *Handler) ensureBaseExt4(
 	if err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: storageFor for base stage: %w", err)
 	}
+	if err := checkBaseGenerationRoute(be, baseKey, ref); err != nil {
+		return BaseStageResult{}, err
+	}
 	guestInitDigest, err := guestInitBinaryDigest(h.guestInitPath)
 	if err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: hash guest-init %q: %w", h.guestInitPath, err)
@@ -883,8 +886,8 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, digestKey, ref,
 		// to "refuse to boot".
 		findings = &ScanResult{
 			SeverityCounts: SeverityCounts{
-				Critical: 9999, High: 9999, Medium: 9999,
-				Low: 9999, Unknown: 0,
+				Critical: wire.BaseScanFailedCount, High: wire.BaseScanFailedCount, Medium: wire.BaseScanFailedCount,
+				Low: wire.BaseScanFailedCount, Unknown: 0,
 			},
 		}
 	}
@@ -982,7 +985,7 @@ func (h *Handler) scanSidecarSourceCurrent(ctx context.Context, be storage.Stora
 	if err := json.NewDecoder(rc).Decode(&sidecar); err != nil {
 		return false
 	}
-	if sidecar.Findings[SeverityCritical] >= 9999 {
+	if sidecar.Findings[SeverityCritical] >= wire.BaseScanFailedCount {
 		return false
 	}
 	// Sidecars written before the runtime gate matched CI's --only-fixed

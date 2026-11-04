@@ -69,6 +69,24 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	defer func() { _ = release(ctx) }() //nolint:errcheck // PG auto-releases on conn close; logged at call sites
 
+	// A daemon on its runtime role (ADR-20261023104734) owns no object and
+	// cannot run DDL. Holding the lock above, it waits out an owner's run and
+	// then only confirms the schema is current.
+	owns, err := sessionOwnsMigrationLedger(ctx, pool)
+	if err != nil {
+		return err
+	}
+	if !owns {
+		status, err := Status(ctx, pool)
+		if err != nil {
+			return err
+		}
+		if len(status.Pending) > 0 {
+			return fmt.Errorf("%w: %d pending, first %s", ErrMigrationsPendingForRuntimeRole, len(status.Pending), status.Pending[0])
+		}
+		return nil
+	}
+
 	connStr := stdlib.RegisterConnConfig(cfg.ConnConfig)
 	sqlDB, err := sql.Open("pgx", connStr)
 	if err != nil {

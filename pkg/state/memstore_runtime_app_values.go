@@ -85,11 +85,19 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 	return result, nil
 }
 
+// inheritsProjectEnvironment mirrors the runtime queries'
+// inherits_project_environment column: a PR preview runs unreviewed code and
+// never inherits the project environment its scope maps to (the default
+// scope maps to production).
+func inheritsProjectEnvironment(app App) bool {
+	return app.ProjectID != "" && app.PreviewOfSlug == ""
+}
+
 // inheritedProjectEnvLocked reads the latest configuration of the project
 // environment the owner's scope maps to (ADR-1136).
 func (m *MemStore) inheritedProjectEnvLocked(owner RuntimeAppEnvSnapshot) ([]AppEnv, error) {
 	app := m.apps[owner.AppID]
-	if app.ProjectID == "" {
+	if !inheritsProjectEnvironment(app) {
 		return []AppEnv{}, nil
 	}
 	versions := m.projectEnvironmentConfigs[projectEnvironmentConfigKey(app.ProjectID, workloadEnvironmentSlug(owner.Scope))]
@@ -104,7 +112,7 @@ func (m *MemStore) inheritedProjectEnvLocked(owner RuntimeAppEnvSnapshot) ([]App
 // project_secrets column (ADR-1139).
 func (m *MemStore) inheritedProjectSecretsLocked(snapshot RuntimeAppValuesSnapshot) []ProjectEnvironmentSecret {
 	app := m.apps[snapshot.AppID]
-	if app.ProjectID == "" {
+	if !inheritsProjectEnvironment(app) {
 		return []ProjectEnvironmentSecret{}
 	}
 	var rows []ProjectEnvironmentSecret

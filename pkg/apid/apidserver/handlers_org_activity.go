@@ -216,7 +216,11 @@ func orgActivitySummary(row state.OrgActivity) string {
 	case "org.member.role_changed":
 		return orgActivitySummaryWithRole(fmt.Sprintf("%s changed %s's role", row.ActorLabel, row.ResourceLabel), newRole)
 	case "org.member.removed":
-		return orgActivitySummaryWithRole(fmt.Sprintf("%s removed %s", row.ActorLabel, row.ResourceLabel), role)
+		summary := orgActivitySummaryWithRole(fmt.Sprintf("%s removed %s", row.ActorLabel, row.ResourceLabel), role)
+		if n := orgActivityPausedIntegrations(row); n > 0 {
+			summary += fmt.Sprintf("; paused %d alerts, log drains and webhooks they set up on company apps", n)
+		}
+		return summary
 	case "org.ownership_transferred":
 		return fmt.Sprintf("%s transferred ownership to %s", row.ActorLabel, row.ResourceLabel)
 	case "deploy.rolled_back":
@@ -225,9 +229,28 @@ func orgActivitySummary(row state.OrgActivity) string {
 		return fmt.Sprintf("Rollback of %s failed (requested by %s)", row.ResourceLabel, row.ActorLabel)
 	case "deploy.rollback_requested":
 		return fmt.Sprintf("%s requested a rollback of %s", row.ActorLabel, row.ResourceLabel)
+	case "release.freeze_created":
+		return fmt.Sprintf("%s froze production releases of %s: %s", row.ActorLabel, row.ResourceLabel, orgActivityDataString(row, "reason"))
+	case "release.freeze_lifted":
+		return fmt.Sprintf("%s lifted the freeze on %s: %s", row.ActorLabel, row.ResourceLabel, orgActivityDataString(row, "reason"))
+	case "release.freeze_overridden":
+		return fmt.Sprintf("%s released %s through a freeze: %s", row.ActorLabel, row.ResourceLabel, orgActivityDataString(row, "reason"))
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%s %s %s", row.ActorLabel, row.Kind, row.ResourceLabel))
 	}
+}
+
+// orgActivityPausedIntegrations sums what a member's departure paused, as
+// the removal recorded it.
+func orgActivityPausedIntegrations(row state.OrgActivity) int64 {
+	var data map[string]int64
+	// "role" is not a count: Unmarshal skips it and still decodes the counts.
+	_ = json.Unmarshal(row.Data, &data)
+	var n int64
+	for _, key := range []string{"paused_alert_rules", "cleared_alert_webhooks", "unbound_alert_channels", "paused_log_drains", "paused_webhooks"} {
+		n += data[key]
+	}
+	return n
 }
 
 func orgActivityDataChangeFields(row state.OrgActivity) []string {

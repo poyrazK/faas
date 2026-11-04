@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
 
 type WorkerFaultStore interface {
@@ -79,12 +80,27 @@ func (s *Session) PrepareWorkerTermination(ctx context.Context, fault string) er
 		s.Fail()
 		return ctx.Err()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.failed || len(s.connections) != 0 {
-		return errors.New("worker collectors did not settle")
+	// Shutdown joins HTTP handlers; the Serve owner's deferred Detach can run
+	// just after it returns. Wait for every collector to detach, as suspend does.
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		s.mu.Lock()
+		failed, pending := s.failed, len(s.connections)
+		s.mu.Unlock()
+		if failed {
+			return errors.New("worker collectors did not settle")
+		}
+		if pending == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			s.Fail()
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
-	return nil
 }
 
 func (s *Session) FinishWorkerTermination(ctx context.Context, fault string) error {

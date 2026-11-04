@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -237,7 +238,7 @@ func (s *server) projectEnvironmentWorkloadConfigIdentity(ctx context.Context, a
 }
 
 func projectEnvironmentWorkloadURL(environmentID, appID string) string {
-	host := gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, environmentID, appID)
+	host := gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), environmentID, appID)
 	if host == "" {
 		return ""
 	}
@@ -260,7 +261,7 @@ func projectEnvironmentSecrets(rows []state.AppSecret) []api.ProjectEnvironmentS
 	for _, row := range rows {
 		managedBy, bindingID := projectEnvironmentSecretOwner(row)
 		out = append(out, api.ProjectEnvironmentSecretResponse{
-			Key: row.Key, ValueHash: row.ValueHash, Version: row.SecretVersion, ManagedBy: managedBy, BindingID: bindingID,
+			Key: row.Key, ValueHash: displayValueHash(row.AccountID, row.ValueHash), Version: row.SecretVersion, ManagedBy: managedBy, BindingID: bindingID,
 			CredentialGeneration: row.ManagedCredentialGeneration,
 			UpdatedAt:            row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		})

@@ -10,14 +10,19 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/financial"
+	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -48,6 +53,16 @@ func (v financialRemoteNativeVMM) PublicForwardTarget(instance string) (*netns.P
 	}
 	copy := v.target
 	return &copy, nil
+}
+
+// The RPC handler admits each exchange against the VM's per-VM HTTP cap
+// (ADR-570) and refuses one it cannot verify. The cap belongs to the
+// fixture's real vmmd; these variants check funding, so admit the attempt.
+func (v financialRemoteNativeVMM) AcquireHTTPForward(ctx context.Context, instance string) (context.Context, func(), error) {
+	if instance != v.record.Lease.Instance {
+		return nil, nil, fcvm.ErrHTTPForwardNotLive
+	}
+	return ctx, func() {}, nil
 }
 
 func financialRemoteVariantClient(t *testing.T, h *e2etest.Harness, record financialSystemRecord) vmmdpb.VmmdClient {
@@ -193,28 +208,49 @@ func financialRemoteExhaustion(t *testing.T, h *e2etest.Harness, record financia
 	if err != nil {
 		t.Fatal(err)
 	}
+	// vmmd admits at most the plan's per-VM bound of concurrent exchanges
+	// (ADR-570) and refuses the rest at once; the fixture account is Hobby.
+	// Send rounds inside that bound until one in which every exchange was
+	// admitted delivers nothing: only then has the kernel quota spent the grant.
+	workers := api.MustLimitsFor(api.PlanHobby).ConcurrencyPerVMBound
 	var delivered atomicRemoteBytes
-	var wg sync.WaitGroup
-	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for range 8 {
+	for round := 1; ; round++ {
+		var sent atomicRemoteBytes
+		var refused atomic.Bool
+		var wg sync.WaitGroup
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 				response := financialRemoteRequest(ctx, client, record.Lease.Instance)
 				cancel()
+				if problem, ok := grpcerr.FromStatus(response.err); ok && problem != nil && problem.Code == api.CodeConcurrencyThrottled {
+					refused.Store(true)
+				}
 				if len(response.body) > len(body) {
 					delivered.invalid()
 					return
 				}
-				delivered.add(uint64(len(response.body)))
-			}
-		}()
+				sent.add(uint64(len(response.body)))
+			}()
+		}
+		wg.Wait()
+		n, _ := sent.value()
+		delivered.add(n)
+		if n == 0 && !refused.Load() {
+			break
+		}
+		if time.Until(lease.RunUntil) < 5*time.Second {
+			payload, _ := delivered.value()
+			financialNetnsEvidence(t, record)
+			t.Fatalf("the quota never stopped remote responses: %d rounds, %d bytes, last round refused=%t", round, payload, refused.Load())
+		}
 	}
-	wg.Wait()
 	after, err := netns.ReadVethRXBytes(record.Lease.VethHost)
 	payload, invalid := delivered.value()
 	if err != nil || invalid || payload == 0 || after < before+payload || after > uint64(lease.EgressGranted) {
+		financialNetnsEvidence(t, record)
 		t.Fatalf("remote exhaustion bytes: before=%d after=%d payload=%d granted=%d err=%v", before, after, payload, lease.EgressGranted, err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -222,6 +258,7 @@ func financialRemoteExhaustion(t *testing.T, h *e2etest.Harness, record financia
 	response := financialRemoteRequest(ctx, client, record.Lease.Instance)
 	final, err := netns.ReadVethRXBytes(record.Lease.VethHost)
 	if err != nil || len(response.body) != 0 || final != after {
+		financialNetnsEvidence(t, record)
 		t.Fatalf("exhausted response reopened credit: %d -> %d body=%d err=%v", after, final, len(response.body), err)
 	}
 	if financialSystemPhysicalAbsent(record) {
@@ -251,4 +288,19 @@ func (b *atomicRemoteBytes) value() (uint64, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.bytes, b.bad
+}
+
+// financialNetnsEvidence logs the attempt namespace's byte gates and links,
+// so an exhaustion failure shows whether the quota existed and what it saw.
+func financialNetnsEvidence(t *testing.T, record financialSystemRecord) {
+	t.Helper()
+	for _, argv := range [][]string{
+		{"ip", "netns", "exec", record.Lease.Netns, "nft", "list", "table", "netdev", "faas_budget"},
+		{"ip", "netns", "exec", record.Lease.Netns, "nft", "list", "table", "inet", "faas_budget"},
+		{"ip", "netns", "exec", record.Lease.Netns, "ip", "-s", "link"},
+		{"ip", "netns", "exec", record.Lease.Netns, "tc", "-s", "filter", "show", "dev", "tap0", "ingress"},
+	} {
+		out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+		t.Logf("evidence %v (err=%v):\n%s", argv[4:], err, out)
+	}
 }

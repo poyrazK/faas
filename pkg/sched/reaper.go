@@ -14,9 +14,15 @@ import (
 // snapshot of instance metadata so the policy is unit-tested without a clock or a
 // database; schedd calls them on its 10 s tick and under RAM pressure.
 
-// EvictionThresholdMB is the RAM level above which schedd starts evicting: 80% of
-// the 85% admission target (spec §4.3). Below it, nothing is evicted.
+// EvictionThresholdMB is the RAM level above which schedd starts evicting on
+// the reference box: 80% of its 47,600 MB admission ceiling (spec §4.3).
+// Below it, nothing is evicted. Nodes with their own ceiling (ADR-203) use
+// evictionThresholdFor; see SelectNodeEvictions.
 const EvictionThresholdMB = api.RAMAdmissionCeilingMB * 80 / 100 // 38,080
+
+// evictionThresholdFor is the RAM level above which schedd evicts on a node
+// with the given admission ceiling: 80% of it (spec §4.3).
+func evictionThresholdFor(ceilingMB int) int { return ceilingMB * 80 / 100 }
 
 // MinInstanceAge protects a freshly-woken instance from being reaped/evicted
 // before it has had a chance to serve (spec §4.3: never evict younger than 30 s).
@@ -426,7 +432,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		// customer's work and emits a false idle_timeout
 		// lifecycle_failure_reason.
 		switch state.InstanceMode(in.Mode) {
-		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob:
+		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob, state.InstanceModeFork:
 			continue
 		}
 		if in.State == state.StateRunning {
@@ -648,7 +654,7 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		// job-mode runs are bounded by JobMaxRuntimeS, not the
 		// reaper; scale-in mid-job loses the customer's work.
 		switch state.InstanceMode(in.Mode) {
-		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob:
+		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob, state.InstanceModeFork:
 			continue
 		}
 		g, ok := byApp[groupKey]
@@ -765,6 +771,34 @@ func SelectEvictions(residentMB int, now time.Time, instances []InstanceInfo) []
 	return evict
 }
 
+// SelectNodeEvictions is RAM-pressure eviction under reservation admission,
+// per node. On every node whose reservations exceed 80% of its own admission
+// ceiling, it returns that node's instances to evict, in SelectEvictions'
+// order, until the node is back at or under that threshold. A node with the
+// reference ceiling evicts exactly as SelectEvictions does. A node without a
+// known ceiling is skipped.
+func SelectNodeEvictions(now time.Time, instances []InstanceInfo, reservedMB, ceilingMB map[string]int) []string {
+	remaining := make(map[string]int, len(reservedMB))
+	for node, reserved := range reservedMB {
+		if ceiling := ceilingMB[node]; ceiling > 0 && reserved > evictionThresholdFor(ceiling) {
+			remaining[node] = reserved
+		}
+	}
+	if len(remaining) == 0 {
+		return nil
+	}
+	var evict []string
+	for _, in := range evictionCandidates(now, instances) {
+		reserved, pressured := remaining[in.NodeID]
+		if !pressured || reserved <= evictionThresholdFor(ceilingMB[in.NodeID]) {
+			continue
+		}
+		evict = append(evict, in.Instance)
+		remaining[in.NodeID] = reserved - in.evictionFreedMB()
+	}
+	return evict
+}
+
 // SelectMemoryEvictions is RAM-pressure eviction under measured admission
 // (ADR-909): reservations may then exceed a node's ceiling, so pressure is
 // the node's measured memory, not its reservations. On every node whose
@@ -810,6 +844,12 @@ func (in InstanceInfo) evictionFreedMB() int {
 
 // evictionCandidates returns the instances RAM-pressure eviction may park, in
 // eviction order.
+// evictionBusy reports whether an instance is doing work an eviction would
+// cut: requests in flight, open connections or waitUntil tails.
+func evictionBusy(in InstanceInfo) bool {
+	return in.InflightRequests > 0 || in.OpenConns > 0 || in.TailCount > 0
+}
+
 func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo {
 	// Candidates: running instances old enough to evict.
 	var cands []InstanceInfo
@@ -850,6 +890,14 @@ func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo 
 		af, bf := cands[a].State == state.StateFrozen, cands[b].State == state.StateFrozen
 		if af != bf {
 			return af // frozen first
+		}
+		// An instance serving requests, holding connections or running
+		// waitUntil tails is a last resort: a node over its ceiling must
+		// still shed memory, but evicting it first cut those requests
+		// while idle instances stayed (bug hunt 2026-10-28 B10).
+		abusy, bbusy := evictionBusy(cands[a]), evictionBusy(cands[b])
+		if abusy != bbusy {
+			return !abusy // idle first
 		}
 		ar, br := cands[a].EvictionPriority == string(api.EvictionPriorityReserved),
 			cands[b].EvictionPriority == string(api.EvictionPriorityReserved)

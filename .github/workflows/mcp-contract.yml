@@ -99,8 +99,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: ${{ github.event_name != 'pull_request' }}
@@ -109,7 +109,7 @@ jobs:
       # evicted ci-light's main families, so light jobs compiled cold.
       - name: restore Go cache from main (pull requests)
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -150,7 +150,7 @@ jobs:
           python3 scripts/ops/management-mcp-admin-acceptance.py
           --gregale-binary "$RUNNER_TEMP/gregale-management"
           | tee "$RUNNER_TEMP/management-mcp-admin.json"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
@@ -168,7 +168,7 @@ jobs:
           GREGALE_MCP_CODEX_BINARY="$GITHUB_WORKSPACE/scripts/ci/management-mcp-client/node_modules/.bin/codex" \
           GREGALE_MCP_CLIENT_REPORT="$RUNNER_TEMP/management-mcp-remote.json" \
             go test -race -p=1 ./pkg/mcpmanagement -run 'TestCodex(RemoteOAuth|RequestDiagnostics|RegressionTriage)Acceptance' -count=1 -v
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() && steps.management-build.outcome == 'success' }}
         with:
           name: management-mcp-client-acceptance
@@ -198,13 +198,13 @@ jobs:
           --health-cmd "pg_isready -U mcp"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Restore-only: use main's state shard cache and the legacy API
       # race-build family; avoid a setup-go cache per pull-request ref.
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + module cache from main
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -214,7 +214,7 @@ jobs:
             go-light-test-2-${{ runner.os }}-
             go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-1-${{ runner.os }}-
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false  # restored from main above
@@ -244,14 +244,14 @@ jobs:
           --health-cmd "pg_isready -U mcp"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Restore-only: read main's CLI shard cache instead of letting
       # setup-go save a ~0.8 GB entry per pull-request ref, which evicted main's
       # CI cache families from the 10 GB repository budget.
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + module cache from main
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -261,11 +261,11 @@ jobs:
             go-light-test-1-${{ runner.os }}-
             go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-checks-${{ runner.os }}-
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false  # restored from main above
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: npm
@@ -390,7 +390,7 @@ jobs:
           --health-cmd "pg_isready -U mcp"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Restore-only: read main's `unit tests (pg shard 1)` Go cache, which
       # race-builds cmd/apid with the same GOFLAGS as below, instead of letting
       # setup-go save a ~0.8 GB entry per pull-request ref that evicted main's
@@ -398,7 +398,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + module cache from main
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -408,7 +408,7 @@ jobs:
             go-light-test-3-${{ runner.os }}-
             go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-pg-1-${{ runner.os }}-
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: false  # restored from main above

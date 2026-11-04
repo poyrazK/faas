@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -138,9 +139,10 @@ func TestCmdDeploysStatusConfigurationReadOnly(t *testing.T) {
 		t.Run(map[bool]string{false: "text", true: "json"}[asJSON], func(t *testing.T) {
 			const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 			configuration := api.NewDeploymentConfigurationStatus("conflict", "cron_changed")
-			calls := 0
+			// status reads the deployment and its stages concurrently.
+			var calls atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
+				calls.Add(1)
 				if r.Method != http.MethodGet {
 					t.Errorf("status mutated server: %s", r.Method)
 					w.WriteHeader(500)
@@ -167,8 +169,8 @@ func TestCmdDeploysStatusConfigurationReadOnly(t *testing.T) {
 			if code := cmdDeploys([]string{"status", id}); code != 0 {
 				t.Fatalf("exit=%d output=%s", code, &output)
 			}
-			if calls != 2 {
-				t.Fatalf("status made %d requests", calls)
+			if got := calls.Load(); got != 2 {
+				t.Fatalf("status made %d requests", got)
 			}
 			if asJSON {
 				var out api.DeploymentResponse

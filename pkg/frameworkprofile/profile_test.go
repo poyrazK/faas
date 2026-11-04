@@ -68,6 +68,25 @@ func TestAnalyzeProfilesCommonAPIs(t *testing.T) {
 			},
 			framework: "gin", command: "go run .", port: 8080,
 		},
+		{
+			// Railpack runs the Procfile's web process (Hunt 12 H12-3).
+			name: "flask with a Procfile",
+			files: fstest.MapFS{
+				"requirements.txt": &fstest.MapFile{Data: []byte("flask\ngunicorn\n")},
+				"handler.py":       &fstest.MapFile{Data: []byte("from flask import Flask\napp = Flask(__name__)\n")},
+				"Procfile":         &fstest.MapFile{Data: []byte("# web server\nworker: python jobs.py\nweb: gunicorn --workers 2 handler:app\n")},
+			},
+			framework: "flask", command: "gunicorn --workers 2 handler:app", port: 8000,
+		},
+		{
+			name: "Procfile without a web process",
+			files: fstest.MapFS{
+				"requirements.txt": &fstest.MapFile{Data: []byte("flask\n")},
+				"handler.py":       &fstest.MapFile{Data: []byte("from flask import Flask\napp = Flask(__name__)\n")},
+				"Procfile":         &fstest.MapFile{Data: []byte("worker: python jobs.py\n")},
+			},
+			framework: "flask", command: "gunicorn handler:app --bind 0.0.0.0:$PORT", port: 8000,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -171,7 +190,7 @@ func TestAnalyzeAppliesHostingOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.StartCommand != "npm run serve" || got.Port != 8787 || got.HealthPath != "/ready" {
+	if got.StartCommand != "npm run serve" || got.Port != 8787 || got.HealthPath != "/ready" || !got.HealthFromConfig {
 		t.Fatalf("profile = %+v, want configured run contract", got)
 	}
 	if got.ConfigFile != "gregale.yaml" || !got.Inferred {
@@ -191,8 +210,8 @@ func TestAnalyzePythonUsesNestedApplicationEntrypoint(t *testing.T) {
 	if got.PackageManager != "uv" || got.StartCommand != "uvicorn src.api:api --host 0.0.0.0 --port $PORT" {
 		t.Fatalf("profile = %+v, want uv + nested FastAPI entrypoint", got)
 	}
-	if got.HealthPath != "/health" {
-		t.Fatalf("health path = %q, want /health", got.HealthPath)
+	if got.HealthPath != "/health" || got.HealthFromConfig {
+		t.Fatalf("health path = %q from config %v, want inferred /health", got.HealthPath, got.HealthFromConfig)
 	}
 }
 
@@ -209,4 +228,54 @@ func TestAnalyzeWarnsForDevelopmentNodeCommand(t *testing.T) {
 		}
 	}
 	t.Fatalf("warnings = %+v, want development_start_command", got.Warnings)
+}
+
+// Only gregale.yaml's hosting.start marks the start command explicit; an
+// inferred command must not replace the built image's launcher (Hunt 12
+// H12-29).
+func TestAnalyzeMarksHostingStartExplicit(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    fstest.MapFS
+		wantCmd  string
+		explicit bool
+	}{
+		{
+			name: "hosting.start",
+			files: fstest.MapFS{
+				"requirements.txt": {Data: []byte("flask\n")},
+				"worker.py":        {Data: []byte("print('x')\n")},
+				"gregale.yaml":     {Data: []byte("hosting:\n  start: python worker.py\n")},
+			},
+			wantCmd: "python worker.py", explicit: true,
+		},
+		{
+			name: "hosting block without start",
+			files: fstest.MapFS{
+				"requirements.txt": {Data: []byte("flask\n")},
+				"app.py":           {Data: []byte("from flask import Flask\napp = Flask(__name__)\n")},
+				"gregale.yaml":     {Data: []byte("hosting:\n  port: 9000\n")},
+			},
+			explicit: false,
+		},
+		{
+			name: "no manifest",
+			files: fstest.MapFS{
+				"requirements.txt": {Data: []byte("flask\n")},
+				"app.py":           {Data: []byte("from flask import Flask\napp = Flask(__name__)\n")},
+			},
+			explicit: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile, err := Analyze(tt.files)
+			if err != nil {
+				t.Fatalf("Analyze: %v", err)
+			}
+			if profile.StartFromConfig != tt.explicit || (tt.wantCmd != "" && profile.StartCommand != tt.wantCmd) {
+				t.Fatalf("start = %q explicit=%v; want %q explicit=%v", profile.StartCommand, profile.StartFromConfig, tt.wantCmd, tt.explicit)
+			}
+		})
+	}
 }

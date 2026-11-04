@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { FailureRules } from './FailureRules.js';
 /**
- * Wire projection of state.JobRun. Aggregate counters are recomputed by schedd after every terminal task transition.
+ * Wire projection of state.JobRun. Aggregate counters are recomputed by the scheduler after every terminal task transition.
  */
 export type JobRunResponse = {
   id: string;

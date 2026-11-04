@@ -9,13 +9,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestPromotionSchedulingMigrationRoundTrip(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	pool := openMigrated(t)
 	ctx := t.Context()
 	account := seedAccount(t, ctx, pool)
+	// Projects bind to the account's personal org (ADR-202610171908).
+	seedPersonalOrg(t, ctx, pool, account)
 	project, id := uuid.NewString(), uuid.NewString()
 	if _, err := pool.Exec(ctx, "INSERT INTO projects(id,account_id,slug) VALUES($1,$2,'schedule-roundtrip')", project, account); err != nil {
 		t.Fatal(err)

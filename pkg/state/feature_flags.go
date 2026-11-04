@@ -93,6 +93,13 @@ func prepareFeatureFlags(u FeatureFlagUpdate, prior FeatureFlagVersion) (Feature
 				return FeatureFlagVersion{}, fmt.Errorf("flag seed is immutable: %w", ErrInvalidArgument)
 			}
 			f.Seed = seed
+		} else if u.RestoreVersion > 0 && f.Seed != "" {
+			// A restore reads this environment's own history, so its seed is
+			// server-owned already, including one a clone or promotion carried
+			// in from another environment. Keeping it keeps rollout buckets.
+			if _, err := uuid.Parse(f.Seed); err != nil {
+				return FeatureFlagVersion{}, ErrInvalidArgument
+			}
 		} else {
 			environment, err := uuid.Parse(u.Scope.EnvironmentID)
 			if err != nil {

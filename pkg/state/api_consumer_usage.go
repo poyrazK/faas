@@ -260,6 +260,11 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	bucket.ComputeMS += event.ComputeMS
 	bucket.ResponseBytes += event.ResponseBytes
 	m.apiConsumerUsage[key] = bucket
+	recordedAt := time.Now().UTC()
+	m.apiConsumerUsageRecordedAt[event.AccountID+"\x00"+event.AppID+"\x00"+event.ConsumerKey] = recordedAt
+	if event.PlatformTenantID != "" {
+		m.platformTenantUsageRecordedAt[event.AccountID+"\x00"+event.PlatformTenantID] = recordedAt
+	}
 	m.recordMeterUnitsLocked(event)
 	if route := billingRouteFor(event); route != "" {
 		routeKey := consumerRouteUsageKey(event.AccountID, event.AppID, event.ConsumerKey, route, event.WindowStart)

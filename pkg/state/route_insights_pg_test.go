@@ -2,7 +2,7 @@
 
 package state_test
 
-// adr: 1198, 1199
+// adr: 1198, 1199, 20261024154324
 
 import (
 	"testing"
@@ -122,15 +122,67 @@ func TestRouteInsightsLifecyclePG(t *testing.T) {
 		a.ID, app.ID, uuid.NewString(), t0.Truncate(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := s.RouteInsightCandidateApps(t.Context(), sqlc.RouteInsightCandidateAppsParams{SinceAt: at(-time.Hour), MaxApps: 100})
-	if err != nil {
-		t.Fatal(err)
+	isCandidate := func(plan string, dueBefore time.Duration) bool {
+		t.Helper()
+		candidates, err := s.RouteInsightCandidateApps(t.Context(), sqlc.RouteInsightCandidateAppsParams{
+			SinceAt: at(-time.Hour), Plans: []string{plan}, DueBefore: at(dueBefore), MaxApps: 100,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range candidates {
+			if c.AppID == appID && c.AccountID == accountID {
+				return true
+			}
+		}
+		return false
 	}
-	found := false
-	for _, c := range candidates {
-		found = found || (c.AppID == appID && c.AccountID == accountID)
+	if !isCandidate(string(a.Plan), 0) {
+		t.Fatal("an app that ran must be a candidate")
 	}
-	if !found {
-		t.Fatalf("an app that ran must be a candidate: %+v", candidates)
+
+	// adr: 20261024154324 — only apps on the given plans are candidates, a
+	// claim holds an app until due_before passes it, and a claimed app is
+	// not a candidate meanwhile.
+	if isCandidate("no-such-plan", 0) {
+		t.Fatal("an app on another plan must not be a candidate")
+	}
+	claim := func(evaluatedAt, dueBefore time.Duration) int64 {
+		t.Helper()
+		n, err := s.ClaimRouteInsightEvaluation(t.Context(), sqlc.ClaimRouteInsightEvaluationParams{
+			AppID: appID, AccountID: accountID, EvaluatedAt: at(evaluatedAt), DueBefore: at(dueBefore),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := claim(time.Minute, 0); n != 1 {
+		t.Fatalf("first claim = %d, want 1", n)
+	}
+	if n := claim(2*time.Minute, 0); n != 0 {
+		t.Fatalf("a second claim before the app is due = %d, want 0", n)
+	}
+	if isCandidate(string(a.Plan), 0) {
+		t.Fatal("a claimed app must not be a candidate until it is due")
+	}
+	if !isCandidate(string(a.Plan), 2*time.Minute) || claim(3*time.Minute, 2*time.Minute) != 1 {
+		t.Fatal("a due app must be a candidate and claimable again")
+	}
+
+	// The batch resolve covers every app's stale insights, row_limit at a
+	// time: the reopened kept_awake insight and the two cache rule insights.
+	resolveBatch := func(limit int32) int64 {
+		t.Helper()
+		n, err := s.ResolveStaleRouteInsightsBatch(t.Context(), sqlc.ResolveStaleRouteInsightsBatchParams{
+			ResolvedAt: at(100 * time.Hour), StaleBefore: at(50 * time.Hour), RowLimit: limit,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if got := []int64{resolveBatch(1), resolveBatch(10), resolveBatch(10)}; got[0] != 1 || got[1] != 2 || got[2] != 0 {
+		t.Fatalf("batch resolves = %v, want [1 2 0]", got)
 	}
 }

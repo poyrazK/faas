@@ -44,8 +44,10 @@ func TestPgAPIDiscoveryOfRehearsalAppDoesNotFanOut(t *testing.T) {
 			if enrolled {
 				want = 0
 			}
-			if events != want || fanout != want {
-				t.Fatalf("route events=%d fanout=%d, want %d", events, fanout, want)
+			// ADR-20261030170000: the receipt is the event's one copy; no
+			// events row is kept.
+			if events != 0 || fanout != want {
+				t.Fatalf("route events=%d fanout=%d, want 0 and %d", events, fanout, want)
 			}
 		})
 	}

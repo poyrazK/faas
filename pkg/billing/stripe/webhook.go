@@ -17,14 +17,13 @@ package stripe
 
 import (
 	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/billing/stripe/webhooksig"
 )
 
 // ErrBadSignature is returned by VerifySignature when the header is
@@ -91,12 +90,7 @@ func VerifySignature(payload []byte, header, secret string, tolerance time.Durat
 		return fmt.Errorf("%w: timestamp outside tolerance (age=%s)", ErrBadSignature, age)
 	}
 
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(ts))
-	mac.Write([]byte("."))
-	mac.Write(payload)
-	expected := mac.Sum(nil)
-	expHex := hex.EncodeToString(expected)
+	expHex := webhooksig.V1(payload, secret, ts)
 
 	// Constant-time compare against every provided v1 signature (Stripe
 	// rotates secrets; the header may carry more than one valid sig).
@@ -112,9 +106,5 @@ func VerifySignature(payload []byte, header, secret string, tolerance time.Durat
 // for the given payload + secret + timestamp. Tests use it to generate
 // fixtures; never call from production code.
 func SignForTest(payload []byte, secret string, ts time.Time) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(strconv.FormatInt(ts.Unix(), 10)))
-	mac.Write([]byte("."))
-	mac.Write(payload)
-	return "t=" + strconv.FormatInt(ts.Unix(), 10) + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+	return webhooksig.Header(payload, secret, ts)
 }

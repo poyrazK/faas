@@ -1,4 +1,4 @@
-// adr: 686, 682, 20261019195000
+// adr: 686, 682, 20261019195000, 20261024100000
 package conformance
 
 import (
@@ -54,21 +54,37 @@ func testImageRuntimeProfile(t *testing.T, fx *Fixture) {
 	}
 }
 
-// A built service that froze a Compose healthcheck records imaged's readiness
-// verdict through the same writer; other source deployments cannot, and the
-// frozen override survives the write (ADR-20261019195000).
+// Any source build records imaged's HEALTHCHECK verdict through the same
+// writer while it is being assembled (ADR-20261024100000), and a frozen
+// Compose override survives the write (ADR-20261019195000).
 func testSourceRuntimeProfileHealthcheck(t *testing.T, fx *Fixture) {
 	t.Helper()
 	plain, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
 		AppID: fx.App.ID, Kind: state.DeploymentKindDockerfile, Status: state.DeployImaging,
-		InferredProfile: []byte(`{"version":"v1","framework":"docker"}`),
+		InferredProfile: []byte(`{"version":"v1","framework":"docker","dockerfile_path":"api/Dockerfile"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	verdict := []byte(`{"version":"v1","framework":"docker","image_healthcheck_required":true}`)
-	if err := fx.Store.SetDeploymentRuntimeProfile(fx.Ctx, plain.ID, verdict); !errors.Is(err, state.ErrInvalidStateTransition) {
-		t.Fatalf("source deployment without a frozen healthcheck: error=%v, want invalid state transition", err)
+	plainVerdict := []byte(`{"version":"v1","framework":"docker","dockerfile_path":"api/Dockerfile","image_healthcheck_required":true}`)
+	if err := fx.Store.SetDeploymentRuntimeProfile(fx.Ctx, plain.ID, plainVerdict); err != nil {
+		t.Fatalf("Dockerfile build verdict: %v", err)
+	}
+	stored, err := fx.Store.DeploymentByID(fx.Ctx, plain.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plainProfile frameworkprofile.Profile
+	if err := json.Unmarshal(stored.InferredProfile, &plainProfile); err != nil || plainProfile.DockerfilePath != "api/Dockerfile" ||
+		!frameworkprofile.RequiresSourceImageHealthcheck(stored.InferredProfile) {
+		t.Fatalf("Dockerfile build verdict not recorded: %s, %v", stored.InferredProfile, err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, plain.ID, state.DeployCancelled, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Store.SetDeploymentRuntimeProfile(fx.Ctx, plain.ID, plainVerdict); !errors.Is(err, state.ErrInvalidStateTransition) {
+		t.Fatalf("terminal source deployment: error=%v, want invalid state transition", err)
 	}
 	frozen, err := json.Marshal(frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: "docker",
 		ImageHealthcheck: &frameworkprofile.ImageHealthcheck{Version: frameworkprofile.ImageHealthcheckVersion,
@@ -85,7 +101,7 @@ func testSourceRuntimeProfileHealthcheck(t *testing.T, fx *Fixture) {
 	if err := fx.Store.SetDeploymentRuntimeProfile(fx.Ctx, dep.ID, verdict); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := fx.Store.DeploymentByID(fx.Ctx, dep.ID)
+	stored, err = fx.Store.DeploymentByID(fx.Ctx, dep.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

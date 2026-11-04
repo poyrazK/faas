@@ -11,6 +11,7 @@ import (
 
 var _ ObjectStorageAccountingStore = (*MemStore)(nil)
 var _ ObjectStorageBillingStore = (*MemStore)(nil)
+var _ ObjectInventoryReleaser = (*MemStore)(nil)
 
 func (m *MemStore) ObjectUsage(ctx context.Context, account string, now time.Time) (ObjectUsageSnapshot, error) {
 	m.mu.Lock()
@@ -54,6 +55,9 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 			u.RequestCount = m.objectProviderRequests[objectProviderRequestKey(b.ID, periodStart)]
 			u.EgressBytes = m.objectProviderRequests[objectProviderRequestKey(b.ID, periodStart)+"\x00egress"]
 			u.GatewayMetricsKnown = true
+			if g := m.objectGatewayStorage[objectProviderRequestKey(b.ID, periodStart)]; g != nil {
+				u.StoredByteHours, u.StorageMeteredThrough = int64(g.byteHours), g.through
+			}
 			u.MultipartBytes = 0
 			for id, upload := range m.objectMultipartUploads {
 				if upload.BucketID == b.ID && upload.State != ObjectMultipartCompleted {
@@ -190,7 +194,7 @@ func (m *MemStore) admitObjectURLLocked(account, bucket, key string, size int64,
 		return ErrNotFound
 	}
 	subject := m.objectBillingSubjectLocked(owned)
-	if put && (m.objectCapacityFencedLocked(bucket) || m.objectWriteKeyFencedLocked(bucket, key, token) || token == "" && m.objectBucketDefaultRequiresTrackingLocked(bucket)) {
+	if put && (m.objectCapacityFencedForKeyLocked(bucket, key) || m.objectWriteKeyFencedLocked(bucket, key, token) || token == "" && m.objectBucketDefaultRequiresTrackingLocked(bucket)) {
 		return ErrConflict
 	}
 	s := m.objectUsageLocked(subject, now)
@@ -276,7 +280,12 @@ func (m *MemStore) DueObjectInventories(ctx context.Context, limit int32) ([]Obj
 	out := []ObjectBucket{}
 	for _, b := range m.objectBuckets {
 		u := m.objectUsage[b.ID]
-		if !m.objectCapacityFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute) && !u.LeaseUntil.After(now) {
+		// Active deletions do not block a claim: they yield to it and the
+		// worker waits for them before listing (ADR-20261025115958).
+		// An unfinished listing is due at once (ADR-20261030100835).
+		scan := u.InventoryScan
+		listing := scan.Pages > 0 && !scan.Complete && scan.StartedAt.After(u.ObservedAt) && now.Sub(scan.StartedAt) < api.ObjectInventoryScanMaxAge
+		if !m.inventoryClaimFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute || listing) && !u.LeaseUntil.After(now) {
 			out = append(out, b)
 		}
 	}
@@ -298,7 +307,7 @@ func (m *MemStore) ClaimObjectInventory(ctx context.Context, bucket, token strin
 	}
 
 	u := m.objectUsage[bucket]
-	if m.objectCapacityFencedLocked(bucket) || token == "" || m.objectBuckets[bucket].State != "ready" || u.LeaseUntil.After(time.Now()) {
+	if m.inventoryClaimFencedLocked(bucket) || token == "" || m.objectBuckets[bucket].State != "ready" || u.LeaseUntil.After(time.Now()) {
 		return ErrConflict
 	}
 	u.Token = token
@@ -311,6 +320,26 @@ func (m *MemStore) ClaimObjectInventory(ctx context.Context, bucket, token strin
 	return nil
 }
 
+func (m *MemStore) inventoryClaimFencedLocked(bucket string) bool {
+	return m.activeVersionProtectionLocked(bucket) || m.objectBucketTransitionLocked(bucket)
+}
+
+func (m *MemStore) ReleaseObjectInventory(ctx context.Context, bucket, token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
+	u, ok := m.objectUsage[bucket]
+	if !ok || token == "" || u.Token != token {
+		return ErrConflict
+	}
+	u.Token, u.LeaseUntil = "", time.Time{}
+	m.objectUsage[bucket] = u
+	return nil
+}
+
 func (m *MemStore) FinishObjectInventory(ctx context.Context, bucket, token string, bytes, objects int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -319,7 +348,7 @@ func (m *MemStore) FinishObjectInventory(ctx context.Context, bucket, token stri
 	}
 
 	u := m.objectUsage[bucket]
-	if m.versionAccountingStatusLocked(bucket).VersionsObserved || u.InventoryScope == ObjectInventoryAllVersions || m.objectCapacityFencedLocked(bucket) || token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
+	if m.inventoryPublicationRefusedLocked(bucket, token) || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
 		return ErrConflict
 	}
 	if u.ObservedAt.IsZero() {
@@ -329,4 +358,12 @@ func (m *MemStore) FinishObjectInventory(ctx context.Context, bucket, token stri
 	u.Token, u.LeaseUntil = "", time.Time{}
 	m.objectUsage[bucket] = u
 	return nil
+}
+
+// inventoryPublicationRefusedLocked reports a bucket whose inventory cannot be
+// published under token: the claim is not live, or the bucket's versions,
+// deletions or transitions fence inventory.
+func (m *MemStore) inventoryPublicationRefusedLocked(bucket, token string) bool {
+	u := m.objectUsage[bucket]
+	return m.versionAccountingStatusLocked(bucket).VersionsObserved || u.InventoryScope == ObjectInventoryAllVersions || m.objectCapacityFencedLocked(bucket) || token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready"
 }

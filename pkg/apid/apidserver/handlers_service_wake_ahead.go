@@ -29,6 +29,8 @@ func (s *server) getServiceWakeAhead(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	out := serviceWakeAheadResponse(app.Slug, setting)
+	// An app that never chose reports the default the gateway applies to it.
+	out.Enabled = state.EffectiveServiceWakeAhead(setting, app)
 	learned := s.routeEvidence().WakeAheadLearned(r.Context(), acct, app)
 	out.Learned = &learned
 	writeJSON(w, http.StatusOK, out)

@@ -36,7 +36,7 @@ import { request as __request } from '../core/request.js';
 export class DevService {
   /**
    * List active development sessions owned by the account.
-   * ADR-379 bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is informational and unknown after observer restart or eviction. No credentials are returned.
+   * Bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is informational and unknown after observer restart or eviction. No credentials are returned.
    * @returns ListDevBridgesResponse Active owned sessions.
    * @throws ApiError
    */
@@ -53,7 +53,7 @@ export class DevService {
   }
   /**
    * Create a leased local service development session.
-   * Operator-gated ADR-378 feature. Select an owned app in an unprotected non-production project environment. Credentials are returned once; the request token routes only the selected application graph, while the attachment token connects the laptop. The lease lasts one hour.
+   * Operator-gated feature. Select an owned app in an unprotected non-production project environment. Credentials are returned once; the request token routes only the selected application graph, while the attachment token connects the laptop. The lease lasts one hour.
    * @returns CreateDevBridgeResponse Development session and one-time credentials created.
    * @throws ApiError
    */
@@ -132,7 +132,7 @@ export class DevService {
   }
   /**
    * Inspect recent connection and request metadata.
-   * ADR-379 temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded eviction clears activity; observation never authorizes routing.
+   * Temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded eviction clears activity; observation never authorizes routing.
    * @returns DevBridgeActivity Bounded session activity.
    * @throws ApiError
    */
@@ -224,7 +224,7 @@ export class DevService {
   }
   /**
    * Inspect delivery of a developer live patch.
-   * Reports whether a published developer live patch (ADR-740) reached the running developer environment. The state is pending until an instance acknowledges it, then applied, or failed with a bounded error code. Never renews the developer lease.
+   * Reports whether a published developer live patch reached the running developer environment. The state is pending until an instance acknowledges it, then applied, or failed with a bounded error code. Never renews the developer lease.
    * @returns DevPatchStatusResponse Live patch delivery state.
    * @throws ApiError
    */
@@ -302,7 +302,7 @@ export class DevService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -346,7 +346,7 @@ export class DevService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -389,7 +389,7 @@ export class DevService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -425,6 +425,7 @@ export class DevService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        501: `code: rehearsal_not_enabled — a requested rehearsal capability is not enabled on this installation. Retrying will not help.`,
       },
     });
   }
@@ -479,7 +480,7 @@ export class DevService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -511,7 +512,7 @@ export class DevService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -547,7 +548,7 @@ export class DevService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -582,7 +583,8 @@ export class DevService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        501: `code: rehearsal_not_enabled — a requested rehearsal capability is not enabled on this installation. Retrying will not help.`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -611,7 +613,7 @@ export class DevService {
       },
       errors: {
         401: `code: unauthorized`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -646,7 +648,7 @@ export class DevService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -681,7 +683,8 @@ export class DevService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        501: `code: rehearsal_not_enabled — a requested rehearsal capability is not enabled on this installation. Retrying will not help.`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -710,7 +713,7 @@ export class DevService {
       },
       errors: {
         401: `code: unauthorized`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -745,7 +748,7 @@ export class DevService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,

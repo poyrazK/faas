@@ -15,12 +15,14 @@ func TestRemoteRolloutPreservesActivationAndProbeEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name, activation, failTarget, baselineFail, wantActivated string
 		wantExit                                                  int
+		appURL, wantAppURL                                        string
 	}{
-		{"healthy", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "", "", "true", 0},
-		{"preactivation failure", "exit 17", "", "", "false", 17},
-		{"postactivation failure", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; exit 19", "", "", "true", 19},
-		{"customer regression", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "app", "", "true", 1},
-		{"unhealthy API never activates", "touch \"$ROLLOUT_ACTIVATION_MARKER\"", "", "api", "false", 1},
+		{"healthy", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "", "", "true", 0, "", "https://e2e-probe.gregale.dev/"},
+		{"preactivation failure", "exit 17", "", "", "false", 17, "", "https://e2e-probe.gregale.dev/"},
+		{"postactivation failure", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; exit 19", "", "", "true", 19, "", "https://e2e-probe.gregale.dev/"},
+		{"customer regression", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "app", "", "true", 1, "", "https://e2e-probe.gregale.dev/"},
+		{"unhealthy API never activates", "touch \"$ROLLOUT_ACTIVATION_MARKER\"", "", "api", "false", 1, "", "https://e2e-probe.gregale.dev/"},
+		{"variable retargets the canary app", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "", "", "true", 0, "https://canary.example/healthz", "https://canary.example/healthz"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			temp := t.TempDir()
@@ -46,6 +48,7 @@ if [[ "$recursive" == true ]]; then cp -R "${args[@]}"; else cp "${args[@]}"; fi
 set -euo pipefail
 url="${@: -1}"
 case "$url" in */readyz?*) target=api ;; */v1/status?*) target=status ;; *) target=app ;; esac
+printf '%s %s\n' "$target" "$url" >> "$FAKE_CURL_LOG"
 if [[ "$target" == "$FAKE_BASELINE_FAIL" || ( -f "$ROLLOUT_ACTIVATION_MARKER" && "$target" == "$FAKE_FAIL_TARGET" ) ]]; then
   printf '503\t0.01\t0.001\t0.005'
 else
@@ -57,11 +60,13 @@ fi
 				t.Fatal(err)
 			}
 			outputPath := filepath.Join(temp, "output")
+			curlLog := filepath.Join(temp, "curl.log")
 			command := exec.Command("bash", "scripts/ci/observe_remote_rollout.sh", "fake", "unused-key", activation)
 			command.Dir = filepath.Join("..", "..")
 			command.Env = append(os.Environ(), "PATH="+temp+":"+os.Getenv("PATH"), "RUNNER_TEMP="+temp,
 				"GITHUB_RUN_ID=local", "GITHUB_RUN_ATTEMPT=1", "GITHUB_OUTPUT="+outputPath,
 				"GITHUB_STEP_SUMMARY="+filepath.Join(temp, "summary"), "ROLLOUT_BASELINE_SAMPLE_COUNT=1",
+				"ROLLOUT_APP_PROBE_URL="+tc.appURL, "FAKE_CURL_LOG="+curlLog,
 				"FAKE_FAIL_TARGET="+tc.failTarget, "FAKE_BASELINE_FAIL="+tc.baselineFail)
 			output, err := command.CombinedOutput()
 			if got := rolloutExitCode(t, err); got != tc.wantExit {
@@ -74,6 +79,32 @@ fi
 			evidence, err := os.ReadFile(filepath.Join(temp, "gregale-rollout-availability-local-1-api.tsv"))
 			if err != nil || !strings.Contains(string(evidence), "baseline\tapi") {
 				t.Fatalf("baseline evidence missing: %s, %v", evidence, err)
+			}
+			probes, err := os.ReadFile(curlLog)
+			if err != nil || !strings.Contains(string(probes), "app "+tc.wantAppURL+"?rollout_probe=") {
+				t.Fatalf("canary app probes did not target %s: %s, %v", tc.wantAppURL, probes, err)
+			}
+		})
+	}
+}
+
+// A malformed canary URL is refused before anything reaches the host, so a
+// typo in the ROLLOUT_APP_PROBE_URL variable cannot run an ungated activation.
+func TestRemoteRolloutRefusesAMalformedCanaryURL(t *testing.T) {
+	for _, url := range []string{"http://e2e-probe.gregale.dev/", "https://e2e-probe.gregale.dev/?x=1", "https://user@e2e-probe.gregale.dev/", "https://a.example/'; touch x"} {
+		t.Run(url, func(t *testing.T) {
+			temp := t.TempDir()
+			marker := filepath.Join(temp, "ssh-called")
+			writeRolloutExecutable(t, temp, "ssh", "#!/bin/sh\ntouch "+marker+"\n")
+			command := exec.Command("bash", "scripts/ci/observe_remote_rollout.sh", "fake", "unused-key", filepath.Join(temp, "activation.sh"))
+			command.Dir = filepath.Join("..", "..")
+			command.Env = append(os.Environ(), "PATH="+temp+":"+os.Getenv("PATH"), "ROLLOUT_APP_PROBE_URL="+url)
+			output, err := command.CombinedOutput()
+			if got := rolloutExitCode(t, err); got != 2 || !strings.Contains(string(output), "ROLLOUT_APP_PROBE_URL must be") {
+				t.Fatalf("exit=%d, want 2 with a ROLLOUT_APP_PROBE_URL error: %s", got, output)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("observer reached the host with a malformed canary URL: %v", err)
 			}
 		})
 	}

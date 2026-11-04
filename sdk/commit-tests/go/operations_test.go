@@ -15,12 +15,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
-func operationInput(t *testing.T) faas.OperationRequest {
+func operationInput(t *testing.T) preview.OperationRequest {
 	t.Helper()
 	var fixture struct {
 		Headers map[string]string `json:"headers"`
@@ -43,7 +46,7 @@ func operationInput(t *testing.T) faas.OperationRequest {
 	for name, value := range fixture.Headers {
 		req.Header.Set(name, value)
 	}
-	input, err := faas.OperationRequestFromHTTP(req, body)
+	input, err := preview.OperationRequestFromHTTP(req, body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,10 +88,10 @@ func operationDatabase(t *testing.T) (*sql.DB, context.Context) {
 		_ = admin.Close()
 	})
 	for range 2 {
-		if _, err := db.ExecContext(ctx, faas.OperationReceiptSchema); err != nil {
+		if _, err := db.ExecContext(ctx, preview.OperationReceiptSchema); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.ExecContext(ctx, faas.CustomerOperationReceiptSchema); err != nil {
+		if _, err := db.ExecContext(ctx, preview.CustomerOperationReceiptSchema); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -101,8 +104,8 @@ func operationDatabase(t *testing.T) (*sql.DB, context.Context) {
 func TestOperationSQLTransactionBoundary(t *testing.T) {
 	db, ctx := operationDatabase(t)
 	input := operationInput(t)
-	outcome := faas.OperationOutcome{Result: json.RawMessage(`{"value":9007199254740993,"label":"π <>&"}`), Effects: []faas.ManagedOperationEffect{{Name: "notify", WebhookID: "cccbbbaa-3333-4333-8333-cccccccccccc", Type: "order.fulfilled", Payload: json.RawMessage(`{"order_id":123}`)}}}
-	callback := func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+	outcome := preview.OperationOutcome{Result: json.RawMessage(`{"value":9007199254740993,"label":"π <>&"}`), Effects: []faas.ManagedOperationEffect{{Name: "notify", WebhookID: "cccbbbaa-3333-4333-8333-cccccccccccc", Type: "order.fulfilled", Payload: json.RawMessage(`{"order_id":123}`)}}}
+	callback := func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 		_, err := tx.ExecContext(ctx, "UPDATE business.counter SET total=total+1 WHERE id=1")
 		return outcome, err
 	}
@@ -115,19 +118,19 @@ func TestOperationSQLTransactionBoundary(t *testing.T) {
 		}
 	}
 	aborted := errors.New("business transaction aborted")
-	if _, err := faas.WithOperationTransaction(ctx, db, input, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+	if _, err := preview.WithOperationTransaction(ctx, db, input, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 		_, _ = callback(tx)
 		return outcome, aborted
 	}); !errors.Is(err, aborted) {
 		t.Fatal(err)
 	}
 	counts(0, 0)
-	for _, bad := range []faas.OperationOutcome{
+	for _, bad := range []preview.OperationOutcome{
 		{Result: json.RawMessage(`invalid`)},
 		{Result: json.RawMessage(`null`), Effects: append(outcome.Effects, outcome.Effects[0])},
 		{Result: json.RawMessage(`null`), Effects: []faas.ManagedOperationEffect{{Name: "Bad", WebhookID: outcome.Effects[0].WebhookID, Type: "order.fulfilled", Payload: json.RawMessage(`null`)}}},
 	} {
-		if _, err := faas.WithOperationTransaction(ctx, db, input, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+		if _, err := preview.WithOperationTransaction(ctx, db, input, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 			_, _ = callback(tx)
 			return bad, nil
 		}); err == nil {
@@ -136,13 +139,13 @@ func TestOperationSQLTransactionBoundary(t *testing.T) {
 		counts(0, 0)
 	}
 	var wg sync.WaitGroup
-	results := make(chan faas.OperationTransactionResult, 8)
+	results := make(chan preview.OperationTransactionResult, 8)
 	failures := make(chan error, 8)
 	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := faas.WithOperationTransaction(ctx, db, input, callback)
+			result, err := preview.WithOperationTransaction(ctx, db, input, callback)
 			results <- result
 			failures <- err
 		}()
@@ -172,20 +175,20 @@ func TestOperationSQLTransactionBoundary(t *testing.T) {
 	}
 	counts(1, 1)
 	input.Generation++
-	later, err := faas.WithOperationTransaction(ctx, db, input, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
-		return faas.OperationOutcome{}, errors.New("committed callback reran")
+	later, err := preview.WithOperationTransaction(ctx, db, input, func(preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
+		return preview.OperationOutcome{}, errors.New("committed callback reran")
 	})
 	if err != nil || !later.Replayed || !bytes.Equal(saved, later.Body) {
 		t.Fatalf("replay=%+v err=%v", later, err)
 	}
-	for _, change := range []func(*faas.OperationRequest){
-		func(r *faas.OperationRequest) { r.Body = []byte(`{}`) }, func(r *faas.OperationRequest) { r.Path = "/other" }, func(r *faas.OperationRequest) { r.Method = "PUT" },
-		func(r *faas.OperationRequest) { r.PlatformTenantID = "" }, func(r *faas.OperationRequest) { r.PlatformTenantID = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee" },
-		func(r *faas.OperationRequest) { r.AccountID = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee" }, func(r *faas.OperationRequest) { r.AppID = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee" },
+	for _, change := range []func(*preview.OperationRequest){
+		func(r *preview.OperationRequest) { r.Body = []byte(`{}`) }, func(r *preview.OperationRequest) { r.Path = "/other" }, func(r *preview.OperationRequest) { r.Method = "PUT" },
+		func(r *preview.OperationRequest) { r.PlatformTenantID = "" }, func(r *preview.OperationRequest) { r.PlatformTenantID = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee" },
+		func(r *preview.OperationRequest) { r.AccountID = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee" }, func(r *preview.OperationRequest) { r.AppID = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee" },
 	} {
 		copy := input
 		change(&copy)
-		if _, err := faas.WithOperationTransaction(ctx, db, copy, callback); !errors.Is(err, faas.ErrOperationReceiptConflict) {
+		if _, err := preview.WithOperationTransaction(ctx, db, copy, callback); !errors.Is(err, preview.ErrOperationReceiptConflict) {
 			t.Fatalf("conflict=%v", err)
 		}
 	}
@@ -208,17 +211,17 @@ func TestCustomerOperationSQLTransactionBoundary(t *testing.T) {
 	} {
 		request.Header.Set(name, value)
 	}
-	input, err := faas.CustomerOperationRequestFromHTTP(request, managed.Body)
+	input, err := preview.CustomerOperationRequestFromHTTP(request, managed.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := json.RawMessage(`{"file":"ready.csv","value":9007199254740993,"label":"π <>&"}`)
-	callback := func(tx faas.OperationSQLTransaction) (json.RawMessage, error) {
+	callback := func(tx preview.OperationSQLTransaction) (json.RawMessage, error) {
 		_, err := tx.ExecContext(ctx, "UPDATE business.counter SET total=total+1 WHERE id=1")
 		return body, err
 	}
 	aborted := errors.New("abort")
-	if _, err := faas.WithCustomerOperationTransaction(ctx, db, input, func(tx faas.OperationSQLTransaction) (json.RawMessage, error) {
+	if _, err := preview.WithCustomerOperationTransaction(ctx, db, input, func(tx preview.OperationSQLTransaction) (json.RawMessage, error) {
 		_, _ = callback(tx)
 		return body, aborted
 	}); !errors.Is(err, aborted) {
@@ -229,12 +232,12 @@ func TestCustomerOperationSQLTransactionBoundary(t *testing.T) {
 		t.Fatalf("rollback total=%d: %v", total, err)
 	}
 	var wg sync.WaitGroup
-	results := make(chan faas.OperationTransactionResult, 8)
+	results := make(chan preview.OperationTransactionResult, 8)
 	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := faas.WithCustomerOperationTransaction(ctx, db, input, callback)
+			result, err := preview.WithCustomerOperationTransaction(ctx, db, input, callback)
 			if err != nil {
 				t.Error(err)
 				return
@@ -259,11 +262,11 @@ func TestCustomerOperationSQLTransactionBoundary(t *testing.T) {
 	}
 	request.Header.Set("X-Gregale-Operation-Attempt", "2")
 	request.Header.Set("X-Faas-Invocation-Id", "ffffffff-6666-4666-8666-ffffffffffff")
-	later, err := faas.CustomerOperationRequestFromHTTP(request, managed.Body)
+	later, err := preview.CustomerOperationRequestFromHTTP(request, managed.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := faas.WithCustomerOperationTransaction(ctx, db, later, func(faas.OperationSQLTransaction) (json.RawMessage, error) {
+	replayed, err := preview.WithCustomerOperationTransaction(ctx, db, later, func(preview.OperationSQLTransaction) (json.RawMessage, error) {
 		t.Fatal("committed callback reran")
 		return nil, nil
 	})
@@ -271,19 +274,19 @@ func TestCustomerOperationSQLTransactionBoundary(t *testing.T) {
 		t.Fatalf("replay: %+v %v", replayed, err)
 	}
 	request.Header.Set("X-Gregale-Customer-Operation-Receipt-Binding", strings.Repeat("d", 64))
-	changed, err := faas.CustomerOperationRequestFromHTTP(request, managed.Body)
+	changed, err := preview.CustomerOperationRequestFromHTTP(request, managed.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := faas.WithCustomerOperationTransaction(ctx, db, changed, callback); !errors.Is(err, faas.ErrOperationReceiptConflict) {
+	if _, err := preview.WithCustomerOperationTransaction(ctx, db, changed, callback); !errors.Is(err, preview.ErrOperationReceiptConflict) {
 		t.Fatalf("changed binding accepted: %v", err)
 	}
 	var customerReceipts, managedReceipts int
 	if err := db.QueryRowContext(ctx, "SELECT (SELECT total FROM business.counter WHERE id=1),(SELECT count(*) FROM public.gregale_customer_operation_inbox),(SELECT count(*) FROM public.gregale_operation_inbox)").Scan(&total, &customerReceipts, &managedReceipts); err != nil || total != 1 || customerReceipts != 1 || managedReceipts != 0 {
 		t.Fatalf("total=%d customer receipts=%d managed receipts=%d: %v", total, customerReceipts, managedReceipts, err)
 	}
-	managedResult, err := faas.WithOperationTransaction(ctx, db, managed, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
-		return faas.OperationOutcome{Result: json.RawMessage(`{"scope":"managed"}`)}, nil
+	managedResult, err := preview.WithOperationTransaction(ctx, db, managed, func(preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
+		return preview.OperationOutcome{Result: json.RawMessage(`{"scope":"managed"}`)}, nil
 	})
 	if err != nil || managedResult.Replayed {
 		t.Fatalf("managed receipt was not isolated from the Customer Operation receipt: result=%+v err=%v", managedResult, err)

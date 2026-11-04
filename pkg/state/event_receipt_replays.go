@@ -41,7 +41,10 @@ func enrichPgEventReceiptReplays(ctx context.Context, q *sqlc.Queries, tx pgx.Tx
 	}
 	for i := range receipt.Recipients {
 		entry := &receipt.Recipients[i]
-		root := PublishedEventInvocationID(receipt.invocationAccountID, receipt.EventSource, receipt.EventID, entry.SubscriptionID)
+		root := entry.deliveryID
+		if root == "" {
+			root = PublishedEventInvocationID(receipt.invocationAccountID, receipt.EventSource, receipt.EventID, entry.SubscriptionID)
+		}
 		row, ok := byRoot[root]
 		if !ok || uuidString(row.AppID) != entry.AppID {
 			continue
@@ -132,14 +135,15 @@ func (s *PgStore) EventReceiptReplays(ctx context.Context, accountID, source, ev
 	if !validReplayCursor(cursor, meta.ID) {
 		return EventReceiptReplayHistory{}, ErrConflict
 	}
-	appID, err := q.EventReceiptReplayTarget(ctx, tx, sqlc.EventReceiptReplayTargetParams{OutboxID: meta.ID, AccountID: meta.AccountID, SubscriptionID: subscriptionID})
+	target, err := q.EventReceiptReplayTarget(ctx, tx, sqlc.EventReceiptReplayTargetParams{OutboxID: meta.ID, AccountID: meta.AccountID, SubscriptionID: subscriptionID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EventReceiptReplayHistory{}, ErrNotFound
 	}
 	if err != nil {
 		return EventReceiptReplayHistory{}, fmt.Errorf("read replay recipient: %w", err)
 	}
-	root := PublishedEventInvocationID(meta.InvocationAccountID, source, eventID, subscriptionID)
+	appID := target.AppID
+	root := PublishedEventDeliveryID(PublishedEventRecipientProgress{DeliveryID: target.DeliveryID}, meta.InvocationAccountID, source, eventID, subscriptionID)
 	params := sqlc.EventReceiptReplayHistoryParams{AccountID: meta.AccountID, AppID: appID, RootInvocationID: mustPgUUID(root), AcceptedAt: meta.CreatedAt, PageLimit: int32(receiptLimit(limit) + 1)}
 	if cursor.OutboxID != 0 {
 		params.AfterCreatedAt = pgtype.Timestamptz{Time: cursor.CreatedAt, Valid: true}
@@ -201,7 +205,7 @@ func (m *MemStore) EventReceiptReplays(ctx context.Context, accountID, source, e
 	if !exists || !sameMemUUID(app.AccountID, accountID) {
 		return EventReceiptReplayHistory{}, ErrNotFound
 	}
-	root := PublishedEventInvocationID(receipt.invocationAccountID, source, eventID, subscriptionID)
+	root := PublishedEventDeliveryID(work.RecipientProgress[subscriptionID], receipt.invocationAccountID, source, eventID, subscriptionID)
 	history := EventReceiptReplayHistory{OutboxID: work.ID, EventSource: source, EventID: eventID, SubscriptionID: subscriptionID, OriginalInvocationID: root, Replays: make([]EventReceiptExecution, 0)}
 	for _, inv := range m.receiptReplaysLocked(accountID, appID, root, receipt.AcceptedAt) {
 		if cursor.OutboxID != 0 && (inv.CreatedAt.After(cursor.CreatedAt) || (inv.CreatedAt.Equal(cursor.CreatedAt) && canonicalMemUUID(inv.ID) >= canonicalMemUUID(cursor.InvocationID))) {

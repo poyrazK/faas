@@ -13,13 +13,13 @@ available on Hobby and above.
 ## Create a check
 
 ```sh
-gregale synthetics create --app shop --name health --path /healthz
-gregale synthetics create --app shop --name home --path / --method HEAD \
+gregale alert check create --app shop --name health --path /healthz
+gregale alert check create --app shop --name home --path / --method HEAD \
   --expect-status 200 --every-minutes 15
-gregale synthetics list --app shop
-gregale synthetics pause --app shop CHECK_ID
-gregale synthetics resume --app shop CHECK_ID
-gregale synthetics rm --app shop CHECK_ID
+gregale alert check list --app shop
+gregale alert check pause --app shop CHECK_ID
+gregale alert check resume --app shop CHECK_ID
+gregale alert check delete --app shop CHECK_ID
 ```
 
 The API equivalent is `POST /v1/apps/{slug}/synthetics`, with `GET`,
@@ -38,13 +38,13 @@ An app can have up to 5 checks.
 ## See results
 
 ```sh
-gregale synthetics status --app shop CHECK_ID
+gregale alert check status --app shop CHECK_ID
 ```
 
 ```
 health — GET https://shop.gregale.dev/healthz every 5 minutes, expecting 2xx
   Uptime:   99.65% (24h, 288 runs) · 99.90% (7d)
-  Latency:  p95 840 ms over 24h, including wakes
+  Latency:  p95 840 ms over 24h of successful runs, including wakes
   Recent runs:
     2026-10-10T12:05:00Z  ok              200  92 ms
     2026-10-10T12:00:00Z  FAIL status     503  31 ms
@@ -53,11 +53,15 @@ health — GET https://shop.gregale.dev/healthz every 5 minutes, expecting 2xx
 A run fails with one of: `status` (a response with an unexpected code),
 `timeout`, `dns`, `connect`, `tls`, or `other`. Runs are kept for 7 days.
 Latency is measured end to end, so a run that woke a parked app includes the
-wake. `GET /v1/apps/{slug}/synthetics/{id}` returns the same figures in
+wake. The p95 covers successful runs; a check with none in 24 hours shows `—`. `GET /v1/apps/{slug}/synthetics/{id}` returns the same figures in
 `results`.
 
 Checks run from Gregale's control plane. Requests carry the user agent
 `Gregale-Synthetics/1`, so you can recognise them in your logs.
+
+Checks run only while your plan includes them (Hobby and above). After a
+move to the Free plan your checks are kept but no longer run, so they stop
+waking your app; they resume when you upgrade.
 
 ## Alert on a check
 
@@ -66,13 +70,13 @@ Two alert metrics watch one check, named with `synthetic_check_id`
 
 ```sh
 # Two failed runs in a row, ignoring a single blip.
-printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "health failing" \
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "health failing" \
   --metric synthetic_check_consecutive_failures --synthetic-check CHECK_ID \
   --comparison gte --threshold 2 --window-spec 1h \
   --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 
 # p95 latency of successful runs above 2 s over an hour.
-printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "health slow" \
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "health slow" \
   --metric synthetic_check_latency_p95_ms --synthetic-check CHECK_ID \
   --comparison gt --threshold 2000 --window-spec 1h \
   --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
@@ -88,6 +92,15 @@ printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "health slo
 The dashboard's app page lists every check with its uptime, p95 latency and
 last result under **Synthetic checks**.
 
+## Probes are traffic
+
+A probe reaches your app through its public hostname like any other request,
+with the user agent `Gregale-Synthetics/1`. So probes appear in request
+analytics (group by `ua_family` to see them apart), count toward
+`request_count`, error-rate and latency alerts, and count in availability and
+latency SLOs. On an app with little other traffic, probes can be most of an
+SLO's requests; set its objective with that in mind.
+
 ## What checks cost
 
 A probe is an ordinary request and is billed like one. If your app is
@@ -96,13 +109,15 @@ parked, the probe wakes it, and it stays up for your plan's idle timeout
 before parking again. For an app with **no other traffic**, one check costs
 roughly:
 
-| Plan (idle timeout) | Every 5 min | Every 15 min | Every 60 min | Included per month |
+| Plan (RAM, idle timeout) | Every 5 min | Every 15 min | Every 60 min | Included per month |
 |---|---|---|---|---|
-| Hobby (60 s) | ~37 GB-h | ~12 GB-h | ~3 GB-h | 50 GB-h |
-| Pro (300 s) | ~366 GB-h (always warm) | ~122 GB-h | ~31 GB-h | 250 GB-h |
-| Scale (600 s) | ~726 GB-h (always warm) | ~484 GB-h | ~121 GB-h | 1,500 GB-h |
+| Hobby (512 MB, 60 s) | ~73 GB-h | ~24 GB-h | ~6 GB-h | 200 GB-h |
+| Pro (1,024 MB, 300 s) | ~726 GB-h (always warm) | ~242 GB-h | ~60 GB-h | 1,000 GB-h |
+| Scale (2,048 MB, 600 s) | ~1,446 GB-h (always warm) | ~964 GB-h | ~241 GB-h | 3,000 GB-h |
 
-Figures use the plan's RAM plus 8 MB per running second over a 30-day month.
+Figures assume the app uses its plan's full RAM, plus 8 MB, for every running
+second over a 30-day month (1 GB = 1,024 MB); an app given less RAM costs
+proportionally less.
 On Pro and Scale, a check at or below the idle timeout keeps the app warm
 continuously, which also removes cold starts for real users. Choose a
 longer interval for an app that should park. The shortest interval is

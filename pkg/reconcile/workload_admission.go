@@ -31,12 +31,31 @@ func validatePlatformTenantPolicy(plan api.Plan, workloads []reposcan.Workload) 
 	return nil
 }
 
+// WorkloadPlanAdmissionReasons are the plan gates a project deploy applies to
+// workloads before it writes them: declared resources, image processes,
+// lifecycle settings and platform-tenant-required apps. PR previews apply
+// them to the workloads a pull request builds; a head the plan refuses at
+// merge must not run as a preview (ADR-20261031180000).
+func WorkloadPlanAdmissionReasons(plan api.Plan, workloads []reposcan.Workload) []string {
+	reasons := ProjectImageLifecycleAdmissionReasons(plan, workloads)
+	if plan.ConsumerKeysPerApp() > 0 {
+		return reasons
+	}
+	for _, workload := range workloads {
+		if workload.PlatformTenantRequired != nil && *workload.PlatformTenantRequired {
+			reasons = append(reasons, fmt.Sprintf("workload %q: the %s plan does not include platform-tenant-required apps", workload.Name, plan))
+		}
+	}
+	return reasons
+}
+
 // ProjectImageLifecycleAdmissionReasons keeps background image workloads, and
 // built workers, on their worker/job lifecycle and applies the same plan gate
 // as standalone apps.
 func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.Workload) []string {
 	var reasons []string
 	for _, workload := range workloads {
+		reasons = append(reasons, composeResourcesAdmissionReasons(plan, workload)...)
 		// Built services carry Compose process overrides too (ADR-20261022160000).
 		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))
@@ -70,8 +89,18 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 	}
 
 	bySlug := make(map[string]state.App, len(accountApps))
+	var projectApps []state.App
 	for _, app := range accountApps {
 		bySlug[app.Slug] = app
+		if projectID != "" && app.ProjectID == projectID {
+			projectApps = append(projectApps, app)
+		}
+	}
+	// A renamed service keeps its previous name's app (ADR-20261029090000),
+	// so that app is this workload's member.
+	renamed := RenamedWorkloads(workloads, projectApps)
+	member := func(app state.App, workload reposcan.Workload) bool {
+		return app.WorkloadName == workload.Name || renamed[app.WorkloadName] == workload.Name
 	}
 	seen := make(map[string]string, len(workloads))
 	var reasons []string
@@ -100,6 +129,9 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		if err := workload.DockerfileBuild.Validate(); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q has invalid build options: %s", workload.Name, err))
 		}
+		if err := api.ValidateSecretFiles(workload.SecretFiles); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has invalid secret files: %s", workload.Name, err))
+		}
 		if workload.Image != "" && !workload.DockerfileBuild.IsZero() {
 			reasons = append(reasons, fmt.Sprintf("workload %q is a prebuilt image; build options apply only to Dockerfile builds", workload.Name))
 		}
@@ -109,7 +141,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 			// fresh allocation (or a collision outside this exact member) is
 			// rejected.
 			app, exists := bySlug[slug]
-			if !exists || projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name || app.PreviewOfSlug != "" {
+			if !exists || projectID == "" || app.ProjectID != projectID || !member(app, workload) || app.PreviewOfSlug != "" {
 				reasons = append(reasons, fmt.Sprintf(
 					"workload %q uses app slug %q reserved for a Gregale service",
 					workload.Name, slug))
@@ -130,7 +162,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		}
 		seen[slug] = workload.RootDir
 		if app, exists := bySlug[slug]; exists &&
-			(projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name || app.PreviewOfSlug != "") {
+			(projectID == "" || app.ProjectID != projectID || !member(app, workload) || app.PreviewOfSlug != "") {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q conflicts with existing app slug %q outside this project member",
 				workload.Name, app.Slug))

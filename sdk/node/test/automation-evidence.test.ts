@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, WorkflowsService } from '../src/index.js';
+import { FaaSClient, WorkflowsService } from '../src/preview.js';
 import type { AutomationCheckEvidence } from '../src/generated/models/AutomationCheckEvidence.js';
 
 test('checked publication sends evidence and revision reads retain advisory gaps', async t => {

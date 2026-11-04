@@ -10,10 +10,12 @@ import (
 // adr: 20261016151947 — Data API live reads are a customer feature
 // (`gregale data-api live`); sealed live queries stay an operator preview:
 // `gregale postgres live` stays callable but out of customer help,
-// completions and the published CLI reference.
+// completions and the published CLI reference. `postgres` itself is a
+// customer command since ADR-20261031091607; the command tree keeps `live`
+// under the hidden admin command.
 func TestLiveQueriesHiddenFromCustomerDiscovery(t *testing.T) {
 	dataAPILive := false
-	for _, command := range main.CustomerCliCommands() {
+	for _, command := range main.CliTreeManifest(main.CustomerCliCommands()) {
 		for _, sub := range command.Subcommands {
 			switch {
 			case command.Name == "postgres" && sub.Name == "live":

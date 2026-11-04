@@ -164,7 +164,7 @@ export class UsageService {
   }
   /**
    * Realtime connections against the plan's fair-use limit, and recorded usage per hour.
-   * Realtime is free (ADR-1323). open_connections counts connections on realtime nodes that reported in the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is the most connections open at once in any minute of the hour.
+   * Realtime is free. open_connections counts connections on realtime nodes that reported in the last 30 seconds. Hourly usage appears only when the operator records realtime usage; the peak is the most connections open at once in any minute of the hour.
    * @returns RealtimeUsageResponse Open connections, the plan limit, and hourly usage for the account and each endpoint.
    * @throws ApiError
    */

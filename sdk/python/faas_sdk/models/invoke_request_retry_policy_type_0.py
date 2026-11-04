@@ -13,8 +13,8 @@ T = TypeVar("T", bound="InvokeRequestRetryPolicyType0")
 
 @_attrs_define
 class InvokeRequestRetryPolicyType0:
-    """ADR-134 PR-B. Per-row retry curve override. max_attempts counts the original, is capped by the account plan, and 0
-    inherits that finite cap.
+    """Per-row retry curve override. max_attempts counts the original, is capped by the account plan, and 0 inherits that
+    finite cap.
 
     """
 

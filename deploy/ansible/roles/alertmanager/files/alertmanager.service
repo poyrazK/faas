@@ -15,6 +15,12 @@ ExecStart=/usr/local/bin/alertmanager \
     --cluster.listen-address=
 Restart=on-failure
 RestartSec=10s
+# ADR-20261023124955 §1: capped observability slice. Alert delivery outranks
+# the dashboards for CPU there. production-us measured 33 MB RSS and a 46 MB
+# peak on 2026-10-23.
+Slice=faas-obs.slice
+CPUWeight=100
+MemoryMax=128M
 
 # Hardening (mirrors prometheus.service).
 NoNewPrivileges=true

@@ -1,6 +1,7 @@
-# loki — pinned single-binary Loki backend for the dedicated observability
-# host (issue #274). The role owns the backend; promtail owns journal reads on
-# FaaS hosts. Customer requests never depend on this process synchronously.
+# loki — pinned single-binary Loki backend on the control plane (issue #274,
+# ADR-20261023124955 §2). The role owns the backend; promtail owns journal
+# reads on FaaS hosts. Customer requests never depend on this process
+# synchronously.
 
 - name: loki — assert SHA-256 pin was supplied
   ansible.builtin.assert:
@@ -18,7 +19,8 @@
       - loki_http_listen_address not in ['0.0.0.0', '::']
     fail_msg: >-
       loki_http_listen_address={{ loki_http_listen_address }} is empty or
-      wildcard. Bind Loki to the observability host's private address.
+      wildcard. Bind Loki to the control plane's private address
+      (faas_obs_loki_address).
 
 - name: loki — require an off-host production bind address
   ansible.builtin.assert:
@@ -27,11 +29,58 @@
       - loki_http_listen_address != '::1'
       - loki_http_listen_address != 'localhost'
     fail_msg: >-
-      Production Loki must listen on the observability host's private address,
-      not {{ loki_http_listen_address }}. Set loki_http_listen_address in
-      provider-owned inventory, or explicitly enable loki_dev_mode for local
-      role validation.
+      Production Loki must listen on the control plane's private address so
+      compute-node Promtail can reach it, not {{ loki_http_listen_address }}.
+      Set faas_obs_loki_address in the operator variables, or explicitly
+      enable loki_dev_mode for local role validation.
   when: not (loki_dev_mode | bool)
+
+- name: loki — validate the storage backend
+  ansible.builtin.assert:
+    that:
+      - loki_storage_backend in ['filesystem', 's3']
+      - loki_storage_backend != 's3' or (loki_s3_endpoint | length > 0 and loki_s3_endpoint is not search('://') and loki_s3_bucket | length > 0)
+      - loki_dev_mode | bool or loki_storage_backend == 's3'
+    fail_msg: >-
+      Production Loki stores chunks in object storage (ADR-20261023124955 §2):
+      set loki_storage_backend=s3 with loki_s3_endpoint as host[:port] without
+      a scheme (got '{{ loki_s3_endpoint }}') and loki_s3_bucket (got
+      '{{ loki_s3_bucket }}'). Filesystem storage is for loki_dev_mode only.
+
+- name: loki — stat the object-storage credentials
+  ansible.builtin.stat:
+    path: "{{ loki_s3_credentials_file }}"
+  register: loki_s3_credentials
+  when: loki_storage_backend == 's3'
+
+- name: loki — require root-only object-storage credentials
+  ansible.builtin.assert:
+    that:
+      - loki_s3_credentials.stat.exists
+      - loki_s3_credentials.stat.pw_name == 'root'
+      - loki_s3_credentials.stat.mode == '0400'
+    fail_msg: >-
+      {{ loki_s3_credentials_file }} must exist as root:root 0400 and hold
+      AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY for the Loki bucket. See
+      docs/ops/logs.md.
+  when: loki_storage_backend == 's3'
+
+- name: loki — stat the object-storage CA
+  ansible.builtin.stat:
+    path: "{{ loki_s3_ca_file }}"
+  register: loki_s3_ca
+  when: loki_storage_backend == 's3' and loki_s3_ca_file | length > 0
+
+- name: loki — require the object-storage CA to be a readable file
+  ansible.builtin.assert:
+    that:
+      - loki_s3_ca.stat.exists
+      - loki_s3_ca.stat.isreg
+      - loki_s3_ca.stat.roth
+    fail_msg: >-
+      loki_s3_ca_file={{ loki_s3_ca_file }} must be a world-readable file (a CA
+      certificate, not a secret); Loki reads it as the loki user.
+  when: loki_storage_backend == 's3' and loki_s3_ca_file | length > 0
 
 - name: loki — create service account
   ansible.builtin.user:
@@ -76,14 +125,25 @@
       - item.stat.isreg
       - (item.stat.mode | default('0000')) in ['0400', '0440', '0444', '0640', '0644']
     fail_msg: >-
-      Loki TLS {{ item.item.name }} is missing or has an unsupported mode;
-      provision the certificate bundle out-of-band and keep the private key
-      restricted to root:loki.
+      Loki TLS {{ item.item.name }} is missing or has an unsupported mode. The
+      platform_logs_pki role issues it from the fleet CA (ADR-20261023124955
+      §2); converge it before this role.
   loop: "{{ loki_tls_stats.results | default([]) }}"
   loop_control:
     label: "{{ item.item.name }}"
   when: not (loki_dev_mode | bool)
   no_log: true
+
+# pkg/pki writes keys root:root 0400; platform_logs_pki repeats this on
+# renewal (ADR-20261023124955 §2).
+- name: loki — let loki read its server key
+  ansible.builtin.file:
+    path: "{{ loki_tls_key_file }}"
+    state: file
+    owner: root
+    group: loki
+    mode: "0440"
+  when: not (loki_dev_mode | bool)
 
 - name: loki — download release archive
   ansible.builtin.get_url:
@@ -123,6 +183,7 @@
     argv:
       - /usr/local/bin/loki
       - -verify-config=true
+      - -config.expand-env=true
       - -config.file={{ loki_config_path }}
   changed_when: false
   check_mode: false
@@ -137,6 +198,14 @@
   notify:
     - daemon-reload
     - restart loki
+
+- name: loki — render client settings for gregalectl obs logs
+  ansible.builtin.template:
+    src: loki-client.env.j2
+    dest: "{{ loki_cli_env_path }}"
+    owner: root
+    group: root
+    mode: "0644"
 
 - name: loki — enable and start service
   ansible.builtin.service:

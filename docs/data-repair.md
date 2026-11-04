@@ -108,8 +108,8 @@ executor reports have `profile: "executor"`. Both exit zero only when ready.
 Applications can inspect their own connection pool before enabling an importer:
 
 ```go
-report, err := faas.CheckDataRepairCapture(ctx, writerDB, faas.DataRepairCaptureReadinessOptions{
-    Scope: faas.DataRepairCaptureScope{
+report, err := preview.CheckDataRepairCapture(ctx, writerDB, preview.DataRepairCaptureReadinessOptions{
+    Scope: preview.DataRepairCaptureScope{
         AccountID: accountID, AppID: appID, Environment: "production",
     },
     Table: "public.products", Release: executingRelease,
@@ -118,7 +118,7 @@ report, err := faas.CheckDataRepairCapture(ctx, writerDB, faas.DataRepairCapture
 ```
 
 ```ts
-import { checkDataRepairCapture } from '@gregale/sdk-node';
+import { checkDataRepairCapture } from '@gregale/sdk-node/preview';
 
 const report = await checkDataRepairCapture(writerPool, {
   accountId, appId, environment: 'production',
@@ -127,7 +127,7 @@ const report = await checkDataRepairCapture(writerPool, {
 ```
 
 ```python
-from faas_sdk import check_data_repair_capture, acheck_data_repair_capture
+from faas_sdk.preview import check_data_repair_capture, acheck_data_repair_capture
 
 options = dict(account_id=account_id, app_id=app_id, environment="production",
                table="public.products", release=executing_release)
@@ -431,7 +431,7 @@ capture, calls the business handler, finalizes capture and binds it to the
 operation receipt before COMMIT, using one connection and transaction:
 
 ```ts
-import { withRepairableOperationTransaction } from '@gregale/sdk-node';
+import { withRepairableOperationTransaction } from '@gregale/sdk-node/preview';
 
 const response = await withRepairableOperationTransaction(pool, operationRequest, {
   table: 'public.products', environment: 'production', release: executingRelease,
@@ -443,16 +443,16 @@ const response = await withRepairableOperationTransaction(pool, operationRequest
 ```
 
 ```go
-response, err := faas.WithRepairableOperationTransaction(ctx, writerDB, request,
-    faas.DataRepairCapture{Table: "public.products", Environment: "production", Release: executingRelease},
-    func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+response, err := preview.WithRepairableOperationTransaction(ctx, writerDB, request,
+    preview.DataRepairCapture{Table: "public.products", Environment: "production", Release: executingRelease},
+    func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
         _, err := tx.ExecContext(ctx, "UPDATE public.products SET category=$1 WHERE id=$2", category, productID)
-        return faas.OperationOutcome{Result: json.RawMessage(`{"imported":1}`)}, err
+        return preview.OperationOutcome{Result: json.RawMessage(`{"imported":1}`)}, err
     })
 ```
 
 ```python
-from faas_sdk import with_repairable_operation_transaction
+from faas_sdk.preview import with_repairable_operation_transaction
 
 def import_products(cursor):
     cursor.execute("UPDATE public.products SET category=%s WHERE id=%s", (category, product_id))
@@ -528,7 +528,7 @@ The SDK helper belongs **inside** the existing operation transaction callback.
 Use only its supplied transaction and propagate errors:
 
 ```ts
-import { withOperationTransaction, withDataRepairCapture } from '@gregale/sdk-node';
+import { withOperationTransaction, withDataRepairCapture } from '@gregale/sdk-node/preview';
 
 const response = await withOperationTransaction(pool, operationRequest, tx =>
   withDataRepairCapture(tx, operationRequest, {

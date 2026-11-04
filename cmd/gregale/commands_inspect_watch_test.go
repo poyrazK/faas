@@ -91,7 +91,7 @@ func TestRunInspectWatchSkipsQuietPollsAndStopsOnOutputFailure(t *testing.T) {
 		polls++
 		summary := inspectWatchTestSummary(time.Now().UTC())
 		if polls > 2 {
-			summary.Release = main.InspectReleaseSummary{Available: true, DeploymentID: "deployment-b", Status: "live"}
+			summary.Release = main.InspectReleaseSummary{Available: true, DeploymentID: "deployment-b", Status: "live", TrafficPercent: 100}
 		}
 		return summary, nil
 	}, func(event main.InspectWatchEvent) error {

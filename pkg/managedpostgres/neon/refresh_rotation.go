@@ -105,6 +105,15 @@ func verifyRefreshRotationTables(ctx context.Context, tx pgx.Tx, owner string) e
  AND NOT EXISTS(SELECT 1 FROM pg_attribute a,LATERAL aclexplode(a.attacl) x WHERE a.attrelid=c.oid AND x.grantee<>r.oid)
  AND NOT EXISTS(SELECT 1 FROM aclexplode(coalesce(n.nspacl,acldefault('n',n.nspowner))) a WHERE a.grantee=0)
  AND NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=c.oid OR inhparent=c.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_trigger t WHERE t.tgrelid=c.oid AND NOT t.tgisinternal)
+ AND NOT EXISTS(SELECT 1 FROM pg_rewrite w WHERE w.ev_class=c.oid)
+ AND NOT EXISTS(SELECT 1 FROM pg_constraint f WHERE f.contype='f' AND (f.conrelid=c.oid OR f.confrelid=c.oid)
+ AND NOT (f.conrelid=to_regclass('gregale_data_api.refresh_rotation_members') AND f.confrelid=to_regclass('gregale_data_api.refresh_rotation_bindings')
+ AND f.confupdtype='a' AND f.confdeltype='a'))
+ AND NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.refclassid IN ('pg_proc'::regclass,'pg_operator'::regclass,'pg_type'::regclass) AND d.refobjid>=16384
+ AND ((d.classid='pg_constraint'::regclass AND d.objid IN (SELECT k.oid FROM pg_constraint k WHERE k.conrelid=c.oid))
+ OR (d.classid='pg_class'::regclass AND d.objid IN (SELECT i.indexrelid FROM pg_index i WHERE i.indrelid=c.oid))
+ OR (d.classid='pg_attrdef'::regclass AND d.objid IN (SELECT x.oid FROM pg_attrdef x WHERE x.adrelid=c.oid))))
  AND (SELECT array_agg(a.attname::text||':'||a.atttypid::regtype::text||':'||a.attnotnull::text ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped)=$3::text[]
  AND EXISTS(SELECT 1 FROM pg_constraint p WHERE p.conrelid=c.oid AND p.contype='p' AND p.convalidated
  AND p.conkey=CASE WHEN $2='refresh_rotation_bindings' THEN ARRAY[1,2]::smallint[] ELSE ARRAY[1]::smallint[] END)
@@ -169,7 +178,7 @@ func retireRefreshRotationMember(ctx context.Context, tx pgx.Tx, role credential
 		if err := verifyRefreshRotationTables(ctx, tx, role.schemaOwner); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('gregale-data-api-binding:'||$2||':'||$1,0))`, role.bindingID, role.scope); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('gregale-data-api-binding:'||$2||':'||$1,0))`, role.bindingID, role.scope); err != nil {
 			return err
 		}
 		var conflicting bool

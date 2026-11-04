@@ -1,0 +1,83 @@
+# Hosted management MCP (ADR-20261026195952): each faas_hosted_mcp alert fires
+# on its failure shape and stays quiet on a healthy series beside it.
+
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 30s
+tests:
+- name: a bridge that is not scraped fires; a scraped one stays quiet
+  interval: 1m
+  input_series:
+  - series: up{job="mcp-bridged",instance="127.0.0.1:9110"}
+    values: '0x20'
+  - series: up{job="mcp-bridged",instance="127.0.0.2:9110"}
+    values: 1x20
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasHostedMCPDown
+  - eval_time: 6m
+    alertname: FaasHostedMCPDown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: mcp-bridged
+        family: hosted_mcp
+        job: mcp-bridged
+        instance: 127.0.0.1:9110
+      exp_annotations:
+        summary: The hosted MCP server is down on 127.0.0.1:9110
+        description: Prometheus has not scraped mcp-bridged for 5m, so agents cannot sign in to or use the hosted MCP server.
+          Check systemctl status faas-mcp-bridge and its journal. It exits when it loses its state lease or cannot commit its
+          state, and systemd stops restarting it after five failures in a minute.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostedMCP.md
+- name: three starts in half an hour fire; one restart stays quiet
+  interval: 1m
+  input_series:
+  - series: process_start_time_seconds{job="mcp-bridged",instance="127.0.0.1:9110"}
+    values: 100x5 400x5 700x5 1000x20
+  - series: process_start_time_seconds{job="mcp-bridged",instance="127.0.0.2:9110"}
+    values: 100x10 700x25
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: FaasHostedMCPRestarting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: mcp-bridged
+        family: hosted_mcp
+        job: mcp-bridged
+        instance: 127.0.0.1:9110
+      exp_annotations:
+        summary: The hosted MCP server keeps restarting on 127.0.0.1:9110
+        description: "mcp-bridged started at least three times in 30m. Each start after a crash waits up to a minute for the
+          old state lease to lapse, and agents' requests fail meanwhile. The journal names the cause: a lost lease, a state
+          commit Postgres refused, or a crash."
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostedMCP.md
+- name: grants at 92.5% of the bound fire after 30m; clients well below stay quiet
+  interval: 1m
+  input_series:
+  - series: gregale_management_mcp_oauth_entries{job="mcp-bridged",instance="127.0.0.1:9110",kind="grants"}
+    values: 1850x40
+  - series: gregale_management_mcp_oauth_entries{job="mcp-bridged",instance="127.0.0.1:9110",kind="clients"}
+    values: 100x40
+  - series: gregale_management_mcp_oauth_entry_limit{job="mcp-bridged",instance="127.0.0.1:9110"}
+    values: 2000x40
+  alert_rule_test:
+  - eval_time: 29m
+    alertname: FaasHostedMCPConnectionsNearCapacity
+  - eval_time: 31m
+    alertname: FaasHostedMCPConnectionsNearCapacity
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: mcp-bridged
+        family: hosted_mcp_demand
+        job: mcp-bridged
+        instance: 127.0.0.1:9110
+        kind: grants
+      exp_annotations:
+        summary: Hosted MCP grants are at 92.5% of their bound
+        description: The hosted MCP server holds at least 90% of the grants it allows. At the bound it refuses new client registrations
+          or sign-ins until entries expire. List connections over the admin socket and revoke abandoned ones; raising the
+          bound is a code change (ADR-20261026195952).
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostedMCP.md

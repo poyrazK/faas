@@ -22,6 +22,7 @@ FROM event_fanout_outbox o
 WHERE o.account_id=$3::uuid
   AND o.created_at >= $4::timestamptz AND o.created_at < $5::timestamptz
   AND (o.created_at,o.id) > ($6::timestamptz,$7::bigint)
+  AND event_app_in_producer_reach(o.account_id, o.payload->>'producer', $2::text)
 ORDER BY o.created_at, o.id LIMIT $8::integer
 `
 
@@ -191,6 +192,7 @@ LEFT JOIN workflow_runs wr ON wr.id=wer.run_id
 WHERE o.account_id=$3::uuid
   AND o.created_at >= $4::timestamptz AND o.created_at < $5::timestamptz
   AND (o.created_at,o.id) > ($6::timestamptz,$7::bigint)
+  AND event_app_in_producer_reach(o.account_id, o.payload->>'producer', $1::text)
 ORDER BY o.created_at, o.id LIMIT $8::integer
 `
 

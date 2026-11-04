@@ -129,7 +129,7 @@ func (s *PgStore) IssueRealtimeSubscriptionTicket(ctx context.Context, ep, princ
 	}
 	encoded, _ := json.Marshal(channels)
 	err = tx.QueryRow(ctx, `insert into managed_realtime_subscription_tickets(token_hash,endpoint_id,principal,channels,issued_at,expires_at)
- select $1,$2,$3,$4::jsonb,t,t+make_interval(secs=>$5::integer) from (select clock_timestamp() as t) stamp returning id::text,issued_at,expires_at`, hash, ep, principal, encoded, ttl).Scan(&ticket.ID, &ticket.IssuedAt, &ticket.ExpiresAt)
+ select $1,$2,$3,$4::jsonb,t,t+make_interval(secs=>$5::integer) from (select clock_timestamp() as t) stamp returning id::text,issued_at,expires_at`, storedCredential(credTagRealtimeTicket, hash), ep, principal, encoded, ttl).Scan(&ticket.ID, &ticket.IssuedAt, &ticket.ExpiresAt)
 	if err != nil {
 		return "", ticket, err
 	}
@@ -144,10 +144,14 @@ func (s *PgStore) ReadRealtimeSubscriptionTicket(ctx context.Context, ep, token 
 		return ticket, err
 	}
 	var encoded []byte
-	err = s.pool.QueryRow(ctx, `select t.id::text,t.principal,t.channels,t.issued_at,t.expires_at from managed_realtime_subscription_tickets t join managed_realtime_endpoints e on e.id=t.endpoint_id where t.token_hash=$1 and t.endpoint_id=$2 and e.enabled and t.expires_at>clock_timestamp()`, hash, ep).Scan(&ticket.ID, &ticket.Principal, &encoded, &ticket.IssuedAt, &ticket.ExpiresAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ticket, ErrNotFound
-	}
+	encoded, err = firstCredential(ctx, credentialLookups(credTagRealtimeTicket, hash), func(ctx context.Context, value []byte) ([]byte, error) {
+		var encoded []byte
+		err := s.pool.QueryRow(ctx, `select t.id::text,t.principal,t.channels,t.issued_at,t.expires_at from managed_realtime_subscription_tickets t join managed_realtime_endpoints e on e.id=t.endpoint_id where t.token_hash=$1 and t.endpoint_id=$2 and e.enabled and t.expires_at>clock_timestamp()`, value, ep).Scan(&ticket.ID, &ticket.Principal, &encoded, &ticket.IssuedAt, &ticket.ExpiresAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return encoded, err
+	})
 	if err != nil {
 		return ticket, err
 	}
@@ -225,7 +229,7 @@ func (m *MemStore) IssueRealtimeSubscriptionTicket(_ context.Context, ep, princi
 	if m.realtimeTickets == nil {
 		m.realtimeTickets = map[string]storedRealtimeTicket{}
 	}
-	m.realtimeTickets[string(hash)] = storedRealtimeTicket{ep, ticket}
+	m.realtimeTickets[string(storedCredential(credTagRealtimeTicket, hash))] = storedRealtimeTicket{ep, ticket}
 	return token, ticket, nil
 }
 func (m *MemStore) ReadRealtimeSubscriptionTicket(_ context.Context, ep, token string) (RealtimeSubscriptionTicket, error) {
@@ -235,7 +239,8 @@ func (m *MemStore) ReadRealtimeSubscriptionTicket(_ context.Context, ep, token s
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.realtimeTickets[string(hash)]
+	key, _ := rawCredentialKey(m.realtimeTickets, credTagRealtimeTicket, hash)
+	row, ok := m.realtimeTickets[key]
 	endpoint, enabled := m.managedRealtimeEndpoints[ep]
 	if !ok || row.EndpointID != ep || !enabled || !endpoint.Enabled {
 		return RealtimeSubscriptionTicket{}, ErrNotFound

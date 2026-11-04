@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -33,16 +34,24 @@ func (e *Evaluator) deliverReleaseApprovalEvents(ctx context.Context, now time.T
 	due, err := events.DueReleaseApprovalEvents(ctx, now, releaseApprovalBatch)
 	if err != nil {
 		e.log.Warn("alerts: list due release approval events", "err", err)
+		e.releaseMetrics.Error(releasemetrics.WorkerApprovalNotices)
 		return 0
 	}
+	e.releaseMetrics.Pass(releasemetrics.WorkerApprovalNotices, now)
 	delivered := 0
 	for _, ev := range due {
 		if ctx.Err() != nil {
 			return delivered
 		}
 		attempt := e.deliverReleaseApprovalEvent(ctx, ev, now)
-		if attempt.State == state.ReleaseApprovalEventDelivered {
+		switch attempt.State {
+		case state.ReleaseApprovalEventDelivered:
 			delivered++
+			e.releaseMetrics.Decision(releasemetrics.GuardApprovalNotice, "sent")
+		case state.ReleaseApprovalEventFailed:
+			e.releaseMetrics.Decision(releasemetrics.GuardApprovalNotice, "dropped")
+		default:
+			e.releaseMetrics.Decision(releasemetrics.GuardApprovalNotice, "retried")
 		}
 		if err := events.FinishReleaseApprovalEvent(ctx, ev.ID, attempt); err != nil && !errors.Is(err, state.ErrNotFound) {
 			e.log.Warn("alerts: record release approval delivery", "event", ev.ID, "err", err)

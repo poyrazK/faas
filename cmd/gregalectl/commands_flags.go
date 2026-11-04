@@ -19,12 +19,14 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/productcap"
 )
 
 const dispatchFlags = "flags"
@@ -50,6 +52,9 @@ type flagsMutation struct {
 	reason   *string
 	traceID  *string
 	yes      *bool
+	force    *bool
+	tier     *string
+	capab    *string
 	edit     func(*platformflags.Definition) error
 	groups   bool
 	editGrps func(platformflags.Groups) error
@@ -192,6 +197,7 @@ func cmdFlagsSwitch(enabled bool) func([]string) int {
 	return func(args []string) int {
 		fs := flagsFlagSet(name)
 		key, mutation := flagsMutationFlags(fs)
+		flagsSelectorFlags(fs, &mutation)
 		if err := fs.Parse(args); err != nil || !flagsNoPositional(fs, name) {
 			return 2
 		}
@@ -200,7 +206,7 @@ func cmdFlagsSwitch(enabled bool) func([]string) int {
 			def.Enabled = enabled
 			return nil
 		}
-		return runFlagsMutation(*key, mutation)
+		return runFlagsMutationOrBulk(*key, mutation)
 	}
 }
 
@@ -211,6 +217,7 @@ func cmdFlagsAccountRule(name string) func([]string) int {
 	return func(args []string) int {
 		fs := flagsFlagSet(name)
 		key, mutation := flagsMutationFlags(fs)
+		flagsSelectorFlags(fs, &mutation)
 		accountID := fs.String("account-id", "", "account UUID")
 		orgID := fs.String("org-id", "", "organization UUID: everyone acting under the company")
 		if err := fs.Parse(args); err != nil || !flagsNoPositional(fs, name) || !flagsRequireSubject(name, *accountID, *orgID) {
@@ -233,7 +240,7 @@ func cmdFlagsAccountRule(name string) func([]string) int {
 			}
 			return nil
 		}
-		return runFlagsMutation(*key, mutation)
+		return runFlagsMutationOrBulk(*key, mutation)
 	}
 }
 
@@ -334,6 +341,7 @@ func cmdFlagsRollout(args []string) int {
 func cmdFlagsDefault(args []string) int {
 	fs := flagsFlagSet("default")
 	key, mutation := flagsMutationFlags(fs)
+	flagsSelectorFlags(fs, &mutation)
 	value := fs.String("value", "", "default for accounts no rule matches: true or false")
 	if err := fs.Parse(args); err != nil || !flagsNoPositional(fs, "default") {
 		return 2
@@ -348,7 +356,7 @@ func cmdFlagsDefault(args []string) int {
 		def.Default = parsed
 		return nil
 	}
-	return runFlagsMutation(*key, mutation)
+	return runFlagsMutationOrBulk(*key, mutation)
 }
 
 // cmdFlagsSelfServe opens or closes a preview to customer opt-ins (ADR
@@ -521,7 +529,7 @@ func cmdFlagsRollback(args []string) int {
 	if code != 0 {
 		return code
 	}
-	request := api.RollbackOperatorRuntimeConfigRequest{Version: *version, Reason: reason, ExpectedVersion: &current}
+	request := api.RollbackOperatorRuntimeConfigRequest{Version: *version, Reason: reason, ExpectedVersion: &current, Force: *mutation.force}
 	return flagsWrite(&sess, http.MethodPost, "/v1/admin/config/"+url.PathEscape(configKey)+"/rollback", request, traceID, "rollback")
 }
 
@@ -547,7 +555,7 @@ func runFlagsMutation(key string, mutation flagsMutation) int {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl flags %s: %v\n", mutation.name, err)
 		return 2
 	}
-	request := operatorConfigPatchRequest{Value: value, Reason: reason, ExpectedVersion: &expected}
+	request := operatorConfigPatchRequest{Value: value, Reason: reason, ExpectedVersion: &expected, Force: *mutation.force}
 	return flagsWrite(&sess, http.MethodPatch, "/v1/admin/config/"+url.PathEscape(configKey), request, traceID, mutation.name)
 }
 
@@ -727,6 +735,7 @@ func flagsMutationOptions(fs *flag.FlagSet) flagsMutation {
 		reason:  fs.String("reason", "", "audit reason (3..500 characters)"),
 		traceID: fs.String("trace-id", "", "OTel 32-char-hex trace id (auto-generated when empty)"),
 		yes:     fs.Bool("yes", false, "acknowledge the platform flag change"),
+		force:   fs.Bool("force", false, "confirm turning a core capability flag off for every account"),
 	}
 }
 
@@ -821,10 +830,25 @@ func sortedGroupNames(groups map[string][]string) []string {
 }
 
 func printPlatformFlagSummary(item api.OperatorPlatformFlag) {
-	_, _ = fmt.Fprintf(osStdout, "key=%s enabled=%t default=%t rules=%d version=%d source=%s status=%s converged=%s pending=%s failed=%s%s\n",
+	_, _ = fmt.Fprintf(osStdout, "key=%s enabled=%t default=%t rules=%d version=%d source=%s status=%s converged=%s pending=%s failed=%s%s%s\n",
 		item.Key, item.Definition.Enabled, item.Definition.Default, len(item.Definition.Rules), item.Version, item.Source, item.Status,
 		strings.Join(item.Convergence.Converged, ","), strings.Join(item.Convergence.Pending, ","), strings.Join(item.Convergence.Failed, ","),
-		flagsRetireBy(item.RetireBy, time.Now()))
+		flagsRetireBy(item.RetireBy, time.Now()), flagsCapabilityFacts(item))
+}
+
+// flagsCapabilityFacts renders the released capability's tier, parent, core
+// mark and enforcement (ADR-20261023115741); absent fields are omitted.
+func flagsCapabilityFacts(item api.OperatorPlatformFlag) string {
+	var b strings.Builder
+	for _, kv := range [][2]string{{"tier", item.Maturity}, {"parent", item.Parent}, {"enforcement", item.Enforcement}} {
+		if kv[1] != "" {
+			b.WriteString(" " + kv[0] + "=" + kv[1])
+		}
+	}
+	if item.Core {
+		b.WriteString(" core=true")
+	}
+	return b.String()
 }
 
 // flagsRetireBy renders a preview flag's retire-by date, marking it overdue
@@ -860,4 +884,138 @@ func printPlatformFlagDecision(d api.OperatorPlatformFlagDecision) {
 	}
 	_, _ = fmt.Fprintf(osStdout, "flag=%s account=%s%s plan=%s enabled=%t reason=%s rule=%s entitled=%s available=%t version=%d%s\n",
 		d.Flag, d.AccountID, org, d.Plan, d.Enabled, d.Reason, d.RuleID, entitled, d.Available, d.Version, scheduled)
+}
+
+// flagsSelectorFlags registers the bulk selectors (ADR-20261023115741): a
+// write can target every flag of a tier, or a capability and all its
+// sub-features, instead of one --key.
+func flagsSelectorFlags(fs *flag.FlagSet, mutation *flagsMutation) {
+	mutation.tier = fs.String("tier", "", "apply to every capability flag of this tier: ga, beta, preview or internal")
+	mutation.capab = fs.String("capability", "", "apply to this capability's flag and every sub-feature flag under it")
+}
+
+// runFlagsMutationOrBulk applies a write to one --key or, with a selector, to
+// every matching flag.
+func runFlagsMutationOrBulk(key string, mutation flagsMutation) int {
+	tier, capability := selectorValue(mutation.tier), selectorValue(mutation.capab)
+	if tier == "" && capability == "" {
+		return runFlagsMutation(key, mutation)
+	}
+	if strings.TrimSpace(key) != "" || (tier != "" && capability != "") {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl flags %s: use exactly one of --key, --tier or --capability\n", mutation.name)
+		return 2
+	}
+	return runFlagsBulkMutation(tier, capability, mutation)
+}
+
+func selectorValue(raw *string) string {
+	if raw == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(*raw))
+}
+
+// runFlagsBulkMutation writes every matching flag with the version it read.
+// Each write stands alone and is audited; a refused write (a core flag
+// without --force, a concurrent change) is reported and the rest proceed.
+func runFlagsBulkMutation(tier, capability string, mutation flagsMutation) int {
+	reason, traceID, ok := flagsMutationPreflight(mutation.name, mutation)
+	if !ok {
+		return 2
+	}
+	sess, err := loadOperatorSession()
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl flags %s: %v\n", mutation.name, err)
+		return 1
+	}
+	var list api.OperatorPlatformFlagList
+	if err := newOperatorHTTPClient(&sess).doJSON(context.Background(), http.MethodGet, "/v1/admin/flags", nil, &list, false, nil); err != nil {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl flags %s: %v\n", mutation.name, err)
+		return 1
+	}
+	keys := selectFlagKeys(list.Items, tier, capability)
+	if len(keys) == 0 {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl flags %s: no flag matches --tier=%q --capability=%q\n", mutation.name, tier, capability)
+		return 2
+	}
+	failed := 0
+	for _, key := range keys {
+		configKey, value, expected, err := editedFlagsValue(list, key, mutation)
+		if err == nil {
+			request := operatorConfigPatchRequest{Value: value, Reason: reason, ExpectedVersion: &expected, Force: *mutation.force}
+			if code := flagsWrite(&sess, http.MethodPatch, "/v1/admin/config/"+url.PathEscape(configKey), request, traceID, mutation.name+" "+key); code == 0 {
+				continue
+			}
+		} else {
+			_, _ = fmt.Fprintf(osStderr, "gregalectl flags %s %s: %v\n", mutation.name, key, err)
+		}
+		failed++
+	}
+	_, _ = fmt.Fprintf(osStdout, "flags=%d written=%d failed=%d\n", len(keys), len(keys)-failed, failed)
+	if failed > 0 {
+		return 1
+	}
+	return 0
+}
+
+// selectFlagKeys picks the flags a bulk write targets: every flag whose
+// capability has the tier, or the capability's flag and every flag whose
+// capability descends from it.
+func selectFlagKeys(items []api.OperatorPlatformFlag, tier, capability string) []string {
+	items = withLocalCapabilityFacts(items)
+	parent := map[string]string{}
+	for _, item := range items {
+		if item.Capability != "" {
+			parent[item.Capability] = item.Parent
+		}
+	}
+	descends := func(id string) bool {
+		for depth := 0; id != "" && depth < 8; depth++ {
+			if id == capability {
+				return true
+			}
+			id = parent[id]
+		}
+		return false
+	}
+	var keys []string
+	for _, item := range items {
+		switch {
+		case item.Capability == "":
+			continue
+		case tier != "" && item.Maturity == tier:
+			keys = append(keys, item.Key)
+		case capability != "" && descends(item.Capability):
+			keys = append(keys, item.Key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// withLocalCapabilityFacts fills a capability's tier and parent from this
+// binary's catalog when an older apid does not report them.
+func withLocalCapabilityFacts(items []api.OperatorPlatformFlag) []api.OperatorPlatformFlag {
+	catalog, err := productcap.Load()
+	if err != nil {
+		return items
+	}
+	byID := make(map[string]productcap.Capability, len(catalog.Capabilities))
+	for _, capability := range catalog.Capabilities {
+		byID[capability.ID] = capability
+	}
+	out := slices.Clone(items)
+	for i := range out {
+		capability, ok := byID[out[i].Capability]
+		if !ok {
+			continue
+		}
+		if out[i].Maturity == "" {
+			out[i].Maturity = string(capability.Maturity)
+		}
+		if out[i].Parent == "" {
+			out[i].Parent = capability.Parent
+		}
+	}
+	return out
 }

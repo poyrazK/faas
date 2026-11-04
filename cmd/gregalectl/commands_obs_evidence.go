@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +19,7 @@ func cmdObsEvidence(args []string) int {
 	incident := fs.String("incident", "", "inbox incident ID (type/resource-id)")
 	limit := fs.Int("limit", api.ObsIncidentEvidenceLimitDefault, "maximum history entries (1..100)")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
-	adminToken := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	adminToken := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -30,15 +29,11 @@ func cmdObsEvidence(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs evidence: --incident type/resource-id, --limit 1..100, and a positive --timeout are required")
 		return 2
 	}
-	token := *adminToken
-	if token == "" {
-		token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs evidence: --admin-token (or $FAAS_ADMIN_TOKEN) required")
+	cred, ok := resolveObsCredential("obs evidence", *adminToken)
+	if !ok {
 		return 2
 	}
-	body, code := fetchObsSnapshot(subObsEvidence, operatorobs.EvidencePath(kind, id)+"?limit="+strconv.Itoa(*limit), token, *timeout)
+	body, code := fetchObsSnapshot(subObsEvidence, operatorobs.EvidencePath(kind, id)+"?limit="+strconv.Itoa(*limit), cred, *timeout)
 	if code != 0 {
 		return code
 	}

@@ -70,7 +70,14 @@ func (r *runtimeConfigReceiver) handleRuntimeDevPatch(instance string, req runti
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: runtimeDevPatchUnavailable})
 	}
 	// Mark before the guest can write anything: from here on this instance
-	// must never be snapshotted (ADR-005, ADR-740).
+	// must never be snapshotted (ADR-005, ADR-740). The adoption block keeps
+	// the mark across a vmmd restart; without it the patch is not served.
+	if err := r.mgr.MarkDevPatched(instance); err != nil {
+		if r.log != nil {
+			r.log.Warn("developer live patch not served: mark not durable", "instance", instance, "err", err)
+		}
+		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: runtimeDevPatchUnavailable})
+	}
 	r.diverged.Mark(instance)
 	return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{DevPatch: &runtimeDevPatch{
 		Generation: patch.Generation, ImageDir: patch.ImageDir, Archive: patch.Archive,

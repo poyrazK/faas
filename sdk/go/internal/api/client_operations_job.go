@@ -24,7 +24,7 @@ func (p OperationJobRuntimeProof) LogValue() slog.Value { return slog.StringValu
 func (p OperationJobRuntimeProof) headers() http.Header {
 	return http.Header{OperationJobRunHeader: {p.RunID}, OperationJobInstanceHeader: {p.InstanceID}, OperationGenerationHeader: {strconv.Itoa(p.Generation)}, OperationAttemptHeader: {strconv.Itoa(p.Attempt)}, OperationJobCapabilityHeader: {p.Capability}}
 }
-func (c *Client) GetJobOperationExecutionControl(ctx context.Context, id string, proof OperationJobRuntimeProof) (OperationJobControlResponse, error) {
+func (c *PreviewClient) GetJobOperationExecutionControl(ctx context.Context, id string, proof OperationJobRuntimeProof) (OperationJobControlResponse, error) {
 	var out OperationJobControlResponse
 	if err := c.validateJobOperationClient(); err != nil {
 		return out, err
@@ -32,13 +32,13 @@ func (c *Client) GetJobOperationExecutionControl(ctx context.Context, id string,
 	err := c.doOperationWithHeaders(ctx, http.MethodGet, "/v1/runtime/job-operations/"+url.PathEscape(id)+"/control", nil, &out, proof.headers())
 	return out, err
 }
-func (c *Client) ReportJobOperationProgress(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationJobReportRequest) (OperationResponse, error) {
+func (c *PreviewClient) ReportJobOperationProgress(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationJobReportRequest) (OperationResponse, error) {
 	return c.reportJobOperation(ctx, id, proof, "progress", req)
 }
-func (c *Client) PrepareJobOperationResult(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationJobReportRequest) (OperationResponse, error) {
+func (c *PreviewClient) PrepareJobOperationResult(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationJobReportRequest) (OperationResponse, error) {
 	return c.reportJobOperation(ctx, id, proof, "result", req)
 }
-func (c *Client) reportJobOperation(ctx context.Context, id string, proof OperationJobRuntimeProof, kind string, req OperationJobReportRequest) (OperationResponse, error) {
+func (c *PreviewClient) reportJobOperation(ctx context.Context, id string, proof OperationJobRuntimeProof, kind string, req OperationJobReportRequest) (OperationResponse, error) {
 	var out OperationResponse
 	if err := c.validateJobOperationClient(); err != nil {
 		return out, err
@@ -59,15 +59,15 @@ func (c *Client) validateJobOperationClient() error {
 }
 
 // ReuseJobOperationArtifact checks a committed private copy without source I/O.
-func (c *Client) ReuseJobOperationArtifact(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationArtifactRequest) (OperationJobArtifactResponse, error) {
+func (c *PreviewClient) ReuseJobOperationArtifact(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationArtifactRequest) (OperationJobArtifactResponse, error) {
 	return c.jobOperationArtifact(ctx, id, proof, "artifact-receipts", req)
 }
 
 // PrepareJobOperationArtifact verifies and retains a file, pending host confirmation.
-func (c *Client) PrepareJobOperationArtifact(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationArtifactRequest) (OperationJobArtifactResponse, error) {
+func (c *PreviewClient) PrepareJobOperationArtifact(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationArtifactRequest) (OperationJobArtifactResponse, error) {
 	return c.jobOperationArtifact(ctx, id, proof, "artifacts", req)
 }
-func (c *Client) jobOperationArtifact(ctx context.Context, id string, proof OperationJobRuntimeProof, action string, req OperationArtifactRequest) (OperationJobArtifactResponse, error) {
+func (c *PreviewClient) jobOperationArtifact(ctx context.Context, id string, proof OperationJobRuntimeProof, action string, req OperationArtifactRequest) (OperationJobArtifactResponse, error) {
 	var out OperationJobArtifactResponse
 	if err := c.validateJobOperationClient(); err != nil {
 		return out, err

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -174,8 +175,8 @@ func (wf *Workflow) Name() string { return wf.request.Workflow }
 func (wf *Workflow) Invocation() int { return wf.request.Invocation }
 
 func (wf *Workflow) claim(name, kind, event string) (int, string, *WorkflowJournalEntry, bool) {
-	if !workflowOpName.MatchString(name) {
-		panic(fmt.Errorf("invalid workflow operation name %q: use 1-128 of A-Z a-z 0-9 _ . : # / - starting with a letter or digit", name))
+	if !workflowOpName.MatchString(name) || strings.Contains(name, "#") {
+		panic(fmt.Errorf("invalid workflow operation name %q: use 1-128 of A-Z a-z 0-9 _ . : / - starting with a letter or digit; \"#\" is reserved for repeated names (poll, poll#2, …)", name))
 	}
 	wf.names[name]++
 	opName := name
@@ -253,6 +254,9 @@ func WorkflowStep[T any](wf *Workflow, name string, fn func(context.Context, Wor
 		return WorkflowDecode[T](entry.Output)
 	case entry != nil && entry.Status == "failed":
 		return zero, &WorkflowStepError{Step: opName, Message: entry.Error, Attempts: entry.Attempt}
+	case entry != nil && entry.Status == "scheduled":
+		// Its back-off has not elapsed; Gregale calls again when it is due.
+		wf.suspend()
 	}
 	attempt := 1
 	if entry != nil {
@@ -288,7 +292,7 @@ func WorkflowParallel(wf *Workflow, steps ...WorkflowParallelStep) []WorkflowPar
 		name                string
 	}
 	var todo []pending
-	conflict := false
+	conflict, scheduled := false, false
 	for i, step := range steps {
 		seq, opName, entry, conflicted := wf.claim(step.Name, "step", "")
 		switch {
@@ -299,6 +303,8 @@ func WorkflowParallel(wf *Workflow, steps ...WorkflowParallelStep) []WorkflowPar
 			results[i].Output = entry.Output
 		case entry != nil && entry.Status == "failed":
 			results[i].Err = &WorkflowStepError{Step: opName, Message: entry.Error, Attempts: entry.Attempt}
+		case entry != nil && entry.Status == "scheduled":
+			scheduled = true
 		default:
 			attempt := 1
 			if entry != nil {
@@ -311,6 +317,9 @@ func WorkflowParallel(wf *Workflow, steps ...WorkflowParallelStep) []WorkflowPar
 		wf.suspend()
 	}
 	if len(todo) == 0 {
+		if scheduled {
+			wf.suspend()
+		}
 		return results
 	}
 	ops := make([]WorkflowReportedOp, len(todo))

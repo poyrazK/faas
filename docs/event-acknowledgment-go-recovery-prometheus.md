@@ -9,21 +9,21 @@ no SQL, callback or recovery work. Construction starts no goroutine or listener.
 ## Poll and serve explicitly
 
 ```go
-metrics, err := faas.NewEventAcknowledgmentIntentHealthMetrics(accountID, appID,
-    faas.EventAcknowledgmentIntentHealthMetricsOptions{MaxAge: 30 * time.Second})
+metrics, err := preview.NewEventAcknowledgmentIntentHealthMetrics(accountID, appID,
+    preview.EventAcknowledgmentIntentHealthMetricsOptions{MaxAge: 30 * time.Second})
 if err != nil {
     return err
 }
-handler, err := faas.NewEventAcknowledgmentIntentHealthMetricsHandler(metrics,
-    faas.EventAcknowledgmentIntentHealthPrometheusOptions{})
+handler, err := preview.NewEventAcknowledgmentIntentHealthMetricsHandler(metrics,
+    preview.EventAcknowledgmentIntentHealthPrometheusOptions{})
 if err != nil {
     return err
 }
 // Give handler to a separately supervised, protected HTTP server.
 // Run the following in the host's polling goroutine and join it on shutdown:
-return faas.WatchEventAcknowledgmentIntentHealthMetrics(ctx, db, accountID, appID,
-    metrics, faas.EventAcknowledgmentIntentHealthMetricsWatchOptions{
-        Health: faas.EventAcknowledgmentIntentHealthOptions{
+return preview.WatchEventAcknowledgmentIntentHealthMetrics(ctx, db, accountID, appID,
+    metrics, preview.EventAcknowledgmentIntentHealthMetricsWatchOptions{
+        Health: preview.EventAcknowledgmentIntentHealthOptions{
             ScanLimit: 1000, StallAfter: 5 * time.Minute,
         },
         PollInterval: 5 * time.Second,

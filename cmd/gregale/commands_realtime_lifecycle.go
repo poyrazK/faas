@@ -457,7 +457,7 @@ func cmdRealtimeCreateWithAuth(app, authApp string, fs *flag.FlagSet, origins re
 	}
 	// Running Auth instances load the new token on a fresh restart.
 	if _, err := client.RestartAppFresh(ctx, authApp); err != nil {
-		PrintWarn(osStderr, "the endpoint exists, but restarting %s failed (%v); run `gregale app %s restart --fresh` before clients subscribe", authApp, err, authApp)
+		PrintWarn(osStderr, "the endpoint exists, but restarting %s failed (%v); run `gregale app restart %s --fresh` before clients subscribe", authApp, err, authApp)
 	}
 	return renderRealtimeLifecycleEndpoint(endpoint)
 }

@@ -31,7 +31,11 @@ mv "$work/incomplete" "$source_log"
 if native_e2e_combined_verdict "$root" "$work" "$sha" success full >/dev/null 2>&1;then echo 'accepted incomplete full chain' >&2;exit 1;fi
 source "$root/scripts/ci/native-e2e-phases.sh"
 union="$(for group in source runtime;do native_e2e_group_phases "$group";done)"
-[[ "$(printf '%s\n' "$union" | sort)" == "$(printf '%s\n' "${NATIVE_E2E_PHASES[@]}" | sort)" ]] || { echo 'phase groups lost/duplicated a full phase' >&2;exit 1; }
+# The financial phase runs in its own financial-system job after the platform
+# groups (e2e-native.yml), so source and runtime partition every other phase.
+platform_phases=()
+for phase in "${NATIVE_E2E_PHASES[@]}";do [[ "$phase" == financial ]] || platform_phases+=("$phase");done
+[[ "$(printf '%s\n' "$union" | sort)" == "$(printf '%s\n' "${platform_phases[@]}" | sort)" ]] || { echo 'phase groups lost/duplicated a full phase' >&2;exit 1; }
 echo 'combined native evidence and group partition checks OK'
 
 for group in promotion-core promotion-controls promotion-load promotion-admission promotion-migrations promotion-publication;do

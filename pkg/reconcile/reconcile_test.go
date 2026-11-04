@@ -965,10 +965,10 @@ func TestReconcile_DraftAppPersistsHTTPSFirstBindingTransport(t *testing.T) {
 	}
 }
 
-func TestReconcile_NewProjectBindingPolicyDefaultsDeclared(t *testing.T) {
+func TestReconcile_NewProjectBindingPolicyDefaultsProject(t *testing.T) {
 	got := workloadToDraftApp(state.Project{}, reposcan.Workload{Name: "frontend"}, "", api.PlanFree)
-	if got.Manifest.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
-		t.Fatalf("new project service policy = %q, want declared", got.Manifest.ServiceBindingPolicy)
+	if got.Manifest.ServiceBindingPolicy != api.ServiceBindingPolicyProject {
+		t.Fatalf("new project service policy = %q, want project", got.Manifest.ServiceBindingPolicy)
 	}
 }
 

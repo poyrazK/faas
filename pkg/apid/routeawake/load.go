@@ -18,6 +18,7 @@ type Store interface {
 	RouteAwakeMinutes(context.Context, sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error)
 	RouteAwakeRouteMinutes(context.Context, sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error)
 	RouteAwakeSourceMinutes(context.Context, sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error)
+	RouteAwakeWorkMinutes(context.Context, sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error)
 }
 
 // Data is what Load reads for one window.
@@ -28,7 +29,8 @@ type Data struct {
 }
 
 // Load reads an app's billed running minutes, the per-route minutes of its
-// busiest routes and its probe and prewarm events for [from, until).
+// busiest routes, its probe and prewarm events, and the cron, queue and other
+// deliveries schedd made to it (ADR-20261022184757) for [from, until).
 func Load(ctx context.Context, store Store, accountID, appID string, from, until time.Time) (Data, error) {
 	account, err := pgUUID(accountID)
 	if err != nil {
@@ -53,6 +55,12 @@ func Load(ctx context.Context, store Store, accountID, appID string, from, until
 	if err != nil {
 		return Data{}, fmt.Errorf("route awake source minutes: %w", err)
 	}
+	work, err := store.RouteAwakeWorkMinutes(ctx, sqlc.RouteAwakeWorkMinutesParams{
+		AccountID: account, AppID: app, SinceAt: since, UntilAt: end, MaxMinutes: api.RouteAwakeWorkMaxMinutes,
+	})
+	if err != nil {
+		return Data{}, fmt.Errorf("route awake work minutes: %w", err)
+	}
 	var out Data
 	for _, row := range usage {
 		out.Awake = append(out.Awake, Minute{At: row.Minute.Time, MBSeconds: row.MbSeconds, ColdBoots: row.ColdBoots})
@@ -66,7 +74,25 @@ func Load(ctx context.Context, store Store, accountID, appID string, from, until
 	for _, row := range sources {
 		out.Sources = append(out.Sources, SourceMinute{At: row.Minute.Time, Source: row.Source, Events: row.Events})
 	}
+	for _, row := range work {
+		out.Sources = append(out.Sources, SourceMinute{
+			At: row.Minute.Time, Source: row.Source, Detail: row.Detail, Name: workName(row),
+			Events: row.Started, Running: row.Running,
+		})
+	}
 	return out, nil
+}
+
+// workName shows a cron job as the path or command it runs and its
+// schedule, and a queue by its name.
+func workName(row sqlc.RouteAwakeWorkMinutesRow) string {
+	switch {
+	case row.Source == api.RouteAwakeSourceCron && row.CronSchedule != "":
+		return fmt.Sprintf("%s (%s)", row.CronTarget, row.CronSchedule)
+	case row.Source == api.RouteAwakeSourceQueue:
+		return row.Detail
+	}
+	return ""
 }
 
 func pgUUID(id string) (pgtype.UUID, error) {

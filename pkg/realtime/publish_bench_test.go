@@ -13,7 +13,7 @@ func BenchmarkManagerPublishSparseSubscribers(b *testing.B) {
 	const subscribers = 100
 	m := NewManager(Config{}, nil)
 	b.Cleanup(m.cancel)
-	endpoint := Endpoint{ID: "benchmark", MaxMessageBytes: 1024}
+	endpoint := Endpoint{Preview: true, ID: "benchmark", MaxMessageBytes: 1024}
 	if err := m.RegisterEndpoint(endpoint); err != nil {
 		b.Fatal(err)
 	}

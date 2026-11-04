@@ -73,3 +73,27 @@ func waitStarted(t *testing.T, started <-chan struct{}) {
 		t.Fatal("child did not start")
 	}
 }
+
+// Production-us rc.294: h14-py crashed once (restart 1/3), was parked into
+// a fresh snapshot, and the instance restored from it read "restart 2/3"
+// on its first crash: the snapshot carried the used budget, so each
+// park/wake cycle shrank it until a single crash killed the instance
+// (Hunt 14 H14-19).
+func TestSupervisorRestoreRestoresTheRestartBudget(t *testing.T) {
+	var starts int
+	s := &Supervisor{Max: 1, Policy: api.RestartPolicyOnFailure}
+	s.Start = func() error {
+		starts++
+		if starts == 2 {
+			restoreGeneration.bump() // the instance was snapshotted and restored while this run was up
+		}
+		return errors.New("boom")
+	}
+	if err := s.Run(); err == nil {
+		t.Fatal("Run = nil, want the crash loop error")
+	}
+	// start, crash (1/1), restore, crash (budget reset: 1/1), crash: exhausted.
+	if starts != 3 {
+		t.Fatalf("starts = %d, want 3: a restore resets the restart budget", starts)
+	}
+}

@@ -87,6 +87,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return errors.New("maild: account suspension notification schema is unavailable")
 		}
 	}
+	if internalmail.ManagedPostgresCapOutboxEnabled(os.Getenv) {
+		if err := store.ManagedPostgresCapOutboxReady(ctx); err != nil {
+			return errors.New("maild: managed postgres cap notification schema is unavailable")
+		}
+	}
+	if internalmail.ManagedPostgresRestoreSlotOutboxEnabled(os.Getenv) {
+		if err := store.ManagedPostgresRestoreSlotOutboxReady(ctx); err != nil {
+			return errors.New("maild: managed postgres restore slot notification schema is unavailable")
+		}
+	}
 	if internalmail.AccountRestoredOutboxEnabled(os.Getenv) {
 		if err := store.AccountRestoredOutboxReady(ctx); err != nil {
 			return errors.New("maild: account restoration notification schema is unavailable")
@@ -146,10 +156,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		MagicLinkOutboxEnabled:            func() bool { return internalmail.MagicLinkOutboxEnabled(os.Getenv) },
 		MFADisableOutboxEnabled:           func() bool { return internalmail.MFADisableOutboxEnabled(os.Getenv) },
 		DeploymentFailedOutboxEnabled:     func() bool { return internalmail.DeploymentFailedOutboxEnabled(os.Getenv) },
+		AgentRunDeliveredOutboxEnabled:    func() bool { return internalmail.AgentRunDeliveredOutboxEnabled(os.Getenv) },
 		SubscriptionEndedOutboxEnabled:    func() bool { return internalmail.SubscriptionEndedOutboxEnabled(os.Getenv) },
 		QuotaWarningOutboxEnabled:         func() bool { return internalmail.QuotaWarningOutboxEnabled(os.Getenv) },
 		NonpaymentDeletionOutboxEnabled:   func() bool { return internalmail.NonpaymentDeletionOutboxEnabled(os.Getenv) },
 		AccountSuspendedOutboxEnabled:     func() bool { return internalmail.AccountSuspendedOutboxEnabled(os.Getenv) },
+		ManagedPostgresCapOutboxEnabled:   func() bool { return internalmail.ManagedPostgresCapOutboxEnabled(os.Getenv) },
 		AccountRestoredOutboxEnabled:      func() bool { return internalmail.AccountRestoredOutboxEnabled(os.Getenv) },
 		PaymentFailedOutboxEnabled:        func() bool { return internalmail.PaymentFailedOutboxEnabled(os.Getenv) },
 		MFAEnabledAlertOutboxEnabled:      func() bool { return internalmail.MFAEnabledAlertOutboxEnabled(os.Getenv) },
@@ -168,6 +180,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return nil
 		},
 		Metrics: ops.Handler(),
+
+		ManagedPostgresRestoreSlotOutboxEnabled: func() bool { return internalmail.ManagedPostgresRestoreSlotOutboxEnabled(os.Getenv) },
 	}
 	monitor := internalmail.NewMonitor(store, service.Enabled, service.DeliveryEnabled, service.ReportsEnabled, service.FeedbackEnabled)
 	retentionMonitor := internalmail.NewRetentionMonitor(store, func() bool { return internalmail.RetentionEnabled(os.Getenv) }, cfg.RetentionPolicy)

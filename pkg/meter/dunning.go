@@ -22,12 +22,14 @@ package meter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // DunningSender is the slice of mail.Sender the dunning timer needs
@@ -54,12 +56,16 @@ type DunningParams struct {
 	Interval                    time.Duration // default 1h
 	Now                         func() time.Time
 	Log                         *slog.Logger
+	// Registerer receives meterd_dunning_deletion_blocked_accounts; nil
+	// leaves the gauge unregistered (tests).
+	Registerer prometheus.Registerer
 }
 
 // Dunning is the 7-day / 21-day dunning timer. Owns the ticker + the
 // sweep loop; Run exits cleanly when ctx is cancelled.
 type Dunning struct {
-	p DunningParams
+	p       DunningParams
+	blocked *prometheus.GaugeVec
 }
 
 // NewDunning returns a Dunning ready to Run. Defaults: Interval 1h,
@@ -83,8 +89,18 @@ func NewDunning(p DunningParams) *Dunning {
 	if p.Notif == nil {
 		p.Notif = noopDunningNotifier{}
 	}
-	return &Dunning{p: p}
+	d := &Dunning{p: p, blocked: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "meterd_dunning_deletion_blocked_accounts",
+		Help: "Suspended accounts past the non-payment deletion deadline whose move to deleted_pending a deletion guard refused in the last dunning sweep, by guard (managed_postgres_databases, shared_app_ownership).",
+	}, []string{"reason"})}
+	if p.Registerer != nil {
+		p.Registerer.MustRegister(d.blocked)
+	}
+	return d
 }
+
+// BlockedGauge exposes meterd_dunning_deletion_blocked_accounts for tests.
+func (d *Dunning) BlockedGauge() *prometheus.GaugeVec { return d.blocked }
 
 // noopDunningNotifier swallows every notify call. Default for tests.
 type noopDunningNotifier struct{}
@@ -158,6 +174,15 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 		return err
 	}
 	now := d.p.Now()
+	blocked := newDeletionBlockTally()
+	defer blocked.publish(d.blocked)
+	// A step that fails for one account does not stop the sweep, but it fails
+	// the tick, so FaasMeterdDunningFailing sees it (ADR-20261030120000). A
+	// status that moved under us and a deletion guard are not failures.
+	var failed []error
+	fail := func(acct state.Account, step string, err error) {
+		failed = append(failed, fmt.Errorf("dunning %s %s: %w", step, acct.ID, err))
+	}
 	for _, acct := range rows {
 		switch acct.Status {
 		case state.AccountPastDue:
@@ -172,6 +197,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 				// pick up the now-stamped row.
 				if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountPastDue, state.AccountPastDue); err != nil {
 					d.p.Log.Warn("meter: dunning backfill stamp", "account", acct.ID, "err", err)
+					fail(acct, "backfill past_due_at", err)
 					continue
 				}
 				d.p.Log.Warn("meter: dunning backfilled past_due_at on legacy row",
@@ -184,6 +210,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			if handled, err := d.suspendWithNotice(ctx, acct); handled {
 				if err != nil {
 					d.p.Log.Warn("meter: durable suspension unavailable", "account", acct.ID)
+					fail(acct, "suspend", err)
 				}
 				continue
 			}
@@ -192,6 +219,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 					continue // redelivery race or status flipped under us
 				}
 				d.p.Log.Warn("meter: dunning suspend", "account", acct.ID, "err", err)
+				fail(acct, "suspend", err)
 				continue
 			}
 			d.suspensionFollowup(ctx, acct, now)
@@ -203,21 +231,27 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			}
 			if _, err := d.suspendWithNotice(ctx, acct); err != nil {
 				d.p.Log.Warn("meter: suspension follow-up unavailable", "account", acct.ID)
+				fail(acct, "suspension follow-up", err)
 			}
 			if now.Sub(*acct.PastDueAt) < DunningSuspendedToDeletedDuration {
 				continue // still inside the 21-day window
 			}
 			if handled, err := d.scheduleNonpaymentDeletion(ctx, acct); handled {
-				if err != nil {
+				if err != nil && !d.deletionBlocked(acct, err, blocked) {
 					d.p.Log.Warn("meter: durable non-payment deletion unavailable", "account", acct.ID)
+					fail(acct, "schedule deletion", err)
 				}
 				continue
 			}
-			if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountSuspended, state.AccountDeletedPending); err != nil {
-				if errors.Is(err, state.ErrNotFound) {
+			// ADR-20261024150500: the deletion includes the account's managed
+			// PostgreSQL databases unless the operator kill switch is off.
+			includeDatabases := state.IncludingManagedPostgres(api.NonpaymentDeletionIncludesManagedPostgres())
+			if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountSuspended, state.AccountDeletedPending, includeDatabases); err != nil {
+				if errors.Is(err, state.ErrNotFound) || d.deletionBlocked(acct, err, blocked) {
 					continue
 				}
 				d.p.Log.Warn("meter: dunning delete_pending", "account", acct.ID, "err", err)
+				fail(acct, "schedule deletion", err)
 				continue
 			}
 			d.nonpaymentDeletionFollowup(ctx, acct, now)
@@ -227,11 +261,12 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			if acct.PastDueAt != nil {
 				if _, err := d.scheduleNonpaymentDeletion(ctx, acct); err != nil {
 					d.p.Log.Warn("meter: non-payment deletion follow-up unavailable", "account", acct.ID)
+					fail(acct, "deletion follow-up", err)
 				}
 			}
 		}
 	}
-	return nil
+	return errors.Join(failed...)
 }
 
 // parkAll is the per-account ParkInstance fanout. Mirrors the shape of

@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -33,6 +34,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ChecksWriter is the business seam. The real impl is ChecksAPI;
@@ -114,6 +117,61 @@ type ChecksAPI struct {
 	Bindings    BindingsLookup // repo → installation_id (review finding #1+#2 closure)
 	CheckRuns   CheckRunStore
 	Deployments GitHubDeploymentStore
+	// AppID is the GitHub App's ID. With it, the preview status comment
+	// upsert adopts only comments GitHub attributes to this App.
+	AppID int64
+	// Ops and Log, when set, count and report Deployments API calls GitHub
+	// refuses for lack of permission (ErrGitHubDeploymentsForbidden).
+	Ops *wire.OpsMetrics
+	Log *slog.Logger
+
+	forbiddenMu       sync.Mutex
+	forbiddenLoggedAt time.Time
+}
+
+// ErrGitHubDeploymentsForbidden marks a Deployments API call GitHub refused
+// with 403 outside a rate limit: the App lacks the Deployments permission, or
+// an installation has not accepted it yet. A GitHub Deployment only adds the
+// PR's environment link, so callers skip it and still write the Check Run and
+// the preview comment, which need only Checks and Issues.
+var ErrGitHubDeploymentsForbidden = errors.New("githubd: GitHub App is not permitted to write deployments")
+
+// deploymentsForbiddenLogEvery bounds the missing-permission warning: every
+// deployment transition hits it until the App's permission is fixed.
+const deploymentsForbiddenLogEvery = 10 * time.Minute
+
+// githubDeploymentsResponseError describes a non-success Deployments API
+// response. A 403 that is not a rate limit wraps ErrGitHubDeploymentsForbidden.
+func githubDeploymentsResponseError(op string, resp *http.Response) error {
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	err := fmt.Errorf("githubd: %s: status=%d body=%s", op, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	if resp.StatusCode != http.StatusForbidden ||
+		resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "" {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrGitHubDeploymentsForbidden, err)
+}
+
+func (c *ChecksAPI) observeDeploymentsForbidden(update GitHubDeploymentUpdate, dur time.Duration) {
+	if c.Ops != nil {
+		c.Ops.ObserveCode("github_deployment", "forbidden", dur)
+	}
+	if c.Log == nil {
+		return
+	}
+	now := time.Now()
+	c.forbiddenMu.Lock()
+	quiet := !c.forbiddenLoggedAt.IsZero() && now.Sub(c.forbiddenLoggedAt) < deploymentsForbiddenLogEvery
+	if !quiet {
+		c.forbiddenLoggedAt = now
+	}
+	c.forbiddenMu.Unlock()
+	if quiet {
+		return
+	}
+	c.Log.Warn("githubd: GitHub refused a deployment write; grant the App Deployments read and write (docs/ops/github-app.md). Check Runs and PR comments are still written.",
+		"installation_id", update.InstallationID, "repo", logsanitize.Field(update.RepoFullName),
+		"deployment_id", logsanitize.Field(update.LocalDeploymentID))
 }
 
 func (c *ChecksAPI) WithCheckRunStore(store CheckRunStore) *ChecksAPI {
@@ -276,7 +334,17 @@ func (c *ChecksAPI) writeCheckRunWithToken(ctx context.Context, token, repoFullN
 // Deployment corresponding to a durable Gregale deployment. The lookup-before-
 // create path closes the retry window where GitHub accepted a create request
 // but the response was lost before the local identity could be persisted.
+// A refusal for lack of permission returns ErrGitHubDeploymentsForbidden.
 func (c *ChecksAPI) WriteGitHubDeploymentStatus(ctx context.Context, update GitHubDeploymentUpdate) error {
+	start := time.Now()
+	err := c.writeGitHubDeploymentStatus(ctx, update)
+	if errors.Is(err, ErrGitHubDeploymentsForbidden) {
+		c.observeDeploymentsForbidden(update, time.Since(start))
+	}
+	return err
+}
+
+func (c *ChecksAPI) writeGitHubDeploymentStatus(ctx context.Context, update GitHubDeploymentUpdate) error {
 	state, ok := githubDeploymentStateForRollout(update.Status, update.RolloutState, update.CanaryTotalSteps)
 	if !ok {
 		return nil
@@ -322,8 +390,7 @@ func (c *ChecksAPI) WriteGitHubDeploymentStatus(ctx context.Context, update GitH
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return fmt.Errorf("githubd: write github deployment status: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return githubDeploymentsResponseError("write github deployment status", resp)
 	}
 	return nil
 }
@@ -375,8 +442,7 @@ func (c *ChecksAPI) findGitHubDeployment(ctx context.Context, token string, upda
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return 0, fmt.Errorf("githubd: list github deployments: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return 0, githubDeploymentsResponseError("list github deployments", resp)
 	}
 	var deployments []githubDeploymentResponse
 	if err := decodeGitHubJSON(resp.Body, &deployments); err != nil {
@@ -438,8 +504,7 @@ func (c *ChecksAPI) createGitHubDeployment(ctx context.Context, token string, up
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		return 0, fmt.Errorf("githubd: create github deployment: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return 0, githubDeploymentsResponseError("create github deployment", resp)
 	}
 	var deployment githubDeploymentResponse
 	if err := decodeGitHubJSON(resp.Body, &deployment); err != nil {
@@ -503,6 +568,10 @@ func githubDeploymentState(status string) (string, bool) {
 // release state to GitHub's deployment vocabulary. The durable deployment
 // row remains `live` while a canary is being observed, so looking only at
 // status would incorrectly publish a successful deployment too early.
+// GitHubDeploymentStatusTornDown is the update status for a deployment whose
+// preview app was torn down: GitHub shows its environment inactive.
+const GitHubDeploymentStatusTornDown = "torn_down"
+
 func githubDeploymentStateForRollout(status, rolloutState string, canaryTotalSteps int) (string, bool) {
 	if status == "live" && canaryTotalSteps > 0 {
 		switch rolloutState {
@@ -513,6 +582,8 @@ func githubDeploymentStateForRollout(status, rolloutState string, canaryTotalSte
 		}
 	}
 	switch status {
+	case GitHubDeploymentStatusTornDown:
+		return "inactive", true
 	case "pending":
 		return "queued", true
 	case "building", "imaging", "snapshotting":
@@ -743,6 +814,23 @@ func (c *ChecksAPI) WritePreviewCheckForInstallation(ctx context.Context, instal
 	})
 }
 
+// WritePreviewCheckNeutralForInstallation completes the gregale-preview check
+// of a commit no open PR previews any more (closed, superseded or torn down
+// before its build finished), so it does not stay pending forever.
+func (c *ChecksAPI) WritePreviewCheckNeutralForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, title, summary string) error {
+	if repoFullName == "" || commitSHA == "" {
+		return fmt.Errorf("githubd: repo and sha required for preview check-run")
+	}
+	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, previewCheckName, checkRunRequest{
+		Name:       previewCheckName,
+		HeadSHA:    commitSHA,
+		Status:     statusCompleted,
+		Conclusion: previewCheckConclusionNeutral,
+		Output:     &checkRunOutput{Title: title, Summary: summary},
+		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
+	})
+}
+
 func (c *ChecksAPI) WritePreviewCheckForkRefusedForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
 	if repoFullName == "" || commitSHA == "" {
 		return fmt.Errorf("githubd: repo and sha required for preview check-run")
@@ -905,6 +993,30 @@ func (c *ChecksAPI) WritePreviewDestroyComment(ctx context.Context, repoFullName
 type previewIssueComment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`
+	User struct {
+		Type string `json:"type"`
+	} `json:"user"`
+	PerformedViaGitHubApp *struct {
+		ID int64 `json:"id"`
+	} `json:"performed_via_github_app"`
+}
+
+// previewCommentPageSize and previewCommentMaxPages bound the scan for the
+// existing status comment: a thread longer than this gets a fresh comment.
+const (
+	previewCommentPageSize = 100
+	previewCommentMaxPages = 10
+)
+
+// ownPreviewComment reports whether comment is this App's status comment.
+// The marker alone is not proof: any commenter can paste it, and the
+// installation token could then rewrite their comment. Only a bot comment
+// qualifies, and with the App ID configured, one GitHub attributes to it.
+func (c *ChecksAPI) ownPreviewComment(comment previewIssueComment, marker string) bool {
+	if comment.ID == 0 || comment.User.Type != "Bot" || !strings.Contains(comment.Body, marker) {
+		return false
+	}
+	return c.AppID == 0 || comment.PerformedViaGitHubApp == nil || comment.PerformedViaGitHubApp.ID == c.AppID
 }
 
 // UpsertPreviewComment keeps one customer-facing preview status comment per
@@ -913,6 +1025,17 @@ type previewIssueComment struct {
 // hidden so a retry can find and PATCH the existing comment instead of
 // spamming the thread with another bot message.
 func (c *ChecksAPI) UpsertPreviewComment(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string) error {
+	return c.writePreviewStatusComment(ctx, installationID, repoFullName, prNumber, marker, body, true)
+}
+
+// UpdatePreviewComment rewrites the preview status comment only when the
+// PR already has one. A teardown reports through it: a workload that never
+// had a comment of its own (a dependency preview) must not post one.
+func (c *ChecksAPI) UpdatePreviewComment(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string) error {
+	return c.writePreviewStatusComment(ctx, installationID, repoFullName, prNumber, marker, body, false)
+}
+
+func (c *ChecksAPI) writePreviewStatusComment(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string, create bool) error {
 	if installationID <= 0 || repoFullName == "" || prNumber <= 0 || marker == "" || body == "" {
 		return fmt.Errorf("githubd: installation, repo, pr_number, marker, and body are required for preview comment")
 	}
@@ -923,16 +1046,24 @@ func (c *ChecksAPI) UpsertPreviewComment(ctx context.Context, installationID int
 	if err != nil {
 		return err
 	}
-	comments, err := c.listPreviewComments(ctx, token, repoFullName, prNumber)
-	if err != nil {
-		return err
-	}
-	for _, comment := range comments {
-		if comment.ID == 0 || !strings.Contains(comment.Body, marker) {
-			continue
+	for page := 1; page <= previewCommentMaxPages; page++ {
+		comments, err := c.listPreviewComments(ctx, token, repoFullName, prNumber, page)
+		if err != nil {
+			return err
 		}
-		return c.writePreviewComment(ctx, token, http.MethodPatch,
-			fmt.Sprintf("%s/repos/%s/issues/comments/%d", GitHubAPI, repoFullName, comment.ID), body, http.StatusOK)
+		for _, comment := range comments {
+			if !c.ownPreviewComment(comment, marker) {
+				continue
+			}
+			return c.writePreviewComment(ctx, token, http.MethodPatch,
+				fmt.Sprintf("%s/repos/%s/issues/comments/%d", GitHubAPI, repoFullName, comment.ID), body, http.StatusOK)
+		}
+		if len(comments) < previewCommentPageSize {
+			break
+		}
+	}
+	if !create {
+		return nil
 	}
 	return c.writePreviewComment(ctx, token, http.MethodPost,
 		fmt.Sprintf("%s/repos/%s/issues/%d/comments", GitHubAPI, repoFullName, prNumber), body, http.StatusCreated)
@@ -949,8 +1080,8 @@ func (c *ChecksAPI) installationToken(ctx context.Context, installationID int64)
 	return token, nil
 }
 
-func (c *ChecksAPI) listPreviewComments(ctx context.Context, token, repoFullName string, prNumber int) ([]previewIssueComment, error) {
-	endpoint := fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=100", GitHubAPI, repoFullName, prNumber)
+func (c *ChecksAPI) listPreviewComments(ctx context.Context, token, repoFullName string, prNumber, page int) ([]previewIssueComment, error) {
+	endpoint := fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=%d&page=%d", GitHubAPI, repoFullName, prNumber, previewCommentPageSize, page)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err

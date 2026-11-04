@@ -72,8 +72,8 @@ func (s *selectivePromQL) QueryScalar(_ context.Context, query string) (float64,
 
 // recordingDispatcher captures every Dispatch call so tests assert on
 // the URL + payload without spinning an httptest.Server. Implements
-// alerts.Dispatcher; safe for concurrent use (the evaluator wraps the
-// dispatch in a mutex so the test fakes don't have to).
+// alerts.Dispatcher; safe for concurrent use (the evaluator dispatches
+// for several accounts at once).
 type recordingDispatcher struct {
 	mu     sync.Mutex
 	calls  []recordedCall
@@ -193,12 +193,19 @@ func discardLog() *slog.Logger {
 // the test can recover via the supplied age identity.
 func seedRule(t *testing.T, store *state.MemStore, metric state.AlertMetric, comparison state.AlertComparison, threshold float64) (state.AlertRule, *age.X25519Identity, []byte) {
 	t.Helper()
+	return seedRuleForApp(t, store, "alert-app", metric, comparison, threshold)
+}
+
+// seedRuleForApp is seedRule with its own account and an app named slug, for
+// tests that need several accounts in one store.
+func seedRuleForApp(t *testing.T, store *state.MemStore, slug string, metric state.AlertMetric, comparison state.AlertComparison, threshold float64) (state.AlertRule, *age.X25519Identity, []byte) {
+	t.Helper()
 	acct, err := store.CreateAccount(context.Background(), "alerts-"+fmt.Sprint(time.Now().UnixNano())+"@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
 	app, err := store.CreateApp(context.Background(), state.App{
-		AccountID: acct.ID, Slug: "alert-app", Type: state.AppTypeApp,
+		AccountID: acct.ID, Slug: slug, Type: state.AppTypeApp,
 		RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 30,
 	})
 	if err != nil {

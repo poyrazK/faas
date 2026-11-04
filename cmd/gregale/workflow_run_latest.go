@@ -15,12 +15,12 @@ type workflowReadTarget struct{ Ref, App, Name string }
 func parseWorkflowReadTarget(verb string, args []string) (workflowReadTarget, int) {
 	fs := newFlagSet("workflows "+verb, flag.ContinueOnError)
 	app := fs.String("app", "", "app slug for latest (defaults to linked project app)")
-	name := fs.String("workflow-name", "", "exact workflow name required for latest")
+	name := fs.String("workflow-name", "", "exact workflow name for latest (inferred when the app's recent runs share one)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return workflowReadTarget{}, 1
 	}
 	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
-		return workflowReadTarget{}, printErr("Invalid workflow read target", fmt.Errorf("usage: gregale workflows %s RUN_ID | latest --workflow-name NAME [--app SLUG]", verb))
+		return workflowReadTarget{}, printErr("Invalid workflow read target", fmt.Errorf("usage: gregale workflows %s RUN_ID | latest [--workflow-name NAME] [--app SLUG]", verb))
 	}
 	return validateWorkflowReadTarget(fs.Arg(0), *app, *name)
 }
@@ -33,8 +33,8 @@ func validateWorkflowReadTarget(ref, app, name string) (workflowReadTarget, int)
 		}
 		return target, 0
 	}
-	if strings.TrimSpace(name) == "" || len(name) > api.WorkflowWebhookNameMaxBytes {
-		return workflowReadTarget{}, printErr("Invalid workflow name", fmt.Errorf("latest requires a non-empty --workflow-name of at most %d bytes", api.WorkflowWebhookNameMaxBytes))
+	if name != "" && (strings.TrimSpace(name) == "" || len(name) > api.WorkflowWebhookNameMaxBytes) {
+		return workflowReadTarget{}, printErr("Invalid workflow name", fmt.Errorf("--workflow-name must be non-empty and at most %d bytes", api.WorkflowWebhookNameMaxBytes))
 	}
 	resolved, err := resolveWorkflowApp(app)
 	if err != nil {
@@ -49,6 +49,13 @@ func validateWorkflowReadTarget(ref, app, name string) (workflowReadTarget, int)
 func resolveWorkflowReadTarget(ctx context.Context, client *api.Client, target workflowReadTarget) (string, error) {
 	if target.Ref != "latest" {
 		return target.Ref, nil
+	}
+	if target.Name == "" {
+		name, err := inferLatestWorkflowName(ctx, client, target.App)
+		if err != nil {
+			return "", err
+		}
+		target.Name = name
 	}
 	page, err := client.ListWorkflowRunsWithOptions(ctx, target.App, api.WorkflowRunListOptions{Limit: 1, WorkflowName: target.Name})
 	if err != nil {
@@ -66,4 +73,34 @@ func resolveWorkflowReadTarget(ctx context.Context, client *api.Client, target w
 		_, _ = fmt.Fprintln(osStderr, "Latest means newest for this app and workflow name, including unfinished or failed runs. This read uses the selected ID.")
 	}
 	return run.ID, nil
+}
+
+// latestWorkflowNameScan bounds the recent runs read to infer a workflow name.
+const latestWorkflowNameScan = 100
+
+// inferLatestWorkflowName returns the workflow name shared by the app's recent
+// runs. `latest` needed --workflow-name even for an app with one workflow
+// (Hunt 11 H11-29); an app whose recent runs span several workflows still has
+// to name one, so latest never silently picks another workflow's run.
+func inferLatestWorkflowName(ctx context.Context, client *api.Client, app string) (string, error) {
+	page, err := client.ListWorkflowRunsWithOptions(ctx, app, api.WorkflowRunListOptions{Limit: latestWorkflowNameScan})
+	if err != nil {
+		return "", err
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, run := range page.Runs {
+		if run.WorkflowName != "" && !seen[run.WorkflowName] {
+			seen[run.WorkflowName] = true
+			names = append(names, run.WorkflowName)
+		}
+	}
+	switch len(names) {
+	case 0:
+		return "", fmt.Errorf("no workflow runs found in app %q; pass --workflow-name or start a run first", app)
+	case 1:
+		return names[0], nil
+	default:
+		return "", fmt.Errorf("app %q has runs of several workflows (%s); pass --workflow-name", app, strings.Join(names, ", "))
+	}
 }

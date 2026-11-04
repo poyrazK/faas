@@ -25,9 +25,8 @@ class DeployDevSourceBody:
     dev_source_deleted: str | Unset = UNSET
     """JSON string array of canonical archive paths removed since dev_source_base."""
     dev_source_build_now: str | Unset = UNSET
-    """Set to true to build this sync at once even when it reaches the running instance as a live patch
-    (ADR-20261021221906). Without it, such a sync's build waits until the developer stops saving and a later sync
-    replaces it."""
+    """Set to true to build this sync at once even when it reaches the running instance as a live patch. Without it,
+    such a sync's build waits until the developer stops saving and a later sync replaces it."""
     dockerfile: bool | Unset = UNSET
     runtime: DeployDevSourceBodyRuntime | Unset = UNSET
     handler: str | Unset = UNSET

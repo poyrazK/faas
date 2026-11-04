@@ -14,7 +14,6 @@ import (
 func sourceDeployCtxTimeout() time.Duration {
 	return e2etest.DefaultBuildCeiling + 5*time.Minute
 }
-
 func TestSourceDeployCtxOutlastsTheBuildCeiling(t *testing.T) {
 	if sourceDeployCtxTimeout() <= e2etest.DefaultBuildCeiling {
 		t.Error("the enclosing context expires before the build ceiling, so the " +

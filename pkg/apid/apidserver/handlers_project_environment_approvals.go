@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -139,15 +140,20 @@ func (s *server) createProjectEnvironmentApproval(ctx context.Context, acct stat
 	}
 	approvalToken := base64.RawURLEncoding.EncodeToString(raw)
 	now := time.Now().UTC()
+	approver := acct.ID
+	if actor, _, ok := middleware.AccountFromCtx(ctx); ok {
+		approver = actor.ID
+	}
 	approval, err := s.store.CreateProjectEnvironmentApproval(ctx, state.ProjectEnvironmentApproval{
-		AccountID:         acct.ID,
-		ProjectSlug:       projectSlug,
-		EnvironmentSlug:   environment,
-		TokenKind:         tokenKind,
-		PlanTokenHash:     hashProjectEnvironmentApprovalMaterial(token),
-		ApprovalTokenHash: hashProjectEnvironmentApprovalMaterial(approvalToken),
-		ExpiresAt:         now.Add(projectEnvironmentApprovalTTL),
-		CreatedAt:         now,
+		ApprovedByAccountID: approver,
+		AccountID:           acct.ID,
+		ProjectSlug:         projectSlug,
+		EnvironmentSlug:     environment,
+		TokenKind:           tokenKind,
+		PlanTokenHash:       hashProjectEnvironmentApprovalMaterial(token),
+		ApprovalTokenHash:   hashProjectEnvironmentApprovalMaterial(approvalToken),
+		ExpiresAt:           now.Add(projectEnvironmentApprovalTTL),
+		CreatedAt:           now,
 	})
 	if err != nil {
 		return "", state.ProjectEnvironmentApproval{}, api.ErrCapacity("could not create environment approval")

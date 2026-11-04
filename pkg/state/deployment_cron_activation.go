@@ -104,15 +104,13 @@ func (m *MemStore) prepareCronActivationLocked(appID string, p DeploymentCronSta
 	}
 	if write {
 		if r.Operation == "prepare" {
-			appCount, accountCount := 0, 0
+			appCount := 0
 			for _, c := range m.crons {
 				if c.AppID == appID {
 					appCount++
 				}
-				if a := m.apps[c.AppID]; a.AccountID == p.AccountID && a.Status != AppDeleted {
-					accountCount++
-				}
 			}
+			accountCount := m.quotaSubjectCronsLocked(m.appBillingSubjectLocked(app.AccountID, appID))
 			if err := checkCronReplacementQuota(appCount, accountCount, len(m.httpCronsLocked(appID)), len(r.Desired), p); err != nil {
 				return DeploymentCronStagingResult{}, err
 			}
@@ -144,9 +142,9 @@ func (s *PgStore) prepareCronActivation(ctx context.Context, appID string, p Dep
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	accountID, err := q.LockCronAccountForApp(ctx, tx, appID)
+	accountID, subject, err := lockCronQuotaSubjectTx(ctx, tx, appID)
 	if err != nil {
-		return DeploymentCronStagingResult{}, mapErr(err)
+		return DeploymentCronStagingResult{}, err
 	}
 	meta, err := q.ReadDeploymentCronState(ctx, tx, appID)
 	if err != nil {
@@ -208,7 +206,7 @@ func (s *PgStore) prepareCronActivation(ctx context.Context, appID string, p Dep
 	}
 	if write {
 		if r.Operation == "prepare" {
-			counts, err := q.CountDeploymentCrons(ctx, tx, sqlc.CountDeploymentCronsParams{AppID: appID, AccountID: p.AccountID})
+			counts, err := q.CountDeploymentCrons(ctx, tx, sqlc.CountDeploymentCronsParams{AppID: appID, SubjectID: subject})
 			if err != nil {
 				return DeploymentCronStagingResult{}, err
 			}
@@ -328,7 +326,10 @@ func (m *MemStore) ReconcileDeploymentCrons(_ context.Context) ([]CronActivation
 			if m.deploymentCronStates[appID].Revision != a.Revision || !api.DeploymentCronsEqual(cronIntents(m.httpCronsLocked(appID)), r.Before) {
 				a.Status, reason = "conflict", "cron_changed"
 			} else {
-				limits, known := api.LimitsFor(m.accounts[app.AccountID].Plan)
+				// The billing subject's plan (ADR-202610171904): a company app's
+				// creator's personal plan does not apply.
+				owner, _ := m.appResourceAccountLocked(app)
+				limits, known := api.LimitsFor(owner.Plan)
 				if !known {
 					a.Status, reason = "conflict", "plan_unavailable"
 				} else if err := m.activateDeploymentCronSetLocked(appID, DeploymentCronStagingParams{AccountID: app.AccountID, Request: r, Limits: limits}); err != nil {
@@ -372,9 +373,9 @@ func (s *PgStore) reconcileDeploymentCron(ctx context.Context, appID string) (*C
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	accountID, err := q.LockCronAccountForApp(ctx, tx, appID)
+	accountID, subject, err := lockCronQuotaSubjectTx(ctx, tx, appID)
 	if err != nil {
-		return nil, mapErr(err)
+		return nil, err
 	}
 	meta, err := q.ReadDeploymentCronState(ctx, tx, appID)
 	if err != nil {
@@ -409,7 +410,7 @@ func (s *PgStore) reconcileDeploymentCron(ctx context.Context, appID string) (*C
 		if meta.Status == "deleted" || meta.DeploymentCronRevision != a.Revision || !api.DeploymentCronsEqual(current, a.Intent.Before) {
 			status, reason = "conflict", "cron_changed"
 		} else {
-			plan, err := q.CronActivationPlan(ctx, tx, accountID)
+			plan, err := q.CronActivationOwnerPlan(ctx, tx, appID)
 			if err != nil {
 				return nil, err
 			}
@@ -424,7 +425,7 @@ func (s *PgStore) reconcileDeploymentCron(ctx context.Context, appID string) (*C
 				if err != nil {
 					return nil, err
 				}
-				err = s.writeCronSet(ctx, nested, appID, DeploymentCronStagingParams{AccountID: accountID, Request: r, Limits: limits}, len(current), nil)
+				err = s.writeCronSet(ctx, nested, appID, subject, DeploymentCronStagingParams{AccountID: accountID, Request: r, Limits: limits}, len(current), nil)
 				if err != nil {
 					if rollbackErr := nested.Rollback(ctx); rollbackErr != nil {
 						return nil, rollbackErr
@@ -506,15 +507,13 @@ func (s *PgStore) PreparedDeploymentCrons(ctx context.Context, appID string) (bo
 // Check final counts even for identical before/desired sets: the account plan
 // can have changed since preparation. PostgreSQL performs this same check.
 func (m *MemStore) activateDeploymentCronSetLocked(appID string, p DeploymentCronStagingParams) error {
-	appCount, accountCount := 0, 0
+	appCount := 0
 	for _, c := range m.crons {
 		if c.AppID == appID {
 			appCount++
 		}
-		if a := m.apps[c.AppID]; a.AccountID == p.AccountID && a.Status != AppDeleted {
-			accountCount++
-		}
 	}
+	accountCount := m.quotaSubjectCronsLocked(m.appBillingSubjectLocked(p.AccountID, appID))
 	if err := checkCronReplacementQuota(appCount, accountCount, len(m.httpCronsLocked(appID)), len(p.Request.Desired), p); err != nil {
 		return err
 	}

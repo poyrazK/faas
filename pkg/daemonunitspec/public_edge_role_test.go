@@ -65,22 +65,34 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 		}
 	}
 	vars["faas_public_edge_domain"] = "gregale.dev"
+	vars["faas_public_edge_cloudflare_cidrs"] = []string{"173.245.48.0/20", "2400:cb00::/32"}
 	text := renderPublicEdgeBlock(t, block, vars)
+	// The platform site answers only Cloudflare and loopback: a direct peer
+	// could otherwise send its own CF-Connecting-IP and choose the caller IP
+	// that ip, geo, allowlist and throttle rules see.
 	for _, want := range []string{
 		"gregale.dev, *.gregale.dev {",
 		"tls /etc/caddy/tls/cloudflare-origin.pem /etc/caddy/tls/cloudflare-origin.key",
 		"reverse_proxy " + listen[1] + " {",
 		"header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}",
+		"@direct not remote_ip 173.245.48.0/20 2400:cb00::/32 127.0.0.0/8 ::1",
+		"abort @direct",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("rendered edge block is missing %q:\n%s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"on_demand", "https:// {", "abort"} {
+	for _, unwanted := range []string{"on_demand", "https:// {"} {
 		if strings.Contains(text, unwanted) {
 			t.Errorf("Cloudflare-only edge renders customer-domain config %q:\n%s", unwanted, text)
 		}
 	}
+	// An edge with no Cloudflare in front opts out of the guard.
+	vars["faas_public_edge_cloudflare_only"] = false
+	if text := renderPublicEdgeBlock(t, block, vars); strings.Contains(text, "abort") {
+		t.Errorf("an edge that opted out of Cloudflare-only still aborts direct peers:\n%s", text)
+	}
+	delete(vars, "faas_public_edge_cloudflare_only")
 
 	// ADR-520: customer domains open 443 to everyone. The platform site must
 	// still answer Cloudflare only, customer hosts must get certificates
@@ -111,8 +123,40 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 		t.Errorf("ask URL %q does not point at gatewayd-public's on-demand TLS endpoint", askURL)
 	}
 	customHost := text[strings.Index(text, "https:// {"):]
-	if strings.Contains(customHost, "CF-Connecting-IP") {
-		t.Errorf("customer-domain site trusts CF-Connecting-IP:\n%s", customHost)
+	if strings.Contains(customHost, "{http.request.header.CF-Connecting-IP}") || !strings.Contains(customHost, "header_up -CF-Connecting-IP") {
+		t.Errorf("customer-domain site trusts or forwards a client-sent CF-Connecting-IP:\n%s", customHost)
+	}
+	if strings.Contains(text, "h2c") {
+		t.Errorf("gRPC over h2c is on by default:\n%s", text)
+	}
+
+	// gRPC reached gatewayd-public over the HTTP/1.1 hop only, so
+	// bidirectional streams could not work from the internet. Opted in,
+	// gRPC requests take an h2c hop on both sites; everything else keeps
+	// HTTP/1.1 and the same client-IP header.
+	vars["faas_public_edge_grpc_h2c"] = true
+	for _, customDomains := range []bool{false, true} {
+		vars["faas_custom_domain_tls"] = customDomains
+		text = renderPublicEdgeBlock(t, block, vars)
+		if got := strings.Count(text, "reverse_proxy @grpc h2c://"+listen[1]+" {"); got != map[bool]int{false: 1, true: 2}[customDomains] {
+			t.Errorf("custom domains %v: %d gRPC h2c hops:\n%s", customDomains, got, text)
+		}
+		if !strings.Contains(text, "@grpc header Content-Type application/grpc*") {
+			t.Errorf("custom domains %v: gRPC matcher missing:\n%s", customDomains, text)
+		}
+		if !strings.Contains(text, "reverse_proxy "+listen[1]+" {") {
+			t.Errorf("custom domains %v: the HTTP/1.1 hop is gone:\n%s", customDomains, text)
+		}
+		if customDomains {
+			custom := text[strings.Index(text, "https:// {"):]
+			if strings.Contains(custom, "{http.request.header.CF-Connecting-IP}") || strings.Count(custom, "header_up -CF-Connecting-IP") != 2 ||
+				!strings.Contains(custom, "reverse_proxy @grpc h2c://") {
+				t.Errorf("customer-domain gRPC hop:\n%s", custom)
+			}
+			if !strings.Contains(text, "abort @direct") {
+				t.Errorf("platform site stopped aborting direct peers:\n%s", text)
+			}
+		}
 	}
 }
 

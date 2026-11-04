@@ -45,6 +45,8 @@ func loadWorkloadIdentitySigner(configOpt ...*Config) (*workloadidentity.Signer,
 	if envKeyID := strings.TrimSpace(os.Getenv("FAAS_WORKLOAD_IDENTITY_KEY_ID")); envKeyID != "" {
 		keyID = envKeyID
 	}
+	// Lifetimes above workloadidentity.DefaultTokenTTL (5 minutes) are
+	// accepted for existing configs and capped by NewSigner.
 	ttl := workloadidentity.DefaultTokenTTL
 	if cfg.WorkloadIdentityTTL > 0 {
 		ttl = cfg.WorkloadIdentityTTL

@@ -11,10 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
-	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestCommitSQLTransactionBoundary(t *testing.T) {
@@ -71,7 +72,7 @@ func TestCommitSQLTransactionBoundary(t *testing.T) {
 			t.Fatalf("committed visibility orders=%d events=%d: %v", gotOrders, gotEvents, err)
 		}
 	}
-	event := faas.CommitEventRequest{Type: "order.created", Data: json.RawMessage(`{"order_id":1}`)}
+	event := preview.CommitEventRequest{Type: "order.created", Data: json.RawMessage(`{"order_id":1}`)}
 	tx, err := writer.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +85,7 @@ func TestCommitSQLTransactionBoundary(t *testing.T) {
 	if _, err := tx.ExecContext(ctx, "INSERT INTO orders VALUES(1)"); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := faas.InsertCommitEvent(ctx, tx, event)
+	identity, err := preview.InsertCommitEvent(ctx, tx, event)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestCommitSQLTransactionBoundary(t *testing.T) {
 	if _, err := tx.ExecContext(ctx, "INSERT INTO orders VALUES(2)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := faas.InsertCommitEvent(ctx, tx, event); err != nil {
+	if _, err := preview.InsertCommitEvent(ctx, tx, event); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Rollback(); err != nil {
@@ -120,7 +121,7 @@ func TestCommitSQLTransactionBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	event.ID = identity
-	_, err = faas.InsertCommitEvent(ctx, tx, event)
+	_, err = preview.InsertCommitEvent(ctx, tx, event)
 	var duplicate *pgconn.PgError
 	if !errors.As(err, &duplicate) || duplicate.Code != "23505" {
 		t.Fatalf("duplicate event identity: %v", err)
@@ -134,7 +135,7 @@ func TestCommitSQLTransactionBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	event.ID = "not-an-event-id"
-	if _, err := faas.InsertCommitEvent(ctx, tx, event); err == nil {
+	if _, err := preview.InsertCommitEvent(ctx, tx, event); err == nil {
 		t.Fatal("invalid event ID accepted")
 	}
 	if err := tx.Rollback(); err != nil {
@@ -146,11 +147,11 @@ func TestCommitSQLTransactionBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	event.ID = ""
-	event.Routing = &faas.CommitRouting{Version: 2, PlatformTenantID: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", Key: json.RawMessage(`"order-5"`)}
+	event.Routing = &preview.CommitRouting{Version: 2, PlatformTenantID: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", Key: json.RawMessage(`"order-5"`)}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO orders VALUES(5)"); err != nil {
 		t.Fatal(err)
 	}
-	routed, err := faas.InsertCommitEvent(ctx, tx, event)
+	routed, err := preview.InsertCommitEvent(ctx, tx, event)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +168,7 @@ func TestCommitSQLTransactionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := faas.InsertCommitEvent(ctx, tx, event); err != nil {
+	if _, err := preview.InsertCommitEvent(ctx, tx, event); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Rollback(); err != nil {

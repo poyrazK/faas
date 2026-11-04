@@ -14,7 +14,10 @@ package logarchive
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -48,6 +51,10 @@ const DefaultRetentionDays = 7
 // uncompressed volume for a 1000 rps app × 50 KB/s; the cap is
 // overridable via FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX.
 const DefaultLocalBytesMax = 10 << 30
+
+// InstanceShareDivisor bounds one instance's unshipped bytes to
+// 1/InstanceShareDivisor of the local spool budget.
+const InstanceShareDivisor = 8
 
 // EnvBucket is the FAAS_LOG_ARCHIVE_BUCKET env var — required for
 // the shipper to run. Empty = shipper exits on ctx.Done() (the
@@ -114,6 +121,10 @@ const EnvCredentialsPath = "FAAS_LOG_ARCHIVE_CREDS_PATH"
 // gcp_metadata uses the attached GCE service account's short-lived token.
 const EnvAuthMode = "FAAS_LOG_ARCHIVE_AUTH_MODE"
 
+// EnvPartObjects ("1") makes the shipper write one part object per flush
+// (Config.PartObjects).
+const EnvPartObjects = "FAAS_LOG_ARCHIVE_PART_OBJECTS"
+
 // DefaultCredentialsPath is used outside systemd (for example by a manual
 // binary invocation) and is also the source path used by LoadCredential=.
 const DefaultCredentialsPath = "/etc/faas/secrets/storage-box/archive-creds.json"
@@ -168,6 +179,12 @@ type Config struct {
 	// SpoolRoot is the directory the spool writes into. Empty =
 	// DefaultSpoolRoot.
 	SpoolRoot string
+	// PartObjects uploads each flush as its own part object under
+	// DayPartPrefix instead of re-uploading the whole day, and keeps no local
+	// history (ADR-20261028110000). Readers of every release that ships this
+	// field read parts; switch writers on only once every gatewayd-internal
+	// runs such a release.
+	PartObjects bool
 
 	// regionExplicit distinguishes an explicit FAAS_LOG_ARCHIVE_REGION from
 	// ConfigFromEnv's us-east-1 default. It lets an archive envelope provide
@@ -209,6 +226,7 @@ func ConfigFromEnv(getenv func(string) string, log *slog.Logger) (Config, error)
 		RetentionDays:  parseIntEnv(getenv(EnvRetentionDays), DefaultRetentionDays, EnvRetentionDays, log),
 		LocalBytesMax:  parseInt64Env(getenv(EnvLocalBytesMax), DefaultLocalBytesMax, EnvLocalBytesMax, log),
 		SpoolRoot:      defaultSpoolRoot(getenv(EnvSpoolRoot)),
+		PartObjects:    getenv(EnvPartObjects) == "1",
 		regionExplicit: getenv(EnvRegion) != "",
 	}
 	if cfg.KeyID != "" && cfg.Secret == "" {
@@ -262,8 +280,10 @@ func parseIntEnv(s string, fallback int, envName string, log *slog.Logger) int {
 	if s == "" {
 		return fallback
 	}
-	var v int
-	if _, err := fmt.Sscanf(s, "%d", &v); err != nil || v < 0 {
+	// strconv, not fmt.Sscanf: Sscanf("%d") stops at the first non-digit,
+	// so "20G" read as 20.
+	v, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || v < 0 {
 		log.Warn("logarchive.config.parse_int_failed",
 			"env", envName, "value", s, "fallback", fallback, "err", err)
 		return fallback
@@ -275,11 +295,46 @@ func parseInt64Env(s string, fallback int64, envName string, log *slog.Logger) i
 	if s == "" {
 		return fallback
 	}
-	var v int64
-	if _, err := fmt.Sscanf(s, "%d", &v); err != nil || v < 0 {
+	v, err := parseByteSize(s)
+	if err != nil || v < 0 {
 		log.Warn("logarchive.config.parse_int64_failed",
 			"env", envName, "value", s, "fallback", fallback, "err", err)
 		return fallback
 	}
 	return v
+}
+
+// byteUnits are the binary size suffixes parseByteSize accepts; "G", "GB"
+// and "GiB" all mean 2^30.
+var byteUnits = []struct {
+	suffixes []string
+	shift    uint
+}{
+	{[]string{"TiB", "TB", "T"}, 40},
+	{[]string{"GiB", "GB", "G"}, 30},
+	{[]string{"MiB", "MB", "M"}, 20},
+	{[]string{"KiB", "KB", "K"}, 10},
+	{[]string{"B"}, 0},
+}
+
+// parseByteSize reads a byte count, either plain ("10737418240") or with a
+// binary unit ("20G", "20GiB"). Anything else is an error, never a prefix
+// of the number.
+func parseByteSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	for _, unit := range byteUnits {
+		for _, suffix := range unit.suffixes {
+			if num, ok := strings.CutSuffix(s, suffix); ok {
+				v, err := strconv.ParseInt(strings.TrimSpace(num), 10, 64)
+				if err != nil {
+					return 0, err
+				}
+				if v > math.MaxInt64>>unit.shift {
+					return 0, fmt.Errorf("%q overflows int64", s)
+				}
+				return v << unit.shift, nil
+			}
+		}
+	}
+	return strconv.ParseInt(s, 10, 64)
 }

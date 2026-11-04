@@ -412,23 +412,40 @@ func jsonStdUnmarshal(b []byte, v any) error {
 
 func init() {
 	registerPoller("nats", func(t sqlc.Trigger) (triggerSource, error) {
-		broker := getCurrentNATSBroker()
-		if broker == nil {
-			return nil, fmt.Errorf("nats_poller: no broker registered")
+		cfg, err := decodeNATSConfig(t)
+		if err != nil {
+			return nil, err
+		}
+		broker, err := natsBrokers.forURL(cfg.URL)
+		if err != nil {
+			return nil, err
 		}
 		return newNATSPoller(broker, t)
 	})
 }
 
-var currentNATSBroker *natsBroker
+// natsBrokerPool holds one connection per server URL (credentials
+// included), opened when the first trigger naming the URL builds its
+// poller. Triggers that share a URL share the connection. Nothing ever
+// registered a broker before, so every NATS trigger failed to construct.
+type natsBrokerPool struct {
+	mu      sync.Mutex
+	dial    func(rawURL string) (*natsBroker, error)
+	brokers map[string]*natsBroker
+}
 
-// setCurrentNATSBroker is invoked from schedd boot once per URL
-// group. Triggers that share a URL share a broker.
-//
-//nolint:unused // reserved for cmd/schedd boot wiring (PR-B).
-func setCurrentNATSBroker(b *natsBroker) { currentNATSBroker = b }
+var natsBrokers = &natsBrokerPool{dial: NewNATSBroker, brokers: map[string]*natsBroker{}}
 
-// getCurrentNATSBroker returns the broker registered at startup,
-// or nil if no broker is configured. Dispatcher treats nil as
-// "skip kind=nats" and continues.
-func getCurrentNATSBroker() *natsBroker { return currentNATSBroker }
+func (p *natsBrokerPool) forURL(rawURL string) (*natsBroker, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if b, ok := p.brokers[rawURL]; ok {
+		return b, nil
+	}
+	b, err := p.dial(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	p.brokers[rawURL] = b
+	return b, nil
+}

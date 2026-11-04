@@ -255,7 +255,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		}
 		branchRef = req.SourceBranch
 	}
-	if prob := scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+	if prob := s.scanSourceTarballSecrets(spoolPath, limits); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := scanForStatefulShapeAtRoot(spoolPath, false, app.RootDir); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -263,9 +267,14 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, problem)
 		return
 	}
-	manifest, manifestProblem := loadReviewedSourceManifest(spoolPath, app, acct.Plan, req.ExpectedSource != nil)
+	manifest, manifestProblem := loadReviewedSourceManifest(spoolPath, app, acct.Plan, req.ExpectedSource != nil, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
+		return
+	}
+	sourceBuild, _, buildProblem := resolveSourceDockerfileBuild(spoolPath, app.RootDir, app, manifest)
+	if buildProblem != nil {
+		api.WriteProblem(w, buildProblem)
 		return
 	}
 	releaseCommand, releaseProblem := reviewedSourceReleaseCommand(spoolPath, app, manifest, req.ExpectedSource != nil)
@@ -352,6 +361,8 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		SourcePath:                spoolPath,
 		SourceBytes:               spoolBytes,
 		SourceRoot:                app.RootDir,
+		DockerfilePath:            sourceBuild.path,
+		DockerfileBuild:           sourceBuild.options,
 		SourceURL:                 fmt.Sprintf("github://%s@%s", req.Repo, resolvedSHA),
 		CommitSHA:                 resolvedSHA,
 		GitHubSourceRef:           branchRef,

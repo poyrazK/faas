@@ -4,6 +4,7 @@
 package githubd
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -134,8 +135,6 @@ const validPRBody = `{
   "number": 42,
   "pull_request": {
     "state": "open",
-    "head_sha": "0123456789abcdef0123456789abcdef01234567",
-    "head_ref": "feat/foo",
     "head": {"ref": "feat/foo", "sha": "0123456789abcdef0123456789abcdef01234567", "repo": {"full_name": "octo/api"}}
   },
   "repository": {"full_name": "octo/api", "name": "api", "html_url": "https://github.com/octo/api"},
@@ -175,12 +174,36 @@ func TestDecodePullRequest_HappyPath(t *testing.T) {
 	}
 }
 
+// GitHub's real pull_request payload has no flat head_sha/head_ref: the head
+// commit and branch are only in pull_request.head. Production refused every
+// real PR event with "head_sha must be a 40-char SHA" until the decoder read
+// them from there.
+func TestDecodePullRequest_GitHubPayloadShape(t *testing.T) {
+	t.Parallel()
+	sha := strings.Repeat("ab", 20)
+	body := `{"action":"opened","number":4,
+		"pull_request":{"number":4,"state":"open","draft":false,
+			"head":{"label":"octo:feat-x","ref":"feat-x","sha":"` + sha + `","repo":{"full_name":"octo/api"}},
+			"base":{"label":"octo:main","ref":"main","sha":"` + strings.Repeat("cd", 20) + `","repo":{"full_name":"octo/api"}}},
+		"repository":{"full_name":"octo/api","name":"api"},"installation":{"id":42},"sender":{"login":"octocat"}}`
+	ev, err := DecodePullRequest([]byte(body))
+	if err != nil {
+		t.Fatalf("decode GitHub-shaped pull_request: %v", err)
+	}
+	if ev.PullRequest.HeadSHA != sha || ev.PullRequest.HeadRef != "feat-x" || ev.IsFork() {
+		t.Fatalf("decoded head = (%q, %q, fork %t), want the head commit and branch, not a fork",
+			ev.PullRequest.HeadSHA, ev.PullRequest.HeadRef, ev.IsFork())
+	}
+}
+
 func TestDecodePullRequest_ActionsAccepted(t *testing.T) {
 	t.Parallel()
 	cases := []PullRequestAction{
 		PullRequestActionOpened,
 		PullRequestActionSynchronize,
 		PullRequestActionReopened,
+		PullRequestActionReadyForReview,
+		PullRequestActionConvertedToDraft,
 		PullRequestActionClosed,
 	}
 	for _, a := range cases {
@@ -197,18 +220,16 @@ func TestDecodePullRequest_ActionsAccepted(t *testing.T) {
 
 func TestDecodePullRequest_RejectsUnknownAction(t *testing.T) {
 	t.Parallel()
-	cases := []string{"assigned", "labeled", "review_requested", "edited", "ready_for_review"}
+	cases := []string{"assigned", "labeled", "review_requested", "edited", "auto_merge_enabled"}
 	for _, a := range cases {
 		a := a
 		t.Run(a, func(t *testing.T) {
 			t.Parallel()
 			body := strings.Replace(validPRBody, `"action": "opened"`, `"action": "`+a+`"`, 1)
 			_, err := DecodePullRequest([]byte(body))
-			if err == nil {
-				t.Fatalf("DecodePullRequest(%s) err = nil, want rejection", a)
-			}
-			if !strings.Contains(err.Error(), "action not in") {
-				t.Errorf("err = %v, want error mentioning 'action not in'", err)
+			// Ignored, so the delivery completes without retries (B27).
+			if !errors.Is(err, ErrPullRequestActionIgnored) {
+				t.Fatalf("DecodePullRequest(%s) err = %v, want ErrPullRequestActionIgnored", a, err)
 			}
 		})
 	}
@@ -234,7 +255,7 @@ func TestDecodePullRequest_RejectsMissingFields(t *testing.T) {
 		{
 			name: "short head SHA",
 			mutate: func(b string) string {
-				return strings.Replace(b, "0123456789abcdef0123456789abcdef01234567", "abc123", 1)
+				return strings.ReplaceAll(b, "0123456789abcdef0123456789abcdef01234567", "abc123")
 			},
 			wantFrag: "40-char SHA",
 		},
@@ -295,11 +316,11 @@ func TestDecodePullRequest_ForkDetected(t *testing.T) {
 	}
 }
 
-func TestDecodePullRequest_MissingHeadRepoIsNotFork(t *testing.T) {
+func TestDecodePullRequest_MissingHeadRepoIsFork(t *testing.T) {
 	t.Parallel()
-	// Drop the head.repo.full_name — a malformed payload. The
-	// decoder must still parse the rest, and IsFork() must
-	// return false (conservative: we cannot prove it's a fork).
+	// GitHub sends head.repo null when the head repository was deleted:
+	// a deleted fork. The decoder still parses the rest, and IsFork()
+	// refuses it (bug hunt 2026-10-28 B27).
 	body := strings.Replace(validPRBody,
 		`"head": {"ref": "feat/foo", "sha": "0123456789abcdef0123456789abcdef01234567", "repo": {"full_name": "octo/api"}}`,
 		`"head": {"ref": "feat/foo", "sha": "0123456789abcdef0123456789abcdef01234567", "repo": {}}`,
@@ -309,8 +330,8 @@ func TestDecodePullRequest_MissingHeadRepoIsNotFork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodePullRequest() err = %v", err)
 	}
-	if ev.IsFork() {
-		t.Errorf("IsFork() = true, want false (head.repo missing → conservative not-fork)")
+	if !ev.IsFork() {
+		t.Errorf("IsFork() = false, want true (head.repo missing → deleted fork)")
 	}
 	if ev.HeadRepoFullName() != "" {
 		t.Errorf("HeadRepoFullName() = %q, want empty", ev.HeadRepoFullName())

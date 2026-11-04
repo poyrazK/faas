@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, ProjectsService, type ProjectDeploymentCheckRequest, type ProjectDeploymentReadiness } from '../src/index.js';
+import { FaaSClient, ProjectsService, type ProjectDeploymentCheckRequest, type ProjectDeploymentReadiness } from '../src/preview.js';
 
 test('deployment readiness preserves unknown checks and quota evidence', async (t) => {
   const request: ProjectDeploymentCheckRequest = {

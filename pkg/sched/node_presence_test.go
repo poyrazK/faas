@@ -284,6 +284,19 @@ func TestNodeInventoryServiceRecoversWithoutTrafficAndNotifiesRouting(t *testing
 	if live != 1 {
 		t.Fatalf("live replicas=%d, want exactly 1", live)
 	}
+	// The worker commits RUNNING before publishing its route invalidation.
+	// Join that worker within the original recovery deadline before inspecting
+	// notifications; observing the row alone does not prove it has returned.
+	finished := make(chan struct{})
+	go func() {
+		f.work.Drain()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Until(deadline)):
+		t.Fatal("service recovery worker did not finish route invalidation notifications")
+	}
 	(*f.notifier.Mu()).Lock()
 	defer (*f.notifier.Mu()).Unlock()
 	failedNotified, replacementNotified := false, false

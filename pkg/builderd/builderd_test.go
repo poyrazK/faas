@@ -114,6 +114,65 @@ func testBuildCacheRecipe(sourceHash string, framework Framework, plan api.Plan,
 	}
 }
 
+// withAccount is recipe for a build of accountID's app: ProcessOne keys every
+// build by the account that owns the app.
+func withAccount(recipe BuildCacheRecipe, accountID string) BuildCacheRecipe {
+	recipe.AccountID = accountID
+	return recipe
+}
+
+type buildAccountStore interface {
+	BuildByID(context.Context, string) (state.Build, error)
+	DeploymentByID(context.Context, string) (state.Deployment, error)
+	AppByID(context.Context, string) (state.App, error)
+}
+
+// buildAccount returns the account of the app that build buildID builds.
+func buildAccount(t *testing.T, store buildAccountStore, buildID string) string {
+	t.Helper()
+	build, err := store.BuildByID(context.Background(), buildID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.DeploymentByID(context.Background(), build.DeploymentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.AppByID(context.Background(), dep.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return app.AccountID
+}
+
+// seedDeploymentForAccount seeds another app, deployment and build of an
+// existing account, for tests that expect a build to reuse that account's
+// cache.
+func seedDeploymentForAccount(t *testing.T, ctx context.Context, store state.Store, source, accountID, slug string) (string, string, string) {
+	t.Helper()
+	app, err := store.CreateApp(ctx, state.App{
+		AccountID: accountID, Slug: slug, RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID:       app.ID,
+		Kind:        state.DeploymentKindTarball,
+		SourcePath:  source,
+		SourceBytes: 100,
+		LogPath:     filepath.Join(t.TempDir(), "build.log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := store.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 100, dep.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return build.ID, dep.ID, app.ID
+}
+
 func (f *fakeVM) Spawn(_ context.Context, req VMRequest) (BuildHandle, error) {
 	f.spawnCalls++
 	f.lastRequest = req
@@ -234,7 +293,7 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), layerPath, 18); err != nil {
+	if err := c.StoreBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID)), layerPath, 18); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,7 +323,7 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 	if build.Status != state.BuildSucceeded {
 		t.Errorf("build status = %s, want succeeded", build.Status)
 	}
-	wantKey, err := testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal).KeySHA256()
+	wantKey, err := withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID)).KeySHA256()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,6 +340,43 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 	}
 	if !bootFound {
 		t.Errorf("expected snapshot_boot notification; got %v", notif.calls)
+	}
+}
+
+// A cache hit opens image_build at once, so imaged's wait for the layer is
+// recorded there and not as source download (the spawn path already does).
+func TestProcessOne_CacheHitOpensImageBuildStage(t *testing.T) {
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json", "index.js"})
+	buildID, depID, _ := seedDeployment(t, store, src)
+	c := NewCache(t.TempDir())
+	layerPath := filepath.Join(t.TempDir(), "layer.ext4")
+	if err := os.WriteFile(layerPath, []byte("pre-cached layer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := hashFile(src)
+	if err := c.StoreBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID)), layerPath, 18); err != nil {
+		t.Fatal(err)
+	}
+	b := New(store, &fakeNotifier{}, &fakeVM{}, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	if res, err := b.ProcessOne(context.Background(), buildID); err != nil || !res.CacheHit {
+		t.Fatalf("ProcessOne = %+v, %v; want a cache hit", res, err)
+	}
+	dep, _ := store.DeploymentByID(context.Background(), depID)
+	var stages state.StageState
+	if err := json.Unmarshal(dep.StageState, &stages); err != nil {
+		t.Fatalf("decode stage state: %v", err)
+	}
+	if stages.Current != state.StageImageBuild {
+		t.Errorf("current stage = %q, want %q", stages.Current, state.StageImageBuild)
+	}
+	if len(stages.History) != 1 {
+		t.Fatalf("stage history length = %d, want the completed source download: %+v", len(stages.History), stages.History)
+	}
+	if got := stages.History[0]; got.Name != state.StageSourceDownload || got.Status != "completed" || got.EndedAt == nil {
+		t.Errorf("source stage = %+v, want completed", got)
 	}
 }
 
@@ -351,7 +447,7 @@ func TestProcessOne_VMSpawnSucceedsAndStamps(t *testing.T) {
 	if fvm.lastRequest.SourceSHA256 != hash {
 		t.Errorf("VM source digest = %q, want %q", fvm.lastRequest.SourceSHA256, hash)
 	}
-	if _, ok := c.LookupBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal)); !ok {
+	if _, ok := c.LookupBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID))); !ok {
 		t.Error("expected cache populated after successful build")
 	}
 }
@@ -514,6 +610,43 @@ func TestBoundedGuestBuildLogTailKeepsNewestDiagnostic(t *testing.T) {
 	}
 }
 
+// Hunt 11 H11-2: a successful build's log tail opened mid-line and was
+// mostly buildkitd's ref-lock retries, which read as build errors.
+func TestBoundedGuestBuildLogTailDropsRefLockRetries(t *testing.T) {
+	retry := `time="2026-10-22T00:13:07Z" level=error msg="(*service).Write failed" error="rpc error: code = Unavailable desc = ref layer-sha256:d4014f locked for 550.91972ms (since 2026-10-22 00:13:06 +0000 UTC): unavailable"` + "\n"
+	tests := []struct {
+		name     string
+		raw      string
+		want     []string
+		wantGone []string
+	}{
+		{"retries between export lines", strings.Repeat(retry, 6) + "#24 writing layer sha256:cbc1 2.3s done\n#24 DONE 120.9s\n",
+			[]string{"#24 writing layer sha256:cbc1 2.3s done", "#24 DONE 120.9s"}, []string{"(*service).Write failed"}},
+		{"other buildkitd errors stay", `time="t" level=error msg="failed to solve" error="exit code: 3"` + "\n#6 ERROR: exit code: 3\n",
+			[]string{"failed to solve", "#6 ERROR: exit code: 3"}, nil},
+		{"a cut tail starts on a whole line", strings.Repeat("#5 sha256:abcdef layer done\n", 200) + "#24 DONE 1.0s\n",
+			[]string{"#24 DONE 1.0s"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := boundedGuestBuildLogTail(tt.raw)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("tail lost %q:\n%s", want, got)
+				}
+			}
+			for _, gone := range tt.wantGone {
+				if strings.Contains(got, gone) {
+					t.Errorf("tail still has %q:\n%s", gone, got)
+				}
+			}
+			if first, _, _ := strings.Cut(got, "\n"); !strings.HasPrefix(first, "#") && !strings.HasPrefix(first, "time=") {
+				t.Errorf("tail opens mid-line: %q", first)
+			}
+		})
+	}
+}
+
 // production-us hunt #9: a Dockerfile RUN exiting 3 surfaced only buildkitd's
 // --debug stack traces; the failing step and its output were cut off.
 func TestBoundedGuestBuildLogTailKeepsTheCustomerBuildOutput(t *testing.T) {
@@ -562,6 +695,51 @@ func TestProcessOne_FrameworkDetectFailsFlipsDeployment(t *testing.T) {
 	}
 	if !contains(dep.Error, "framework detect") {
 		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "framework detect")
+	}
+	// adr: 20261029103512 — a plain build failure carries its class's code
+	// and guidance, not only the message.
+	if dep.ErrorCode != api.CodeBuildFailed || dep.ErrorHint == "" {
+		t.Errorf("deployment error_code=%q hint=%q, want %q with a hint", dep.ErrorCode, dep.ErrorHint, api.CodeBuildFailed)
+	}
+}
+
+// adr: 20261029103512 — a build whose deployment a newer revision of the same
+// app has outpaced is skipped: promotion would supersede it, and building it
+// first held the builder slot the newer deployment was queued for.
+func TestProcessOne_SkipsBuildOutpacedByNewerDeployment(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	src := filepath.Join(t.TempDir(), "src.tar.gz")
+	makeTarballWithName(t, src, []string{"package.json"})
+	buildID, depID, appID := seedDeployment(t, store, src)
+	if err := store.UpdateDeploymentStatus(ctx, depID, state.DeployBuilding, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindTarball, SourcePath: src, SourceBytes: 100}); err != nil {
+		t.Fatal(err)
+	}
+	fvm := &fakeVM{}
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := b.ProcessOne(ctx, buildID); err != nil {
+		t.Fatalf("ProcessOne: %v", err)
+	}
+	build, _ := store.BuildByID(ctx, buildID)
+	dep, _ := store.DeploymentByID(ctx, depID)
+	if build.Status != state.BuildCancelled || dep.Status != state.DeploySuperseded || fvm.spawnCalls != 0 {
+		t.Fatalf("build=%s deployment=%s spawns=%d; want cancelled, superseded, 0", build.Status, dep.Status, fvm.spawnCalls)
+	}
+}
+
+func TestBuildFailureCodeCoversEveryClass(t *testing.T) {
+	for fc, want := range map[state.FailureClass]string{
+		state.FailureOOM:       api.CodeStageImageBuildOOM,
+		state.FailureTimeout:   api.CodeStageImageBuildTimeout,
+		state.FailureUserError: api.CodeBuildFailed,
+		state.FailureInfra:     api.CodeBuildInfrastructure,
+	} {
+		if got := buildFailureCode(fc); got != want {
+			t.Errorf("buildFailureCode(%s) = %q, want %q", fc, got, want)
+		}
 	}
 }
 
@@ -1056,7 +1234,7 @@ func TestProcessOne_BuildMetricCodeByOutcome(t *testing.T) {
 		if _, err := b.ProcessOne(context.Background(), primeID); err != nil {
 			t.Fatalf("first ProcessOne (cache prime): %v", err)
 		}
-		hitID := seedBuildForCachePrime(t, store, src)
+		hitID, _, _ := seedDeploymentForAccount(t, context.Background(), store, src, buildAccount(t, store, primeID), fmt.Sprintf("hit-%d", time.Now().UnixNano()))
 		_, _ = b.ProcessOne(context.Background(), hitID)
 		assertCodes(t, ops, "cache_hit", "cache_hit")
 	})
@@ -1486,7 +1664,7 @@ func TestProcessNext_FairnessWindow_ZeroDisablesFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), srcCopy, 17); err != nil {
+	if err := c.StoreBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID)), srcCopy, 17); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1544,8 +1722,10 @@ func TestProcessNext_FairnessWindow_PreferQuietAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), srcCopy, 17); err != nil {
-		t.Fatal(err)
+	for _, s := range seeded {
+		if err := c.StoreBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), s.accountID), srcCopy, 17); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	ops := wire.NewOpsMetrics("builderd")
@@ -1679,7 +1859,7 @@ func TestProcessNext_RecordRecentBuildClaim_FailureDoesNotFailBuild(t *testing.T
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), srcCopy, 17); err != nil {
+	if err := c.StoreBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store.MemStore, buildID)), srcCopy, 17); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1723,7 +1903,7 @@ func TestProcessOne_CacheHitPersistsProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), layerPath, 18); err != nil {
+	if err := c.StoreBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID)), layerPath, 18); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1804,7 +1984,7 @@ func TestProcessOne_FreshBuildPersistsProvenance(t *testing.T) {
 	if prov.BaseDigest != testBuildEnvironment.BaseDigest {
 		t.Errorf("BaseDigest = %q, want %q", prov.BaseDigest, testBuildEnvironment.BaseDigest)
 	}
-	cached, ok := c.LookupBuild(testBuildCacheRecipe(prov.SourceSHA256, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal))
+	cached, ok := c.LookupBuild(withAccount(testBuildCacheRecipe(prov.SourceSHA256, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID)))
 	if !ok {
 		t.Fatal("fresh build was not cached")
 	}
@@ -1841,7 +2021,7 @@ func TestProcessOne_ProvenanceCopiesDeploymentSourceFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := hashFile(src)
-	if err := c.StoreBuild(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), layerPath, 18); err != nil {
+	if err := c.StoreBuild(withAccount(testBuildCacheRecipe(hash, FrameworkNode, api.PlanPro, imaged.BaseRefMinimal), buildAccount(t, store, buildID)), layerPath, 18); err != nil {
 		t.Fatal(err)
 	}
 

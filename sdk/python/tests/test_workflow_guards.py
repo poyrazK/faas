@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from faas_sdk.models.workflow_guard_spec import WorkflowGuardSpec
-from faas_sdk.models.workflow_spec import WorkflowSpec
-from faas_sdk.models.workflow_step_response import WorkflowStepResponse
+from faas_sdk.preview.models.workflow_guard_spec import WorkflowGuardSpec
+from faas_sdk.preview.models.workflow_spec import WorkflowSpec
+from faas_sdk.preview.models.workflow_step_response import WorkflowStepResponse
 
 
 def test_nested_guard_roundtrip_preserves_json_types_and_large_integer():

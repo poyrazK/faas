@@ -86,6 +86,7 @@ func (m *MemStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context,
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
+	tokenHash = storedCredentialHex(credTagEnvironmentQueueReceipt, tokenHash)
 	ownerHash := environmentQueueReceiptOwnerHash(m.invocationEnvironmentQueueAdmissions[next.ID])
 	previous, issued := m.invocationEnvironmentQueueReceipts[next.ID]
 	if issued && (previous.Attempt >= next.Attempts+1 || previous.OwnerHash != ownerHash) {

@@ -6,8 +6,8 @@ import httpx
 import pytest
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.projects import create_project_environment
-from faas_sdk.models import CreateProjectEnvironmentRequest, ProjectEnvironmentResponse
+from faas_sdk.preview.api.projects import create_project_environment
+from faas_sdk.preview.models import CreateProjectEnvironmentRequest, ProjectEnvironmentResponse
 from faas_sdk.types import UNSET
 
 

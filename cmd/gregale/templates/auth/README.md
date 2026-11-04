@@ -10,7 +10,7 @@ token refresh, sign-out, MFA and the user endpoint. Access tokens are ES256
 JWTs with `sub`, `session_id`, `aud=authenticated` and a 10-minute lifetime.
 Verify them with the JWKS at `/auth/v1/.well-known/jwks.json`, or let Gregale
 resolve it: `gregale data-api create NAME --database DATABASE --auth AUTH_APP`
-or `gregale edge-rules create ... --kind jwt --jwt-auth AUTH_APP`.
+or `gregale edge rule create ... --kind jwt --jwt-auth AUTH_APP`.
 
 Users live in the `auth` schema of your own database. The `auth` binding acts
 as the owner of only the `auth` and `gregale_auth` schemas; it cannot read or

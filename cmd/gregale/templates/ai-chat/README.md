@@ -55,23 +55,23 @@ If you prefer to set secrets through the app API, reserve the app first:
 
 ```sh
 gregale deploy --create-only --template ai-chat --name <slug>
-gregale secrets set --app <slug> OPENAI_API_KEY=sk-...  # or ANTHROPIC_API_KEY=sk-ant-...
+gregale env set --app <slug> OPENAI_API_KEY=sk-...  # or ANTHROPIC_API_KEY=sk-ant-...
 cd <this-directory> && gregale deploy
 ```
 
 ## Rotate or update secrets
 
-After the app exists, use `gregale secrets set --app <slug> KEY=VALUE`
+After the app exists, use `gregale env set --app <slug> KEY=VALUE`
 to change the provider or optional settings, then redeploy.
 
 ## Pick a provider
 
 ```sh
 # OpenAI
-gregale secrets set --app <slug> OPENAI_API_KEY=sk-...
+gregale env set --app <slug> OPENAI_API_KEY=sk-...
 
 # Anthropic
-gregale secrets set --app <slug> ANTHROPIC_API_KEY=sk-ant-...
+gregale env set --app <slug> ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 Setting both is rejected at startup with an actionable error.
@@ -81,12 +81,12 @@ Setting neither is rejected too — pick one.
 
 ```sh
 # Pick a specific model (defaults are sensible)
-gregale secrets set --app <slug> OPENAI_MODEL=gpt-4o
-gregale secrets set --app <slug> ANTHROPIC_MODEL=claude-sonnet-5
+gregale env set --app <slug> OPENAI_MODEL=gpt-4o
+gregale env set --app <slug> ANTHROPIC_MODEL=claude-sonnet-5
 
 # Prepend a system prompt to every conversation. Keep it short —
 # every byte costs tokens on every request.
-gregale secrets set --app <slug> SYSTEM_PROMPT='You are a helpful assistant for a coffee shop. Be concise.'
+gregale env set --app <slug> SYSTEM_PROMPT='You are a helpful assistant for a coffee shop. Be concise.'
 ```
 
 ## Deploy

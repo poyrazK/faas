@@ -33,6 +33,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"gopkg.in/yaml.v3"
 )
 
@@ -169,6 +171,117 @@ type Manifest struct {
 	// manifest sees the consequence spelled out before they can
 	// flip it.
 	Egress Egress `yaml:"egress,omitempty"`
+
+	// ObjectStorage places the customer object storage gateway
+	// (s3-gatewayd) under the playbooks (ADR 20261025111015). Absent keeps
+	// the gateway unmanaged; strict fleet verify then fails if one runs.
+	ObjectStorage ObjectStorage `yaml:"object_storage,omitempty"`
+
+	// LogArchive is the bucket customer logs are archived to. Absent leaves
+	// each host's archive credential envelope untouched.
+	LogArchive LogArchive `yaml:"log_archive,omitempty"`
+
+	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
+	// renderer hands its source directory to every control-plane and
+	// compute host, so the roles install the JWKS and the signing key.
+	WorkloadIdentity WorkloadIdentity `yaml:"workload_identity,omitempty"`
+}
+
+// ObjectStorage is the s3-gatewayd deployment contract for the control plane.
+type ObjectStorage struct {
+	// Gateway is "managed" (the s3_gateway_service role installs and
+	// health-gates s3-gatewayd, and Prometheus scrapes it) or empty/"off".
+	Gateway string `yaml:"gateway,omitempty"`
+	// ConfigSrc is the controller-local provider registry JSON the role
+	// copies to /etc/faas/object-storage.json. Required when managed.
+	ConfigSrc string `yaml:"config_src,omitempty"`
+	// ProviderEnvSrc is the optional controller-local credential env file
+	// for S3-compatible providers; GCS with attached ADC needs none.
+	ProviderEnvSrc string `yaml:"provider_env_src,omitempty"`
+	// ComputeNodes runs the gateway on every compute node of the cell as
+	// well (ADR-20261031122757). It needs the managed gateway, the app edge
+	// on the compute nodes, GatewayProviderEnvSrc and every compute host's
+	// port_mbps.
+	ComputeNodes bool `yaml:"compute_nodes,omitempty"`
+	// GatewayProviderEnvSrc is the controller-local env file holding only
+	// the gateway credentials the registry's gateway_*_env fields name.
+	// Compute nodes get it instead of ProviderEnvSrc, so they never hold the
+	// bucket-admin credential.
+	GatewayProviderEnvSrc string `yaml:"gateway_provider_env_src,omitempty"`
+}
+
+// Managed reports whether the playbooks own s3-gatewayd.
+func (o ObjectStorage) Managed() bool { return o.Gateway == "managed" }
+
+func (o ObjectStorage) validate() Errors {
+	var errs Errors
+	switch o.Gateway {
+	case "", "off", "managed":
+	default:
+		errs = append(errs, Error{"object_storage.gateway", fmt.Sprintf("%q must be managed or off", o.Gateway)})
+	}
+	if o.Managed() && !filepath.IsAbs(o.ConfigSrc) {
+		errs = append(errs, Error{"object_storage.config_src", "must be an absolute controller path when the gateway is managed"})
+	}
+	if o.ProviderEnvSrc != "" && !filepath.IsAbs(o.ProviderEnvSrc) {
+		errs = append(errs, Error{"object_storage.provider_env_src", "must be an absolute controller path"})
+	}
+	if !o.Managed() && (o.ConfigSrc != "" || o.ProviderEnvSrc != "") {
+		errs = append(errs, Error{"object_storage.gateway", "must be managed when config_src or provider_env_src is set"})
+	}
+	if o.ComputeNodes && !o.Managed() {
+		errs = append(errs, Error{"object_storage.compute_nodes", "needs the managed gateway"})
+	}
+	if o.ComputeNodes && !filepath.IsAbs(o.GatewayProviderEnvSrc) {
+		errs = append(errs, Error{"object_storage.gateway_provider_env_src", "must be an absolute controller path when the gateway runs on compute nodes"})
+	}
+	if !o.ComputeNodes && o.GatewayProviderEnvSrc != "" {
+		errs = append(errs, Error{"object_storage.gateway_provider_env_src", "is used only with compute_nodes"})
+	}
+	return errs
+}
+
+// validateOnCompute checks what the gateway on compute nodes needs from the
+// rest of the manifest (ADR-20261031122757): the app edge runs there too, and
+// every compute host declares its port speed, from which its port share is
+// rendered.
+func (o ObjectStorage) validateOnCompute(edge PublicEdge, hosts []Host) Errors {
+	if !o.ComputeNodes {
+		return nil
+	}
+	var errs Errors
+	if !edge.ComputeNodes {
+		errs = append(errs, Error{"object_storage.compute_nodes", "needs public_edge.compute_nodes: the gateway's tunnel runs beside the app edge"})
+	}
+	for i, h := range hosts {
+		if h.Role == "compute-only" && (h.PortMbps < MinHostPortMbps || h.PortMbps > MaxHostPortMbps) {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].port_mbps", i), fmt.Sprintf("must be %d–%d Mbit/s when the object gateway runs on compute nodes", MinHostPortMbps, MaxHostPortMbps)})
+		}
+	}
+	return errs
+}
+
+// MinHostPortMbps and MaxHostPortMbps bound a host's declared port speed.
+const (
+	MinHostPortMbps = 100
+	MaxHostPortMbps = 100_000
+)
+
+// WorkloadIdentity names the directory `gregalectl workload-identity init`
+// wrote on the Ansible controller (ADR-1141 amendment 2026-10-24). Empty
+// leaves issuance off, which is the default.
+type WorkloadIdentity struct {
+	SourceDir string `yaml:"source_dir,omitempty"`
+}
+
+func (w WorkloadIdentity) validate() Errors {
+	if w.SourceDir == "" {
+		return nil
+	}
+	if !filepath.IsAbs(w.SourceDir) || strings.ContainsAny(w.SourceDir, "\"\\\n\r") {
+		return Errors{{"workload_identity.source_dir", "must be an absolute path on the Ansible controller, without quotes, backslashes or line breaks"}}
+	}
+	return nil
 }
 
 // Egress is the top-level egress-policy knob. PR scale-out
@@ -404,6 +517,10 @@ type Host struct {
 	// checks (e.g. `--role=compute-only` skips cert checks for the
 	// egress server leaf, which lives on the control-plane box).
 	Tags []string `yaml:"tags,omitempty"`
+	// PortMbps is the speed of the host's network port in Mbit/s. A compute
+	// host that runs the object gateway gets its share of it
+	// (ADR-20261031122757 §3); required there, unused elsewhere.
+	PortMbps int `yaml:"port_mbps,omitempty"`
 }
 
 // Daemons is the per-daemon configuration. Keys are daemon names;
@@ -488,8 +605,17 @@ type DaemonConfig struct {
 
 	// RateLimitLease is gatewayd-internal's [ratelimit] lease (ADR-1520):
 	// central counters are spent from local leases instead of one Postgres
-	// consult per request. Omitted renders false. Requires central mode.
+	// consult per request. Omitted keeps the Ansible default, true. Requires
+	// central mode.
 	RateLimitLease *bool `yaml:"ratelimit_lease,omitempty"`
+
+	// FrozenTierEarlyFreezeAfterS is schedd's
+	// frozen_tier_early_freeze_after_s (ADR-20261021215353): freeze a quiet
+	// between_requests instance this many seconds after its last request.
+	// Omitted renders nothing, which keeps schedd's default (0, off); 0
+	// turns it off explicitly, otherwise api.FrozenEarlyFreezeMinSeconds-
+	// api.FrozenEarlyFreezeMaxSeconds. It needs schedd's frozen tier on.
+	FrozenTierEarlyFreezeAfterS *int `yaml:"frozen_tier_early_freeze_after_s,omitempty"`
 
 	// GatewaySynthTarget is schedd's optional remote gatewayd-internal
 	// synthesis endpoint. It is separate from Outbound because schedd has
@@ -587,6 +713,17 @@ type DNS struct {
 	// consistency against the gatewayd-internal / apid / CLI
 	// running config.
 	AppsDomain string `yaml:"apps_domain"`
+	// PlatformDomain, DeployDomain, AppsDomainAliases and
+	// AppsDomainAliasMode split the layout (ADR-20261026100000): the site,
+	// dashboard and API hosts, the deployment-preview hosts, further apps
+	// domains that reach the same apps, and whether those serve or redirect.
+	// Empty keeps every host under apps_domain. manifest-ansible renders them
+	// as the faas_* variables the domain-layout drop-in and the public edge
+	// read.
+	PlatformDomain      string   `yaml:"platform_domain,omitempty"`
+	DeployDomain        string   `yaml:"deploy_domain,omitempty"`
+	AppsDomainAliases   []string `yaml:"apps_domain_aliases,omitempty"`
+	AppsDomainAliasMode string   `yaml:"apps_domain_alias_mode,omitempty"`
 	// Mode is the DNS provider ("cloudflare", "manual", "nip_io").
 	// The validator rejects values outside the supported set.
 	Mode string `yaml:"mode"`
@@ -1026,6 +1163,10 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Cgroups.validate()...)
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
+	errs = append(errs, m.ObjectStorage.validate()...)
+	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
+	errs = append(errs, m.LogArchive.validate()...)
+	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs
 	}
@@ -1386,6 +1527,14 @@ func (d *Daemons) validate() Errors {
 				errs = append(errs, Error{path + ".ratelimit_lease", fmt.Sprintf("requires ratelimit_mode central, got %q", dc.RateLimitMode)})
 			}
 		}
+		if dc.FrozenTierEarlyFreezeAfterS != nil {
+			if name != "schedd" {
+				errs = append(errs, Error{path + ".frozen_tier_early_freeze_after_s", "is only valid for schedd"})
+			} else if v := *dc.FrozenTierEarlyFreezeAfterS; v != 0 && (v < api.FrozenEarlyFreezeMinSeconds || v > api.FrozenEarlyFreezeMaxSeconds) {
+				errs = append(errs, Error{path + ".frozen_tier_early_freeze_after_s",
+					fmt.Sprintf("must be 0 or %d-%d, got %d", api.FrozenEarlyFreezeMinSeconds, api.FrozenEarlyFreezeMaxSeconds, v)})
+			}
+		}
 	}
 	return errs
 }
@@ -1456,6 +1605,8 @@ func (d *DNS) validate() Errors {
 	} else if !looksLikeHostname(d.AppsDomain) {
 		errs = append(errs, Error{"dns.apps_domain",
 			fmt.Sprintf("apps_domain %q must be a valid hostname (e.g. gregale.dev)", d.AppsDomain)})
+	} else if _, err := hostidentity.NewDomains(d.PlatformDomain, d.AppsDomain, d.DeployDomain, d.AppsDomainAliases, d.AppsDomainAliasMode); err != nil {
+		errs = append(errs, Error{"dns", err.Error()})
 	}
 	if d.Mode == "" {
 		errs = append(errs, Error{"dns.mode", "is required"})

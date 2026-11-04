@@ -250,7 +250,7 @@ func TestMCPStarterCapabilityReferenceFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got.Bytes(), want) {
-		t.Fatal("regenerate docs/mcp-capabilities.md with gregale mcp capabilities --markdown")
+		t.Fatal("regenerate docs/mcp-capabilities.md with gregale mcp server capabilities --markdown")
 	}
 }
 

@@ -63,11 +63,12 @@ func (s *server) getMCPInstanceHealth(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrValidation("host must be a hostname and optional port without a URL path"))
 		return
 	}
-	if s.gatewaydControlURL == "" {
+	controlURL := s.gatewayControlURL(r.Context())
+	if controlURL == "" {
 		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
 		return
 	}
-	endpoint, err := url.JoinPath(s.gatewaydControlURL, "v1", "internal", "apps", app.Slug, "mcp-health")
+	endpoint, err := url.JoinPath(controlURL, "v1", "internal", "apps", app.Slug, "mcp-health")
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
 		return

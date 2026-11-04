@@ -774,7 +774,9 @@ func (q *Queries) EventReceiptReplaySummaries(ctx context.Context, db DBTX, arg 
 }
 
 const eventReceiptReplayTarget = `-- name: EventReceiptReplayTarget :one
-SELECT a.id AS app_id FROM event_fanout_outbox o
+SELECT a.id AS app_id,
+       coalesce(o.recipient_progress -> (s.recipient->>'id') ->> 'delivery_id', '')::text AS delivery_id
+FROM event_fanout_outbox o
 CROSS JOIN LATERAL (
     SELECT recipient FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
     UNION ALL
@@ -791,11 +793,47 @@ type EventReceiptReplayTargetParams struct {
 	SubscriptionID string
 }
 
-func (q *Queries) EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (pgtype.UUID, error) {
+type EventReceiptReplayTargetRow struct {
+	AppID      pgtype.UUID
+	DeliveryID string
+}
+
+func (q *Queries) EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (EventReceiptReplayTargetRow, error) {
 	row := db.QueryRow(ctx, eventReceiptReplayTarget, arg.OutboxID, arg.AccountID, arg.SubscriptionID)
-	var app_id pgtype.UUID
-	err := row.Scan(&app_id)
-	return app_id, err
+	var i EventReceiptReplayTargetRow
+	err := row.Scan(&i.AppID, &i.DeliveryID)
+	return i, err
+}
+
+const eventReceiptScope = `-- name: EventReceiptScope :one
+SELECT coalesce(o.payload->>'producer', '')::text AS producer,
+       coalesce((SELECT jsonb_object_agg(s.recipient->>'id', s.recipient->>'app_id') FROM (
+           SELECT captured.recipient FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
+           UNION ALL
+           SELECT added.recipient FROM event_fanout_recipients added WHERE added.outbox_id=o.id AND added.receipt_position IS NOT NULL
+       ) s), '{}'::jsonb)::jsonb AS recipient_apps
+FROM event_fanout_outbox o
+WHERE o.account_id=$1::uuid AND o.source=$2::text AND o.event_id=$3::text
+`
+
+type EventReceiptScopeParams struct {
+	AccountID   pgtype.UUID
+	EventSource string
+	EventID     string
+}
+
+type EventReceiptScopeRow struct {
+	Producer      string
+	RecipientApps []byte
+}
+
+// The producer and each recipient's app, for company access on the account
+// routes (ADR-20261025211616).
+func (q *Queries) EventReceiptScope(ctx context.Context, db DBTX, arg EventReceiptScopeParams) (EventReceiptScopeRow, error) {
+	row := db.QueryRow(ctx, eventReceiptScope, arg.AccountID, arg.EventSource, arg.EventID)
+	var i EventReceiptScopeRow
+	err := row.Scan(&i.Producer, &i.RecipientApps)
+	return i, err
 }
 
 const eventRecipientBlockerTarget = `-- name: EventRecipientBlockerTarget :one
@@ -1043,15 +1081,15 @@ func (q *Queries) EventStorageLockAccount(ctx context.Context, db DBTX, accountI
 }
 
 const eventStoragePublicUsage = `-- name: EventStoragePublicUsage :one
-SELECT a.plan, coalesce(u.retained_events,0)::bigint AS retained_events,
-       coalesce(u.retained_bytes,0)::bigint AS retained_bytes, coalesce(u.pending_events,0)::bigint AS pending_events,
+SELECT a.plan, coalesce(r.retained_events,0)::bigint AS retained_events,
+       coalesce(r.retained_bytes,0)::bigint AS retained_bytes, coalesce(u.pending_events,0)::bigint AS pending_events,
        u.oldest_pending_at::timestamptz AS oldest_pending_at
 FROM accounts a
+LEFT JOIN event_receipt_usage r ON r.account_id=a.id
 LEFT JOIN LATERAL (
-    SELECT count(*)::bigint AS retained_events, coalesce(sum(o.customer_storage_bytes),0)::bigint AS retained_bytes,
-           count(*) FILTER (WHERE o.state <> 'delivered')::bigint AS pending_events,
-           min(o.created_at) FILTER (WHERE o.state <> 'delivered') AS oldest_pending_at
+    SELECT count(*)::bigint AS pending_events, min(o.created_at) AS oldest_pending_at
     FROM event_fanout_outbox o WHERE o.account_id=a.id AND o.customer_storage_bytes>0
+     AND (o.state='pending' OR o.state='processing')
 ) u ON true WHERE a.id=$1::uuid
 `
 
@@ -1063,6 +1101,8 @@ type EventStoragePublicUsageRow struct {
 	OldestPendingAt pgtype.Timestamptz
 }
 
+// Pending receipts are read through the pending and lease indexes, so the
+// account's settled history is not scanned.
 func (q *Queries) EventStoragePublicUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStoragePublicUsageRow, error) {
 	row := db.QueryRow(ctx, eventStoragePublicUsage, accountID)
 	var i EventStoragePublicUsageRow
@@ -1077,8 +1117,8 @@ func (q *Queries) EventStoragePublicUsage(ctx context.Context, db DBTX, accountI
 }
 
 const eventStorageUsage = `-- name: EventStorageUsage :one
-SELECT count(*)::bigint AS retained_events, coalesce(sum(customer_storage_bytes),0)::bigint AS retained_bytes
-FROM event_fanout_outbox WHERE account_id=$1::uuid AND customer_storage_bytes>0
+SELECT coalesce(max(retained_events),0)::bigint AS retained_events, coalesce(max(retained_bytes),0)::bigint AS retained_bytes
+FROM event_receipt_usage WHERE account_id=$1::uuid
 `
 
 type EventStorageUsageRow struct {
@@ -1086,6 +1126,8 @@ type EventStorageUsageRow struct {
 	RetainedBytes  int64
 }
 
+// ADR-20261023215834: the trigger-kept counts, not a scan of every
+// retained receipt under the account's admission lock.
 func (q *Queries) EventStorageUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStorageUsageRow, error) {
 	row := db.QueryRow(ctx, eventStorageUsage, accountID)
 	var i EventStorageUsageRow

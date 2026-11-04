@@ -3,6 +3,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,27 +149,70 @@ func TestConfig_LoadServerTLS(t *testing.T) {
 	}
 }
 
-func TestHostKeyPath_Precedence(t *testing.T) {
-	origIdentity := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH")
-	origKey := os.Getenv("FAAS_HOST_AGE_KEY")
-	defer func() {
-		os.Setenv("FAAS_HOST_AGE_IDENTITY_PATH", origIdentity)
-		os.Setenv("FAAS_HOST_AGE_KEY", origKey)
-	}()
-
-	os.Unsetenv("FAAS_HOST_AGE_IDENTITY_PATH")
-	os.Unsetenv("FAAS_HOST_AGE_KEY")
-	if got := hostKeyPath(); got != "/etc/faas/secrets/host.age" {
-		t.Errorf("default hostKeyPath() = %q, want /etc/faas/secrets/host.age", got)
+func TestLegacyKeyPath(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		env    map[string]string
+		staged bool
+		want   string
+	}{
+		{name: "default", want: "/etc/faas/secrets/host.age"},
+		{name: "host key", env: map[string]string{"FAAS_HOST_AGE_KEY": "/custom/key.age"}, want: "/custom/key.age"},
+		{name: "credential wins", env: map[string]string{"FAAS_HOST_AGE_KEY": "/custom/key.age", "FAAS_HOST_AGE_IDENTITY_PATH": "/credential/identity.age"}, want: "/credential/identity.age"},
+		{name: "domain staged beside the fleet key", env: map[string]string{"FAAS_HOST_AGE_IDENTITY_PATH": "/credential/identity.age"}, staged: true, want: "/credential/identity.age"},
+		// ADR 20261022111812: the contracted drop-in unsets both paths.
+		{name: "contracted", staged: true, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := legacyKeyPath(func(k string) string { return tc.env[k] }, tc.staged); got != tc.want {
+				t.Errorf("legacyKeyPath = %q, want %q", got, tc.want)
+			}
+		})
 	}
+}
 
-	os.Setenv("FAAS_HOST_AGE_KEY", "/custom/key.age")
-	if got := hostKeyPath(); got != "/custom/key.age" {
-		t.Errorf("FAAS_HOST_AGE_KEY hostKeyPath() = %q, want /custom/key.age", got)
+// githubd reads the TOML wire.Daemon's --config names, so a harness can move
+// its listeners off the production socket and port; without the flag it keeps
+// the production path.
+func TestGithubdConfigPathFollowsTheConfigFlag(t *testing.T) {
+	if flag.Lookup("config") == nil {
+		if got := githubdConfigPath(); got != "/etc/faas/githubd.toml" {
+			t.Fatalf("githubdConfigPath() = %q without the flag", got)
+		}
+		flag.String("config", "/etc/faas/githubd.toml", "")
 	}
+	f := flag.Lookup("config")
+	previous := f.Value.String()
+	t.Cleanup(func() { _ = f.Value.Set(previous) })
+	if err := f.Value.Set("/tmp/harness/githubd.toml"); err != nil {
+		t.Fatal(err)
+	}
+	if got := githubdConfigPath(); got != "/tmp/harness/githubd.toml" {
+		t.Fatalf("githubdConfigPath() = %q, want the flag's path", got)
+	}
+}
 
-	os.Setenv("FAAS_HOST_AGE_IDENTITY_PATH", "/credential/identity.age")
-	if got := hostKeyPath(); got != "/credential/identity.age" {
-		t.Errorf("FAAS_HOST_AGE_IDENTITY_PATH hostKeyPath() = %q, want /credential/identity.age", got)
+// adr: 570
+func TestLoadConfigAppsDomain(t *testing.T) {
+	for _, test := range []struct{ name, toml, env, want string }{
+		{"default", "", "", "gregale.dev"},
+		{"custom", `apps_domain = "apps.example.test"`, "", "apps.example.test"},
+		{"disabled", `apps_domain = ""`, "", ""},
+		{"env-overrides-toml", `apps_domain = "apps.example.test"`, "other.example.test", "other.example.test"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("FAAS_APPS_DOMAIN", test.env)
+			path := filepath.Join(t.TempDir(), "githubd.toml")
+			if err := os.WriteFile(path, []byte(test.toml), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.AppsDomain != test.want {
+				t.Fatalf("apps_domain=%q want=%q", cfg.AppsDomain, test.want)
+			}
+		})
 	}
 }

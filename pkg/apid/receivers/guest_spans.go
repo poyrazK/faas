@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -48,6 +50,12 @@ type GuestSpansIngester struct {
 	accounts guestSpansAccounts
 	limiter  *peraccount.Limiter
 	log      *slog.Logger
+	// logs, when set by WithLogs, ingests guest OTLP log exports (ADR-213
+	// runtime adapter); nil reports log exports unavailable.
+	logs *guestLogsIngester
+	// binding, when set by WithPeerNodes, accepts a mutual-TLS caller's
+	// frames only for instances on its node.
+	binding *guestBinding
 }
 
 func NewGuestSpansIngester(accounts guestSpansAccounts, limiter *peraccount.Limiter, log *slog.Logger) *GuestSpansIngester {
@@ -105,7 +113,7 @@ func (g *GuestSpansIngester) ingest(ctx context.Context, req *apidpb.IngestGuest
 	if taken, retryMs := g.limiter.Take(accountID, limits.DebugTelemetryRequestsPerMinute); !taken {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansRateLimited, RetryAfterMs: retryMs}
 	}
-	accepted, rejected, err := g.acc.AddOTLPTraceExport(accountID, contentType, contentEncoding, req.GetPayload(), api.TraceMaxDecodedBytes)
+	accepted, rejected, err := g.acc.AddOTLPTraceExport(accountID, string(limits.Plan), contentType, contentEncoding, req.GetPayload(), api.TraceMaxDecodedBytes)
 	if err != nil {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansInvalid}
 	}
@@ -124,11 +132,8 @@ func (g *GuestSpansIngester) Run(ctx context.Context, interval time.Duration, wr
 			return resp.GetOutcome(), resp.GetRetryAfterMs(), nil
 		},
 		Log: g.log,
-		// UpdateSpansSummary keeps the slowest Scale-tier maximum across all
-		// producers; per-trace volume is bounded upstream by the rate cap.
-		MaxSpansPerTrace: func(string) int {
-			return api.MustLimitsFor(api.PlanScale).DebugTelemetrySpansPerTrace
-		},
+		// Each trace is bounded by its account's plan (ingest passes it).
+		MaxSpansPerTrace: gateway.MaxSpansPerTraceForPlan,
 	})
 }
 
@@ -138,6 +143,13 @@ func (g *GuestSpansIngester) Run(ctx context.Context, interval time.Duration, wr
 func (r *spansWriterReceiver) IngestGuestSpans(ctx context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestSpansResponse, error) {
 	if !r.enabled || r.guest == nil {
 		return &apidpb.IngestGuestSpansResponse{Outcome: guestSpansUnavailable}, nil
+	}
+	refused, err := r.guest.bindToPeerNode(ctx, req)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "guest spans: %v", err)
+	}
+	if refused != "" {
+		return &apidpb.IngestGuestSpansResponse{Outcome: refused}, nil
 	}
 	return r.guest.ingest(ctx, req), nil
 }

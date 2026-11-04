@@ -24,12 +24,10 @@ func (s *server) slackOAuthService() (issueslack.OAuthService, bool) {
 		client = issueslack.NewClient(nil)
 	}
 	service := issueslack.OAuthService{Store: st, Client: client, Config: s.issueSlackOAuthConfig}
-	if setSecretRecipient != nil {
-		service.Recipient = setSecretRecipient()
-	}
-	if mfaIdentities != nil {
-		service.Identities = mfaIdentities()
-	}
+	// Slack tokens, signing secrets and consent flows are account values
+	// (ADR 20261022111812). No recipient leaves the service unconfigured.
+	service.Recipients, _ = accountRecipients(hostSecretRecipient())
+	service.Identities = accountIdentities()
 	return service, ok
 }
 func slackOAuthNonce(r *http.Request, value string) bool {
@@ -123,7 +121,7 @@ func (s *server) slackOAuthCallbackForAccount(w http.ResponseWriter, r *http.Req
 	defer cancel()
 	r = r.WithContext(ctx)
 	if r.URL.Query().Get("error") != "" {
-		_, _ = service.Store.ClaimIssueSlackOAuth(ctx, issueslack.OAuthStateHash(nonce), acct.ID)
+		_, _ = service.Claim(ctx, nonce, acct.ID)
 		setSlackOAuthCookie(w, "")
 		api.WriteProblem(w, api.ErrValidation("Slack authorization declined; restart consent when ready"))
 		return

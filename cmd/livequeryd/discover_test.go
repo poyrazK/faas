@@ -71,10 +71,20 @@ func TestDiscoveredDatabase(t *testing.T) {
 	if db, _ := discoveredDatabase(plain, ids, discovery{releaseAfter: time.Minute}); db.ReleaseAfter != 0 {
 		t.Error("released a database its provider cannot wake-check")
 	}
+	// Release 2 seals a login to its database's namespace; this release opens
+	// both that and the legacy unbound namespace apid still writes.
+	bound := row
+	bound.Sealed = sealLogin(t, identity, livekeys.LoginSealNamespaceFor(row.DatabaseID), "postgresql://live:pw@ep-a.neon.tech/neondb")
+	if db, err := discoveredDatabase(bound, ids, discovery{}); err != nil || db.DSN != "postgresql://live:pw@ep-a.neon.tech/neondb" {
+		t.Fatalf("database-bound login = %+v, %v", db, err)
+	}
 	for name, bad := range map[string]livekeys.LiveDatabase{
-		"a live key, not a login": {DatabaseID: row.DatabaseID, Sealed: sealLogin(t, identity, livekeys.SealNamespace, "glsk1_x")},
-		"another identity's":      {DatabaseID: row.DatabaseID, Sealed: sealLogin(t, stranger, livekeys.LoginSealNamespace, "postgresql://x")},
-		"a bad database ID":       {DatabaseID: "db/1", Sealed: sealLogin(t, identity, livekeys.LoginSealNamespace, "postgresql://x")},
+		"a login bound to another database": {DatabaseID: row.DatabaseID,
+			Sealed: sealLogin(t, identity, livekeys.LoginSealNamespaceFor("0a1b2c3d-0000-4000-8000-000000000001"), "postgresql://x")},
+		"a live key bound to this database": {DatabaseID: row.DatabaseID, Sealed: sealLogin(t, identity, livekeys.KeySealNamespaceFor(row.DatabaseID), "glsk1_x")},
+		"a live key, not a login":           {DatabaseID: row.DatabaseID, Sealed: sealLogin(t, identity, livekeys.SealNamespace, "glsk1_x")},
+		"another identity's":                {DatabaseID: row.DatabaseID, Sealed: sealLogin(t, stranger, livekeys.LoginSealNamespace, "postgresql://x")},
+		"a bad database ID":                 {DatabaseID: "db/1", Sealed: sealLogin(t, identity, livekeys.LoginSealNamespace, "postgresql://x")},
 	} {
 		if _, err := discoveredDatabase(bad, ids, discovery{}); err == nil {
 			t.Errorf("%s: opened", name)

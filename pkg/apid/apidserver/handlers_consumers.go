@@ -185,40 +185,6 @@ func (s *server) listConsumerKeys(w http.ResponseWriter, r *http.Request, acct s
 	writeJSON(w, http.StatusOK, api.ConsumerKeyListResponse{Keys: out})
 }
 
-func (s *server) countConsumerKeys(ctx context.Context, acctID, appID string) (int, error) {
-	rows, err := s.store.ListConsumerKeysForApp(ctx, acctID, appID)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, row := range rows {
-		if row.RevokedAt == nil {
-			count++
-		}
-	}
-	return count, nil
-}
-
-func (s *server) countAccountConsumerKeys(ctx context.Context, acctID string) (int, error) {
-	apps, err := s.store.ListApps(ctx, acctID)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, app := range apps {
-		rows, err := s.store.ListConsumerKeysForApp(ctx, acctID, app.ID)
-		if err != nil {
-			return 0, err
-		}
-		for _, row := range rows {
-			if row.RevokedAt == nil {
-				count++
-			}
-		}
-	}
-	return count, nil
-}
-
 // consumerKeyScopesProblem trims scopes in place and rejects unknown or
 // repeated ones. The billing scope only reaches API monetization's
 // self-service routes, so it is not offered until monetization is released
@@ -291,33 +257,26 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 
 // issueConsumerKey creates a key for an active consumer within the plan's
 // per-app and per-account key quotas and returns its plaintext once. The
-// owner's key route and consumer sign-up (ADR-20261021143000) share it.
+// owner's key route and consumer sign-up (ADR-20261021143000) share it. The
+// store counts the quotas and inserts the key in one step: the per-account
+// allowance belongs to the app's billing subject (ADR-202610171904), and
+// concurrent issues must not each see the last free slot.
 func (s *server) issueConsumerKey(ctx context.Context, acct state.Account, c state.APIConsumer, name string, scopes []string,
 	expiresAt *time.Time) (state.ConsumerKey, string, *api.Problem) {
-	appCount, err := s.countConsumerKeys(ctx, acct.ID, c.AppID)
-	if err != nil {
-		return state.ConsumerKey{}, "", api.ErrInternal("could not count consumer keys")
-	}
-	if appCount >= acct.Plan.ConsumerKeysPerApp() {
-		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeApp, acct.Plan.ConsumerKeysPerApp(), appCount)
-	}
-	accountCount, err := s.countAccountConsumerKeys(ctx, acct.ID)
-	if err != nil {
-		return state.ConsumerKey{}, "", api.ErrInternal("could not count account consumer keys")
-	}
-	if accountCount >= acct.Plan.ConsumerKeysPerAccount() {
-		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeAccount, acct.Plan.ConsumerKeysPerAccount(), accountCount)
-	}
 	plaintext, prefix, hash, err := api.GenerateConsumerKey()
 	if err != nil {
 		return state.ConsumerKey{}, "", api.ErrInternal("could not generate consumer key")
 	}
-	k, err := s.store.CreateConsumerKeyForConsumer(ctx, acct.ID, c.ID, name, prefix, hash, scopes, expiresAt)
-	if err != nil {
-		if errors.Is(err, state.ErrConflict) {
-			return state.ConsumerKey{}, "", api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Consumer key already exists", "a key with this name or generated prefix already exists for the app")
-		}
+	quota := state.ConsumerKeyQuota{PerApp: acct.Plan.ConsumerKeysPerApp(), PerAccount: acct.Plan.ConsumerKeysPerAccount()}
+	k, err := s.store.CreateConsumerKeyForConsumerIfUnderQuota(ctx, acct.ID, c.ID, name, prefix, hash, scopes, expiresAt, quota)
+	var exceeded *state.ConsumerKeyQuotaError
+	switch {
+	case errors.As(err, &exceeded):
+		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, exceeded.Scope, exceeded.Limit, exceeded.Observed)
+	case errors.Is(err, state.ErrConflict):
+		return state.ConsumerKey{}, "", api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Consumer key already exists", "a key with this name or generated prefix already exists for the app")
+	case err != nil:
 		return state.ConsumerKey{}, "", api.ErrInternal("could not create consumer key")
 	}
 	s.audit.Emit(ctx, "consumer_key.created", &acct.ID, map[string]any{

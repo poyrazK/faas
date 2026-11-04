@@ -94,6 +94,26 @@ git -C "$with_conformance" commit -q -m 'fix: guard the regression'
 make_event "$with_conformance" 'ci: enforce regression tests' '' '[]'
 expect_pass 'fix commit with a conformance case' "$with_conformance"
 
+# SDK fixes are tested in the SDK's language (Hunt 14 H14-91).
+with_sdk_test="$test_root/with-sdk-test"
+git_init "$with_sdk_test"
+mkdir -p "$with_sdk_test/sdk/node/src" "$with_sdk_test/sdk/node/test"
+printf 'export const x = 1;\n' > "$with_sdk_test/sdk/node/src/errors.ts"
+printf 'import test from "node:test";\n' > "$with_sdk_test/sdk/node/test/errors.test.ts"
+git -C "$with_sdk_test" add sdk
+git -C "$with_sdk_test" commit -q -m 'fix(sdk/node): map problems'
+make_event "$with_sdk_test" 'fix(sdk/node): map problems' '' '[]'
+expect_pass 'fix commit with a Node SDK test' "$with_sdk_test"
+
+without_sdk_test="$test_root/without-sdk-test"
+git_init "$without_sdk_test"
+mkdir -p "$without_sdk_test/sdk/node/src"
+printf 'export const x = 1;\n' > "$without_sdk_test/sdk/node/src/errors.ts"
+git -C "$without_sdk_test" add sdk
+git -C "$without_sdk_test" commit -q -m 'fix(sdk/node): map problems'
+make_event "$without_sdk_test" 'fix(sdk/node): map problems' '' '[]'
+expect_fail 'production TypeScript is not a regression test' "$without_sdk_test"
+
 # A fix-shaped PR with no test fails, even when the title itself is neutral.
 without_test="$test_root/without-test"
 git_init "$without_test"

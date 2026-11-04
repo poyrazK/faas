@@ -1,2 +1,2 @@
 // TypeScript resolves the browser route to the packed SDK's published types.
-export * from '@gregale/sdk-node/operations';
+export * from '@gregale/sdk-node/preview/operations';

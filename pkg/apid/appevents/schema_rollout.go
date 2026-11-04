@@ -39,6 +39,38 @@ func (s *Service) PreviewEventSchemaRollout(w http.ResponseWriter, r *http.Reque
 	case err != nil:
 		api.WriteProblem(w, api.ErrInternal("schema rollout preview"))
 	default:
+		if err := s.hideRolloutConsumers(ctx, acct, &out); err != nil {
+			api.WriteProblem(w, api.ErrInternal("schema rollout preview"))
+			return
+		}
 		httpkit.WriteJSON(w, http.StatusOK, out)
 	}
+}
+
+// hideRolloutConsumers drops the consumers on apps the caller may not see,
+// and their counts (ADR-20261025211616), as the event preview does.
+func (s *Service) hideRolloutConsumers(ctx context.Context, acct state.Account, out *api.EventSchemaRolloutResponse) error {
+	access, err := s.eventAccess(ctx, acct)
+	if err != nil {
+		return err
+	}
+	kept := out.Consumers[:0]
+	for _, consumer := range out.Consumers {
+		visible, err := access.app(consumer.AppID)
+		if err != nil {
+			return err
+		}
+		if visible {
+			kept = append(kept, consumer)
+			continue
+		}
+		out.ConsumerCount--
+		if consumer.AcceptsVersion {
+			out.AcceptingCount--
+		} else {
+			out.ExcludingCount--
+		}
+	}
+	out.Consumers = kept
+	return nil
 }

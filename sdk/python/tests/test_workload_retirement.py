@@ -1,7 +1,7 @@
 """Reviewed workload identities and retirement progress survive SDK transport."""
 
-from faas_sdk.models.environment_definition import EnvironmentDefinition
-from faas_sdk.models.environment_workload_retirement import EnvironmentWorkloadRetirement
+from faas_sdk.preview.models.environment_definition import EnvironmentDefinition
+from faas_sdk.preview.models.environment_workload_retirement import EnvironmentWorkloadRetirement
 
 
 def test_reviewed_workload_recovery_round_trip():

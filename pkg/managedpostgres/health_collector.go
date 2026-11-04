@@ -71,6 +71,7 @@ func NewHealthCollector(registry *Registry, store HealthStore, options HealthCol
 }
 
 func (c *HealthCollector) Sweep(ctx context.Context) (summary HealthCollectionSummary, sweepErr error) {
+	ctx = WithBackgroundRequests(ctx)
 	summary.Enabled, summary.StaleAfter = c.policy.Enabled, c.policy.StaleAfter
 	defer func() {
 		if c.options.ObserveSweep != nil {
@@ -191,6 +192,7 @@ func (c *HealthCollector) observe(ctx context.Context, database Database) Health
 	}
 	result.ProviderStatus, result.ComputeState = string(observed.Status), observed.ComputeState
 	result.Succeeded = true
+	observed.Spec = SpecForObservation(database.Spec, observed.Spec)
 	if observed.Status == ProviderStatusFailed {
 		result.LastErrorCode = "provider_failed"
 	}

@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateExport} from '../export.mjs';
 import {createExportServer} from '../server.mjs';
-import {GregaleOperationClient, GregaleOperationSession} from '@gregale/sdk-node/operations';
-import {GregaleOperations} from '@gregale/sdk-node/operations/runtime';
+import {GregaleOperationClient, GregaleOperationSession} from '@gregale/sdk-node/preview/operations';
+import {GregaleOperations} from '@gregale/sdk-node/preview/operations/runtime';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const config = {apiURL: 'https://api.example.test', appID: id, scope: 'default', definitionID: id};

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { OpenAPI, runBindingVerification, runProjectBindingVerification, BindingVerificationRecoveryError } from '../src/index.js';
-import type { BindingVerificationRun, BindingVerificationRunStep, ProjectBindingVerificationRun, BindingVerificationRunnerOptions, BindingVerificationProgress } from '../src/index.js';
+import { OpenAPI, runBindingVerification, runProjectBindingVerification, BindingVerificationRecoveryError } from '../src/preview.js';
+import type { BindingVerificationRun, BindingVerificationRunStep, ProjectBindingVerificationRun, BindingVerificationRunnerOptions, BindingVerificationProgress } from '../src/preview.js';
 
 type Scenario={name:string;compact?:boolean;graph?:boolean;actions:string[];concurrency?:number;fault?:string;resume?:boolean;passed:boolean;admits:number};
 const scenarios=JSON.parse(readFileSync(new URL('../../../binding-runner-tests/contracts.json',import.meta.url),'utf8')).cases as Scenario[];
@@ -96,7 +96,7 @@ test('abort while awaiting progress preserves graph resources',async()=>{
 });
 
 for(const fault of ['budget_after_admit','capacity'])test(`wrapped client handles ${fault}`,async()=>{
- const {FaaSClient}=await import('../src/index.js');
+ const {FaaSClient}=await import('../src/preview.js');
  const oldFetch=globalThis.fetch,oldBase=OpenAPI.BASE,f=fixture({name:'wrapped-budget',graph:true,actions:['probe','queue-canary'],fault,passed:fault!=='capacity',admits:fault==='capacity'?0:2});
  const expiry=f.root.expires_at;
  const client=new FaaSClient('https://api.invalid',{fetch:f.fetch,retry:{maxAttempts:0,backoffMs:0}});

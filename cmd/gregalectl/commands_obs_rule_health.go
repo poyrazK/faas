@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +17,7 @@ import (
 func cmdObsRuleHealth(args []string) int {
 	fs := flag.NewFlagSet(subObsRuleHealth, flag.ContinueOnError)
 	fs.SetOutput(osStderr)
-	token := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	token := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
@@ -28,16 +27,13 @@ func cmdObsRuleHealth(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs rule-health: no positional arguments and a positive timeout required")
 		return 2
 	}
-	if *token == "" {
-		*token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if *token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs rule-health: admin token required")
+	cred, ok := resolveObsCredential("obs rule-health", *token)
+	if !ok {
 		return 2
 	}
 	var out api.ObsRuleHealthResponse
 	client := &http.Client{Timeout: *timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	if err := fetchObsBundleSection(context.Background(), client, apidBase()+operatorobs.RuleHealthPath, *token, subObsRuleHealth, &out); err != nil {
+	if err := fetchObsBundleSection(context.Background(), client, apidBase()+operatorobs.RuleHealthPath, cred, subObsRuleHealth, &out); err != nil {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl obs %v\n", err)
 		return 1
 	}

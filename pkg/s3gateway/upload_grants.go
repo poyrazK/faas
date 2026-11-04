@@ -43,6 +43,10 @@ func UploadGrantURL(endpoint, bucket, key, token string) (string, error) {
 }
 
 func (h *Handler) serveUploadGrant(w http.ResponseWriter, r *http.Request, requestID string) {
+	if !h.uploadGrants {
+		writeS3Error(w, 403, "AccessDenied", "The upload grant is invalid.", r.URL.Path, requestID)
+		return
+	}
 	store, ok := h.store.(state.ObjectUploadGrantStore)
 	if !ok {
 		writeS3Error(w, 503, "ServiceUnavailable", "Upload grants are unavailable.", r.URL.Path, requestID)
@@ -61,6 +65,9 @@ func (h *Handler) serveUploadGrant(w http.ResponseWriter, r *http.Request, reque
 	}
 	if !validUploadGrantRequest(r, g) || !g.ExpiresAt.After(h.now()) {
 		writeS3Error(w, 403, "AccessDenied", "The request does not match this upload grant.", r.URL.Path, requestID)
+		return
+	}
+	if !h.applyBucketCORS(w, r, g.Bucket, requestID) {
 		return
 	}
 	backend, err := h.registry.Resolve(g.Bucket.BackendID, g.Bucket.BackendFingerprint)

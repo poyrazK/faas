@@ -42,6 +42,10 @@ type Runner struct {
 	Concurrency int
 	Log         *slog.Logger
 	Now         func() time.Time
+	// Released decides whether a due check is still probed: its account's
+	// plan and the synthetic-checks capability flag (ADR-20261028101615).
+	// nil probes every due check.
+	Released func(ctx context.Context, check state.RunnableSyntheticCheck) bool
 }
 
 // NewClient returns the probe client: no redirects (a 3xx is the result),
@@ -64,7 +68,9 @@ func NewClient() *http.Client {
 // RunStats summarises one pass.
 type RunStats struct {
 	Due, OK, Failed, RecordErrors int
-	Purged                        int64
+	// NotReleased counts due checks not probed because Released refused them.
+	NotReleased int
+	Purged      int64
 }
 
 // RunOnce runs every due check once and purges runs past retention.
@@ -77,9 +83,14 @@ func (r *Runner) RunOnce(ctx context.Context) (RunStats, error) {
 	}
 	var due []state.RunnableSyntheticCheck
 	for _, c := range checks {
-		if Due(c, now) {
-			due = append(due, c)
+		if !Due(c, now) {
+			continue
 		}
+		if r.Released != nil && !r.Released(ctx, c) {
+			stats.NotReleased++
+			continue
+		}
+		due = append(due, c)
 	}
 	stats.Due = len(due)
 	var mu sync.Mutex

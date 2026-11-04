@@ -198,3 +198,23 @@ Three unit tests pin the shape:
 - **Pre-claim at createApp via a synchronous schedd RPC.** Rejected:
   makes apid depend on schedd reachability at write time; the
   notify-driven async path keeps the control plane decoupled.
+## Amendment 2 — Placement reads fleet-wide vCPU bookings (2026-10-26)
+
+"vCPU placement input: ledger-only `usedVCPU`" predates owner schedds
+placing on each other's nodes. A schedd's ledger books only the instances
+of the apps it owns, so on a node shared by several owners it undercounted
+the node's vCPU budget and placed onto a node whose budget other owners had
+filled. Physical CPU millicores already read the store's fleet-wide
+aggregate for this reason.
+
+Placement now takes the larger of the ledger's vCPU booking and the store's
+(`ComputeNodeVCPUUsageBatcher`: Σ `instances.capacity_vcpu` over live rows,
+which `capture_instance_capacity` stamps from the plan on every insert),
+then applies the quiet-pause discount as before. `Admit`'s vCPU check stays
+ledger-local and there is still no durable vCPU guard (ADR-193). Two owners
+choosing the same node at the same moment can still overbook it until their
+rows land; vCPU overbooking costs latency, not memory. Pending migration
+reservations carry no vCPU column and are not in the store figure.
+
+Test: `TestPlacementCountsAnotherOwnersVCPUs`; the store aggregate is
+pinned by `checkNodeVCPUUsage` on MemStore and PostgreSQL.

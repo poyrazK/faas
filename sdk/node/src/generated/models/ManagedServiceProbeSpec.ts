@@ -26,7 +26,7 @@ export type ManagedServiceProbeSpec = {
   release_id: string;
   context_revision: string;
   /**
-   * Caller transport the probe verifies (ADR-20261019200059). Absent means the original HTTPS probe; `http` probes the caller's plaintext `.svc.gregale` URL.
+   * Caller transport the probe verifies. Absent means the original HTTPS probe; `http` probes the caller's plaintext `.svc.gregale` URL.
    */
   transport?: ServiceBindingTransport;
 };

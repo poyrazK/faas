@@ -2,9 +2,9 @@ import json
 
 import httpx
 
-from faas_sdk.api.workflows import get_automation_revision, list_automation_revisions, restore_automation_revision
+from faas_sdk.preview.api.workflows import get_automation_revision, list_automation_revisions, restore_automation_revision
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.restore_automation_revision_request import RestoreAutomationRevisionRequest
+from faas_sdk.preview.models.restore_automation_revision_request import RestoreAutomationRevisionRequest
 
 
 def test_revision_history_and_restore_requests():

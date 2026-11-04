@@ -1,12 +1,36 @@
 package polar
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
 )
+
+// IsTransient reports whether err is a Polar or network failure a later
+// attempt can clear: a timeout, a connection failure, HTTP 429 or a 5xx.
+// Catalog validation failures, a missing access token and other HTTP 4xx
+// answers are configuration (ADR-20261031100000).
+func IsTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ae *APIError
+	if errors.As(err, &ae) {
+		return ae.Status == 429 || ae.Status >= 500
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return true
+	}
+	var ue *url.Error
+	return errors.As(err, &ue)
+}
 
 var (
 	ErrNoAPIKey          = errors.New("polar: access token not configured")

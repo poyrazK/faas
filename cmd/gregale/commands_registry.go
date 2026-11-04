@@ -58,9 +58,7 @@ func cmdRegistry(args []string) int {
 		return cmdRegistryPublished(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown registry subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "registry", parent, args[0])
 }
 
 // cmdRegistryList implements `gregale registry list --app <slug>`
@@ -188,7 +186,7 @@ func cmdRegistryRm(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale registry rm --app <slug> --registry <h>", "registry")
+		PrintUsage(os.Stderr, "usage: gregale registry delete --app <slug> --registry <h>", "registry")
 		return 1
 	}
 	registryAPI, normErr := registryInputForAPI(*registry)

@@ -11,8 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -49,13 +52,13 @@ func run() error {
 	defer db.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	var result faas.OperationTransactionResult
+	var result preview.OperationTransactionResult
 	if req.Header.Get("X-Gregale-Customer-Operation-Receipt-Version") != "" {
-		input, parseErr := faas.CustomerOperationRequestFromHTTP(req, body)
+		input, parseErr := preview.CustomerOperationRequestFromHTTP(req, body)
 		if parseErr != nil {
 			return parseErr
 		}
-		result, err = faas.WithCustomerOperationTransaction(ctx, db, input, func(tx faas.OperationSQLTransaction) (json.RawMessage, error) {
+		result, err = preview.WithCustomerOperationTransaction(ctx, db, input, func(tx preview.OperationSQLTransaction) (json.RawMessage, error) {
 			if os.Getenv("OPERATION_MODE") != "write" {
 				return nil, fmt.Errorf("cross SDK receipt callback reran")
 			}
@@ -63,19 +66,19 @@ func run() error {
 			return json.RawMessage(`{"file":"ready.csv","value":9007199254740993,"wide":1e400,"label":"π <>&"}`), err
 		})
 	} else {
-		input, parseErr := faas.OperationRequestFromHTTP(req, body)
+		input, parseErr := preview.OperationRequestFromHTTP(req, body)
 		if parseErr != nil {
 			return parseErr
 		}
-		result, err = faas.WithOperationTransaction(ctx, db, input, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+		result, err = preview.WithOperationTransaction(ctx, db, input, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 			if os.Getenv("OPERATION_MODE") != "write" {
-				return faas.OperationOutcome{}, fmt.Errorf("cross SDK receipt callback reran")
+				return preview.OperationOutcome{}, fmt.Errorf("cross SDK receipt callback reran")
 			}
 			_, err := tx.ExecContext(ctx, "UPDATE business.counter SET total=total+1 WHERE id=1")
 			// Valid JSON whose wire size and numbers cannot be reconstructed from a
 			// JavaScript/Python float. The saved payload remains below 64 KiB.
 			payload := `{"wide":1e400,"integer":1` + strings.Repeat("0", 5000) + `,"values":[` + strings.Repeat("1e1,", 14990) + "1e1]}"
-			return faas.OperationOutcome{Result: json.RawMessage(`{"value":9007199254740993,"label":"π <>&"}`), Effects: []faas.ManagedOperationEffect{{Name: "notify", WebhookID: "cccbbbaa-3333-4333-8333-cccccccccccc", Type: "order.fulfilled", Payload: json.RawMessage(payload)}}}, err
+			return preview.OperationOutcome{Result: json.RawMessage(`{"value":9007199254740993,"label":"π <>&"}`), Effects: []faas.ManagedOperationEffect{{Name: "notify", WebhookID: "cccbbbaa-3333-4333-8333-cccccccccccc", Type: "order.fulfilled", Payload: json.RawMessage(payload)}}}, err
 		})
 	}
 	if err != nil {

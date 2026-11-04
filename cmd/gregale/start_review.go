@@ -20,5 +20,5 @@ func (r *startRunner) renderAllowance(existing bool) {
 		_, _ = fmt.Fprintf(osStdout, "  Compute  %.2f/%d included GB-h used\n", r.account.UsageGBHours, limits.IncludedGBHours)
 	}
 	_, _ = fmt.Fprintln(osStdout, "  Billing  Normal plan limits apply. Eligible idle apps park and wake on the next request.")
-	_, _ = fmt.Fprintf(osStdout, "  Usage    gregale usage · %s/dashboard/usage\n", dashboardBaseURL(r.session.APIBase))
+	_, _ = fmt.Fprintf(osStdout, "  Usage    gregale billing usage · %s/dashboard/usage\n", dashboardBaseURL(r.session.APIBase))
 }

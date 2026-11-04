@@ -4,13 +4,13 @@ from uuid import UUID
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.projects import (
+from faas_sdk.preview.api.projects import (
     list_environment_git_releases,
     preview_environment_git_plan,
     preview_environment_git_promotion,
     preview_environment_git_rollback,
 )
-from faas_sdk.models import (
+from faas_sdk.preview.models import (
     PreviewEnvironmentGitPromotionRequest,
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRollbackRequest,
@@ -18,7 +18,7 @@ from faas_sdk.models import (
 
 
 def test_built_artifact_reference_round_trip_keeps_typed_provenance() -> None:
-    from faas_sdk.models import EnvironmentGitPromotionArtifact, EnvironmentWorkloadSource
+    from faas_sdk.preview.models import EnvironmentGitPromotionArtifact, EnvironmentWorkloadSource
 
     artifact_id = "018f22b4-1d51-7d55-a5d8-fdc06ec7c663"
     source = {

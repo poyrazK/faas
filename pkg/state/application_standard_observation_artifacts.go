@@ -49,8 +49,15 @@ func standardObservationSnapshot(r ApplicationStandardSnapshotCaptureRecord, cur
 	if err != nil || !matches {
 		return "snapshot_inputs_stale"
 	}
+	// The producer is the process the capture was acknowledged from: after a
+	// re-bind its parent's receipt still names the issuer (ADR-595
+	// extension, open question 3).
+	producer := r.ProducerIncarnation
+	if producer == "" {
+		producer = b.Incarnation
+	}
 	for _, n := range roster.Nodes {
-		if n.NodeID == b.NodeID && n.Present && n.Active && n.HeartbeatFresh && n.Role != "control-plane" && n.NativeIncarnation == b.Incarnation && n.NativeProtocol == runtimeadmission.ArtifactProtocolVersion {
+		if n.NodeID == b.NodeID && n.Present && n.Active && n.HeartbeatFresh && n.Role != "control-plane" && n.NativeIncarnation == producer && n.NativeProtocol == runtimeadmission.ArtifactProtocolVersion {
 			return ""
 		}
 	}

@@ -162,7 +162,7 @@ func previewParentFilter(explicit string) (string, error) {
 
 func cmdPreviewShow(args []string) int {
 	if len(args) != 1 {
-		PrintUsage(osStderr, "usage: gregale preview show <preview-slug>", "preview")
+		PrintUsage(osStderr, "usage: gregale preview get <preview-slug>", "preview")
 		return 1
 	}
 	client, err := authedClient()

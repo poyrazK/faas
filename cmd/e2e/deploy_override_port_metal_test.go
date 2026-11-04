@@ -1,17 +1,17 @@
 //go:build metal
 
 // deploy_override_port_metal_test.go — issue #460 / ADR-053 PR-C
-// acceptance: deploy with `Overrides.Port=9090`, wake, and assert
-// the gateway response is served from the override port. The test
+// acceptance: deploy a source tree that declares port 9090, wake, and
+// assert the gateway response is served from that port. The test
 // stands up its own harness + fake registry so the override-port
 // fixture doesn't interfere with the 100-cycle wake-latency loop
 // in TestDeployWakeMetal (which targets the legacy :3000 fixture).
 //
-// Why the test stands up its own harness: PR-C's PathOfWire is
+// Why the test stands up its own harness: the port's PathOfWire is
 //
-//	fargate POST /v1/apps/{slug}/deployments
-//	  with Overrides.Port=9090
-//	    → deployments.override_port = 9090
+//	multipart POST /v1/apps/{slug}/deployments
+//	  with gregale.yaml hosting.port: 9090
+//	    → deployments.inferred_profile port = 9090
 //	    → imaged writes app.json with Port = 9090
 //	    → schedd's spec.Port = 9090
 //	    → vmmd CreateFromSnapshot/ColdBoot ports Port to
@@ -48,19 +48,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestDeployOverridePortMetal issues a single deploy with
-// Overrides.Port=9090, waits for the deployment to reach Live and
-// an instance to park, then sends one GET through the gateway and
-// asserts the runner served the request on :9090. The check is
+// TestDeployOverridePortMetal issues a single deploy of a source tree
+// that declares hosting.port: 9090, waits for the deployment to reach
+// Live and an instance to park, then sends one GET through the gateway
+// and asserts the runner served the request on :9090. The check is
 // content-driven: the response body includes "override-port:9090",
 // proving the platform contract ran end-to-end.
 //
 // The fixture (NodeFixturePort) reads `PORT` env var — guest-init
 // stamps it from m.EffectivePort(); the vmmd bridge then dials
-// 10.0.0.2:9090. If any seam drops Port, the bridge either dials
-// :8080 (silently 503s on a guest bound on :9090) or 500s when the
-// guest's portnorm ladder fails to find anything on :8080. Both
-// surface here.
+// 10.0.0.2:9090. If any seam drops Port, the bridge dials another
+// port and the deployment fails readiness (app_not_listening names
+// both ports).
 func TestDeployOverridePortMetal(t *testing.T) {
 	if !metalAvailable(t) {
 		return
@@ -112,18 +111,12 @@ func TestDeployOverridePortMetal(t *testing.T) {
 	}
 	appID := mustGetAppID(t, h, key, slug)
 
-	// Multipart deploy via builderd (same path build_metal_test uses)
-	// — the fixture's source tarball carries index.js that reads PORT
-	// from env, and the multipart form carries Overrides.Port=9090.
-	// The override payload: Port=9090 + a redundant env override
-	// (PORT=9090) — the platform contract still wins because
-	// guest-init appends PORT AFTER BuildEnvWithSecrets (see
-	// guest/init/main_linux.go::runAppWithEnv).
+	// Multipart deploy via builderd (same path build_metal_test uses).
+	// A source upload takes no request overrides (ADR-053): the fixture
+	// declares hosting.port: 9090 in gregale.yaml, and its index.js
+	// reads PORT from env.
 	src := NodeFixturePort(t)
-	raw, status := postMultipartDeploymentWithOverrides(t, h, key, slug, src, false, &api.CreateDeploymentOverrides{
-		Port: 9090,
-		Env:  map[string]string{"PORT": "9090"},
-	}, "")
+	raw, status := postMultipartDeploymentWithFields(t, h, key, slug, src, false, nil, "")
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)
 	}
@@ -132,12 +125,8 @@ func TestDeployOverridePortMetal(t *testing.T) {
 	// Wait for parked → live.
 	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
-	dep, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
-	if err != nil {
+	if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
-	}
-	if dep.OverridePort != 9090 {
-		t.Errorf("OverridePort = %d, want 9090 (PR-A persisted value)", dep.OverridePort)
 	}
 	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 90*time.Second); err != nil {
 		t.Fatalf("no parked instance: %v", err)

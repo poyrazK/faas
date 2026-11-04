@@ -47,4 +47,15 @@ func TestLoadConfig_NodeNameEnvOverlay(t *testing.T) {
 	if cfg.NodeName != "" {
 		t.Errorf("default NodeName = %q, want empty (single-box dev)", cfg.NodeName)
 	}
+
+	// Without a TOML file the env still names the node, as it does the
+	// role and the app-errors TLS paths.
+	t.Setenv("FAAS_NODE_NAME", "from-env-no-toml")
+	cfg, err = apidserver.LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.NodeName != "from-env-no-toml" {
+		t.Errorf("NodeName (env, no TOML) = %q, want from-env-no-toml", cfg.NodeName)
+	}
 }

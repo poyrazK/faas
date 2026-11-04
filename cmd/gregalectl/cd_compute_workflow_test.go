@@ -546,3 +546,57 @@ func TestCDComputeWorkflowVerifiesHostingSmokeTenantRouting(t *testing.T) {
 		t.Fatal("compute hosting-smoke drop-in does not render the tenant apps domain")
 	}
 }
+
+// TestCDPlatformRunsANodeCanaryBeforeTheNextNode: rc.301's fsn-2 passed every
+// configuration and reachability gate while its builderd failed every build,
+// and only an operator's hold kept fsn-3 on the old release. cd-platform's
+// serial activation legs now each end with a canary that deploys through
+// production ingress until the node serves and has built an app, after the
+// last reachability gate and through a CP host key pinned in
+// COMPUTE_KNOWN_HOSTS. Prepare legs and standalone repair dispatches skip it.
+func TestCDPlatformRunsANodeCanaryBeforeTheNextNode(t *testing.T) {
+	workflow := readWorkflow(t, "cd-compute.yml")
+	if !strings.Contains(workflow, "      node_canary:\n") {
+		t.Fatal("cd-compute has no node_canary input")
+	}
+	gatewayGate := strings.Index(workflow, "- name: Verify private compute gateway reachability")
+	canary := strings.Index(workflow, "- name: Prove the activated node serves and builds through production ingress")
+	identity := strings.Index(workflow, "- name: Show post-join identity without exposing secrets")
+	if gatewayGate < 0 || canary < 0 || identity < 0 || !(gatewayGate < canary && canary < identity) {
+		t.Fatalf("node canary must follow the reachability gates: gateway=%d canary=%d identity=%d", gatewayGate, canary, identity)
+	}
+	step := workflow[canary:identity]
+	for _, want := range []string{
+		"if: inputs.rollout_phase != 'prepare' && inputs.node_canary",
+		"timeout-minutes: 25",
+		`<<<"$COMPUTE_KNOWN_HOSTS"`,
+		"-o StrictHostKeyChecking=yes",
+		"ACCEPTANCE_NODE='${NODE}'",
+		"RELEASE_SHA='${RELEASE_ID}'",
+		`<"$script"`,
+		"predates the per-node canary",
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("node canary step is missing %q", want)
+		}
+	}
+	if strings.Contains(step, "StrictHostKeyChecking=no") {
+		t.Error("node canary must not trust the control-plane host key on first use")
+	}
+
+	platform := readWorkflow(t, "cd-platform.yml")
+	compute := strings.Index(platform, "\n  compute:\n")
+	verify := strings.Index(platform, "\n  verify:\n")
+	if compute < 0 || verify < 0 || !strings.Contains(platform[compute:verify], "node_canary: true") {
+		t.Fatal("cd-platform's serial compute activation legs do not run the node canary")
+	}
+	for _, prepare := range []string{"\n  compute-prepare:\n", "\n  compute-prepare-compat:\n"} {
+		start := strings.Index(platform, prepare)
+		if start < 0 {
+			t.Fatalf("cd-platform has no %q job", strings.TrimSpace(prepare))
+		}
+		if strings.Contains(platform[start:compute], "node_canary") {
+			t.Errorf("%s must not run the node canary on a node it has not activated", strings.TrimSpace(prepare))
+		}
+	}
+}

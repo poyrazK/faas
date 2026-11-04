@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -524,7 +525,7 @@ func (s *server) bindGitHubConnection(w http.ResponseWriter, r *http.Request, ac
 // The browser JSON picker and bind routes use the durable account-owned
 // connection instead (ADR-1345); they do not depend on the sign-in provider.
 func (s *server) sessionGithubLogin(w http.ResponseWriter, r *http.Request) (string, bool) {
-	c, err := r.Cookie(sessionCookie)
+	c, err := sessioncookie.Get(r)
 	if err != nil || c.Value == "" {
 		s.writeGithubLoginRequired(w, r)
 		return "", false

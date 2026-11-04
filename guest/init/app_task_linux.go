@@ -247,11 +247,16 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 // working directory, and configured user.
 func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string) (*exec.Cmd, *syscall.Credential, *apptaskproto.Result) {
 	argv := append([]string(nil), req.Command...)
-	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
+	credential, err := processCredential("", manifest.EffectiveUser())
+	if err != nil {
+		failure := appTaskInfraFailure("command_identity_invalid", "command identity could not be resolved", 126)
+		return nil, nil, &failure
+	}
+	env := withDefaultPath(BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv))
 	// Like the app process, a task needs a writable HOME: with HOME=/ every
 	// release command logged mise's "failed create_dir_all:
 	// /.local/state/mise/tracked-configs: Permission denied" (SB-10).
-	env = StampDefaultHomeEnv(env)
+	env = StampDefaultHomeEnv(env, workloadHome(credential.Uid, credential.Gid))
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
@@ -264,12 +269,11 @@ func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, s
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = manifest.EffectiveWorkingDir()
-	cmd.Env = env
-	credential, err := processCredential("", manifest.EffectiveUser())
-	if err != nil {
-		failure := appTaskInfraFailure("command_identity_invalid", "command identity could not be resolved", 126)
+	if err := ensureWorkingDir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
+		failure := appTaskInfraFailure("command_start_failed", "working directory could not be prepared", 126)
 		return nil, nil, &failure
 	}
+	cmd.Env = env
 	return cmd, execProcessCredential(credential), nil
 }
 

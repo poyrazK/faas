@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AppsService, OpenAPI } from '../src/index.js';
+import { AppsService, OpenAPI } from '../src/preview.js';
 
 test('saved cutover identity, recovery records and explicit limited-traffic consent survive the wire', async () => {
   const originalFetch = globalThis.fetch;

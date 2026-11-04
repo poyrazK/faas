@@ -43,12 +43,12 @@ func cmdCronsInfo(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale crons info <id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron get <id>\n")
 		return 1
 	}
 	id := fs.Arg(0)
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale crons info <id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron get <id>\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -94,7 +94,7 @@ func renderCronRecentRuns(w io.Writer, id string, runs []api.CronRun) {
 		}
 	}
 	if unsuccessful > 0 {
-		_, _ = fmt.Fprintf(w, "  recent:   %d of the last %d runs did not succeed; see `gregale crons runs %s`\n", unsuccessful, len(runs), id)
+		_, _ = fmt.Fprintf(w, "  recent:   %d of the last %d runs did not succeed; see `gregale cron runs %s`\n", unsuccessful, len(runs), id)
 	}
 }
 
@@ -125,5 +125,7 @@ func renderCronInfo(w io.Writer, c api.CronResponse) {
 	if last == "" {
 		last = "—"
 	}
-	_, _ = fmt.Fprintf(w, "  last:     %s\n", last)
+	// A manual run does not move last_fired_at, so a bare "last: —" sat
+	// above "last run: success" on production-us rc.294 (Hunt 14 H14-64).
+	_, _ = fmt.Fprintf(w, "  last scheduled fire: %s\n", last)
 }

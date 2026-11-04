@@ -337,7 +337,7 @@ type WatchExecutionOptions struct {
 // Calls to Next must be serialized. Close may be called from another
 // goroutine and is idempotent.
 type ExecutionWatcher struct {
-	client *Client
+	client *PreviewClient
 	ctx    context.Context
 	cancel context.CancelFunc
 	id     string
@@ -357,7 +357,7 @@ type ExecutionWatcher struct {
 
 // NewExecutionWatcher builds a lazy watcher. The first HTTP request is made
 // by Next, so callers can construct a watcher before entering a select loop.
-func (c *Client) NewExecutionWatcher(ctx context.Context, id string, opts WatchExecutionOptions) *ExecutionWatcher {
+func (c *PreviewClient) NewExecutionWatcher(ctx context.Context, id string, opts WatchExecutionOptions) *ExecutionWatcher {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -392,7 +392,7 @@ func (c *Client) NewExecutionWatcher(ctx context.Context, id string, opts WatchE
 
 // WatchExecution is the concise public constructor for a lazy watcher. It
 // does not perform network I/O until Next is called.
-func (c *Client) WatchExecution(ctx context.Context, id string, opts WatchExecutionOptions) *ExecutionWatcher {
+func (c *PreviewClient) WatchExecution(ctx context.Context, id string, opts WatchExecutionOptions) *ExecutionWatcher {
 	return c.NewExecutionWatcher(ctx, id, opts)
 }
 
@@ -627,7 +627,7 @@ type RunOptions struct {
 // final receipt after the terminal event. The callback is invoked in event
 // order and may return an error to stop local consumption; it does not cancel
 // the already-admitted remote execution.
-func (c *Client) Run(ctx context.Context, req CreateExecutionRequest, opts RunOptions) (ExecutionResponse, error) {
+func (c *PreviewClient) Run(ctx context.Context, req CreateExecutionRequest, opts RunOptions) (ExecutionResponse, error) {
 	receipt, err := c.CreateExecution(ctx, req)
 	if err != nil {
 		return ExecutionResponse{}, err

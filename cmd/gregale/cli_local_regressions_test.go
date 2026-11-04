@@ -129,6 +129,11 @@ func TestDoctorStrictFlagBeforeOrAfterSource(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte("app.listen(3000, '0.0.0.0');\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// A deployable Node app, so the only finding is the port warning (a bare
+	// server.js has no app marker and is a source error, H14-61).
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"strict-order","scripts":{"start":"node server.js"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		args []string
 		want int

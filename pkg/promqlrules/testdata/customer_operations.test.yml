@@ -26,6 +26,7 @@ tests:
               severity: warn
               component: schedd
               family: customer_operations
+              public_status: internal
             exp_annotations:
               summary: "Customer Operations are staying past their deadlines"
               description: "2 active Customer Operations have been more than three minutes past their deadline for 10m. Workflow Operations are settled by the schedd deadline sweep and HTTP Operations by the invocation deadline reaper; one of them has stopped."
@@ -54,6 +55,7 @@ tests:
               severity: warn
               component: schedd
               family: customer_operations
+              public_status: internal
             exp_annotations:
               summary: "Customer Operation attempts are ending with unknown outcomes across accounts"
               description: "3 accounts had an Operation attempt end with an unknown outcome in the last 15m. One app timing out is its owner's problem; several accounts at once point at the platform losing attempts (instance crashes, lost leases, node loss)."

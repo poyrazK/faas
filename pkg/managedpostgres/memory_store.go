@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 )
 
@@ -14,6 +15,7 @@ import (
 type MemoryStore struct {
 	resizes                   map[string]ResizeOperation
 	cutovers                  map[string]Cutover
+	fences                    map[string]CutoverAdmissionFence
 	preflights                map[string]CutoverPreflight
 	health                    map[string]memoryHealthEntry
 	mu                        sync.Mutex
@@ -29,12 +31,20 @@ type MemoryStore struct {
 	usageProgress             map[usageProgressKey]UsageProgress
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
+	overage                   map[string]bool
+	capEvents                 map[memoryCapEventKey]CapEvent
+	capEventsMailed           map[memoryCapEventKey]bool
+	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
+	restoreSlotNoticesMailed  map[memoryRestoreSlotNoticeKey]bool
+	overageDeliveries         map[memoryOverageKey]OverageDelivery
+	usageWaivers              map[string][]usageWaiver
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		resizes:                   map[string]ResizeOperation{},
 		cutovers:                  map[string]Cutover{},
+		fences:                    map[string]CutoverAdmissionFence{},
 		preflights:                map[string]CutoverPreflight{},
 		health:                    map[string]memoryHealthEntry{},
 		databases:                 map[string]Database{},
@@ -49,6 +59,13 @@ func NewMemoryStore() *MemoryStore {
 		usageProgress:             map[usageProgressKey]UsageProgress{},
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
+		overage:                   map[string]bool{},
+		capEvents:                 map[memoryCapEventKey]CapEvent{},
+		capEventsMailed:           map[memoryCapEventKey]bool{},
+		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
+		restoreSlotNoticesMailed:  map[memoryRestoreSlotNoticeKey]bool{},
+		overageDeliveries:         map[memoryOverageKey]OverageDelivery{},
+		usageWaivers:              map[string][]usageWaiver{},
 	}
 }
 
@@ -99,7 +116,20 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 		}
 	}
 	if active >= limit {
-		return Database{}, false, ErrQuotaExceeded
+		// Only a restore may go one database past the limit, while no other
+		// database of the owner holds the slot (ADR-20261031123259).
+		if database.RestoreSourceDatabaseID == "" {
+			return Database{}, false, ErrQuotaExceeded
+		}
+		for _, existing := range s.databases {
+			if s.sameQuotaOwner(ctx, existing, database) && existing.State != StateDeleted && !existing.RestoreSlotUntil.IsZero() {
+				return Database{}, false, ErrRestoreSlotInUse
+			}
+		}
+		if active >= limit+api.ManagedPostgresRestoreSlots {
+			return Database{}, false, ErrQuotaExceeded
+		}
+		database.RestoreSlotUntil = database.CreatedAt.Add(api.ManagedPostgresRestoreSlotWindow)
 	}
 	s.databases[database.ID] = cloneDatabase(database)
 	s.billingSubjects[database.ID] = PolicySubject(ctx, database.AccountID)
@@ -262,12 +292,16 @@ func (s *MemoryStore) ClaimDelete(ctx context.Context, accountID, databaseID, le
 	if database.AttemptCount < 30 {
 		database.AttemptCount++
 	}
+	before := database
 	database.State = StateDeleting
+	// An immediate delete ends any scheduled window (ADR-20261029174950).
+	database.PurgeAfter = time.Time{}
 	database.LeaseToken = leaseToken
 	database.LeaseUntil = leaseUntil
 	database.UpdatedAt = now
 	database.RetryAt = now
 	s.databases[databaseID] = database
+	s.trackUsageWaiverLocked(before, database)
 	return cloneDatabase(database), nil
 }
 

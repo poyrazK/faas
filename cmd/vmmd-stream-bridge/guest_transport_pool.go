@@ -12,6 +12,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -31,6 +32,13 @@ const (
 	guestTransportMaxPorts = 8
 
 	guestTransportMaxIdleConnsPerHost = 32
+
+	// guestHeadroomDialTimeout replaces dialTimeout when vmmd's
+	// bridge_stream_headroom switch is on (ADR-20261026120000). The guest is
+	// a few microseconds away on the instance's own tap, so a dial that has
+	// not completed after two SYN retransmits (1 s, 3 s) is a stuck guest,
+	// and holding the request's stream for 30 s only queues others behind it.
+	guestHeadroomDialTimeout = 5 * time.Second
 
 	// h1IdleConnTimeout bounds an idle keep-alive connection to an H1 guest.
 	// It is shorter than the bridge's process lifetime so parked instances do
@@ -377,17 +385,43 @@ func (e *guestTransportEntry) closeIdleConnections() {
 // namespace address; the URL host is still used by net/http for Host and
 // transport-pool identity.
 func newGuestH1Transport(guestIP string, guestPort uint16) *http.Transport {
+	idle := guestIdleConnsPerHost()
 	return &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			d := net.Dialer{Timeout: dialTimeout}
+			d := net.Dialer{Timeout: guestDialTimeout()}
 			return netns.DialBridgeContext(ctx, &d, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
 		},
 		DisableCompression:  true,
-		MaxIdleConns:        guestTransportMaxIdleConnsPerHost,
-		MaxIdleConnsPerHost: guestTransportMaxIdleConnsPerHost,
+		MaxIdleConns:        idle,
+		MaxIdleConnsPerHost: idle,
 		IdleConnTimeout:     h1IdleConnTimeout,
 		// Outer cap; each request bounds its own wait (guestHeaderWait).
 		ResponseHeaderTimeout: api.RequestBudgetPlanMax,
 		ExpectContinueTimeout: time.Second,
 	}
+}
+
+// guestHeadroom reports whether vmmd started this bridge with its
+// bridge_stream_headroom switch on (ADR-20261026120000).
+func guestHeadroom() bool {
+	return os.Getenv("FAAS_BRIDGE_GUEST_HEADROOM") == "1"
+}
+
+// guestIdleConnsPerHost keeps, with headroom, one idle guest connection per
+// stream the bridge accepts. Below that, more than 32 concurrent requests
+// close a connection after every response and dial a new one: on prod at
+// ~290 req/s that was ~90 new guest connections a second.
+func guestIdleConnsPerHost() int {
+	if guestHeadroom() {
+		return h2cMaxConcurrentStreams
+	}
+	return guestTransportMaxIdleConnsPerHost
+}
+
+// guestDialTimeout bounds one TCP dial to the guest.
+func guestDialTimeout() time.Duration {
+	if guestHeadroom() {
+		return guestHeadroomDialTimeout
+	}
+	return dialTimeout
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FaaSClient } from '../src/index.js';
+import { FaaSClient } from '../src/preview.js';
 import { InternalService } from '../src/generated/services/InternalService.js';
 
 test('queue batch transport preserves durable identity and per-record outcome', async () => {

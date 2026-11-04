@@ -29,7 +29,7 @@ func TestCapabilitiesForPlanProjectsCanonicalCatalog(t *testing.T) {
 		t.Fatalf("customer capability count = %d, want %d (internal rows omitted)", len(response.Capabilities), publicCount)
 	}
 	for _, capability := range response.Capabilities {
-		if capability.Key == "managed-postgres" {
+		if capability.Key == "product-control" {
 			t.Fatal("internal capability leaked into customer response")
 		}
 		if capability.Key == "object-storage" && !capability.Enabled {

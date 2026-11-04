@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -27,6 +28,11 @@ const (
 func (s *server) renderFailedEvents(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	ctx := r.Context()
 	apps, err := s.store.ListApps(ctx, acct.ID)
+	if err == nil {
+		// A company app the creator left stays out of this page, as it
+		// does from every account view.
+		apps, err = appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	}
 	if err != nil {
 		log.Warn("dashboard failed events: list apps", "account_id", acct.ID, "err", err)
 		apps = nil
@@ -65,9 +71,13 @@ func (s *server) renderFailedEvents(w http.ResponseWriter, r *http.Request, log 
 			data.NextPageURL = failedEventsPageURL(selected, events[dashboardFailedEventsPageSize-1].ID)
 			events = events[:dashboardFailedEventsPageSize]
 		}
+		access := s.deadLetterAccess(r, acct)
 		for _, event := range events {
 			appSlug := appSlugs[event.AppID]
 			if selected != "" && appSlug != selected {
+				continue
+			}
+			if ok, err := access.visible(ctx, event.AppID); err != nil || !ok {
 				continue
 			}
 			data.Events = append(data.Events, projectFailedEvent(appSlug, event))
@@ -80,7 +90,7 @@ func (s *server) renderFailedEvents(w http.ResponseWriter, r *http.Request, log 
 		data.Events = data.Events[:dashboardFailedEventsMax]
 	}
 	if s.sessions != nil {
-		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardFailedEventsAction, acct.ID, dashboardFailedEventsCSRFCookie)
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardFailedEventsAction, actorAccount(r, acct).ID, dashboardFailedEventsCSRFCookie)
 		if tokenErr != nil {
 			log.Warn("dashboard failed events: issue csrf", "account_id", acct.ID, "err", tokenErr)
 		} else {
@@ -109,6 +119,7 @@ func projectFailedEvent(appSlug string, event state.DeadLetterEvent) dashboard.F
 		Headers: dashboardFailedEventJSON(event.Headers), ErrorDetail: dashboardFailedEventJSON(event.ErrorDetail),
 		RetryCount: event.RetryCount, FirstFailed: dashboardJobsTime(event.FirstFailedAt),
 		LastFailed: dashboardJobsTime(event.LastFailedAt), ReplayedAt: replayedAt, Status: status,
+		Replayable: state.DeadLetterReplayable(event.Source),
 	}
 }
 
@@ -161,7 +172,13 @@ func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
+		http.NotFound(w, r)
+		return
+	}
+	// Creating the app is not enough: a creator who left the company, or
+	// lost the role to deploy its apps, may not replay or discard its work.
+	if writable, err := s.deadLetterWritable(r.Context(), actorAccount(r, acct), app); err != nil || !writable {
 		http.NotFound(w, r)
 		return
 	}
@@ -188,15 +205,16 @@ func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Reque
 		s.log.Warn("dashboard failed event action", "action", action, "account_id", acct.ID, "app_id", app.ID, "event_id", eventID, "err", err)
 	}
 	flash := action + "ed"
+	actorID := actorAccount(r, acct).ID
 	if err != nil {
 		flash = "error"
 	} else if action == "replay" {
-		s.audit.Emit(r.Context(), "app.dlq.event_replayed", &acct.ID, map[string]any{
+		s.audit.Emit(r.Context(), "app.dlq.event_replayed", &actorID, map[string]any{
 			"app_id": app.ID, "event_id": event.ID, "source": event.Source,
 			"source_id": event.SourceID, "surface": "dashboard",
 		})
 	} else {
-		s.audit.Emit(r.Context(), "app.dlq.purged", &acct.ID, map[string]any{
+		s.audit.Emit(r.Context(), "app.dlq.purged", &actorID, map[string]any{
 			"app_id": app.ID, "event_id": event.ID, "count": 1,
 			"surface": "dashboard",
 		})
@@ -219,7 +237,7 @@ func (s *server) dashboardAccountFailedEventAction(w http.ResponseWriter, r *htt
 		http.NotFound(w, r)
 		return
 	}
-	event, err := s.store.DeadLetterEventByAccountID(r.Context(), acct.ID, eventID)
+	event, err := s.deadLetterWriteAccess(r, acct).visibleEvent(r.Context(), eventID)
 	if err != nil || event.ReplayedAt != nil {
 		if err == nil {
 			err = state.ErrNotFound
@@ -274,8 +292,12 @@ func (s *server) dashboardFailedEventsBulkAction(w http.ResponseWriter, r *http.
 	var err error
 	var app state.App
 	if selected != "" {
-		app, err = s.store.AppBySlug(r.Context(), selected)
-		if err != nil || app.AccountID != acct.ID {
+		var visible bool
+		if app, visible = s.dashboardFailedEventsApp(r, acct, selected); visible {
+			writable, writeErr := s.deadLetterWritable(r.Context(), actorAccount(r, acct), app)
+			visible = writeErr == nil && writable
+		}
+		if !visible {
 			s.observeDashboardDeadLetterAction("account", action, state.ErrNotFound)
 			http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
 			return
@@ -293,9 +315,9 @@ func (s *server) dashboardFailedEventsBulkAction(w http.ResponseWriter, r *http.
 	} else {
 		switch action {
 		case "replay":
-			count, err = s.store.ReplayDeadLetterEventsForAccount(r.Context(), acct.ID, dashboardFailedEventsMax)
+			count, err = s.replayVisibleAccountDeadLetters(r, acct, dashboardFailedEventsMax)
 		case "discard":
-			count, err = s.store.DeleteDeadLetterEventsForAccount(r.Context(), acct.ID, dashboardFailedEventsMax)
+			count, err = s.purgeVisibleAccountDeadLetters(r, acct, dashboardFailedEventsMax)
 		default:
 			http.NotFound(w, r)
 			return
@@ -357,14 +379,19 @@ func (s *server) dashboardFailedEventsSelectedAction(w http.ResponseWriter, r *h
 	var app state.App
 	var err error
 	if selected != "" {
-		app, err = s.store.AppBySlug(r.Context(), selected)
-		if err != nil || app.AccountID != acct.ID {
+		var visible bool
+		if app, visible = s.dashboardFailedEventsApp(r, acct, selected); visible {
+			writable, writeErr := s.deadLetterWritable(r.Context(), actorAccount(r, acct), app)
+			visible = writeErr == nil && writable
+		}
+		if !visible {
 			s.observeDashboardDeadLetterAction("account", action, state.ErrNotFound)
 			http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
 			return
 		}
 		scope = app.Slug
 	}
+	access := s.deadLetterWriteAccess(r, acct)
 
 	events := make([]state.DeadLetterEvent, 0, len(ids))
 	for _, id := range ids {
@@ -372,7 +399,10 @@ func (s *server) dashboardFailedEventsSelectedAction(w http.ResponseWriter, r *h
 		if selected != "" {
 			event, err = s.store.DeadLetterEventByID(r.Context(), app.ID, id)
 		} else {
-			event, err = s.store.DeadLetterEventByAccountID(r.Context(), acct.ID, id)
+			event, err = access.visibleEvent(r.Context(), id)
+		}
+		if err == nil && action == "replay" && !state.DeadLetterReplayable(event.Source) {
+			err = state.ErrDeadLetterNotReplayable
 		}
 		if err != nil || event.ReplayedAt != nil {
 			if err == nil {
@@ -467,4 +497,18 @@ func failedEventsRedirect(slug, action string, count ...int) string {
 		values.Set("count", strconv.Itoa(count[0]))
 	}
 	return "/dashboard/failed-events?" + values.Encode()
+}
+
+// dashboardFailedEventsApp resolves the page's selected app: one the account
+// created and the session may still see (appaccess.VisibleApps).
+func (s *server) dashboardFailedEventsApp(r *http.Request, acct state.Account, slug string) (state.App, bool) {
+	app, err := s.store.AppBySlug(r.Context(), slug)
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
+		return state.App{}, false
+	}
+	visible, err := appaccess.VisibleApps(r, s.store, actorAccount(r, acct), []state.App{app})
+	if err != nil || len(visible) != 1 {
+		return state.App{}, false
+	}
+	return app, true
 }

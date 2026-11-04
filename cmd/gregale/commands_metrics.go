@@ -54,7 +54,7 @@ func cmdMetrics(args []string) int {
 	fs := newFlagSet("metrics", flag.ContinueOnError)
 	rng := fs.String("range", "5m", "time window (5m, 15m, 1h, 6h, 24h)")
 	account := fs.Bool("account", false, "account-wide rollup (GET /v1/apps/metrics) — mutually exclusive with <slug>")
-	services := fs.Bool("services", false, "account service map of app-to-app calls (GET /v1/service-map)")
+	services := fs.Bool("services", false, "account service map of app-to-app calls, a preview not enabled on every account (GET /v1/service-map)")
 	app := fs.String("app", "", appSlugFlagUsage)
 	custom := fs.String("custom", "", "show the history of one pushed custom metric (ADR-745)")
 	flags, pos := splitArgsForFlags(args, "account", "services")
@@ -159,11 +159,15 @@ func renderAppMetrics(w io.Writer, slug string, m api.AppMetricsResponse) {
 		_, _ = fmt.Fprintf(w, "Source:     %s\n", m.Source)
 	}
 	_, _ = fmt.Fprintf(w, "Requests:   %d (in window)\n", m.RequestCount)
-	_, _ = fmt.Fprintf(w, "Latency:    p50=%.1fms p95=%.1fms p99=%.1fms\n", m.LatencyP50MS, m.LatencyP95MS, m.LatencyP99MS)
+	_, _ = fmt.Fprintf(w, "Latency:    %s\n", requestLatencyLine(m.LatencyP50MS, m.LatencyP95MS, m.LatencyP99MS))
 	_, _ = fmt.Fprintf(w, "Error rate: %.2f%%\n", m.ErrorRatePct)
 	_, _ = fmt.Fprintf(w, "Cold boot:  %.2f%%\n", m.ColdStartPct)
 	if m.WakeP95MS > 0 {
-		_, _ = fmt.Fprintf(w, "Wake p95:   %.0fms (fleet-wide)\n", m.WakeP95MS)
+		if m.WakeSamples != nil && *m.WakeSamples < api.FleetWakeP95MinSamples {
+			_, _ = fmt.Fprintf(w, "Wake p95:   — (fleet-wide; %d wakes in the window, %d needed)\n", *m.WakeSamples, api.FleetWakeP95MinSamples)
+		} else {
+			_, _ = fmt.Fprintf(w, "Wake p95:   %.0fms (fleet-wide)\n", m.WakeP95MS)
+		}
 	}
 }
 
@@ -200,10 +204,19 @@ func renderAppsMetrics(w io.Writer, m api.AppsMetricsResponse) {
 		row := m.Apps[s]
 		_, _ = fmt.Fprintf(w, "\nApp:        %s\n", s)
 		_, _ = fmt.Fprintf(w, "  Requests:   %d\n", row.RequestCount)
-		_, _ = fmt.Fprintf(w, "  Latency:    p50=%.1fms p95=%.1fms p99=%.1fms\n", row.LatencyP50MS, row.LatencyP95MS, row.LatencyP99MS)
+		_, _ = fmt.Fprintf(w, "  Latency:    %s\n", requestLatencyLine(row.LatencyP50MS, row.LatencyP95MS, row.LatencyP99MS))
 		_, _ = fmt.Fprintf(w, "  Error rate: %.2f%%\n", row.ErrorRatePct)
 		_, _ = fmt.Fprintf(w, "  Cold boot:  %.2f%%\n", row.ColdStartPct)
 	}
+}
+
+// printServiceMapUnavailable explains --services on an account the service map
+// preview is not released to: apid answers its route as absent
+// (ADR-20261023115741), and the CLI printed only "Not found: no such API
+// route".
+func printServiceMapUnavailable() int {
+	PrintUsage(osStderr, "The service map (--services) is a preview that is not enabled for this account; run 'gregale metrics <app>' for per-app metrics", metricsCmdDocsTopic)
+	return 2
 }
 
 // cmdMetricsServices implements `gregale metrics --services` (ADR-1131).
@@ -214,6 +227,9 @@ func cmdMetricsServices(rng string) int {
 	}
 	m, err := client.GetServiceMap(context.Background(), rng)
 	if err != nil {
+		if routeNotOffered(err) {
+			return printServiceMapUnavailable()
+		}
 		return printErr("Could not fetch service map", err)
 	}
 	if jsonOutput {
@@ -257,7 +273,7 @@ func renderServiceMap(w io.Writer, m api.ServiceMapResponse) {
 			_, _ = fmt.Fprintf(w, "  Wake-ahead: %d of %d restores used\n", e.WakeAheadUsed, e.WakeAheadStarted)
 		}
 		if e.SuggestWakeAhead {
-			_, _ = fmt.Fprintf(w, "  Tip:        run `gregale wake-ahead %s on` to restore %s while %s wakes\n", e.CallerAppSlug, e.TargetAppSlug, e.CallerAppSlug)
+			_, _ = fmt.Fprintf(w, "  Tip:        run `gregale app wake-ahead %s on` to restore %s while %s wakes\n", e.CallerAppSlug, e.TargetAppSlug, e.CallerAppSlug)
 		}
 	}
 	if m.Truncated {
@@ -356,6 +372,16 @@ func cmdThrottleSuggestions(args []string) int {
 	return 0
 }
 
+// formatObservedRPS keeps a real but small rate from printing as 0.00:
+// the server lists only routes with traffic, so "observed=0.00" beside a
+// 1 rps suggestion read as a limit derived from nothing (Hunt 12 H12-55).
+func formatObservedRPS(rps float64) string {
+	if rps > 0 && rps < 0.01 {
+		return "<0.01"
+	}
+	return fmt.Sprintf("%.2f", rps)
+}
+
 // renderThrottleSuggestions writes the human-mode labelled block
 // for a ThrottleSuggestionsResponse. The recommendation slice
 // mirrors the dashboard's suggestions card (route / observed /
@@ -371,6 +397,10 @@ func renderThrottleSuggestions(w io.Writer, slug string, r api.ThrottleSuggestio
 		_, _ = fmt.Fprintf(w, "Note: source=%s (values below may be zero — Prometheus is unavailable)\n", r.Source)
 	}
 	_, _ = fmt.Fprintf(w, "App:           %s\n", r.AppID)
+	// Same App/Slug pair as `gregale metrics` (Hunt 12 H12-55).
+	if slug != "" {
+		_, _ = fmt.Fprintf(w, "Slug:          %s\n", slug)
+	}
 	_, _ = fmt.Fprintf(w, "Range:         %s\n", r.Range)
 	if r.AsOf != "" {
 		_, _ = fmt.Fprintf(w, "As of:         %s\n", r.AsOf)
@@ -396,8 +426,8 @@ func renderThrottleSuggestions(w io.Writer, slug string, r api.ThrottleSuggestio
 	} else {
 		_, _ = fmt.Fprintln(w, "\nSuggestions:")
 		for _, s := range r.Suggestions {
-			_, _ = fmt.Fprintf(w, "  %-40s observed=%-6.2f rps  suggested=%-6.2f rps (burst=%d)\n",
-				s.Route, s.ObservedRPS, s.SuggestedRPS, s.SuggestedBurst)
+			_, _ = fmt.Fprintf(w, "  %-40s observed=%-6s rps  suggested=%-6.2f rps (burst=%d)\n",
+				s.Route, formatObservedRPS(s.ObservedRPS), s.SuggestedRPS, s.SuggestedBurst)
 		}
 	}
 	if !r.DryRun {

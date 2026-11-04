@@ -1,0 +1,51 @@
+[Unit]
+Description=Grafana Alloy journal shipper for Gregale (ADR-20261023185953)
+Documentation=https://grafana.com/docs/alloy/latest/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=alloy
+Group=alloy
+SupplementaryGroups=systemd-journal adm
+Type=simple
+# --disable-reporting: Alloy sends anonymous usage statistics by default, and
+# Loki is the only outbound destination this host allows.
+# --stability.level: the config may not load experimental components.
+# The HTTP server (metrics and Alloy's config UI) binds only to the private
+# address, or loopback on the control plane.
+ExecStart=/usr/local/bin/alloy run \
+  --server.http.listen-addr={{ alloy_effective_listen_address }}:{{ alloy_listen_port }} \
+  --storage.path={{ alloy_storage_path }} \
+  --disable-reporting \
+  --stability.level=generally-available \
+  {{ alloy_config_path }}
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+# ADR-20261023124955 §1: observability work yields CPU and IO to the daemons
+# and tenants. 256 MB is the spec §13 "loki/promtail agents" budget.
+Slice=faas-obs.slice
+CPUWeight=50
+MemoryMax={{ alloy_memory_max }}
+Environment=GOMEMLIMIT={{ alloy_gomemlimit }}
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/faas
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/run/log/journal /var/log/journal
+ReadWritePaths={{ alloy_storage_path }}
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,71 @@
+# ADR-20261029172812: the canary SQL probe pages when a backend fails every
+# probe for five minutes and warns when it spends the 99.95% budget.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: a backend that stops answering pages after five minutes; a healthy one stays quiet
+    interval: 1m
+    input_series:
+      - series: apid_managed_postgres_sql_probe_enabled{job="apid",instance="a"}
+        values: 1+0x30
+      # Succeeds every minute until minute 5, then never again.
+      - series: apid_managed_postgres_sql_probe_last_success_timestamp_seconds{job="apid",instance="a",backend="neon-eu"}
+        values: 0+60x5 300+0x25
+      - series: apid_managed_postgres_sql_probe_last_success_timestamp_seconds{job="apid",instance="a",backend="neon-us"}
+        values: 0+60x30
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasManagedPostgresSQLProbeFailing
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: FaasManagedPostgresSQLProbeFailing
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: apid
+              family: managed_postgres
+              backend: neon-eu
+            exp_annotations:
+              summary: Managed PostgreSQL backend neon-eu has failed every SQL probe for 5 minutes
+              description: No apid could connect to the backend's canary database, write a row and read it back for at least five minutes, so customer databases on this backend are likely unreachable or read-only. apid_managed_postgres_sql_probe_total shows which step fails.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresSQLProbeFailing.md
+
+  - name: one apid still succeeding keeps the page quiet
+    interval: 1m
+    input_series:
+      - series: apid_managed_postgres_sql_probe_enabled{job="apid",instance="a"}
+        values: 1+0x30
+      - series: apid_managed_postgres_sql_probe_last_success_timestamp_seconds{job="apid",instance="a",backend="neon-eu"}
+        values: 0+60x5 300+0x25
+      - series: apid_managed_postgres_sql_probe_last_success_timestamp_seconds{job="apid",instance="b",backend="neon-eu"}
+        values: 0+60x30
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasManagedPostgresSQLProbeFailing
+        exp_alerts: []
+
+  - name: two failed probes in six hours spend the budget too fast; one does not
+    interval: 1m
+    input_series:
+      - series: apid_managed_postgres_sql_probe_total{job="apid",instance="a",backend="neon-eu",outcome="ok"}
+        values: 0+1x420
+      - series: apid_managed_postgres_sql_probe_total{job="apid",instance="a",backend="neon-eu",outcome="write_failed"}
+        values: 0x100 1x100 2x218
+      - series: apid_managed_postgres_sql_probe_total{job="apid",instance="a",backend="neon-us",outcome="ok"}
+        values: 0+1x420
+      - series: apid_managed_postgres_sql_probe_total{job="apid",instance="a",backend="neon-us",outcome="connect_failed"}
+        values: 0x200 1x219
+    alert_rule_test:
+      - eval_time: 400m
+        alertname: FaasManagedPostgresSQLErrorBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+              backend: neon-eu
+            exp_annotations:
+              summary: Managed PostgreSQL backend neon-eu is spending its availability budget
+              description: "More than 0.3% of canary SQL probes failed over six hours: six times the failure rate that would spend the 99.95% monthly budget. Intermittent failures that never reach the five-minute page still count against the GA bar."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresSQLProbeFailing.md

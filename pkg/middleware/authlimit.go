@@ -169,6 +169,11 @@ func limiterKey(ip string) string {
 	return prefix.String()
 }
 
+// RateLimitKey is the per-client key for any per-address rate limit: the
+// IPv4 address, or the /64 an IPv6 client sits in (see limiterKey). Pass it
+// ClientIP's result.
+func RateLimitKey(ip string) string { return limiterKey(ip) }
+
 // Limiter is the exported handle on an authLimiter. Use NewLimiter to
 // share one bucket across multiple AuthLimit-wrapped handlers
 // (spec §11 "rate limit auth failures 10/min/IP" is per-IP, not per

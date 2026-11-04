@@ -11,7 +11,7 @@ import (
 
 func cmdAppsTCPTLSStatus(client *api.Client, slug string, args []string) int {
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> tls-status NAME", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app list tcp <slug> tls-status NAME", "apps")
 		return 1
 	}
 	status, err := client.AppTCPListenerTLSStatus(context.Background(), slug, args[0])

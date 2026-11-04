@@ -15,6 +15,11 @@ import (
 )
 
 func (s *Service) sendManagedRealtimePrincipalInbox(w http.ResponseWriter, r *http.Request, acct state.Account, row state.ManagedRealtimeEndpoint, request api.ManagedRealtimePrincipalMessageRequest, data []byte) {
+	// Outside the preview rollout a retained send is answered like any invalid delivery.
+	if !s.PreviewVisible(acct.ID) {
+		api.WriteProblem(w, api.ErrRealtimeInvalid("delivery must be live or retained, and may be specified once"))
+		return
+	}
 	if !s.HistoryPreviewEnabled {
 		httpkit.NotFound(w, "realtime inbox preview unavailable")
 		return
@@ -76,8 +81,7 @@ func (s *Service) sendManagedRealtimePrincipalInbox(w http.ResponseWriter, r *ht
 }
 
 func (s *Service) ReadManagedRealtimeInbox(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "realtime inbox preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "realtime inbox preview unavailable") {
 		return
 	}
 	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

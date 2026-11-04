@@ -186,11 +186,11 @@ func TestDataAPICoordinatedSyncFailureAndRecovery(t *testing.T) {
 					writeJSONTest(w, api.AppRestartResponse{WakeID: "wake"})
 				case "GET /v1/apps/notes/runtime-config-restarts/wake":
 					writeJSONTest(w, api.RuntimeConfigRestartStatusResponse{WakeID: "wake", Status: "completed"})
-				case "POST /v1/apps/notes/tasks":
-					var req api.CreateAppTaskRequest
+				case "POST /v1/apps/notes/data-api/contract-tasks":
+					var req api.CreateDataAPIContractTaskRequest
 					_ = json.NewDecoder(r.Body).Decode(&req)
 					content := types
-					if len(req.Command) == 3 {
+					if req.Kind == api.DataAPIContractSchema {
 						content = string(before)
 					}
 					writeJSONTest(w, api.AppTaskResponse{ID: "task", DeploymentID: "deployment", Status: api.AppTaskStatusSucceeded, StdoutTail: content})

@@ -60,12 +60,15 @@ func instanceTransitionEventData(from, to state.State, reason string) []byte {
 // per-wake correlation handle; its key is always present (even when empty) so
 // subscribers parse one shape. Job-task instances have no app row and say so,
 // so gateway subscribers can ignore them (issue #2763).
-func instanceChangedPayload(instanceID, appID string, st state.State, wakeID string) string {
+func instanceChangedPayload(instanceID, appID string, st state.State, wakeID string, nodeIDs ...string) string {
 	fields := map[string]any{
 		"instance_id": instanceID,
 		"app_id":      appID,
 		"state":       string(st),
 		"wake_id":     wakeID,
+	}
+	if len(nodeIDs) > 0 {
+		fields["node_id"] = nodeIDs[0]
 	}
 	if appID == "" {
 		fields["kind"] = "job"

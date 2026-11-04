@@ -40,7 +40,7 @@ func cmdBillingBudgetPreview(args []string) int {
 	if err != nil {
 		return printErr("Could not preview budget", err)
 	}
-	if *asJSON {
+	if *asJSON || jsonOutput { // global --json sets jsonOutput (Hunt 12 H12-42)
 		if err := json.NewEncoder(osStdout).Encode(preview); err != nil {
 			return printErr("Could not print budget preview", err)
 		}

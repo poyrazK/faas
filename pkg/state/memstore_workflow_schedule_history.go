@@ -112,12 +112,7 @@ func (m *MemStore) workflowScheduleReplayResults(appID string, ids []string, exe
 	}
 	workflowScheduleReplayOrder(rows)
 
-	active := 0
-	for _, run := range m.workflowRuns {
-		if run.AppID == appID && workflowRunIsActive(run.Status) {
-			active++
-		}
-	}
+	active := -1
 	reserved := 0
 	reservedNamed := make(map[string]int)
 	results := make([]WorkflowScheduleReplayResult, 0, len(rows))
@@ -189,6 +184,9 @@ func (m *MemStore) workflowScheduleReplayResults(appID string, ids []string, exe
 			result.Outcome = WorkflowScheduleReplayOverlapActive
 			results = append(results, result)
 			continue
+		}
+		if active < 0 {
+			active = m.workflowAdmissionLocked(appID, account.Plan.WorkflowMaxParkedRuns())
 		}
 		if active+reserved >= account.Plan.WorkflowMaxConcurrentRuns() {
 			result.Outcome = WorkflowScheduleReplayQuotaFull

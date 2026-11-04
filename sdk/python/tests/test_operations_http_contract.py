@@ -3,16 +3,16 @@
 from io import BytesIO
 from uuid import UUID
 
-from faas_sdk.api.operations import get_platform_tenant_self_operation_events, start_platform_tenant_self_operation
-from faas_sdk.models.operation_accepted_response import OperationAcceptedResponse
-from faas_sdk.models.operation_events_response import OperationEventsResponse
-from faas_sdk.models.operation_start_request import OperationStartRequest
+from faas_sdk.preview.api.operations import get_platform_tenant_self_operation_events, start_platform_tenant_self_operation
+from faas_sdk.preview.models.operation_accepted_response import OperationAcceptedResponse
+from faas_sdk.preview.models.operation_events_response import OperationEventsResponse
+from faas_sdk.preview.models.operation_start_request import OperationStartRequest
 
 
 def test_direct_job_upload_wire_contract() -> None:
-    from faas_sdk.api.operations import reuse_job_operation_upload, upload_job_operation_artifact
-    from faas_sdk.models.operation_artifact_upload_request import OperationArtifactUploadRequest
-    from faas_sdk.models.operation_job_artifact_response import OperationJobArtifactResponse
+    from faas_sdk.preview.api.operations import reuse_job_operation_upload, upload_job_operation_artifact
+    from faas_sdk.preview.models.operation_artifact_upload_request import OperationArtifactUploadRequest
+    from faas_sdk.preview.models.operation_job_artifact_response import OperationJobArtifactResponse
     from faas_sdk.types import File
 
     operation = UUID("11111111-1111-4111-8111-111111111111")
@@ -89,14 +89,14 @@ def test_direct_workflow_upload_with_current_native_proof() -> None:
 
     import httpx
 
-    from faas_sdk.api.operations import reuse_workflow_operation_upload, upload_workflow_operation_artifact
+    from faas_sdk.preview.api.operations import reuse_workflow_operation_upload, upload_workflow_operation_artifact
     from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.models.operation_artifact_upload_request import OperationArtifactUploadRequest
-    from faas_sdk.models.operation_workflow_artifact_response import OperationWorkflowArtifactResponse
-    from faas_sdk.models.reuse_workflow_operation_upload_x_gregale_operation_execution_kind import (
+    from faas_sdk.preview.models.operation_artifact_upload_request import OperationArtifactUploadRequest
+    from faas_sdk.preview.models.operation_workflow_artifact_response import OperationWorkflowArtifactResponse
+    from faas_sdk.preview.models.reuse_workflow_operation_upload_x_gregale_operation_execution_kind import (
         ReuseWorkflowOperationUploadXGregaleOperationExecutionKind,
     )
-    from faas_sdk.models.upload_workflow_operation_artifact_x_gregale_operation_execution_kind import (
+    from faas_sdk.preview.models.upload_workflow_operation_artifact_x_gregale_operation_execution_kind import (
         UploadWorkflowOperationArtifactXGregaleOperationExecutionKind,
     )
     from faas_sdk.types import File
@@ -174,10 +174,10 @@ def test_direct_workflow_upload_with_current_native_proof() -> None:
 
 
 def test_recovery_inspection_preview_and_revision_fence() -> None:
-    from faas_sdk.api.operations import inspect_operation_recovery, preview_operation_recovery, recover_operation
-    from faas_sdk.models.operation_recovery_preview import OperationRecoveryPreview
-    from faas_sdk.models.operation_recovery_preview_request import OperationRecoveryPreviewRequest
-    from faas_sdk.models.operation_recovery_request import OperationRecoveryRequest
+    from faas_sdk.preview.api.operations import inspect_operation_recovery, preview_operation_recovery, recover_operation
+    from faas_sdk.preview.models.operation_recovery_preview import OperationRecoveryPreview
+    from faas_sdk.preview.models.operation_recovery_preview_request import OperationRecoveryPreviewRequest
+    from faas_sdk.preview.models.operation_recovery_request import OperationRecoveryRequest
 
     operation = UUID("11111111-1111-1111-1111-111111111111")
     revision = "sha256:" + "a" * 64
@@ -251,8 +251,8 @@ def test_operation_submission_and_cursor_contract() -> None:
 
 
 def test_operation_history_scope_and_projection() -> None:
-    from faas_sdk.api.operations import list_platform_tenant_self_operations
-    from faas_sdk.models.operation_list_response import OperationListResponse
+    from faas_sdk.preview.api.operations import list_platform_tenant_self_operations
+    from faas_sdk.preview.models.operation_list_response import OperationListResponse
 
     app = UUID("11111111-1111-1111-1111-111111111111")
     request = list_platform_tenant_self_operations._get_kwargs(
@@ -291,14 +291,14 @@ def test_operation_history_scope_and_projection() -> None:
 
 
 def test_operation_account_operator_contract() -> None:
-    from faas_sdk.api.operations import (
+    from faas_sdk.preview.api.operations import (
         get_account_operation_events,
         get_operation_executions,
         list_account_operations,
         retry_operation_delivery,
     )
-    from faas_sdk.models.operation_delivery_summary import OperationDeliverySummary
-    from faas_sdk.models.operation_executions_response import OperationExecutionsResponse
+    from faas_sdk.preview.models.operation_delivery_summary import OperationDeliverySummary
+    from faas_sdk.preview.models.operation_executions_response import OperationExecutionsResponse
 
     tenant = UUID("11111111-1111-1111-1111-111111111111")
     operation = UUID("22222222-2222-2222-2222-222222222222")
@@ -332,13 +332,13 @@ def test_operation_account_operator_contract() -> None:
 
 
 def test_definition_discovery_and_submission_identity() -> None:
-    from faas_sdk.api.operations import (
+    from faas_sdk.preview.api.operations import (
         get_operation_definition,
         get_platform_tenant_self_operation_identity,
         list_operation_definitions,
     )
-    from faas_sdk.models.operation_definitions_response import OperationDefinitionsResponse
-    from faas_sdk.models.operation_tenant_identity import OperationTenantIdentity
+    from faas_sdk.preview.models.operation_definitions_response import OperationDefinitionsResponse
+    from faas_sdk.preview.models.operation_tenant_identity import OperationTenantIdentity
 
     deployment = UUID("11111111-1111-1111-1111-111111111111")
     page = list_operation_definitions._get_kwargs("exports", deployment_id=deployment)
@@ -356,8 +356,8 @@ def test_definition_discovery_and_submission_identity() -> None:
 
 def test_operation_doctor_scoped_observation_contract() -> None:
     """ADR-521: delivery and unverified runtime remain separate from submission."""
-    from faas_sdk.api.operations import get_operation_doctor
-    from faas_sdk.models.operation_doctor_response import OperationDoctorResponse
+    from faas_sdk.preview.api.operations import get_operation_doctor
+    from faas_sdk.preview.models.operation_doctor_response import OperationDoctorResponse
 
     deployment = UUID("11111111-1111-4111-8111-111111111111")
     tenant = UUID("22222222-2222-4222-8222-222222222222")
@@ -413,14 +413,14 @@ def test_operation_doctor_scoped_observation_contract() -> None:
 
 def test_operation_completion_retry_receipt_contract() -> None:
     """ADR-521: explicit replay zero and retry IDs survive generation unchanged."""
-    from faas_sdk.api.operations import (
+    from faas_sdk.preview.api.operations import (
         get_operation_delivery,
         get_operation_delivery_attempts,
         retry_operation_delivery_with_receipt,
     )
-    from faas_sdk.models.operation_delivery_inspection import OperationDeliveryInspection
-    from faas_sdk.models.operation_delivery_retry_request import OperationDeliveryRetryRequest
-    from faas_sdk.models.operation_delivery_retry_response import OperationDeliveryRetryResponse
+    from faas_sdk.preview.models.operation_delivery_inspection import OperationDeliveryInspection
+    from faas_sdk.preview.models.operation_delivery_retry_request import OperationDeliveryRetryRequest
+    from faas_sdk.preview.models.operation_delivery_retry_response import OperationDeliveryRetryResponse
 
     identity = UUID("11111111-1111-1111-1111-111111111111")
     req = OperationDeliveryRetryRequest(retry_id="stable", delivery_id=identity, expected_replay_generation=0)
@@ -459,8 +459,8 @@ def test_operation_completion_retry_receipt_contract() -> None:
 
 
 def test_workflow_operation_definition_and_execution_identity() -> None:
-    from faas_sdk.models.operation_definition_spec import OperationDefinitionSpec
-    from faas_sdk.models.operation_execution import OperationExecution
+    from faas_sdk.preview.models.operation_definition_spec import OperationDefinitionSpec
+    from faas_sdk.preview.models.operation_execution import OperationExecution
     from faas_sdk.types import UNSET
 
     definition = {
@@ -492,11 +492,11 @@ def test_workflow_operation_definition_and_execution_identity() -> None:
 
 
 def test_submission_lookup_and_principal_feature_fences() -> None:
-    from faas_sdk.api.operations import lookup_platform_tenant_self_operation_submission
-    from faas_sdk.models.operation_submission_lookup_request import OperationSubmissionLookupRequest
-    from faas_sdk.models.operation_submission_lookup_response import OperationSubmissionLookupResponse
-    from faas_sdk.models.operation_submission_scope import OperationSubmissionScope
-    from faas_sdk.models.operation_tenant_identity import OperationTenantIdentity
+    from faas_sdk.preview.api.operations import lookup_platform_tenant_self_operation_submission
+    from faas_sdk.preview.models.operation_submission_lookup_request import OperationSubmissionLookupRequest
+    from faas_sdk.preview.models.operation_submission_lookup_response import OperationSubmissionLookupResponse
+    from faas_sdk.preview.models.operation_submission_scope import OperationSubmissionScope
+    from faas_sdk.preview.models.operation_tenant_identity import OperationTenantIdentity
 
     operation = UUID("11111111-1111-4111-8111-111111111111")
     identity = OperationTenantIdentity(account_id=operation, platform_tenant_id=operation)
@@ -537,10 +537,10 @@ def test_submission_lookup_and_principal_feature_fences() -> None:
 def test_direct_http_upload_with_workload_jwt_and_invocation_proof() -> None:
     import httpx
 
-    from faas_sdk.api.operations import reuse_operation_upload, upload_operation_artifact
+    from faas_sdk.preview.api.operations import reuse_operation_upload, upload_operation_artifact
     from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.models.operation_artifact_upload_request import OperationArtifactUploadRequest
-    from faas_sdk.models.operation_artifact_upload_response import OperationArtifactUploadResponse
+    from faas_sdk.preview.models.operation_artifact_upload_request import OperationArtifactUploadRequest
+    from faas_sdk.preview.models.operation_artifact_upload_response import OperationArtifactUploadResponse
     from faas_sdk.types import File
 
     operation = UUID("11111111-1111-4111-8111-111111111111")
@@ -586,9 +586,9 @@ def test_direct_http_upload_with_workload_jwt_and_invocation_proof() -> None:
 
 # ADR-714: public references are independent of caller identity and stay opaque.
 def test_operation_business_reference_wire_contract() -> None:
-    from faas_sdk.api.operations import list_account_operations, list_platform_tenant_self_operations
-    from faas_sdk.models.operation_subject import OperationSubject
-    from faas_sdk.models.operation_subject_spec import OperationSubjectSpec
+    from faas_sdk.preview.api.operations import list_account_operations, list_platform_tenant_self_operations
+    from faas_sdk.preview.models.operation_subject import OperationSubject
+    from faas_sdk.preview.models.operation_subject_spec import OperationSubjectSpec
 
     app = UUID("11111111-1111-1111-1111-111111111111")
     subject = {"type": "order", "id": "ord/42&é"}
@@ -609,9 +609,9 @@ def test_operation_business_reference_wire_contract() -> None:
 
 
 def test_operation_milestone_wire_and_scoped_feed() -> None:
-    from faas_sdk.api.operations import list_platform_tenant_self_business_milestones
-    from faas_sdk.models.operation_definition_spec_milestones import OperationDefinitionSpecMilestones
-    from faas_sdk.models.operation_milestone import OperationMilestone
+    from faas_sdk.preview.api.operations import list_platform_tenant_self_business_milestones
+    from faas_sdk.preview.models.operation_definition_spec_milestones import OperationDefinitionSpecMilestones
+    from faas_sdk.preview.models.operation_milestone import OperationMilestone
 
     app = UUID("11111111-1111-4111-8111-111111111111")
     request = list_platform_tenant_self_business_milestones._get_kwargs(

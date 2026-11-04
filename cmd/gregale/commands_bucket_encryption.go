@@ -10,7 +10,7 @@ import (
 
 func cmdBucketEncryptionKeys(args []string) int {
 	if len(args) != 2 || args[0] == "" {
-		PrintUsage(osStderr, "usage: gregale bucket encryption-keys <app> <bucket-id>", "bucket")
+		PrintUsage(osStderr, "usage: gregale bucket encryption keys <app> <bucket-id>", "bucket")
 		return 1
 	}
 	if _, err := uuid.Parse(args[1]); err != nil {
@@ -104,6 +104,6 @@ func bucketDefaultEncryptionSelection(args []string) (api.ObjectEncryption, erro
 }
 
 func bucketDefaultEncryptionUsage() int {
-	PrintUsage(osStderr, "usage: gregale bucket encryption <status|clear|AES256|aws:kms|aws:kms:dsse> <app> <bucket-id> [owned-key-ref] [bucket-key-enabled]", "bucket")
+	PrintUsage(osStderr, "usage: gregale bucket encryption set <status|clear|AES256|aws:kms|aws:kms:dsse> <app> <bucket-id> [owned-key-ref] [bucket-key-enabled]", "bucket")
 	return 1
 }

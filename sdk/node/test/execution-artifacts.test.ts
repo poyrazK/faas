@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { decodeExecutionArtifact } from '../src/index.js';
+import { decodeExecutionArtifact } from '../src/preview.js';
 
 test('decodeExecutionArtifact verifies binary outputs and rejects corrupt receipts', () => {
   const bytes = Buffer.from([0, 1, 255]);

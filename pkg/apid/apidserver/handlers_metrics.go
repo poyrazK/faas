@@ -149,6 +149,9 @@ func (s *server) getAppMetrics(w http.ResponseWriter, r *http.Request, acct stat
 // (pkg/appmetrics.Fetch) so the dashboard's two cards share the
 // same PromQL transport and the same degraded-fallback shape.
 func (s *server) getAppThrottleSuggestions(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug")) //nolint:contextcheck // loadApp takes r and uses r.Context() for its own DB calls; the helper is shared across every per-app handler.
 	if !ok {
 		return

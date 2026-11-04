@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample PostgreSQL activity every 30 seconds
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=faas-postgres-activity-metrics.service
+
+[Install]
+WantedBy=timers.target

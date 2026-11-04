@@ -81,8 +81,8 @@ func productCustomerTx(ctx context.Context, db sqlc.DBTX, account, appID, tenant
 	if err != nil {
 		return api.ProductCustomer{}, mapErr(err)
 	}
-	return withProductTrial(api.ProductCustomer{TenantID: tenant, Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended, AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)},
-		row.TrialStartsAt, row.TrialEndsAt), nil
+	return withProductConversion(withProductTrial(api.ProductCustomer{TenantID: tenant, Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended, AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)},
+		row.TrialStartsAt, row.TrialEndsAt), row.PaymentMethodAt, row.TrialResolvedAt), nil
 }
 
 // withProductTrial adds a customer's stored trial (ADR-20261021195901).
@@ -254,8 +254,8 @@ func (s *PgStore) ListProductCustomers(ctx context.Context, account, appID, curs
 	}
 	out := api.ProductCustomersResponse{Customers: []api.ProductCustomer{}}
 	for _, row := range rows {
-		out.Customers = append(out.Customers, withProductTrial(api.ProductCustomer{TenantID: pgUUIDString(row.TenantID), Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended,
-			AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)}, row.TrialStartsAt, row.TrialEndsAt))
+		out.Customers = append(out.Customers, withProductConversion(withProductTrial(api.ProductCustomer{TenantID: pgUUIDString(row.TenantID), Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended,
+			AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)}, row.TrialStartsAt, row.TrialEndsAt), row.PaymentMethodAt, row.TrialResolvedAt))
 	}
 	if len(out.Customers) > api.ProductControlCustomerPageSize {
 		out.Customers = out.Customers[:api.ProductControlCustomerPageSize]
@@ -346,6 +346,9 @@ func prepareProductOperationTx(ctx context.Context, tx pgx.Tx, op *Operation, de
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
 	}
+	if customer.AwaitsPaymentMethod(catalog.Spec.Plans[customer.Plan], now) {
+		return ErrProductPaymentMethodRequired
+	}
 	feature := catalog.Spec.Features[admission.ProductFeature]
 	if feature.Operation != nil {
 		current, err := productDefinitionTx(ctx, tx, op.AccountID, op.AppID, feature)
@@ -415,6 +418,6 @@ func (s *PgStore) ProductCustomerByAuthOrganization(ctx context.Context, account
 	if err != nil {
 		return api.ProductCustomer{}, mapErr(err)
 	}
-	return withProductTrial(api.ProductCustomer{TenantID: pgUUIDString(row.TenantID), Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended, AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)},
-		row.TrialStartsAt, row.TrialEndsAt), nil
+	return withProductConversion(withProductTrial(api.ProductCustomer{TenantID: pgUUIDString(row.TenantID), Revision: row.Revision, Plan: row.Plan, Suspended: row.Suspended, AuthOrganizationID: pgUUIDString(row.AuthOrganizationID)},
+		row.TrialStartsAt, row.TrialEndsAt), row.PaymentMethodAt, row.TrialResolvedAt), nil
 }

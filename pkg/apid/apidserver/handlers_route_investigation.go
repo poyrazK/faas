@@ -58,6 +58,10 @@ func (s *server) getRouteHealthInvestigation(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if p := s.routeCustomerGroupingProblem(acct, app, opts.CustomerGroupBy); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if !acct.Plan.DebugTelemetryEnabled() {
 		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
 		return

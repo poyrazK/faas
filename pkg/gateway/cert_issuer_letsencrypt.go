@@ -67,13 +67,11 @@ import (
 
 // LetsEncryptCertIssuer is the production CA wrapper. It owns a
 // single certmagic.Config that drives the per-host Obtain path.
-// We deliberately avoid the cache: the per-host engine mints
-// one cert per hostname and writes each leaf to its own
-// directory; cross-cert coordination (the load-bearing
-// rationale for the cache in tls_wire.go) is unnecessary here
-// because each cert has its own (issuer-key, primary-host)
-// storage path and the renewer goroutine handles re-mint
-// without racing the certmagic internal renew loop.
+// certmagic requires a certificate cache for every Config, but this
+// issuer never loads certificates into it: the per-host engine mints
+// one cert per hostname and writes each leaf to its own directory,
+// and the renewer goroutine drives renewal through Issue, so the
+// cache's own maintenance loop has nothing to renew.
 type LetsEncryptCertIssuer struct {
 	// storageDir is the parent directory; certmagic writes to
 	// <storageDir>/certificates/<issuerKey>/<primary>/. Mode 0700
@@ -148,13 +146,25 @@ func NewLetsEncryptCertIssuer(storageDir, contactEmail string, staging bool, dns
 // (issuer-key, primary-host) storage path.
 func (l *LetsEncryptCertIssuer) initConfig() error {
 	l.initOnce.Do(func() {
-		storage := &certmagic.FileStorage{Path: filepath.Join(l.storageDir, "certificates")}
+		// certmagic prefixes its own "certificates/" key, so the
+		// storage root is storageDir itself; rooting it at
+		// storageDir/certificates wrote every leaf one level below
+		// where leafPath and the expiry refresher read it.
+		storage := &certmagic.FileStorage{Path: l.storageDir}
 		ca := certmagic.LetsEncryptProductionCA
 		if l.staging {
 			ca = certmagic.LetsEncryptStagingCA
 		}
-		magic := certmagic.New(nil, certmagic.Config{
+		// certmagic.New panics on a nil cache, so the first
+		// issuance would take gatewayd-internal down.
+		var magic *certmagic.Config
+		cache := certmagic.NewCache(certmagic.CacheOptions{
+			GetConfigForCert: func(certmagic.Certificate) (*certmagic.Config, error) { return magic, nil },
+			Logger:           silentZap,
+		})
+		magic = certmagic.New(cache, certmagic.Config{
 			Storage: storage,
+			Logger:  silentZap,
 		})
 		issuer := certmagic.NewACMEIssuer(magic, certmagic.ACMEIssuer{
 			Email:       l.contactEmail,
@@ -196,6 +206,15 @@ func (l *LetsEncryptCertIssuer) Issue(ctx context.Context, primary string) (time
 	// recover NotAfter.
 	if err := l.cfg.ObtainCertSync(ctx, primary); err != nil {
 		return time.Time{}, fmt.Errorf("gateway: certmagic ObtainCertSync %s: %w", primary, err)
+	}
+	// ObtainCertSync is a no-op whenever storage already holds a
+	// certificate for primary, expiring or not, so on its own the
+	// renewer's re-mint would restamp the old NotAfter until the
+	// certificate lapsed. RenewCertSync replaces it only inside
+	// certmagic's renewal window (a third of its lifetime by
+	// default); otherwise it returns without contacting the CA.
+	if err := l.cfg.RenewCertSync(ctx, primary, false); err != nil {
+		return time.Time{}, fmt.Errorf("gateway: certmagic RenewCertSync %s: %w", primary, err)
 	}
 	// Certmagic writes the leaf to
 	// <storageDir>/certificates/<issuerKey>/<primary>/<primary>.crt.
@@ -249,8 +268,8 @@ func (l *LetsEncryptCertIssuer) IssueSet(ctx context.Context, primarySANS []stri
 // cert to. Certmagic's FileStorage layout is
 // <StorageDir>/certificates/<issuerKey>/<domain>/<domain>.crt
 // (storage.go:357 prefixCerts = "certificates"). The issuerKey
-// for both LE production and staging is
-// "acme-v02.api.letsencrypt.org-directory" in certmagic v0.25.
+// is derived from the CA directory URL, so production and
+// staging certificates live under different keys.
 //
 // parseCertNotAfter (cert_expiry.go:481) accepts the
 // "first PEM block = leaf" invariant — the standard
@@ -259,5 +278,18 @@ func (l *LetsEncryptCertIssuer) leafPath(primary string) (string, error) {
 	if primary == "" {
 		return "", errors.New("gateway: empty primary hostname for leaf path")
 	}
-	return filepath.Join(l.storageDir, "certificates", "acme-v02.api.letsencrypt.org-directory", primary, primary+".crt"), nil
+	return filepath.Join(l.storageDir, "certificates", l.issuerKey(), primary, primary+".crt"), nil
+}
+
+// issuerKey is the storage key of the configured CA: the ACME issuer's own
+// key once the Config is built, else the key certmagic derives for the
+// Let's Encrypt directory this issuer targets.
+func (l *LetsEncryptCertIssuer) issuerKey() string {
+	if l.cfg != nil && len(l.cfg.Issuers) > 0 {
+		return l.cfg.Issuers[0].IssuerKey()
+	}
+	if l.staging {
+		return "acme-staging-v02.api.letsencrypt.org-directory"
+	}
+	return "acme-v02.api.letsencrypt.org-directory"
 }

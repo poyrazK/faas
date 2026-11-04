@@ -6,7 +6,7 @@ Create one long-lived collector for an application-owned observation scope and
 pass its bound `record` method as the synchronous `on_event` observer:
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentPreparationMetrics,
     EventAcknowledgmentPreparedOptions,
 )

@@ -204,6 +204,8 @@ func registerComputeNode(ctx context.Context, st state.Store, cfg ComputeNodeCon
 		VCPUBudget:         cfg.VCPUBudget,
 		Active:             true,
 		CertFingerprint:    certFP,
+		CPUTemplate:        cfg.CPUTemplate,
+		CPUModel:           cfg.CPUModel,
 	}
 	if parsedOverlayIP, parseErr := netip.ParseAddr(strings.TrimSpace(overlayIP)); parseErr == nil && parsedOverlayIP.Is4() {
 		row.OverlayIP = &parsedOverlayIP

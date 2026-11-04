@@ -136,6 +136,21 @@ func (v *delayedJobLogVMM) Logs(_ context.Context, _ string, _ string, sinceSeq 
 	return &jobLogStream{}, nil
 }
 
+// instantJobLogVMM is a task that exited before any of its output reached
+// vmmd's ring: the first snapshot is empty.
+type instantJobLogVMM struct {
+	*fakeVMM
+	calls int
+}
+
+func (v *instantJobLogVMM) Logs(_ context.Context, _ string, _ string, sinceSeq int64, _ time.Time, _ bool) (LogStream, error) {
+	v.calls++
+	if v.calls >= 3 && sinceSeq <= 1 {
+		return &jobLogStream{lines: []LogLine{{Seq: 1, Stream: "stdout", Line: "done in 4ms"}}}, nil
+	}
+	return &jobLogStream{}, nil
+}
+
 type routedDestroyJobVMM struct {
 	*fakeVMM
 	destroyNode     string
@@ -612,6 +627,29 @@ func TestHandleJobExitSettlesLateSerialOutput(t *testing.T) {
 	}
 	if vmm.calls < 2 {
 		t.Fatalf("Logs calls = %d, want replay after initial snapshot", vmm.calls)
+	}
+}
+
+// A sub-50 ms task's exit envelope can arrive before any of its output is in
+// the ring; an empty first snapshot used to persist no output at all.
+func TestHandleJobExitWaitsForOutputOfInstantTask(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _, run := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	const (
+		instanceID = "job-instant-log-instance"
+		leaseToken = "0d4c6a0e-55b0-4c55-9b8c-5f0f3c7d2a11"
+	)
+	if err := store.JobTaskMarkClaimed(context.Background(), run.ID, 0, instanceID, leaseToken, time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
+		t.Fatalf("JobTaskMarkClaimed: %v", err)
+	}
+	vmm := &instantJobLogVMM{fakeVMM: &fakeVMM{}}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if err := e.HandleJobExit(context.Background(), acct.ID, run.ID, 0, 0, "succeeded", leaseToken); err != nil {
+		t.Fatalf("HandleJobExit: %v", err)
+	}
+	task, err := store.JobTaskGet(context.Background(), run.ID, 0)
+	if err != nil || task.LogContent != "done in 4ms\n" {
+		t.Fatalf("terminal task = %+v, err %v; want the output that arrived after the exit envelope", task, err)
 	}
 }
 

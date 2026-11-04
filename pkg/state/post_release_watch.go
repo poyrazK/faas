@@ -71,7 +71,8 @@ func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time
 	var out []PostReleaseWatchCandidate
 	for _, d := range m.deployments {
 		if d.Status != DeployLive || !d.RollbackOn5xx || d.LastAutoRollbackReason != "" || d.TrafficPercent != 100 ||
-			d.RolloutState != "complete" || d.RolloutCompletedAt == nil || !d.RolloutCompletedAt.After(cutoff) {
+			d.RolloutState != "complete" || d.RolloutCompletedAt == nil || !d.RolloutCompletedAt.After(cutoff) ||
+			postReleaseRollbackSkipped(d.RolloutDecision) {
 			continue
 		}
 		scope := normalizedDeploymentScope(d.Scope)
@@ -84,8 +85,10 @@ func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time
 			if other.CreatedAt.After(d.CreatedAt) && other.Status != DeployFailed && other.Status != DeployCancelled {
 				newest = false
 			}
-			if other.Status == DeploySuperseded && other.CreatedAt.Before(d.CreatedAt) &&
-				(predecessor == nil || other.CreatedAt.After(predecessor.CreatedAt)) {
+			// The release a plain rollback returns to: the most recently
+			// serving, never a canary aborted before it completed.
+			if other.Status == DeploySuperseded && other.CreatedAt.Before(d.CreatedAt) && !abortedCanaryCandidate(other) &&
+				(predecessor == nil || m.rollbackMoreRecentLocked(other, *predecessor)) {
 				p := other
 				predecessor = &p
 			}
@@ -110,6 +113,16 @@ func (m *MemStore) ListPostReleaseWatchCandidates(_ context.Context, window time
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// postReleaseRollbackSkipped reports whether the watch already found a
+// regression it could not roll back (rollout_decision.rollback_skipped):
+// the release keeps serving, a person decides, and it is not judged again.
+func postReleaseRollbackSkipped(decision json.RawMessage) bool {
+	var d struct {
+		RollbackSkipped string `json:"rollback_skipped"`
+	}
+	return len(decision) > 0 && json.Unmarshal(decision, &d) == nil && d.RollbackSkipped != ""
 }
 
 func (m *MemStore) RecordPostReleaseRolloutDecision(_ context.Context, deploymentID string, decision json.RawMessage) error {

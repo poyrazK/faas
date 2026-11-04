@@ -188,3 +188,30 @@ func TestDeployPreflightListenerShowsGRPCHealth(t *testing.T) {
 		t.Fatalf("listener = %q, want %q", got, want)
 	}
 }
+
+// H14-55 on rc.297: `deploy --app-protocol grpc` without a probe flag showed
+// "health GET /healthz" while schedd boots it with gRPC health readiness.
+func TestRenderDeployPreflightGRPCAppShowsGRPCHealth(t *testing.T) {
+	for _, tc := range []struct {
+		name, protocol string
+		hc             *api.DeploymentHealthcheck
+		want           string
+	}{
+		{"grpc without a probe flag", "grpc", nil, "listener:      :8080 · gRPC health"},
+		{"grpc with an explicit path", "grpc", &api.DeploymentHealthcheck{Path: "/ready"}, "listener:      :8080 · health GET /ready"},
+		{"http1 keeps the inferred path", "http1", nil, "listener:      :8080 · health GET /healthz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			main.RenderDeployPreflight(&out, main.DeployPreflightSummary{
+				Slug: "h14-grpc", Source: "working tree",
+				BuildPlan:   &api.BuildPlan{Class: "app", Framework: "go", Port: 8080, HealthPath: "/healthz"},
+				AppProtocol: tc.protocol, Healthcheck: tc.hc,
+				Release: "standard · 100% after readiness",
+			})
+			if got := out.String(); !strings.Contains(got, tc.want) {
+				t.Fatalf("preflight missing %q in:\n%s", tc.want, got)
+			}
+		})
+	}
+}

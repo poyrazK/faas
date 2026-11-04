@@ -20,6 +20,13 @@ reachability. Do not copy webhook payloads into tickets; the operator view
 intentionally omits them. The command uses the authenticated operator API and
 does not need database credentials.
 
+A delivery whose `last_error` starts with `githubd: unprocessable webhook
+delivery` is dead on its first attempt: githubd could not decode or route the
+payload, and retrying the same bytes cannot succeed. That is a githubd bug or
+an App subscribed to a payload shape githubd does not know. Retry it only after
+the release that fixes the decoder is deployed. Pull request actions previews
+do not use (labeled, edited, ...) are completed as ignored, not dead.
+
 ## Recover
 
 After correcting the dependency failure, retry one dead item:

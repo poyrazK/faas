@@ -40,6 +40,14 @@ const (
 	// DefaultTimeout bounds one hook call. Lifecycle notifications are
 	// telemetry/control hints, never a reason to hold the workload boot path.
 	DefaultTimeout = 250 * time.Millisecond
+
+	// InvokeUnavailableBackoff is how long vmmd stops sending per-request
+	// invoke events to an instance whose guest reported that no extension
+	// endpoint accepted the last one (ADR-20261025150000). Each event costs the
+	// guest a vsock connection, about 4 ms of CPU on nested hosts, so an app
+	// without an extension must not pay it on every request. An extension that
+	// starts listening later receives invoke events within this interval.
+	InvokeUnavailableBackoff = 30 * time.Second
 )
 
 // ErrUnavailable means the extension socket could not be reached. It is

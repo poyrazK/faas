@@ -238,6 +238,9 @@ type WakePhaseMetrics struct {
 	// against ~0 on the metal harness, and could not attribute them.
 	restorePhases *prometheus.HistogramVec
 	preBootFiles  *prometheus.CounterVec
+	// journalCommits counts the resource-journal commits behind the
+	// journal_sync phase; bpftrace on production-us saw ~26 per restore.
+	journalCommits prometheus.Counter
 	// resumeGuestStages splits resume_hook by the guest's own timing frame
 	// (ADR-022 amendment). Production-us measured resume_hook ~190 ms for
 	// Node and Python apps against ~58 ms for Go, with the host able to see
@@ -259,6 +262,7 @@ var restorePhaseNames = []string{
 	"restore_gate_wait", "chroot", "resolve_images", "stage_drives", "stage_writable",
 	"stage_pre_boot_files", "pre_boot_join_wait", "stage_snapshot", "helper",
 	"network_wait", "start_jailer", "bind_tun", "load_snapshot", "resume_hook", "wait_ready",
+	"journal_sync", "journal_lock_wait",
 }
 
 // NewWakePhaseMetrics registers vmmd_wake_phase_duration_seconds on
@@ -306,9 +310,13 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 	}
 	m.restorePhases = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "vmmd_restore_phase_duration_seconds",
-		Help:    "Snapshot restore sub-phase durations, operator-only (the customer wake.restore_breakdown event carries a subset). stage_writable is the per-instance drive clone inside stage_drives; pre_boot_join_wait and network_wait are the critical-path waits on the concurrent pre-boot write and wake network.",
+		Help:    "Snapshot restore sub-phase durations, operator-only (the customer wake.restore_breakdown event carries a subset). stage_writable is the per-instance drive clone inside stage_drives; pre_boot_join_wait and network_wait are the critical-path waits on the concurrent pre-boot write and wake network. journal_sync and journal_lock_wait are the wake's resource-journal fsyncs and lock waits, summed across the phases they overlap.",
 		Buckets: []float64{0.001, 0.0025, 0.005, 0.01, 0.02, 0.035, 0.05, 0.075, 0.1, 0.15, 0.25, 0.5, 1.0, 2.0},
 	}, []string{"phase"})
+	m.journalCommits = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "vmmd_restore_journal_commits_total",
+		Help: "Resource-journal record commits made by successful snapshot restores, from lease intent to readiness. Divided by the restore count, the commits per restore.",
+	})
 	m.preBootFiles = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "vmmd_restore_pre_boot_files_total",
 		Help: "Restores by pre-boot file staging outcome: skipped (the captured drive already held the files) or written.",
@@ -327,7 +335,7 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 	for _, stage := range resumeGuestStageNames {
 		m.resumeGuestStages.WithLabelValues(stage)
 	}
-	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes, m.restorePhases, m.preBootFiles, m.resumeGuestStages)
+	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes, m.restorePhases, m.journalCommits, m.preBootFiles, m.resumeGuestStages)
 	return m
 }
 
@@ -364,10 +372,12 @@ func (m *WakePhaseMetrics) ObserveRestorePhases(b restoreTimingBreakdown) {
 		"stage_snapshot": b.StageSnapshotMs, "helper": b.HelperMs, "network_wait": b.NetworkWaitMs,
 		"start_jailer": b.StartJailerMs, "bind_tun": b.BindTunMs, "load_snapshot": b.LoadSnapshotMs,
 		"resume_hook": b.ResumeHookMs, "wait_ready": b.WaitReadyMs,
+		"journal_sync": b.JournalSyncMs, "journal_lock_wait": b.JournalLockWaitMs,
 	}
 	for _, phase := range restorePhaseNames {
 		m.restorePhases.WithLabelValues(phase).Observe(float64(values[phase]) / 1000.0)
 	}
+	m.journalCommits.Add(float64(b.JournalCommits))
 	outcome := "written"
 	if b.PreBootSkipped {
 		outcome = "skipped"

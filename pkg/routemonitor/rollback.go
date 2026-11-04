@@ -20,6 +20,10 @@ const (
 	RollbackSkipOutsideWindow    = "outside_rollback_window"
 	RollbackSkipNoBaseline       = "no_healthy_baseline"
 	RollbackSkipTargetIneligible = "rollback_target_ineligible"
+	// RollbackSkipProjectRelease: a project release serves the app; the
+	// project rolls back as a set, never one member (ADR-20261028110044
+	// amendment 1).
+	RollbackSkipProjectRelease = "project_release"
 )
 
 // RollbackDecision is what a store needs to claim or skip one incident.

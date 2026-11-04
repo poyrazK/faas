@@ -874,6 +874,47 @@ func TestLoadHost_EmitsCompileErrorCounter(t *testing.T) {
 	}
 }
 
+// adr: 091 — amendment 2026-10-28 (review round 3): every dropped rule fails
+// its host closed and is counted, whatever its kind. A broken cache rule was
+// dropped without a counter tick, and a rule whose list was missing was
+// silently disabled, so an IP rule stopped refusing with no signal at all.
+func TestCompileHostRules_BrokenRulesAreCountedAndFailClosed(t *testing.T) {
+	store := &fakeEdgeRuleListStore{}
+	metrics := gateway.NewMetrics()
+	g := newGatewaydEdgeRules(store, newQuietLogger(), nil, metrics)
+	ipRule := listRule("ip-missing-list", "a", "missing")
+	ipRule.Enabled, ipRule.Kind, ipRule.MatchPath = true, state.EdgeRuleKindIP, "/**"
+	ipRule.Action = state.EdgeRuleAction{Kind: state.EdgeRuleKindIP, IP: &state.EdgeRuleIPAction{Deny: []string{"0.0.0.0/0"}}}
+	rules := []state.EdgeRule{
+		ipRule,
+		{ID: "cache-bad", AccountID: "a", AppID: "app-a", Enabled: true, Kind: state.EdgeRuleKindCache,
+			MatchPath: "[unmatched", Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindCache, Cache: &state.EdgeRuleCacheAction{MaxAgeSeconds: 60}}},
+	}
+	entry, err := g.compileHostRules(context.Background(), "a.example.com", rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := map[string]bool{}
+	for _, e := range entry.PathGlobErrs {
+		failed[e.RuleID] = true
+	}
+	if !failed["ip-missing-list"] || !failed["cache-bad"] {
+		t.Fatalf("PathGlobErrs = %+v, want both broken rules", entry.PathGlobErrs)
+	}
+	if entry.PolicyRuleOwners["ip-missing-list"] != "a" {
+		t.Fatalf("PolicyRuleOwners = %v, want the broken rule's owner", entry.PolicyRuleOwners)
+	}
+	body := counterBody(t, metrics)
+	for _, want := range []string{
+		`gateway_edge_rule_compile_error_total{kind="ip"} 1`,
+		`gateway_edge_rule_compile_error_total{kind="cache"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/metrics body missing %q", want)
+		}
+	}
+}
+
 // TestLoadHost_NilMetrics_DoesNotPanic is the nil-safety tripwire. The
 // production daemon always wires metrics via run.go; cmd-side tests
 // historically pass nil. PR-B's emit must guard before touching the
@@ -949,21 +990,19 @@ func TestCompileCacheRulesIntersectsActionAndSelectorMethods(t *testing.T) {
 	}
 }
 
-// TestLoadHost_AllKindsCovered pins the kind-switch. If a future
-// PR adds a new kind but forgets to add the counter loop, this
-// test (extended with the new kind) fails. Today it pins the ten:
-// route, rewrite, redirect, headers, cors, jwt, ip, validate,
-// limit, budget (the validate widening was PR-B, the limit
-// widening was PR-D24, the budget widening is ADR-093).
+// TestLoadHost_AllKindsCovered pins the compile-error table. If a future
+// PR adds a new kind but forgets its row, this test (extended with the new
+// kind) fails. compileHostRules counts and records every kind's errors from
+// one table since ADR-091 amendment 2026-10-28, which added the cache,
+// retry and circuit_breaker rows the per-kind loops had missed.
 func TestLoadHost_AllKindsCovered(t *testing.T) {
 	// We only need the counter contract; the actual malformed-glob /
 	// malformed-CIDR trigger lives in compile* helpers, which already
-	// have their own tests. Here we drive loadHost with a malformed
-	// route rule to prove the loop for kind="route" fires; the other
-	// nine loops are byte-identical (range over each err slice; kind
-	// string literal differs) so we verify the ten kind literals
-	// are present in the source rather than re-driving nine malformed
-	// fixtures (which would couple this test to compileIPRules et al).
+	// have their own tests. TestLoadHost_EmitsCompileErrorCounter drives
+	// the route row and TestCompileHostRules_BrokenRulesAreCountedAndFailClosed
+	// the cache row; every row shares the same loop, so the rows are checked
+	// in the source rather than re-driving a malformed fixture per kind
+	// (which would couple this test to compileIPRules et al).
 	srcBytes, err := os.ReadFile("edge_rules.go")
 	if err != nil {
 		// Tests run from cmd/gatewayd-internal/ — try the package dir.
@@ -972,14 +1011,16 @@ func TestLoadHost_AllKindsCovered(t *testing.T) {
 		t.Skipf("could not read edge_rules.go: %v", err)
 	}
 	src := string(srcBytes)
-	for _, kind := range []string{
-		`"route"`, `"rewrite"`, `"redirect"`, `"headers"`,
-		`"cors"`, `"jwt"`, `"ip"`,
-		`"validate"`, `"limit"`, `"budget"`,
+	for kind, errs := range map[string]string{
+		"route": "routeErrs", "rewrite": "rewriteErrs", "redirect": "redirectErrs", "headers": "headersErrs",
+		"cors": "corsErrs", "jwt": "jwtErrs", "ip": "ipErrs", "validate": "validateErrs", "limit": "limitErrs",
+		"maintenance": "maintenanceErrs", "geo": "geoErrs", "throttle": "throttleErrs", "budget": "budgetErrs",
+		"cache": "cacheErrs", "retry": "retryErrs", "circuit_breaker": "circuitBreakerErrs", "respond": "respondErrs",
+		"async": "asyncErrs", "waf": "wafErrs", "challenge": "challengeErrs",
 	} {
-		pattern := fmt.Sprintf(`ObserveEdgeRuleCompileError(%s)`, kind)
+		pattern := fmt.Sprintf(`{%q, %s}`, kind, errs)
 		if !strings.Contains(src, pattern) {
-			t.Errorf("edge_rules.go missing compile-error loop for kind=%s (pattern %q)", kind, pattern)
+			t.Errorf("edge_rules.go compile-error table has no row for kind=%s (pattern %q)", kind, pattern)
 		}
 	}
 }

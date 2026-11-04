@@ -54,3 +54,42 @@ func TestPromotionRequiresFreshPurposeAndExactHistoricalLease(t *testing.T) {
 		t.Fatal("ignored unknown parent field")
 	}
 }
+
+// A held admission's fresh promotion names the successor while its parent
+// names the issuer; only the issuer the caller vouches for may differ, and
+// nothing else.
+func TestPromotionHeldAcrossARestartMayNameTheSuccessor(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-time.Hour)
+	parent := Receipt{Binding: validBinding(old), NativeInputHash: strings.Repeat("d", 64), Netns: "native-promotion", HostIP: "10.100.0.8", LeaseUID: 20008, Paused: true, CompletedAtUnixNano: old.UnixNano()}
+	p := Promotion{Parent: parent, Binding: parent.Binding}
+	p.Binding.Token, p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = uuid.NewString(), now.UnixNano(), now.Add(time.Minute).UnixNano()
+	p.Binding.Incarnation = uuid.NewString() // the successor
+	p.Binding.PayloadHash, _ = HashPromotionPayload(p.ToProto())
+	issuer := parent.Binding.Incarnation
+	if err := p.Validate(now); err == nil {
+		t.Fatal("a successor's promotion validated without a hold")
+	}
+	if err := p.Held(uuid.NewString()).Validate(now); err == nil {
+		t.Fatal("a hold from another issuer validated")
+	}
+	if err := p.Held(issuer).Validate(now); err != nil {
+		t.Fatalf("held promotion: %v", err)
+	}
+	r := parent
+	r.Binding, r.Paused, r.CompletedAtUnixNano = p.Binding, false, now.UnixNano()
+	if err := p.Held(issuer).CheckReceipt(r, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CheckReceipt(r, now); err == nil {
+		t.Fatal("held receipt checked without a hold")
+	}
+	if c := p.Held(issuer).Clone(); c.Validate(now) != nil {
+		t.Fatal("a clone lost its hold")
+	}
+	bad := p
+	bad.Binding.EgressRevision++
+	if bad.Held(issuer).Validate(now) == nil {
+		t.Fatal("a hold excused another binding change")
+	}
+}

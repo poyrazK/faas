@@ -397,33 +397,20 @@ func metalSidecarBoot(t *testing.T, mainReload bool) {
 func mainSecretReloadMetalLayer(t *testing.T, source string) string {
 	t.Helper()
 	dir := t.TempDir()
-	layer, mount := filepath.Join(dir, "main-reload.ext4"), filepath.Join(dir, "mnt")
+	layer := filepath.Join(dir, "main-reload.ext4")
 	if err := copyFile(source, layer); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(mount, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command("mount", "-o", "loop", layer, mount).CombinedOutput(); err != nil {
-		t.Fatalf("mount reload fixture: %v %s", err, out)
-	}
-	defer func() {
-		if out, err := exec.Command("umount", mount).CombinedOutput(); err != nil {
-			t.Errorf("unmount reload fixture: %v %s", err, out)
-		}
-	}()
-	manifestPath, err := stagedDrivePath(mount, "upper/"+strings.TrimPrefix(api.AppManifestPath, "/"))
+	img := metalDriveSession(t, layer)
+	manifestRel := "upper/" + strings.TrimPrefix(api.AppManifestPath, "/")
+	const ackRel = "upper/usr/local/bin/ack-current"
+	layout, err := inspectDrive(t.Context(), img, []string{manifestRel, ackRel}, map[string]int64{manifestRel: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, relative, err := openDriveRoot(mount, manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = root.Close() }()
-	body, err := root.ReadFile(relative)
-	if err != nil {
-		t.Fatal(err)
+	body := layout.entries[driveImagePath(layout.fullRootfs, manifestRel)].Data
+	if body == nil {
+		t.Fatal("reload fixture has no readable app manifest")
 	}
 	manifest, err := api.ReadManifest(bytes.NewReader(body))
 	if err != nil {
@@ -434,14 +421,14 @@ func mainSecretReloadMetalLayer(t *testing.T, source string) string {
 	if manifest.StopSignal == "SIGHUP" {
 		manifest.SecretReloadSignal = "SIGUSR1"
 	}
-	if err := writeDriveFile(mount, "upper/usr/local/bin/ack-current", []byte(metalSecretAckCGI("/bin/busybox", "/tmp/current-generation")), 0755, "generation ACK fixture"); err != nil {
-		t.Fatal(err)
-	}
 	var encoded bytes.Buffer
 	if err := api.WriteManifest(&encoded, manifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeDriveFile(mount, "upper/"+strings.TrimPrefix(api.AppManifestPath, "/"), encoded.Bytes(), 0o644, "main reload fixture"); err != nil {
+	if err := stageDriveFiles(t.Context(), img, layout, []driveFile{
+		{what: "generation ACK fixture", path: ackRel, want: []byte(metalSecretAckCGI("/bin/busybox", "/tmp/current-generation")), mode: 0o755},
+		{what: "main reload fixture", path: manifestRel, want: encoded.Bytes(), mode: 0o644},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return layer

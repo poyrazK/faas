@@ -51,7 +51,7 @@ func (m *MemStore) insertWorkflowRunLocked(r *WorkflowRun) error {
 
 // CreateWorkflowRunAdmitted performs the quota check and insert under the same
 // store lock, mirroring PgStore's per-app advisory-lock transaction.
-func (m *MemStore) CreateWorkflowRunAdmitted(_ context.Context, r *WorkflowRun, maxActive int) (int, error) {
+func (m *MemStore) CreateWorkflowRunAdmitted(_ context.Context, r *WorkflowRun, maxActive, maxParked int) (int, error) {
 	if maxActive < 1 {
 		return 0, ErrWorkflowRunQuotaExceeded
 	}
@@ -60,12 +60,7 @@ func (m *MemStore) CreateWorkflowRunAdmitted(_ context.Context, r *WorkflowRun, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	active := 0
-	for _, existing := range m.workflowRuns {
-		if existing.AppID == r.AppID && (existing.Status == WorkflowRunStatusPending || existing.Status == WorkflowRunStatusRunning || existing.Status == WorkflowRunStatusAwaitingEvent) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(r.AppID, maxParked)
 	if active >= maxActive {
 		return active, ErrWorkflowRunQuotaExceeded
 	}
@@ -100,7 +95,7 @@ func (m *MemStore) GetWorkflowRunByIdempotencyKey(_ context.Context, appID, work
 	return &copy, nil
 }
 
-func (m *MemStore) CreateWorkflowRunAdmittedWithIdempotencyKey(_ context.Context, r *WorkflowRun, maxActive int, key string, requestFingerprint []byte) (int, bool, error) {
+func (m *MemStore) CreateWorkflowRunAdmittedWithIdempotencyKey(_ context.Context, r *WorkflowRun, maxActive, maxParked int, key string, requestFingerprint []byte) (int, bool, error) {
 	if err := validateWorkflowRunCreateIdempotency(key, requestFingerprint); err != nil {
 		return 0, false, err
 	}
@@ -128,12 +123,7 @@ func (m *MemStore) CreateWorkflowRunAdmittedWithIdempotencyKey(_ context.Context
 	if maxActive < 1 {
 		return 0, false, ErrWorkflowRunQuotaExceeded
 	}
-	active := 0
-	for _, existing := range m.workflowRuns {
-		if existing.AppID == r.AppID && (existing.Status == WorkflowRunStatusPending || existing.Status == WorkflowRunStatusRunning || existing.Status == WorkflowRunStatusAwaitingEvent) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(r.AppID, maxParked)
 	if active >= maxActive {
 		return active, false, ErrWorkflowRunQuotaExceeded
 	}
@@ -403,6 +393,10 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 		chosen.Input = cloneWorkflowJSON(chosen.Input)
 		chosen.Output = cloneWorkflowJSON(chosen.Output)
 		chosen.DefinitionSnapshot = cloneWorkflowJSON(chosen.DefinitionSnapshot)
+		if priorStatus != WorkflowRunStatusRunning {
+			dueAt := chosen.ScheduledFor
+			chosen.ClaimedDueAt = &dueAt
+		}
 		return &chosen, nil
 	}
 	return nil, ErrNotFound
@@ -612,7 +606,7 @@ func (m *MemStore) CancelUnstartedWorkflowRuns(ctx context.Context, appID, workf
 // RetryWorkflowStep requeues a failed HTTP step in the existing run. The
 // store lock makes eligibility checks, descendant reopening, quota admission,
 // and the terminal-to-pending transition atomic.
-func (m *MemStore) RetryWorkflowStep(_ context.Context, runID, stepName string, maxActive int) (*WorkflowRun, int, error) {
+func (m *MemStore) RetryWorkflowStep(_ context.Context, runID, stepName string, maxActive, maxParked int) (*WorkflowRun, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if maxActive < 1 {
@@ -635,12 +629,7 @@ func (m *MemStore) RetryWorkflowStep(_ context.Context, runID, stepName string, 
 	if err != nil {
 		return nil, 0, err
 	}
-	active := 0
-	for _, existing := range m.workflowRuns {
-		if existing.AppID == run.AppID && (existing.Status == WorkflowRunStatusPending || existing.Status == WorkflowRunStatusRunning || existing.Status == WorkflowRunStatusAwaitingEvent) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(run.AppID, maxParked)
 	if active >= maxActive {
 		return nil, active, ErrWorkflowRunQuotaExceeded
 	}
@@ -764,10 +753,13 @@ func (m *MemStore) CreateWorkflowSteps(_ context.Context, runID string, steps []
 func (m *MemStore) GetWorkflowSteps(_ context.Context, runID string) ([]*WorkflowStep, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.workflowStepsLocked(runID), nil
+}
 
+func (m *MemStore) workflowStepsLocked(runID string) []*WorkflowStep {
 	stepsMap, ok := m.workflowSteps[runID]
 	if !ok {
-		return []*WorkflowStep{}, nil
+		return []*WorkflowStep{}
 	}
 
 	var steps []*WorkflowStep
@@ -800,7 +792,7 @@ func (m *MemStore) GetWorkflowSteps(_ context.Context, runID string) ([]*Workflo
 		return steps[i].CreatedAt.Before(steps[j].CreatedAt)
 	})
 
-	return steps, nil
+	return steps
 }
 
 // StartWorkflowStep persists the resolved input with the running transition.

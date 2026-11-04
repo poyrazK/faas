@@ -308,6 +308,36 @@ func TestLeaseFailureDecidesLocallyButSpendsHeldTokens(t *testing.T) {
 	}
 }
 
+// A gateway that has never reached Postgres must not arm the central outage
+// grace from a cold-start allowance admit: otherwise, with Postgres down from
+// the start, it would fall back to its full per-gateway local bucket (N× the
+// shared limit) instead of failing closed.
+func TestLeaseColdStartOutageDoesNotArmGraceAndFailsClosed(t *testing.T) {
+	clock := newFakeClock(time.Unix(1_700_000_000, 0))
+	bucket := &sharedBucket{clock: clock}
+	bucket.mu.Lock()
+	bucket.failWith = errors.New("postgres unavailable at cold start")
+	bucket.mu.Unlock()
+	l, _ := leasingGateway(bucket, clock)
+
+	// The first request bootstraps via allowance (no central round-trip); its
+	// lease statement then fails and opens the breaker.
+	if !allow(l, 100, 500) {
+		t.Fatal("cold-start allowance refused the first request")
+	}
+	if l.centralVerifiedAt.Load() != 0 {
+		t.Fatalf("outage grace armed on a never-verified gateway (centralVerifiedAt=%d); a cold-start allowance admit is not a shared-counter decision", l.centralVerifiedAt.Load())
+	}
+	if !l.centralBreakerOpen(clock.Now()) {
+		t.Fatal("a failed cold-start lease statement did not open the breaker")
+	}
+	// Breaker open + never verified → fail closed, not a fall back to the full
+	// per-gateway local bucket.
+	if allow(l, 100, 500) {
+		t.Fatal("request admitted during a cold-start outage; a never-verified gateway must fail closed, not use its local bucket")
+	}
+}
+
 func TestLeaseShortfallIsCountedAndMarksTheCounterEmpty(t *testing.T) {
 	clock := newFakeClock(time.Unix(1_700_000_000, 0))
 	bucket := &sharedBucket{clock: clock}
@@ -333,6 +363,33 @@ func TestLeaseShortfallIsCountedAndMarksTheCounterEmpty(t *testing.T) {
 	}
 }
 
+// A counter commit past the 250 ms pre-auth bound (a checkpoint or fsync
+// stall) failed the lease, opened the breaker and refused requests within
+// their limit with 503. A lease now gets the consume bound, and a request
+// waiting on it the batch wait (ADR-20261027173012 amendment 2).
+func TestLeaseOutlastsASlowCommit(t *testing.T) {
+	clock := newFakeClock(time.Unix(1_700_000_000, 0))
+	hold := make(chan struct{})
+	bucket := &sharedBucket{clock: clock, hold: hold}
+	l, _ := leasingGateway(bucket, clock)
+	// A burst of 20 is the smallest with a local allowance (one request).
+	const rps, burst = 10.0, 20.0
+	// The first request is admitted from the allowance and starts a lease
+	// that stalls in Postgres; the second has no allowance left and waits.
+	if !l.AllowWithCentralParams(t.Context(), "lease-app", rps, burst, leaseTestKey) {
+		t.Fatal("first request refused")
+	}
+	stall := time.AfterFunc(400*time.Millisecond, func() { close(hold) })
+	defer stall.Stop()
+	ctx := withRateAdmissionEvidence(t.Context())
+	allowed := l.AllowWithCentralParams(ctx, "lease-app", rps, burst, leaseTestKey)
+	unavailable, _ := ctx.Value(rateAdmissionKey{}).(*atomic.Bool)
+	if !allowed || unavailable.Load() {
+		t.Fatalf("request behind a 400 ms commit: allowed=%v unavailable=%v, want admitted", allowed, unavailable.Load())
+	}
+	l.lease.calls.Wait()
+}
+
 func TestLeaseDropsIdleStates(t *testing.T) {
 	clock := newFakeClock(time.Unix(1_700_000_000, 0))
 	bucket := &sharedBucket{clock: clock}
@@ -351,6 +408,28 @@ func TestLeaseDropsIdleStates(t *testing.T) {
 // TestLeaseAdmissionStaysWithinTheADRBounds simulates N gateways with random
 // arrivals against one shared bucket and compares their admissions with an
 // exact token bucket fed the same arrivals.
+// A small burst, such as a sign-in throttle's, gets no local allowance: one
+// unverified request per gateway would be a large share of it, so every
+// admission is debited from the shared counter first.
+func TestLeaseSmallBurstAdmitsOnlyDebitedRequests(t *testing.T) {
+	clock := newFakeClock(time.Unix(1_700_000_000, 0))
+	bucket := &sharedBucket{clock: clock}
+	gateways := make([]*Limiter, 3)
+	for i := range gateways {
+		gateways[i], _ = leasingGateway(bucket, clock)
+	}
+	admitted := 0
+	for i := range 10 {
+		clock.Advance(10 * time.Millisecond)
+		if allow(gateways[i%len(gateways)], 0.1, 2) {
+			admitted++
+		}
+	}
+	if admitted > 2 {
+		t.Fatalf("admitted %d of 10 back-to-back requests at burst 2 across 3 gateways, want at most 2", admitted)
+	}
+}
+
 func TestLeaseAdmissionStaysWithinTheADRBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -388,7 +467,7 @@ func TestLeaseAdmissionStaysWithinTheADRBounds(t *testing.T) {
 			}
 			t.Logf("admitted %d, exact bucket %d, statements %d", admitted, exactAdmitted, bucket.statementCount())
 			n := float64(tc.gateways)
-			allowance := math.Max(1, math.Floor(defaultLeaseAllowanceFraction*tc.burst))
+			allowance := math.Floor(defaultLeaseAllowanceFraction * tc.burst)
 			lease := math.Max(1, math.Floor(defaultLeaseFraction*tc.burst))
 			if over := float64(admitted - exactAdmitted); over > n*allowance+1 {
 				t.Fatalf("admitted %d, exact bucket %d: %v over, want at most N*A = %v", admitted, exactAdmitted, over, n*allowance)

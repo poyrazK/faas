@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -21,6 +22,7 @@ const (
 	ShapeUnsafePath ShapeErrorKind = "unsafe_path"
 	ShapeUnsafeLink ShapeErrorKind = "unsafe_link"
 	ShapeTooMany    ShapeErrorKind = "too_many_entries"
+	ShapeTooLarge   ShapeErrorKind = "expanded_too_large"
 	ShapeEmpty      ShapeErrorKind = "empty"
 )
 
@@ -49,10 +51,14 @@ func (e *ShapeError) Unwrap() error { return e.Err }
 
 // ValidateShape verifies the source archive contract without extracting or
 // executing customer content. It rejects malformed gzip/tar streams, empty
-// archives, path escapes, escaping link targets, and entry-count overflow.
+// archives, path escapes, escaping link targets, entry-count overflow, and
+// entries whose declared sizes sum past maxExpandedBytes (0 disables that
+// cap). The size check runs on each header before its data is read, so a
+// highly compressed archive is refused without being decompressed: every
+// later pass over the archive would otherwise inflate it again.
 //
 //nolint:forbidigo // callers first apply their customer-path ownership/symlink policy; the server passes a private spool file.
-func ValidateShape(path string, maxEntries int) error {
+func ValidateShape(path string, maxEntries int, maxExpandedBytes int64) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return &ShapeError{Kind: ShapeOpen, Detail: err.Error(), Err: err}
@@ -66,6 +72,7 @@ func ValidateShape(path string, maxEntries int) error {
 
 	reader := tar.NewReader(zr)
 	count := 0
+	var expanded int64
 	for {
 		header, nextErr := reader.Next()
 		if errors.Is(nextErr, io.EOF) {
@@ -81,19 +88,45 @@ func ValidateShape(path string, maxEntries int) error {
 			return &ShapeError{Kind: ShapeUnsafePath, Detail: "absolute paths or '..' entries are rejected"}
 		}
 		if header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink {
-			if EscapesRoot(header.Linkname) {
-				return &ShapeError{Kind: ShapeUnsafeLink, Detail: "symlink/hardlink with absolute or '..' target rejected"}
+			if _, ok := LinkTarget(header.Name, header.Linkname, header.Typeflag == tar.TypeLink); !ok {
+				return &ShapeError{Kind: ShapeUnsafeLink, Detail: "symlink/hardlink with an absolute target or one outside the archive rejected"}
 			}
 		}
 		count++
 		if maxEntries > 0 && count > maxEntries {
 			return &ShapeError{Kind: ShapeTooMany, Detail: fmt.Sprintf("too many files (>%d)", maxEntries)}
 		}
+		if header.Size > 0 {
+			expanded += header.Size
+		}
+		if maxExpandedBytes > 0 && (header.Size > maxExpandedBytes || expanded > maxExpandedBytes) {
+			return &ShapeError{Kind: ShapeTooLarge, Detail: fmt.Sprintf("source expands past %d bytes", maxExpandedBytes)}
+		}
 	}
 }
 
 // EscapesRoot reports whether a tar path is absolute or contains a parent
 // component. Tar paths always use forward slashes, independent of host OS.
+// LinkTarget resolves a link entry's target to an archive-relative path. A
+// symlink's target is relative to the directory holding the link, so
+// "packages/api/LICENSE -> ../../LICENSE" names the root LICENSE; a hard
+// link's target is an archive entry name. ok is false for an absolute
+// target or one resolving outside the archive (ADR-20261029103512).
+// Checking the raw target for ".." refused ordinary in-repository links.
+func LinkTarget(name, linkname string, hard bool) (string, bool) {
+	if linkname == "" || strings.HasPrefix(linkname, "/") {
+		return "", false
+	}
+	resolved := path.Clean(TrimLeadingDotSlash(linkname))
+	if !hard {
+		resolved = path.Join(path.Dir(TrimLeadingDotSlash(name)), linkname)
+	}
+	if resolved == ".." || strings.HasPrefix(resolved, "../") {
+		return "", false
+	}
+	return resolved, true
+}
+
 func EscapesRoot(value string) bool {
 	if value == "" {
 		return false

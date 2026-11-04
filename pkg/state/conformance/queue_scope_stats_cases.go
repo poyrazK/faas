@@ -60,6 +60,13 @@ func testQueueDemandScope(t *testing.T, fx *Fixture) {
 			(item.depth > 0) == stats.OldestPendingAt.IsZero() {
 			t.Fatalf("scope %q stats = %+v, %v", item.scope, stats, err)
 		}
+		// The scaling reader counts the same depth, stopping at its limit.
+		for _, limit := range []int{100, 2} {
+			depth, err := fx.Store.QueueDepthInScope(fx.Ctx, app.ID, item.scope, limit)
+			if err != nil || depth != min(item.depth, limit) {
+				t.Fatalf("scope %q depth limit %d = %d, %v; want %d", item.scope, limit, depth, err, min(item.depth, limit))
+			}
+		}
 	}
 	for _, item := range []struct {
 		scope, queue    string
@@ -81,6 +88,9 @@ func testQueueDemandScope(t *testing.T, fx *Fixture) {
 		}
 		if _, err := fx.Store.QueueStateForQueueInScope(fx.Ctx, app.ID, "orders", scope); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("invalid named scope %q accepted: %v", scope, err)
+		}
+		if _, err := fx.Store.QueueDepthInScope(fx.Ctx, app.ID, scope, 10); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Fatalf("invalid depth scope %q accepted: %v", scope, err)
 		}
 	}
 }

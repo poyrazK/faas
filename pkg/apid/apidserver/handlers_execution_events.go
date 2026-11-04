@@ -70,8 +70,12 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 			flusher.Flush()
 		}
 	}
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
+	// The poll backs off while nothing happens: a fixed 100 ms ticker cost
+	// about 20 CP queries a second per open stream for the whole life of an
+	// execution (bug hunt 2026-10-28 O16/O21).
+	interval := executionEventsPollMin
+	poll := time.NewTimer(interval)
+	defer poll.Stop()
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 
@@ -91,10 +95,16 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 		if row.Status.Terminal() && len(events) == 0 {
 			return
 		}
+		interval = nextExecutionEventsPoll(interval, len(events) > 0)
+		poll.Reset(interval)
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-poll.C:
+			// The execution row decides the end only when no event did.
+			if len(events) > 0 {
+				continue
+			}
 			fresh, readErr := s.store.ExecutionByID(ctx, acct.ID, id) //nolint:contextcheck // ctx derives from r.Context() via reqbudget.WithStream
 			if readErr == nil {
 				row = fresh
@@ -104,6 +114,20 @@ func (s *server) streamExecutionEvents(w http.ResponseWriter, r *http.Request, a
 			flush()
 		}
 	}
+}
+
+const (
+	executionEventsPollMin = 100 * time.Millisecond
+	executionEventsPollMax = 2 * time.Second
+)
+
+// nextExecutionEventsPoll returns the next poll delay: the minimum after a
+// poll that found events, otherwise double the last, up to the maximum.
+func nextExecutionEventsPoll(last time.Duration, found bool) time.Duration {
+	if found {
+		return executionEventsPollMin
+	}
+	return min(2*last, executionEventsPollMax)
 }
 
 func executionEventCursor(r *http.Request) (int64, *api.Problem) {

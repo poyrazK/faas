@@ -54,7 +54,7 @@ func (s LifecycleExpirationService) Step(ctx context.Context, b state.ObjectBuck
 			}
 		}
 	}()
-	active, err := s.Store.HasActiveObjectDeletion(ctx, b.AccountID, b.AppID, b.ID)
+	active, err := s.paused(ctx, b, j)
 	if err != nil {
 		return j, err
 	}
@@ -85,6 +85,18 @@ func (s LifecycleExpirationService) Step(ctx context.Context, b state.ObjectBuck
 		return j, err
 	}
 	return s.Store.CheckpointObjectLifecycleScan(ctx, j.ID, j.Token, key, false)
+}
+
+// paused reports whether the scan must wait: one of its own deletions is
+// unsettled, so its cursor cannot advance, or a version protection job runs.
+// Deletions of other keys do not pause it; its own deletion of a key that
+// another deletion holds waits at admission (ADR-20261025115958). A store
+// without the scoped check falls back to waiting for every deletion.
+func (s LifecycleExpirationService) paused(ctx context.Context, b state.ObjectBucket, j state.ObjectLifecycleScan) (bool, error) {
+	if scoped, ok := s.Store.(state.ObjectLifecycleDeletionActivityStore); ok {
+		return scoped.HasActiveObjectLifecycleDeletion(ctx, b.ID, j.ID)
+	}
+	return s.Store.HasActiveObjectDeletion(ctx, b.AccountID, b.AppID, b.ID)
 }
 
 func lifecycleScanHasObjectActions(rules []api.ObjectLifecycleRule) bool {

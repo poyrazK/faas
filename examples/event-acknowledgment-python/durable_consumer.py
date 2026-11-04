@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from consumer import _enqueue_authenticated_delivery, _owned_delivery
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentCheckpointWatchOptions,
     EventAcknowledgmentIntentError,
     EventAcknowledgmentIntentHealthOptions,

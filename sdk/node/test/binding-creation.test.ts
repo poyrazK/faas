@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { OpenAPI, createBindingVerificationFromReview, reconcileBindingVerificationCreation, createProjectBindingVerificationFromReview, reconcileProjectBindingVerificationCreation, BindingVerificationCreationError } from '../src/index.js';
-import type { BindingVerificationReview, ProjectBindingVerificationReview, BindingVerificationRun, ProjectBindingVerificationRun, BindingVerificationCreationOptions } from '../src/index.js';
+import { OpenAPI, createBindingVerificationFromReview, reconcileBindingVerificationCreation, createProjectBindingVerificationFromReview, reconcileProjectBindingVerificationCreation, BindingVerificationCreationError } from '../src/preview.js';
+import type { BindingVerificationReview, ProjectBindingVerificationReview, BindingVerificationRun, ProjectBindingVerificationRun, BindingVerificationCreationOptions } from '../src/preview.js';
 const template=JSON.parse(readFileSync(new URL('../../../binding-runner-tests/creation.json',import.meta.url),'utf8')) as {app_review:BindingVerificationReview; app_run:BindingVerificationRun;graph_review:ProjectBindingVerificationReview;graph_run:ProjectBindingVerificationRun};
 function fixture(graph: boolean) {
  const f=structuredClone(template),created=new Date(Date.now()-1000).toISOString(),expires=new Date(Date.parse(created)+60_000).toISOString();

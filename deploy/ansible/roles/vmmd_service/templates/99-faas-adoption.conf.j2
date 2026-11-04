@@ -1,0 +1,7 @@
+[Service]
+# vmmd restart adoption switches; see roles/vmmd_service/defaults/main.yml.
+# A switch that is on overrides vmmd.toml; one that is off renders empty,
+# which leaves vmmd.toml (default off) in charge.
+Environment=FAAS_VMMD_ADOPTION_RECORD={{ 'true' if (vmmd_adoption_record | bool) else '' }}
+Environment=FAAS_VMMD_ADOPT_RUNNING_VMS={{ 'true' if (vmmd_adopt_running_vms | bool) else '' }}
+Environment=FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES={{ 'true' if (vmmd_adopt_admitted_runtimes | bool) else '' }}

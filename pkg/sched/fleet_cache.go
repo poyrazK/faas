@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -56,6 +57,17 @@ func (r *NodeRegistry) Remove(nodeID string) {
 	r.mu.Unlock()
 }
 
+// Node returns the registry's row for nodeID, if the node is active.
+func (r *NodeRegistry) Node(nodeID string) (state.ComputeNode, bool) {
+	if r == nil {
+		return state.ComputeNode{}, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	node, ok := r.nodes[nodeID]
+	return node, ok
+}
+
 // Snapshot returns a stable copy suitable for a placement or observer sweep.
 func (r *NodeRegistry) Snapshot() []state.ComputeNode {
 	if r == nil {
@@ -99,6 +111,9 @@ type NodeTelemetry struct {
 	QuietPaused bool
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
 	Frozen bool
+	// QuietPause is the instance's quiet pause record for the pause ledger
+	// (ADR-20261023171905).
+	QuietPause QuietPauseRecord
 }
 
 // NodeTelemetryCache holds the most recent batched report from each node.
@@ -108,6 +123,113 @@ type NodeTelemetry struct {
 type NodeTelemetryCache struct {
 	mu    sync.RWMutex
 	nodes map[string]telemetryEntry
+	// bridges is each node's instance bridge memory from the same stream
+	// (connection-survival ADR §2): node-level, so kept beside the rows.
+	bridges map[string]bridgeMemorySample
+	// cpuPressure is each node's CPU pressure readings from the same stream
+	// (ADR 20261030100950).
+	cpuPressure map[string]cpuPressureSample
+}
+
+type cpuPressureSample struct {
+	reading  NodeCPUPressure
+	lastSeen time.Time
+}
+
+type bridgeMemorySample struct {
+	bytes    int64
+	lastSeen time.Time
+}
+
+// ReplaceInstanceBridge records a node's instance bridge memory.
+func (c *NodeTelemetryCache) ReplaceInstanceBridge(nodeID string, receivedAt time.Time, bytes int64) {
+	if c == nil || nodeID == "" || bytes < 0 {
+		return
+	}
+	c.mu.Lock()
+	if c.bridges == nil {
+		c.bridges = make(map[string]bridgeMemorySample)
+	}
+	c.bridges[nodeID] = bridgeMemorySample{bytes: bytes, lastSeen: receivedAt}
+	c.mu.Unlock()
+}
+
+// InstanceBridgeMB returns each node's fresh instance bridge memory in MiB,
+// rounded up.
+func (c *NodeTelemetryCache) InstanceBridgeMB(now time.Time) map[string]int {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]int, len(c.bridges))
+	for nodeID, s := range c.bridges {
+		if now.Sub(s.lastSeen) <= TelemetryFreshness {
+			out[nodeID] = BytesToMiBCeil(s.bytes)
+		}
+	}
+	return out
+}
+
+// BytesToMiBCeil converts a byte count to MiB, rounding up.
+func BytesToMiBCeil(b int64) int {
+	if b <= 0 {
+		return 0
+	}
+	return int((b + (1 << 20) - 1) >> 20)
+}
+
+// InstanceBridgeSink applies a node's instance bridge memory from its
+// capacity stream.
+type InstanceBridgeSink func(nodeID string, receivedAt time.Time, bytes int64)
+
+// NodeCPUPressure is a node's CPU pressure readings (ADR 20261030100950):
+// the share of the last 10 s in which a tenant task waited for a CPU, and
+// the host's busy share of its CPUs over api.NodeCPUBusyWindowSeconds, both
+// in percent.
+type NodeCPUPressure struct {
+	SomeAvg10   float64
+	BusyPercent float64
+}
+
+// Pressured reports whether the readings put the node under CPU pressure:
+// tenant tasks wait while the host's CPUs are nearly all busy, so the wait
+// is not only one app's own cpu.max quota.
+func (p NodeCPUPressure) Pressured() bool {
+	return p.SomeAvg10 >= api.NodeCPUPressureStallPercent && p.BusyPercent >= api.NodeCPUPressureBusyPercent
+}
+
+// CPUPressureSink applies a node's CPU pressure readings from its capacity
+// stream.
+type CPUPressureSink func(nodeID string, receivedAt time.Time, reading NodeCPUPressure)
+
+// ReplaceCPUPressure records a node's CPU pressure readings.
+func (c *NodeTelemetryCache) ReplaceCPUPressure(nodeID string, receivedAt time.Time, reading NodeCPUPressure) {
+	if c == nil || nodeID == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.cpuPressure == nil {
+		c.cpuPressure = make(map[string]cpuPressureSample)
+	}
+	c.cpuPressure[nodeID] = cpuPressureSample{reading: reading, lastSeen: receivedAt}
+	c.mu.Unlock()
+}
+
+// CPUPressure returns each node's fresh CPU pressure readings.
+func (c *NodeTelemetryCache) CPUPressure(now time.Time) map[string]NodeCPUPressure {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]NodeCPUPressure, len(c.cpuPressure))
+	for nodeID, s := range c.cpuPressure {
+		if now.Sub(s.lastSeen) <= TelemetryFreshness {
+			out[nodeID] = s.reading
+		}
+	}
+	return out
 }
 
 type telemetryEntry struct {

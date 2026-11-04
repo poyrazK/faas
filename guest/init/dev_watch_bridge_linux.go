@@ -3,10 +3,14 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"strconv"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -107,6 +111,18 @@ func proxyDevWatchConn(c net.Conn, target string, log *slog.Logger) {
 	_, _ = ioCopy(c, upstream)
 	_ = c.Close()
 	<-done
+}
+
+// ioCopy treats a peer closing the connection (EPIPE) or the listener
+// closing as a normal end, so the bridge does not log every finished
+// connection as an error.
+func ioCopy(dst io.Writer, src io.Reader) (int64, error) {
+	const buf = 64 * 1024
+	n, err := io.CopyBuffer(dst, src, make([]byte, buf))
+	if errors.Is(err, unix.EPIPE) || errors.Is(err, net.ErrClosed) {
+		return n, nil
+	}
+	return n, err
 }
 
 // guestIPv4 is the guest's tap address: 10.0.0.2 in every guest (ADR-009),

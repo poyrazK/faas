@@ -8,8 +8,8 @@ The [Node intent store](event-acknowledgment-node-intents.md) uses the same appl
 
 ## Install and protect
 
-Install `faas.EventConsumerReceiptSchema` and
-`faas.EventAcknowledgmentIntentSchema` explicitly in the application PostgreSQL
+Install `preview.EventConsumerReceiptSchema` and
+`preview.EventAcknowledgmentIntentSchema` explicitly in the application PostgreSQL
 database. Add `EventConsumerProcessingSchema` only when using local preparation
 leases. No helper installs, migrates or prunes application tables automatically.
 This is application-owned DDL, separate from Gregale's platform schema/registries.
@@ -40,7 +40,7 @@ job ownership. Do not mix durable and immediate callback modes for the same atte
 
 ```go
 queued, err := worker.RunDurable(ctx, db,
-    func(workCtx context.Context, tx faas.EventConsumerSQLTransaction) (json.RawMessage, error) {
+    func(workCtx context.Context, tx preview.EventConsumerSQLTransaction) (json.RawMessage, error) {
         _, err := tx.ExecContext(workCtx,
             "UPDATE invoices SET paid = true WHERE id = $1", invoiceID)
         if err != nil {
@@ -121,9 +121,9 @@ The single-iteration API below remains available for host-owned scheduling.
 Run a bounded iteration from an application-owned durable recovery host:
 
 ```go
-status, err := faas.RecoverNextEventAcknowledgmentIntent(ctx, db, client,
+status, err := preview.RecoverNextEventAcknowledgmentIntent(ctx, db, client,
     accountID, appID, 30*time.Second,
-    faas.EventAcknowledgmentWorkerOptions{}, time.Second)
+    preview.EventAcknowledgmentWorkerOptions{}, time.Second)
 ```
 
 `ErrEventAcknowledgmentIntentEmpty` means no row is currently due and unclaimed.

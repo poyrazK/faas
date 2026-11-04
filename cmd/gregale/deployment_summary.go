@@ -36,7 +36,7 @@ func cmdDeploymentSummary(args []string) int {
 		return cmdDeploymentSummaryInteractive(slug)
 	}
 	if len(pos) != 1 || (*app != "" && !validCLISlug(*app)) || !validDeploymentRef(pos[0]) {
-		PrintUsage(os.Stderr, "usage: gregale deployment summary <id|vN> [--app SLUG] | gregale deployment summary --interactive [--app SLUG]", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale release summary <id|vN> [--app SLUG] | gregale release summary --interactive [--app SLUG]", "deployment")
 		return 1
 	}
 

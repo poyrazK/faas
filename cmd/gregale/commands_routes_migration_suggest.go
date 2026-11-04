@@ -84,7 +84,7 @@ func cmdRoutesMigrationSuggest(args []string) int {
 		return 1
 	}
 	if len(positional) != 0 || len(fromValues) == 0 || len(toValues) == 0 || *limit < 1 || *limit > 10 || *withoutTraffic && *customerDetails || !validRouteHealthSuggestionSince(*since) || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes migration suggest --from-deployment APP=ID --to-deployment APP=ID [--sources PATH] [--since 14d] [--limit 3] [--without-traffic] [--customer-details] [--out draft.json] [--report-out report.json] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route migration suggest --from-deployment APP=ID --to-deployment APP=ID [--sources PATH] [--since 14d] [--limit 3] [--without-traffic] [--customer-details] [--out draft.json] [--report-out report.json] [--json]", "cli")
 		return 1
 	}
 	if *output != "" && *output == *reportOutput {

@@ -14,6 +14,7 @@ import (
 type contractTestStore interface {
 	Store // teststorecheck:allow the one Store-sized interface the contracts alias
 	AccountAbuseHoldStore
+	AdoptionReportInstanceStore
 	ApplicationStandardAssignmentInventoryStore
 	ApplicationStandardAutomaticMaterializationStore
 	ApplicationStandardAutomaticObservationStore

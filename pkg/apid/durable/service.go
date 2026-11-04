@@ -39,8 +39,10 @@ type Host interface {
 	EnqueuePreparedInvocation(ctx context.Context, inv state.Invocation, capacityDetail string) (state.Invocation, *api.Problem)
 	// ResultRetention is how long an invocation result is kept for acct.
 	ResultRetention(acct state.Account) *time.Time
-	// SecretRecipient seals isolated validator payloads; nil when unavailable.
-	SecretRecipient() *age.X25519Recipient
+	// ExecutionPayloadRecipients are who an isolated validator's payload is
+	// sealed to and the key id stored beside it (the delivery seal domain,
+	// ADR 20261022111812); an error when none is loaded.
+	ExecutionPayloadRecipients() ([]*age.X25519Recipient, string, error)
 	ExecutionAPIEnabled() bool
 }
 

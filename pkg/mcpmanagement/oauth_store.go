@@ -20,11 +20,35 @@ const oauthCodeTTL = time.Minute
 const oauthAccessTTL = 15 * time.Minute
 const oauthGrantTTL = 8 * time.Hour
 
+// A browser sign-in's connection slides with its mcp-login key
+// (ADR-20261028205920; api.MCPLoginKeyIdle and api.MCPLoginKeyMaxAge). A
+// pasted API key's connection keeps oauthGrantTTL. The bridge records a slid
+// expiry once it has moved by credentialRenewInterval.
+const (
+	maxConnectionLifetime   = api.MCPLoginKeyMaxAge
+	credentialRenewInterval = time.Hour
+)
+
 type oauthClient struct {
 	ID        string
 	Name      string
 	Redirects []string
-	Expires   time.Time
+	// Expires is extended while a grant the client holds lasts
+	// (holdClientLocked), so a restart keeps that grant.
+	Expires time.Time
+	// Metadata marks a client identified by a Client ID Metadata Document
+	// (ADR-20261030065746): ID is the document's URL, fetched again after
+	// Refresh.
+	Metadata bool      `json:",omitempty"`
+	Refresh  time.Time `json:",omitzero"`
+}
+
+// holdClientLocked keeps g's client registered as long as g lasts. Caller
+// holds r.mu.
+func (r *remoteServer) holdClientLocked(g *oauthGrant) {
+	if c := r.clients[g.clientID]; c != nil && c.Expires.Before(g.expires) {
+		c.Expires = g.expires
+	}
 }
 
 type authorizationRequest struct {
@@ -40,6 +64,9 @@ type authorizationRequest struct {
 	Expires    time.Time
 	NativeCode string
 	NativeURL  string
+	// Capabilities are the extra scopes chosen before sign-in; the browser
+	// code carries exactly these (ADR-20261026195952).
+	Capabilities []string
 }
 
 type authorizationCode struct {
@@ -51,23 +78,34 @@ type authorizationCode struct {
 }
 
 type oauthGrant struct {
-	id                    string
-	clientID              string
-	accountID             string
-	scopes                []string
-	server                *mcp.Server
-	client                *api.Client
-	expires               time.Time
-	accessExpires         time.Time
-	accessHash            string
-	refreshHash           string
-	revoked               bool
-	management            *management
-	allowedApps           map[string]string
-	availableApps         []api.AppResponse
-	credentialExpires     time.Time
+	id        string
+	clientID  string
+	accountID string
+	scopes    []string
+	// approved is set once consent completes. server and management are
+	// built on first use and dropped when idle (grant_servers.go); inflight
+	// counts the requests using them.
+	approved          bool
+	server            *mcp.Server
+	inflight          int
+	lastUsed          time.Time
+	client            *api.Client
+	expires           time.Time
+	accessExpires     time.Time
+	accessHash        string
+	refreshHash       string
+	revoked           bool
+	management        *management
+	allowedApps       map[string]string
+	availableApps     []api.AppResponse
+	credentialExpires time.Time
+	// renewable grants hold an mcp-login key, issued at credentialIssued,
+	// that apid slides while it is used (grant_renewal.go).
+	renewable             bool
+	credentialIssued      time.Time
 	environments          *EnvironmentConsent
 	availableEnvironments []EnvironmentGrant
+	capabilities          []string
 }
 
 func randomToken(prefix string) (string, error) {
@@ -114,6 +152,7 @@ func (r *remoteServer) pruneLocked() {
 			delete(r.usedRefresh, key)
 		}
 	}
+	r.dropIdleServersLocked(now)
 }
 
 func (r *remoteServer) revokeLocked(g *oauthGrant) {

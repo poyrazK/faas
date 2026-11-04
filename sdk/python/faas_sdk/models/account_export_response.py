@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from ..models.cron_response import CronResponse
     from ..models.custom_domain_response import CustomDomainResponse
     from ..models.deployment_response import DeploymentResponse
+    from ..models.edge_rule_list_response import EdgeRuleListResponse
+    from ..models.edge_rule_response import EdgeRuleResponse
     from ..models.gdpr_audit_export_response import GdprAuditExportResponse
     from ..models.instance_response import InstanceResponse
     from ..models.org_invitation_response import OrgInvitationResponse
@@ -61,6 +63,10 @@ class AccountExportResponse:
     crons: list[CronResponse]
     api_keys: list[APIKeyExportResponse]
     app_secrets: list[AppSecretExportResponse]
+    edge_rules: list[EdgeRuleResponse] | Unset = UNSET
+    """Edge rules on the exported apps."""
+    edge_rule_lists: list[EdgeRuleListResponse] | Unset = UNSET
+    """The account's edge rule lists, with their items."""
     audit_trail: list[GdprAuditExportResponse] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -136,6 +142,20 @@ class AccountExportResponse:
             app_secrets_item = app_secrets_item_data.to_dict()
             app_secrets.append(app_secrets_item)
 
+        edge_rules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.edge_rules, Unset):
+            edge_rules = []
+            for edge_rules_item_data in self.edge_rules:
+                edge_rules_item = edge_rules_item_data.to_dict()
+                edge_rules.append(edge_rules_item)
+
+        edge_rule_lists: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.edge_rule_lists, Unset):
+            edge_rule_lists = []
+            for edge_rule_lists_item_data in self.edge_rule_lists:
+                edge_rule_lists_item = edge_rule_lists_item_data.to_dict()
+                edge_rule_lists.append(edge_rule_lists_item)
+
         audit_trail: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.audit_trail, Unset):
             audit_trail = []
@@ -165,6 +185,10 @@ class AccountExportResponse:
                 "app_secrets": app_secrets,
             }
         )
+        if edge_rules is not UNSET:
+            field_dict["edge_rules"] = edge_rules
+        if edge_rule_lists is not UNSET:
+            field_dict["edge_rule_lists"] = edge_rule_lists
         if audit_trail is not UNSET:
             field_dict["audit_trail"] = audit_trail
 
@@ -181,6 +205,8 @@ class AccountExportResponse:
         from ..models.cron_response import CronResponse
         from ..models.custom_domain_response import CustomDomainResponse
         from ..models.deployment_response import DeploymentResponse
+        from ..models.edge_rule_list_response import EdgeRuleListResponse
+        from ..models.edge_rule_response import EdgeRuleResponse
         from ..models.gdpr_audit_export_response import GdprAuditExportResponse
         from ..models.instance_response import InstanceResponse
         from ..models.org_invitation_response import OrgInvitationResponse
@@ -286,6 +312,24 @@ class AccountExportResponse:
 
             app_secrets.append(app_secrets_item)
 
+        _edge_rules = d.pop("edge_rules", UNSET)
+        edge_rules: list[EdgeRuleResponse] | Unset = UNSET
+        if _edge_rules is not UNSET:
+            edge_rules = []
+            for edge_rules_item_data in _edge_rules:
+                edge_rules_item = EdgeRuleResponse.from_dict(edge_rules_item_data)
+
+                edge_rules.append(edge_rules_item)
+
+        _edge_rule_lists = d.pop("edge_rule_lists", UNSET)
+        edge_rule_lists: list[EdgeRuleListResponse] | Unset = UNSET
+        if _edge_rule_lists is not UNSET:
+            edge_rule_lists = []
+            for edge_rule_lists_item_data in _edge_rule_lists:
+                edge_rule_lists_item = EdgeRuleListResponse.from_dict(edge_rule_lists_item_data)
+
+                edge_rule_lists.append(edge_rule_lists_item)
+
         _audit_trail = d.pop("audit_trail", UNSET)
         audit_trail: list[GdprAuditExportResponse] | Unset = UNSET
         if _audit_trail is not UNSET:
@@ -312,6 +356,8 @@ class AccountExportResponse:
             crons=crons,
             api_keys=api_keys,
             app_secrets=app_secrets,
+            edge_rules=edge_rules,
+            edge_rule_lists=edge_rule_lists,
             audit_trail=audit_trail,
         )
 

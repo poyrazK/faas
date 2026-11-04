@@ -5,10 +5,10 @@ from uuid import UUID
 import httpx
 import pytest
 
-from faas_sdk.api.exclusive_operations import get_exclusive_operation
+from faas_sdk.preview.api.exclusive_operations import get_exclusive_operation
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.commit_operation_response import CommitOperationResponse
-from faas_sdk.models.exclusive_operation_record import ExclusiveOperationRecord
+from faas_sdk.preview.models.commit_operation_response import CommitOperationResponse
+from faas_sdk.preview.models.exclusive_operation_record import ExclusiveOperationRecord
 
 
 @pytest.mark.parametrize(

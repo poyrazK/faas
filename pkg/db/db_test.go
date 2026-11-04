@@ -11,7 +11,7 @@ import (
 func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 	// Control plane: apid, schedd, public gateway/control services. Each
 	// compute node: schedd, internal gateway, vmmd, imaged, and builderd.
-	control := []string{"apid", "apid-clone-worker", "schedd", "gatewayd-public", "meterd", "githubd", "outboundd", "s3-gatewayd", "bridged"}
+	control := []string{"apid", "apid-clone-worker", "schedd", "gatewayd-public", "meterd", "githubd", "outboundd", "s3-gatewayd", "bridged", "mcp-bridge"}
 	compute := []string{"schedd", "gatewayd-internal", "vmmd", "imaged", "builderd"}
 	sum := func(names []string) int32 {
 		var total int32
@@ -42,7 +42,7 @@ func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 		{computeNodes: 12, rolloutNodes: standaloneRolloutNodes, wantMax: 620},
 		// join-fleet converges four nodes by default. These cases cover the
 		// boundary where the steady-state 75% margin alone is insufficient.
-		{computeNodes: 10, rolloutNodes: 4, wantMax: 540},
+		{computeNodes: 10, rolloutNodes: 4, wantMax: 550},
 		{computeNodes: 11, rolloutNodes: 4, wantMax: 580},
 	}
 	for _, tt := range tests {

@@ -36,7 +36,7 @@ func MatchEdgeRuleCORSOrigin(allowList []string, origin string) string {
 		}
 		if strings.HasSuffix(allowHost, ":*") {
 			prefix := strings.TrimSuffix(allowHost, ":*")
-			if port, found := strings.CutPrefix(requestHost, prefix+":"); found && port != "" && !strings.ContainsAny(port, ":/") {
+			if port, found := strings.CutPrefix(requestHost, prefix+":"); found && validCORSOriginPort(port) {
 				return origin
 			}
 		}
@@ -50,4 +50,18 @@ func splitCORSOriginScheme(origin string) (scheme, rest string, ok bool) {
 		return "", "", false
 	}
 	return origin[:idx], origin[idx+3:], true
+}
+
+// validCORSOriginPort reports a decimal port of one to five digits, the only
+// form a browser puts in an Origin.
+func validCORSOriginPort(port string) bool {
+	if port == "" || len(port) > 5 {
+		return false
+	}
+	for _, c := range port {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }

@@ -83,7 +83,7 @@ func TestKeysListHelpNeverRequestsAPI(t *testing.T) {
 			if calls != 0 {
 				t.Fatalf("help made %d API request(s)", calls)
 			}
-			if !strings.Contains(stdout.String(), "gregale keys list") {
+			if !strings.Contains(stdout.String(), "gregale key list") {
 				t.Fatalf("help output does not identify the list command: %q", stdout.String())
 			}
 		})

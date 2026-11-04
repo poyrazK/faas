@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -50,7 +51,13 @@ func retryPolicyDTOFromJSON(raw json.RawMessage) *api.RetryPolicyDTO {
 }
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), acct, r))
+	resp := s.accountResponse(r.Context(), acct, r)
+	// A key learns its own scopes; the hosted MCP server lists an agent
+	// key's tools from them (ADR-20261029085359). Sessions have none.
+	if p, ok := principalFrom(r); ok && p.Key != nil {
+		resp.KeyScopes = p.Key.Scopes
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // nilStringPtr returns a *string pointing at the given value, or
@@ -97,8 +104,9 @@ func (s *server) resolveOverflowNode(ctx context.Context, wire *string, strictEm
 		if errors.Is(err, state.ErrNotFound) {
 			return "", api.ErrInvalidOverflowNode(*wire)
 		}
+		logCustomerFailure(s.log, "lookup overflow_node", err)
 		return "", api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-			"Capacity", fmt.Sprintf("lookup overflow_node %q: %v", *wire, err))
+			"Capacity", api.DetailServerFailure)
 	}
 	if !row.Active {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidOverflowNode,
@@ -118,6 +126,11 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not list apps"))
 		return
 	}
+	apps, labelsByApp, problem := s.appListLabels(r, acct, apps)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	latestByApp, err := s.store.ListLatestDeploymentPerApp(r.Context(), acct.ID)
 	if err != nil {
 		s.log.Error("list app deployments failed", "account", acct.ID, "err", err)
@@ -135,6 +148,7 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 	for _, a := range apps {
 		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
 		resp.DeploymentAvailability = appDeploymentAvailability(liveByApp[a.ID])
+		resp.Labels = labelsByApp[a.ID]
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}
@@ -191,6 +205,10 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := s.appCreateSettingsProblem(r, acct, req); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// Resolve the wire name → UUID server-side before buildApp
 	// runs, so the resulting state.App carries the resolved
@@ -245,8 +263,8 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-				"Capacity", "could not create app"))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Capacity", "could not create app")))
 		}
 		return
 	}
@@ -322,7 +340,11 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		cpuMillicores = profile.CPUMillicores
 	}
 	if ram == 0 {
-		ram = limits.RAMMB
+		ram = api.StandaloneAppDefaultRAMMB(limits)
+		if req.VCPU != 0 {
+			// An explicit vCPU asks for the plan's joint RAM/vCPU shape.
+			ram = limits.RAMMB
+		}
 	}
 	if cpuMillicores == 0 {
 		cpuMillicores = api.DefaultAppCPUMillicores
@@ -576,6 +598,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if serviceTransportProblem != nil {
 		return state.App{}, serviceTransportProblem
 	}
+	if problem := api.PrivateServiceHTTPSTransportProblem(serviceTransport, s.privateServiceHTTPS(acct)); problem != nil {
+		return state.App{}, problem
+	}
 	appManifest := stateManifestFromAPI(lifecycle)
 	appManifest.AllowedServiceCallers = allowedCallers
 	appManifest.AllowedServiceCallScopes = allowedCallScopes
@@ -649,6 +674,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// JSON branch is the rest of this handler. Extracted to
 	// loadAppAndPreflight so createDeployment stays under the
 	// CLAUDE.md 50-line handler cap.
+	if !s.deploymentBodyCapabilityAllowed(r, acct) {
+		writeMissingRoute(w, r)
+		return
+	}
 	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
 	if !ok {
 		return
@@ -714,7 +743,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		}
 	}
 	if len(req.Workflows) > 0 {
-		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
+		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan, s.agentStepsAllowed(acct)); p != nil {
 			api.WriteProblem(w, p)
 			return
 		}
@@ -1204,7 +1233,12 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 	if !ok {
 		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency, RequestBodyMaxBytes: plan.MaxRequestBodyBytes()}
 	}
-	queueDepth, queueWait, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	queueDepth, _, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	perInstance := 0
+	if a.ScalingPolicy != nil {
+		perInstance = a.ScalingPolicy.PerInstanceConcurrency
+	}
+	queueWait := api.ConcurrencyQueueDefaultWaitFor(plan, perInstance)
 	if a.ScalingPolicy != nil {
 		if a.ScalingPolicy.MaxQueueDepth > 0 {
 			queueDepth = a.ScalingPolicy.MaxQueueDepth
@@ -1224,7 +1258,7 @@ func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
 		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
 		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
 		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
-		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
+		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.PerInstanceConcurrency(perInstance),
 		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
 		AppRequestRateRPS: requestRateRPS, AppRequestBurst: requestRateBurst,
 		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
@@ -1324,6 +1358,7 @@ func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
 		MaxQueueDepth:           p.MaxQueueDepth,
 		WakeMaxQueueDepth:       p.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: p.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  p.PerInstanceConcurrency,
 	}
 	if p.Target != nil {
 		out.Target = &api.ScalingTarget{
@@ -1426,7 +1461,9 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 	return resp
 }
 
-func validSlug(s string) bool { return api.ValidAppSlug(s) }
+// validSlug accepts app slugs and the longer PR preview slugs githubd
+// allocates; every creation path rejects the preview shape as reserved first.
+func validSlug(s string) bool { return api.ValidAppSlug(s) || api.ValidPreviewAppSlug(s) }
 
 // digestPinnedRE matches a digest-pinned OCI reference end-to-end:
 //

@@ -36,22 +36,37 @@ func TestDiscoverDevAllApps(t *testing.T) {
 			},
 			rootDeployable: true,
 			want: []devAllApp{
-				{Project: "api", RootDir: "apps/api", SourceDir: "/work/repo/apps/api"},
-				{Project: "web", RootDir: "apps/web", SourceDir: "/work/repo/apps/web"},
+				{Project: "api", RootDir: "apps/api", SourceDir: "/work/repo/apps/api", Service: "api", declared: "api"},
+				{Project: "web", RootDir: "apps/web", SourceDir: "/work/repo/apps/web", Service: "web", declared: "web"},
 			},
 		},
 		{
 			name:    "workload name is sanitized and empty name falls back to directory",
 			sources: []projectSource{{Name: "Billing_Service", RootDir: "services/billing", Path: "/b"}, {Name: "", RootDir: "services/inventory", Path: "/i"}},
 			want: []devAllApp{
-				{Project: "billing-service", RootDir: "services/billing", SourceDir: "/b"},
-				{Project: "inventory", RootDir: "services/inventory", SourceDir: "/i"},
+				{Project: "billing-service", RootDir: "services/billing", SourceDir: "/b", Service: "billing-service", declared: "Billing_Service"},
+				{Project: "inventory", RootDir: "services/inventory", SourceDir: "/i", Service: "inventory"},
+			},
+		},
+		// ADR-20261026105459: a short service keeps the name the other apps
+		// call it by, and dependencies map to the group's service names.
+		{
+			name: "service names and group dependencies",
+			sources: []projectSource{
+				{Name: "ui", RootDir: "ui", Path: "/ui", DependsOn: []string{"api", "db"}},
+				{Name: "api", RootDir: "api", Path: "/api", DependsOn: []string{"Billing_Service", "db", "api"}},
+				{Name: "Billing_Service", RootDir: "billing", Path: "/billing"},
+			},
+			want: []devAllApp{
+				{Project: "api", RootDir: "api", SourceDir: "/api", Service: "api", declared: "api", Depends: []string{"billing-service"}},
+				{Project: "billing-service", RootDir: "billing", SourceDir: "/billing", Service: "billing-service", declared: "Billing_Service"},
+				{Project: "app-ui", RootDir: "ui", SourceDir: "/ui", Service: "ui", declared: "ui", Depends: []string{"api"}},
 			},
 		},
 		{
 			name:           "deployable root with no members is the single app",
 			rootDeployable: true,
-			want:           []devAllApp{{Project: "repo", RootDir: ".", SourceDir: root}},
+			want:           []devAllApp{{Project: "repo", RootDir: ".", SourceDir: root, Service: "repo"}},
 		},
 		{
 			name:    "nothing deployable",
@@ -357,7 +372,7 @@ type fakeDevAllScript struct {
 }
 
 func fakeDevAllLauncher(scripts map[string]fakeDevAllScript, signals *[]string, launched *[][]string, mu *sync.Mutex) devAllLauncher {
-	return func(args []string, stdout, stderr io.Writer) (devAllProcess, error) {
+	return func(args, _ []string, stdout, stderr io.Writer) (devAllProcess, error) {
 		project := args[4]
 		mu.Lock()
 		*launched = append(*launched, args)

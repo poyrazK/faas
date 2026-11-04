@@ -63,10 +63,10 @@ ORDER BY held.since
 LIMIT sqlc.arg(page_limit)::int;
 
 -- name: ProductControlGetCustomer :one
-SELECT revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at FROM product_control_customers WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3;
+SELECT revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at,payment_method_at,trial_resolved_at FROM product_control_customers WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3;
 
 -- name: ProductControlCustomerForUpdate :one
-SELECT revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at FROM product_control_customers
+SELECT revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at,payment_method_at,trial_resolved_at FROM product_control_customers
 WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3 FOR UPDATE;
 
 -- name: ProductControlSetTrialEnd :exec
@@ -75,13 +75,49 @@ WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3 FOR UPDATE;
 UPDATE product_control_customers SET trial_ends_at=sqlc.arg(trial_ends_at)::timestamptz
 WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND tenant_id=sqlc.arg(tenant_id) AND trial_starts_at IS NOT NULL;
 
+-- name: ProductControlSetPaymentMethod :exec
+-- Records since when a payment method has been on file, or clears it
+-- (ADR-20261022180921); the caller decided under the row lock.
+UPDATE product_control_customers SET payment_method_at=sqlc.narg(payment_method_at)::timestamptz
+WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND tenant_id=sqlc.arg(tenant_id);
+
+-- name: ProductControlUnresolvedTrials :many
+-- Ended trials not resolved yet, oldest first, each with what its plan
+-- requires in the customer's own revision and whether the customer was
+-- assigned another plan after the trial ended (ADR-20261022180921). The
+-- customers are locked; a concurrent step skips them.
+SELECT c.account_id, c.app_id, c.tenant_id, c.revision, c.plan, c.trial_ends_at, c.payment_method_at,
+  COALESCE((v.spec->'plans'->c.plan->>'requires_payment_method')::boolean, false)::boolean AS requires_payment_method,
+  COALESCE(v.spec->'plans'->c.plan->>'fallback_plan', '')::text AS fallback_plan,
+  EXISTS (SELECT 1 FROM product_control_plan_history h
+    WHERE h.app_id=c.app_id AND h.tenant_id=c.tenant_id AND h.effective_at > c.trial_ends_at)::boolean AS changed_after_trial
+FROM product_control_customers c
+JOIN product_control_revisions v ON v.app_id=c.app_id AND v.revision=c.revision
+JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
+WHERE c.trial_ends_at IS NOT NULL AND c.trial_resolved_at IS NULL AND c.trial_ends_at <= sqlc.arg(resolved_at)::timestamptz AND a.status<>'deleted'
+ORDER BY c.trial_ends_at, c.tenant_id
+LIMIT sqlc.arg(page_limit)::int
+FOR UPDATE OF c SKIP LOCKED;
+
+-- name: ProductControlResolveTrial :exec
+-- Marks a customer's ended trial resolved, moving them to fallback_plan when
+-- given (ADR-20261022180921).
+UPDATE product_control_customers SET trial_resolved_at=sqlc.arg(resolved_at)::timestamptz, plan=COALESCE(sqlc.narg(fallback_plan)::text, plan)
+WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND tenant_id=sqlc.arg(tenant_id) AND trial_resolved_at IS NULL;
+
+-- name: ProductControlAppendTrialFallback :exec
+-- The fallback assignment takes effect at the trial's end, so no fee minute
+-- after the trial is priced on the paid plan (ADR-20261022180921).
+INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment,effective_at)
+VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,sqlc.arg(revision)::text,sqlc.arg(plan)::text,false,sqlc.arg(effective_at)::timestamptz);
+
 -- name: ProductControlCustomerByAuthOrganization :one
-SELECT tenant_id,revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at FROM product_control_customers c
+SELECT tenant_id,revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at,payment_method_at,trial_resolved_at FROM product_control_customers c
 JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
 WHERE c.account_id=$1 AND c.app_id=$2 AND c.auth_organization_id=$3 AND a.status<>'deleted';
 
 -- name: ProductControlListCustomers :many
-SELECT tenant_id,revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at FROM product_control_customers
+SELECT tenant_id,revision,plan,suspended,auth_organization_id,trial_starts_at,trial_ends_at,payment_method_at,trial_resolved_at FROM product_control_customers
 WHERE account_id=$1 AND app_id=$2 AND tenant_id::text>sqlc.arg(cursor)::text
 ORDER BY tenant_id::text LIMIT 101;
 

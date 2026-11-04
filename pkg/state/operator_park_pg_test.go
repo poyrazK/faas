@@ -6,8 +6,6 @@ package state_test
 
 import (
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -122,8 +120,7 @@ func TestOperatorParkPostgresPreparationRollbackAndLineage(t *testing.T) {
 func TestOperatorParkMigrationQuarantinesLegacy(t *testing.T) {
 	s, p := parkPGStore(t)
 	f := seedPark(t, s)
-	_, file, _, _ := runtime.Caller(0)
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "../../migrations/20261017120000001_operator_park_execution.sql"))
+	raw, err := os.ReadFile("../../migrations/20261017120000001_operator_park_execution.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,8 +165,7 @@ func TestOperatorParkPostgresDowngradePreservesEvidence(t *testing.T) {
 	s, p := parkPGStore(t)
 	f := seedPark(t, s)
 	f.prepare(t)
-	_, file, _, _ := runtime.Caller(0)
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "../../migrations/20261017120000001_operator_park_execution.sql"))
+	raw, err := os.ReadFile("../../migrations/20261017120000001_operator_park_execution.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

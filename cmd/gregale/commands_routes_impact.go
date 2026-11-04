@@ -30,7 +30,7 @@ func cmdRoutesImpact(args []string) int {
 		return 1
 	}
 	if len(positional) > 1 || (len(positional) == 1 && !validCLISlug(positional[0])) || *base == "" || (*format != "text" && *format != "markdown") || (*framework != "auto" && *framework != "fastapi" && *framework != "go-nethttp" && *framework != "node-http") {
-		PrintUsage(osStderr, "usage: gregale routes impact [<slug>] --base REF [--head REF] [--path DIR] [--framework auto|fastapi|go-nethttp|node-http] [--entrypoint MODULE:VARIABLE] [--format text|markdown] [--out PATH] [--fail-on-impact] [--fail-on-incomplete]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route impact [<slug>] --base REF [--head REF] [--path DIR] [--framework auto|fastapi|go-nethttp|node-http] [--entrypoint MODULE:VARIABLE] [--format text|markdown] [--out PATH] [--fail-on-impact] [--fail-on-incomplete]", "cli")
 		return 1
 	}
 	app := ""

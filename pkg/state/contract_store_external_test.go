@@ -22,6 +22,9 @@ type contractTestStore interface {
 	state.AppWorkPolicyStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
+	state.ComputeNodeReadinessStore
+	state.ComputeNodeWakeBreakerStore
+	state.ComputeNodeCPUPressureStore
 	state.ComputeNodeUsageBatcher
 	state.DeferredBuildStore
 	state.DeploymentAliasStore
@@ -35,13 +38,17 @@ type contractTestStore interface {
 	state.EventFanoutReplayBatchStore
 	state.EventFanoutReplayStore
 	state.EventReceiptAcceptanceStore
+	state.EventReceiptAttemptStore
 	state.EventReceiptReplayStore
+	state.EventReceiptScopeStore
 	state.EventReceiptStore
 	state.EventReplayPreviewStore
 	state.EventStorageUsageStore
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
+	state.EventSubscriptionReconcileStore
 	state.EventWorkBindingStore
+	state.FeatureFlagPromotionHoldReader
 	state.FeatureFlagStore
 	state.HostPortLeaseStore
 	state.InvocationEnvironmentQueueAdmissionReader
@@ -72,10 +79,13 @@ type contractTestStore interface {
 	state.NodeLeaseStore
 	state.NodeLifecycleCompletionStore
 	state.ObjectBucketAccessStore
+	state.ObjectBucketPlacementStore
 	state.ObjectBucketReservationResultStore
 	state.ObjectBucketStore
 	state.ObjectBucketWriteFenceStore
+	state.ObjectReadAdmissionStore
 	state.ObjectCapacityStore
+	state.ObjectInventoryScanStore
 	state.ObjectMultipartCompletionStore
 	state.ObjectMultipartTransferStore
 	state.ObjectMultipartURLCapabilityStore
@@ -103,6 +113,8 @@ type contractTestStore interface {
 	state.PlatformTenantReconciliationStore
 	state.PlatformTenantStore
 	state.PlatformTenantWebhookStore
+	state.ProfileCaptureQueue
+	state.ProfileCaptureStore
 	state.ProjectEnvironmentCloneBindingCaptureStore
 	state.ProjectEnvironmentCloneLeasedObjectManifestStore
 	state.ProjectEnvironmentCloneObjectBucketStore

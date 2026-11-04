@@ -54,3 +54,18 @@ func TestCrossingProblemWithoutManagedDatabases(t *testing.T) {
 		t.Fatalf("problem = %+v", p)
 	}
 }
+
+// TestSwitchRestore pins where a rollback that restores the database restores
+// it to (ADR-20261023181931): the earliest crossed release's start, truncated
+// to the second, under the name the crossing problem suggests.
+func TestSwitchRestore(t *testing.T) {
+	first := time.Date(2026, 10, 15, 10, 2, 13, 900_000_000, time.UTC)
+	runs := []state.ReleaseRun{
+		{DeploymentID: "d42", Revision: 42, StartedAt: first.Add(time.Hour)},
+		{DeploymentID: "d41", Revision: 41, StartedAt: first},
+	}
+	point, name := SwitchRestore(runs, state.ReleaseDatabase{ID: "db-1", Name: "orders"})
+	if !point.Equal(first.Truncate(time.Second)) || name != "orders-before-v41" {
+		t.Fatalf("restore to %s as %q", point, name)
+	}
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #666; --open: #b3261e; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #aaa; --open: #ff8a80; } }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1100px; margin: auto; padding: 0 1.5rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid #8886; } nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .scroll { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .45rem; border-bottom: 1px solid #8884; vertical-align: top; }
+    .muted { color: var(--muted); } .warn { padding: .6rem; background: #d4900022; } code { font-size: .9em; }
+    .open { color: var(--open); font-weight: 600; } .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  </style>
+</head>
+<body>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/dashboards">Dashboards</a><a href="/dashboard/incidents">Incidents</a></nav></header>
+<main>
+{{template "email-verification-banner" .}}
+<h1>Incidents</h1>
+{{with .Data}}
+{{if not .Enabled}}
+  <p>Incidents are not enabled for this deployment.</p>
+{{else}}
+  {{if .Error}}<p class="warn" role="alert">{{.Error}}</p>{{end}}
+  <p class="muted">Open incidents first, then those resolved since {{.Since}}: alert rules, route monitors and platform status.</p>
+  {{if .Rows}}
+  <div class="scroll"><table><thead><tr><th>Status</th><th>Incident</th><th>Source</th><th>App</th><th>Opened</th><th>Duration</th><th>Acknowledged</th></tr></thead><tbody>
+  {{range .Rows}}<tr>
+    <td{{if .Open}} class="open"{{end}}>{{.Status}}</td>
+    <td><a href="/dashboard/incidents/{{.ID}}">{{.Title}}</a></td>
+    <td>{{.Source}}</td><td>{{if .App}}{{.App}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td class="num">{{.Opened}}</td><td class="num">{{.Duration}}</td>
+    <td>{{if .AcknowledgedBy}}{{.AcknowledgedBy}}{{else}}<span class="muted">—</span>{{end}}</td>
+  </tr>{{end}}
+  </tbody></table></div>
+  {{if .Truncated}}<p class="muted">More incidents exist; narrow the list with <code>gregale incidents list --app SLUG --open</code>.</p>{{end}}
+  {{else}}
+  <p class="muted">No incidents since {{.Since}}. See the <a href="/docs/incidents">incidents docs</a> for what is listed here.</p>
+  {{end}}
+{{end}}
+{{end}}
+</main>
+</body>
+</html>

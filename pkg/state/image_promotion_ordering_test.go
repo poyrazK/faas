@@ -256,6 +256,10 @@ func TestPgImagePromotionWaitsForAdmissionCommit(t *testing.T) {
 	go func() { result <- promoter.MarkDeploymentLiveIfLatest(ctx, older.ID) }()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
+	// ADR-570 traffic mutations take their locks with NOWAIT and retry, so a
+	// pending promotion may poll rather than queue on a lock. Either way it
+	// must not finish before the admission commits.
+	pending := time.After(time.Second)
 	for {
 		var waiting bool
 		if err := pool.QueryRow(ctx, `select coalesce(wait_event_type = 'Lock', false) from pg_stat_activity where pid = $1::bigint`, pid).Scan(&waiting); err != nil {
@@ -269,8 +273,11 @@ func TestPgImagePromotionWaitsForAdmissionCommit(t *testing.T) {
 			t.Fatalf("promotion bypassed uncommitted admission: %v", err)
 		case <-ctx.Done():
 			t.Fatal("promotion did not wait on the admission lock")
+		case <-pending:
 		case <-ticker.C:
+			continue
 		}
+		break
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)

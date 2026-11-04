@@ -63,7 +63,7 @@ func TestQuietEffective(t *testing.T) {
 		{booked: 24, discount: 24, budget: 8, want: 8}, // all paused, at the cap
 		{booked: 10, discount: 4, budget: 0, want: 10}, // no budget: bookings
 	} {
-		if got := sched.QuietEffective(tc.booked, tc.discount, tc.budget); got != tc.want {
+		if got := sched.QuietEffective(tc.booked, tc.discount, tc.budget, api.QuietPauseMaxVCPUOvercommitPercent); got != tc.want {
 			t.Errorf("quietEffective(%d, %d, %d) = %d, want %d", tc.booked, tc.discount, tc.budget, got, tc.want)
 		}
 	}

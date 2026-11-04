@@ -172,7 +172,15 @@ func TestUpdateTriggerPreservesRotatesAndRemovesKafkaPassword(t *testing.T) {
 		t.Fatalf("AppByID before patch: %v (app_id=%q)", err, apidserver.UuidFromPgtype(before.AppID).String())
 	}
 
-	preserveConfig := json.RawMessage(`{"brokers":["new:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"new-user","password_set":true}}`)
+	// Pointing the trigger at another broker without the password is refused,
+	// so the stored secret cannot be sent to a server the caller chose (bug
+	// hunt 2026-10-28 H107).
+	moved := json.RawMessage(`{"brokers":["attacker:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password_set":true}}`)
+	if rec := e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{Config: moved}, nil); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("move brokers keeping the password = %d, want 422: %s", rec.Code, rec.Body.String())
+	}
+
+	preserveConfig := json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"new-user","password_set":true}}`)
 	rec := e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{Config: preserveConfig}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("preserve status = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -208,7 +216,11 @@ func TestUpdateTriggerPreservesRotatesAndRemovesKafkaPassword(t *testing.T) {
 	}
 }
 
-func TestUpdateTriggerCorruptStoredSecretReturnsSanitizedProblem(t *testing.T) {
+// TestUpdateTriggerKeepsAStoredSecretItCannotOpen: apid merges an update
+// without opening the stored config (ADR 20261022111812), so a stored
+// secret it could not open is kept as it is, and neither the response nor
+// a log carries its ciphertext. schedd is the one that opens it.
+func TestUpdateTriggerKeepsAStoredSecretItCannotOpen(t *testing.T) {
 	installTriggerSecretIdentity(t)
 	e := apidserver.Setup(t, api.PlanPro)
 	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "corrupt-app"})
@@ -223,13 +235,41 @@ func TestUpdateTriggerCorruptStoredSecretReturnsSanitizedProblem(t *testing.T) {
 		t.Fatalf("CreateTriggerIfUnderQuota: %v", err)
 	}
 	id := apidserver.UuidFromPgtype(created.ID).String()
-	if _, err := (*e.Store()).TriggerByID(t.Context(), id); err != nil {
-		t.Fatalf("TriggerByID before corrupt patch: %v (id=%q, raw=%q)", err, id, created.ID.String())
-	}
 	rec := e.Do(t, http.MethodPatch, "/v1/triggers/"+id, api.UpdateTriggerRequest{
-		Config: json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password_set":true}}`),
+		Config: json.RawMessage(`{"brokers":["b:9092"],"topic":"orders-v2","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password_set":true}}`),
 	}, nil)
-	if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "bm90LWFnZQ") {
-		t.Fatalf("status/body = %d %s, want sanitized 503", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "bm90LWFnZQ") {
+		t.Fatalf("status/body = %d %s, want 200 without the ciphertext", rec.Code, rec.Body.String())
+	}
+	stored, err := (*e.Store()).TriggerByID(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stored.Config, []byte(`"password_sealed": "bm90LWFnZQ=="`)) && !bytes.Contains(stored.Config, []byte(`"password_sealed":"bm90LWFnZQ=="`)) || !bytes.Contains(stored.Config, []byte("orders-v2")) {
+		t.Fatalf("stored config = %s; want the update applied and the stored secret kept", stored.Config)
+	}
+}
+
+// TestUpdateTriggerRetryPolicyKeepsKafkaPassword: an update that changes only
+// the retry policy validates the stored config with its sealed password
+// counted as set, and keeps the password. It used to fail validation on the
+// sealed password, and sealing the stored config would have dropped it.
+func TestUpdateTriggerRetryPolicyKeepsKafkaPassword(t *testing.T) {
+	identity := installTriggerSecretIdentity(t)
+	e := apidserver.Setup(t, api.PlanPro)
+	trigger := createKafkaTriggerForSecretTest(t, e, "kept-secret")
+	rec := e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{
+		RetryPolicy: &api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 2, MaxSeconds: 20},
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry policy update status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	stored, err := (*e.Store()).TriggerByID(t.Context(), trigger.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := triggerconfig.Open(api.TriggerKindKafka, stored.Config, []*age.X25519Identity{identity})
+	if err != nil || !bytes.Contains(opened, []byte("kept-secret")) {
+		t.Fatalf("config after a retry policy update = %s, %v; want the password kept", opened, err)
 	}
 }

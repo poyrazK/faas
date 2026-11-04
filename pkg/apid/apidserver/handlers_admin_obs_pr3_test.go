@@ -123,7 +123,7 @@ func TestObsAuditLogSearch_AuthGate_RejectsNonAllowlistedEmail(t *testing.T) {
 
 func TestObsAuditLogSearch_HappyPath_EmptyStore(t *testing.T) {
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -155,7 +155,7 @@ func TestObsAuditLogSearch_KindPrefix(t *testing.T) {
 	seedAuditLogRow(t, e.store, "account.deleted", &acctID, "user@example.com", "user@example.com", nil)
 	seedAuditLogRow(t, e.store, "billing.charge.failed", &acctID, "user@example.com", "user@example.com", nil)
 
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search?kind_prefix=auth.", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/audit-log/search?kind_prefix=auth.", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search kind_prefix: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -181,7 +181,7 @@ func TestObsAuditLogSearch_AnonymousToggle(t *testing.T) {
 	seedAuditLogRow(t, e.store, "system.bootstrap", nil, "", "system:scheduler", nil)
 
 	// Default (?include_anonymous unset → false): anonymous row excluded.
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search default: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -197,7 +197,7 @@ func TestObsAuditLogSearch_AnonymousToggle(t *testing.T) {
 	}
 
 	// Opt-in: include_anonymous=true → both rows.
-	rec = e.do(t, "GET", "/v1/admin/obs/audit-log/search?include_anonymous=true", nil, nil)
+	rec = e.doOperator(t, "GET", "/v1/admin/obs/audit-log/search?include_anonymous=true", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search include_anonymous=1: got %d", rec.Code)
 	}
@@ -219,7 +219,7 @@ func TestObsAuditLogSearch_AccountIDFilter(t *testing.T) {
 	seedAuditLogRow(t, e.store, "auth.login", &acctA, "a@example.com", "a@example.com", nil)
 	seedAuditLogRow(t, e.store, "auth.login", &acctB, "b@example.com", "b@example.com", nil)
 
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search?account_id="+acctA.String(), nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/audit-log/search?account_id="+acctA.String(), nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search account_id: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -240,7 +240,7 @@ func TestObsAuditLogSearch_AccountIDFilter(t *testing.T) {
 
 func TestObsAuditLogSearch_BadAccountID_400(t *testing.T) {
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search?account_id=not-a-uuid", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/audit-log/search?account_id=not-a-uuid", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("audit-log/search bad account_id: got %d, want 400", rec.Code)
 	}
@@ -248,7 +248,7 @@ func TestObsAuditLogSearch_BadAccountID_400(t *testing.T) {
 
 func TestObsAuditLogSearch_BadSince_400(t *testing.T) {
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search?since=not-rfc3339", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/audit-log/search?since=not-rfc3339", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("audit-log/search bad since: got %d, want 400", rec.Code)
 	}
@@ -256,7 +256,7 @@ func TestObsAuditLogSearch_BadSince_400(t *testing.T) {
 
 func TestObsAuditLogSearch_PaginationCap(t *testing.T) {
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search?limit=99999", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/audit-log/search?limit=99999", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search over-cap: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -271,7 +271,7 @@ func TestObsAuditLogSearch_PaginationCap(t *testing.T) {
 
 func TestObsAuditLogSearch_BadLimit_400(t *testing.T) {
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/audit-log/search?limit=abc", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/audit-log/search?limit=abc", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("audit-log/search bad limit: got %d, want 400", rec.Code)
 	}
@@ -298,7 +298,7 @@ func TestObsEvents_AuthGate_RejectsNonAllowlistedEmail(t *testing.T) {
 
 func TestObsEvents_HappyPath_EmptyStore(t *testing.T) {
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/events", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/events", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("events: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -330,7 +330,7 @@ func TestObsEvents_KindPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := e.do(t, "GET", "/v1/admin/obs/events?kind_prefix=wake.", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/events?kind_prefix=wake.", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("events kind_prefix: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -361,7 +361,7 @@ func TestObsEvents_ActorFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := e.do(t, "GET", "/v1/admin/obs/events?actor=system:schedd", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/events?actor=system:schedd", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("events actor: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -382,7 +382,7 @@ func TestObsEvents_ActorFilter(t *testing.T) {
 
 func TestObsEvents_BadSubject_400(t *testing.T) {
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/events?subject=not-a-uuid", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/events?subject=not-a-uuid", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("events bad subject: got %d, want 400", rec.Code)
 	}
@@ -390,7 +390,7 @@ func TestObsEvents_BadSubject_400(t *testing.T) {
 
 func TestObsEvents_PaginationCap(t *testing.T) {
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/events?limit=99999", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/events?limit=99999", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("events over-cap: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -424,7 +424,7 @@ func TestObsNodesEvents_AuthGate_RejectsNonAllowlistedEmail(t *testing.T) {
 
 func TestObsNodesEvents_OpensSSE(t *testing.T) {
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("nodes/events: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -441,7 +441,7 @@ func TestObsNodesEvents_AbsentDeprecationHeader(t *testing.T) {
 	// Deprecation header (only the OLD /v1/compute-nodes/events
 	// path carries it). See TestObsSecurity_DeprecationHeader.
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("nodes/events: got %d", rec.Code)
 	}
@@ -475,7 +475,7 @@ func TestObsSecurity_DeprecationHeader_AbsentOnNewPath(t *testing.T) {
 	// lives in the security test file so the deprecation
 	// contract has its own focused pin.
 	e := newObsPR3Env(t, api.ScopesAdminOnly, pr3AdminEmail, pr3AdminEmail)
-	rec := e.do(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("nodes/events: got %d", rec.Code)
 	}

@@ -72,6 +72,40 @@ func (e testEnv) do(t *testing.T, method, path string, body any, hdrs map[string
 	return rec
 }
 
+// doSession dispatches a request as accountID's MFA-completed dashboard
+// session, for routes that refuse API keys, such as approving a release
+// (ADR-20261020085706 amendment 4). An empty accountID is e.acct.
+func (e testEnv) doSession(t *testing.T, accountID, method, path string, body any, hdrs map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	if e.s == nil || e.s.sessions == nil || e.store == nil {
+		t.Fatal("session helper requires a server, session manager, and store")
+	}
+	if accountID == "" {
+		accountID = e.acct.ID
+	}
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, path, r)
+	sid := uuid.NewString()
+	if _, err := e.store.CreateSession(req.Context(), sid, accountID, "192.0.2.11", "session-test-ua"); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	token, err := e.s.sessions.IssueWithSession(sid, accountID, false)
+	if err != nil {
+		t.Fatalf("IssueWithSession: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	return rec
+}
+
 // doAdmin dispatches a request as a verified operator session. Provider
 // mutations deliberately reject bearer/API-key principals; keeping this
 // helper beside testEnv makes that contract explicit in admin tests without
@@ -94,6 +128,25 @@ func (e testEnv) doAdmin(t *testing.T, method, path string, body any, hdrs map[s
 	return rec
 }
 
+// doOperator dispatches a read as an MFA-completed operator session. Provider
+// reads of customer data refuse bearer keys (ADR 20261023214253).
+func (e testEnv) doOperator(t *testing.T, method, path string, body any, hdrs map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, path, r)
+	e.addAdminSession(t, req)
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	return rec
+}
+
 // addAdminSession mints a short-lived session carrying a fresh step-up stamp
 // so a test can exercise the same authentication path as the operations UI.
 // It is intentionally not used by do: bearer requests remain available for
@@ -103,6 +156,7 @@ func (e testEnv) addAdminSession(t *testing.T, req *http.Request) {
 	if e.s == nil || e.s.sessions == nil || e.store == nil {
 		t.Fatal("admin session helper requires a server, session manager, and store")
 	}
+	enrollOperatorForTest(req.Context(), t, e.store, e.acct.ID)
 	sid := uuid.NewString()
 	if _, err := e.store.CreateSession(req.Context(), sid, e.acct.ID, "192.0.2.10", "admin-test-ua"); err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -112,6 +166,33 @@ func (e testEnv) addAdminSession(t *testing.T, req *http.Request) {
 		t.Fatalf("IssueWithSessionAndBindingHashAndStepUp: %v", err)
 	}
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+}
+
+// operatorEnroller is the slice of the store enrollOperatorForTest writes.
+type operatorEnroller interface {
+	AccountByID(ctx context.Context, id string) (state.Account, error)
+	SetMFASecret(ctx context.Context, id string, encrypted []byte, recoveryHashes [][]byte) error
+	MarkMFAEnrolled(ctx context.Context, id string) error
+}
+
+// enrollOperatorForTest gives a test operator a confirmed authenticator:
+// operator sessions must belong to an enrolled operator (ADR
+// 20261023214253). An account that is already enrolled keeps its secret.
+func enrollOperatorForTest(ctx context.Context, t *testing.T, store operatorEnroller, accountID string) {
+	t.Helper()
+	acct, err := store.AccountByID(ctx, accountID)
+	if err != nil {
+		t.Fatalf("AccountByID: %v", err)
+	}
+	if acct.MFAEnrolled() {
+		return
+	}
+	if err := store.SetMFASecret(ctx, accountID, []byte("test-operator-mfa-secret"), nil); err != nil {
+		t.Fatalf("SetMFASecret: %v", err)
+	}
+	if err := store.MarkMFAEnrolled(ctx, accountID); err != nil {
+		t.Fatalf("MarkMFAEnrolled: %v", err)
+	}
 }
 
 // setupWithNotifier is the Move 2 sibling of setup: lets handlers_ext_test
@@ -183,7 +264,7 @@ func TestWhoamiIncludesTriggerCapabilities(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	wantKinds := []api.TriggerKind{api.TriggerKindSQSCompat, api.TriggerKindQueue, api.TriggerKindRealtime}
+	wantKinds := []api.TriggerKind{api.TriggerKindQueue, api.TriggerKindRealtime}
 	if !reflect.DeepEqual(out.Limits.TriggerKinds, wantKinds) {
 		t.Errorf("trigger_kinds = %v, want %v", out.Limits.TriggerKinds, wantKinds)
 	}

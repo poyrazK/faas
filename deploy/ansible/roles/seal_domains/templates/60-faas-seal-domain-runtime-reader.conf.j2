@@ -1,0 +1,18 @@
+# Managed by the seal_domains role (ADR-20261023173624): true makes vmmd
+# refuse runtime secrets that carry no account binding. vmmd reads it at
+# start; faas_runtime_secret_binding_required reports it.
+[Service]
+Environment=FAAS_RUNTIME_SECRET_BINDING_REQUIRED={{ faas_seal_domain_runtime_binding_required | bool | lower }}
+{% if faas_seal_domain_runtime_signing_pub_src | length > 0 %}
+# ADR 20261028161502 amendment 1: vmmd verifies apid's signature on every
+# runtime secret before it opens one, and with the required switch also
+# refuses unsigned ones. faas_runtime_secret_signature_enforcement reports it.
+Environment=FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE=/etc/faas/secrets/domains/runtime-signing.pub
+Environment=FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED={{ faas_seal_domain_runtime_signatures_required | bool | lower }}
+{% endif %}
+{% if faas_seal_domain_runtime_contracted | bool %}
+# ADR 20261022111812, contract step: vmmd opens runtime secrets and registry
+# passwords with the runtime and build domains alone, never the fleet or
+# host identity. faas_seal_domain_legacy_identities reports it.
+Environment=FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED=true
+{% endif %}

@@ -50,15 +50,93 @@ var deploySubmissionRoutes = []struct{ method, path string }{
 // IsDeploySubmissionRequest identifies a request that uploads deploy source
 // or submits a deployment.
 func IsDeploySubmissionRequest(r *http.Request) bool {
+	return matchesRoute(r, deploySubmissionRoutes)
+}
+
+// accountExportRoutes assemble the whole account (every app, deployment and
+// audit row) into one spool before the first byte goes out. On
+// production-us a 44-app account outran the 5 s apid default on every
+// attempt and got 503 "could not assemble export" (hunt #9 H9-136; again on
+// rc.304 and rc.305, Hunt 14 H14-120).
+var accountExportRoutes = []struct{ method, path string }{
+	{http.MethodGet, "/v1/account/export"},
+	{http.MethodGet, "/dashboard/account/export"},
+}
+
+// IsAccountExportRequest identifies the REST and dashboard account exports.
+func IsAccountExportRequest(r *http.Request) bool {
+	return matchesRoute(r, accountExportRoutes)
+}
+
+func matchesRoute(r *http.Request, routes []struct{ method, path string }) bool {
 	if r == nil {
 		return false
 	}
-	for _, route := range deploySubmissionRoutes {
+	for _, route := range routes {
 		if r.Method == route.method && pathMatches(route.path, r.URL.Path) {
 			return true
 		}
 	}
 	return false
+}
+
+// longWaitRoutes are the apid routes that hold a request past the 5 s
+// default by design: queue lease long-polls of up to 20 s (ADR-1140), the
+// policy status wait of up to 10 s, and work that grows with the source (a
+// project scan of a repository tarball, a dev source upload). Under the
+// default every one answered 504 at 5 s; an SDK consumer leasing from an idle
+// queue got an error and backed off instead of an empty list (bug hunt
+// 2026-10-28 B35). A route that needs longer than the platform ceiling must
+// detach its work instead.
+//
+// The second group set their own longer timeouts (10 s to 2 minutes) that the
+// 5 s default silently cut: alert test sends, invoice history pages and
+// refreshes, profile queries, the app health read, the Slack and Linear OAuth
+// exchanges, binding promotion, MCP readiness and the native issue-tracker
+// calls. They get the ceiling too; a test send or invoice page that needs
+// longer answers before the ceiling instead of being cut at 5 s.
+var longWaitRoutes = []struct{ method, path string }{
+	{http.MethodPost, "/v1/apps/*/queues/*/leases"},
+	{http.MethodPost, "/v1/orgs/*/apps/*/queues/*/leases"},
+	{http.MethodGet, "/v1/apps/*/policy/status"},
+	{http.MethodPost, "/v1/projects/scan/source-ref"},
+	{http.MethodPost, "/v1/apps/*/deployments/dev-source"},
+
+	{http.MethodPost, "/v1/notification-channels/*/test"},
+	{http.MethodPost, "/v1/apps/*/alert-presets/*/test"},
+	{http.MethodPost, "/dashboard/apps/*/alert-presets/*/test"},
+	{http.MethodPost, "/v1/invoices/backfill"},
+	{http.MethodPost, "/v1/invoices/*/refresh"},
+	{http.MethodGet, "/v1/apps/*/profiles"},
+	{http.MethodGet, "/v1/apps/*/profiles/heap"},
+	{http.MethodPost, "/v1/apps/*/profiles/compare"},
+	{http.MethodPost, "/v1/apps/*/profiles/investigations/*/check"},
+	{http.MethodGet, "/v1/apps/*/health"},
+	{http.MethodGet, "/oauth/slack/callback"},
+	{http.MethodGet, "/oauth/linear/callback"},
+	{http.MethodPost, "/v1/deployments/*/promote"},
+	{http.MethodPost, "/v1/deployments/*/promote-with-application-ack"},
+	{http.MethodPost, "/v1/deployments/*/mcp-readiness"},
+	{http.MethodPost, "/dashboard/mcp/apps/*/oauth"},
+	{http.MethodPost, "/v1/apps/*/issues/*/native-tickets"},
+	{http.MethodPost, "/v1/apps/*/issues/*/native-linear-tickets"},
+	{http.MethodGet, "/v1/apps/*/issues/*/tracker-links/*/native-status"},
+	{http.MethodPost, "/v1/apps/*/issues/*/tracker-links/*/native-status"},
+	{http.MethodGet, "/v1/apps/*/issues/*/tracker-links/*/native-linear-status"},
+	{http.MethodPost, "/v1/apps/*/issues/*/tracker-links/*/native-linear-status"},
+	{http.MethodGet, "/v1/apps/*/issues/*/tracker-links/*/auto-sync"},
+	{http.MethodPut, "/v1/apps/*/issues/*/tracker-links/*/auto-sync"},
+	{http.MethodGet, "/v1/apps/*/issue-tracker-linear-connection"},
+	{http.MethodPut, "/v1/apps/*/issue-tracker-linear-connection"},
+	{http.MethodPost, "/dashboard/apps/*/issues/*/tracker-sync"},
+	{http.MethodPost, "/dashboard/apps/*/issues/*/linear-connection"},
+	{http.MethodGet, "/dashboard/apps/*/issues/*/tracker-sync/*"},
+	{http.MethodGet, "/dashboard/apps/*/issues/slack-routing"},
+}
+
+// IsLongWaitRequest identifies a request on one of longWaitRoutes.
+func IsLongWaitRequest(r *http.Request) bool {
+	return matchesRoute(r, longWaitRoutes)
 }
 
 func pathMatches(pattern, path string) bool {

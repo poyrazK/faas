@@ -28,7 +28,7 @@ func TestThawStartsTheBridgeTheFreezeClosed(t *testing.T) {
 	s.streamBridges = newTestStreamBridgeManager(t, func() { starts.Add(1) })
 	req := &vmmdpb.ForwardHTTPRequestInit{Instance: "vm-a", Port: 9090, AppProtocol: "http2"}
 	// The restore's prewarm, then the requests the instance served.
-	lease, err := s.streamBridges.acquire(t.Context(), req, "fc-vm-a")
+	lease, err := s.streamBridges.acquire(t.Context(), req, "fc-vm-a", bridgeIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestThawStartsTheBridgeTheFreezeClosed(t *testing.T) {
 	}
 	waitBridges(t, func() bool { return starts.Load() == 2 })
 	// The first request joins the bridge the thaw started.
-	lease, err = s.streamBridges.acquire(t.Context(), req, "fc-vm-a")
+	lease, err = s.streamBridges.acquire(t.Context(), req, "fc-vm-a", bridgeIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestFailedThawDropsTheBridge(t *testing.T) {
 	vmm := &freezeStubVMM{}
 	s := New(vmm, nil, "1.17.0", nil)
 	s.streamBridges = newTestStreamBridgeManager(t, func() {})
-	lease, err := s.streamBridges.acquire(t.Context(), &vmmdpb.ForwardHTTPRequestInit{Instance: "vm-a", Port: 9090}, "fc-vm-a")
+	lease, err := s.streamBridges.acquire(t.Context(), &vmmdpb.ForwardHTTPRequestInit{Instance: "vm-a", Port: 9090}, "fc-vm-a", bridgeIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -42,11 +42,11 @@ class DebugDependencyLatencyItem:
     calls, and the current error rate is at least 5 percentage points and 2x above baseline."""
     kind: str | Unset = UNSET
     exclusive_p50_ms: int | Unset = UNSET
-    """P50 wall time not covered by overlapping direct child spans."""
+    """Median (p50) wall time not covered by overlapping direct child spans."""
     exclusive_p95_ms: int | Unset = UNSET
-    """P95 wall time not covered by overlapping direct child spans."""
+    """p95 wall time not covered by overlapping direct child spans."""
     exclusive_p99_ms: int | Unset = UNSET
-    """P99 wall time not covered by overlapping direct child spans."""
+    """p99 wall time not covered by overlapping direct child spans."""
     baseline_p95_ms: int | Unset = UNSET
     current_p95_ms: int | Unset = UNSET
     p95_delta_ms: int | Unset = UNSET

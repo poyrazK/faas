@@ -368,6 +368,10 @@ func appendPreviewReleaseReviewPriorities(release *previewReleaseRouteReview, re
 func collectOnePreviewReleaseRouteReview(ctx context.Context, client *api.Client, slug string, input previewReviewEvidenceInput, since string, customerDetails bool) previewReleaseRouteReviewPreview {
 	entry := previewReleaseRouteReviewPreview{Slug: slug, Status: "unavailable", Reason: "preview_or_evidence_unavailable"}
 	report, err := collectPreviewRouteReport(ctx, client, slug, input.baselineDeployment, since)
+	if errors.Is(err, errPreviewNoProductionParent) {
+		entry.Reason = "no_production_parent"
+		return entry
+	}
 	if err != nil {
 		return entry
 	}

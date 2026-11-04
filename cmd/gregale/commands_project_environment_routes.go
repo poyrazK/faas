@@ -14,7 +14,7 @@ import (
 
 func cmdProjectsEnvironmentRoutes(args []string) int {
 	if len(args) == 0 || args[0] != "set" {
-		PrintUsage(os.Stderr, "usage: gregale projects environments routes set <project> <environment> <workload> (--file PATH|--stdin) [--yes]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment routes set <project> <environment> <workload> (--file PATH|--stdin) [--yes]", "projects environments")
 		return 1
 	}
 	flags, positional := splitArgsForFlags(args[1:], "stdin", "yes")
@@ -23,7 +23,7 @@ func cmdProjectsEnvironmentRoutes(args []string) int {
 	stdin := fs.Bool("stdin", false, "read JSON route policy from stdin")
 	yes := fs.Bool("yes", false, "confirm route-policy replacement")
 	if err := fs.Parse(flags); err != nil || len(positional) != 3 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) || !api.ValidAppSlug(positional[2]) || (*file == "") == !*stdin {
-		PrintUsage(os.Stderr, "usage: gregale projects environments routes set <project> <environment> <workload> (--file PATH|--stdin) [--yes]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment routes set <project> <environment> <workload> (--file PATH|--stdin) [--yes]", "projects environments")
 		return 1
 	}
 	if *stdin && !*yes {

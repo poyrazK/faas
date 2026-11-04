@@ -82,6 +82,10 @@ func TestEdgeRuleRecipeConditions(t *testing.T) {
 	scanners := compile(EdgeRuleRecipeBlockScannerPaths, nil)
 	challenge := compile(EdgeRuleRecipeChallengePath, map[string]string{"path": "/login"})
 	custom := compile(EdgeRuleRecipeBlockScannerPaths, map[string]string{"paths": "/.env /old-admin/"})
+	training := compile(EdgeRuleRecipeControlAICrawlers, nil)
+	allAI := compile(EdgeRuleRecipeControlAICrawlers, map[string]string{"purposes": "all"})
+	const gptbot = "Mozilla/5.0 (compatible; GPTBot/1.1; +https://openai.com/gptbot)"
+	const chatgptUser = "Mozilla/5.0 (compatible; ChatGPT-User/1.0; +https://openai.com/bot)"
 	for _, tc := range []struct {
 		name  string
 		p     *EdgeRuleMatchProgram
@@ -110,6 +114,12 @@ func TestEdgeRuleRecipeConditions(t *testing.T) {
 		{"challenge browser", challenge, EdgeRuleMatchInput{Headers: ua("Mozilla/5.0 (Windows NT 10.0) Chrome/129.0")}, true},
 		{"challenge spoofed crawler", challenge, EdgeRuleMatchInput{Headers: ua(googlebot), VerifiedBot: verified("")}, true},
 		{"challenge verified crawler", challenge, EdgeRuleMatchInput{Headers: ua(googlebot), VerifiedBot: verified("googlebot")}, false},
+		// adr: 20261022083601 — AI crawlers by purpose; training by default.
+		{"training crawler", training, EdgeRuleMatchInput{Headers: ua(gptbot)}, true},
+		{"assistant fetch kept", training, EdgeRuleMatchInput{Headers: ua(chatgptUser)}, false},
+		{"search engine kept", training, EdgeRuleMatchInput{Headers: ua(googlebot), VerifiedBot: verified("googlebot")}, false},
+		{"browser kept", training, EdgeRuleMatchInput{Headers: ua("Mozilla/5.0 (Windows NT 10.0) Chrome/129.0")}, false},
+		{"all purposes", allAI, EdgeRuleMatchInput{Headers: ua(chatgptUser)}, true},
 	} {
 		if got := tc.p.Matches(tc.in); got != tc.block {
 			t.Errorf("%s: matches=%v, want %v", tc.name, got, tc.block)
@@ -124,18 +134,24 @@ func TestEdgeRuleRecipeRejectsBadInput(t *testing.T) {
 		host   string
 		values map[string]string
 	}{
-		"unknown recipe":      {"nope", "h", nil},
-		"no host":             {EdgeRuleRecipeBlockUnverifiedBots, " ", nil},
-		"unknown parameter":   {EdgeRuleRecipeBlockUnverifiedBots, "h", map[string]string{"cidrs": "1.2.3.4"}},
-		"missing cidrs":       {EdgeRuleRecipeAllowIPsOnly, "h", nil},
-		"bad cidr":            {EdgeRuleRecipeAllowIPsOnly, "h", map[string]string{"cidrs": "10.0.0.0/33"}},
-		"missing countries":   {EdgeRuleRecipeBlockCountries, "h", map[string]string{"countries": " , "}},
-		"reserved country":    {EdgeRuleRecipeBlockCountries, "h", map[string]string{"countries": "ZZ"}},
-		"zero rate":           {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"per_minute": "0"}},
-		"rate not a number":   {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"per_minute": "ten"}},
-		"burst out of bounds": {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"burst": "100000"}},
-		"scanner not a path":  {EdgeRuleRecipeBlockScannerPaths, "h", map[string]string{"paths": "/.env wp-admin"}},
-		"scanner root prefix": {EdgeRuleRecipeBlockScannerPaths, "h", map[string]string{"paths": "/"}},
+		"unknown recipe":       {"nope", "h", nil},
+		"no host":              {EdgeRuleRecipeBlockUnverifiedBots, " ", nil},
+		"unknown parameter":    {EdgeRuleRecipeBlockUnverifiedBots, "h", map[string]string{"cidrs": "1.2.3.4"}},
+		"missing cidrs":        {EdgeRuleRecipeAllowIPsOnly, "h", nil},
+		"bad cidr":             {EdgeRuleRecipeAllowIPsOnly, "h", map[string]string{"cidrs": "10.0.0.0/33"}},
+		"missing countries":    {EdgeRuleRecipeBlockCountries, "h", map[string]string{"countries": " , "}},
+		"reserved country":     {EdgeRuleRecipeBlockCountries, "h", map[string]string{"countries": "ZZ"}},
+		"zero rate":            {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"per_minute": "0"}},
+		"rate not a number":    {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"per_minute": "ten"}},
+		"burst out of bounds":  {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"burst": "100000"}},
+		"scanner not a path":   {EdgeRuleRecipeBlockScannerPaths, "h", map[string]string{"paths": "/.env wp-admin"}},
+		"scanner root prefix":  {EdgeRuleRecipeBlockScannerPaths, "h", map[string]string{"paths": "/"}},
+		"penalty not a number": {EdgeRuleRecipeBlockScannerPaths, "h", map[string]string{"penalty_minutes": "soon"}},
+		"penalty too long":     {EdgeRuleRecipeRateLimitPath, "h", map[string]string{"penalty_minutes": "1441"}},
+		"penalty unsupported":  {EdgeRuleRecipeBlockCountries, "h", map[string]string{"countries": "KP", "penalty_minutes": "10"}},
+		"unknown ai purpose":   {EdgeRuleRecipeControlAICrawlers, "h", map[string]string{"purposes": "scraping"}},
+		"empty ai purposes":    {EdgeRuleRecipeControlAICrawlers, "h", map[string]string{"purposes": " , "}},
+		"unknown ai action":    {EdgeRuleRecipeControlAICrawlers, "h", map[string]string{"action": "tarpit"}},
 	} {
 		if _, prob := BuildEdgeRuleRecipe(tc.id, tc.host, tc.values, false); prob == nil {
 			t.Errorf("%s: built, want error", name)
@@ -149,5 +165,48 @@ func TestEdgeRuleRecipeRejectsBadInput(t *testing.T) {
 	_ = json.Unmarshal(req.Action, &a)
 	if a.RequestsPerSecond != 0.5 || a.Burst != 30 || strings.Join(req.MatchMethods, ",") != "POST,PUT" || req.MatchPath != "/login" {
 		t.Fatalf("rate-limit request = %+v action = %+v", req, a)
+	}
+}
+
+// adr: 20261022083601 — the AI crawler recipe blocks with a deny-all ip
+// rule or challenges with a challenge rule, de-duplicating purposes.
+func TestEdgeRuleRecipeControlAICrawlersActions(t *testing.T) {
+	block, prob := BuildEdgeRuleRecipe(EdgeRuleRecipeControlAICrawlers, "h", map[string]string{"purposes": "training, search, training"}, false)
+	if prob != nil {
+		t.Fatal(prob.Detail)
+	}
+	if block.Kind != "ip" || block.Mode != EdgeRuleModeLog || block.Match == nil || block.Match.Field != "ai_crawler_purpose" ||
+		strings.Join(block.Match.Values, ",") != "training,search" {
+		t.Fatalf("block request = %+v", block)
+	}
+	challenge, prob := BuildEdgeRuleRecipe(EdgeRuleRecipeControlAICrawlers, "h", map[string]string{"action": "Challenge"}, true)
+	if prob != nil {
+		t.Fatal(prob.Detail)
+	}
+	var action EdgeRuleChallengeAction
+	if challenge.Kind != "challenge" || challenge.Mode != EdgeRuleModeEnforce || json.Unmarshal(challenge.Action, &action) != nil {
+		t.Fatalf("challenge request = %+v", challenge)
+	}
+}
+
+// adr: 20261022105846 — penalty_minutes adds a penalty box: on the first
+// scanner hit, after three throttle refusals; without it there is none.
+func TestEdgeRuleRecipePenaltyMinutes(t *testing.T) {
+	scanners, prob := BuildEdgeRuleRecipe(EdgeRuleRecipeBlockScannerPaths, "h", map[string]string{"penalty_minutes": "30"}, true)
+	if prob != nil {
+		t.Fatal(prob.Detail)
+	}
+	if scanners.Penalty == nil || *scanners.Penalty != (EdgeRulePenalty{Seconds: 1800, After: 1, WithinSeconds: 60}) {
+		t.Fatalf("scanner penalty = %+v", scanners.Penalty)
+	}
+	limit, prob := BuildEdgeRuleRecipe(EdgeRuleRecipeRateLimitPath, "h", map[string]string{"penalty_minutes": "15"}, true)
+	if prob != nil {
+		t.Fatal(prob.Detail)
+	}
+	if limit.Penalty == nil || limit.Penalty.After != 3 || limit.Penalty.Seconds != 900 {
+		t.Fatalf("rate-limit penalty = %+v", limit.Penalty)
+	}
+	if plain, _ := BuildEdgeRuleRecipe(EdgeRuleRecipeBlockScannerPaths, "h", nil, false); plain.Penalty != nil {
+		t.Fatal("a recipe without penalty_minutes got a penalty")
 	}
 }

@@ -1,13 +1,13 @@
 from uuid import UUID
 
-from faas_sdk.api.apps import (
+from faas_sdk.preview.api.apps import (
     advance_migration_verification,
     cancel_migration_verification,
     create_migration_verification,
 )
-from faas_sdk.models.create_migration_verification_request import CreateMigrationVerificationRequest
-from faas_sdk.models.migration_dependency_checks import MigrationDependencyChecks
-from faas_sdk.models.migration_service_connection_check import MigrationServiceConnectionCheck
+from faas_sdk.preview.models.create_migration_verification_request import CreateMigrationVerificationRequest
+from faas_sdk.preview.models.migration_dependency_checks import MigrationDependencyChecks
+from faas_sdk.preview.models.migration_service_connection_check import MigrationServiceConnectionCheck
 
 
 def test_verification_uses_names_and_preserves_explicit_cold_wake_consent():

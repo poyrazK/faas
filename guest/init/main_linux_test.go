@@ -490,6 +490,75 @@ func TestBuildArgv_DependencyCacheExportIsConditional(t *testing.T) {
 	}
 }
 
+// ADR-20261028084018: with LayerCompression zstd both exporters compress with
+// zstd; without it the arguments are exactly as before.
+func TestBuildArgv_LayerCompression(t *testing.T) {
+	for _, tt := range []struct {
+		framework api.BuildFramework
+		quote     string // the Railpack shell quotes the destination
+	}{
+		{framework: api.FrameworkRailpackNode, quote: "'"},
+		{framework: api.FrameworkDockerfile},
+	} {
+		t.Run(string(tt.framework), func(t *testing.T) {
+			base := api.BuildManifest{Framework: tt.framework, Workdir: "/build/src", OutDir: "/build/out", DependencyCache: true}
+			gzip := strings.Join(buildArgv(base), " ")
+			if strings.Contains(gzip, "compression=") {
+				t.Fatalf("gzip argv sets a compression: %s", gzip)
+			}
+			base.LayerCompression = api.BuildLayerCompressionZstd
+			zstd := strings.Join(buildArgv(base), " ")
+			for _, want := range []string{"image.tar" + tt.quote + ",compression=zstd", "mode=max,compression=zstd"} {
+				if !strings.Contains(zstd, want) {
+					t.Fatalf("zstd argv missing %q: %s", want, zstd)
+				}
+			}
+			if strings.Contains(zstd, "force-compression") {
+				t.Fatalf("zstd argv recompresses inherited layers: %s", zstd)
+			}
+		})
+	}
+}
+
+// The Railpack shell must hand buildctl one --output argument and one
+// --export-cache argument even with the appended attributes.
+func TestBuildArgv_LayerCompressionShellWords(t *testing.T) {
+	argv := buildArgv(api.BuildManifest{Framework: api.FrameworkRailpackNode, Workdir: "/build/src", OutDir: "/build/out", DependencyCache: true, LayerCompression: api.BuildLayerCompressionZstd})
+	helper := filepath.Join(t.TempDir(), "helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\necho export\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubbed := strings.NewReplacer(
+		"/usr/local/bin/railpack", "true",
+		"/proc/1/exe", helper,
+		"exec /usr/local/bin/buildctl", `exec printf '[%s]\n' buildctl`,
+	).Replace(argv[2])
+	out, err := exec.Command("/bin/sh", "-c", stubbed).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"[type=oci,dest=/build/out/image.tar,compression=zstd]",
+		"[type=local,dest=/build/out/cache,mode=max,compression=zstd]",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("buildctl argument %s missing from:\n%s", want, out)
+		}
+	}
+}
+
+func TestBuildkitSnapshotter(t *testing.T) {
+	if got := buildkitSnapshotter(api.BuildManifest{}); got != "fuse-overlayfs" {
+		t.Fatalf("default snapshotter = %q, want fuse-overlayfs", got)
+	}
+	if got := buildkitSnapshotter(api.BuildManifest{BuildKitSnapshotter: api.BuildKitSnapshotterAuto}); got != "auto" {
+		t.Fatalf("auto snapshotter = %q, want auto", got)
+	}
+	if got := buildkitSnapshotter(api.BuildManifest{BuildKitSnapshotter: "overlayfs"}); got != "fuse-overlayfs" {
+		t.Fatalf("unknown value chose %q, want the fuse-overlayfs default", got)
+	}
+}
+
 func TestRemoveOversizedDependencyCache(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "cache")
 	if err := os.MkdirAll(filepath.Join(root, "blobs"), 0o700); err != nil {
@@ -610,6 +679,43 @@ func TestPrepareRailpackConfig_CreatesAndRemovesPlatformConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workdir, "railpack.json")); !os.IsNotExist(err) {
 		t.Fatalf("generated config remains after restore, err=%v", err)
+	}
+}
+
+// Issue #2641: Railpack applies railpack.json packages after it reads go.mod,
+// so this pin chooses the compiler for every Go function. A function whose
+// go.mod names an older Go must still build on a supported, patched release.
+func TestPrepareRailpackConfig_GoFunctionsUseSupportedToolchain(t *testing.T) {
+	for _, runtime := range []string{"go124", "go124-alpine"} {
+		t.Run(runtime, func(t *testing.T) {
+			workdir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(workdir, "go.mod"), []byte("module example.com/fn\n\ngo 1.24\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			restore, err := prepareRailpackConfig(api.BuildManifest{
+				Framework:      api.FrameworkRailpackGo,
+				Runtime:        runtime,
+				RuntimeBaseRef: "ghcr.io/poyrazk/runner-" + runtime + "@sha256:" + strings.Repeat("c", 64),
+				Workdir:        workdir,
+			})
+			if err != nil {
+				t.Fatalf("prepareRailpackConfig: %v", err)
+			}
+			data, err := os.ReadFile(filepath.Join(workdir, "railpack.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config map[string]any
+			if err := json.Unmarshal(data, &config); err != nil {
+				t.Fatal(err)
+			}
+			if got := config["packages"].(map[string]any)["go"]; got != api.GoBuildToolchain {
+				t.Fatalf("Go function toolchain = %v, want %s", got, api.GoBuildToolchain)
+			}
+			if err := restore(); err != nil {
+				t.Fatalf("restore: %v", err)
+			}
+		})
 	}
 }
 
@@ -766,5 +872,37 @@ func TestPrepareRailpackConfig_SharedRuntimeClearsDefaultAptPackages(t *testing.
 	}
 	if got := config["packages"].(map[string]any)["node"]; got != "24" {
 		t.Fatalf("node package = %v, want the runner base's major", got)
+	}
+}
+
+// ADR-1500 amendment 2: a shared Python build pins Railpack's Python to the
+// base's minor and clears the platform apt default, as its own minimal base
+// did; runner-python313 is Wolfi and has no apt.
+func TestPrepareRailpackConfig_SharedPythonPinsMinor(t *testing.T) {
+	workdir := t.TempDir()
+	restore, err := prepareRailpackConfig(api.BuildManifest{
+		Framework:      api.FrameworkRailpackPython,
+		Runtime:        "python313",
+		RuntimeBaseRef: "ghcr.io/poyrazk/runner-python313@sha256:" + strings.Repeat("c", 64),
+		SharedRuntime:  true,
+		Workdir:        workdir,
+	})
+	if err != nil {
+		t.Fatalf("prepareRailpackConfig: %v", err)
+	}
+	defer func() { _ = restore() }()
+	data, err := os.ReadFile(filepath.Join(workdir, "railpack.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config["deploy"].(map[string]any)["aptPackages"].([]any); len(got) != 0 {
+		t.Fatalf("shared Python aptPackages = %v, want empty", got)
+	}
+	if got := config["packages"].(map[string]any)["python"]; got != "3.13" {
+		t.Fatalf("python package = %v, want the runner base's minor", got)
 	}
 }

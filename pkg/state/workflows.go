@@ -87,7 +87,7 @@ type WorkflowRunLeaseStore interface {
 // It remains optional so existing WorkflowStore implementations and test
 // doubles do not need to support the operator retry surface.
 type WorkflowRetryStore interface {
-	RetryWorkflowStep(context.Context, string, string, int) (*WorkflowRun, int, error)
+	RetryWorkflowStep(ctx context.Context, runID, stepName string, maxActive, maxParked int) (*WorkflowRun, int, error)
 }
 
 // workflowRetryPlan validates an in-place retry and returns skipped dependency
@@ -332,6 +332,10 @@ type WorkflowRun struct {
 	LastError          *string         `json:"last_error,omitempty"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
+	// ClaimedDueAt is set only on a run returned by ClaimNextDueWorkflowRun
+	// that was claimed because it was due: the scheduled_for it was due at.
+	// It is nil for a run recovered from an expired lease.
+	ClaimedDueAt *time.Time `json:"-"`
 }
 
 func earlierWorkflowWake(current, candidate, now time.Time) time.Time {
@@ -431,7 +435,7 @@ type WorkflowStore interface {
 	CreateWorkflowRun(ctx context.Context, r *WorkflowRun) error
 	// CreateWorkflowRunAdmitted serializes quota admission per app and returns
 	// the observed active count when the quota is already full.
-	CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun, maxActive int) (active int, err error)
+	CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun, maxActive, maxParked int) (active int, err error)
 	// GetWorkflowRunByIdempotencyKey returns the original run for a matching
 	// request fingerprint. A missing key returns ErrWorkflowRunNotFound and a
 	// different fingerprint returns ErrWorkflowRunIdempotencyConflict.
@@ -439,7 +443,7 @@ type WorkflowStore interface {
 	// CreateWorkflowRunAdmittedWithIdempotencyKey atomically records a run and
 	// its request key with quota admission. A replay replaces r with the
 	// original run and returns replayed=true without consuming another slot.
-	CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Context, r *WorkflowRun, maxActive int, key string, requestFingerprint []byte) (active int, replayed bool, err error)
+	CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Context, r *WorkflowRun, maxActive, maxParked int, key string, requestFingerprint []byte) (active int, replayed bool, err error)
 	GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error)
 	ListWorkflowRuns(ctx context.Context, appID string, opts ListWorkflowRunsOpts) ([]*WorkflowRun, int, error)
 	MarkWorkflowRunStatus(ctx context.Context, id, status string, output json.RawMessage, lastErr *string) error

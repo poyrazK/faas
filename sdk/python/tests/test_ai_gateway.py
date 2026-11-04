@@ -1,6 +1,6 @@
 import pytest
 
-from faas_sdk import (
+from faas_sdk.preview import (
     AI_SESSION_HEADER,
     AI_USER_HEADER,
     AIGatewayError,

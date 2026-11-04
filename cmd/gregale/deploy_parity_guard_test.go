@@ -97,7 +97,6 @@ func TestValidateSingleAppManifestTargetsRejectsEveryUnifiedKindExplicitly(t *te
 		{"kafka", "slug: orders\n    config: {brokers: ['broker:9092'], topic: orders, group: workers}"},
 		{"nats", "slug: telemetry\n    config: {url: 'nats://nats:4222', stream: events, subject: 'events.>', durable: faas}"},
 		{"redis_streams", "slug: cache\n    config: {addr: 'redis:6379', stream: events, group: workers}"},
-		{"sqs_compat", "slug: external\n    config: {queue_url: 'https://queue.example.test/external'}"},
 		{"queue", "slug: internal\n    config: {mode: queue}"},
 	}
 	for _, test := range tests {
@@ -111,7 +110,7 @@ func TestValidateSingleAppManifestTargetsRejectsEveryUnifiedKindExplicitly(t *te
 			if err == nil {
 				t.Fatal("non-cron manifest trigger was accepted")
 			}
-			for _, want := range []string{test.kind, "--no-triggers", "gregale triggers add"} {
+			for _, want := range []string{test.kind, "--no-triggers", "gregale trigger add"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("error %q does not contain %q", err, want)
 				}

@@ -75,15 +75,15 @@ func (m *MemStore) rollbackRowsLocked(r api.RollbackOperation) []Deployment {
 	}
 	return rows
 }
-func (m *MemStore) CreateCheckedRollback(_ context.Context, acct, app, target, current, reason string) (api.RollbackOperation, error) {
+func (m *MemStore) CreateCheckedRollback(ctx context.Context, acct, app, target, current, reason string) (api.RollbackOperation, error) {
 	if err := validateCheckedRollbackArguments(acct, app, target, current, reason); err != nil {
 		return api.RollbackOperation{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.createCheckedRollbackLocked(acct, app, target, current, reason, "")
+	return m.createCheckedRollbackLocked(ctx, acct, app, target, current, reason, "")
 }
-func (m *MemStore) createCheckedRollbackLocked(acct, app, target, current, reason, id string) (api.RollbackOperation, error) {
+func (m *MemStore) createCheckedRollbackLocked(ctx context.Context, acct, app, target, current, reason, id string) (api.RollbackOperation, error) {
 	a, ok := m.apps[app]
 	if !ok || a.AccountID != acct || a.Status == AppDeleted {
 		return api.RollbackOperation{}, ErrNotFound
@@ -104,7 +104,7 @@ func (m *MemStore) createCheckedRollbackLocked(acct, app, target, current, reaso
 			return r, ErrConflict
 		}
 	}
-	d, err := m.prepareDeploymentRollbackLocked(app, target)
+	d, err := m.prepareDeploymentRollbackLocked(ctx, app, target)
 	if err != nil {
 		return r, err
 	}

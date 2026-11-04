@@ -39,7 +39,7 @@ func TestWorkflowUploadClientUsesWorkloadProofAndRejectsRedirects(t *testing.T) 
 	if _, err := client.UploadWorkflowOperationArtifact(context.Background(), "operation", proof, declaration, strings.NewReader("csv")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ReuseWorkflowOperationUpload(context.Background(), "operation", proof, declaration); err != nil {
+	if _, err := NewPreviewClient(client).ReuseWorkflowOperationUpload(context.Background(), "operation", proof, declaration); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -56,7 +56,7 @@ func TestWorkflowUploadClientUsesWorkloadProofAndRejectsRedirects(t *testing.T) 
 	if _, err := client.UploadWorkflowOperationArtifact(context.Background(), "operation", proof, declaration, strings.NewReader("csv")); err == nil || redirects != 0 {
 		t.Fatal("upload followed redirect", err)
 	}
-	if _, err := client.ReuseWorkflowOperationUpload(context.Background(), "operation", proof, declaration); err == nil || redirects != 0 {
+	if _, err := NewPreviewClient(client).ReuseWorkflowOperationUpload(context.Background(), "operation", proof, declaration); err == nil || redirects != 0 {
 		t.Fatal("lookup followed redirect", err)
 	}
 }

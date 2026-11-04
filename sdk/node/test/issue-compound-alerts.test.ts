@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService, FaaSClient, type IssueCompoundAlertRule} from '../src/index.js';
+import {AppsService, FaaSClient, type IssueCompoundAlertRule} from '../src/preview.js';
 
 test('compound management preserves the AND thresholds and one shared window', async t => {
   const rule: IssueCompoundAlertRule = {key: 'payments', enabled: true, environment: 'production', minimum_events: 20, minimum_customers: 3, window_seconds: 600, cooldown_seconds: 1800};

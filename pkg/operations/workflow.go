@@ -124,7 +124,7 @@ var operationSignalEvent = regexp.MustCompile(`^[a-z][a-z0-9_.-]*$`)
 // ValidOperationSignalEvent bounds event-wait and signal names. Callback
 // names stay reserved for approvals.
 func ValidOperationSignalEvent(name string) bool {
-	return len(name) <= api.OperationSignalEventMaxBytes && operationSignalEvent.MatchString(name) && !api.IsWorkflowCallbackEventName(name)
+	return len(name) <= api.OperationSignalEventMaxBytes && operationSignalEvent.MatchString(name) && !api.IsWorkflowReservedEventName(name)
 }
 
 // OperationSignalEvents lists the events a workflow snapshot waits for.

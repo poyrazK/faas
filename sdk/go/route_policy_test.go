@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -19,7 +21,7 @@ func TestCanaryRouteGateClient(t *testing.T) {
 			_, _ = w.Write([]byte(`{"app_id":"11111111-1111-4111-8111-111111111111","mode":"report","revision":0}`))
 			return
 		}
-		var request faas.SetCanaryRouteGateRequest
+		var request preview.SetCanaryRouteGateRequest
 		if r.Method != "PUT" || json.NewDecoder(r.Body).Decode(&request) != nil || request.Mode != "enforce" || request.ExpectedRevision == nil || *request.ExpectedRevision != 0 {
 			t.Error("gate CAS binding")
 		}
@@ -30,11 +32,11 @@ func TestCanaryRouteGateClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate, err := client.GetCanaryRouteGate(context.Background(), "demo")
+	gate, err := preview.Wrap(client).GetCanaryRouteGate(context.Background(), "demo")
 	if err != nil || gate.Mode != "report" || gate.Revision != 0 {
 		t.Fatalf("read: %+v %v", gate, err)
 	}
-	gate, err = client.SetCanaryRouteGate(context.Background(), "demo", faas.SetCanaryRouteGateRequest{Mode: "enforce", ExpectedRevision: &gate.Revision})
+	gate, err = preview.Wrap(client).SetCanaryRouteGate(context.Background(), "demo", preview.SetCanaryRouteGateRequest{Mode: "enforce", ExpectedRevision: &gate.Revision})
 	if err != nil || gate.Mode != "enforce" || gate.Revision != 1 {
 		t.Fatalf("set: %+v %v", gate, err)
 	}
@@ -51,7 +53,7 @@ func TestRoutePolicyClientPreservesRetryKey(t *testing.T) {
 			if r.Header.Get("Idempotency-Key") != "reviewed-plan" {
 				t.Error("retry key changed")
 			}
-			var request faas.RoutePolicyApplyRequest
+			var request preview.RoutePolicyApplyRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
@@ -71,15 +73,15 @@ func TestRoutePolicyClientPreservesRetryKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := faas.RoutePolicyPlanRequest{Requirements: faas.RouteRequirementsConfig{Version: 1}}
-	if plan, err := client.PlanRoutePolicy(context.Background(), "demo", request); err != nil || plan.Version != 2 {
+	request := preview.RoutePolicyPlanRequest{Requirements: preview.RouteRequirementsConfig{Version: 1}}
+	if plan, err := preview.Wrap(client).PlanRoutePolicy(context.Background(), "demo", request); err != nil || plan.Version != 2 {
 		t.Fatalf("plan: %v", err)
 	}
-	response, err := client.ApplyRoutePolicy(context.Background(), "demo", "reviewed-plan", faas.RoutePolicyApplyRequest{RoutePolicyPlanRequest: request, Confirm: true})
+	response, err := preview.Wrap(client).ApplyRoutePolicy(context.Background(), "demo", "reviewed-plan", preview.RoutePolicyApplyRequest{RoutePolicyPlanRequest: request, Confirm: true})
 	if err != nil || !response.Replayed || response.Receipt.ID != "receipt" {
 		t.Fatalf("apply: %v %+v", err, response)
 	}
-	if receipt, err := client.GetRoutePolicyReceipt(context.Background(), "demo", "receipt"); err != nil || receipt.ID != "receipt" {
+	if receipt, err := preview.Wrap(client).GetRoutePolicyReceipt(context.Background(), "demo", "receipt"); err != nil || receipt.ID != "receipt" {
 		t.Fatalf("receipt: %v", err)
 	}
 	if requests != 3 {
@@ -92,12 +94,12 @@ func TestSavedRouteRequirementsClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "PUT":
-			var request faas.SaveRouteRequirementsRequest
+			var request preview.SaveRouteRequirementsRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ExpectedRevision == nil || *request.ExpectedRevision != 0 || request.Requirements.Version != 2 {
 				t.Errorf("save revision not preserved: %+v %v", request, err)
 			}
 		case "POST":
-			var request faas.CheckRouteRequirementsRequest
+			var request preview.CheckRouteRequirementsRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.ExpectedRevision == nil || *request.ExpectedRevision != 1 || request.DeploymentID != "selected" || r.URL.Path != "/v1/apps/demo/route-requirements/check" {
 				t.Errorf("check binding not preserved: %+v %v", request, err)
 			}
@@ -114,13 +116,13 @@ func TestSavedRouteRequirementsClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved, err := client.SaveRouteRequirements(context.Background(), "demo", faas.SaveRouteRequirementsRequest{ExpectedRevision: &zero, Requirements: faas.RouteRequirementsConfig{Version: 2}}); err != nil || saved.Revision != 1 {
+	if saved, err := preview.Wrap(client).SaveRouteRequirements(context.Background(), "demo", preview.SaveRouteRequirementsRequest{ExpectedRevision: &zero, Requirements: preview.RouteRequirementsConfig{Version: 2}}); err != nil || saved.Revision != 1 {
 		t.Fatalf("save: %+v %v", saved, err)
 	}
-	if saved, err := client.GetSavedRouteRequirements(context.Background(), "demo"); err != nil || saved.AppID != "app-id" {
+	if saved, err := preview.Wrap(client).GetSavedRouteRequirements(context.Background(), "demo"); err != nil || saved.AppID != "app-id" {
 		t.Fatalf("get: %+v %v", saved, err)
 	}
-	if result, err := client.CheckRouteRequirements(context.Background(), "demo", faas.CheckRouteRequirementsRequest{ExpectedRevision: &one, DeploymentID: "selected"}); err != nil || result.Report.Status != "violated" || result.RequirementsRevision != 1 {
+	if result, err := preview.Wrap(client).CheckRouteRequirements(context.Background(), "demo", preview.CheckRouteRequirementsRequest{ExpectedRevision: &one, DeploymentID: "selected"}); err != nil || result.Report.Status != "violated" || result.RequirementsRevision != 1 {
 		t.Fatalf("check: %+v %v", result, err)
 	}
 }
@@ -146,10 +148,10 @@ func TestAutomaticRouteCheckClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.RefreshAutomaticRouteCheck(context.Background(), "demo", "selected"); err != nil || refreshes != 1 {
+	if err := preview.Wrap(client).RefreshAutomaticRouteCheck(context.Background(), "demo", "selected"); err != nil || refreshes != 1 {
 		t.Fatalf("refresh: %v", err)
 	}
-	result, err := client.GetAutomaticRouteCheck(context.Background(), "demo", "selected")
+	result, err := preview.Wrap(client).GetAutomaticRouteCheck(context.Background(), "demo", "selected")
 	if err != nil || result.Freshness != "stale" || result.Check.Report.Status != "satisfied" || result.CurrentRequirementsRevision != 2 {
 		t.Fatalf("lookup: %+v %v", result, err)
 	}

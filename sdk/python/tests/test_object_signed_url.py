@@ -5,9 +5,9 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.storage import create_object_multipart_upload, sign_bucket_object
+from faas_sdk.preview.api.storage import create_object_multipart_upload, sign_bucket_object
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import (
+from faas_sdk.preview.models import (
     CreateObjectMultipartUploadRequest,
     ObjectEncryption,
     ObjectMultipartUpload,
@@ -17,8 +17,8 @@ from faas_sdk.models import (
 
 
 def test_historical_read_and_public_version_pagination() -> None:
-    from faas_sdk.api.storage import list_object_bucket_versions
-    from faas_sdk.models import ObjectVersionList
+    from faas_sdk.preview.api.storage import list_object_bucket_versions
+    from faas_sdk.preview.models import ObjectVersionList
 
     bucket = UUID("11111111-1111-4111-8111-111111111111")
     version = UUID("22222222-2222-4222-8222-222222222222")

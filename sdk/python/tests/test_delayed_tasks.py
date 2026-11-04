@@ -5,8 +5,8 @@ from __future__ import annotations
 import datetime
 import uuid
 
-from faas_sdk.api.delayed_tasks import list_delayed_tasks
-from faas_sdk.models import (
+from faas_sdk.preview.api.delayed_tasks import list_delayed_tasks
+from faas_sdk.preview.models import (
     DelayedTaskAfterRequest,
     DelayedTaskAfterRequestHeaders,
     DelayedTaskAfterRequestPayload,

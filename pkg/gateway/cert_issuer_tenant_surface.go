@@ -259,22 +259,34 @@ func (i *TenantSurfaceCertIssuer) RequestCertForSurface(ctx context.Context, sur
 		i.emitCertTransition(ctx, surf.ID, surf.AccountID, surf.CertState, state.CertStateFailed, errMsg, "error")
 		return nil
 	}
-	// Flip cert_state=pending BEFORE the certmagic call so the
-	// dashboard sees the in-flight state. The trigger fires
-	// (notify) — the subscriber re-invokes RequestCertForSurface
-	// for the same surface; the second invocation hits the
-	// cert_state=pending branch (the "renewer tick during a
-	// pending CA call" race) and returns nil without minting
-	// twice. The race is benign because both invocations point
-	// at the same cache key and certmagic's per-key lock
-	// deduplicates the underlying Obtain call.
-	if err := i.store.UpdateTenantSurfaceCert(ctx, state.UpdateSurfaceCertParams{
-		SurfaceID: surf.ID,
-		CertState: state.CertStatePending,
-	}); err != nil {
-		return fmt.Errorf("gateway: flip to pending for surface %s: %w", surf.ID, err)
+	// Flip cert_state=pending before the first certmagic call so
+	// the dashboard sees the in-flight first issuance. Only then:
+	// every cert_state write fires tenant_surface_changed, which
+	// re-enters this method, so flipping pending on every call
+	// (issued → pending → issued, failed → pending → failed)
+	// produced two notifies per call, each starting another call.
+	// One remint grew into an unbounded notify storm on the
+	// gateway's invalidation channel. Later calls write only an
+	// outcome that differs from the stored one, which converges.
+	// Concurrent calls share certmagic's per-name lock.
+	from := surf.CertState
+	if from == "" || from == state.CertStateNone {
+		if err := i.store.UpdateTenantSurfaceCert(ctx, state.UpdateSurfaceCertParams{
+			SurfaceID: surf.ID,
+			CertState: state.CertStatePending,
+		}); err != nil {
+			return fmt.Errorf("gateway: flip to pending for surface %s: %w", surf.ID, err)
+		}
+		i.emitCertTransition(ctx, surf.ID, surf.AccountID, from, state.CertStatePending, "", "success")
+		from = state.CertStatePending
 	}
-	i.emitCertTransition(ctx, surf.ID, surf.AccountID, surf.CertState, state.CertStatePending, "", "success")
+	// settled audits the outcome only when it changed the stored state or,
+	// for a renewal, the expiry; a converging re-entry is not a transition.
+	settled := func(to state.CertState, notAfter time.Time, lastError, result string) {
+		if from != to || (to == state.CertStateIssued && !notAfter.Equal(surf.CertNotAfter)) {
+			i.emitCertTransition(ctx, surf.ID, surf.AccountID, from, to, lastError, result)
+		}
+	}
 	// Nil-safe degradation: if le is nil (the test-only path
 	// or a misconfigured boot), we still flip to failed with
 	// a clear last_error so the wiring is visible without
@@ -287,7 +299,7 @@ func (i *TenantSurfaceCertIssuer) RequestCertForSurface(ctx context.Context, sur
 			LastError: errMsg,
 		})
 		i.metrics.ObserveTenantSurfaceCert("failed", string(surf.CertKind))
-		i.emitCertTransition(ctx, surf.ID, surf.AccountID, state.CertStatePending, state.CertStateFailed, errMsg, "error")
+		settled(state.CertStateFailed, time.Time{}, errMsg, "error")
 		return nil
 	}
 	// CA call. IssueSet mints per-host certs and returns the
@@ -302,7 +314,7 @@ func (i *TenantSurfaceCertIssuer) RequestCertForSurface(ctx context.Context, sur
 			LastError: errMsg,
 		})
 		i.metrics.ObserveTenantSurfaceCert("failed", string(surf.CertKind))
-		i.emitCertTransition(ctx, surf.ID, surf.AccountID, state.CertStatePending, state.CertStateFailed, errMsg, "error")
+		settled(state.CertStateFailed, time.Time{}, errMsg, "error")
 		return fmt.Errorf("gateway: IssueSet for surface %s: %w", surf.ID, err)
 	}
 	if err := i.store.UpdateTenantSurfaceCert(ctx, state.UpdateSurfaceCertParams{
@@ -314,7 +326,7 @@ func (i *TenantSurfaceCertIssuer) RequestCertForSurface(ctx context.Context, sur
 		return fmt.Errorf("gateway: flip to issued for surface %s: %w", surf.ID, err)
 	}
 	i.metrics.ObserveTenantSurfaceCert("issued", string(surf.CertKind))
-	i.emitCertTransition(ctx, surf.ID, surf.AccountID, state.CertStatePending, state.CertStateIssued, "", "success")
+	settled(state.CertStateIssued, notAfter, "", "success")
 	return nil
 }
 

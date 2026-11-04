@@ -13,9 +13,11 @@ import (
 )
 
 func workflowRecoveryTargetFromSQLC(row sqlc.GetWorkflowRecoveryTargetRow) workflowRecoveryTarget {
-	return workflowRecoveryTarget{plan: api.Plan(row.Plan), accountActive: row.AccountActive, appDeleted: row.AppDeleted,
+	plan := api.Plan(row.Plan)
+	return workflowRecoveryTarget{plan: plan, accountActive: row.AccountActive, appDeleted: row.AppDeleted,
 		maintenance: row.MaintenanceMode, tenantRequired: row.PlatformTenantRequired, liveDeployment: row.LiveDeployment,
-		pinnedDeployment: row.PinnedDeployment, tenantActive: row.TenantActive, activeRuns: int(row.ActiveRuns)}
+		pinnedDeployment: row.PinnedDeployment, tenantActive: row.TenantActive,
+		activeRuns: api.WorkflowAdmittedRuns(int(row.ActiveRuns-row.ParkedRuns), int(row.ParkedRuns), plan.WorkflowMaxParkedRuns())}
 }
 
 func (s *PgStore) GetWorkflowRunDiagnostics(ctx context.Context, opts WorkflowDiagnosticsOptions) (api.WorkflowRunDiagnosticsResponse, error) {

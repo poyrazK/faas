@@ -299,7 +299,11 @@ func TestEnvironmentGitOpsScopedWorkloadIntentBindsInheritedBaseline(t *testing.
 }
 
 func TestEnvironmentGitOpsScopedWorkloadIntentBlocksWholePlan(t *testing.T) {
-	for _, raw := range []string{`{"startup_deadline_s":100}`, `{"execution_mode":"worker"}`} {
+	// stop_grace_period 100s is valid for Scale, which Compile checks, but
+	// over the Pro account's 60 s cap, so only the plan preflight can block
+	// it. (startup_deadline_s no longer differs: Hunt 12 capped every plan
+	// above Free at the 30 s cold-boot window, #5205.)
+	for _, raw := range []string{`{"stop_grace_period":100000000000}`, `{"execution_mode":"worker"}`} {
 		t.Run(raw, func(t *testing.T) {
 			stores(t, func(t *testing.T, basic gitOpsTestStore) {
 				store, source, desired, app, _, _ := workloadIntentFixture(t, basic, "enforce")

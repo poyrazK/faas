@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -146,6 +147,10 @@ func ReservationProblem(err error, plan api.Plan) *api.Problem {
 	var quota *state.QuotaError
 	if errors.As(err, &quota) {
 		return api.ErrPlanLimitApps(api.MustLimitsFor(plan), quota.Observed)
+	}
+	// A new service's hostname can expose an oversized policy (ADR-570).
+	if problem := trafficproblem.Policy(err, nil); problem != nil {
+		return problem
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Service addition reservation changed", "Project membership or reserved service settings changed; scan again.")
 }

@@ -66,6 +66,7 @@ func TestCreateEdgeRuleWAFRejections(t *testing.T) {
 func TestCreateEdgeRuleWAFBlockMode(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	slug := apidserver.MustSeedEdgeRuleApp(t, e, "waf-block")
+	releaseEdgeFeatures(e)
 	rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", wafEdgeRuleRequest(`{"mode":"block"}`), nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())

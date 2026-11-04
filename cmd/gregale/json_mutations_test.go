@@ -22,7 +22,11 @@ const jsonMutationCronID = "0123456789abcdef0123456789abcdef"
 func TestJSONMutations_ParkAndWake(t *testing.T) {
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.Method+" "+r.URL.Path)
+		// wake reads the app after queuing to explain an idle worker pool
+		// (H14-75); only the mutations matter here.
+		if r.Method != http.MethodGet {
+			paths = append(paths, r.Method+" "+r.URL.Path)
+		}
 		if strings.HasSuffix(r.URL.Path, "/wake") {
 			main.WriteJSONTest(w, api.AppWakeResponse{WakeID: "wake-1"})
 			return
@@ -271,7 +275,7 @@ func TestCronAddHumanOutputNamesTheID(t *testing.T) {
 	if code := main.CmdCrons([]string{"add", "--app", "demo", "--schedule", "0 * * * *", "--path", "/tick"}); code != 0 {
 		t.Fatalf("cron add = %d, want 0", code)
 	}
-	if !strings.Contains(stdout.String(), "id: "+jsonMutationCronID) || !strings.Contains(stdout.String(), "gregale crons run "+jsonMutationCronID) {
+	if !strings.Contains(stdout.String(), "id: "+jsonMutationCronID) || !strings.Contains(stdout.String(), "gregale cron run "+jsonMutationCronID) {
 		t.Fatalf("cron add output does not name the new id:\n%s", stdout.String())
 	}
 	// H10-14: HTTP crons fire POST; a GET-only route 404ed on every run.

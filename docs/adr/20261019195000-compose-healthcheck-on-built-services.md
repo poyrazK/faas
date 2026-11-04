@@ -3,6 +3,7 @@
 Date: 2026-10-19
 Status: Accepted
 Amends: ADR-682 (Compose healthchecks applied to prebuilt images only)
+Amended by: ADR-20261024100000 (a Dockerfile HEALTHCHECK alone is enforced)
 Related: ADR-683 (image healthcheck readiness), ADR-684 (image healthcheck runtime recovery), ADR-1337 (Compose key reporting)
 
 ## Context

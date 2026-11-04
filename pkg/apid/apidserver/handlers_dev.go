@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -112,6 +113,10 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	req.Watch = watch
+	if prob := devloop.ValidateGoCommand(req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	lease, prob := devSessionLease(req.LeaseSeconds, limits)
 	if prob != nil {
@@ -129,6 +134,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 	app.PreviewPrNumber = 0
 	app.PreviewPrState = state.PreviewPrStateOpen
 	app.PreviewExpiresAt = &expiresAt
+	app.Manifest.BuildGoCommand = req.GoCommand
 
 	if existing, err := s.store.AppBySlug(r.Context(), slug); err == nil {
 		if existing.AccountID != acct.ID || existing.PreviewOfSlug != project || existing.PreviewPrNumber != 0 {
@@ -237,13 +243,19 @@ func (s *server) reviveDevSession(r *http.Request, acct state.Account, slug, pro
 		tomb.Type != app.Type || (app.Type == state.AppTypeFunction && tomb.Runtime != app.Runtime) {
 		return state.App{}, false
 	}
-	if _, err := s.store.RestoreApp(r.Context(), tomb.ID, limits); err != nil {
-		s.log.Warn("developer session revive failed", "app", tomb.ID, "err", err)
+	// Restore refuses a torn-down preview (ADR-20261030070000), so the session
+	// reopens first; the restore's quota check then counts it as open. A failed
+	// restore puts the tombstone back, where the restore guard covers it again.
+	if _, err := s.store.SetPreviewPrState(r.Context(), tomb.ID, state.PreviewPrStateOpen); err != nil {
+		s.log.Warn("developer session reopen failed", "app", tomb.ID, "err", err)
 		return state.App{}, false
 	}
-	restored, err := s.store.SetPreviewPrState(r.Context(), tomb.ID, state.PreviewPrStateOpen)
+	restored, err := s.store.RestoreApp(r.Context(), tomb.ID, limits)
 	if err != nil {
-		s.log.Warn("developer session reopen failed", "app", tomb.ID, "err", err)
+		s.log.Warn("developer session revive failed", "app", tomb.ID, "err", err)
+		if _, err := s.store.SetPreviewPrState(context.WithoutCancel(r.Context()), tomb.ID, state.PreviewPrStateTornDown); err != nil {
+			s.log.Warn("developer session tombstone not put back", "app", tomb.ID, "err", err)
+		}
 		return state.App{}, false
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,

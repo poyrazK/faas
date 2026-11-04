@@ -13,6 +13,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -35,8 +36,8 @@ func cmdProjects(args []string) int {
 	case "rm", "delete":
 		return cmdProjectsRemove(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown projects subcommand %q", args[0]), "projects")
-		return 1
+		printCommandValidation(os.Stderr, "unknown projects subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "projects", nestedCliCommand("projects"), args[0])
 	}
 }
 
@@ -93,8 +94,7 @@ func cmdProjectsEnvironments(args []string) int {
 	case "rollback":
 		return cmdProjectsEnvironmentPromotionRollback(args[1:])
 	default:
-		PrintUsage(os.Stderr, fmt.Sprintf("unknown project environments subcommand %q", args[0]), "projects environments")
-		return 1
+		return printUnknownSubcommand(os.Stderr, "projects environments", nestedCliCommand("projects", "environments"), args[0])
 	}
 }
 
@@ -104,7 +104,7 @@ func cmdProjectsEnvironmentQualify(args []string) int {
 	profile := fs.String("profile", "", "YAML probe profile for every workload in the active release set")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) ||
 		!api.ValidProjectEnvironmentSlug(positional[1]) || strings.TrimSpace(*profile) == "" {
-		PrintUsage(os.Stderr, "usage: gregale projects environments qualify <project-slug> <environment-slug> --profile <FILE>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment qualify <project-slug> <environment-slug> --profile <FILE>", "projects environments")
 		return 1
 	}
 	client, err := authedClient()
@@ -141,7 +141,7 @@ func cmdProjectsEnvironmentQualify(args []string) int {
 
 func cmdProjectsEnvironmentReleases(args []string) int {
 	if len(args) != 2 || !api.ValidProjectSlug(args[0]) || !api.ValidProjectEnvironmentSlug(args[1]) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments releases <project-slug> <environment-slug>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment releases <project-slug> <environment-slug>", "projects environments")
 		return 1
 	}
 	client, err := authedClient()
@@ -172,7 +172,7 @@ func cmdProjectsEnvironmentHistory(args []string) int {
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	limit := fs.Int("limit", 50, "page size (1-100)")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments history <project-slug> <environment-slug> [--from <environment>] [--status running|succeeded|failed] [--cursor <CURSOR>] [--all] [--limit <N>]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment history <project-slug> <environment-slug> [--from <environment>] [--status running|succeeded|failed] [--cursor <CURSOR>] [--all] [--limit <N>]", "projects environments")
 		return 1
 	}
 	if *from != "" && !api.ValidProjectEnvironmentSlug(*from) {
@@ -212,7 +212,7 @@ func cmdProjectsEnvironmentHistory(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s %-16s %-16s %-10s %s\n", promotion.PromotionID, promotion.Status, promotion.FromEnvironment, promotion.ToEnvironment, configSync, promotion.CreatedAt)
 	}
 	if history.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "next page: gregale projects environments history %s %s --cursor '%s' --limit %d", positional[0], positional[1], strings.ReplaceAll(history.NextBefore, "'", "'\"'\"'"), *limit)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale environment history %s %s --cursor '%s' --limit %d", positional[0], positional[1], strings.ReplaceAll(history.NextBefore, "'", "'\"'\"'"), *limit)
 		if *from != "" {
 			_, _ = fmt.Fprintf(osStdout, " --from %s", *from)
 		}
@@ -229,7 +229,7 @@ func cmdProjectsEnvironmentConfig(args []string) int {
 		return cmdProjectsEnvironmentConfigSet(args[1:])
 	}
 	if len(args) != 2 || !api.ValidProjectSlug(args[0]) || !api.ValidProjectEnvironmentSlug(args[1]) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments config <project-slug> <environment-slug> | config set <project-slug> <environment-slug> (--file PATH|--stdin) [--dry-run] [--if-hash HASH] [--yes]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment config <project-slug> <environment-slug> | config set <project-slug> <environment-slug> (--file PATH|--stdin) [--dry-run] [--if-hash HASH] [--yes]", "projects environments")
 		return 1
 	}
 	client, err := authedClient()
@@ -272,7 +272,7 @@ func cmdProjectsEnvironmentConfigSet(args []string) int {
 	expectedHash := fs.String("if-hash", "", "only apply if the current config hash matches HASH")
 	yes := fs.Bool("yes", false, "confirm the configuration update")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments config set <project-slug> <environment-slug> (--file PATH|--stdin) [--dry-run] [--if-hash HASH] [--yes]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment config set <project-slug> <environment-slug> (--file PATH|--stdin) [--dry-run] [--if-hash HASH] [--yes]", "projects environments")
 		return 1
 	}
 	if (*file == "") == !*fromStdin {
@@ -429,13 +429,19 @@ func renderProjectEnvironmentConfigPreview(preview projectEnvironmentConfigApply
 	return 0
 }
 
+// cmdProjectsEnvironmentConfigDiff compares two environments of a project:
+// `<project> --from F --to T`, or `<from> <to> [--project P]` as the
+// earlier `gregale diff` takes them (ADR-20261026145832).
 func cmdProjectsEnvironmentConfigDiff(args []string) int {
 	flags, positional := splitArgsForFlags(args)
+	if len(positional) == 2 {
+		return environmentDiff(args)
+	}
 	fs := newFlagSet("projects-environments-diff", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments diff <project-slug> --from <environment> --to <environment>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment diff <project-slug> --from <environment> --to <environment>", "projects environments")
 		return 1
 	}
 	if *from == *to {
@@ -589,7 +595,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !api.ValidProjectSlug(positional[0]) {
-		PrintUsage(osStderr, "usage: gregale projects environments promote <project-slug> [--interactive | --from ENV --to ENV]", "projects environments")
+		PrintUsage(osStderr, "usage: gregale environment promote <project-slug> [--interactive | --from ENV --to ENV]", "projects environments")
 		return 1
 	}
 	if *interactive {
@@ -611,7 +617,7 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 		return cmdProjectPromotionInteractive(positional[0], *timeoutSeconds)
 	}
 	if !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(osStderr, "usage: gregale projects environments promote <project-slug> --from ENV --to ENV", "projects environments")
+		PrintUsage(osStderr, "usage: gregale environment promote <project-slug> --from ENV --to ENV", "projects environments")
 		return 1
 	}
 	if *progress && !*wait {
@@ -753,7 +759,7 @@ func executeProjectPromotion(ctx context.Context, client *Client, project string
 	}
 	if promoted.Status == "running" {
 		_, _ = fmt.Fprintf(osStdout, "Promotion %s accepted: %s -> %s; destination health is pending\n", promoted.PromotionID, promoted.FromEnvironment, promoted.ToEnvironment)
-		PrintProgress(osStdout, "Inspect with: gregale projects environments status %s %s --to %s", promoted.ProjectSlug, promoted.PromotionID, promoted.ToEnvironment)
+		PrintProgress(osStdout, "Inspect with: gregale environment status %s %s --to %s", promoted.ProjectSlug, promoted.PromotionID, promoted.ToEnvironment)
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "Promoted %s: %s -> %s\n", promoted.ProjectSlug, promoted.FromEnvironment, promoted.ToEnvironment)
@@ -771,7 +777,7 @@ func cmdProjectsEnvironmentPromotionStatus(args []string) int {
 	fs := newFlagSet("projects-environments-status", flag.ContinueOnError)
 	to := fs.String("to", "", "target environment")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || strings.TrimSpace(positional[1]) == "" || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments status <project-slug> <promotion-id> --to <environment>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment status <project-slug> <promotion-id> --to <environment>", "projects environments")
 		return 1
 	}
 	client, err := authedClient()
@@ -796,7 +802,7 @@ func cmdProjectsEnvironmentPromotionRollback(args []string) int {
 	yes := fs.Bool("yes", false, "confirm the rollback")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying this rollback")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 || !api.ValidProjectSlug(positional[0]) || strings.TrimSpace(positional[1]) == "" || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments rollback <project-slug> <promotion-id> --to <environment> [--yes] [--idempotency-key <KEY>]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment rollback <project-slug> <promotion-id> --to <environment> [--yes] [--idempotency-key <KEY>]", "projects environments")
 		return 1
 	}
 	if !*yes {
@@ -850,7 +856,7 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 	workers := fs.Bool("workers", false, "preview coordinated HTTP and push-worker promotion (requires --sync-config --verify)")
 	migrate := fs.Bool("migrate", false, "preview one backward-compatible destination migration (requires --sync-config --verify)")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments preview <project-slug> --from <environment> --to <environment> [--sync-config]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment preview <project-slug> --from <environment> --to <environment> [--sync-config]", "projects environments")
 		return 1
 	}
 	if *from == *to {
@@ -952,7 +958,7 @@ func printPromotionReleaseSet(label string, release *api.ProjectReleaseSetRespon
 
 func cmdProjectsEnvironmentsList(args []string) int {
 	if len(args) != 1 || !api.ValidProjectSlug(args[0]) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments list <project-slug>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment list <project-slug>", "projects environments")
 		return 1
 	}
 	client, err := authedClient()
@@ -980,7 +986,7 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 	from := fs.String("from", "", "source environment to clone")
 	shareResources := fs.Bool("share-resources", false, "explicitly share managed database and object-storage data")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments create <project-slug> <environment-slug> [--from <environment>] [--protected] [--share-resources]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment create <project-slug> <environment-slug> [--from <environment>] [--protected] [--share-resources]", "projects environments")
 		return 1
 	}
 	if !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
@@ -1045,7 +1051,7 @@ func renderProjectEnvironment(environment api.ProjectEnvironmentResponse) int {
 
 func cmdProjectsList(args []string) int {
 	if len(args) != 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects list", "projects")
+		PrintUsage(os.Stderr, "usage: gregale project list", "projects")
 		return 1
 	}
 	client, err := authedClient()
@@ -1068,7 +1074,7 @@ func cmdProjectsList(args []string) int {
 
 func cmdProjectsInfo(args []string) int {
 	if len(args) != 1 || !api.ValidProjectSlug(args[0]) {
-		PrintUsage(os.Stderr, "usage: gregale projects info <slug>", "projects")
+		PrintUsage(os.Stderr, "usage: gregale project get <slug>", "projects")
 		return 1
 	}
 	client, err := authedClient()
@@ -1088,7 +1094,7 @@ func cmdProjectsUpdate(args []string) int {
 	repo := fs.String("repo", "", "GitHub repository owner/name; empty unbinds")
 	branch := fs.String("branch", "", "production branch")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale projects update <slug> [--repo owner/name] [--branch main]", "projects")
+		PrintUsage(os.Stderr, "usage: gregale project update <slug> [--repo owner/name] [--branch main]", "projects")
 		return 1
 	}
 	if !api.ValidProjectSlug(positional[0]) {
@@ -1161,7 +1167,24 @@ func renderProject(project api.ProjectResponse) int {
 		return jsonOut(writeJSON(project))
 	}
 	_, _ = fmt.Fprintf(osStdout, "%s\n  repository: %s\n  production branch: %s\n  scan source: %s\n  workloads: %d\n  exclusions: %s\n  last deploy: %s\n  last build: %s\n",
-		project.Slug, project.RepoFullName, project.ProductionBranch, project.ScanSource,
-		len(project.Workloads), strings.Join(project.Exclusions, ", "), project.LastReconciliationStatus, project.LastBuildStatus)
+		project.Slug, orDash(project.RepoFullName), orDash(project.ProductionBranch), orDash(project.ScanSource),
+		len(project.Workloads), orDash(strings.Join(project.Exclusions, ", ")), orDash(project.LastReconciliationStatus), orDash(project.LastBuildStatus))
+	printProjectServices(osStdout, project.Workloads)
 	return 0
+}
+
+// printProjectServices lists each service with its app, its latest
+// deployment and the services it declares it calls (ADR-20261026193018).
+func printProjectServices(w io.Writer, workloads []api.ProjectWorkloadResponse) {
+	if len(workloads) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "  services:")
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "    NAME\tAPP\tDEPLOYMENT\tCALLS")
+	for _, workload := range workloads {
+		_, _ = fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\n", orDash(workload.WorkloadName), workload.Slug,
+			orDash(workload.DeploymentStatus), orDash(strings.Join(workload.DependsOn, ", ")))
+	}
+	_ = tw.Flush()
 }

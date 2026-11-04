@@ -12,8 +12,15 @@ import (
 
 // This request intentionally has no caller-supplied source revision or release.
 // The state transaction selects and captures the actual source configuration.
+//
+// RequireCompleteInventory is set by public admission: the capture then fails
+// with a ProjectEnvironmentCloneInventoryError, before any operation exists,
+// when the source holds rows the clone cannot copy into an isolated target
+// (ADR-20261024123122). The data-checkpoint machinery's own tests capture
+// sources that admission cannot accept yet, so it stays opt-in.
 type ProjectEnvironmentCloneCaptureRequest struct {
 	AccountID, ProjectID, SourceEnvironment, TargetEnvironment, IdempotencyKey string
+	RequireCompleteInventory                                                   bool
 }
 
 // The root covers the current frozen configuration catalogue. Complete mode

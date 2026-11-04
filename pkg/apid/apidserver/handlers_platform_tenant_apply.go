@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -118,7 +119,7 @@ func (s *server) platformTenantApplyError(w http.ResponseWriter, err error, plan
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid onboarding bundle", "consumer and surface references, surface names, and hostnames must be unique and valid"))
 	default:
-		api.WriteProblem(w, api.ErrInternal("could not apply platform tenant onboarding"))
+		api.WriteProblem(w, trafficproblem.TenantBinding(err, api.ErrInternal("could not apply platform tenant onboarding")))
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -56,16 +58,16 @@ func TestVersionProtectionClient(t *testing.T) {
 	if out, err := c.GetObjectVersionRetention(ctx, "demo", "bucket", key, version); err != nil || !out.Retention.Empty() {
 		t.Fatal(out, err)
 	}
-	if out, err := c.PutObjectVersionRetention(ctx, "demo", "bucket", key, version, faas.ObjectVersionRetentionRequest{ID: id}); err != nil || out.State != "waiting" {
+	if out, err := c.PutObjectVersionRetention(ctx, "demo", "bucket", key, version, preview.ObjectVersionRetentionRequest{ID: id}); err != nil || out.State != "waiting" {
 		t.Fatal(out, err)
 	}
 	if out, err := c.GetObjectVersionLegalHold(ctx, "demo", "bucket", key, version); err != nil || out.LegalHold.Status != "ON" {
 		t.Fatal(out, err)
 	}
-	if out, err := c.PutObjectVersionLegalHold(ctx, "demo", "bucket", key, version, faas.ObjectVersionLegalHoldRequest{ID: id, LegalHold: faas.ObjectVersionLegalHold{Status: "OFF"}}); err != nil || out.ID != id {
+	if out, err := c.PutObjectVersionLegalHold(ctx, "demo", "bucket", key, version, preview.ObjectVersionLegalHoldRequest{ID: id, LegalHold: preview.ObjectVersionLegalHold{Status: "OFF"}}); err != nil || out.ID != id {
 		t.Fatal(out, err)
 	}
-	if out, err := c.GetObjectVersionProtection(ctx, "demo", "bucket", id); err != nil || out.State != "ready" {
+	if out, err := preview.Wrap(c).GetObjectVersionProtection(ctx, "demo", "bucket", id); err != nil || out.State != "ready" {
 		t.Fatal(out, err)
 	}
 	if calls != 5 {
@@ -78,15 +80,15 @@ func TestEventHoldProtectionClient(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	day, year := int32(30), int32(1)
-	for _, policy := range []faas.ObjectVersionRetention{
-		{Mode: "COMPLIANCE", EventHold: "ON", EventHoldDuration: &faas.ObjectRetentionPeriod{Days: &day}},
-		{Mode: "GOVERNANCE", EventHold: "ON", EventHoldDuration: &faas.ObjectRetentionPeriod{Years: &year}},
+	for _, policy := range []preview.ObjectVersionRetention{
+		{Mode: "COMPLIANCE", EventHold: "ON", EventHoldDuration: &preview.ObjectRetentionPeriod{Days: &day}},
+		{Mode: "GOVERNANCE", EventHold: "ON", EventHoldDuration: &preview.ObjectRetentionPeriod{Years: &year}},
 		{Mode: "COMPLIANCE", EventHold: "OFF"},
 	} {
 		t.Run(policy.Mode+policy.EventHold, func(t *testing.T) {
-			in := faas.ObjectVersionRetentionRequest{ID: "00000000-0000-4000-8000-000000000001", Retention: policy}
+			in := preview.ObjectVersionRetentionRequest{ID: "00000000-0000-4000-8000-000000000001", Retention: policy}
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var got faas.ObjectVersionRetentionRequest
+				var got preview.ObjectVersionRetentionRequest
 				if r.Method != "PUT" || r.URL.Query().Get("version_id") != "null" || r.URL.Query().Get("key") != "目录/+ %" || json.NewDecoder(r.Body).Decode(&got) != nil {
 					t.Error("invalid request", r.URL)
 				}

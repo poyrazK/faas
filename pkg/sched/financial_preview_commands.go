@@ -83,7 +83,9 @@ func (e *Engine) seedFinancialPreviewCommandLedger(ctx context.Context, apps []s
 		if err != nil {
 			return err
 		}
-		account, err := e.store.AccountByID(ctx, app.AccountID)
+		// The billing subject's plan, not the creator's (bug hunt
+		// 2026-10-28 B37).
+		account, err := state.AppResourceAccount(ctx, e.store, app)
 		if err != nil {
 			return err
 		}
@@ -94,7 +96,7 @@ func (e *Engine) seedFinancialPreviewCommandLedger(ctx context.Context, apps []s
 			}
 			if err := e.ledger.Admit(Request{Instance: command.TaskID, AppID: app.ID, DeploymentID: command.DeploymentID, Plan: account.Plan,
 				RAMMB: command.RAMMB, VCPU: limits.VCPU, CPUMillicores: command.CPUMillicores, MaxConcurrency: app.MaxConcurrency,
-				NodeID: command.NodeID, Kind: KindAppTask, AllowConcurrencyRecovery: true, AllowCPUOvercommitRecovery: true}); err != nil {
+				NodeID: command.NodeID, Kind: KindAppTask, AllowConcurrencyRecovery: true, AllowResidentRecovery: true}); err != nil {
 				return fmt.Errorf("recover preview command capacity: %w", err)
 			}
 		}

@@ -73,7 +73,7 @@ def sync_detailed(
     """Rotate an API key.
 
      Mints a new key (status='active') and demotes the old key in
-    a single transaction (issue #189 / IAM-5). The new key
+    a single transaction. The new key
     inherits the predecessor's label + scopes so the customer's
     CI config does not need to chase a label change.
 
@@ -124,7 +124,7 @@ def sync(
     """Rotate an API key.
 
      Mints a new key (status='active') and demotes the old key in
-    a single transaction (issue #189 / IAM-5). The new key
+    a single transaction. The new key
     inherits the predecessor's label + scopes so the customer's
     CI config does not need to chase a label change.
 
@@ -170,7 +170,7 @@ async def asyncio_detailed(
     """Rotate an API key.
 
      Mints a new key (status='active') and demotes the old key in
-    a single transaction (issue #189 / IAM-5). The new key
+    a single transaction. The new key
     inherits the predecessor's label + scopes so the customer's
     CI config does not need to chase a label change.
 
@@ -219,7 +219,7 @@ async def asyncio(
     """Rotate an API key.
 
      Mints a new key (status='active') and demotes the old key in
-    a single transaction (issue #189 / IAM-5). The new key
+    a single transaction. The new key
     inherits the predecessor's label + scopes so the customer's
     CI config does not need to chase a label change.
 

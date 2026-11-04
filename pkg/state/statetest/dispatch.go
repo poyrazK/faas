@@ -8,6 +8,7 @@ package statetest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -26,6 +27,9 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"DeleteAppPermanently":                   true,
+	"ListApplicationStandardRebinds":         true,
+	"RecordApplicationStandardRebind":        true,
 	"RestoreApp":                             true,
 	"RestoreAppWithActivity":                 true,
 	"AppTaskByID":                            true,
@@ -57,6 +61,7 @@ var memDispatched = map[string]bool{
 	"DeploymentSidecarRAMs":                                   true,
 	"ListBillingWindowInstances":                              true,
 	"ListInstancesForApp":                                     true,
+	"ListLiveInstancesForApps":                                true,
 	"AccountByID":                                             true,
 	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
@@ -73,6 +78,8 @@ var memDispatched = map[string]bool{
 	"StatementHandoffBlocked":                                 true,
 	"AppRuntimeConfigChangedAt":                               true,
 	"AppRuntimeConfigChangedAtInScope":                        true,
+	"ClaimDuePublishedEventRecipient":                         true,
+	"ClaimDuePublishedEventRecipients":                        true,
 	"ClaimPreviewTeardown":                                    true,
 	"CloneProjectEnvironment":                                 true,
 	"ComputeNodeByID":                                         true,
@@ -87,6 +94,7 @@ var memDispatched = map[string]bool{
 	"CreateProjectEnvironmentPromotion":                       true,
 	"CreateTCPListener":                                       true,
 	"DeadLetterEventByID":                                     true,
+	"DomainByName":                                            true,
 	"DeploymentByID":                                          true,
 	"DeploymentSnapshotBackoffActive":                         true,
 	"EdgeRuleHitStatsForApp":                                  true,
@@ -94,11 +102,16 @@ var memDispatched = map[string]bool{
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
+	"ListAllAccounts":                                         true,
+	"MarkDunningStep":                                         true,
+	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
+	"FinishPublishedEventRecipient":                           true,
 	"GetAppErrorSample":                                       true,
 	"GetFeatureFlags":                                         true,
 	"GetObjectBucketObjectLock":                               true,
 	"GetRouteHealthReport":                                    true,
+	"ListRouteHealthHistory":                                  true,
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
 	"IssueObjectMultipartURLCredential":                       true,
@@ -138,6 +151,7 @@ var memDispatched = map[string]bool{
 	"PruneWorkflowRecoveryHistory":                            true,
 	"PublishOwnedInstanceRuntime":                             true,
 	"QueueBindingByID":                                        true,
+	"QueueDepthForBindingInScope":                             true,
 	"QueueStateForBinding":                                    true,
 	"ReadBindingApplicationAdoption":                          true,
 	"ReadBindingPromotionRevision":                            true,
@@ -165,9 +179,12 @@ var memDispatched = map[string]bool{
 	"RouteAwakeMinutes":                                       true,
 	"RouteInsightCandidateApps":                               true,
 	"RouteInsightsDetectedSince":                              true,
+	"RouteMonitorIncidentsSince":                              true,
+	"RouteHealthHoldsSince":                                   true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
 	"RouteAwakeSourceMinutes":                                 true,
+	"RouteAwakeWorkMinutes":                                   true,
 	"RuntimeAppValuesForDeployment":                           true,
 	"RuntimeScalingStateForDeployment":                        true,
 	"SafeReleaseWorkerLeaseHealth":                            true,
@@ -200,6 +217,7 @@ var memDispatched = map[string]bool{
 	"JobRetryLegacyArtifactVerification":                      true,
 	"LatestAppEgressPolicyRevision":                           true,
 	"LatestSnapshotForTier":                                   true,
+	"LiveSnapshotsForTier":                                    true,
 	"ListAppDeploymentAuditBetween":                           true,
 	"ListMCPReadinessMonitoring":                              true,
 	"ListPendingApplicationStandardEgress":                    true,
@@ -222,6 +240,31 @@ var memDispatched = map[string]bool{
 	"WorkflowRecoveryReviewCompletionNotificationAllowed":     true,
 	"WorkflowRecoveryReviewNotificationAllowed":               true,
 
+	"SetDeploymentAlias":                         true,
+	"DeleteDeploymentAlias":                      true,
+	"CreateAppIfUnderQuota":                      true,
+	"CreateAppIfUnderQuotaWithActivity":          true,
+	"UpdateApp":                                  true,
+	"UpdateAppWithActivity":                      true,
+	"ScheduleAppDeletionWithActivity":            true,
+	"ScheduleAppDeletion":                        true,
+	"RenameApp":                                  true,
+	"MarkDomainVerifiedIfChallenge":              true,
+	"CreateCustomDomainIfUnderQuota":             true,
+	"CreateCustomDomainIfUnderQuotaWithActivity": true,
+	"DeleteCustomDomainForApp":                   true,
+	"DeleteCustomDomainForAppWithActivity":       true,
+	"CreateEdgeRuleIfUnderQuota":                 true,
+	"UpdateEdgeRule":                             true,
+	"CreateDeployment":                           true,
+	"CreateDeploymentWithActivity":               true,
+	"MarkTenantHostnameVerifiedIfChallenge":      true,
+	"SetPlatformTenantStatus":                    true,
+	"LinkPlatformTenantSurface":                  true,
+	"DeleteTenantHostnameForSurface":             true,
+	"DeleteTenantSurfaceWithHostnames":           true,
+	"WithInvocationVersionSnapshot":              true,
+
 	"PutIdempotent":                                 true,
 	"AttachDeploymentSubmission":                    true,
 	"CreateBuildWithID":                             true,
@@ -236,6 +279,9 @@ var memDispatched = map[string]bool{
 	"RecordProjectMigrationBaseline":                true,
 	"PinnedProjectReleaseWorkers":                   true,
 	"HeldProjectReleaseWorkers":                     true,
+	"ListConsumerKeysForApp":                        true,
+	"GetSLO":                                        true,
+	"CountOpenAPIDocsByAccount":                     true,
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -353,6 +399,33 @@ func (s *Mem) AdmitPublishedEventRecipient(p0 context.Context, p1 state.Publishe
 	return s.MemStore.AdmitPublishedEventRecipient(p0, p1)
 }
 
+func (s *Mem) ClaimDuePublishedEventRecipient(p0 context.Context, p1 time.Time, p2 ...bool) (*state.PublishedEventRecipientWork, error) {
+	if o, ok := s.over.(interface {
+		ClaimDuePublishedEventRecipient(context.Context, time.Time, ...bool) (*state.PublishedEventRecipientWork, error)
+	}); ok {
+		return o.ClaimDuePublishedEventRecipient(p0, p1, p2...)
+	}
+	return s.MemStore.ClaimDuePublishedEventRecipient(p0, p1, p2...)
+}
+
+func (s *Mem) ClaimDuePublishedEventRecipients(p0 context.Context, p1 time.Time, p2 int, p3 bool) ([]*state.PublishedEventRecipientWork, error) {
+	if o, ok := s.over.(interface {
+		ClaimDuePublishedEventRecipients(context.Context, time.Time, int, bool) ([]*state.PublishedEventRecipientWork, error)
+	}); ok {
+		return o.ClaimDuePublishedEventRecipients(p0, p1, p2, p3)
+	}
+	return s.MemStore.ClaimDuePublishedEventRecipients(p0, p1, p2, p3)
+}
+
+func (s *Mem) FinishPublishedEventRecipient(p0 context.Context, p1 *state.PublishedEventRecipientWork, p2 state.PublishedEventRecipientProgress, p3 time.Time) error {
+	if o, ok := s.over.(interface {
+		FinishPublishedEventRecipient(context.Context, *state.PublishedEventRecipientWork, state.PublishedEventRecipientProgress, time.Time) error
+	}); ok {
+		return o.FinishPublishedEventRecipient(p0, p1, p2, p3)
+	}
+	return s.MemStore.FinishPublishedEventRecipient(p0, p1, p2, p3)
+}
+
 func (s *Mem) AdmitScheduledWorkflow(p0 context.Context, p1 string, p2 string, p3 string, p4 time.Time) (state.WorkflowScheduleCursor, bool, error) {
 	if o, ok := s.over.(interface {
 		AdmitScheduledWorkflow(context.Context, string, string, string, time.Time) (state.WorkflowScheduleCursor, bool, error)
@@ -380,6 +453,24 @@ func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) erro
 	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
 }
 
+func (s *Mem) ListAllAccounts(p0 context.Context) ([]state.Account, error) {
+	if o, ok := s.over.(interface {
+		ListAllAccounts(context.Context) ([]state.Account, error)
+	}); ok {
+		return o.ListAllAccounts(p0)
+	}
+	return s.MemStore.ListAllAccounts(p0)
+}
+
+func (s *Mem) MarkDunningStep(p0 context.Context, p1 string, p2, p3 state.AccountStatus, p4 ...state.AccountDeletionOption) error {
+	if o, ok := s.over.(interface {
+		MarkDunningStep(context.Context, string, state.AccountStatus, state.AccountStatus, ...state.AccountDeletionOption) error
+	}); ok {
+		return o.MarkDunningStep(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.MarkDunningStep(p0, p1, p2, p3, p4...)
+}
+
 func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
 	if o, ok := s.over.(interface {
 		FinancialEvidenceCoverage(context.Context) (time.Time, error)
@@ -387,6 +478,24 @@ func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
 		return o.FinancialEvidenceCoverage(p0)
 	}
 	return s.MemStore.FinancialEvidenceCoverage(p0)
+}
+
+func (s *Mem) ListFinancialPriceSnapshots(p0 context.Context, p1 string, p2 time.Time) ([]state.FinancialPriceSnapshot, error) {
+	if o, ok := s.over.(interface {
+		ListFinancialPriceSnapshots(context.Context, string, time.Time) ([]state.FinancialPriceSnapshot, error)
+	}); ok {
+		return o.ListFinancialPriceSnapshots(p0, p1, p2)
+	}
+	return s.MemStore.ListFinancialPriceSnapshots(p0, p1, p2)
+}
+
+func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
+	if o, ok := s.over.(interface {
+		DeleteAppPermanently(context.Context, string) error
+	}); ok {
+		return o.DeleteAppPermanently(p0, p1)
+	}
+	return s.MemStore.DeleteAppPermanently(p0, p1)
 }
 
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
@@ -524,6 +633,15 @@ func (s *Mem) DeadLetterEventByID(p0 context.Context, p1 string, p2 string) (sta
 	return s.MemStore.DeadLetterEventByID(p0, p1, p2)
 }
 
+func (s *Mem) DomainByName(p0 context.Context, p1 string) (state.CustomDomain, error) {
+	if o, ok := s.over.(interface {
+		DomainByName(context.Context, string) (state.CustomDomain, error)
+	}); ok {
+		return o.DomainByName(p0, p1)
+	}
+	return s.MemStore.DomainByName(p0, p1)
+}
+
 func (s *Mem) DeploymentByID(p0 context.Context, p1 string) (state.Deployment, error) {
 	if o, ok := s.over.(interface {
 		DeploymentByID(context.Context, string) (state.Deployment, error)
@@ -558,6 +676,24 @@ func (s *Mem) RouteInsightsDetectedSince(p0 context.Context, p1 string, p2 time.
 		return o.RouteInsightsDetectedSince(p0, p1, p2, p3)
 	}
 	return s.MemStore.RouteInsightsDetectedSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) RouteMonitorIncidentsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteMonitorIncidentAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteMonitorIncidentsSince(context.Context, string, time.Time, int) ([]state.RouteMonitorIncidentAlert, int64, error)
+	}); ok {
+		return o.RouteMonitorIncidentsSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteMonitorIncidentsSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) RouteHealthHoldsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteHealthHoldAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteHealthHoldsSince(context.Context, string, time.Time, int) ([]state.RouteHealthHoldAlert, int64, error)
+	}); ok {
+		return o.RouteHealthHoldsSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteHealthHoldsSince(p0, p1, p2, p3)
 }
 
 func (s *Mem) EnvironmentWorkloadAdmissionRetired(p0 context.Context, p1 string, p2 string) (bool, error) {
@@ -605,6 +741,24 @@ func (s *Mem) FinalizeObjectS3CredentialRotationsForApp(p0 context.Context, p1 s
 	return s.MemStore.FinalizeObjectS3CredentialRotationsForApp(p0, p1, p2)
 }
 
+func (s *Mem) ListConsumerKeysForApp(p0 context.Context, p1 string, p2 string) ([]state.ConsumerKey, error) {
+	if o, ok := s.over.(interface {
+		ListConsumerKeysForApp(context.Context, string, string) ([]state.ConsumerKey, error)
+	}); ok {
+		return o.ListConsumerKeysForApp(p0, p1, p2)
+	}
+	return s.MemStore.ListConsumerKeysForApp(p0, p1, p2)
+}
+
+func (s *Mem) CountOpenAPIDocsByAccount(p0 context.Context, p1 string) (int, error) {
+	if o, ok := s.over.(interface {
+		CountOpenAPIDocsByAccount(context.Context, string) (int, error)
+	}); ok {
+		return o.CountOpenAPIDocsByAccount(p0, p1)
+	}
+	return s.MemStore.CountOpenAPIDocsByAccount(p0, p1)
+}
+
 func (s *Mem) GetAppErrorSample(p0 context.Context, p1 sqlc.GetAppErrorSampleParams) (state.AppErrorSampleRow, error) {
 	if o, ok := s.over.(interface {
 		GetAppErrorSample(context.Context, sqlc.GetAppErrorSampleParams) (state.AppErrorSampleRow, error)
@@ -639,6 +793,15 @@ func (s *Mem) GetRouteHealthReport(p0 context.Context, p1 string, p2 string, p3 
 		return o.GetRouteHealthReport(p0, p1, p2, p3)
 	}
 	return s.MemStore.GetRouteHealthReport(p0, p1, p2, p3)
+}
+
+func (s *Mem) ListRouteHealthHistory(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string) (api.RouteHealthHistoryPage, error) {
+	if o, ok := s.over.(interface {
+		ListRouteHealthHistory(context.Context, string, string, string, int, string) (api.RouteHealthHistoryPage, error)
+	}); ok {
+		return o.ListRouteHealthHistory(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.ListRouteHealthHistory(p0, p1, p2, p3, p4, p5)
 }
 
 func (s *Mem) HasSnapshotHistory(p0 context.Context, p1 string) (bool, error) {
@@ -1010,6 +1173,15 @@ func (s *Mem) QueueStateForBinding(p0 context.Context, p1 string, p2 string) (st
 	return s.MemStore.QueueStateForBinding(p0, p1, p2)
 }
 
+func (s *Mem) QueueDepthForBindingInScope(p0 context.Context, p1 string, p2 string, p3 string, p4 int) (int, error) {
+	if o, ok := s.over.(interface {
+		QueueDepthForBindingInScope(context.Context, string, string, string, int) (int, error)
+	}); ok {
+		return o.QueueDepthForBindingInScope(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.QueueDepthForBindingInScope(p0, p1, p2, p3, p4)
+}
+
 func (s *Mem) ReadBindingApplicationAdoption(p0 context.Context, p1 string, p2 string, p3 []state.BindingAdoptionSelector) ([]state.BindingApplicationAdoptionRow, error) {
 	if o, ok := s.over.(interface {
 		ReadBindingApplicationAdoption(context.Context, string, string, []state.BindingAdoptionSelector) ([]state.BindingApplicationAdoptionRow, error)
@@ -1260,6 +1432,15 @@ func (s *Mem) RouteAwakeSourceMinutes(p0 context.Context, p1 sqlc.RouteAwakeSour
 	return s.MemStore.RouteAwakeSourceMinutes(p0, p1)
 }
 
+func (s *Mem) RouteAwakeWorkMinutes(p0 context.Context, p1 sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeWorkMinutes(context.Context, sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeWorkMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeWorkMinutes(p0, p1)
+}
+
 func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {
 	if o, ok := s.over.(interface {
 		RuntimeAppValuesForDeployment(context.Context, string, string, string) (state.RuntimeAppValuesSnapshot, error)
@@ -1332,6 +1513,24 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 	return s.MemStore.WarmPoolReconciliationAppIDs(p0, p1)
 }
 
+func (s *Mem) ListApplicationStandardRebinds(p0 context.Context, p1 string) ([]state.ApplicationStandardRebind, error) {
+	if o, ok := s.over.(interface {
+		ListApplicationStandardRebinds(context.Context, string) ([]state.ApplicationStandardRebind, error)
+	}); ok {
+		return o.ListApplicationStandardRebinds(p0, p1)
+	}
+	return s.MemStore.ListApplicationStandardRebinds(p0, p1)
+}
+
+func (s *Mem) RecordApplicationStandardRebind(p0 context.Context, p1 state.ApplicationStandardRebind) error {
+	if o, ok := s.over.(interface {
+		RecordApplicationStandardRebind(context.Context, state.ApplicationStandardRebind) error
+	}); ok {
+		return o.RecordApplicationStandardRebind(p0, p1)
+	}
+	return s.MemStore.RecordApplicationStandardRebind(p0, p1)
+}
+
 func (s *Mem) DeploymentSidecarRAMs(p0 context.Context, p1 string) ([]int, error) {
 	if o, ok := s.over.(interface {
 		DeploymentSidecarRAMs(context.Context, string) ([]int, error)
@@ -1357,6 +1556,231 @@ func (s *Mem) ListInstancesForApp(p0 context.Context, p1 string) ([]state.Instan
 		return o.ListInstancesForApp(p0, p1)
 	}
 	return s.MemStore.ListInstancesForApp(p0, p1)
+}
+
+func (s *Mem) ListLiveInstancesForApps(p0 context.Context, p1 []string) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListLiveInstancesForApps(context.Context, []string) ([]state.Instance, error)
+	}); ok {
+		return o.ListLiveInstancesForApps(p0, p1)
+	}
+	return s.MemStore.ListLiveInstancesForApps(p0, p1)
+}
+
+func (s *Mem) SetDeploymentAlias(p0 context.Context, p1 string, p2 string, p3 string) (state.DeploymentAlias, error) {
+	if o, ok := s.over.(interface {
+		SetDeploymentAlias(context.Context, string, string, string) (state.DeploymentAlias, error)
+	}); ok {
+		return o.SetDeploymentAlias(p0, p1, p2, p3)
+	}
+	return s.MemStore.SetDeploymentAlias(p0, p1, p2, p3)
+}
+
+func (s *Mem) DeleteDeploymentAlias(p0 context.Context, p1 string, p2 string) error {
+	if o, ok := s.over.(interface {
+		DeleteDeploymentAlias(context.Context, string, string) error
+	}); ok {
+		return o.DeleteDeploymentAlias(p0, p1, p2)
+	}
+	return s.MemStore.DeleteDeploymentAlias(p0, p1, p2)
+}
+
+func (s *Mem) CreateAppIfUnderQuota(p0 context.Context, p1 state.App, p2 api.Limits) (state.App, error) {
+	if o, ok := s.over.(interface {
+		CreateAppIfUnderQuota(context.Context, state.App, api.Limits) (state.App, error)
+	}); ok {
+		return o.CreateAppIfUnderQuota(p0, p1, p2)
+	}
+	return s.MemStore.CreateAppIfUnderQuota(p0, p1, p2)
+}
+
+func (s *Mem) CreateAppIfUnderQuotaWithActivity(p0 context.Context, p1 state.App, p2 api.Limits, p3 state.OrgActivity) (state.App, int64, error) {
+	if o, ok := s.over.(interface {
+		CreateAppIfUnderQuotaWithActivity(context.Context, state.App, api.Limits, state.OrgActivity) (state.App, int64, error)
+	}); ok {
+		return o.CreateAppIfUnderQuotaWithActivity(p0, p1, p2, p3)
+	}
+	return s.MemStore.CreateAppIfUnderQuotaWithActivity(p0, p1, p2, p3)
+}
+
+func (s *Mem) UpdateApp(p0 context.Context, p1 string, p2 state.UpdateAppParams) (state.App, error) {
+	if o, ok := s.over.(interface {
+		UpdateApp(context.Context, string, state.UpdateAppParams) (state.App, error)
+	}); ok {
+		return o.UpdateApp(p0, p1, p2)
+	}
+	return s.MemStore.UpdateApp(p0, p1, p2)
+}
+
+func (s *Mem) UpdateAppWithActivity(p0 context.Context, p1 string, p2 state.UpdateAppParams, p3 state.OrgActivity, p4 state.OrgActivityAppConfigBuilder) (state.App, int64, error) {
+	if o, ok := s.over.(interface {
+		UpdateAppWithActivity(context.Context, string, state.UpdateAppParams, state.OrgActivity, state.OrgActivityAppConfigBuilder) (state.App, int64, error)
+	}); ok {
+		return o.UpdateAppWithActivity(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.UpdateAppWithActivity(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) ScheduleAppDeletionWithActivity(p0 context.Context, p1 string, p2 time.Time, p3 state.OrgActivity) (state.App, int64, error) {
+	if o, ok := s.over.(interface {
+		ScheduleAppDeletionWithActivity(context.Context, string, time.Time, state.OrgActivity) (state.App, int64, error)
+	}); ok {
+		return o.ScheduleAppDeletionWithActivity(p0, p1, p2, p3)
+	}
+	return s.MemStore.ScheduleAppDeletionWithActivity(p0, p1, p2, p3)
+}
+
+func (s *Mem) ScheduleAppDeletion(p0 context.Context, p1 string, p2 time.Time) (state.App, error) {
+	if o, ok := s.over.(interface {
+		ScheduleAppDeletion(context.Context, string, time.Time) (state.App, error)
+	}); ok {
+		return o.ScheduleAppDeletion(p0, p1, p2)
+	}
+	return s.MemStore.ScheduleAppDeletion(p0, p1, p2)
+}
+
+func (s *Mem) RenameApp(p0 context.Context, p1 string, p2 string, p3 string) (state.App, error) {
+	if o, ok := s.over.(interface {
+		RenameApp(context.Context, string, string, string) (state.App, error)
+	}); ok {
+		return o.RenameApp(p0, p1, p2, p3)
+	}
+	return s.MemStore.RenameApp(p0, p1, p2, p3)
+}
+
+func (s *Mem) MarkDomainVerifiedIfChallenge(p0 context.Context, p1 string, p2 string) (bool, error) {
+	if o, ok := s.over.(interface {
+		MarkDomainVerifiedIfChallenge(context.Context, string, string) (bool, error)
+	}); ok {
+		return o.MarkDomainVerifiedIfChallenge(p0, p1, p2)
+	}
+	return s.MemStore.MarkDomainVerifiedIfChallenge(p0, p1, p2)
+}
+
+func (s *Mem) CreateCustomDomainIfUnderQuota(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 int) (state.CustomDomain, error) {
+	if o, ok := s.over.(interface {
+		CreateCustomDomainIfUnderQuota(context.Context, string, string, string, int, int) (state.CustomDomain, error)
+	}); ok {
+		return o.CreateCustomDomainIfUnderQuota(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.CreateCustomDomainIfUnderQuota(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) CreateCustomDomainIfUnderQuotaWithActivity(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 int, p6 state.OrgActivity) (state.CustomDomain, int64, error) {
+	if o, ok := s.over.(interface {
+		CreateCustomDomainIfUnderQuotaWithActivity(context.Context, string, string, string, int, int, state.OrgActivity) (state.CustomDomain, int64, error)
+	}); ok {
+		return o.CreateCustomDomainIfUnderQuotaWithActivity(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.CreateCustomDomainIfUnderQuotaWithActivity(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Mem) DeleteCustomDomainForApp(p0 context.Context, p1 string, p2 string) error {
+	if o, ok := s.over.(interface {
+		DeleteCustomDomainForApp(context.Context, string, string) error
+	}); ok {
+		return o.DeleteCustomDomainForApp(p0, p1, p2)
+	}
+	return s.MemStore.DeleteCustomDomainForApp(p0, p1, p2)
+}
+
+func (s *Mem) DeleteCustomDomainForAppWithActivity(p0 context.Context, p1 string, p2 string, p3 state.OrgActivity) (int64, error) {
+	if o, ok := s.over.(interface {
+		DeleteCustomDomainForAppWithActivity(context.Context, string, string, state.OrgActivity) (int64, error)
+	}); ok {
+		return o.DeleteCustomDomainForAppWithActivity(p0, p1, p2, p3)
+	}
+	return s.MemStore.DeleteCustomDomainForAppWithActivity(p0, p1, p2, p3)
+}
+
+func (s *Mem) CreateEdgeRuleIfUnderQuota(p0 context.Context, p1 state.CreateEdgeRuleParams, p2 api.Limits) (state.EdgeRule, error) {
+	if o, ok := s.over.(interface {
+		CreateEdgeRuleIfUnderQuota(context.Context, state.CreateEdgeRuleParams, api.Limits) (state.EdgeRule, error)
+	}); ok {
+		return o.CreateEdgeRuleIfUnderQuota(p0, p1, p2)
+	}
+	return s.MemStore.CreateEdgeRuleIfUnderQuota(p0, p1, p2)
+}
+
+func (s *Mem) UpdateEdgeRule(p0 context.Context, p1 string, p2 state.UpdateEdgeRuleParams) (state.EdgeRule, error) {
+	if o, ok := s.over.(interface {
+		UpdateEdgeRule(context.Context, string, state.UpdateEdgeRuleParams) (state.EdgeRule, error)
+	}); ok {
+		return o.UpdateEdgeRule(p0, p1, p2)
+	}
+	return s.MemStore.UpdateEdgeRule(p0, p1, p2)
+}
+
+func (s *Mem) CreateDeployment(p0 context.Context, p1 state.Deployment) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		CreateDeployment(context.Context, state.Deployment) (state.Deployment, error)
+	}); ok {
+		return o.CreateDeployment(p0, p1)
+	}
+	return s.MemStore.CreateDeployment(p0, p1)
+}
+
+func (s *Mem) CreateDeploymentWithActivity(p0 context.Context, p1 state.Deployment, p2 state.OrgActivity) (state.Deployment, int64, error) {
+	if o, ok := s.over.(interface {
+		CreateDeploymentWithActivity(context.Context, state.Deployment, state.OrgActivity) (state.Deployment, int64, error)
+	}); ok {
+		return o.CreateDeploymentWithActivity(p0, p1, p2)
+	}
+	return s.MemStore.CreateDeploymentWithActivity(p0, p1, p2)
+}
+
+func (s *Mem) MarkTenantHostnameVerifiedIfChallenge(p0 context.Context, p1 string, p2 string) (bool, error) {
+	if o, ok := s.over.(interface {
+		MarkTenantHostnameVerifiedIfChallenge(context.Context, string, string) (bool, error)
+	}); ok {
+		return o.MarkTenantHostnameVerifiedIfChallenge(p0, p1, p2)
+	}
+	return s.MemStore.MarkTenantHostnameVerifiedIfChallenge(p0, p1, p2)
+}
+
+func (s *Mem) SetPlatformTenantStatus(p0 context.Context, p1 string, p2 string, p3 string) (state.PlatformTenant, error) {
+	if o, ok := s.over.(interface {
+		SetPlatformTenantStatus(context.Context, string, string, string) (state.PlatformTenant, error)
+	}); ok {
+		return o.SetPlatformTenantStatus(p0, p1, p2, p3)
+	}
+	return s.MemStore.SetPlatformTenantStatus(p0, p1, p2, p3)
+}
+
+func (s *Mem) LinkPlatformTenantSurface(p0 context.Context, p1 string, p2 string, p3 string) (state.TenantSurface, error) {
+	if o, ok := s.over.(interface {
+		LinkPlatformTenantSurface(context.Context, string, string, string) (state.TenantSurface, error)
+	}); ok {
+		return o.LinkPlatformTenantSurface(p0, p1, p2, p3)
+	}
+	return s.MemStore.LinkPlatformTenantSurface(p0, p1, p2, p3)
+}
+
+func (s *Mem) DeleteTenantHostnameForSurface(p0 context.Context, p1 string, p2 string) error {
+	if o, ok := s.over.(interface {
+		DeleteTenantHostnameForSurface(context.Context, string, string) error
+	}); ok {
+		return o.DeleteTenantHostnameForSurface(p0, p1, p2)
+	}
+	return s.MemStore.DeleteTenantHostnameForSurface(p0, p1, p2)
+}
+
+func (s *Mem) DeleteTenantSurfaceWithHostnames(p0 context.Context, p1 string, p2 string) error {
+	if o, ok := s.over.(interface {
+		DeleteTenantSurfaceWithHostnames(context.Context, string, string) error
+	}); ok {
+		return o.DeleteTenantSurfaceWithHostnames(p0, p1, p2)
+	}
+	return s.MemStore.DeleteTenantSurfaceWithHostnames(p0, p1, p2)
+}
+
+func (s *Mem) WithInvocationVersionSnapshot(p0 context.Context, p1 func(state.InvocationVersionReader) error) error {
+	if o, ok := s.over.(interface {
+		WithInvocationVersionSnapshot(context.Context, func(state.InvocationVersionReader) error) error
+	}); ok {
+		return o.WithInvocationVersionSnapshot(p0, p1)
+	}
+	return s.MemStore.WithInvocationVersionSnapshot(p0, p1)
 }
 
 func (s *Mem) AccountByID(p0 context.Context, p1 string) (state.Account, error) {
@@ -1516,6 +1940,9 @@ var pgDispatched = map[string]bool{
 	"TouchConsumerKeyLastUsed":                                               true,
 	"WithdrawProjectEnvironmentCloneCheckpointObjects":                       true,
 	"WithdrawProjectEnvironmentCloneCheckpointPgBindings":                    true,
+
+	"WithPublicHostPolicySnapshot":  true,
+	"WithInvocationVersionSnapshot": true,
 }
 
 func (s *Pg) AbandonProjectEnvironmentCloneConfigurationFence(p0 context.Context, p1 state.ProjectEnvironmentCloneLease) error {
@@ -2733,6 +3160,24 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 	return s.PgStore.WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0, p1)
 }
 
+func (s *Pg) WithPublicHostPolicySnapshot(p0 context.Context, p1 func(state.PublicHostPolicyReader) error) error {
+	if o, ok := s.over.(interface {
+		WithPublicHostPolicySnapshot(context.Context, func(state.PublicHostPolicyReader) error) error
+	}); ok {
+		return o.WithPublicHostPolicySnapshot(p0, p1)
+	}
+	return s.PgStore.WithPublicHostPolicySnapshot(p0, p1)
+}
+
+func (s *Pg) WithInvocationVersionSnapshot(p0 context.Context, p1 func(state.InvocationVersionReader) error) error {
+	if o, ok := s.over.(interface {
+		WithInvocationVersionSnapshot(context.Context, func(state.InvocationVersionReader) error) error
+	}); ok {
+		return o.WithInvocationVersionSnapshot(p0, p1)
+	}
+	return s.PgStore.WithInvocationVersionSnapshot(p0, p1)
+}
+
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
 	"ListAllApps":                                   true,
@@ -2761,6 +3206,7 @@ var storeDispatched = map[string]bool{
 	"ListServingAppCPUPolicyNodeStates":             true,
 	"ListServingAppEgressPolicyNodeStates":          true,
 	"ListServingGatewayControlPlaneStates":          true,
+	"ListServingGatewayTrafficRuntime":              true,
 	"LatestAppCPUPolicyRevision":                    true,
 	"LatestAppEgressPolicyRevision":                 true,
 	"LatestAppResponseCachePurgeID":                 true,
@@ -2795,6 +3241,7 @@ var storeDispatched = map[string]bool{
 	"ListRequestTelemetryByPlatformTenant":          true,
 	"MarkSnapshotStale":                             true,
 	"Ping":                                          true,
+	"QueueDepthInScope":                             true,
 	"QueueStateInScope":                             true,
 	"ReapExpiredUploadSessions":                     true,
 	"RecordAppSecretDelivery":                       true,
@@ -3063,6 +3510,15 @@ func (s *Store) QueueStateInScope(p0 context.Context, p1 string, p2 string) (sta
 	return s.Store.QueueStateInScope(p0, p1, p2)
 }
 
+func (s *Store) QueueDepthInScope(p0 context.Context, p1 string, p2 string, p3 int) (int, error) {
+	if o, ok := s.over.(interface {
+		QueueDepthInScope(context.Context, string, string, int) (int, error)
+	}); ok {
+		return o.QueueDepthInScope(p0, p1, p2, p3)
+	}
+	return s.Store.QueueDepthInScope(p0, p1, p2, p3)
+}
+
 func (s *Store) ReapExpiredUploadSessions(p0 context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error) {
 	if o, ok := s.over.(interface {
 		ReapExpiredUploadSessions(context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error)
@@ -3237,6 +3693,19 @@ func (s *Store) ListServingGatewayControlPlaneStates(ctx context.Context) ([]sta
 		ListServingGatewayControlPlaneStates(ctx context.Context) ([]state.ServingGatewayControlPlaneState, error)
 	}); ok {
 		return source.ListServingGatewayControlPlaneStates(ctx)
+	}
+	return nil, state.ErrNotFound
+}
+func (s *Store) ListServingGatewayTrafficRuntime(ctx context.Context) ([]state.ServingGatewayTrafficRuntime, error) {
+	if override, ok := s.over.(interface {
+		ListServingGatewayTrafficRuntime(ctx context.Context) ([]state.ServingGatewayTrafficRuntime, error)
+	}); ok {
+		return override.ListServingGatewayTrafficRuntime(ctx)
+	}
+	if source, ok := s.Store.(interface {
+		ListServingGatewayTrafficRuntime(ctx context.Context) ([]state.ServingGatewayTrafficRuntime, error)
+	}); ok {
+		return source.ListServingGatewayTrafficRuntime(ctx)
 	}
 	return nil, state.ErrNotFound
 }
@@ -3867,6 +4336,29 @@ func (s *Mem) LatestSnapshotForTier(p0 context.Context, p1 string, p2 string) (s
 	return s.MemStore.LatestSnapshotForTier(p0, p1, p2)
 }
 
+// LiveSnapshotsForTier keeps a fake that overrides only LatestSnapshotForTier
+// consistent: it then lists that one row (ADR-20261024225612 amendment 1).
+func (s *Mem) LiveSnapshotsForTier(p0 context.Context, p1 string, p2 string) ([]state.Snapshot, error) {
+	if o, ok := s.over.(interface {
+		LiveSnapshotsForTier(context.Context, string, string) ([]state.Snapshot, error)
+	}); ok {
+		return o.LiveSnapshotsForTier(p0, p1, p2)
+	}
+	if _, ok := s.over.(interface {
+		LatestSnapshotForTier(context.Context, string, string) (state.Snapshot, error)
+	}); ok {
+		snap, err := s.LatestSnapshotForTier(p0, p1, p2)
+		switch {
+		case err == nil:
+			return []state.Snapshot{snap}, nil
+		case errors.Is(err, state.ErrNotFound):
+			return nil, nil
+		}
+		return nil, err
+	}
+	return s.MemStore.LiveSnapshotsForTier(p0, p1, p2)
+}
+
 func (s *Mem) ListAppDeploymentAuditBetween(p0 context.Context, p1 string, p2 string, p3 time.Time, p4 time.Time, p5 int) ([]state.AppChangeRow, error) {
 	if o, ok := s.over.(interface {
 		ListAppDeploymentAuditBetween(context.Context, string, string, time.Time, time.Time, int) ([]state.AppChangeRow, error)
@@ -4288,4 +4780,13 @@ func (s *Mem) HeldProjectReleaseWorkers(p0 context.Context, p1 string) ([]string
 		return o.HeldProjectReleaseWorkers(p0, p1)
 	}
 	return s.MemStore.HeldProjectReleaseWorkers(p0, p1)
+}
+
+func (s *Mem) GetSLO(p0 context.Context, p1 string, p2 string) (state.SLO, error) {
+	if o, ok := s.over.(interface {
+		GetSLO(context.Context, string, string) (state.SLO, error)
+	}); ok {
+		return o.GetSLO(p0, p1, p2)
+	}
+	return s.MemStore.GetSLO(p0, p1, p2)
 }

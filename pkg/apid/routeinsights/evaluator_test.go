@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -95,23 +96,62 @@ func TestCacheRules(t *testing.T) {
 	}
 }
 
-// fakeStore serves one Pro app that is pinged every minute and has a stable
-// catalog, one Free app, and one app whose reads fail.
+// fakeStore serves apps that ran in the window: busyApp is pinged every
+// minute and has a stable catalog, failApp's reads fail, the rest are quiet.
+// It keeps the evaluation claims the way route_insight_evaluations does;
+// apps in taken are claimed by another replica first.
 type fakeStore struct {
-	now      time.Time
-	accounts map[string]state.Account
-	apps     map[string]state.App
-	failApp  string
-	upserts  []sqlc.UpsertRouteInsightParams
-	resolved []string
+	now       time.Time
+	accounts  map[string]state.Account
+	apps      map[string]state.App
+	busyApp   string
+	failApp   string
+	taken     map[string]bool
+	evaluated map[string]time.Time
+	upserts   []sqlc.UpsertRouteInsightParams
+	resolves  []sqlc.ResolveStaleRouteInsightsBatchParams
+	reads     int
 }
 
-func (f *fakeStore) RouteInsightCandidateApps(context.Context, sqlc.RouteInsightCandidateAppsParams) ([]sqlc.RouteInsightCandidateAppsRow, error) {
-	var out []sqlc.RouteInsightCandidateAppsRow
+func (f *fakeStore) RouteInsightCandidateApps(_ context.Context, arg sqlc.RouteInsightCandidateAppsParams) ([]sqlc.RouteInsightCandidateAppsRow, error) {
+	f.reads++
+	var due []state.App
 	for _, app := range f.apps {
+		if !slices.Contains(arg.Plans, string(f.accounts[app.AccountID].Plan)) {
+			continue
+		}
+		if at, ok := f.evaluated[app.ID]; ok && !at.Before(arg.DueBefore.Time) {
+			continue
+		}
+		due = append(due, app)
+	}
+	slices.SortFunc(due, func(a, b state.App) int {
+		if c := f.evaluated[a.ID].Compare(f.evaluated[b.ID]); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	var out []sqlc.RouteInsightCandidateAppsRow
+	for _, app := range due[:min(len(due), int(arg.MaxApps))] {
 		out = append(out, sqlc.RouteInsightCandidateAppsRow{AppID: pg(app.ID), AccountID: pg(app.AccountID)})
 	}
 	return out, nil
+}
+
+func (f *fakeStore) ClaimRouteInsightEvaluation(_ context.Context, arg sqlc.ClaimRouteInsightEvaluationParams) (int64, error) {
+	id := uuid.UUID(arg.AppID.Bytes).String()
+	if f.evaluated == nil {
+		f.evaluated = map[string]time.Time{}
+	}
+	if f.taken[id] {
+		f.evaluated[id] = arg.EvaluatedAt.Time
+		return 0, nil
+	}
+	if at, ok := f.evaluated[id]; ok && !at.Before(arg.DueBefore.Time) {
+		return 0, nil
+	}
+	f.evaluated[id] = arg.EvaluatedAt.Time
+	return 1, nil
 }
 
 func (f *fakeStore) AccountByID(_ context.Context, id string) (state.Account, error) {
@@ -127,8 +167,12 @@ func (f *fakeStore) ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRu
 }
 
 func (f *fakeStore) RouteAwakeMinutes(_ context.Context, arg sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error) {
-	if uuid.UUID(arg.AppID.Bytes).String() == f.failApp {
+	switch uuid.UUID(arg.AppID.Bytes).String() {
+	case f.failApp:
 		return nil, errors.New("boom")
+	case f.busyApp:
+	default:
+		return nil, nil
 	}
 	var out []sqlc.RouteAwakeMinutesRow
 	for m := 0; m < 24*60; m++ {
@@ -141,7 +185,14 @@ func (f *fakeStore) RouteAwakeSourceMinutes(context.Context, sqlc.RouteAwakeSour
 	return nil, nil
 }
 
-func (f *fakeStore) RouteAwakeRouteMinutes(context.Context, sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error) {
+func (f *fakeStore) RouteAwakeWorkMinutes(context.Context, sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) RouteAwakeRouteMinutes(_ context.Context, arg sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error) {
+	if uuid.UUID(arg.AppID.Bytes).String() != f.busyApp {
+		return nil, nil
+	}
 	var out []sqlc.RouteAwakeRouteMinutesRow
 	for m := 0; m < 24*60; m++ {
 		out = append(out, sqlc.RouteAwakeRouteMinutesRow{Minute: ts(f.now.Add(-24 * time.Hour).Add(time.Duration(m) * time.Minute)), Route: "GET /health", Method: "GET", Requests: 1, AnonymousRequests: 1})
@@ -163,12 +214,9 @@ func (f *fakeStore) UpsertRouteInsight(_ context.Context, arg sqlc.UpsertRouteIn
 	return nil
 }
 
-func (f *fakeStore) ResolveStaleRouteInsights(_ context.Context, arg sqlc.ResolveStaleRouteInsightsParams) (int64, error) {
-	if !arg.StaleBefore.Time.Equal(f.now.Add(-api.RouteInsightResolveAfter)) {
-		return 0, errors.New("unexpected stale bound")
-	}
-	f.resolved = append(f.resolved, uuid.UUID(arg.AppID.Bytes).String())
-	return 1, nil
+func (f *fakeStore) ResolveStaleRouteInsightsBatch(_ context.Context, arg sqlc.ResolveStaleRouteInsightsBatchParams) (int64, error) {
+	f.resolves = append(f.resolves, arg)
+	return 3, nil
 }
 
 func pg(id string) pgtype.UUID { return pgtype.UUID{Bytes: uuid.MustParse(id), Valid: true} }
@@ -187,6 +235,7 @@ func TestEvaluatorRunOnce(t *testing.T) {
 			freeApp:   {ID: freeApp, AccountID: free, Slug: "hobby", Type: state.AppTypeApp, RAMMB: 128},
 			brokenApp: {ID: brokenApp, AccountID: broken, Slug: "broken", Type: state.AppTypeApp, RAMMB: 256},
 		},
+		busyApp: proApp,
 		failApp: brokenApp,
 	}
 	e := &routeinsights.Evaluator{Store: store, Now: func() time.Time { return now }}
@@ -194,8 +243,13 @@ func TestEvaluatorRunOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Apps != 3 || stats.Skipped != 1 || stats.Failed != 1 || stats.Observed != 2 {
+	// adr: 20261024154324 — the Free app has no request telemetry, so it is
+	// not a candidate at all.
+	if stats.Apps != 2 || stats.Skipped != 0 || stats.Failed != 1 || stats.Observed != 2 || stats.Resolved != 3 {
 		t.Fatalf("stats = %+v", stats)
+	}
+	if _, ok := store.evaluated[freeApp]; ok {
+		t.Fatal("the Free app was claimed")
 	}
 	kinds := map[string]sqlc.UpsertRouteInsightParams{}
 	for _, u := range store.upserts {
@@ -215,17 +269,66 @@ func TestEvaluatorRunOnce(t *testing.T) {
 	if kinds[routeinsights.KindKeptAwake].Route != "/health" || kinds[routeinsights.KindCacheable].Route != "/catalog" {
 		t.Fatalf("upserts = %+v", store.upserts)
 	}
-	// The Free app has no telemetry but still resolves what went stale.
-	if len(store.resolved) != 2 || !contains(store.resolved, freeApp) || !contains(store.resolved, proApp) {
-		t.Fatalf("resolved = %v", store.resolved)
+	// Stale insights resolve for every app, including ones no longer
+	// evaluated, in one bounded batch per run.
+	if len(store.resolves) != 1 || !store.resolves[0].StaleBefore.Time.Equal(now.Add(-api.RouteInsightResolveAfter)) ||
+		store.resolves[0].RowLimit != api.RouteInsightResolveBatch {
+		t.Fatalf("resolves = %+v", store.resolves)
 	}
 }
 
-func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
+// TestEvaluatorEvaluatesEveryAppPastOneBatch is the starvation regression
+// (ADR-20261024154324): with more apps than one candidate batch, one run
+// evaluates all of them, the next run finds none due, and after half an
+// interval every app is due again.
+func TestEvaluatorEvaluatesEveryAppPastOneBatch(t *testing.T) {
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	acct := uuid.NewString()
+	store := &fakeStore{now: now, accounts: map[string]state.Account{acct: {ID: acct, Plan: api.PlanHobby}}, apps: map[string]state.App{}}
+	total := 2*api.RouteInsightBatchApps + 7
+	for range total {
+		id := uuid.NewString()
+		store.apps[id] = state.App{ID: id, AccountID: acct, Slug: "app", Type: state.AppTypeApp, RAMMB: 256}
 	}
-	return false
+	clock := now
+	e := &routeinsights.Evaluator{Store: store, Now: func() time.Time { return clock }}
+	stats, err := e.RunOnce(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Apps != total || store.reads != 3 {
+		t.Fatalf("first run evaluated %d of %d apps in %d reads", stats.Apps, total, store.reads)
+	}
+	clock = now.Add(time.Hour)
+	if stats, err = e.RunOnce(t.Context()); err != nil || stats.Apps != 0 {
+		t.Fatalf("second run evaluated %d apps, err %v; want none due", stats.Apps, err)
+	}
+	clock = now.Add(api.RouteInsightInterval)
+	if stats, err = e.RunOnce(t.Context()); err != nil || stats.Apps != total {
+		t.Fatalf("run after an interval evaluated %d apps, err %v; want %d", stats.Apps, err, total)
+	}
+}
+
+// TestEvaluatorSkipsAppsAnotherReplicaTook checks that a claim lost to
+// another replica is counted and not evaluated twice.
+func TestEvaluatorSkipsAppsAnotherReplicaTook(t *testing.T) {
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	acct, mine, theirs := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	store := &fakeStore{
+		now:      now,
+		accounts: map[string]state.Account{acct: {ID: acct, Plan: api.PlanPro}},
+		apps: map[string]state.App{
+			mine:   {ID: mine, AccountID: acct, Slug: "mine", Type: state.AppTypeApp, RAMMB: 256},
+			theirs: {ID: theirs, AccountID: acct, Slug: "theirs", Type: state.AppTypeApp, RAMMB: 256},
+		},
+		taken: map[string]bool{theirs: true},
+	}
+	e := &routeinsights.Evaluator{Store: store, Now: func() time.Time { return now }}
+	stats, err := e.RunOnce(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Apps != 1 || stats.Taken != 1 {
+		t.Fatalf("stats = %+v, want one app evaluated and one taken", stats)
+	}
 }

@@ -20,7 +20,7 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AlertRulesService {
   /**
-   * List the account's alert notification channels (ADR-749)
+   * List the account's alert notification channels
    * Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown as non-secret hints only.
    * @returns NotificationChannelResponse The account's channels.
    * @throws ApiError
@@ -35,7 +35,7 @@ export class AlertRulesService {
     });
   }
   /**
-   * Add an alert notification channel (ADR-749)
+   * Add an alert notification channel
    * Slack takes an incoming-webhook URL on hooks.slack.com; PagerDuty takes an Events API v2 routing key and region; email may only address the account's own email. Secret destinations are sealed at rest and never returned.
    * @returns NotificationChannelResponse The channel was created.
    * @throws ApiError
@@ -59,7 +59,7 @@ export class AlertRulesService {
     });
   }
   /**
-   * Get one notification channel (ADR-749)
+   * Get one notification channel
    * Returns one channel with its last delivery outcome.
    * @returns NotificationChannelResponse The channel.
    * @throws ApiError
@@ -85,8 +85,8 @@ export class AlertRulesService {
     });
   }
   /**
-   * Delete a notification channel (ADR-749)
-   * Removes the channel; alert rules stop delivering to it.
+   * Delete a notification channel
+   * Removes the channel; alert rules stop delivering to it. Refused with 409 notification_channel_in_use while the channel is the only destination of a rule (no webhook and no other channel), naming those rules.
    * @returns void
    * @throws ApiError
    */
@@ -107,11 +107,12 @@ export class AlertRulesService {
       errors: {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
   /**
-   * Send a test notification through a channel (ADR-749)
+   * Send a test notification through a channel
    * Sends a clearly marked test message and records the outcome on the channel. Returns 200 whether or not the destination accepted it; delivered and error say which.
    * @returns TestNotificationChannelResponse The test outcome.
    * @throws ApiError
@@ -747,6 +748,14 @@ export class AlertRulesService {
         \`delivery_status_code\` + \`delivery_attempts\` for the
         investigator; the customer's receiver likely rejected
         the request, was unreachable, or returned 5xx.
+        `,
+        503: `Webhook delivery failed after the dispatcher's retry
+        budget (5 attempts, 2s/8s/32s/128s backoff). The audit
+        log entry (\`alert_preset.test_sent\`) carries the
+        \`delivery_status_code\` + \`delivery_attempts\` for the
+        investigator; the customer's receiver likely rejected
+        the request, was unreachable, or returned 5xx.
+        Sent as 503 by the public edge.
         `,
       },
     });

@@ -47,14 +47,6 @@ func (m *MemStore) planPlatformTenantCredentials(in ApplyPlatformTenantCredentia
 	if len(in.Keys) > 0 && tenant.Status != PlatformTenantActive {
 		return result, ErrConflict
 	}
-	accountCount := 0
-	appCounts := make(map[string]int)
-	for _, key := range m.consumerKeys {
-		if key.AccountID == in.AccountID && key.RevokedAt == nil {
-			accountCount++
-			appCounts[key.AppID]++
-		}
-	}
 	revoking := make(map[string]bool, len(in.RevokeKeyIDs))
 	for _, id := range in.RevokeKeyIDs {
 		key, ok := m.consumerKeys[id]
@@ -65,8 +57,6 @@ func (m *MemStore) planPlatformTenantCredentials(in ApplyPlatformTenantCredentia
 		item := PlatformTenantCredentialResult{Key: key, Action: "unchanged"}
 		if key.RevokedAt == nil {
 			item.Action = "revoke"
-			accountCount--
-			appCounts[key.AppID]--
 		}
 		result.Keys = append(result.Keys, item)
 	}
@@ -104,27 +94,12 @@ func (m *MemStore) planPlatformTenantCredentials(in ApplyPlatformTenantCredentia
 			return result, ErrInvalidArgument
 		}
 		key := ConsumerKey{AccountID: in.AccountID, AppID: consumer.AppID, ConsumerID: consumer.ID,
-			Name: wanted.Name, Prefix: wanted.Prefix, Hash: append([]byte(nil), wanted.Hash...),
+			Name: wanted.Name, Prefix: wanted.Prefix, Hash: storedCredential(CredentialColumnConsumerKey, append([]byte(nil), wanted.Hash...)),
 			Scopes: append([]string(nil), wanted.Scopes...), ExpiresAt: wanted.ExpiresAt}
-		accountCount++
-		appCounts[consumer.AppID]++
 		result.Keys = append(result.Keys, PlatformTenantCredentialResult{Key: key, Action: "create"})
 	}
-	hasCreate := false
-	createdByApp := make(map[string]bool)
-	for _, item := range result.Keys {
-		if item.Action == "create" {
-			hasCreate = true
-			createdByApp[item.Key.AppID] = true
-		}
-	}
-	if hasCreate && accountCount > in.AccountLimit {
-		return result, &PlatformTenantCredentialQuotaError{Scope: "account", Limit: in.AccountLimit, Observed: accountCount - 1}
-	}
-	for appID, count := range appCounts {
-		if createdByApp[appID] && count > in.AppLimit {
-			return result, &PlatformTenantCredentialQuotaError{Scope: "app", Limit: in.AppLimit, Observed: count - 1}
-		}
+	if err := m.checkPlatformTenantKeyQuotaLocked(result); err != nil {
+		return result, err
 	}
 	if in.EnforceDelegationPolicy {
 		policy := m.platformTenantCredentialPolicies[in.TenantID]

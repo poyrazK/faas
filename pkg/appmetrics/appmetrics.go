@@ -195,6 +195,14 @@ func fetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 	case "queue_depth":
 		query = fmt.Sprintf(`sum(gateway_queue_depth{app=%q,account_id=~".+"}) or vector(0)`, appID)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "queue_backlog":
+		// schedd's durable queue gauges (ADR-20261018101500 amendment
+		// 2026-10-27), refreshed every 30 s by the schedd that owns the app.
+		query = fmt.Sprintf(`max(schedd_queue_depth{app=%q}) or vector(0)`, appID)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
+	case "queue_oldest_age_seconds":
+		query = fmt.Sprintf(`max(schedd_queue_oldest_age_seconds{app=%q}) or vector(0)`, appID)
+		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
 	case "pre_auth_target_threshold":
 		query = fmt.Sprintf(`sum(increase(gateway_pre_auth_policy_shadow_total{app=%q,policy=~"targets_[0-9]+",outcome="target_threshold"}[%s])) or vector(0)`, appID, rng)
 		normalize = func(v float64) float64 { return float64(int64(SafeRoundNonNeg(v))) }
@@ -392,6 +400,12 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		resp.WakeP95MS = SafeFloat(v)
 	} else {
 		return degradedFromErr(resp, err, log, "wake_p95")
+	}
+	// The sample count is best-effort: without it clients show the p95
+	// as before (Hunt 12 H12-40).
+	if v, err := fetcher.QueryScalar(ctx, fmt.Sprintf(`sum(increase(gateway_wake_latency_seconds_count[%s]))`, rng)); err == nil {
+		n := int64(math.Round(SafeFloat(v)))
+		resp.WakeSamples = &n
 	}
 
 	// 7b. Issue #1233 / ADR-123 — per-app wake queue depth

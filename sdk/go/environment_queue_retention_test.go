@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestEnvironmentGitOpsDefinitionPreservesReviewedQueueDisposition(t *testing.T) {
 	const id = "11111111-2222-4333-8444-555555555555"
-	var definition faas.EnvironmentDefinition
+	var definition preview.EnvironmentDefinition
 	if err := json.Unmarshal([]byte(`{"api_version":"gregale.dev/environment/v1","project":"shop","environment":"production","queue_pruning_policy":"retain","workloads":{"api":{"queue_bindings":{"orders":{"queue_name":"orders","workload_class":"worker"}},"queue_recoveries":{"orders":"`+id+`"}}}}`), &definition); err != nil {
 		t.Fatal(err)
 	}
@@ -51,10 +53,10 @@ func TestQueueBindingRecoveryHistoryTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rows, err := c.ListQueueBindings(context.Background(), "worker"); err != nil || len(rows) != 0 {
+	if rows, err := preview.Wrap(c).ListQueueBindings(context.Background(), "worker"); err != nil || len(rows) != 0 {
 		t.Fatalf("default list: %+v %v", rows, err)
 	}
-	rows, err := c.ListQueueBindingHistory(context.Background(), "worker")
+	rows, err := preview.Wrap(c).ListQueueBindingHistory(context.Background(), "worker")
 	if err != nil || len(rows) != 1 || rows[0].ID != id || rows[0].RetiredAt == nil || !rows[0].RetiredAt.Equal(retired) {
 		t.Fatalf("recovery history: %+v %v", rows, err)
 	}

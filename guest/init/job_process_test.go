@@ -24,11 +24,19 @@ func TestBuildImageJobEnvLayersLikeDocker(t *testing.T) {
 	m := JobManifest{Env: map[string]string{"SHARED": "run", "RUN_ONLY": "2"}}
 	got := envMap(buildImageJobEnv(base, image, m, map[string]string{"SECRET": "s"}))
 	want := map[string]string{
-		"HOME": "/", "TERM": "linux", "PATH": "/opt/app/bin:/usr/bin", "SHARED": "run", "IMAGE_ONLY": "1",
+		"TERM": "linux", "PATH": "/opt/app/bin:/usr/bin", "SHARED": "run", "IMAGE_ONLY": "1",
 		"RUN_ONLY": "2", "SECRET": "s", "FAAS_JOB": "1", "FAAS_RUNTIME_KIND": "job",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("env = %v\nwant %v", got, want)
+	}
+	// PID 1's kernel-supplied HOME=/ must not hide the image user's home
+	// (a native run reported home=/ for a USER with /home/app in passwd).
+	if got := envMap(withImageHome(buildImageJobEnv(base, nil, JobManifest{}, nil), "/home/app")); got["HOME"] != "/home/app" {
+		t.Fatalf("HOME = %q, want the passwd home", got["HOME"])
+	}
+	if got := envMap(withImageHome(buildImageJobEnv(base, map[string]string{"HOME": "/data"}, JobManifest{}, nil), "/home/app")); got["HOME"] != "/data" {
+		t.Fatalf("HOME = %q, want the image's HOME", got["HOME"])
 	}
 	if got := envMap(buildImageJobEnv(nil, nil, JobManifest{}, nil)); got["PATH"] != defaultImagePath {
 		t.Fatalf("PATH without an image PATH = %q, want Docker's default", got["PATH"])

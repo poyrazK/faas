@@ -647,15 +647,11 @@ func validateOutputTarget(in BuildInput) error {
 
 // InjectManifest writes the app.json contract to /etc/faas/app.json in staging.
 func InjectManifest(staging string, m api.AppManifest) error {
-	path := filepath.Join(staging, filepath.FromSlash(api.AppManifestPath))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("rootfs: manifest dir: %w", err)
-	}
 	var buf bytes.Buffer
 	if err := api.WriteManifest(&buf, m); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if _, err := writeStagingFile(staging, api.AppManifestPath, buf.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("rootfs: write manifest: %w", err)
 	}
 	return nil
@@ -674,15 +670,12 @@ func InjectWorkloadManifest(staging, workloadName string, m api.AppManifest) err
 	if err := m.Validate(); err != nil {
 		return fmt.Errorf("rootfs: workload manifest: %w", err)
 	}
-	path := filepath.Join(staging, filepath.FromSlash(strings.TrimPrefix(api.SidecarWorkloadManifestPath, "/")), workloadName, "workload.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("rootfs: workload manifest dir: %w", err)
-	}
 	var buf bytes.Buffer
 	if err := api.WriteManifest(&buf, m); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	guestPath := filepath.Join(api.SidecarWorkloadManifestPath, workloadName, "workload.json")
+	if _, err := writeStagingFile(staging, guestPath, buf.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("rootfs: write workload manifest: %w", err)
 	}
 	return nil
@@ -719,18 +712,11 @@ func injectGuestInitWithDigest(staging, guestInitPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("rootfs: read guest-init: %w", err)
 	}
-	dst := filepath.Join(staging, "sbin", "init")
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return "", err
-	}
 	// OCI base images commonly ship /sbin/init as a symlink (for example
-	// Alpine points it at /bin/busybox). Remove the link before writing the
-	// platform PID-1 binary; os.WriteFile follows a symlink and would
-	// overwrite the link target while leaving /sbin/init pointing at it.
-	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("rootfs: remove existing init: %w", err)
-	}
-	if err := os.WriteFile(dst, data, 0o755); err != nil {
+	// Alpine points it at /bin/busybox). writeStagingFile replaces the link
+	// instead of writing through it, and resolves an image-provided sbin
+	// link inside staging.
+	if _, err := writeStagingFile(staging, "sbin/init", data, 0o755); err != nil {
 		return "", fmt.Errorf("rootfs: write guest-init: %w", err)
 	}
 	return fmt.Sprintf("sha256:%x", sha256.Sum256(data)), nil
@@ -773,8 +759,13 @@ func ApplyTarball(staging, tarballPath string, capBytes int64) error {
 		return fmt.Errorf("rootfs: open tarball: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	appDir := filepath.Join(staging, "app")
-	if err := os.MkdirAll(appDir, 0o755); err != nil {
+	// An earlier layer may have made /app a symlink; resolve it inside
+	// staging so the tarball cannot be unpacked through it onto the host.
+	appDir, err := stagingPath(staging, "app")
+	if err != nil {
+		return err
+	}
+	if err := mkdirImageDirectories(appDir, 0o755); err != nil {
 		return err
 	}
 	return applyTarballWithCap(appDir, f, capBytes, prefix)
@@ -812,6 +803,10 @@ func layerApplyError(limits api.Limits, i int, err error) error {
 	var budgetErr *ErrLayerExtractionExceedsBudget
 	if errors.As(err, &budgetErr) {
 		return api.ErrAppLayerTooLarge(limits, budgetErr.UsedBytes+budgetErr.EntryBytes)
+	}
+	var entriesErr *ErrLayerExtractionTooManyEntries
+	if errors.As(err, &entriesErr) {
+		return api.ErrAppLayerTooManyEntries(limits, entriesErr.LimitEntries)
 	}
 	return fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 }
@@ -897,8 +892,10 @@ func NormalizeFunctionHandler(staging, handlerPath string) error {
 	if !strings.HasPrefix(clean, "/app/") || clean == "/app/" {
 		return fmt.Errorf("rootfs: invalid function handler path %q", handlerPath)
 	}
-	target := filepath.Join(staging, filepath.FromSlash(strings.TrimPrefix(clean, "/")))
-	if info, err := os.Stat(target); err == nil {
+	// Every path below is a guest path; the staging helpers resolve it
+	// inside staging, so image symlinks under /app cannot reach the host.
+	target := clean
+	if _, info, err := lstatStaging(staging, target); err == nil {
 		if info.IsDir() {
 			return fmt.Errorf("rootfs: function handler path %q is a directory", handlerPath)
 		}
@@ -907,12 +904,12 @@ func NormalizeFunctionHandler(staging, handlerPath string) error {
 		// handler(event, ctx) shape; an existing protocol script is left
 		// untouched.
 		if filepath.Ext(target) == ".py" {
-			data, readErr := os.ReadFile(target)
+			data, _, readErr := readStagingFile(staging, target)
 			if readErr != nil {
 				return fmt.Errorf("rootfs: read python function source %q: %w", target, readErr)
 			}
 			if isPythonFunctionSource(string(data)) {
-				return wrapPythonFunctionHandler(target, data)
+				return wrapPythonFunctionHandler(staging, target)
 			}
 		}
 		return nil
@@ -935,7 +932,7 @@ func NormalizeFunctionHandler(staging, handlerPath string) error {
 	if source == target {
 		return fmt.Errorf("rootfs: function handler %q not found", handlerPath)
 	}
-	if sourceInfo, err := os.Stat(source); err != nil {
+	if _, sourceInfo, err := lstatStaging(staging, source); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("rootfs: function handler %q not found", handlerPath)
 		}
@@ -946,22 +943,22 @@ func NormalizeFunctionHandler(staging, handlerPath string) error {
 	if clean == "/app/handler" {
 		// Go's source-build artifact is already the executable; avoid reading
 		// the binary into memory just to apply the stable handler alias.
-		if err := os.Rename(source, target); err != nil {
+		if err := renameStagingEntry(staging, source, target); err != nil {
 			return fmt.Errorf("rootfs: alias function handler %s as %s: %w", source, target, err)
 		}
 		return nil
 	}
-	data, err := os.ReadFile(source)
+	data, _, err := readStagingFile(staging, source)
 	if err != nil {
 		return fmt.Errorf("rootfs: read function source %q: %w", source, err)
 	}
 	if filepath.Ext(target) == ".js" && isNodeFunctionSource(string(data)) {
-		if err := os.WriteFile(target, []byte(nodeFunctionAdapter), 0o644); err != nil {
+		if _, err := writeStagingFile(staging, target, []byte(nodeFunctionAdapter), 0o644); err != nil {
 			return fmt.Errorf("rootfs: write node function adapter %s: %w", target, err)
 		}
 		return nil
 	}
-	if err := os.Rename(source, target); err != nil {
+	if err := renameStagingEntry(staging, source, target); err != nil {
 		return fmt.Errorf("rootfs: alias function handler %s as %s: %w", source, target, err)
 	}
 	return nil
@@ -982,9 +979,9 @@ func NormalizeFunctionHandlerFrom(staging, sourcePath, handlerPath string) error
 	if err != nil {
 		return err
 	}
-	source := filepath.Join(staging, filepath.FromSlash(strings.TrimPrefix(sourceClean, "/")))
-	target := filepath.Join(staging, filepath.FromSlash(strings.TrimPrefix(targetClean, "/")))
-	info, err := os.Stat(source)
+	// sourceClean and targetClean are guest paths; the staging helpers
+	// resolve them inside staging, so image symlinks cannot reach the host.
+	_, info, err := lstatStaging(staging, sourceClean)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("rootfs: function handler source %q not found", sourcePath)
@@ -994,43 +991,36 @@ func NormalizeFunctionHandlerFrom(staging, sourcePath, handlerPath string) error
 	if info.IsDir() {
 		return fmt.Errorf("rootfs: function handler source %q is a directory", sourcePath)
 	}
-	if source == target {
-		return normalizeExistingFunctionHandler(target, targetClean)
+	if sourceClean == targetClean {
+		return normalizeExistingFunctionHandler(staging, targetClean)
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("rootfs: create function handler target directory: %w", err)
-	}
-	data, err := os.ReadFile(source)
+	data, _, err := readStagingFile(staging, sourceClean)
 	if err != nil {
 		return fmt.Errorf("rootfs: read function handler source %q: %w", sourcePath, err)
 	}
 	// The adapter imports the customer's file where it lives, so a handler in
 	// a shared source tree keeps its relative imports (ADR-985).
-	handlerRel, err := filepath.Rel(filepath.Dir(target), source)
+	handlerRel, err := filepath.Rel(filepath.Dir(targetClean), sourceClean)
 	if err != nil {
 		return fmt.Errorf("rootfs: locate function handler source %q: %w", sourcePath, err)
 	}
 	handlerRel = filepath.ToSlash(handlerRel)
-	if filepath.Ext(target) == ".js" && isNodeFunctionSource(string(data)) {
-		if err := os.WriteFile(target, []byte(nodeFunctionAdapterFor(handlerRel)), 0o644); err != nil {
-			return fmt.Errorf("rootfs: write node function adapter %s: %w", target, err)
+	if filepath.Ext(targetClean) == ".js" && isNodeFunctionSource(string(data)) {
+		if _, err := writeStagingFile(staging, targetClean, []byte(nodeFunctionAdapterFor(handlerRel)), 0o644); err != nil {
+			return fmt.Errorf("rootfs: write node function adapter %s: %w", targetClean, err)
 		}
 		return nil
 	}
-	if filepath.Ext(target) == ".py" && isPythonFunctionSource(string(data)) {
-		if err := os.WriteFile(target, []byte(pythonFunctionAdapterFor(handlerRel)), 0o644); err != nil {
-			return fmt.Errorf("rootfs: write python function adapter %s: %w", target, err)
+	if filepath.Ext(targetClean) == ".py" && isPythonFunctionSource(string(data)) {
+		if _, err := writeStagingFile(staging, targetClean, []byte(pythonFunctionAdapterFor(handlerRel)), 0o644); err != nil {
+			return fmt.Errorf("rootfs: write python function adapter %s: %w", targetClean, err)
 		}
 		return nil
 	}
-	mode := info.Mode().Perm()
-	if err := os.WriteFile(target, data, mode); err != nil {
+	if _, err := writeStagingFile(staging, targetClean, data, info.Mode().Perm()); err != nil {
 		return fmt.Errorf("rootfs: write function handler target %q: %w", handlerPath, err)
 	}
-	if err := os.Chmod(target, mode); err != nil {
-		return fmt.Errorf("rootfs: preserve function handler mode %q: %w", handlerPath, err)
-	}
-	return normalizeExistingFunctionHandler(target, targetClean)
+	return normalizeExistingFunctionHandler(staging, targetClean)
 }
 
 func cleanFunctionPath(path, label string) (string, error) {
@@ -1041,23 +1031,23 @@ func cleanFunctionPath(path, label string) (string, error) {
 	return clean, nil
 }
 
-func normalizeExistingFunctionHandler(target, handlerPath string) error {
-	info, err := os.Stat(target)
+func normalizeExistingFunctionHandler(staging, handlerPath string) error {
+	_, info, err := lstatStaging(staging, handlerPath)
 	if err != nil {
 		return fmt.Errorf("rootfs: stat function handler %q: %w", handlerPath, err)
 	}
 	if info.IsDir() {
 		return fmt.Errorf("rootfs: function handler path %q is a directory", handlerPath)
 	}
-	if filepath.Ext(target) != ".py" {
+	if filepath.Ext(handlerPath) != ".py" {
 		return nil
 	}
-	data, err := os.ReadFile(target)
+	data, _, err := readStagingFile(staging, handlerPath)
 	if err != nil {
-		return fmt.Errorf("rootfs: read python function source %q: %w", target, err)
+		return fmt.Errorf("rootfs: read python function source %q: %w", handlerPath, err)
 	}
 	if isPythonFunctionSource(string(data)) {
-		return wrapPythonFunctionHandler(target, data)
+		return wrapPythonFunctionHandler(staging, handlerPath)
 	}
 	return nil
 }
@@ -1738,18 +1728,24 @@ func pythonFunctionAdapterFor(handlerRel string) string {
 			"sys.path.insert(0, os.path.dirname(handler_path))", 1)
 }
 
-func wrapPythonFunctionHandler(target string, source []byte) error {
+// wrapPythonFunctionHandler moves the guest file target aside to
+// .faas-handler.py and writes the adapter in its place.
+func wrapPythonFunctionHandler(staging, target string) error {
 	impl := filepath.Join(filepath.Dir(target), ".faas-handler.py")
-	if _, err := os.Stat(impl); err == nil {
+	implPath, err := stagingEntryPath(staging, impl)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(implPath); err == nil {
 		return fmt.Errorf("rootfs: python function implementation %q already exists", impl)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("rootfs: stat python function implementation %q: %w", impl, err)
 	}
-	if err := os.Rename(target, impl); err != nil {
+	if err := renameStagingEntry(staging, target, impl); err != nil {
 		return fmt.Errorf("rootfs: preserve python function source: %w", err)
 	}
-	if err := os.WriteFile(target, []byte(pythonFunctionAdapter), 0o644); err != nil {
-		_ = os.Rename(impl, target)
+	if _, err := writeStagingFile(staging, target, []byte(pythonFunctionAdapter), 0o644); err != nil {
+		_ = renameStagingEntry(staging, impl, target)
 		return fmt.Errorf("rootfs: write python function adapter %s: %w", target, err)
 	}
 	return nil
@@ -1772,16 +1768,7 @@ func injectFunctionRunner(staging, runnerPath string) (string, error) {
 		return "", fmt.Errorf("rootfs: read function runner: %w", err)
 	}
 	sum := sha256.Sum256(data)
-	dst := filepath.Join(staging, "usr", "local", "bin", "faas-runner")
-	if err := mkdirImageDirectories(filepath.Dir(dst), 0o755); err != nil {
-		return "", err
-	}
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-	if err != nil {
-		return "", fmt.Errorf("rootfs: open function runner: %w", err)
-	}
-	_, writeErr := f.Write(data)
-	if err := errors.Join(writeErr, f.Chmod(0o755), f.Close()); err != nil {
+	if _, err := writeStagingFile(staging, "usr/local/bin/faas-runner", data, 0o755); err != nil {
 		return "", fmt.Errorf("rootfs: write function runner: %w", err)
 	}
 	return "sha256:" + hex.EncodeToString(sum[:]), nil

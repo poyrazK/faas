@@ -3,6 +3,7 @@ package fcvm
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -12,7 +13,8 @@ import (
 // PromoteAdmitted resumes only the exact paused lease described by the saved
 // parent receipt. The app policy gate spans validation, resume and receipt.
 func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promotion) (*Instance, runtimeadmission.Receipt, error) {
-	p = p.Clone()
+	// An adopted guest's parent names the predecessor that issued it.
+	p = p.Clone().Held(m.AdmissionHeldFrom(p.Binding.InstanceID, p.Parent))
 	if err := p.Validate(time.Now()); err != nil {
 		return nil, runtimeadmission.Receipt{}, err
 	}
@@ -47,9 +49,10 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 		if m.live[p.Binding.InstanceID] != inst || !inst.Paused || !inst.runtimeAdmissionReceipt.Equal(p.Parent) {
 			err = runtimeadmission.ErrStale
 		} else {
-			inst.Paused = false
+			inst.Paused, inst.warmSpare = false, false
 		}
 		m.mu.Unlock()
+		m.markAdoptionDirty(p.Binding.InstanceID)
 	}
 	if err == nil {
 		m.startLivenessLoop(context.WithoutCancel(ctx), p.Binding.InstanceID, inst.Lease.Slot, inst.LivenessProbe)
@@ -77,9 +80,16 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 		defer cleanupCancel()
 		return nil, runtimeadmission.Receipt{}, errors.Join(err, m.Destroy(cleanupCtx, p.Binding.InstanceID))
 	}
-	inst.Paused, inst.runtimeAdmissionReceipt = false, r.Clone()
+	inst.Paused, inst.warmSpare, inst.runtimeAdmissionReceipt, inst.admissionHeldFrom = false, false, r.Clone(), ""
 	m.finishRuntimeAdmissionFlightLocked(p.Binding.InstanceID, flight)
 	m.mu.Unlock()
+	// The promotion receipt replaces the parent in the adoption block now: a
+	// successor holding the old one could not re-bind the promoted guest.
+	if w := m.adoption.Load(); w != nil {
+		if err := m.commitAdoption(p.Binding.InstanceID, w); err != nil && !errors.Is(err, errAdoptionRecordStale) {
+			slog.Warn("vmmd: promotion receipt not recorded for adoption", "instance", p.Binding.InstanceID, "err", err)
+		}
+	}
 	return inst, r, nil
 }
 
@@ -136,7 +146,7 @@ func (m *Manager) consumeRuntimePromotion(p runtimeadmission.Promotion, flight *
 	if err := m.checkAdmittedEgressLocked(input); err != nil {
 		return nil, err
 	}
-	// An initial admitted boot creates these maps before it can produce parent.
+	m.ensureRuntimeAdmissionMapsLocked()
 	m.runtimeAdmissionTokens[p.Binding.Token] = time.Unix(0, p.Binding.ExpiresAtUnixNano)
 	m.runtimeAdmissionFlights[p.Binding.InstanceID] = flight
 	return inst, nil

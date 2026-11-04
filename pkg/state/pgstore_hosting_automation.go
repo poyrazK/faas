@@ -53,7 +53,7 @@ func (s *PgStore) CreateHostingAutomationCredential(ctx context.Context, c api.H
 	if count >= api.HostingAutomationCredentialsPerSite {
 		return c, &HostingQuotaError{Limit: api.HostingAutomationCredentialsPerSite, Observed: api.HostingAutomationCredentialsPerSite + 1, Resource: "automation_credentials"}
 	}
-	row, err := q.HostingCredentialCreate(ctx, tx, sqlc.HostingCredentialCreateParams{ID: id, AccountID: a, SiteID: si, TokenHash: c.Hash, Label: c.Label, Operations: c.Operations, CreatedAt: hostingTimestamp(c.CreatedAt), ExpiresAt: hostingTimestamp(c.ExpiresAt)})
+	row, err := q.HostingCredentialCreate(ctx, tx, sqlc.HostingCredentialCreateParams{ID: id, AccountID: a, SiteID: si, TokenHash: storedCredential(credTagHostingAutomation, c.Hash), Label: c.Label, Operations: c.Operations, CreatedAt: hostingTimestamp(c.CreatedAt), ExpiresAt: hostingTimestamp(c.ExpiresAt)})
 	if err != nil {
 		return c, hostingStoreError(err)
 	}
@@ -91,9 +91,15 @@ func (s *PgStore) RevokeHostingAutomationCredential(ctx context.Context, account
 	return err
 }
 func (s *PgStore) AuthenticateHostingAutomationToken(ctx context.Context, hash []byte) (Account, APIKey, error) {
-	row, err := sqlc.New().HostingCredentialAuthenticate(ctx, s.pool, hash)
+	row, err := firstCredential(ctx, credentialLookups(credTagHostingAutomation, hash), func(ctx context.Context, value []byte) (sqlc.HostingAutomationCredential, error) {
+		row, err := sqlc.New().HostingCredentialAuthenticate(ctx, s.pool, value)
+		if err != nil {
+			return row, hostingStoreError(err)
+		}
+		return row, nil
+	})
 	if err != nil {
-		return Account{}, APIKey{}, hostingStoreError(err)
+		return Account{}, APIKey{}, err
 	}
 	c := hostingCredentialRow(row)
 	account, err := s.AccountByID(ctx, c.AccountID)

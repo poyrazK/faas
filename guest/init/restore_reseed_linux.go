@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // activeRestoreReseedBarrier is the barrier the resume hook drives. nil means
@@ -47,6 +49,7 @@ func startRestoreReseedServer(log *slog.Logger, uid int) error {
 	}
 	barrier := newRestoreReseedBarrier(log)
 	activeRestoreReseedBarrier.Store(barrier)
+	restoreReseedThread.Store(bootArgSet(api.RestoreReseedThreadBootArg))
 	restoreReseedEnabled.Store(true)
 	go barrier.serve(ln)
 	return nil
@@ -67,7 +70,12 @@ func reseedRestoredWorkloads() (restoreReseedStats, error) {
 // when its barrier started (otherwise its Node and Python processes carry
 // no preload). A warm builder holds it trivially: it runs no workload
 // process across the snapshot, and each build's processes start after the
-// restore with fresh state.
+// restore with fresh state. An agent run guest holds it the same way: its
+// preset snapshot is taken while guest-init waits for the run, so the
+// harness and everything it starts begin after the restore (ADR-20261027090010 §2).
 func restoreReseedContractHolds() bool {
-	return activeRestoreReseedBarrier.Load() != nil || warmBuilderEnabled.Load()
+	return activeRestoreReseedBarrier.Load() != nil || warmBuilderEnabled.Load() || agentRunGuest.Load()
 }
+
+// agentRunGuest is set by agent mode before it can be captured.
+var agentRunGuest atomic.Bool

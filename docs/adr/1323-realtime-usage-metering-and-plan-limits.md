@@ -84,3 +84,139 @@ end to end; with every flag off, realtimed and apid behave as before this ADR.
   only the per-connection queue limits apply.
 - `FAAS_REALTIME_USAGE_ENABLED` (apid and realtimed): usage recording, and
   `GET /v1/usage/realtime`, which answers 404 while off.
+
+## Amendment (2026-10-24): the per-node account share is a floor
+
+A security review found that with `FAAS_REALTIME_FAIR_USE_ENABLED` off, which
+is how realtime is deployed, one endpoint could hold every connection slot on
+a node. Endpoint caps equal the node cap, and an `auth_mode=none` endpoint
+admits any client, so a single account (or an anonymous client against any
+open endpoint) left every other tenant on the node with 429s. Likewise the
+node-wide callback outbox (64 MiB) had no per-tenant share: one endpoint with
+a slow callback filled it and every other tenant's message and disconnect
+callbacks on the node failed.
+
+- The per-node account share (`RealtimeAccountNodeSharePercent`, 50 %) now
+  applies with or without the flag. The flag still controls the plan
+  allowances, the fleet-wide count and the 6,000 node default.
+- The callback outbox gives each endpoint at most an eighth of its capacity
+  (`CallbackOutboxConfig.MaxEndpointBytes`); the offending endpoint gets
+  `ErrCallbackOutboxFull`, the others keep their callbacks.
+
+With the flag off, realtimed therefore refuses an account at half of a node,
+not only at the node and endpoint caps.
+
+## Amendment (2026-10-26): fair use and the outbound budget are on in deploy
+
+The rollout kept both flags off until realtime had been tested end to end, so
+a release would not change realtime's behaviour. Off is not the safe state:
+the node default stays 10,000 connections, about 520 MB of idle connections
+at the measured ~52 KB each, while realtimed runs with `MemoryMax=512M`. A
+node near its own cap would be OOM-killed and drop every tenant's sockets.
+These flags are protections, not features.
+
+- The generated apid and realtimed units set `FAAS_REALTIME_FAIR_USE_ENABLED=1`,
+  and the realtimed unit sets `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1`.
+- Endpoint caps per plan were already enforced without the flag, so the change
+  adds the per-account connection allowance, the fleet-wide count and the
+  6,000 node default.
+- Production on 2026-10-26 had two realtime endpoints, both on one Scale test
+  account, and no open connections, so no account is over its allowance.
+- Mixed versions during a release stay safe: an apid with the flag sends an
+  allowance that a realtimed without it ignores, and a realtimed with the flag
+  and no allowance from apid applies only the node and endpoint caps.
+- Usage recording (`FAAS_REALTIME_USAGE_ENABLED`) stays off.
+
+
+## Amendment (2026-10-27): an account's share of the outbound budget
+
+The node outbound budget is one pool, and the shedder disconnects only
+connections whose backlog reaches 1/16 of their own queue limit (256 KiB by
+default). A security audit found that one tenant could open a few hundred
+slow-reading connections, keep each just under that floor, and fill the
+budget with backlogs nothing sheds; every frame on the node, for every
+tenant, was then refused.
+
+- An account's connections on a node hold at most
+  `api.RealtimeAccountNodeSharePercent` (50%) of the node outbound budget,
+  as they hold at most that share of its connections. A frame past the share
+  is refused like a full queue and counted as a node budget drop.
+- The bytes are counted per account (`accountConnections.outbound`) at the
+  same points the node total is reserved and released.
+
+## Amendment (2026-10-27): resume subscriptions per plan
+
+Resume, inbox and SSE subscriptions each read their channel's history from the
+control plane at least every 5 seconds. A node holds at most 256 of them
+(`RealtimeResumeSubscriptionsPerNode`) and one account at most half of those
+(amendment of 2026-10-24). With fair use on, an account now holds at most its
+plan's share of one node: Hobby 16, Pro 64, Scale 128
+(`RealtimeLimits.ResumeSubscriptionsPerNode`). The node and per-connection
+bounds stay; the plan share only divides the node's history-read budget.
+
+realtimed learns the plan from the account connection allowance apid already
+sends with every endpoint (`RealtimeResumeSubscriptionsPerNodeFor`), so no new
+registration field is needed: realtime nodes refuse unknown fields, and a
+release upgrades apid before them. Plans' connection allowances must stay
+distinct; a test pins it. Without fair use only the node share applies.
+
+## Amendment (2026-10-27): retained channels per account
+
+Retained history was bounded per endpoint (32 channels, 1,024 messages of
+4 KiB each, 24 hours), but the 32 counted every channel head ever created.
+Heads outlive their messages so a channel's sequences never restart, so an
+endpoint could retain on only 32 distinct channels in its lifetime, and an
+account's retained storage was bounded only through its endpoint count (up to
+about 32 GiB for Scale).
+
+- The limits now count channels that hold something now: retained messages
+  (`oldest_sequence < next_sequence`), reducer state or a snapshot.
+  `PruneExpiredManagedRealtimeChannelMessages` already deletes expired
+  messages and advances `oldest_sequence`, which frees the channel.
+- An endpoint holds at most 32 such channels at a time, as before, and an
+  account its plan's `RealtimeLimits.RetainedChannelsPerAccount`: Hobby 32,
+  Pro 256, Scale 1,024. At 4 MiB a channel that bounds an account's retained
+  control-plane storage to about 128 MiB, 1 GiB and 4 GiB.
+- The check runs only when a publish, batch or reducer starts holding a
+  channel, inside the transaction that holds the endpoint's row lock. The
+  account count is not serialized across the account's endpoints, so racing
+  publishes can run it over by a few channels.
+- A partial index, `managed_realtime_channel_heads_held_idx`, keeps both
+  counts proportional to the held channels, not to every head ever created.
+- Dormant heads are kept. Removing them safely needs the durable cursor,
+  read-progress and schedule rows that name a channel considered first; that
+  is a follow-up, not a limit.
+
+
+## Amendment (2026-10-31): per-user state counts live rows
+
+Three per-user stores capped each endpoint by counting every row it had ever
+created, and nothing deleted those rows, so each cap was used up for good: an
+endpoint could send inbox messages to 256 distinct users in its lifetime, keep
+notification preferences for 256 users and read markers for 1,024
+user-stream pairs. Event schemas allowed 64 immutable versions per endpoint
+across all its channels and event types, with no way to delete one.
+
+- **Inbox:** an inbox counts while it holds unexpired messages
+  (`oldest_sequence < next_sequence`, which
+  `PruneExpiredManagedRealtimeInboxMessages` advances), as retained channels
+  do since 2026-10-27. An endpoint holds at most 256 such inboxes at a time
+  (`api.RealtimeInboxesHeldPerEndpoint`). Inbox heads stay so sequences never
+  restart; `managed_realtime_inbox_heads_held_idx` keeps the count
+  proportional to held inboxes.
+- **Read markers:** a marker counts for 30 days after its last update and the
+  history reaper deletes it after that, like a named cursor. Messages are
+  retained for at most 24 hours, so an older marker sits below every retained
+  message and deleting it leaves the unread count unchanged. An endpoint keeps
+  at most 1,024 live markers (`api.RealtimeReadMarkersPerEndpoint`).
+- **Notification preferences:** settings with no expiry, so they are capped
+  per account by plan (`RealtimeLimits.NotificationPreferencesPerAccount`):
+  Hobby 1,000, Pro 10,000, Scale 50,000 users. A document is at most 32
+  categories and 16 devices, a few KB, so Scale stays near 100 MB. Writing the
+  defaults deletes the user's row and frees the slot, since the defaults need
+  none.
+- **Event schemas:** 64 versions per channel and event type
+  (`api.RealtimeEventSchemaVersionsPerEventType`) and 1,024 per endpoint
+  (`api.RealtimeEventSchemasPerEndpoint`). At 16 KiB a schema that bounds an
+  endpoint's schemas to 16 MiB. Versions stay immutable and undeletable.
+- The constants moved from `pkg/state` to `pkg/api/limits.go`.

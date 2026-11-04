@@ -405,6 +405,21 @@ func (f *financialNativeFixture) assertBalance(reserved, committed int64) {
 	}
 }
 
+// assertAccountSettled checks a settled lease against the shared account book.
+// That book counts mb-seconds against its included allowance (net usage), so
+// it commits money only for quantity beyond the allowance, not the lease's
+// gross committed funding that an app or job book records.
+func (f *financialNativeFixture) assertAccountSettled(final financial.ComputeLease) {
+	f.t.Helper()
+	b, err := f.store.FinancialComputeBalance(f.ctx, f.policy, time.Now())
+	within := final.QuantityCommitted <= b.AllowanceGranted
+	if err != nil || !b.Initialized || b.AllowanceReserved != 0 || b.ReservedMillicents != 0 || b.UnconfirmedLeases != 0 ||
+		b.AllowanceCommitted != min(b.AllowanceGranted, final.QuantityCommitted) ||
+		within && b.CommittedMillicents != 0 || !within && (b.CommittedMillicents <= 0 || b.CommittedMillicents > final.Committed) {
+		f.t.Fatalf("native account settlement: lease=%+v balance=%+v %v", final, b, err)
+	}
+}
+
 func (f *financialNativeFixture) releaseHold() {
 	f.t.Helper()
 	var err error
@@ -420,7 +435,11 @@ func (f *financialNativeFixture) assertSettled(owner *financialNativeOwner, orig
 	if final.ID != original.ID || final.Fence != original.Fence || final.SettledAt == nil || final.Reserved != 0 || final.Committed <= 0 || final.Committed > original.Reserved+original.Committed {
 		f.t.Fatalf("native funding was not settled within its ceiling: %+v", final)
 	}
-	f.assertBalance(0, final.Committed)
+	if original.AccountFunded {
+		f.assertAccountSettled(final)
+	} else {
+		f.assertBalance(0, final.Committed)
+	}
 	// Recovery is replayable. Neither money nor receipt revision changes.
 	owner.must(f.t, "recover")
 	if replay := f.lease(owner); replay.Revision != final.Revision || replay.Committed != final.Committed || !replay.SettledAt.Equal(*final.SettledAt) {
@@ -453,9 +472,12 @@ func (f *financialNativeFixture) assertSettled(owner *financialNativeOwner, orig
 	if err != nil || seconds != 0 {
 		f.t.Fatalf("stale residency billed beyond funding: %d %v", seconds, err)
 	}
-	covered, err := f.store.FinancialComputeFloorCovered(f.ctx, f.app.AccountID, f.app.ID, final.PeriodStart)
-	if err != nil || !covered {
-		f.t.Fatalf("funded app retained synthetic billing floor: %v %v", covered, err)
+	// Only an app has a synthetic billing floor to waive; a job has none.
+	if final.JobID == "" {
+		covered, err := f.store.FinancialComputeFloorCovered(f.ctx, f.app.AccountID, f.app.ID, final.PeriodStart)
+		if err != nil || !covered {
+			f.t.Fatalf("funded app retained synthetic billing floor: %v %v", covered, err)
+		}
 	}
 	status := owner.must(f.t, "status")
 	if status.Physical != 0 || status.Leased != 0 || status.Live != 0 || !status.ResourcesRemoved {

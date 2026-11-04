@@ -3,8 +3,19 @@
 # interface and tenant bridge range as the boot policy rendered by Ansible.
 Environment="FAAS_PUBLIC_IFACE={{ public_iface | default(ansible_default_ipv4.interface | default('eth0'), true) }}"
 Environment="FAAS_HOST_BRIDGE_CIDR={{ masquerade_cidr | default('10.100.0.0/16', true) }}"
+# vmmd replaces the whole ruleset on every rebuild, so its private ports must
+# be every port the boot policy (nftables role) opens to the control plane:
+# the app edge's control listener and connector metrics (ADR-1343 §5) and
+# Promtail's metrics (ADR-20261023124955) as well as the fixed list.
+{% set faas_private_ingress_ports = faas_control_plane_allowed_ports | default([]) | list %}
+{% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+{% set faas_private_ingress_ports = faas_private_ingress_ports + [faas_edge_connector_metrics_port | default(20241), faas_edge_control_port | default(9109)] %}
+{% endif %}
+{% if (faas_obs_logs_enabled | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+{% set faas_private_ingress_ports = faas_private_ingress_ports + [9080] %}
+{% endif %}
 Environment="FAAS_PRIVATE_INGRESS_CIDRS={{ faas_control_plane_allowed_cidrs | default([]) | join(',') }}"
-Environment="FAAS_PRIVATE_INGRESS_TCP_PORTS={{ faas_control_plane_allowed_ports | default([]) | join(',') }}"
+Environment="FAAS_PRIVATE_INGRESS_TCP_PORTS={{ faas_private_ingress_ports | join(',') }}"
 {% if faas_tenant_egress_iface | default('') %}
 # ADR-372: wake-time host policy routes tenant egress through the gateway tunnel.
 Environment="FAAS_TENANT_EGRESS_IFACE={{ faas_tenant_egress_iface }}"

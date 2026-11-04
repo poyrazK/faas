@@ -17,7 +17,7 @@ T = TypeVar("T", bound="OIDCExchangeRequest")
 
 @_attrs_define
 class OIDCExchangeRequest:
-    """Body for `POST /v1/auth/oidc/exchange` (ADR-101)."""
+    """Body for `POST /v1/auth/oidc/exchange`."""
 
     provider: str
     """IdP identifier (`github`, `gitlab`, `circleci`, or generic `oidc`). Used for audit attribution only — the

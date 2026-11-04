@@ -8,8 +8,8 @@ from datetime import UTC
 import httpx
 import pytest
 
-from faas_sdk.models.operation_report_request import OperationReportRequest
-from faas_sdk.operations_runtime import GregaleOperations, OperationHTTPError
+from faas_sdk.preview.models.operation_report_request import OperationReportRequest
+from faas_sdk.preview.operations_runtime import GregaleOperations, OperationHTTPError
 
 OP = "11111111-1111-4111-8111-111111111111"
 INV = "22222222-2222-4222-8222-222222222222"
@@ -215,7 +215,7 @@ def test_runtime_milestone_uses_current_proof_and_saved_identity():
     from datetime import datetime
     from uuid import UUID
 
-    from faas_sdk.models.operation_milestone_request import OperationMilestoneRequest
+    from faas_sdk.preview.models.operation_milestone_request import OperationMilestoneRequest
 
     async def exercise():
         seen = []

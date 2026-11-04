@@ -1,14 +1,13 @@
 package apidserver
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/oauthpkce"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -77,33 +77,10 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 	}
 
 	// Set CSRF Cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     googleAuthStateCookie,
-		Value:    stateToken,
-		Path:     googleCallbackPath,
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     googleAuthNonceCookie,
-		Value:    nonce,
-		Path:     googleCallbackPath,
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     googleAuthPKCECookie,
-		Value:    codeVerifier,
-		Path:     googleCallbackPath,
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes
-	})
+	setOAuthFlowCookie(w, r, googleAuthStateCookie, stateToken, googleCallbackPath)
+	setOAuthFlowCookie(w, r, googleAuthNonceCookie, nonce, googleCallbackPath)
+	setOAuthFlowCookie(w, r, googleAuthPKCECookie, codeVerifier, googleCallbackPath)
+	setOAuthNext(w, r, googleCallbackPath)
 
 	redirectURI := s.oauthConfig.Google.RedirectURI
 	if redirectURI == "" {
@@ -132,7 +109,7 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 // Verifies state and nonce, validates Google's ID token, exchanges the OAuth
 // code for the user profile, and signs the user in.
 func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	stateCookie, err := r.Cookie(googleAuthStateCookie)
+	stateCookie, err := oauthFlowCookie(r, googleAuthStateCookie)
 	if err != nil || stateCookie.Value == "" {
 		// Issue #286: the OAuth callback can fail before any
 		// identity is known — there is no customer-supplied email
@@ -165,7 +142,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 			"Google sign-in is not available for this Gregale installation. Use email sign-in or contact support.")
 		return
 	}
-	nonceCookie, err := r.Cookie(googleAuthNonceCookie)
+	nonceCookie, err := oauthFlowCookie(r, googleAuthNonceCookie)
 	if err != nil || nonceCookie.Value == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_nonce", "Invalid OAuth Request", "missing OAuth nonce cookie"))
 		return
@@ -182,7 +159,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "missing_code", "Authorization Error", "missing code parameter from Google"))
 		return
 	}
-	pkceCookie, err := r.Cookie(googleAuthPKCECookie)
+	pkceCookie, err := oauthFlowCookie(r, googleAuthPKCECookie)
 	if err != nil || !oauthpkce.ValidVerifier(pkceCookie.Value) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_pkce", "Invalid OAuth Request", "missing or invalid OAuth PKCE verifier cookie"))
 		return
@@ -325,7 +302,11 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// passed so the helper can do a sub-first lookup against the
 	// oauth_links table — the §11 anti-takeover invariant
 	// (one OAuth subject binds to one account, period).
-	acct, err := s.provisionOrFetchGoogleAccount(r.Context(), googleUser)
+	acct, err := s.provisionOrFetchGoogleAccount(r, googleUser, signupSource(oauthNext(r)))
+	if errors.Is(err, errSignupNetworkCap) {
+		writeSignupNetworkCap(w)
+		return
+	}
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "complete Google sign-in",
 			"Gregale could not finish setting up your account.",
@@ -336,7 +317,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// Issue Session Cookie. IAM-2 mfa_pending stamp preserved;
 	// IAM-3 (ADR-039) mints a sid + creates the sessions row +
 	// emits auth.session.created via the unified helper.
-	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, mfaSessionPending(acct), "google")
+	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, s.sessionMFAPending(acct), "google")
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "create Google dashboard session",
 			"Gregale could not start your dashboard session.",
@@ -344,8 +325,7 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,
@@ -364,14 +344,11 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		"email":  googleUser.Email,
 	})
 
-	redirectTarget := os.Getenv("WEBSITE_URL")
-	if redirectTarget == "" {
-		redirectTarget = "/"
-	}
-	http.Redirect(w, r, redirectTarget, http.StatusFound)
+	finishOAuthSignIn(w, r, googleCallbackPath)
 }
 
-func (s *server) provisionOrFetchGoogleAccount(ctx context.Context, info GoogleUserInfo) (state.Account, error) {
+func (s *server) provisionOrFetchGoogleAccount(r *http.Request, info GoogleUserInfo, source string) (state.Account, error) {
+	ctx := r.Context()
 	email := strings.TrimSpace(strings.ToLower(info.Email))
 
 	// Sub-first lookup (spec §11 anti-takeover invariant, issue #165
@@ -408,7 +385,7 @@ func (s *server) provisionOrFetchGoogleAccount(ctx context.Context, info GoogleU
 
 	// Neither sub nor email is bound: create a fresh account on
 	// the Free plan and bind the link.
-	res, err := s.store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+	res, err := s.createSignupAccount(r, signupMethodGoogle, source, state.CreateAccountWithPersonalOrgParams{
 		Email: email,
 		Plan:  api.PlanFree,
 	})

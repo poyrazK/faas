@@ -36,6 +36,11 @@ func (s *server) applySourceRefManifestPathRoutes(ctx context.Context, acct stat
 	if len(matching) > 0 && !app.AcceptsRequestInvocations() {
 		return api.ErrInvocationWorkloadClass(string(app.WorkloadClass), app.Manifest.ExecutionMode)
 	}
+	// A path route serves its target app on a public host; an internal app
+	// is off the public edge, and the gateway refuses it as a route target.
+	if len(matching) > 0 && api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		return edgerules.InternalRouteTargetProblem(app.Slug)
+	}
 	desired := make([]state.CreateEdgeRuleParams, 0, 2*len(matching))
 	for _, route := range matching {
 		params, problem := sourceRefManifestPathRouteParams(acct, app, route)

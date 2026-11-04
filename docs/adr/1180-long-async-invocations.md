@@ -121,3 +121,12 @@ processing.
   the same snapshot (GHSA-24j2-p895-mwc9, ADR-987 §5). Go's runtime RNG
   cannot be reseeded in place, so the restart stays. It already runs in
   the background after the restore barrier.
+
+## Amendment (2026-10-27): the drain serves apps fairly
+
+[ADR 20261027160930](20261027160930-continuous-fair-drain.md) revisits the
+rejected "make every drain dispatch asynchronous" for a different reason:
+fairness for default apps. Inline dispatches share one pool across ticks, an
+app holds at most its share while others wait, a tick no longer waits on a
+page, and every delivery renews its lease. Long-timeout rows keep the
+background path decided here.

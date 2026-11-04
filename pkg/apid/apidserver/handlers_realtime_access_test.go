@@ -18,7 +18,7 @@ func TestRealtimeAccessPreviewRequiresOIDCAndPreservesSessionCutoff(t *testing.T
 	if response := e.Do(t, http.MethodPost, path, request, nil); response.Code != http.StatusNotFound {
 		t.Fatalf("disabled preview: %d %s", response.Code, response.Body)
 	}
-	(*e.S()).WithRealtimeAccessPreviewEnabled(true)
+	(*e.S()).WithRealtimeAccessPreviewEnabled(true).WithRealtimePreview(apidserver.RealtimePreviewEveryone())
 	if response := e.Do(t, http.MethodPost, path, request, nil); response.Code != http.StatusBadRequest {
 		t.Fatalf("non-OIDC: %d %s", response.Code, response.Body)
 	}

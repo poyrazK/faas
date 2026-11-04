@@ -6,7 +6,7 @@ alert. Use the authenticated generated client, normally `client.inner` from a
 configured `FaaSClient`, in its owning event loop.
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     EventDeadlineInvestigationOptions,
     ainvestigate_event_deadline_alert,
     validate_event_deadline_checkpoint,

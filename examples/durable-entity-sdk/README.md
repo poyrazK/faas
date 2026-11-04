@@ -16,7 +16,7 @@ Configure `FaaSClient` with account credentials before constructing a client
 handle:
 
 ```ts
-import { durableEntityHandle } from '@gregale/sdk-node';
+import { durableEntityHandle } from '@gregale/sdk-node/preview';
 const counter = durableEntityHandle<{ delta: number }, { count: number }>(
   { slug: 'counter', namespace: 'counters', key: 'customer:456', environment: 'staging' },
   value => {

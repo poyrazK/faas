@@ -56,6 +56,23 @@ for exe in /proc/[0-9]*/exe; do
   [[ "${target##*/}" == firecracker* ]] && note "process ${exe%/exe}: $target"
 done
 
+# 5b. Instance bridges (connection-survival ADR): no process may still run as
+# a bridge uid, and no per-bridge socket directory may remain.
+for status in /proc/[0-9]*/status; do
+  uid=$(awk '/^Uid:/ {print $2; exit}' "$status" 2>/dev/null || true)
+  [[ -n "$uid" && "$uid" -ge 30000 && "$uid" -le 39999 ]] && note "bridge process ${status%/status} uid $uid"
+done
+for d in /run/faas-ibridge/*/; do
+  [[ -d "$d" ]] && note "bridge socket directory $d"
+done
+# Bridge units (slice 1c, FAAS_INSTANCE_BRIDGE_UNIT=1): systemd owns them, so
+# a bridge vmmd failed to stop survives every process check above.
+if command -v systemctl >/dev/null 2>&1; then
+  while read -r unit _; do
+    [[ -n "$unit" ]] && note "bridge unit $unit"
+  done < <(systemctl list-units --all --plain --no-legend 'faas-ibridge-*.service' 2>/dev/null || true)
+fi
+
 # 6. Per-instance jail and export mounts. The shared jail tmpfs is expected.
 while read -r _ _ _ _ mountpoint _; do
   case "$mountpoint" in
@@ -74,4 +91,4 @@ if [[ "$fail" -ne 0 ]]; then
   echo "leakcheck FAILED"
   exit 1
 fi
-echo "leakcheck OK — no leaked netns/taps/jails/cgroups/processes/mounts/native-loops"
+echo "leakcheck OK — no leaked netns/taps/jails/cgroups/processes/bridges/mounts/native-loops"

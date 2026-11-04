@@ -1,7 +1,7 @@
-from faas_sdk.api.deployments import promote_deployment_with_application_ack
-from faas_sdk.models.app_manifest import AppManifest
-from faas_sdk.models.binding_application_adoption import BindingApplicationAdoption
-from faas_sdk.models.binding_promotion_request import BindingPromotionRequest
+from faas_sdk.preview.api.deployments import promote_deployment_with_application_ack
+from faas_sdk.preview.models.app_manifest import AppManifest
+from faas_sdk.preview.models.binding_application_adoption import BindingApplicationAdoption
+from faas_sdk.preview.models.binding_promotion_request import BindingPromotionRequest
 
 
 def test_strict_route_and_independent_adoption_versions() -> None:

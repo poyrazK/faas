@@ -83,6 +83,22 @@ func TestPgStore_EdgeRuleLists(t *testing.T) {
 	if err := s.DeleteEdgeRuleList(ctx, acct, "office"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("delete missing = %v, want ErrNotFound", err)
 	}
+
+	// ADR-091 amendment 2026-10-28: the write itself refuses a reference to
+	// a list that is gone (a delete that raced apid's own check), so no rule
+	// can be left pointing at a missing list.
+	var missing *state.EdgeRuleListMissingError
+	if _, err := s.CreateEdgeRuleIfUnderQuota(ctx, params, api.MustLimitsFor(api.PlanPro)); !errors.As(err, &missing) || missing.Name != "office" {
+		t.Fatalf("create referencing a deleted list = %v, want EdgeRuleListMissingError", err)
+	}
+	plain := pgSampleEdgeRuleParams(acct, app, "lists.example.com")
+	kept, err := s.CreateEdgeRule(ctx, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateEdgeRule(ctx, kept.ID, state.UpdateEdgeRuleParams{Match: params.Match}); !errors.As(err, &missing) {
+		t.Fatalf("update referencing a deleted list = %v, want EdgeRuleListMissingError", err)
+	}
 }
 
 // ADR-964 against Postgres: batch insert (inet and empty client IPs),
@@ -107,6 +123,7 @@ func TestPgStore_EdgeRuleEvents(t *testing.T) {
 		})
 	}
 	events[1].ClientIP = ""
+	events[2].RequestID = "req-7f3a"
 	events = append(events, state.EdgeRuleEvent{RuleID: rule.ID, AppID: app, OccurredAt: base.Add(-10 * 24 * time.Hour), Outcome: state.EdgeRuleHitMatched})
 	if err := s.RecordEdgeRuleEvents(ctx, events); err != nil {
 		t.Fatal(err)
@@ -123,6 +140,12 @@ func TestPgStore_EdgeRuleEvents(t *testing.T) {
 	logged, err := s.ListEdgeRuleEvents(ctx, state.EdgeRuleEventQuery{AppID: app, RuleID: rule.ID, Outcome: state.EdgeRuleHitLogged, Since: base.Add(-time.Hour), Limit: 10})
 	if err != nil || len(logged) != 1 {
 		t.Fatalf("logged = %+v, %v", logged, err)
+	}
+	// ADR-831 amendment 8: one request's events, by the reference the
+	// challenge page shows.
+	byRequest, err := s.ListEdgeRuleEvents(ctx, state.EdgeRuleEventQuery{AppID: app, RequestID: "req-7f3a", Since: base.Add(-time.Hour), Limit: 10})
+	if err != nil || len(byRequest) != 1 || byRequest[0].RequestID != "req-7f3a" {
+		t.Fatalf("by request = %+v, %v", byRequest, err)
 	}
 	// ADR-831 amendment 5: WAF detail survives the per-row array encoding;
 	// events without it read back empty.

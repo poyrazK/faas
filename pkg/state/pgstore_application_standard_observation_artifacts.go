@@ -42,7 +42,7 @@ func qualifyStandardSnapshotsTx(ctx context.Context, tx pgx.Tx, r ApplicationSta
 		if !row.CatalogMatches || !row.HeartbeatUntil.Valid {
 			return standardApplicationQualification{reason: "snapshot_observation_pending"}, nil
 		}
-		record := ApplicationStandardSnapshotCaptureRecord{inputs: row.InputSnapshot, ExpectedState: row.ExpectedState.String, CreatedAt: row.CreatedAt.Time, ReceivedAt: row.ReceivedAt.Time}
+		record := ApplicationStandardSnapshotCaptureRecord{inputs: row.InputSnapshot, ExpectedState: row.ExpectedState.String, CreatedAt: row.CreatedAt.Time, ReceivedAt: row.ReceivedAt.Time, ProducerIncarnation: row.ProducerIncarnation}
 		record, valid := decodeStandardObservationSnapshotHistory(record, row.GrantData, row.Acknowledgment)
 		if !valid {
 			return standardApplicationQualification{reason: "snapshot_observation_pending"}, nil

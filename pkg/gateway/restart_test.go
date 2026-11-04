@@ -180,6 +180,8 @@ func TestInternalProxyEndsEventStreamOnShutdown(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set(api.StreamingStatusHeader, string(api.StreamingStatusStreaming))
+		// gatewayd-internal's authenticated long-lived marker (ADR-570).
+		w.Header().Set(trafficResponseSessionHeader, "long-lived")
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "data: 1\n\n")
 		http.NewResponseController(w).Flush()
@@ -350,6 +352,7 @@ func TestForwarderEndsEventStreamOnShutdown(t *testing.T) {
 		nodes := singleClientLookup{cli: &heldHTTPStreamClient{contentType: contentType}}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := drain.WithShutdownNotice(r.Context(), tracker)
+			r.Header.Set("x-faas-stream", "true") // a streaming app's forward (ADR-570)
 			cli, _, _ := nodes.ClientFor(ctx, "n1")
 			fwdStreamOnceWithEvents(flushEachWrite{w}, r.WithContext(ctx), cli, discardLog(), Target{NodeID: "n1"}, nil)
 		}))

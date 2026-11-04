@@ -8,7 +8,7 @@ Use the same connection and transaction for your business mutation and outbox in
 
 ```typescript
 import { insertRealtimeCommitEvent, listRealtimeCommitDeliveries,
-  retryRealtimeCommitEvent } from '@gregale/sdk-node';
+  retryRealtimeCommitEvent } from '@gregale/sdk-node/preview';
 
 const client = await pool.connect();
 try {

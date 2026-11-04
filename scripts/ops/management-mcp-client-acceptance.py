@@ -170,7 +170,8 @@ class CodexRPC:
                 self.notifications.append(message)
                 continue
             if "error" in message:
-                raise RuntimeError(f"Codex rejected {method}; inspect the client locally")
+                detail = str(message["error"].get("message", ""))[:300] if isinstance(message["error"], dict) else ""
+                raise RuntimeError(f"Codex rejected {method}: {detail}; inspect the client locally")
             return message["result"]
         raise RuntimeError(f"Codex timed out during {method}")
 

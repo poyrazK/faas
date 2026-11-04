@@ -46,14 +46,14 @@ jobs:
       FLEET_BUNDLE_PUBLISH_TOKEN: ${{ secrets.FLEET_BUNDLE_PUBLISH_TOKEN }}
     steps:
       - name: Check out the signing policy
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
 
       - id: fleet_bundle_auth
         name: Authenticate fleet bundle publisher with GitHub OIDC
         if: startsWith(inputs.bundle_url, 'https://storage.googleapis.com/')
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_FLEET_BUNDLE_PUBLISHER_PROVIDER }}

@@ -1,0 +1,21 @@
+# ADR-20261026181020: Compose env values that call a project service import as its Gregale address
+
+- **Status:** accepted
+- **Date:** 2026-10-26
+- **Amends:** ADR-20261023085230 (Compose environment import), which skipped every value naming a Docker service as `service_address`
+- **Decision:** With `x-gregale-env-import: true`, a Compose value that calls another service of the project over HTTP by its Docker name is imported as that service's Gregale address.
+  - **What is rewritten.** The value must be a URL with the scheme `http`, `https`, `ws` or `wss`, no credentials, and a host that is a service this deploy runs (a scanned workload or an existing project app).
+    - `http` and `ws` become `<scheme>://<name>.svc.gregale:10081`.
+    - `https` and `wss` become `<scheme>://<name>.internal`.
+    - `<name>` is the service's DNS form (ADR-20261026170512), and the path and query are kept.
+  - **Why the port is dropped.** The HTTP service mesh forwards to the service's serving port on every node. The Docker port is that port in the usual case, while private TCP (ADR-576, which would keep it) is a per-node opt-in.
+  - **What stays skipped.** Other values naming a Docker service keep the `service_address` reason: a datastore image (`redis://cache:6379`), a bare `host:port`, any other scheme, and values with credentials. The CLI now says "Docker address of a datastore or non-HTTP service".
+  - **Review.** The plan adds a note per rewritten key, naming the Docker host and the new address host, never the value. The secret checks run on the rewritten value.
+- **Why:** Values such as `BILLING_URL: http://billing:8080` are how Compose projects wire services together. Each one was left as **Needs a value**, to be retyped as a Gregale address after the first plan. With the rewrite, an opted-in Compose project deploys with its service wiring intact.
+- **Consequences:**
+  - A value that pointed at a service's second HTTP listener now reaches its serving port instead. The plan note shows each rewrite, so such a value can be set by hand. A later apply never overwrites a value already set.
+  - Without the opt-in, these values report `not_opted_in`, which is what tells the developer to add `x-gregale-env-import`.
+  - Rolling upgrades: there is no API or schema change. An older apid keeps skipping these values.
+- **Rejected alternatives:**
+  - **Keep the Docker port on `svc.gregale`.** That needs private TCP on the caller's node, which is off by default, so the value would work on some nodes and not others.
+  - **Rewrite without the opt-in.** The import's opt-in decides whether any Compose value is copied, and these are values like any other.

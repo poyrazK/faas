@@ -76,3 +76,53 @@ func TestManifestFromImageConfigWithAppUsesExplicitCommandWhenImageIsEmpty(t *te
 		t.Fatalf("entrypoint = %#v, want %#v", manifest.Entrypoint, want)
 	}
 }
+
+// gregale.yaml's hosting.start was ignored when the built image carried any
+// command: a Railpack Python build with no detected start kept the runner
+// base's CMD ["python3"], which exits 0 at once (Hunt 12 H12-29).
+func TestManifestFromLocalOCIConfigHostingStartReplacesImageCommand(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		profile frameworkprofile.Profile
+		config  oci.Config
+		want    []string
+	}{
+		{
+			name:    "explicit start replaces an inherited base CMD",
+			profile: frameworkprofile.Profile{Framework: "python", StartCommand: "python worker.py", StartFromConfig: true, Inferred: true},
+			config:  oci.Config{Cmd: []string{"python3"}},
+			want:    []string{"/bin/sh", "-c", "python worker.py"},
+		},
+		{
+			name:    "explicit start replaces a Railpack launcher",
+			profile: frameworkprofile.Profile{Framework: "node", StartCommand: "node worker.js", StartFromConfig: true, Inferred: true},
+			config:  oci.Config{Entrypoint: []string{"/bin/bash", "-c"}, Cmd: []string{"npm start"}},
+			want:    []string{"/bin/sh", "-c", "node worker.js"},
+		},
+		{
+			name:    "inferred start keeps the image command",
+			profile: frameworkprofile.Profile{Framework: "fastapi", StartCommand: "uvicorn app:app", Inferred: true},
+			config:  oci.Config{Cmd: []string{"/app/launcher"}},
+			want:    []string{"/app/launcher"},
+		},
+		{
+			name:    "inferred start fills an empty image",
+			profile: frameworkprofile.Profile{Framework: "express", StartCommand: "npm run start", Inferred: true},
+			want:    []string{"/bin/sh", "-c", "npm run start"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.profile.Version = frameworkprofile.Version
+			manifest, err := manifestFromLocalOCIConfig(tt.config, profileDeployment(t, tt.profile))
+			if err != nil {
+				t.Fatalf("manifestFromLocalOCIConfig: %v", err)
+			}
+			if !reflect.DeepEqual(manifest.Entrypoint, tt.want) {
+				t.Fatalf("command = %#v, want %#v", manifest.Entrypoint, tt.want)
+			}
+		})
+	}
+}

@@ -52,7 +52,7 @@ func (e *Engine) ReconcileEnvironmentWarmPools(ctx context.Context, appID string
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: environment inventory: %w", err)
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: paused inventory: %w", err)
 	}
@@ -131,7 +131,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 	// Keep the plan-labelled gauge aligned with durable WARM rows even when
 	// reconciliation exits early (disabled pool, plan gate, or no snapshot).
 	defer e.refreshWarmPoolSizeGauge(ctx, acct.Plan, appID)
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: list instances: %w", err)
 	}
@@ -205,7 +205,7 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 		if err := e.reclaimWarmPool(ctx, warm, desired); err != nil {
 			return err
 		}
-		instances, err = e.store.ListInstancesForApp(ctx, appID)
+		instances, err = e.liveInstancesForApp(ctx, appID)
 		if err != nil {
 			return fmt.Errorf("sched: warm pool: refresh instances: %w", err)
 		}
@@ -304,7 +304,7 @@ func (e *Engine) refreshWarmPoolSizeGauge(ctx context.Context, plan api.Plan, ap
 	if e == nil || e.store == nil || e.ops == nil || appID == "" {
 		return
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		if e.log != nil {
 			e.log.Warn("sched: warm pool: refresh size gauge", "app", appID, "err", err)
@@ -354,9 +354,16 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	if e.warmAffinity != nil {
 		warmHint, _ = e.warmAffinity.LastWarmNode(app.ID)
 	}
+	// ADR-20261024225612: a warm fill restores snap keep-paused, so placement
+	// must narrow to nodes whose CPU can carry it — vmmd has no CPU backstop
+	// (Hunt 25 H25-1). Without this a warm restore could land on an
+	// incompatible node and fault when a wake later promotes it. No
+	// compatible node with room means the best-effort fill is skipped, which
+	// is the correct outcome for a warm fill (ADR-193).
+	restoreSnap := snap
 	placementRequest := Request{
 		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app),
-		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint,
+		MaxConcurrency: app.MaxConcurrency, PreferredNodeID: warmHint, restoreSnapshot: &restoreSnap,
 	}
 	wakeID := uuid.NewString()
 	ins, placement, _, err := e.createWithNodePlacement(ctx, placementRequest, false, func(admitCtx context.Context, p Placement) (state.Instance, error) {
