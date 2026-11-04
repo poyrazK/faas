@@ -124203,7 +124203,7 @@ components:
 
     DebugStatusMemory:
       type: object
-      description: "Present when the app's guests ran short of memory in the last day: the rollup's low point and the RAM that would have kept 30% of the guest's memory free (ADR-20261102124306). Released per account by the app_health_memory platform flag."
+      description: "Present when the app's guests ran short of memory in the last day: the low point and the RAM that would have kept 30% of the guest's memory free. Shown where Gregale has released memory warnings to the account."
       required: [episodes, lowest_available_mb, total_mb, peak_anon_mb, last_at, current_mb, suggested_mb, plan, plan_mb, fits_plan, advice]
       properties:
         episodes: { type: integer, minimum: 0 }

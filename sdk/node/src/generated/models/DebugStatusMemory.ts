@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Present when the app's guests ran short of memory in the last day: the rollup's low point and the RAM that would have kept 30% of the guest's memory free (ADR-20261102124306). Released per account by the app_health_memory platform flag.
+ * Present when the app's guests ran short of memory in the last day: the low point and the RAM that would have kept 30% of the guest's memory free. Shown where Gregale has released memory warnings to the account.
  */
 export type DebugStatusMemory = {
   episodes: number;
