@@ -67786,6 +67786,29 @@ func (q *Queries) ObjectLifecycleScanSave(ctx context.Context, db DBTX, arg Obje
 	return err
 }
 
+const objectMultipartAbandonedPartWritersSettle = `-- name: ObjectMultipartAbandonedPartWritersSettle :execrows
+UPDATE object_multipart_part_writers d SET settled=true
+FROM object_storage_multipart_part_grants g, object_storage_multipart_uploads u
+WHERE d.upload_id=$1 AND u.id=d.upload_id AND u.state='aborting' AND u.lease_token=$2::text
+AND d.managed AND d.dispatched AND NOT d.settled
+AND g.upload_id=d.upload_id AND g.part_number=d.part_number AND g.transfer_token=d.transfer_token
+AND g.unsafe_until IS NOT NULL AND g.unsafe_until<=clock_timestamp()
+`
+
+type ObjectMultipartAbandonedPartWritersSettleParams struct {
+	ID         pgtype.UUID
+	LeaseToken string
+}
+
+// The caller verified the native abort; see ObjectMultipartAbandonedPartSettler.
+func (q *Queries) ObjectMultipartAbandonedPartWritersSettle(ctx context.Context, db DBTX, arg ObjectMultipartAbandonedPartWritersSettleParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartAbandonedPartWritersSettle, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectMultipartAbortOwner = `-- name: ObjectMultipartAbortOwner :one
 SELECT account_id,bucket_id,(part_url_unsafe_until IS NULL OR part_url_unsafe_until<=clock_timestamp())::boolean AS part_urls_drained
 FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting'
