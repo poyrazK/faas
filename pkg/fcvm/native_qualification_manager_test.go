@@ -352,7 +352,7 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 		}
 	}
 	restoreVMM := m.vmm.(*recoveryVMMFixture)
-	restoreVMM.restoreQualification = func(_ context.Context, got state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, candidates [2]string, fcVersion string) error {
+	restoreVMM.restoreQualification = func(ctx context.Context, got state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, candidates [2]string, fcVersion string) error {
 		if got != target || lease.Instance != target.InstanceID || req.Instance != target.InstanceID ||
 			candidates != [2]string{kernelPath, basePath} || fcVersion != "1.7.0" {
 			return errors.New("fixture: restore did not receive the pinned private execution")
@@ -380,7 +380,7 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 		}
 		// The real restorer consumes the receipt before its channels close;
 		// the manager no longer waits after the restorer returns.
-		return req.qualificationRestoreReceiptWaiter.wait(context.Background(), target.InstanceID)
+		return req.qualificationRestoreReceiptWaiter.wait(ctx, target.InstanceID)
 	}
 	req := sourceReq
 	req.Instance, req.BaseKey = target.InstanceID, basePath
