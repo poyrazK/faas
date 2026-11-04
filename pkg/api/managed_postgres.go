@@ -224,6 +224,9 @@ type ManagedPostgresUsageOperatorResponse struct {
 }
 
 type CreateManagedPostgresDatabaseRequest struct {
+	// RequestID reserves the database identity for a durable workflow. Reusing
+	// it with another name or configuration is a conflict.
+	RequestID            string `json:"request_id,omitempty"`
 	Name                 string `json:"name"`
 	Region               string `json:"region"`
 	PostgresMajor        int    `json:"postgres_major,omitempty"`

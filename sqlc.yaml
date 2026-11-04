@@ -18,6 +18,17 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_interface: true
+  # The apps domains' certificates, written by edgednsd (ADR-20261103163954 §3).
+  - engine: "postgresql"
+    queries: "pkg/edgecert/certpg/queries.sql"
+    schema: "pkg/edgecert/certpg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/edgecert/certpg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   # Hosted management MCP bridge state and lease (ADR-20261026195952).
   - engine: "postgresql"
     queries: "pkg/mcpmanagement/statepg/queries.sql"
@@ -216,6 +227,8 @@ sql:
       - "pkg/state/build_coalescing_queries.sql"
       - "pkg/state/build_dependency_queries.sql"
       - "pkg/state/config_revision_queries.sql"
+      - "pkg/state/env_batch_queries.sql"
+      - "pkg/state/app_resource_inventory_queries.sql"
       - "pkg/state/cron_delete_queries.sql"
       - "pkg/state/cron_fire_now_recovery_queries.sql"
       - "pkg/state/cron_history_queries.sql"
@@ -283,6 +296,7 @@ sql:
       - "pkg/state/issue_tracker_linear_queries.sql"
       - "pkg/state/issue_tracker_links_queries.sql"
       - "pkg/state/job_log_retention_queries.sql"
+      - "pkg/state/key_project_limit_queries.sql"
       - "pkg/state/keyed_replay_queries.sql"
       - "pkg/state/managed_postgres_cutover_activation_queries.sql"
       - "pkg/state/managed_postgres_drain_plan_queries.sql"

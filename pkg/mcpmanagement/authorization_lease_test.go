@@ -28,6 +28,9 @@ type leaseFixture struct {
 
 func connectLeaseFixture(t *testing.T, backend *httptest.Server, opts Options, version string) *leaseFixture {
 	t.Helper()
+	if opts.Toolsets == nil {
+		opts.Toolsets = []string{ToolsetAll}
+	}
 	opts.APIBase = backend.URL
 	native := api.NewClient(backend.URL, testToken)
 	server, manager, err := newManagementServer(native, opts)
@@ -345,7 +348,7 @@ func testAuthorizationLeaseMutationExpiryKeepsDurableRetryKey(t *testing.T) {
 	})
 	var leaseUntil atomic.Int64
 	leaseUntil.Store(time.Now().Add(time.Hour).UnixNano())
-	opts := Options{APIBase: native.BaseURL(), AllowWrites: true, planStore: store, planNamespace: "authorization-lease-fixture"}
+	opts := Options{APIBase: native.BaseURL(), AllowWrites: true, Toolsets: []string{ToolsetAll}, planStore: store, planNamespace: "authorization-lease-fixture"}
 	connect := func() (*mcp.ClientSession, *management) {
 		t.Helper()
 		s, manager, err := newManagementServer(native, opts)

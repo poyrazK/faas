@@ -49,7 +49,10 @@ type Evidence struct {
 	// flag); Memory is the app's memory-pressure rollup (ADR-20261102124306).
 	AssessMemory bool
 	Memory       MemoryEvidence
-	Now          time.Time
+	// Plan is the account's plan; with it the memory check says how much RAM
+	// the app needs (ADR-20261102124306 step 3).
+	Plan api.Plan
+	Now  time.Time
 }
 
 func Evaluate(e Evidence) api.AppHealthResponse {

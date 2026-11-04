@@ -2125,6 +2125,10 @@ func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 	return resolved.command, resolved.shell, problem
 }
 
+var MintMCPAuthCodeForTest = mintMCPAuthCode
+var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
+var MCPCodeScopesForTest = mcpCodeScopes
+
 var ALookupFunc = &aLookupFunc
 var AAAALookupFunc = &aaaaLookupFunc
 var CAALookupFunc = &caaLookupFunc

@@ -439,7 +439,18 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		}
 		return
 	}
-	database, err := s.managedPostgres.Create(r.Context(), managedpostgres.CreateRequest{AccountID: acct.ID, Name: req.Name, Spec: spec})
+	request := managedpostgres.CreateRequest{AccountID: acct.ID, Name: req.Name, Spec: spec}
+	var database managedpostgres.Database
+	if req.RequestID != "" {
+		id, parseErr := uuid.Parse(req.RequestID)
+		if parseErr != nil || id == uuid.Nil {
+			managedPostgresProblem(w, managedpostgres.ErrInvalid)
+			return
+		}
+		database, err = s.managedPostgres.CreateWithID(r.Context(), request, id.String())
+	} else {
+		database, err = s.managedPostgres.Create(r.Context(), request)
+	}
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return

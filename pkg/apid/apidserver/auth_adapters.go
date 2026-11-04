@@ -70,6 +70,24 @@ func (a storeAuthAdapter) DeploymentAppID(ctx context.Context, deploymentID stri
 	return d.AppID, nil
 }
 
+// A key limited to projects reaches only their apps, projects and deployments
+// (ADR-20261104085712).
+var (
+	_ middleware.KeyProjectLimiter = storeAuthAdapter{}
+	_ middleware.ProjectResolver   = storeAuthAdapter{}
+	_ middleware.AppByIDResolver   = storeAuthAdapter{}
+)
+
+// APIKeyProjectLimit forwards the optional limit store; a store without it
+// limits no key.
+func (a storeAuthAdapter) APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error) {
+	store, ok := a.Store.(state.KeyProjectLimitStore)
+	if !ok {
+		return nil, false, nil
+	}
+	return store.APIKeyProjectLimit(ctx, keyID)
+}
+
 // AuthenticatePlatformTenantAccessToken forwards this optional credential
 // capability without making it part of the broad state.Store contract.
 func (a storeAuthAdapter) AuthenticatePlatformTenantAccessToken(ctx context.Context, hash []byte) (state.Account, state.PlatformTenantAccessToken, error) {

@@ -17,6 +17,10 @@ import (
 // because it is carried in plan previews and compared before apply.
 const MaxProjectEnvironmentConfigBytes = 64 << 10
 
+// SensitiveConfigurationKey reports whether a configuration name belongs on
+// the sealed-secret surface rather than in non-secret runtime configuration.
+func SensitiveConfigurationKey(key string) bool { return projectEnvironmentConfigKeyIsSensitive(key) }
+
 var (
 	projectEnvironmentConfigKeyRE  = lazyregexp.New(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
 	projectEnvironmentConfigHashRE = lazyregexp.New(`^[a-f0-9]{64}$`)

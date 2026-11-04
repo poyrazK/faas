@@ -176,6 +176,14 @@ faas_seal_domain_edge_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_edge_readers_verified: false
 
+# Operator-local files from `gregalectl seal-domain init --domain edge-tls`
+# (ADR-20261103163954 §3). Compute hosts stage the identity (gatewayd-public
+# opens the apps domains' certificate key), control-plane hosts the
+# recipient (edgednsd seals the key to it). No fleet copy: the domain is new.
+faas_seal_domain_edge_tls_identity_src: ""
+faas_seal_domain_edge_tls_previous_identity_src: ""
+faas_seal_domain_edge_tls_recipient_src: ""
+
 # Operator-local files from `gregalectl seal-domain init --domain alerting`.
 # Control-plane hosts stage both: meterd opens alert rule webhook secrets,
 # notification channel destinations and MCP readiness provider keys with the

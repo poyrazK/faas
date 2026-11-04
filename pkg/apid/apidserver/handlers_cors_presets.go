@@ -139,7 +139,7 @@ func (s *server) listCorsPresets(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	writeJSON(w, http.StatusOK, api.CorsPresetListResponse{
-		Presets: corsPresetResponsesFromRows(rows),
+		Presets: corsPresetResponsesFromRows(s.visibleCorsPresets(r, acct, rows)),
 	})
 }
 
@@ -259,6 +259,13 @@ func (s *server) deleteCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	if !s.corsPresetMutation(w, r, acct, id, "cors_preset_deleted", func(ctx context.Context) bool {
+		// A preset rules use is refused, as a list is: deleting it left
+		// those rules naming a missing preset, and the gateway refuses
+		// every request to their hosts (ADR-091 amendment 2026-11-04).
+		if prob := s.corsPresetInUseProblem(ctx, acct.ID, id); prob != nil {
+			api.WriteProblem(w, prob)
+			return false
+		}
 		err := s.store.DeleteCorsPreset(ctx, acct.ID, id)
 		switch {
 		case errors.Is(err, state.ErrNotFound):

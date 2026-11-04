@@ -231,6 +231,12 @@ has 50 route labels per gateway; the routes a guard or a production monitor
 selects always keep theirs, so a rarely called selected route is never folded
 into `__route_other__`.
 
+Requests sent to a deployment's own URL (its preview URL, an alias URL or a
+revision pin) are not evidence, so smoke tests against a canary's preview URL
+do not change its verdict. A response that stays open past its request budget,
+such as a WebSocket or an event stream, counts as a request and can count as an
+error, but its duration is left out of latency.
+
 Coverage is explicitly `observed_only`: the system cannot establish how many
 requests were dropped before telemetry storage. The ingestion allowance helps
 with normal publishing delay but does not guarantee completeness. This compares

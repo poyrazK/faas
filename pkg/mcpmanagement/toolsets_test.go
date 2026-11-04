@@ -18,13 +18,17 @@ import (
 
 // coreCatalogBudget bounds the tools/list bytes an agent loads with --tools
 // core. Raise it deliberately: every byte is paid on every turn.
-const coreCatalogBudget = 16 << 10
+// Includes structured output envelopes; remain deliberately bounded.
+const coreCatalogBudget = 56 << 10
 
 // toolsetCatalog lists the tools of a local connection and of a fully
 // consented hosted grant (ADR-20261026195952) together: some tools exist on
 // only one of them.
 func toolsetCatalog(t *testing.T, toolsets []string) []*mcp.Tool {
 	t.Helper()
+	if toolsets == nil {
+		toolsets = []string{ToolsetAll}
+	}
 	tools := connectionCatalog(t, toolsets, false)
 	for _, tool := range connectionCatalog(t, toolsets, true) {
 		if !slices.ContainsFunc(tools, func(listed *mcp.Tool) bool { return listed.Name == tool.Name }) {
@@ -46,9 +50,9 @@ func connectionCatalog(t *testing.T, toolsets []string, hosted bool) []*mcp.Tool
 			t.Fatal(err)
 		}
 		opts.Environments = &EnvironmentConsent{DefaultWrite: true, Named: map[string]EnvironmentGrant{}}
-		opts.Capabilities, opts.uploads = []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage}, store
+		opts.Capabilities, opts.uploads = []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage, api.ScopeEnvWrite, api.ScopeUsageRead}, store
 	}
-	cs, ctx := connectConfiguredTestServer(t, backend, opts, "2026-07-28")
+	cs, ctx := connectSelectedTestServer(t, backend, opts, "2026-07-28")
 	var tools []*mcp.Tool
 	params := &mcp.ListToolsParams{}
 	for {
@@ -88,10 +92,10 @@ func TestEveryToolHasAToolset(t *testing.T) {
 }
 
 func TestToolsetsListOnlySelectedTools(t *testing.T) {
-	for _, selected := range [][]string{{ToolsetCore}, {ToolsetRelease}, {ToolsetDiagnose}, {ToolsetCore, ToolsetDiagnose}} {
+	for _, selected := range [][]string{{ToolsetCore}, {ToolsetRelease}, {ToolsetDiagnose}, {ToolsetProvision}, {ToolsetOperate}, {ToolsetCore, ToolsetDiagnose}} {
 		var want []string
-		for name, set := range toolsetOf {
-			if slices.Contains(selected, set) {
+		for name := range toolsetOf {
+			if slices.ContainsFunc(selected, func(set string) bool { return toolsetIncludes(name, set) }) {
 				want = append(want, name)
 			}
 		}
@@ -108,7 +112,7 @@ func TestCoreCatalogStaysSmall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		all, err := json.Marshal(connectionCatalog(t, nil, hosted))
+		all, err := json.Marshal(connectionCatalog(t, []string{ToolsetAll}, hosted))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -121,14 +125,14 @@ func TestCoreCatalogStaysSmall(t *testing.T) {
 
 func TestParseToolsets(t *testing.T) {
 	for spec, want := range map[string][]string{
-		"":                     nil,
-		"all":                  nil,
+		"":                     {ToolsetCore},
+		"all":                  {ToolsetAll},
 		"core":                 {"core"},
 		" diagnose , core ":    {"core", "diagnose"},
 		"core,core,release":    {"core", "release"},
 		"provision,core":       {"core", "provision"},
-		"core,all":             nil,
-		"release,diagnose,all": nil,
+		"core,all":             {ToolsetAll},
+		"release,diagnose,all": {ToolsetAll},
 	} {
 		got, err := ParseToolsets(spec)
 		if err != nil || !slices.Equal(got, want) {
