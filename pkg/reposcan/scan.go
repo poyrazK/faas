@@ -487,7 +487,7 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		highestTier = TierSingle
 	}
 
-	workloads, releaseWarnings, err := foldComposeReleaseServices(mergeByKey(dropShadowedGoCommands(seeds)))
+	workloads, releaseWarnings, err := foldComposeReleaseServices(mergeByKey(foldCoveredRoots(dropShadowedGoCommands(seeds))))
 	if err != nil {
 		return Result{}, err
 	}

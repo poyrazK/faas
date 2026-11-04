@@ -1709,8 +1709,8 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 // output byte-for-byte — a CI consumer parsing either path
 // agrees.
 //
-// Read-only: auth chain on the server is apps:read (no MFA, no
-// deploy:write required). The handler does not call CreateApp /
+// Read-only: auth chain on the server is apps:read or deploy:write (no
+// MFA). The handler does not call CreateApp /
 // CreateDeployment / anything in the write path.
 func (c *Client) Diff(ctx context.Context, slug string, req DiffRequest) (DiffResponse, error) {
 	var out DiffResponse
