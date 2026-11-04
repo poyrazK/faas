@@ -250,6 +250,14 @@ type Querier interface {
 	// Items are keyed product_control/<app>/<tenant>, after every other item kind.
 	BillingRunProductItems(ctx context.Context, db DBTX, arg BillingRunProductItemsParams) ([]BillingRunProductItemsRow, error)
 	BillingRunUpdateProductItem(ctx context.Context, db DBTX, arg BillingRunUpdateProductItemParams) (int64, error)
+	// ADR-20261103131742 amendment 2: the monthly build-minute quota.
+	// Build time a billing subject's source builds ran in [period_start,
+	// period_end): each started build counts from its start to its finish, or to
+	// now while it runs. A company app's builds count for its organization when
+	// the organization owns its resources, as its usage does. A build deferred
+	// behind an identical build has its claim's started_at cleared, so only the
+	// time it really runs counts.
+	BillingSubjectBuildSeconds(ctx context.Context, db DBTX, arg BillingSubjectBuildSecondsParams) (int64, error)
 	// ADR-1741: the admission insert binds the new instance's recovery lineage
 	// in its own transaction. Share locks on the deployment and app order an
 	// operator cold boot, which advances the generation with an UPDATE, before

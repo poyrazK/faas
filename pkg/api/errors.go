@@ -447,7 +447,11 @@ const (
 	CodePlanLimitApps                      = "plan_limit_apps"
 	CodePlanLimitDeveloperApps             = "plan_limit_developer_apps"
 	CodePlanLimitDeveloperLease            = "plan_limit_developer_lease"
-	CodePlanLimitRAM                       = "plan_limit_ram"
+	// CodePlanLimitBuildMinutes refuses a source build once the billing
+	// subject's builds have run the plan's monthly build minutes
+	// (ADR-20261103131742 amendment 2).
+	CodePlanLimitBuildMinutes = "plan_limit_build_minutes"
+	CodePlanLimitRAM          = "plan_limit_ram"
 	// CodePlanLimitObjectStorage refuses a downgrade while the account
 	// stores more than the target plan's storage ceiling (ADR-20261101214152).
 	CodePlanLimitObjectStorage = "plan_limit_object_storage"
@@ -2197,7 +2201,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodePlanLimitEdgeRuleLists, CodePlanLimitEdgeRuleListItems:
 		return http.StatusForbidden
-	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
+	case CodePlanLimitApps, CodePlanLimitDeveloperApps, CodePlanLimitDeveloperLease, CodePlanLimitBuildMinutes, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue,
 		CodePlanPublicAuthIPAllowlistNotAllowed, CodePlanHealthPathWakesNotAllowed, CodePlanEgressPortsNotAllowed,
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
@@ -2709,6 +2713,17 @@ func ErrPlanLimitApps(l Limits, observed int) *Problem {
 		fmt.Sprintf("%s plan allows %d deployed app(s); you have %d.", l.Plan, l.DeployedApps, observed)).
 		WithLimit(int64(l.DeployedApps), int64(observed)).
 		WithDocs(docsBase + "/plans#apps")
+}
+
+// ErrPlanLimitBuildMinutes refuses a source build once the billing subject's
+// builds have run the plan's monthly build minutes. A prebuilt image still
+// deploys (ADR-20261103131742 amendment 2).
+func ErrPlanLimitBuildMinutes(l Limits, usedMinutes int64) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitBuildMinutes,
+		"Monthly build minutes used up",
+		fmt.Sprintf("%s plan includes %d build minutes a month; builds have run %d this month. Deploy a prebuilt image, wait for the next month, or upgrade.", l.Plan, l.MonthlyBuildMinutes, usedMinutes)).
+		WithLimit(int64(l.MonthlyBuildMinutes), usedMinutes).
+		WithDocs(docsBase + "/plans#builds")
 }
 
 // ErrPlanLimitDeveloperApps is returned when a developer session would exceed

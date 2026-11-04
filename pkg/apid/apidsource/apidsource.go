@@ -422,6 +422,9 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	if p.SourcePath == "" {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: SourcePath is required")
 	}
+	if problem := buildMinutesProblem(ctx, store, p.AppID, p.Kind, time.Now(), p.Log); problem != nil {
+		return EnqueueResult{}, problem
+	}
 	if len(p.ReleaseCommand) > 0 || p.ReleaseCommandShell {
 		resolved, problem := (api.CreateAppTaskRequest{
 			Command:      p.ReleaseCommand,

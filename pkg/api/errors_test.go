@@ -408,6 +408,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeBillingEmailInUse, CodeBillingContactMember,
 		CodeBillingSubscriptionEnding, CodePaymentAuthenticationRequired,
 		CodePlanEgressOverageNotAllowed,
+		CodePlanLimitBuildMinutes,
 	}
 	seen := make(map[string]bool)
 	for _, c := range codes {
