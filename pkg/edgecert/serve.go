@@ -281,8 +281,8 @@ func (s *Served) listen(ctx context.Context, pool *pgxpool.Pool, notices chan<- 
 }
 
 func (s *Served) listenOnce(ctx context.Context, pool *pgxpool.Pool, notices chan<- struct{}) error {
-	// LISTEN is session state: it needs the direct session pool, never a
-	// transaction pooler's connection (pkg/db/direct.go).
+	// LISTEN is session-scoped, so it runs on the direct pool: a transaction
+	// pooler would hand the listening backend to another client.
 	conn, err := db.DirectPool(pool).Acquire(ctx)
 	if err != nil {
 		return err

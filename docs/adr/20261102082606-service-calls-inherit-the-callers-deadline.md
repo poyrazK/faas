@@ -114,8 +114,8 @@ call latency is negligible. No CP Postgres call is added to the request path.
   number up to a day; otherwise nothing) and keeps the absolute time it runs
   out. It never cancels the handler's own context.
 - Outbound, only on the managed service hosts each SDK already forwards the
-  release to (`*.svc.gregale`; Node and Python also declared `*.internal`),
-  it sets the header to the time left, keeping a smaller valid value the
+  release to (`*.svc.gregale` and declared `*.internal` aliases; Go added
+  `*.internal` on 2026-11-05 with the signed-carrier parity fix), it sets the header to the time left, keeping a smaller valid value the
   caller set itself. With no time left it sends 1 ms, so the proxy answers 504
   `request_budget_exceeded` without waking the target, as it would for an
   inferred deadline. External hosts get nothing added.
