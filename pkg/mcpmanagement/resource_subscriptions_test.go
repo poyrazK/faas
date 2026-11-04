@@ -27,6 +27,9 @@ type subscriptionHarness struct {
 }
 
 func connectSubscriptionHarness(t *testing.T, b *httptest.Server, opts Options, version string, httpTransport bool) *subscriptionHarness {
+	if opts.Toolsets == nil {
+		opts.Toolsets = []string{ToolsetAll}
+	}
 	t.Helper()
 	s, m, err := newManagementServer(api.NewClient(b.URL, testToken), opts)
 	if err != nil {

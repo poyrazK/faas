@@ -353,6 +353,10 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 	# kept generous for slow runners. Memory: cmd-e2e-coverage-timeout-edge.md
 	$(GO_TEST) -race -count=1 -timeout=18m $(PKGS)
 
+.PHONY: test-mcp-agent-workflows
+test-mcp-agent-workflows: ## Evaluate MCP discovery and recovery workflows against local native API fixtures
+	$(GO_TEST) -count=1 -run 'Test(AgentWorkflow|RecoveryContracts|VerificationContracts|FocusedCatalog|CoreCatalogStaysSmall)' ./pkg/mcpmanagement
+
 .PHONY: test-apid
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/

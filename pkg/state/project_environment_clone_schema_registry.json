@@ -1240,6 +1240,19 @@
     }
   },
   {
+    "table": "app_env_batch_receipts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "receipt",
+      "request_id",
+      "request_sha256",
+      "scope"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_envs",
     "columns": [
       "account_id",

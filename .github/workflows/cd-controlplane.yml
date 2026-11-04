@@ -905,6 +905,11 @@ jobs:
           if [[ -f scripts/ci/edgednsd_vars.sh ]]; then
             bash scripts/ci/edgednsd_vars.sh "$work/vars.yml"
           fi
+          # ADR-20261101214152: apid runs with FAAS_ENVIRONMENT=production in a
+          # production environment. A release cut before the script stages none.
+          if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
+            bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
+          fi
           # ADR-20261023104734: daemons log in as their own runtime roles when
           # the environment variable POSTGRES_RUNTIME_ROLES_ENABLED is true
           # (step 1); POSTGRES_OWNER_CONTRACT_ENABLED then leaves the owner to
@@ -1714,6 +1719,11 @@ jobs:
           # secret. A release cut before the script stages none.
           if [[ -f scripts/ci/edgednsd_vars.sh ]]; then
             bash scripts/ci/edgednsd_vars.sh "$work/vars.yml"
+          fi
+          # ADR-20261101214152: apid runs with FAAS_ENVIRONMENT=production in a
+          # production environment. A release cut before the script stages none.
+          if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
+            bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
           fi
           # ADR-20261023104734: daemons log in as their own runtime roles when
           # the environment variable POSTGRES_RUNTIME_ROLES_ENABLED is true

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gofrs/flock"
 
@@ -200,6 +201,9 @@ func (s *StateStore) updateSnapshot(namespace string, value any, seq uint64) err
 		for key := range s.records {
 			if strings.HasPrefix(key, "plans/") || strings.HasPrefix(key, "environment-plans/") {
 				grantID := strings.TrimPrefix(strings.TrimPrefix(key, "environment-plans/"), "plans/")
+				if strings.HasPrefix(grantID, "agent-key/") && liveAgentPlans(s.records[key], time.Now()) {
+					continue
+				}
 				if _, active := snapshot.Grants[grantID]; !active {
 					delete(s.records, key)
 					changed = append(changed, key)
@@ -226,6 +230,25 @@ func (s *StateStore) fail(err error) {
 	if s.failure == nil {
 		s.failure = err
 	}
+}
+
+// Headless receipts are not OAuth grants; expire their namespace only once
+// every plan has expired, without retaining the key or its bearer token.
+func liveAgentPlans(data json.RawMessage, now time.Time) bool {
+	var plans map[string]struct {
+		Plan struct {
+			ExpiresAt time.Time `json:"expires_at"`
+		}
+	}
+	if json.Unmarshal(data, &plans) != nil {
+		return false
+	}
+	for _, p := range plans {
+		if p.Plan.ExpiresAt.After(now) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *StateStore) available() bool {

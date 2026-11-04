@@ -101,3 +101,43 @@ func TestEventSubscriptionIntentAppliesWhenDeploymentIsLive(t *testing.T) {
 		}
 	})
 }
+
+// A waiting intent is stamped on each pass. The worker reads the 64 least
+// recently stamped intents, so before this 64 intents waiting for days (traffic
+// splits, canaries, scheduled releases) kept every newer one from applying.
+func TestEventSubscriptionIntentWaitingIsStamped(t *testing.T) {
+	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, pool *pgxpool.Pool) {
+		if pool == nil {
+			t.Skip("the batch order is a Postgres concern")
+		}
+		ctx := context.Background()
+		activation := any(store).(state.EventSubscriptionActivationStore)
+		account, err := store.CreateAccount(ctx, "stamp-"+uuid.NewString()+"@example.com", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: account.ID, Slug: "stamp-" + uuid.NewString(), Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 512, MaxConcurrency: 5})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waiting, err := store.CreateDeployment(state.ContextWithDeploymentEventSubscriptions(ctx, []string{}),
+			state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, TrafficPercent: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE deployment_event_subscription_intents SET updated_at = now() - interval '1 day' WHERE deployment_id = $1`, waiting.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := activation.ReconcileEventSubscriptionActivations(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var status string
+		var stamped bool
+		if err := pool.QueryRow(ctx, `SELECT status, updated_at > now() - interval '1 minute' FROM deployment_event_subscription_intents WHERE deployment_id = $1`, waiting.ID).Scan(&status, &stamped); err != nil {
+			t.Fatal(err)
+		}
+		if status != "prepared" || !stamped {
+			t.Fatalf("waiting intent: status=%q stamped=%v, want prepared and re-stamped", status, stamped)
+		}
+	})
+}
