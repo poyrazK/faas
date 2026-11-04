@@ -11,7 +11,8 @@ the live project, not a cached inventory:
 - Cloud Ops Agent write IAM and an alert for dropped exports;
 - deletion protection, retained control-plane state disk, and daily snapshots;
 - IAP/OS Login access with project keys blocked and no public SSH, RDP, or 8080;
-- Cloudflare-only origin ingress on TCP/80+443 at both GCP and host firewalls;
+- Cloudflare origin rules plus a control-plane-only TCP/80+443 exception for
+  custom-domain TLS; platform hosts still reject direct requests at Caddy;
 - separate control/compute identities and a backup writer without delete/IAM;
 - Storage and IAM Data Access logs;
 - SSD-backed active compute capacity and paid disks on stopped nodes;
@@ -93,9 +94,14 @@ GCLOUD_IAP_SSH_VERIFIED=1 GCLOUD_IAP_CD_VERIFIED=1 \
 This creates an IAP-only SSH rule, grants the named operator OS Admin Login and
 IAP tunnel access, enables OS Login, blocks project SSH keys, creates IPv4 and
 IPv6 TCP/80+443 rules containing only the pinned Cloudflare ranges, tags the
-control plane as `gregale-origin`, and deletes known broad ingress rules. The
-Ansible nftables role enforces the same source boundary on every manifest-
-generated Cloudflare control plane. Loopback is the explicit health path; use
+control plane as `gregale-origin`, and deletes known broad ingress rules.
+With `access.custom_domain_tls.enabled`, it also creates the two named public
+TCP/80+443 rules targeting `gregale-custom-domain-edge`, assigned only to the
+control plane. The audit rejects extra targets or ports on that exception.
+Enable the matching `public_edge.custom_domains` manifest settings and publish
+the DNS-only target before rollout; see [custom-domain TLS](../ops/custom-domain-tls.md).
+Ansible opens the host firewall for customer traffic and Caddy continues to
+reject direct requests to platform hosts. Loopback is the health path; use
 IAP/OS Login for emergency access instead of opening a temporary public origin
 rule. The host-hardening role keeps password authentication and direct root
 login off.

@@ -103,6 +103,16 @@ const (
 	// A bound managed database without a restore window cannot be copied at
 	// the clone's point in time (ADR-20261024224230).
 	CloneBlockerPointInTimeRestoreUnavailable = "point_in_time_restore_unavailable"
+	// A bucket setting the clone does not copy yet: CORS, lifecycle,
+	// notifications, encryption, Object Lock, upload routes or per-version
+	// protection (ADR-20261103160000).
+	CloneBlockerObjectBucketSettingUnavailable = "object_bucket_setting_unavailable"
+	// A bucket without versioning has no history to read at the clone's data
+	// point (ADR-20261103160000).
+	CloneBlockerObjectVersioningRequired = "object_versioning_required"
+	// A bucket on a storage backend not yet qualified for clones
+	// (ADR-20261103160000).
+	CloneBlockerObjectStorageProviderUnqualified = "object_storage_provider_unqualified"
 )
 
 var cloneInventoryIdentifier = lazyregexp.New(`^[a-z_][a-z0-9_]{0,62}$`)
@@ -141,7 +151,7 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 		return false
 	}
 	switch c.Unavailable {
-	case "", CloneBlockerDataCheckpointUnavailable, CloneBlockerWorkActivationUnavailable:
+	case "", CloneBlockerDataCheckpointUnavailable, CloneBlockerWorkActivationUnavailable, CloneBlockerObjectBucketSettingUnavailable:
 	default:
 		return false
 	}
@@ -239,3 +249,55 @@ func (e *ProjectEnvironmentCloneInventoryError) Error() string {
 }
 
 func (e *ProjectEnvironmentCloneInventoryError) Unwrap() error { return ErrConflict }
+
+// cloneSourceBucketIDs lists, sorted and once each, the buckets the captured
+// workloads bind.
+func cloneSourceBucketIDs(records []projectCloneWorkloadRecord) []string {
+	seen := map[string]bool{}
+	ids := []string{}
+	for _, record := range records {
+		if record.snapshot.Bindings == nil {
+			continue
+		}
+		for _, bucket := range record.snapshot.Bindings.Buckets {
+			if !seen[bucket.ID] {
+				seen[bucket.ID] = true
+				ids = append(ids, bucket.ID)
+			}
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// cloneBucketBlockers names each source bucket a clone cannot copy at its
+// data point: one on a backend not qualified for clones, or without
+// versioning (ADR-20261103160000). A bucket several workloads bind is named
+// once; blockers are ordered by bucket name.
+func cloneBucketBlockers(records []projectCloneWorkloadRecord, qualifiedBackends []string) []ProjectEnvironmentCloneCoverageBlocker {
+	qualified := make(map[string]bool, len(qualifiedBackends))
+	for _, backend := range qualifiedBackends {
+		qualified[backend] = true
+	}
+	seen := map[string]bool{}
+	blockers := []ProjectEnvironmentCloneCoverageBlocker{}
+	for _, record := range records {
+		if record.snapshot.Bindings == nil {
+			continue
+		}
+		for _, bucket := range record.snapshot.Bindings.Buckets {
+			if seen[bucket.ID] {
+				continue
+			}
+			seen[bucket.ID] = true
+			if !qualified[bucket.BackendID] {
+				blockers = append(blockers, ProjectEnvironmentCloneCoverageBlocker{Table: "object_buckets", Resource: bucket.Name, Code: CloneBlockerObjectStorageProviderUnqualified})
+			}
+			if !bucket.VersioningEnabled {
+				blockers = append(blockers, ProjectEnvironmentCloneCoverageBlocker{Table: "object_buckets", Resource: bucket.Name, Code: CloneBlockerObjectVersioningRequired})
+			}
+		}
+	}
+	sort.SliceStable(blockers, func(i, j int) bool { return blockers[i].Resource < blockers[j].Resource })
+	return blockers
+}

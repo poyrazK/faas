@@ -2,6 +2,7 @@ package polar
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/url"
@@ -117,4 +118,35 @@ func (e *APIError) Error() string {
 		return "polar: API returned HTTP " + strconv.Itoa(e.Status)
 	}
 	return "polar: API returned HTTP " + strconv.Itoa(e.Status) + ": " + body
+}
+
+// Polar error names (the "error" field of an error response) that apid
+// answers differently from a generic provider failure.
+const (
+	// errAlreadyCanceledSubscription: the subscription is cancelled or
+	// scheduled to cancel, so it cannot be cancelled again or change
+	// product (403).
+	errAlreadyCanceledSubscription = "AlreadyCanceledSubscription"
+	// errPaymentActionRequired: the bank asked to confirm a charge made
+	// without the customer present (3-D Secure, 402).
+	errPaymentActionRequired = "PaymentActionRequired"
+	// errPaymentFailed: the charge was declined or there is no card (402).
+	errPaymentFailed = "PaymentFailed"
+)
+
+// errorName is the "error" field of a Polar error response, which carries
+// the exception name ({"error": "AlreadyCanceledSubscription", "detail":
+// ...}); empty when err is not an APIError or the body is not one.
+func errorName(err error) string {
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		return ""
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(ae.Body), &body) != nil {
+		return ""
+	}
+	return body.Error
 }

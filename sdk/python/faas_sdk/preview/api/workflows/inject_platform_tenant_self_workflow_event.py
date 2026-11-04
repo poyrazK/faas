@@ -109,7 +109,8 @@ def sync_detailed(
 
      Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-
     app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return
-    the same 404.
+    the same 404. A matching retained event may be retried after the run finishes; reusing its key with
+    different content conflicts.
 
     Args:
         id (UUID):
@@ -149,7 +150,8 @@ def sync(
 
      Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-
     app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return
-    the same 404.
+    the same 404. A matching retained event may be retried after the run finishes; reusing its key with
+    different content conflicts.
 
     Args:
         id (UUID):
@@ -184,7 +186,8 @@ async def asyncio_detailed(
 
      Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-
     app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return
-    the same 404.
+    the same 404. A matching retained event may be retried after the run finishes; reusing its key with
+    different content conflicts.
 
     Args:
         id (UUID):
@@ -222,7 +225,8 @@ async def asyncio(
 
      Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-
     app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return
-    the same 404.
+    the same 404. A matching retained event may be retried after the run finishes; reusing its key with
+    different content conflicts.
 
     Args:
         id (UUID):

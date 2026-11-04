@@ -365,7 +365,7 @@ func TestIssueRegroupingCombinesEarlyReleaseMetadataByDeploymentIdentity(t *test
 		}
 		groups = append(groups, row.ID)
 		if _, err := q.IssueObserve(t.Context(), (*e.Pool()), sqlc.IssueObserveParams{
-			ID: row.ID, OccurredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			ID: row.ID, OccurredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}, OccurrenceCount: 1,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -375,7 +375,7 @@ func TestIssueRegroupingCombinesEarlyReleaseMetadataByDeploymentIdentity(t *test
 		}
 		if err := q.IssueObserveRelease(t.Context(), (*e.Pool()), sqlc.IssueObserveReleaseParams{
 			IssueID: row.ID, DeploymentID: pgtype.UUID{Bytes: uuid.MustParse(dep.ID), Valid: true},
-			CommitSha: commit, ImageDigest: image, OccurredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			CommitSha: commit, ImageDigest: image, OccurredAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}, OccurrenceCount: 1,
 		}); err != nil {
 			t.Fatal(err)
 		}

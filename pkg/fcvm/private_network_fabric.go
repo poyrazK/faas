@@ -19,6 +19,7 @@ type PrivateNetworkTransportConfig struct {
 	OverlayInterface string
 	LocalAddress     netip.Addr
 	PeerAddresses    []netip.Addr
+	MTU              int
 }
 
 // WithPrivateNetworkTransport configures the optional transport before vmmd
@@ -31,6 +32,19 @@ func (m *Manager) WithPrivateNetworkTransport(cfg PrivateNetworkTransportConfig)
 	return m
 }
 
+// WithPrivateNetworkTransportIdentitySource installs the regional durable VNI allocator.
+func (m *Manager) WithPrivateNetworkTransportIdentitySource(source func(context.Context, string, string, string) (uint32, error)) *Manager {
+	m.privateNetworkVNISource = source
+	return m
+}
+
+func (m *Manager) privateNetworkVNI(ctx context.Context, spec privatenetwork.FabricSpec) (uint32, error) {
+	if m.privateNetworkVNISource == nil {
+		return 0, nil
+	}
+	return m.privateNetworkVNISource(ctx, spec.AccountID, spec.NetworkID, spec.Region)
+}
+
 // ReconcilePrivateNetworkFabric ensures the dedicated host bridge for one
 // Gregale-owned network exists on this vmmd node. The operation is additive
 // and idempotent: a capture-capable runner probes an existing bridge after a
@@ -38,7 +52,10 @@ func (m *Manager) WithPrivateNetworkTransport(cfg PrivateNetworkTransportConfig)
 // during steady state. When configured, the same reconciliation also attaches
 // a deterministic VXLAN link to the bridge for regional cross-node traffic.
 func (m *Manager) ReconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix) error {
-	return m.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, nil, false)
+	if err := m.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, nil, false); err != nil {
+		return err
+	}
+	return m.renderHostSMTPAllowlistRules(ctx, false)
 }
 
 // ReconcilePrivateNetworkFabricWithPeers applies an authoritative regional
@@ -46,7 +63,10 @@ func (m *Manager) ReconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 // roster is supplied by schedd from active compute-node registrations, so a
 // node join or drain converges without editing every vmmd config file.
 func (m *Manager) ReconcilePrivateNetworkFabricWithPeers(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, peers []netip.Addr) error {
-	return m.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, peers, true)
+	if err := m.reconcilePrivateNetworkFabric(ctx, accountID, networkID, region, cidr, peers, true); err != nil {
+		return err
+	}
+	return m.renderHostSMTPAllowlistRules(ctx, false)
 }
 
 // CheckPrivateNetworkFabric inspects the host state after reconciliation. It
@@ -54,6 +74,8 @@ func (m *Manager) ReconcilePrivateNetworkFabricWithPeers(ctx context.Context, ac
 // distinguish an acknowledged mutation from a dataplane that is still
 // missing a link, bridge membership, or regional FDB peer.
 func (m *Manager) CheckPrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, managedPeers []netip.Addr, peersManaged bool) (privatenetwork.FabricReadiness, error) {
+	m.privateNetworkFabricMu.Lock()
+	defer m.privateNetworkFabricMu.Unlock()
 	if m.captureRunner == nil {
 		return privatenetwork.FabricReadiness{Detail: "fabric readiness probe unavailable"}, nil
 	}
@@ -66,12 +88,34 @@ func (m *Manager) CheckPrivateNetworkFabric(ctx context.Context, accountID, netw
 		return privatenetwork.FabricReadiness{}, err
 	}
 	readiness := privatenetwork.FabricReadiness{Supported: true}
-	if _, err := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", plan.BridgeName}); err != nil {
-		readiness.Detail = fmt.Sprintf("bridge %s is unavailable: %v", plan.BridgeName, err)
+	bridgeLinkOutput, bridgeErr := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", plan.BridgeName})
+	if bridgeErr != nil {
+		readiness.Detail = fmt.Sprintf("bridge %s is unavailable: %v", plan.BridgeName, bridgeErr)
+		return readiness, nil
+	}
+	if mtu := parsePrivateLinkMTU(bridgeLinkOutput); m.privateNetworkMTU() != 0 && mtu != 0 && mtu != m.privateNetworkMTU() {
+		readiness.Detail = fmt.Sprintf("private bridge MTU drift: got %d want %d", mtu, m.privateNetworkMTU())
+		return readiness, nil
+	}
+	namespace := privatenetwork.RouterNamespace(spec.AccountID, spec.Region)
+	host := privatenetwork.RouterHostLink(spec.AccountID, spec.NetworkID)
+	peer := privatenetwork.RouterPeerLink(spec.AccountID, spec.NetworkID)
+	membership, memberErr := m.captureRunner.RunCapture(ctx, []string{"bridge", "link", "show", "dev", host})
+	if memberErr != nil || !strings.Contains(string(membership), "master "+plan.BridgeName) {
+		readiness.Detail = fmt.Sprintf("private router endpoint is not attached to its network bridge: %v", memberErr)
+		return readiness, nil
+	}
+	addresses, addrErr := m.captureRunner.RunCapture(ctx, []string{"ip", "-n", namespace, "-4", "-o", "addr", "show", "dev", peer})
+	if addrErr != nil || !strings.Contains(string(addresses), "inet "+plan.GatewayCIDR.String()+" ") {
+		readiness.Detail = fmt.Sprintf("private router gateway address is unavailable: %v", addrErr)
 		return readiness, nil
 	}
 	transportCfg := m.privateNetworkTransportCfg
 	if !transportCfg.Enabled {
+		if peersManaged && len(managedPeers) > 0 {
+			readiness.Detail = "regional transport is disabled"
+			return readiness, nil
+		}
 		readiness.Ready = true
 		readiness.Detail = "fabric bridge ready"
 		return readiness, nil
@@ -80,18 +124,33 @@ func (m *Manager) CheckPrivateNetworkFabric(ctx context.Context, accountID, netw
 	if peersManaged {
 		peerAddresses = managedPeers
 	}
+	vni, err := m.privateNetworkVNI(ctx, spec)
+	if err != nil {
+		return readiness, err
+	}
 	transportPlan, err := privatenetwork.BuildFabricTransportPlan(privatenetwork.FabricTransportSpec{
 		Fabric:           spec,
+		VNI:              vni,
 		OverlayInterface: transportCfg.OverlayInterface,
 		LocalAddress:     transportCfg.LocalAddress,
 		PeerAddresses:    peerAddresses,
+		MTU:              m.privateNetworkMTU(),
 	})
 	if err != nil {
 		return privatenetwork.FabricReadiness{}, err
 	}
+	if err := m.checkPrivateTransportIdentity(ctx, transportPlan); err != nil {
+		readiness.Detail = err.Error()
+		return readiness, nil
+	}
 	readiness.ExpectedPeerAddresses = append([]netip.Addr(nil), transportPlan.Spec.PeerAddresses...)
-	if _, err := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", transportPlan.LinkName}); err != nil {
-		readiness.Detail = fmt.Sprintf("transport link %s is unavailable: %v", transportPlan.LinkName, err)
+	linkOutput, linkErr := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", transportPlan.LinkName})
+	if linkErr != nil {
+		readiness.Detail = fmt.Sprintf("transport link %s is unavailable: %v", transportPlan.LinkName, linkErr)
+		return readiness, nil
+	}
+	if mtu := parsePrivateLinkMTU(linkOutput); mtu != 0 && mtu != m.privateNetworkMTU() {
+		readiness.Detail = fmt.Sprintf("private transport MTU drift: got %d want %d", mtu, m.privateNetworkMTU())
 		return readiness, nil
 	}
 	bridgeOutput, err := m.captureRunner.RunCapture(ctx, []string{"bridge", "link", "show", "dev", transportPlan.LinkName})
@@ -132,6 +191,9 @@ func formatFabricPeers(peers []netip.Addr) string {
 }
 
 func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix, managedPeers []netip.Addr, peersManaged bool) error {
+	if err := m.validatePrivateTransportMTU(ctx); err != nil {
+		return err
+	}
 	spec, err := privatenetwork.NewFabricSpecFromValues(accountID, networkID, region, cidr.String())
 	if err != nil {
 		return err
@@ -140,6 +202,8 @@ func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 	if err != nil {
 		return err
 	}
+	m.privateNetworkFabricMu.Lock()
+	defer m.privateNetworkFabricMu.Unlock()
 	transportCfg := m.privateNetworkTransportCfg
 	var transportPlan privatenetwork.FabricTransportPlan
 	if transportCfg.Enabled {
@@ -147,11 +211,17 @@ func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 		if peersManaged {
 			peerAddresses = managedPeers
 		}
+		vni, vniErr := m.privateNetworkVNI(ctx, spec)
+		if vniErr != nil {
+			return vniErr
+		}
 		transportPlan, err = privatenetwork.BuildFabricTransportPlan(privatenetwork.FabricTransportSpec{
 			Fabric:           spec,
+			VNI:              vni,
 			OverlayInterface: transportCfg.OverlayInterface,
 			LocalAddress:     transportCfg.LocalAddress,
 			PeerAddresses:    peerAddresses,
+			MTU:              m.privateNetworkMTU(),
 		})
 		if err != nil {
 			return err
@@ -159,14 +229,11 @@ func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 	}
 	key := spec.AccountID + "\x00" + spec.NetworkID
 
-	m.privateNetworkFabricMu.Lock()
-	defer m.privateNetworkFabricMu.Unlock()
-
 	known := false
 	if prior, ok := m.privateNetworkFabric[key]; ok {
 		known = prior == spec.CIDR
 	}
-	if !known && m.captureRunner != nil {
+	if m.captureRunner != nil {
 		_, probeErr := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", plan.BridgeName})
 		known = probeErr == nil
 	}
@@ -190,15 +257,38 @@ func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 			return fmt.Errorf("fcvm: reconcile private network bridge %s: %w", plan.BridgeName, err)
 		}
 	}
+	if mtu := m.privateNetworkMTU(); mtu != 0 {
+		if err := m.run.Run(ctx, []string{"ip", "link", "set", "dev", plan.BridgeName, "mtu", fmt.Sprint(mtu)}); err != nil {
+			return err
+		}
+	}
+	if err := m.reconcilePrivateRouterLinkLocked(ctx, plan); err != nil {
+		return err
+	}
 	if transportCfg.Enabled {
 		transportKnown := m.privateNetworkTransport[key]
 		peerSetKey := transportPeerSetKey(transportPlan.Spec.PeerAddresses)
 		priorPeerSetKey, peerSetKnown := m.privateNetworkTransportPeers[key]
 		peerSetKnown = peerSetKnown && priorPeerSetKey == peerSetKey
 		transportCreated := false
-		if !transportKnown && m.captureRunner != nil {
+		if m.captureRunner != nil {
 			_, probeErr := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", transportPlan.LinkName})
 			transportKnown = probeErr == nil
+		}
+		if transportKnown {
+			drift := false
+			if m.captureRunner != nil {
+				drift = m.checkPrivateTransportIdentity(ctx, transportPlan) != nil
+			} else if prior, ok := m.privateNetworkTransportIdentity[key]; ok {
+				drift = prior.VNI != transportPlan.Spec.VNI || prior.LocalAddress != transportPlan.Spec.LocalAddress || prior.OverlayInterface != transportPlan.Spec.OverlayInterface
+			}
+			if drift {
+				if err := m.run.Run(ctx, transportPlan.Teardown[0]); err != nil {
+					return fmt.Errorf("remove drifted private transport: %w", err)
+				}
+				transportKnown = false
+				m.privateNetworkTransport[key] = false
+			}
 		}
 		if !transportKnown {
 			for _, argv := range transportPlan.Setup {
@@ -208,10 +298,28 @@ func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 			}
 			transportCreated = true
 		}
-		if !transportCreated && !peerSetKnown {
-			for _, argv := range transportPlan.PeerSync {
+		if !transportCreated && (!peerSetKnown || m.captureRunner != nil) {
+			commands := transportPlan.PeerSync
+			if m.captureRunner != nil {
+				output, err := m.captureRunner.RunCapture(ctx, []string{"bridge", "fdb", "show", "dev", transportPlan.LinkName})
+				if err != nil {
+					return fmt.Errorf("inspect private transport peers: %w", err)
+				}
+				commands = privatenetwork.FabricTransportPeerCommands(transportPlan.LinkName, transportPlan.Spec.PeerAddresses, privatenetwork.ParseFabricTransportPeers(output))
+			}
+			for _, argv := range commands {
 				if err := m.run.Run(ctx, argv); err != nil {
 					return fmt.Errorf("fcvm: reconcile private network transport peers %s: %w", transportPlan.LinkName, err)
+				}
+			}
+		}
+		if !transportCreated {
+			if err := m.run.Run(ctx, []string{"ip", "link", "set", "dev", transportPlan.LinkName, "mtu", fmt.Sprint(m.privateNetworkMTU())}); err != nil {
+				return err
+			}
+			for _, argv := range transportPlan.Setup[1:3] {
+				if err := m.run.Run(ctx, argv); err != nil {
+					return fmt.Errorf("fcvm: repair private transport membership: %w", err)
 				}
 			}
 		}
@@ -219,6 +327,12 @@ func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 		// part of Setup. Existing links need the flush-and-replace sync above.
 		m.privateNetworkTransportPeers[key] = peerSetKey
 		m.privateNetworkTransport[key] = true
+		if m.privateNetworkTransportIdentity == nil {
+			m.privateNetworkTransportIdentity = make(map[string]privatenetwork.FabricTransportSpec)
+		}
+		m.privateNetworkTransportIdentity[key] = transportPlan.Spec
+	} else if err := m.removePrivateTransportLocked(ctx, key, spec); err != nil {
+		return err
 	}
 	m.privateNetworkFabric[key] = spec.CIDR
 	return nil
@@ -227,6 +341,13 @@ func (m *Manager) reconcilePrivateNetworkFabric(ctx context.Context, accountID, 
 // RemovePrivateNetworkFabric removes a node-local network bridge. It is used
 // by the detach/delete path and is safe to replay after the bridge is gone.
 func (m *Manager) RemovePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix) error {
+	if err := m.removePrivateNetworkFabric(ctx, accountID, networkID, region, cidr); err != nil {
+		return err
+	}
+	return m.renderHostSMTPAllowlistRules(ctx, false)
+}
+
+func (m *Manager) removePrivateNetworkFabric(ctx context.Context, accountID, networkID, region string, cidr netip.Prefix) error {
 	spec, err := privatenetwork.NewFabricSpecFromValues(accountID, networkID, region, cidr.String())
 	if err != nil {
 		return err
@@ -239,39 +360,12 @@ func (m *Manager) RemovePrivateNetworkFabric(ctx context.Context, accountID, net
 
 	m.privateNetworkFabricMu.Lock()
 	defer m.privateNetworkFabricMu.Unlock()
-	if m.privateNetworkTransportCfg.Enabled {
-		transportPlan, transportErr := privatenetwork.BuildFabricTransportPlan(privatenetwork.FabricTransportSpec{
-			Fabric:           spec,
-			OverlayInterface: m.privateNetworkTransportCfg.OverlayInterface,
-			LocalAddress:     m.privateNetworkTransportCfg.LocalAddress,
-			PeerAddresses:    m.privateNetworkTransportCfg.PeerAddresses,
-		})
-		if transportErr != nil {
-			return transportErr
-		}
-		transportKnown := m.privateNetworkTransport[key]
-		if !transportKnown && m.captureRunner != nil {
-			_, probeErr := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", transportPlan.LinkName})
-			transportKnown = probeErr == nil
-		}
-		if transportKnown {
-			if err := m.run.Run(ctx, transportPlan.Teardown[0]); err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				if m.captureRunner != nil {
-					if _, probeErr := m.captureRunner.RunCapture(ctx, []string{"ip", "link", "show", "dev", transportPlan.LinkName}); probeErr != nil {
-						m.privateNetworkTransport[key] = false
-					} else {
-						return fmt.Errorf("fcvm: remove private network transport %s: %w", transportPlan.LinkName, err)
-					}
-				} else {
-					return fmt.Errorf("fcvm: remove private network transport %s: %w", transportPlan.LinkName, err)
-				}
-			} else {
-				m.privateNetworkTransport[key] = false
-			}
-		}
+	if err := m.removePrivateTransportLocked(ctx, key, spec); err != nil {
+		return err
+	}
+
+	if err := m.removePrivateRouterLinkLocked(ctx, plan); err != nil {
+		return err
 	}
 	if err := m.run.Run(ctx, plan.Teardown[0]); err != nil {
 		if ctx.Err() != nil {

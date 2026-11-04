@@ -29,6 +29,9 @@ type consentView struct {
 	LoginURL     string
 	// ClientHost is the site a metadata-document client is published at.
 	ClientHost string
+	// Org is the shared organization the connection acts in
+	// (ADR-20261101225122).
+	Org string
 	// SameTab: the hosted bridge sends the browser to sign-in and back.
 	SameTab      bool
 	Apps         []consentApp
@@ -91,6 +94,11 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 	}
 	view := consentView{ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, ClientHost: clientHost(client), SameTab: r.opts.Hosted}
 	if g := r.grants[flow.GrantID]; g != nil {
+		// The connection's key may carry less than the client asked for: an
+		// organization's agent policy caps it (ADR-20261101225122).
+		view.Capabilities = describeCapabilities(g.capabilities)
+		view.Writes = slices.Contains(g.scopes, scopeWrite)
+		view.Org = g.orgName
 		view.Environments = g.availableEnvironments
 		for _, app := range g.availableApps {
 			view.Apps = append(view.Apps, consentApp{Slug: app.Slug})

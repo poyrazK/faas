@@ -313,7 +313,9 @@ func (e mfaTestEnv) generateEnrolledAccount(t *testing.T) (recovCodes []string, 
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode /enroll: %v", err)
 	}
-	code, err := totp.GenerateCodeCustom(out.Secret, time.Now().UTC(), totp.ValidateOpts{
+	// Spend the previous valid step on enrollment, leaving the current
+	// step for tests that verify another session immediately afterwards.
+	code, err := totp.GenerateCodeCustom(out.Secret, time.Now().UTC().Add(-30*time.Second), totp.ValidateOpts{
 		Period: 30, Digits: 6, Algorithm: 0, // 0 = SHA1 in pquerna/otp (otp.AlgorithmSHA1)
 	})
 	if err != nil {

@@ -25,6 +25,9 @@ type EnvironmentGitOpsServiceBindingRoute struct {
 	RequireHTTPS       bool
 	CallScope          *api.ServiceCallScope
 	Reliability        *api.ServiceReliabilityPolicy
+	// ReconciliationActive permits new verification work. Serving uses the
+	// active release independently of the controller's mode and suspension.
+	ReconciliationActive bool
 }
 
 // EnvironmentGitOpsServiceBindingStore resolves production service aliases

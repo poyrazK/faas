@@ -119,6 +119,7 @@ func TestLoopAppliesRelayedInstanceFailureKinds(t *testing.T) {
 				Channel: db.NotifyInstanceFailureRelayed,
 				Payload: tc.payload(inst.ID, app.ID),
 			})
+			loop.WorkPool().Drain()
 
 			got, err := store.InstanceByID(ctx, inst.ID)
 			if err != nil {

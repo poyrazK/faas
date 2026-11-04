@@ -1165,3 +1165,12 @@ func (s *PgStore) BeginTrafficBindingForTest(ctx context.Context, account, appID
 	}
 	return tx, nil
 }
+
+// SeedLegacyWorkflowEvent inserts a retained event as written by an older
+// version, before the current event payload limit existed.
+func (m *MemStore) SeedLegacyWorkflowEvent(event WorkflowEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workflowEvents[event.RunID] = append(m.workflowEvents[event.RunID], event)
+	m.workflowEventApps[event.RunID] = m.workflowRuns[event.RunID].AppID
+}

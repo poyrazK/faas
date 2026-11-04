@@ -69,6 +69,23 @@ const accountPurgeWaitsQuery = `select (select count(*) from hosting_sites where
        (select count(*) from managed_postgres_checkpoint_maintenance where source_database_id in (select id from managed_postgres_databases where account_id = $1))
      + (select count(*) from managed_postgres_cutover_source_fences where source_database_id in (select id from managed_postgres_databases where account_id = $1))`
 
+// accountGitJobPurgeSteps delete, before the account's environment Git
+// sources, the jobs those sources manage (jobs_environment_git_source_fk has
+// no cascade, and the job guard refuses to unlink a managed job) with every
+// row that references them without a cascade. $1 is the account.
+var accountGitJobPurgeSteps = []appPurgeStep{
+	{"job_tasks", `delete from job_tasks where run_id in (select r.id from job_runs r join jobs j on j.id = r.job_id where j.account_id = $1 and j.environment_git_source_id is not null)
+	   or instance_id in (select i.id from instances i join jobs j on j.id = i.job_id where j.account_id = $1 and j.environment_git_source_id is not null)`},
+	{"ci_job_runtime", `delete from ci_job_runtime where instance_id in (select i.id from instances i join jobs j on j.id = i.job_id where j.account_id = $1 and j.environment_git_source_id is not null)`},
+	{"ci_job_attempts", `delete from ci_job_attempts where run_id in (select r.id from job_runs r join jobs j on j.id = r.job_id where j.account_id = $1 and j.environment_git_source_id is not null)`},
+	{"instances", `delete from instances where job_id in (select id from jobs where account_id = $1 and environment_git_source_id is not null)`},
+	{"exclusive_work_effects", `delete from exclusive_work_effects where operation_id in (select o.id from exclusive_work_operations o join jobs j on j.id = o.job_id where j.account_id = $1 and j.environment_git_source_id is not null)`},
+	{"exclusive_work_submissions", `delete from exclusive_work_submissions where operation_id in (select o.id from exclusive_work_operations o join jobs j on j.id = o.job_id where j.account_id = $1 and j.environment_git_source_id is not null)`},
+	{"exclusive_work_operations", `delete from exclusive_work_operations where job_id in (select id from jobs where account_id = $1 and environment_git_source_id is not null)`},
+	{"environment_workload_retirements", `delete from environment_workload_retirements where job_id in (select id from jobs where account_id = $1 and environment_git_source_id is not null)`},
+	{"jobs", `delete from jobs where account_id = $1 and environment_git_source_id is not null`},
+}
+
 // accountPurgeWaitsTx refuses DeleteAccount, with a typed reason, while the
 // account still has rows another workflow must retire. Without it the purge
 // failed on their keys at the final delete, every tick, with nothing but a

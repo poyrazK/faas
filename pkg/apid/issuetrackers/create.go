@@ -62,7 +62,7 @@ func (s CreationService) Run(ctx context.Context, in api.CreateNativeIssueTicket
 	return s.run(ctx, in, "github", in.RecoveryURL != "")
 }
 func (s CreationService) RunLinear(ctx context.Context, in api.CreateNativeLinearIssueTicketRequest) (api.NativeIssueTicketResult, error) {
-	return s.run(ctx, api.CreateNativeIssueTicketRequest{RequestID: in.RequestID, Repository: in.TeamID, Title: in.Title, Description: in.Description, RecoveryURL: in.RecoveryURL}, "linear", in.Recover || in.RecoveryURL != "")
+	return s.run(ctx, api.CreateNativeIssueTicketRequest{RequestID: in.RequestID, Repository: in.TeamID, Title: in.Title, Description: in.Description, RecoveryURL: in.RecoveryURL, OriginalAppSlug: in.OriginalAppSlug}, "linear", in.Recover || in.RecoveryURL != "")
 }
 func (s CreationService) run(ctx context.Context, in api.CreateNativeIssueTicketRequest, provider string, recoverRequested bool) (api.NativeIssueTicketResult, error) {
 	if s.Host == nil || s.Store == nil || s.Provider == nil {
@@ -103,16 +103,33 @@ func (s CreationService) run(ctx context.Context, in api.CreateNativeIssueTicket
 		}
 		in.RecoveryURL = n.URL
 	}
-	encoded, _ := json.Marshal(struct {
-		Request    issuetracker.Request
-		Connection Connection
-	}{request, p.Connection})
-	sum := sha256.Sum256(encoded)
-	receipt, e := s.Store.ReserveNativeIssueTicket(ctx, state.NativeIssueTicketReceipt{AccountID: p.Connection.AccountID, AppID: p.Issue.AppID, IssueID: request.IssueID, RequestID: request.RequestID, Hash: hex.EncodeToString(sum[:])})
+	// New receipts bind immutable app identity rather than a renameable slug.
+	// Legacy receipts used the slug in their hash. The optional original slug
+	// lets an owner prove the exact old request without loosening input checks.
+	hashRequest := func(slug string) string {
+		copy := request
+		copy.AppSlug = slug
+		encoded, _ := json.Marshal(struct {
+			Request    issuetracker.Request
+			Connection Connection
+		}{copy, p.Connection})
+		sum := sha256.Sum256(encoded)
+		return hex.EncodeToString(sum[:])
+	}
+	stableHash := hashRequest("")
+	receipt, e := s.Store.ReserveNativeIssueTicket(ctx, state.NativeIssueTicketReceipt{AccountID: p.Connection.AccountID, AppID: p.Issue.AppID, IssueID: request.IssueID, RequestID: request.RequestID, Hash: stableHash})
 	if e != nil {
 		return api.NativeIssueTicketResult{}, e
 	}
-	if receipt.Hash != hex.EncodeToString(sum[:]) {
+	matches := receipt.Hash == stableHash || receipt.Hash == hashRequest(request.AppSlug)
+	if !matches && in.OriginalAppSlug != "" {
+		legacy := request
+		legacy.AppSlug = in.OriginalAppSlug
+		if _, err := issuetracker.ValidateRequest(legacy); err == nil {
+			matches = receipt.Hash == hashRequest(in.OriginalAppSlug)
+		}
+	}
+	if !matches {
 		return api.NativeIssueTicketResult{}, api.NewProblem(409, "issue_tracker_request_conflict", "Ticket request conflict", "request ID belongs to different inputs or a different connection; preserve the original request for recovery")
 	}
 	if in.RecoveryURL != "" && receipt.TicketURL != "" && receipt.TicketURL != in.RecoveryURL {

@@ -45,7 +45,11 @@ func TestPgAppDeleteWaitsBehindTheAccountTrafficLock(t *testing.T) {
 		t.Fatalf("delete under the 5 s budget behind a held account lock = %v, want the deadline (production's 503)", err)
 	}
 
+	// The unlock uses holder, so wait for it before the deferred Release.
+	unlocked := make(chan struct{})
+	defer func() { <-unlocked }()
 	go func() {
+		defer close(unlocked)
 		time.Sleep(time.Second)
 		_, _ = holder.Exec(context.WithoutCancel(ctx), `select pg_advisory_unlock(hashtextextended($1, 0))`, key)
 	}()

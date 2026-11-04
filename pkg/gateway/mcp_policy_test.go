@@ -141,3 +141,55 @@ func TestMCPPolicyProtectsPreviewAndCustomAliases(t *testing.T) {
 		}
 	}
 }
+
+// adr: 644 — browser clients must be able to send annotated parameter headers.
+func TestMCPPolicyBrowserPreflightValidatesAndReflectsParameterHeaders(t *testing.T) {
+	policy := &api.MCPResourcePolicy{Resource: "https://app.example/mcp", AllowedOrigins: []string{"https://trusted.example"}}
+	for _, tc := range []struct {
+		name, origin, method, headers string
+		duplicate                     bool
+		want                          int
+	}{
+		{"annotated", "https://trusted.example", "POST", "authorization, content-type, MCP-Method, MCP-Name, MCP-Param-Region, MCP-Param-Trace_Id", false, 204},
+		{"read", "https://trusted.example", "GET", "mcp-session-id", false, 204},
+		{"delete", "https://trusted.example", "DELETE", "mcp-session-id", false, 204},
+		{"untrusted", "https://evil.example", "POST", "mcp-param-region", false, 403},
+		{"duplicate origin", "https://trusted.example", "POST", "mcp-param-region", true, 403},
+		{"bad method", "https://trusted.example", "PATCH", "mcp-param-region", false, 400},
+		{"missing method", "https://trusted.example", "", "mcp-param-region", false, 400},
+		{"unknown header", "https://trusted.example", "POST", "x-private", false, 400},
+		{"empty annotation", "https://trusted.example", "POST", "mcp-param-", false, 400},
+		{"invalid annotation", "https://trusted.example", "POST", "mcp-param-bad name", false, 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest("OPTIONS", policy.Resource, nil)
+			request.Header.Set("Origin", tc.origin)
+			if tc.duplicate {
+				request.Header.Add("Origin", tc.origin)
+			}
+			if tc.method != "" {
+				request.Header.Set("Access-Control-Request-Method", tc.method)
+			}
+			request.Header.Set("Access-Control-Request-Headers", tc.headers)
+			response := httptest.NewRecorder()
+			if !(&Handler{}).applyMCPResourcePolicy(response, request, App{}, &EdgeRuleJWTResolved{Issuer: "https://issuer.example", MCP: policy}) {
+				t.Fatal("preflight reached authentication")
+			}
+			if response.Code != tc.want {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body)
+			}
+			if tc.want == 204 {
+				if response.Header().Get("Access-Control-Allow-Origin") != tc.origin || !strings.Contains(strings.Join(response.Header().Values("Vary"), ","), "Access-Control-Request-Headers") {
+					t.Fatalf("missing CORS response: %v", response.Header())
+				}
+				for _, name := range strings.Split(strings.ToLower(tc.headers), ",") {
+					if !strings.Contains(response.Header().Get("Access-Control-Allow-Headers"), strings.TrimSpace(name)) {
+						t.Fatalf("header %s omitted: %v", name, response.Header())
+					}
+				}
+			} else if response.Header().Get("Access-Control-Allow-Headers") != "" {
+				t.Fatal("invalid preflight granted headers")
+			}
+		})
+	}
+}

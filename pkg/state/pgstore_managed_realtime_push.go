@@ -63,7 +63,7 @@ func (s *PgStore) PutManagedRealtimePushDevice(ctx context.Context, d ManagedRea
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var ep string
-	err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 and enabled for update`, d.EndpointID).Scan(&ep)
+	err = tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id=$1 and enabled for no key update`, d.EndpointID).Scan(&ep)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

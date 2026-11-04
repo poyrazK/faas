@@ -130,7 +130,9 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 	}
 	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(r.Context(), state.ProjectEnvironmentCloneCaptureRequest{AccountID: acct.ID, ProjectID: project.ID,
 		SourceEnvironment: req.FromEnvironment, TargetEnvironment: req.Slug, IdempotencyKey: key, RequireCompleteInventory: true,
-		AdmissionSwitches: []string{runtimeConfigFullEnvironmentClones, runtimeConfigFullEnvironmentCloneAdmission}})
+		AdmissionSwitches:       []string{runtimeConfigFullEnvironmentClones, runtimeConfigFullEnvironmentCloneAdmission},
+		QualifiedObjectBackends: s.cloneQualifiedObjectBackends(),
+		CheckObjectCapacity:     s.cloneObjectCapacityCheck(acct)})
 	if err != nil {
 		operator, _ := s.adminAllows(acct)
 		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, operator, err))
@@ -159,7 +161,11 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, ope
 		problem := api.NewProblem(http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "Full environment clone unavailable",
 			"the source uses resources a full clone cannot copy into an isolated stage yet")
 		for _, blocker := range inventory.Blockers {
-			problem.Errors = append(problem.Errors, api.FieldError{Field: "resource_coverage." + blocker.Table, Expected: "an isolated stage strategy", Got: blocker.Code})
+			field := "resource_coverage." + blocker.Table
+			if blocker.Resource != "" {
+				field += "." + blocker.Resource
+			}
+			problem.Errors = append(problem.Errors, api.FieldError{Field: field, Expected: "an isolated stage strategy", Got: blocker.Code})
 		}
 		return problem
 	case errors.As(err, &coverage):
@@ -178,6 +184,11 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, ope
 		return problem
 	case errors.Is(err, state.ErrProjectEnvironmentCloneAdmissionClosed):
 		return fullProjectEnvironmentCloneUnavailable()
+	case errors.Is(err, state.ErrObjectCapacity):
+		return cloneObjectCapacityProblem(err)
+	case errors.Is(err, state.ErrObjectUsageStale):
+		return api.NewProblem(http.StatusServiceUnavailable, "object_storage_usage_stale", "Object storage usage unavailable",
+			"the source's buckets cannot be sized against the account's storage limits right now; retry in a few minutes")
 	case errors.Is(err, state.ErrInvalidProjectEnvironmentCloneOperation):
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid full clone",
 			"the Idempotency-Key must be 1 to 255 characters and the source and target environments must differ")

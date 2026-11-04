@@ -43,6 +43,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/apid/domaincert"
 )
 
 // cnameLookupFunc is the test seam for the CNAME verifier. Mirrors
@@ -102,6 +104,8 @@ const dialCertTimeout = 5 * time.Second
 // the real tls.Dial; tests inject an httptest.NewTLSServer-backed
 // dialer via test cert dial.
 var dialCertFunc = func(ctx context.Context, domain string) (*x509.Certificate, error) {
+	ctx, cancel := context.WithTimeout(ctx, dialCertTimeout)
+	defer cancel()
 	// CRIT-2 fix: net.Dialer.DialContext(ctx, ...) honours ctx
 	// cancellation AND applies its own Timeout as a hard cap. We
 	// wrap the resulting raw conn in tls.Client so the TLS
@@ -116,10 +120,9 @@ var dialCertFunc = func(ctx context.Context, domain string) (*x509.Certificate, 
 			return nil, fmt.Errorf("%w: %w", errCertFailure, errCertAddressBlocked)
 		}
 	}
-	// Fail closed on a mixed answer set above, then bind the connection to one
-	// validated numeric answer so net.Dialer cannot perform a second lookup.
-	approvedIP := addresses[0].IP.String()
-	rawConn, err := certDialContextFunc(ctx, "tcp", net.JoinHostPort(approvedIP, "443"))
+	// Fail closed on mixed answers, then try the validated numeric addresses
+	// within the probe budget. No connection performs a second DNS lookup.
+	rawConn, err := domaincert.Dial(ctx, addresses, dialCertTimeout, certDialContextFunc)
 	if err != nil {
 		return nil, fmt.Errorf("dial certificate endpoint: %w", joinErr(errCertFailure, err))
 	}

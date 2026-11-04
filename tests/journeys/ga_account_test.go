@@ -61,6 +61,22 @@ func TestAccountExportAndDPA(t *testing.T) {
 	})
 }
 
+// MFA management opens session-authenticated browser forms. The CLI must
+// provide the handoff without attempting a bearer-authenticated mutation.
+func TestAccountMFABrowserHandoff(t *testing.T) {
+	tg := needs(t, tierSmoke, true)
+	t.Parallel()
+	for _, action := range []string{"enroll", "confirm", "verify", "recover", "disable"} {
+		t.Run(action, func(t *testing.T) {
+			result := object(t, tg.ok(t, time.Minute, "account", "mfa", action).stdout)
+			if field(result, "requires_browser") != true || str(result, "action") != action ||
+				!strings.Contains(str(result, "url"), "/dashboard/account/mfa?action="+action) {
+				t.Fatalf("MFA browser handoff = %s", compact(result))
+			}
+		})
+	}
+}
+
 // TestCLITools exercises the developer-facing CLI commands that need no
 // app: version, context, local source check, shell completion, man pages,
 // full help and earlier command names (row 156).

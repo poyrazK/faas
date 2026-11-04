@@ -84,7 +84,7 @@ func (s *server) projectDashboardDomains(ctx stdctx, log *slog.Logger, slug stri
 			DNSRecords:       resp.DNSRecords,
 			DoctorURL:        dashboardDomainDoctorURL(slug, domain.Domain),
 		}
-		if obs, err := s.store.GetDoctorObservation(ctx, domain.Domain); err == nil {
+		if obs, err := s.store.GetDoctorObservation(state.WithCustomDomainProbe(ctx, domain), domain.Domain); err == nil {
 			stale := !obs.ObservedAt.IsZero() && time.Since(obs.ObservedAt) >= s.doctorTTL()
 			report := doctorReportFromObs(domain, obs, stale)
 			summary := &dashboard.DomainDoctorSummary{Healthy: report.Healthy, Stale: report.Stale, ObservedAt: report.ObservedAt}
@@ -95,7 +95,7 @@ func (s *server) projectDashboardDomains(ctx stdctx, log *slog.Logger, slug stri
 				})
 			}
 			item.Doctor = summary
-		} else if !errors.Is(err, state.ErrNotFound) {
+		} else if !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrStaleCustomDomainProbe) {
 			log.Warn("dashboard renderAppDomains: get doctor observation", "domain", domain.Domain, "err", err)
 		}
 		items = append(items, item)

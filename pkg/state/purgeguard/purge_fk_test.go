@@ -129,7 +129,7 @@ var (
 	// tokenPattern finds, in order, inline DELETE statements and calls.
 	// An "update <table> set <col> = null" clears that table's references
 	// without deleting its rows; it is recorded as "~<table>".
-	tokenPattern = regexp.MustCompile("(?i)delete\\s+from\\s+(\\w+)|\\.(\\w+)\\(|\\b(purgeOperationOwnerTx|appPurgeSteps)\\b|update\\s+(\\w+)\\s+set\\s+\\w+\\s*=\\s*null\\b")
+	tokenPattern = regexp.MustCompile("(?i)delete\\s+from\\s+(\\w+)|\\.(\\w+)\\(|\\b(purgeOperationOwnerTx|appPurgeSteps|accountGitJobPurgeSteps)\\b|update\\s+(\\w+)\\s+set\\s+\\w+\\s*=\\s*null\\b")
 )
 
 // removals lists the tables a purge deletes from, in the order it deletes,
@@ -282,7 +282,8 @@ func TestAccountPurgeClearsEveryRestrictingKey(t *testing.T) {
 	queries := sqlcDeletes(t)
 	pgstore := readFile(t, "../pgstore.go")
 	helpers := map[string]string{
-		"purgeOperationOwnerTx": goBlock(t, readFile(t, "../operations_invocation_row.go"), "func purgeOperationOwnerTx("),
+		"purgeOperationOwnerTx":   goBlock(t, readFile(t, "../operations_invocation_row.go"), "func purgeOperationOwnerTx("),
+		"accountGitJobPurgeSteps": goBlock(t, readFile(t, "../account_purge.go"), "var accountGitJobPurgeSteps = "),
 	}
 	body := goBlock(t, pgstore, "func (s *PgStore) DeleteAccount(")
 	// Everything after the sentinel delete runs once the account is gone.

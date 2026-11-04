@@ -1098,7 +1098,7 @@ func firedFlash(r *http.Request) string {
 	switch r.URL.Query().Get("fired") {
 	case "1":
 		return "ok"
-	case "error", "disabled", "busy", "suspended", "plan":
+	case "error", "disabled", "busy", "suspended", "plan", "budget":
 		return r.URL.Query().Get("fired")
 	default:
 		return ""
@@ -1642,6 +1642,7 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	data.CanCheckout = s.canStartCheckout(ctx, acct)
 	data.UpgradeOptions = upgradeOptionsFor(acct)
 	data.UpgradeNotice = upgradeNoticeFor(r.URL.Query().Get("upgrade"))
+	data.ScheduledChange, _ = s.scheduledChangeNotice(ctx, acct)
 
 	// Issue #561 CSRF envelope for the raise-cap form. Mirrors the
 	// renderAccount pattern at line 792 (delete + restore tokens). The

@@ -29,6 +29,25 @@ func customDomainTarget() string {
 	return strings.ToLower(strings.TrimSuffix(appsDomainFunc(), "."))
 }
 
+// customDomainCAAHost follows the certificate being requested: legacy mode
+// mints a wildcard at the zone name, on-demand mode mints the concrete probe.
+func customDomainCAAHost(domain string) (host string, wildcard bool) {
+	if suffix, ok := state.WildcardDomainSuffix(domain); ok && !api.CustomDomainTLSOnDemand() {
+		return suffix, true
+	}
+	host, _ = state.WildcardProbeHost(domain)
+	return host, false
+}
+
+func customDomainCAARemediation(domain string) string {
+	host, wildcard := customDomainCAAHost(domain)
+	tag := "issue"
+	if wildcard {
+		tag = "issuewild"
+	}
+	return "Update CAA record at " + host + " to permit letsencrypt.org (e.g. '0 " + tag + " \"letsencrypt.org\"')"
+}
+
 // customDomainAddresses returns the edge addresses customers may use for
 // A/AAAA records. apid validates the variable at boot, so a parse error here
 // cannot happen in a running daemon.
@@ -109,20 +128,34 @@ func addressesAreEdge(observed []string) bool {
 }
 
 // resolvesToEdge reports whether domain's A and AAAA answers all belong to
-// the configured edge, returning the observed addresses. A failed lookup of
-// one family counts as no records of that family.
-func resolvesToEdge(ctx context.Context, domain string) (bool, []string) {
-	if len(customDomainAddresses()) == 0 {
-		return false, nil
-	}
+// the configured edge, returning the observed addresses. Transient lookup
+// failures leave the result pending rather than revoking a healthy domain.
+func resolvesToEdge(ctx context.Context, domain string) (probeStatus, []string) {
 	var observed []string
-	if v4, err := aLookupFunc(ctx, domain); err == nil {
-		observed = append(observed, v4...)
+	pending := false
+	for _, lookup := range []func(context.Context, string) ([]string, error){aLookupFunc, aaaaLookupFunc} {
+		answers, err := lookup(ctx, domain)
+		if err != nil {
+			pending = pending || !isNotFound(err)
+			continue
+		}
+		observed = append(observed, answers...)
 	}
-	if v6, err := aaaaLookupFunc(ctx, domain); err == nil {
-		observed = append(observed, v6...)
+	if len(observed) > 0 && len(customDomainAddresses()) == 0 {
+		// Without operator-supplied addresses, an A/AAAA alternative cannot
+		// be classified. Absence and resolver failures are still evaluated.
+		return probePending, observed
 	}
-	return addressesAreEdge(observed), observed
+	if len(observed) > 0 && !addressesAreEdge(observed) {
+		return probeFail, observed
+	}
+	if pending {
+		return probePending, observed
+	}
+	if addressesAreEdge(observed) {
+		return probeOK, observed
+	}
+	return probeFail, observed
 }
 
 // withinOnDemandIssuanceGrace reports whether a verified domain is still in

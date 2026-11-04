@@ -54,6 +54,14 @@ func (m *Manager) AllowResolvedEgress(ctx context.Context, source netip.Addr, ad
 		m.mu.Unlock()
 		return ErrResolvedEgressNoInstance
 	}
+	m.mu.Unlock()
+	unlock := m.lockInstanceNetworkPolicy(inst)
+	defer unlock()
+	m.mu.Lock()
+	if m.live[id] != inst {
+		m.mu.Unlock()
+		return ErrResolvedEgressNoInstance
+	}
 	gated := inst.Net.DNSGated && inst.Net.Netns != ""
 	database := databasePort != 0 && inst.Net.DatabaseEgress && inst.Net.Netns != ""
 	if !gated && !database {
@@ -175,6 +183,14 @@ func (m *Manager) seedResolvedEgress(ctx context.Context, instance string) {
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	if !ok || inst.AppID == "" || inst.Net.Netns == "" || !inst.Net.DNSGated && !inst.Net.DatabaseEgress {
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
+	unlock := m.lockInstanceNetworkPolicy(inst)
+	defer unlock()
+	m.mu.Lock()
+	if m.live[instance] != inst {
 		m.mu.Unlock()
 		return
 	}

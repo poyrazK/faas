@@ -304,6 +304,9 @@ func (s *server) removeOrgMember(w http.ResponseWriter, r *http.Request, acct st
 			"transfer ownership or ask another owner to remove you"))
 		return
 	}
+	if s.refuseBillingContactRemoval(r.Context(), w, mem.OrgID, targetID) {
+		return
+	}
 	activity := newOrgAccessActivity(r, acct, mem.OrgID, "org.member.removed", "member", nil)
 	if err := s.removeOrgMemberWithActivity(r.Context(), mem.OrgID, targetID, activity); err != nil {
 		switch {

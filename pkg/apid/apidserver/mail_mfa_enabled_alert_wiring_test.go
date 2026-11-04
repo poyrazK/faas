@@ -168,7 +168,11 @@ CREATE TRIGGER revoke_enabled_alert_session AFTER INSERT ON platform_mail_produc
 			if mode == "missing_setup" {
 				expectedCodes = 0
 			}
-			if enrolled != success || required == success || codes != expectedCodes || events != wantEvents || recorder.calls != 0 {
+			inlineAlerts := 0
+			if mode == "off" {
+				inlineAlerts = 1
+			}
+			if enrolled != success || required == success || codes != expectedCodes || events != wantEvents || recorder.calls != inlineAlerts {
 				t.Fatal("confirmation, policy, recovery codes or alert changed incorrectly", enrolled, required, codes, events, recorder.calls)
 			}
 			cookieCount := 0
@@ -179,7 +183,7 @@ CREATE TRIGGER revoke_enabled_alert_session AFTER INSERT ON platform_mail_produc
 					cookieCount++
 					fresh = c.Value
 					envelope, err := manager.Verify(c.Value)
-					if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != id || !envelope.StepUpAt.IsZero() {
+					if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != id || envelope.StepUpAt.IsZero() {
 						t.Fatal("confirmation changed session proof rules", err)
 					}
 				}
@@ -210,8 +214,8 @@ CREATE TRIGGER revoke_enabled_alert_session AFTER INSERT ON platform_mail_produc
 			}
 			if mode == "atomic" {
 				repeated := enabledMFAPost(t, handler, manager, id, fresh, "/v1/account/mfa/confirm", code, true)
-				if repeated.Code != http.StatusOK {
-					t.Fatal("valid repeated confirmation failed", repeated.Code, repeated.Body.String())
+				if repeated.Code != http.StatusConflict || repeated.Header().Get("Set-Cookie") != "" {
+					t.Fatal("repeated confirmation granted another session", repeated.Code)
 				}
 				if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM platform_mail_producer_outbox WHERE template='mfa_enabled'").Scan(&events); err != nil || events != 1 {
 					t.Fatal("repeat confirmation duplicated alert", err)

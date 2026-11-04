@@ -9,7 +9,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// TestOutboundRelayEndpointMatchesAPI keeps guest-init's relay address and
+// the one `gregale add ai` writes into app settings the same (ADR
+// 20261027132936).
+func TestOutboundRelayEndpointMatchesAPI(t *testing.T) {
+	if OutboundRelayEndpoint != api.OutboundRelayURL {
+		t.Fatalf("guest-init relay %q, api.OutboundRelayURL %q", OutboundRelayEndpoint, api.OutboundRelayURL)
+	}
+}
 
 func TestServeOutboundRelayCopiesBothDirections(t *testing.T) {
 	host, err := net.Listen("tcp", "127.0.0.1:0")

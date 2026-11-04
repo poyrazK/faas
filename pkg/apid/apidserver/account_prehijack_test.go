@@ -150,7 +150,8 @@ func TestVerifyEmailLinkKeepsSignupCredentials(t *testing.T) {
 	srv, mailer, _ := v1AuthTestHarness(t)
 	h := srv.handler()
 	key := signupWithPassword(t, h, "owner@example.com", "owner-password-123!")
-	req := httptest.NewRequest(http.MethodGet, "/v1/auth/verify-email?token="+lastMailToken(t, mailer, verifyEmailTokenPattern), nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-email", strings.NewReader("token="+lastMailToken(t, mailer, verifyEmailTokenPattern)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code >= 400 {

@@ -42,7 +42,7 @@ func (m *management) listEnvironments(ctx context.Context, _ noArgs) (any, error
 		}
 	} else {
 		var err error
-		grants, err = discoverEnvironments(ctx, m.client)
+		grants, err = discoverEnvironments(ctx, m.client, m.opts.Org)
 		if err != nil {
 			return nil, err
 		}

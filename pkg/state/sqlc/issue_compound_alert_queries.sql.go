@@ -12,17 +12,24 @@ import (
 )
 
 const issueCompoundCount = `-- name: IssueCompoundCount :one
-SELECT count(*) AS observed_events,
-count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers
-FROM issue_events e
-WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1)
-AND e.occurred_at > $2 AND e.occurred_at <= $3
+WITH impact_events AS MATERIALIZED (
+ SELECT CASE WHEN e.occurred_at > $1::timestamptz AND e.occurred_at <= $2::timestamptz THEN e.verified_platform_tenant_id END AS verified_platform_tenant_id, CASE WHEN e.occurred_at > $1::timestamptz AND e.occurred_at <= $2::timestamptz THEN e.verified_consumer_id END AS verified_consumer_id, issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$1::timestamptz,$2::timestamptz,false,true)::bigint AS occurrence_count FROM issue_events e
+ WHERE e.issue_id IN (SELECT $3::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$3)
+ AND e.occurred_at >= $1::timestamptz - interval '1 second' AND e.occurred_at <= $2::timestamptz + interval '1 second'
+ AND issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$1::timestamptz,$2::timestamptz,false,true)>0
+), linked_customers AS (
+ SELECT DISTINCT verified_consumer_id FROM impact_events WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+)
+SELECT COALESCE(sum(e.occurrence_count),0)::bigint AS observed_events,
+ (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+ FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS identified_customers
+FROM impact_events e LEFT JOIN linked_customers l ON l.verified_consumer_id=e.verified_consumer_id
 `
 
 type IssueCompoundCountParams struct {
-	IssueID pgtype.UUID
 	Since   pgtype.Timestamptz
 	Until   pgtype.Timestamptz
+	IssueID pgtype.UUID
 }
 
 type IssueCompoundCountRow struct {
@@ -31,7 +38,7 @@ type IssueCompoundCountRow struct {
 }
 
 func (q *Queries) IssueCompoundCount(ctx context.Context, db DBTX, arg IssueCompoundCountParams) (IssueCompoundCountRow, error) {
-	row := db.QueryRow(ctx, issueCompoundCount, arg.IssueID, arg.Since, arg.Until)
+	row := db.QueryRow(ctx, issueCompoundCount, arg.Since, arg.Until, arg.IssueID)
 	var i IssueCompoundCountRow
 	err := row.Scan(&i.ObservedEvents, &i.IdentifiedCustomers)
 	return i, err

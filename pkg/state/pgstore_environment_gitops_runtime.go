@@ -29,19 +29,41 @@ func readGitOpsRuntime(ctx context.Context, tx sqlc.DBTX, source EnvironmentGitS
 	for _, row := range unqualified {
 		blocked[pgUUIDString(row.AppID)] = row.LogicalName
 	}
+	unqualifiedCount := int64(1)
+	if len(blocked) > 0 {
+		evidence, err := currentEnvironmentGitOpsWorkloadEvidenceTx(ctx, tx, source.AccountID, source.ID)
+		if err != nil {
+			return nil, err
+		}
+		if environmentGitOpsWorkloadsConverged(evidence) {
+			unqualifiedCount = 0
+		}
+	}
 	for _, row := range rows {
 		out = append(out, EnvironmentGitOpsRuntimeTarget{AppID: pgUUIDString(row.AppID), Resource: row.Resource,
 			Environment: row.EnvironmentSlug, RequiredAt: row.RequiredAt.Time, StaleResidents: row.StaleResidents,
 			StartingResidents: row.StartingResidents, StaleSnapshots: row.StaleSnapshots})
 		if _, exists := blocked[pgUUIDString(row.AppID)]; exists {
-			out[len(out)-1].UnqualifiedWorkloads = 1
+			out[len(out)-1].UnqualifiedWorkloads = unqualifiedCount
 			delete(blocked, pgUUIDString(row.AppID))
 		}
 	}
 	for id, resource := range blocked {
-		out = append(out, EnvironmentGitOpsRuntimeTarget{AppID: id, Resource: resource, Environment: source.EnvironmentSlug, UnqualifiedWorkloads: 1})
+		out = append(out, EnvironmentGitOpsRuntimeTarget{AppID: id, Resource: resource, Environment: source.EnvironmentSlug, UnqualifiedWorkloads: unqualifiedCount})
 	}
 	return out, nil
+}
+
+func readGitOpsRuntimeEffectTarget(ctx context.Context, tx sqlc.DBTX, sourceID, effectID string) (EnvironmentGitOpsRuntimeTarget, error) {
+	row, err := sqlc.New().EnvironmentGitOpsRuntimeEffectTarget(ctx, tx, sqlc.EnvironmentGitOpsRuntimeEffectTargetParams{
+		SourceID: mustPgUUID(sourceID), EffectID: mustPgUUID(effectID),
+	})
+	if err != nil {
+		return EnvironmentGitOpsRuntimeTarget{}, mapErr(err)
+	}
+	return EnvironmentGitOpsRuntimeTarget{AppID: pgUUIDString(row.AppID), Resource: row.Resource,
+		Environment: row.EnvironmentSlug, RequiredAt: row.RequiredAt.Time, StaleResidents: row.StaleResidents,
+		StartingResidents: row.StartingResidents, StaleSnapshots: row.StaleSnapshots}, nil
 }
 
 func (s *PgStore) ObserveEnvironmentGitOpsRuntime(ctx context.Context, lease EnvironmentGitOpsLease) ([]EnvironmentGitOpsRuntimeTarget, error) {
@@ -150,24 +172,23 @@ func (s *PgStore) ReconcileEnvironmentGitOpsRuntime(ctx context.Context, lease E
 	if err != nil {
 		return EnvironmentGitOpsRuntimeProgress{}, mapErr(err)
 	}
-	if err := q.InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx, tx, sqlc.InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams{AppID: effect.AppID, Scope: effect.EnvironmentSlug, RequiredAt: effect.RequiredAt}); err != nil {
+	// gitOpsEffectTx holds the source lock. Use its persisted mode rather
+	// than caller-supplied lease metadata to authorize runtime side effects.
+	source, err := q.GetEnvironmentGitSourceByID(ctx, tx, effect.SourceID)
+	if err != nil {
 		return EnvironmentGitOpsRuntimeProgress{}, mapErr(err)
 	}
-	targets, err := readGitOpsRuntime(ctx, tx, lease.Source)
+	enforcing := source.Mode == "enforce"
+	if enforcing {
+		if err := q.InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx, tx, sqlc.InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams{AppID: effect.AppID, Scope: effect.EnvironmentSlug, RequiredAt: effect.RequiredAt}); err != nil {
+			return EnvironmentGitOpsRuntimeProgress{}, mapErr(err)
+		}
+	}
+	target, err := readGitOpsRuntimeEffectTarget(ctx, tx, lease.Source.ID, id)
 	if err != nil {
 		return EnvironmentGitOpsRuntimeProgress{}, err
 	}
-	var target *EnvironmentGitOpsRuntimeTarget
-	for i := range targets {
-		if targets[i].AppID == pgUUIDString(effect.AppID) {
-			target = &targets[i]
-			break
-		}
-	}
-	if target == nil {
-		return EnvironmentGitOpsRuntimeProgress{}, ErrConflict
-	}
-	if target.RequiredAt.After(effect.RequiredAt.Time) {
+	if enforcing && target.RequiredAt.After(effect.RequiredAt.Time) {
 		effect, err = q.AdvanceEnvironmentGitOpsRuntimeBoundary(ctx, tx, sqlc.AdvanceEnvironmentGitOpsRuntimeBoundaryParams{
 			SourceID: effect.SourceID, EffectID: effect.ID, RequiredAt: gitOpsTime(target.RequiredAt)})
 		if err != nil {
@@ -179,15 +200,9 @@ func (s *PgStore) ReconcileEnvironmentGitOpsRuntime(ctx context.Context, lease E
 		if err := q.InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx, tx, sqlc.InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams{AppID: effect.AppID, Scope: effect.EnvironmentSlug, RequiredAt: effect.RequiredAt}); err != nil {
 			return EnvironmentGitOpsRuntimeProgress{}, mapErr(err)
 		}
-		targets, err = readGitOpsRuntime(ctx, tx, lease.Source)
+		target, err = readGitOpsRuntimeEffectTarget(ctx, tx, lease.Source.ID, id)
 		if err != nil {
 			return EnvironmentGitOpsRuntimeProgress{}, err
-		}
-		for i := range targets {
-			if targets[i].AppID == pgUUIDString(effect.AppID) {
-				target = &targets[i]
-				break
-			}
 		}
 	}
 	if target.Fresh() {
@@ -198,7 +213,7 @@ func (s *PgStore) ReconcileEnvironmentGitOpsRuntime(ctx context.Context, lease E
 		if count != 1 {
 			return EnvironmentGitOpsRuntimeProgress{}, ErrConflict
 		}
-	} else if lease.Source.Spec.Mode == "enforce" && target.StaleResidents > 0 && !effect.NextRequestAt.Time.After(time.Now()) {
+	} else if enforcing && target.StaleResidents > 0 && !effect.NextRequestAt.Time.After(time.Now()) {
 		if err := requestGitOpsRuntimeTx(ctx, tx, effect); err != nil {
 			return EnvironmentGitOpsRuntimeProgress{}, err
 		}

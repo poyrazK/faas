@@ -17,8 +17,27 @@ func (s *PgStore) loadManagedRealtimeInboxCursor(ctx context.Context, endpointID
 		return 0, fmt.Errorf("state: begin realtime durable cursor load: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// A cursor that exists and is live loads under its own row lock: every
+	// reconnect loads one, and only creating a cursor needs the endpoint lock
+	// that keeps the cap exact (ADR-1323, amendment of 2026-11-03).
+	var live int64
+	err = tx.QueryRow(ctx, `
+		update managed_realtime_inbox_cursors set updated_at = clock_timestamp()
+		where endpoint_id = $1 and principal = $2 and subscription = $3 and channel = $4
+		  and updated_at >= clock_timestamp() - make_interval(secs => $5::double precision)
+		returning sequence
+	`, endpointID, principal, subscription, channel, ManagedRealtimeInboxCursorRetention.Seconds()).Scan(&live)
+	if err == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, fmt.Errorf("state: commit realtime durable cursor load: %w", err)
+		}
+		return live, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("state: refresh realtime durable cursor: %w", err)
+	}
 	var lockedID string
-	if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpointID).Scan(&lockedID); err != nil {
+	if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for no key update`, endpointID).Scan(&lockedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, ErrNotFound
 		}

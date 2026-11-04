@@ -583,6 +583,18 @@ func (p WorkloadPort) EffectiveProtocol() WorkloadPortProtocol {
 	return WorkloadPortProtocol(strings.ToLower(string(p.Protocol)))
 }
 
+// IsInternalWorkloadPort reports whether the current manifest reserves this
+// protocol/port for private service traffic. A previously published listener
+// must stop admitting traffic even if its old name differs from the manifest.
+func IsInternalWorkloadPort(ports []WorkloadPort, protocol WorkloadPortProtocol, port int) bool {
+	for _, declared := range ports {
+		if declared.Internal && declared.EffectiveProtocol() == protocol && declared.Port == port {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateWorkloadPorts validates the bounded listener contract and rejects
 // duplicate names or duplicate (protocol, port) tuples.
 func ValidateWorkloadPorts(ports []WorkloadPort) error {

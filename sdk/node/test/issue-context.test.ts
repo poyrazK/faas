@@ -3,14 +3,16 @@ import assert from 'node:assert/strict';
 import {createIssueContext,issueTagKeys} from '../src/issue-context.js';
 import {createIssueReporter} from '../src/issues.js';
 
-test('captured context is an immutable retry snapshot rather than a live operation buffer',async()=>{
+test('captured context is an immutable retry snapshot rather than a live operation buffer',async(t)=>{
+  // A 5xx defers the retry by 1 s; step the clock past it instead of sleeping.
+  t.mock.timers.enable({apis:['setTimeout','Date'],now:Date.parse('2026-10-13T12:00:00Z')});
   const context=createIssueContext();context.setTag('component','payments');context.addBreadcrumb({message:'starting charge',category:'workflow'});
   const requests:Array<Record<string,unknown>>=[];
   const reporter=createIssueReporter({baseURL:'https://api.gregale.dev',app:'payments',token:'g_issue_test',
     fetch:(async(_url,options)=>{requests.push(JSON.parse(String(options?.body)));return new Response('{}',{status:requests.length===1?503:202});}) as typeof fetch});
   reporter.captureException(new Error('payment failed'),context.snapshot());
   context.setTag('component','other-request');context.addBreadcrumb({message:'not part of this error'});
-  assert.equal(await reporter.flush(),false);assert.equal(await reporter.flush(),true);
+  assert.equal(await reporter.flush(),false);t.mock.timers.tick(1000);assert.equal(await reporter.flush(),true);
   assert.deepEqual(requests[0],requests[1]);assert.equal((requests[0]?.tags as Record<string,string>).component,'payments');
   assert.equal((requests[0]?.breadcrumbs as unknown[]).length,1);await reporter.close();
 });
