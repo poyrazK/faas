@@ -46,12 +46,21 @@ Order first, then switch the edges:
 
 1. `gregalectl seal-domain init --domain edge-tls`, then the seal_domains
    role: the recipient on the control plane, the identity on compute nodes.
-2. edgednsd with `faas_edgednsd_certificate_names` (staging CA first; see
-   roles/edgednsd_service/README.md). Wait for
+   CD stages them from the `SEAL_DOMAIN_EDGE_TLS_AGE_KEY` and
+   `SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT` environment secrets.
+2. In the manifest, `public_edge.dns.certificate.names` (for example
+   `["*.gregale.dev"]`); `ca` stays `letsencrypt-staging` until the path is
+   proven. Converge the control plane and wait for
    `edge_certificate_orders_total{result="issued"}`.
-3. The edges with `faas_edge_public_tls_cert_source: database` and
-   `faas_edge_public_tls_cert_ca` matching edgednsd's CA. An edge is not
-   ready until it has loaded one, so edgednsd keeps it out of DNS until then.
+3. `public_edge.dns.certificate.serve` set to that CA, then converge the
+   compute nodes: each edge serves the certificate stored from it. An edge
+   is not ready until it has loaded one, so edgednsd keeps it out of DNS
+   until then.
+4. To move to production, set `ca: letsencrypt` and converge the control
+   plane; only once `edge_certificate_orders_total{ca="letsencrypt",
+   result="issued"}` counts it, set `serve: letsencrypt` and converge the
+   compute nodes. Changing both at once would restart every edge on a CA it
+   has no certificate from yet.
 
 Only `origin-pull-ca.pem` is still staged by hand. Alerts and failures:
 [FaasEdgeCertificate](FaasEdgeCertificate.md).

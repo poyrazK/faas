@@ -809,6 +809,13 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 			b.WriteString("faas_edge_client_limits: true\n")
 			fmt.Fprintf(&b, "faas_public_entry_addrs: [%s]\n", quotedYAMLList([]string{host.EntryAddress()}))
 		}
+		// ADR-20261103163954 §3: the edge serves the certificate edgednsd
+		// stored from the serve CA, its key opened with the edge-tls
+		// identity.
+		if cert := edgeCertificate(edge); edge.DirectEntry() && cert != nil && cert.Serve != "" {
+			b.WriteString("faas_edge_public_tls_cert_source: \"database\"\n")
+			fmt.Fprintf(&b, "faas_edge_public_tls_cert_ca: %q\n", cert.Serve)
+		}
 	}
 	return b.String()
 }
@@ -854,7 +861,22 @@ func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
 	fmt.Fprintf(&b, "faas_edgednsd_names: [%s]\n", quotedYAMLList(names))
 	fmt.Fprintf(&b, "faas_edgednsd_node_addresses: [%s]\n", quotedYAMLList(addresses))
 	fmt.Fprintf(&b, "faas_edgednsd_dry_run: %t\n", !edge.DNS.Live)
+	// ADR-20261103163954 §3: edgednsd orders the apps domains' certificate
+	// with the DNS-01 challenge in the managed zone.
+	if cert := edge.DNS.Certificate; cert != nil {
+		fmt.Fprintf(&b, "faas_edgednsd_certificate_names: [%s]\n", quotedYAMLList(cert.Names))
+		fmt.Fprintf(&b, "faas_edgednsd_certificate_zone_id: %q\n", edge.DNS.ZoneID)
+		fmt.Fprintf(&b, "faas_edgednsd_acme_ca: %q\n", cert.CAOrDefault())
+	}
 	return b.String()
+}
+
+// edgeCertificate is the manifest's apps-domain certificate, nil without one.
+func edgeCertificate(edge manifest.PublicEdge) *manifest.PublicEdgeCertificate {
+	if edge.DNS == nil {
+		return nil
+	}
+	return edge.DNS.Certificate
 }
 
 func renderPublicControlAddr(host manifest.Host) string {
