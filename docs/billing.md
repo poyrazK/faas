@@ -172,6 +172,24 @@ An organization that owns its resources elects for itself:
 `PUT /v1/orgs/{slug}/egress-overage` (owner) or
 `gregale billing egress-overage on --org SLUG`.
 
+## Credits
+
+Gregale may add credit to an account or organization, for example after an
+incident. Credit has no cash value. It is applied as a discount on your next
+subscription renewal. It reduces the whole order before tax: the plan fee and
+usage, object storage and managed PostgreSQL. The discount shows on the order
+as "Gregale credit".
+
+- The discount is the credit still valid when the subscription renews; credit
+  that expires before then is not included.
+- Only what the order used is taken from your credit; the rest stays for the
+  next renewal.
+- Credit is taken when the order is created, whether or not it is paid.
+- Credit waits for a later renewal while your subscription is set to cancel or
+  change plan at the period end, or while another discount is on it.
+- A first subscription is charged in full; credit applies from its first
+  renewal. Credit is never refunded to your card (ADR-20261104212028).
+
 ## Retained usage costs and forecasts
 
 This financial visibility preview reports supported usage costs and budget

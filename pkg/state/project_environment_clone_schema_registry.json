@@ -5922,6 +5922,24 @@
     "kind": "operational"
   },
   {
+    "table": "credit_discounts",
+    "columns": [
+      "amount_cents",
+      "created_at",
+      "currency",
+      "id",
+      "provider",
+      "provider_discount_id",
+      "provider_invoice_id",
+      "provider_subscription_id",
+      "redeemed_cents",
+      "state",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "egress_policy",
     "columns": [
       "changed_at",

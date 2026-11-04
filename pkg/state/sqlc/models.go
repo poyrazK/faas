@@ -3141,6 +3141,22 @@ type CrashSnapshotSetting struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+// One-time fixed provider discounts Gregale attached to a billing subject's subscription to apply its account credit to the next order; redeemed when an order carries it. Written only by apid (ADR-20261104212028).
+type CreditDiscount struct {
+	ID                     pgtype.UUID
+	SubjectID              pgtype.UUID
+	Provider               string
+	ProviderSubscriptionID string
+	ProviderDiscountID     string
+	AmountCents            int64
+	Currency               string
+	State                  string
+	ProviderInvoiceID      pgtype.Text
+	RedeemedCents          pgtype.Int8
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+}
+
 type CreditLedger struct {
 	ID                pgtype.UUID
 	AccountID         pgtype.UUID
