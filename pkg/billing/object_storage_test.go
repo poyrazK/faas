@@ -231,20 +231,31 @@ func TestFinalizeObjectStoragePeriodRecordsAllowance(t *testing.T) {
 	}
 }
 
-func TestLargestObjectStorageAllowanceTakesPerMeterMaximum(t *testing.T) {
+// adr: 20261103131742 — each plan's object storage allowance counts for the
+// share of the month it held, like compute's: a downgrade halfway through a
+// 30-day month keeps half of the larger allowance, not all of it.
+func TestWeightedObjectStorageAllowanceSharesTheMonth(t *testing.T) {
 	allowances := map[api.Plan]api.ObjectStorageAllowance{
-		api.PlanPro:   {StoredByteHours: 100, Requests: 10, EgressBytes: 1},
+		api.PlanPro:   {StoredByteHours: 100, Requests: 10, EgressBytes: 4},
 		api.PlanHobby: {StoredByteHours: 50, Requests: 20, EgressBytes: 0},
 	}
 	lookup := func(plan api.Plan) (api.ObjectStorageAllowance, bool) {
 		a, ok := allowances[plan]
 		return a, ok
 	}
-	got, err := largestObjectStorageAllowance([]api.Plan{api.PlanPro, api.PlanHobby}, lookup)
-	if err != nil || got != (api.ObjectStorageAllowance{StoredByteHours: 100, Requests: 20, EgressBytes: 1}) {
-		t.Fatalf("allowance = %+v, %v; want the per-meter maximum so a downgrade never shrinks it", got, err)
+	month := time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)
+	half := month.Add(15 * 24 * time.Hour)
+	spans := []state.PlanSpan{{Plan: api.PlanPro, Start: month, End: half}, {Plan: api.PlanHobby, Start: half, End: month.AddDate(0, 1, 0)}}
+	got, err := weightedObjectStorageAllowance(spans, month, lookup)
+	if err != nil || got != (api.ObjectStorageAllowance{StoredByteHours: 75, Requests: 15, EgressBytes: 2}) {
+		t.Fatalf("allowance = %+v, %v; want each plan's allowance for half the month", got, err)
 	}
-	if _, err := largestObjectStorageAllowance([]api.Plan{"unknown"}, lookup); err == nil {
+	whole := []state.PlanSpan{{Plan: api.PlanPro, Start: month, End: month.AddDate(0, 1, 0)}}
+	if got, err := weightedObjectStorageAllowance(whole, month, lookup); err != nil || got != allowances[api.PlanPro] {
+		t.Fatalf("whole month on Pro = %+v, %v; want Pro's allowance", got, err)
+	}
+	unknown := []state.PlanSpan{{Plan: "unknown", Start: month, End: half}}
+	if _, err := weightedObjectStorageAllowance(unknown, month, lookup); err == nil {
 		t.Fatal("unknown plan did not fail closed")
 	}
 }
