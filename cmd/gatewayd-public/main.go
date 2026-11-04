@@ -710,6 +710,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}()
 	}
 	rootHandler := http.Handler(controlPlaneHandler)
+	// Public-read host lookups run in front of every GET and HEAD; names this
+	// edge never saw name an app spend a budget (ADR-20261103163954 §4).
+	hostLookups := objectstorage.NewHostLookupBudget("gatewayd_public_object")
+	opsMetrics.Registry().MustRegister(hostLookups.Collectors()...)
 	if edgeMode == edgeModeCompute {
 		// Upload routes go to the control plane's edge: only apid resolves
 		// their keys. Public bucket reads are served here once the node holds
@@ -726,14 +730,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			fenceOpen := startObjectStorageFence(runtimeCtx, pgStore, log)
 			reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 			defer stopReads()
-			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, func() bool { return s3Flag.Load() && fenceOpen() },
+			localReads, err = publicObjectReads(pgStore, publicStorageRegistry, reads, transfers, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
 				domains, controlPlaneHandler, log)
 			if err != nil {
 				return err
 			}
 			log.Info("gatewayd-public: public object reads served on this node", "max_bytes_per_second", budget)
 		}
-		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, localReads, pgStore, domains, log)
+		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, localReads, pgStore, hostLookups, domains, log)
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
@@ -753,7 +757,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// flush runs before the pool closes.
 		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
 		defer stopReads()
-		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, func() bool { return s3Flag.Load() && fenceOpen() },
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, hostLookups, func() bool { return s3Flag.Load() && fenceOpen() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
