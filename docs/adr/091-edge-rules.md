@@ -1860,3 +1860,55 @@ A review of main after round 9 found these gaps.
 4. **Each list scope has its own cap.** The per-account list cap counted
    organization and personal lists together; it now counts the new list's
    scope.
+
+## Amendment (2026-11-04, later): review round 11 — override methods on declared routes, audit floods, async callers, public-suffix CORS, host cache shares
+
+An eleventh review found five gaps.
+
+1. **Declared routes ignored method overrides.** The 2026-11-02 amendment
+   made the nine protective kinds match a POST that asks the app to run it as
+   another method (`X-HTTP-Method-Override`, `X-HTTP-Method`,
+   `X-Method-Override`, `?_method=`), but `only_allow_declared_routes` still
+   checked only the request line: an app declaring `POST /items/{id}` but not
+   `DELETE` ran a DELETE sent as such a POST. The override method must now be
+   declared too; the 404 names it (`POST (as DELETE) /items/1`).
+2. **Refusals a client produces at will wrote one audit row each.** The
+   repeat throttle covered only `edge_rule.*_matched`. `throttle_rejected`,
+   `throttle_identity_missing`, `validate_failed`,
+   `validate_unsupported_media_type`, `limit_rejected`, `caller_ip_forged` and
+   `ingress_ip_forged` wrote one control-plane events row per refused
+   request, so a flood against a throttle rule became a flood of inserts, and
+   the node's one audit queue (4,096 rows, shared by every tenant) dropped
+   other tenants' evidence. These now repeat at most once a minute per rule
+   and app, carrying the suppressed count, and stay ahead of informational
+   rows in the queue. `edge_rule.async_enqueued`, written per accepted request
+   of ordinary traffic, is informational. The sampled security events
+   (ADR-964) and the metrics still see every request.
+3. **Async routes lost the caller.** The stored request drops
+   `Authorization` and `Cookie` (a token would also have expired by
+   delivery), and the identity a `jwt` rule verified lived only in the
+   request context, so an app behind a `jwt` gate received anonymous jobs.
+   The gateway now hands the app the caller as `X-Faas-Edge-Jwt-Subject` and
+   `X-Faas-Edge-Jwt-Issuer` (the token's `sub`, the rule's `issuer`) on
+   direct requests, and an async route stores them on the invocation
+   (`invocations.edge_jwt_subject` / `edge_jwt_issuer`, migration
+   20261104132656410, expand-only). Delivery reads them from the stored row
+   in the dispatch authority read, never from the transport that names the
+   invocation; replays copy them. Like every `x-faas-*` header, a client's
+   own copies never cross the guest boundary; the forwarder adds the values
+   from the request context. Values over `MaxEdgeJWTIdentityBytes` (1 KiB)
+   or that HTTP cannot carry are not forwarded.
+4. **Credentialed CORS wildcards over public suffixes.** The shared-domain
+   guard (amendment 2026-10-28) refused `https://*.<apps domain>` with
+   `allow_credentials`, but `https://*.com`, `https://*.co.uk`,
+   `https://*.github.io` and `https://*.vercel.app` passed, letting any site
+   registered there read credentialed responses. A wildcard directly under a
+   Public Suffix List entry (ICANN or private) or an unlisted top-level label
+   is now refused with credentials, for rules and presets. Stored rules keep
+   compiling.
+5. **One app's hostnames could empty the host cache.** The edge-rule cache
+   is one 10,000-entry LRU per node keyed by host and app, and a wildcard
+   custom domain gives its app unbounded hostnames: random subdomains missed
+   on every request and evicted every other tenant's sets. An app now holds at
+   most an eighth of the cache (1,250 sets, at least 64); past that, its own
+   least recently used set goes first.

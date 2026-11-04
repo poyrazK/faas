@@ -463,6 +463,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if deadline, ok := guestDeadlineHeader(r.Context()); ok {
 		init.Headers = append(init.Headers, deadline)
 	}
+	for _, kv := range guestEdgeJWTHeaders(r.Context()) {
+		init.Headers = append(init.Headers, &vmmdpb.Header{Name: kv[0], Value: kv[1]})
+	}
 	if err := stream.Send(&vmmdpb.ForwardHTTPStreamRequest{
 		Frame: &vmmdpb.ForwardHTTPStreamRequest_Init{Init: init},
 	}); err != nil {
@@ -1315,6 +1318,9 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 		if api.HasLowerPrefix(name, "x-faas-") && !guestReceivesFaasHeader(r.Context(), name) {
 			headers.Del(name)
 		}
+	}
+	for _, kv := range guestEdgeJWTHeaders(r.Context()) {
+		headers.Set(kv[0], kv[1])
 	}
 	injectGuestTraceContext(r.Context(), headers)
 

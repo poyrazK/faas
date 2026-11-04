@@ -7033,6 +7033,8 @@ type Invocation struct {
 	ReplayRootInvocationID   pgtype.UUID
 	ReplayRootCreatedAt      pgtype.Timestamptz
 	AsyncQuotaSubjectID      pgtype.UUID
+	EdgeJwtIssuer            pgtype.Text
+	EdgeJwtSubject           pgtype.Text
 }
 
 type InvocationAttemptHistory struct {

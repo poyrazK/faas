@@ -2136,6 +2136,16 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 		return true
 	}
 	allowed, err := h.declaredRoutes.MatchDeclaredRoute(r.Context(), app, requestPath, requestMethod)
+	// Frameworks run a POST carrying X-HTTP-Method-Override: DELETE (or
+	// ?_method=DELETE) as DELETE, so the method the app will run must be
+	// declared too, as the protective gates already require (ADR-091
+	// amendment 2026-11-04, round 11).
+	if override := EdgeRuleMethodOverride(r.Context()); err == nil && allowed && override != "" && override != requestMethod {
+		allowed, err = h.declaredRoutes.MatchDeclaredRoute(r.Context(), app, requestPath, override)
+		if err == nil && !allowed {
+			requestMethod = requestMethod + " (as " + override + ")"
+		}
+	}
 	if err != nil {
 		if h.log != nil {
 			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", logsanitize.Field(requestPath), "method", logsanitize.Field(requestMethod), "err", logsanitize.FieldAny(err))
@@ -3265,7 +3275,8 @@ func (h *Handler) applyEdgeRuleJWTRule(w http.ResponseWriter, r *http.Request, a
 	if h.applyPlatformTenantJWTClaim(w, r, app, rule, claims, &authenticated) {
 		return true
 	}
-	*r = *r.WithContext(withAuthenticated(r.Context(), authenticated))
+	ctx := withAuthenticated(r.Context(), authenticated)
+	*r = *r.WithContext(WithEdgeJWTIdentity(ctx, EdgeJWTIdentity{Issuer: rule.Issuer, Subject: claims.Subject}))
 	return false
 }
 

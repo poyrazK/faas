@@ -112,7 +112,10 @@ with the `GET` handler, and one that lists `DELETE`, `PUT` or `PATCH` also
 covers a request that asks the app to run it as that method through an
 `X-HTTP-Method-Override`, `X-HTTP-Method` or `X-Method-Override` header or a
 `_method` query parameter. A `_method` field in a form body is not read at
-the edge: if your app honours one, leave `match_methods` off the rule.
+the edge: if your app honours one, leave `match_methods` off the rule. An app
+that only allows its declared routes (`only_allow_declared_routes`) gets the
+same treatment: a POST that asks to run as `DELETE` needs both `POST` and
+`DELETE` declared for its path.
 
 A gate scoped by `match_headers`, or by a `header:`, `cookie:` or `query:`
 field in `match`, applies only when the client sends that value, and the
@@ -352,7 +355,11 @@ headers. An origin is
 `https://host:*` for any port. `*` cannot be combined with
 `allow_credentials`, and neither can a subdomain wildcard under a Gregale
 domain (`https://*.<your apps domain>`): other customers' apps are served
-there. List your app origins instead. `max_age_seconds` is at most 86400.
+there. A wildcard directly under a public suffix (`https://*.com`,
+`https://*.co.uk`, `https://*.github.io`, `https://*.vercel.app`) cannot be
+combined with `allow_credentials` either, because anyone can register a name
+there; use a wildcard under your own domain (`https://*.example.com`). List
+your app origins instead. `max_age_seconds` is at most 86400.
 Instead of inline fields, `cors_preset_id` can name a CORS preset shared by
 several rules (`/v1/cors-presets`): an account-wide preset or one scoped to
 the rule's app. Editing a preset is applied like a rule change to every rule
@@ -373,6 +380,12 @@ A request needs `Authorization: Bearer <token>` signed by a key from
 and each of `required_claims` as a string claim with exactly that value. A missing or invalid token
 gets 401. The key's `alg` must match the token's, and encryption keys are not
 used for signatures.
+
+The app receives the caller the rule verified as `X-Faas-Edge-Jwt-Subject`
+(the token's `sub`) and `X-Faas-Edge-Jwt-Issuer` (the rule's `issuer`). Only
+the gateway sets them: a client's own copies never reach the app, and a value
+longer than 1 KiB or one HTTP cannot carry is not forwarded. A request an
+[`async`](#async) rule queues gets them too.
 
 A new or edited rule needs `audience` or at least one `required_claims`
 entry. Without one, every token the issuer signs would pass, and a shared
@@ -615,7 +628,9 @@ the app receives the original method, path, JSON body and safe headers later.
 `on_success` and `on_failure` name webhook subscriptions that receive the
 outcome. `retry_policy` and `max_age_seconds` override the app's defaults
 within your plan's limits. The app's workload must accept request
-invocations.
+invocations. The stored request keeps no `Authorization` or `Cookie` header;
+when a `jwt` rule verified the caller, the app receives it at delivery (and on
+replays) as `X-Faas-Edge-Jwt-Subject` and `X-Faas-Edge-Jwt-Issuer`.
 
 ### respond
 

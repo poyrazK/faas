@@ -8055,6 +8055,12 @@ const (
 	// not the cap).
 	MaxEdgeRuleMaintenanceRetryAfterSeconds = 24 * 60 * 60 // 86400 (24h)
 
+	// MaxEdgeJWTIdentityBytes bounds the issuer and subject a kind=jwt rule
+	// hands the app (X-Faas-Edge-Jwt-*) and an async route stores on its
+	// invocation; a longer value is not forwarded (ADR-091 amendment
+	// 2026-11-04, round 11). A global bound, not a plan quota.
+	MaxEdgeJWTIdentityBytes = 1024
+
 	// --- ADR-201 §1: kind=retry bounds -------------------------------
 	// These are global bounds, not plan quotas. The per-plan rule count
 	// is EdgeRulesRetryPerApp above.

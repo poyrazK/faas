@@ -12597,7 +12597,8 @@ INSERT INTO invocations (
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
   work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
-  occurrence_id, start_deadline_at, failure_rules, environment_id, replayed_from_invocation_id, replay_root_invocation_id, replay_root_created_at
+  occurrence_id, start_deadline_at, failure_rules, environment_id, replayed_from_invocation_id, replay_root_invocation_id, replay_root_created_at,
+  edge_jwt_issuer, edge_jwt_subject
 ) SELECT
   coalesce(sqlc.narg(id)::uuid, gen_random_uuid()), sqlc.arg(app_id), sqlc.arg(account_id),
   sqlc.arg(source), sqlc.arg(queue_name), coalesce(nullif(sqlc.arg(state)::text, ''), 'pending'),
@@ -12610,7 +12611,8 @@ INSERT INTO invocations (
   sqlc.narg(work_policy_revision), sqlc.narg(work_fairness_digest), sqlc.narg(work_fairness_limit),
   sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id),
   sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb,
-  sqlc.narg(environment_id)::uuid, replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at
+  sqlc.narg(environment_id)::uuid, replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at,
+  nullif(sqlc.arg(edge_jwt_issuer)::text, ''), nullif(sqlc.arg(edge_jwt_subject)::text, '')
 FROM scenario_action_lock_gate gate
 LEFT JOIN replay_parent ON true
 WHERE gate.ready
