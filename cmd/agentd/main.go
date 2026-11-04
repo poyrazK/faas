@@ -71,6 +71,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer closeDeps()
+	// ADR-20261027090013: sandbox sessions, off unless their own switch is on.
+	if strings.TrimSpace(os.Getenv("FAAS_AGENTD_SANDBOXES")) == "1" {
+		sandboxes := replica.NewSandboxes(store, scheddpb.NewScheddClient(conn), agentd.SandboxConfig{})
+		go func() {
+			if err := sandboxes.Run(ctx); err != nil {
+				log.Error("agentd: sandbox sessions stopped", "err", err)
+			}
+		}()
+		log.Info("agentd: running sandbox sessions", "owner", cfg.Owner)
+	}
 	log.Info("agentd: running agent runs", "owner", cfg.Owner, "schedd", target, "concurrency", cfg.Concurrency)
 	return replica.Run(ctx)
 }

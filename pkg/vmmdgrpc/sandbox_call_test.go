@@ -27,12 +27,13 @@ type sandboxVMM struct {
 	*fakeVMM
 }
 
-func (v *sandboxVMM) DialSandboxSession(_ context.Context, instance, sandboxID string) (net.Conn, error) {
+func (v *sandboxVMM) DialSandboxSession(ctx context.Context, instance, sandboxID string) (net.Conn, error) {
 	if instance != "sbx-vm" || sandboxID != "sbx-1" {
 		return nil, fcvm.ErrSandboxNotFound
 	}
 	host, guest := net.Pipe()
-	go func() { _ = sandboxproto.Serve(context.Background(), guest, echoSandbox) }()
+	// The guest outlives the dial, as a VM's server does.
+	go func() { _ = sandboxproto.Serve(context.WithoutCancel(ctx), guest, echoSandbox) }()
 	return host, nil
 }
 

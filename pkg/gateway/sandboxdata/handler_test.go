@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -359,7 +360,8 @@ func TestFilesRoundTrip(t *testing.T) {
 func TestFileReadFailingMidwayAborts(t *testing.T) {
 	f := newFixture(t)
 	defer func() {
-		if got := recover(); got != http.ErrAbortHandler {
+		got := recover()
+		if err, _ := got.(error); !errors.Is(err, http.ErrAbortHandler) {
 			t.Fatalf("recovered %v, want http.ErrAbortHandler", got)
 		}
 	}()

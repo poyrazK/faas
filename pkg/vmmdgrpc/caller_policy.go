@@ -27,6 +27,7 @@ var schedulerOnlyMethods = map[string]string{
 	vmmdpb.Vmmd_ExecForkCommand_FullMethodName:  "fork command execution",
 	vmmdpb.Vmmd_ExecuteExecution_FullMethodName: "execution",
 	vmmdpb.Vmmd_Destroy_FullMethodName:          "instance destruction",
+	vmmdpb.Vmmd_RunSandbox_FullMethodName:       "sandbox session boot",
 }
 
 // gatewayOnlyMethods run sandbox session operations, which the session token

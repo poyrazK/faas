@@ -319,6 +319,14 @@ service Schedd {
   // Cancel stops the harness, or ends the run before the boot. Events after
   // proceed: booted, output chunks, then one result.
   rpc RunAgent(stream AgentRunRequest) returns (stream AgentRunEvent);
+  // RunSandbox admits one sandbox session on the agent pool and keeps its VM
+  // for the stream's life (ADR-20261027090013 §4). The first client frame is
+  // start; after placed (the reservation is held, nothing booted) schedd
+  // waits for proceed, which agentd sends once it has recorded the session's
+  // placement. Then agentd may freeze or close the session; schedd relays
+  // vmmd's booted, activity, frozen, freeze_refused and thawed events. The
+  // VM is destroyed and the reservation released when the stream ends.
+  rpc RunSandbox(stream SandboxRunRequest) returns (stream SandboxRunEvent);
   // ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
   // memory-pressure report: MemAvailable fell to the pressure share of
   // MemTotal while a profile collector was registered. schedd queues one
@@ -1236,6 +1244,55 @@ message FlowSummary {
 
 // AgentRunRequest is a client frame on RunAgent. Start occurs exactly once,
 // first.
+message SandboxRunRequest {
+  oneof frame {
+    SandboxRunStart start = 1;
+    AgentRunProceed proceed = 2;
+    SandboxRunFreeze freeze = 3;
+    SandboxRunClose close = 4;
+  }
+}
+
+// SandboxRunStart is the session's machine, already checked against the
+// account's plan.
+message SandboxRunStart {
+  string sandbox_id = 1;
+  string account_id = 2;
+  string plan = 3;
+  int32 ram_mb = 4;
+  int32 vcpu = 5;
+  int32 cpu_millicores = 6;
+}
+
+message SandboxRunFreeze {}
+
+message SandboxRunClose {}
+
+message SandboxRunEvent {
+  oneof frame {
+    AgentRunPlaced placed = 1;
+    AgentRunBooted booted = 2;
+    SandboxRunActivity activity = 3;
+    SandboxRunFrozen frozen = 4;
+    SandboxRunFreezeRefused freeze_refused = 5;
+    SandboxRunThawed thawed = 6;
+  }
+}
+
+// SandboxRunActivity is vmmd's report of the session's calls.
+message SandboxRunActivity {
+  int32 calls_in_flight = 1;
+  int64 last_call_ended_unix_ms = 2;
+}
+
+message SandboxRunFrozen {}
+
+message SandboxRunFreezeRefused {
+  string reason = 1;
+}
+
+message SandboxRunThawed {}
+
 message AgentRunRequest {
   oneof frame {
     AgentRunStart start = 1;

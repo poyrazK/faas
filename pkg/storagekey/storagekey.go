@@ -45,6 +45,13 @@ func AgentRunLayerForArch(arch string) string {
 	return "base/agent-layer-v1-" + arch + ".ext4"
 }
 
+// SandboxLayerForArch is where imaged publishes the platform sandbox layer,
+// drive1 holding only the sandbox marker (ADR-20261027090013 §2). guest-init
+// takes exactly one mode marker, so sessions cannot share the agent layer.
+func SandboxLayerForArch(arch string) string {
+	return "base/sandbox-layer-v1-" + arch + ".ext4"
+}
+
 // AppLayer is the key of a per-app drive1 ext4 layer:
 // apps/<slug>/<deploymentID>.ext4.
 func AppLayer(slug, deploymentID string) string {

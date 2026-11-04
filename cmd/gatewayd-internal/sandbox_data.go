@@ -10,20 +10,17 @@ import (
 )
 
 // newSandboxDataHandler serves sandbox session data-plane calls
-// (ADR-20261027090013 §4). Session tokens are signed with the session
-// binding key apid shares, so the calls read no database. Nil when the key or
-// the node cache is missing.
-func newSandboxDataHandler(deps runDeps, log *slog.Logger) http.Handler {
-	if deps.nodeCache == nil || deps.sessions == nil {
-		return nil
-	}
-	signer, err := sandboxtoken.NewSigner(deps.sessions.BindingKey())
-	if err != nil {
-		log.Warn("gatewayd-internal: sandbox data plane off", "err", err.Error())
+// (ADR-20261027090013 §4), verifying session tokens with tokens. Nil when
+// there is no verifier or node cache: the gateway holds no session key
+// (ADR-20261102191500), so until the session-token key reaches gateways the
+// data plane stays off and its paths fall through to apid, which owns none
+// of them.
+func newSandboxDataHandler(deps runDeps, tokens *sandboxtoken.Signer, log *slog.Logger) http.Handler {
+	if deps.nodeCache == nil || tokens == nil {
 		return nil
 	}
 	mux := http.NewServeMux()
-	(&sandboxdata.Handler{Tokens: signer, Nodes: deps.nodeCache.cache, Log: log}).Routes(mux)
+	(&sandboxdata.Handler{Tokens: tokens, Nodes: deps.nodeCache.cache, Log: log}).Routes(mux)
 	return mux
 }
 

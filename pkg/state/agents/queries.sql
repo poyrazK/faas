@@ -145,8 +145,11 @@ SELECT count(*)::integer AS queued,
 SELECT pg_try_advisory_xact_lock(hashtextextended('agent-runs:' || sqlc.arg(account_id)::text, 0))::boolean;
 
 -- name: AccountAgentLoad :one
+-- Live sandbox sessions share the account's concurrency with live runs
+-- (ADR-20261027090013 §7).
 SELECT a.plan,
-  (SELECT count(*) FROM agent_runs r WHERE r.account_id=a.id AND r.state IN ('starting','running','delivering'))::integer AS live
+  ((SELECT count(*) FROM agent_runs r WHERE r.account_id=a.id AND r.state IN ('starting','running','delivering'))
+   + (SELECT count(*) FROM sandbox_sessions sb WHERE sb.account_id=a.id AND sb.state IN ('starting','ready','frozen')))::integer AS live
  FROM accounts a WHERE a.id=sqlc.arg(account_id)::text::uuid;
 
 -- name: StartAgentRun :execrows
@@ -462,3 +465,64 @@ UPDATE sandbox_sessions SET state='closed', outcome_code='closed', closed_at=now
 UPDATE sandbox_sessions SET close_requested_at=coalesce(close_requested_at, now()), updated_at=now()
  WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
  AND state IN ('starting','ready','frozen');
+
+-- name: ListClaimableSandboxSessions :many
+-- Oldest first; rows another replica holds are skipped, not waited on.
+SELECT id::text AS id, account_id::text AS account_id FROM sandbox_sessions
+ WHERE state='queued' AND expires_at > now() ORDER BY created_at, id LIMIT sqlc.arg(max_rows)::integer FOR UPDATE SKIP LOCKED;
+
+-- name: StartSandboxSession :execrows
+UPDATE sandbox_sessions SET state='starting', lease_token=sqlc.arg(lease_token)::text, lease_owner=sqlc.arg(lease_owner)::text,
+  lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND state='queued';
+
+-- name: GetSandboxSessionClaim :one
+SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, sb.idle_timeout_sec, sb.expires_at,
+  (sb.close_requested_at IS NOT NULL)::boolean AS close_requested
+ FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id WHERE sb.id=sqlc.arg(session_id)::text::uuid;
+
+-- name: MarkSandboxSessionReady :execrows
+-- The VM is up: record where it runs, so a read mints a token that reaches it.
+UPDATE sandbox_sessions SET state='ready', node_id=sqlc.arg(node_id)::text, instance_id=sqlc.arg(instance_id)::text,
+  last_activity_at=now(), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
+
+-- name: RenewSandboxSessionLease :one
+-- Renewing also records the last call agentd has seen, so last_activity_at
+-- costs no write per call. It returns what apid may have changed.
+UPDATE sandbox_sessions SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision),
+  last_activity_at=greatest(last_activity_at, sqlc.arg(last_activity_at)::timestamptz), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','ready','frozen')
+ RETURNING (close_requested_at IS NOT NULL)::boolean AS close_requested, idle_timeout_sec, expires_at;
+
+-- name: SetSandboxSessionFrozen :execrows
+UPDATE sandbox_sessions SET state=CASE WHEN sqlc.arg(frozen)::boolean THEN 'frozen' ELSE 'ready' END, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('ready','frozen');
+
+-- name: RequeueSandboxSession :execrows
+-- Only a starting session, which has no VM, goes back to the queue.
+UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
+
+-- name: FinishSandboxSession :execrows
+UPDATE sandbox_sessions SET state=sqlc.arg(state)::text, outcome_code=sqlc.arg(outcome_code)::text,
+  outcome_message=sqlc.narg(outcome_message)::text, lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','ready','frozen')
+ AND sqlc.arg(state)::text IN ('closed','expired','failed');
+
+-- name: RequeueExpiredStartingSandboxSessions :execrows
+UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, updated_at=now()
+ WHERE state='starting' AND lease_expires_at < now();
+
+-- name: FailExpiredLiveSandboxSessions :execrows
+-- A live session whose replica stopped renewing has lost its VM with the
+-- replica's stream; it is never booted again.
+UPDATE sandbox_sessions SET state='failed', outcome_code='lease_lost',
+  outcome_message='agentd lost the session; its VM ended with it', lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
+ WHERE state IN ('ready','frozen') AND lease_expires_at < now();
+
+-- name: ExpireQueuedSandboxSessions :execrows
+-- A session still queued at its end never starts.
+UPDATE sandbox_sessions SET state='expired', outcome_code='lifetime', outcome_message='the session ended before it started',
+  closed_at=now(), updated_at=now()
+ WHERE state='queued' AND expires_at <= now();

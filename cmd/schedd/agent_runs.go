@@ -45,5 +45,12 @@ func agentRunConfigFromEnv(getenv func(string) string) sched.AgentRunConfig {
 	if cfg.LayerKey == "" {
 		cfg.LayerKey = sched.AgentRunLayerKeyForArch(agentRunArch)
 	}
+	// ADR-20261027090013: sandbox sessions, off unless their own switch is on.
+	if strings.TrimSpace(getenv("FAAS_SCHEDD_SANDBOXES")) == "1" {
+		cfg.SandboxLayerKey = strings.TrimSpace(getenv("FAAS_SCHEDD_SANDBOX_LAYER_KEY"))
+		if cfg.SandboxLayerKey == "" {
+			cfg.SandboxLayerKey = sched.SandboxLayerKeyForArch(agentRunArch)
+		}
+	}
 	return cfg
 }

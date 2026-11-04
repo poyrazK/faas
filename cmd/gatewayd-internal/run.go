@@ -3810,7 +3810,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-20261027090013: sandbox session commands and files run in the
 	// session's VM, so they are compute-owned like attach.
-	if sandbox := newSandboxDataHandler(deps, log); sandbox != nil {
+	if sandbox := newSandboxDataHandler(deps, nil, log); sandbox != nil {
 		apidHandler = sandboxDataCarveOut{sandbox: sandbox, next: apidHandler}
 	}
 

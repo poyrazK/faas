@@ -412,6 +412,37 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - the memory integral, which comes with step 11;
      - OpenAPI and SDK entries, which come with step 9.
 5. agentd session lifecycle (idle timers, freezing, expiry) and schedd placement from preset snapshots, with teardown.
+
+   **Built, part one (2026-11-04), on a local branch.** The session lives for exactly one stream: agentd → schedd `RunSandbox` → vmmd `RunSandbox`. A restart of agentd, schedd or vmmd ends the session's VM, and agentd's sweep fails the session with `lease_lost`; ephemeral sessions accept that. Three switches gate it, each off by default: `FAAS_AGENTD_SANDBOXES`, `FAAS_SCHEDD_SANDBOXES` (next to `FAAS_SCHEDD_AGENT_RUNS`) and vmmd's agent-runs switch.
+   - **agentd** (`pkg/agentd/sandboxes.go`) has its own slots, 64 by default.
+     - It claims a queued session under a lease and opens a stream. On placement it sends proceed. On boot it records `node_id` and `instance_id` and marks the session `ready`, so the next read mints a token that reaches the VM.
+     - Each lease renewal (every third of the TTL) also writes the last call vmmd reported to `last_activity_at`, so calls cost no write each. The renewal returns apid's close request and changes to the timeouts.
+     - Timers:
+       - after `SandboxIdleFreezeSec` without calls it asks for a freeze (state `frozen`);
+       - after the session's idle timeout it closes the session as `expired`, outcome `idle`;
+       - at the session's end it closes it as `expired`, outcome `lifetime`;
+       - on a close request it closes it as `closed`.
+     - Failures:
+       - a refusal or broken transport before boot queues the session again;
+       - a plan refusal fails it as `rejected`;
+       - a VM lost after boot fails it as `vm_lost`.
+     - The sweep queues expired `starting` sessions again, fails expired live ones with `lease_lost`, and expires queued sessions past their end.
+   - **Shared limit.** `AccountAgentLoad` counts live sessions (`starting`, `ready`, `frozen`) with live runs, so the two share `AgentRunConcurrentPerAccount` (§7).
+   - **schedd** (`pkg/sched/sandbox_runs.go`) admits a session the way `AgentRunner` admits runs: `KindAgentRun` on the agent pool, instance `sandbox-<id>`, with the plan's agent-run vCPU. It holds the reservation for the call, relays freeze and close, and keeps no session state.
+   - **vmmd** (`pkg/vmmdgrpc/sandbox_run.go`; schedd's certificate only):
+     - `fcvm.WakeSandbox` cold-boots the agent base with the new platform sandbox layer (`base/sandbox-layer-v1-<arch>.ext4`, holding `/etc/faas/sandbox.json`, published by imaged beside the agent layer). It sets `Instance.SandboxID` and returns once the guest's sandbox port answers.
+     - It reports calls at most once a second (`calls_in_flight`, `last_call_ended`). It freezes in place without reclaim when asked; a call in flight refuses the freeze.
+     - It destroys the VM on close and whenever the stream ends.
+     - `SandboxCall` thaws a frozen session in place, waiting out a freeze in progress, and reports `thawed`. A call never waits on schedd or the database.
+     - Session VMs are carved out of the guards that keep execution-only VMs from being quiet-paused (§5, 2 s between calls) and frozen; `ExecuteExecution` and `RunAgent` refuse them.
+   - **Data plane off.** ADR-20261102191500 took the session key off every gateway. Compute nodes had held per-host session keys anyway, so step 4's tokens would not have verified on another node. The gateway's sandbox routes are therefore not mounted until session tokens are signed with a key gateways can verify without being able to mint, which is an open decision. Until then, calls reach apid and answer 404.
+   - **Not yet:**
+     - preset snapshots for sessions (every session cold-boots);
+     - the workspace scratch drive (the workspace lives on drive1's 512 MB);
+     - memory reclaim on freeze;
+     - backoff for a session that fails to boot again and again;
+     - vmmd's own token check;
+     - metrics.
 6. Network modes `none` and `registries`.
 7. Workspace persist and hydrate.
 8. Exposed ports and preview URLs: the preview domain, per-port DNAT, the gateway host route, tokens, and rate limits (§11).

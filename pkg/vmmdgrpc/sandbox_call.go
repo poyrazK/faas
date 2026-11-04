@@ -2,8 +2,8 @@ package vmmdgrpc
 
 // Sandbox session calls (ADR-20261027090013 §4). gatewayd-internal sends one
 // sandboxproto operation per SandboxCall: vmmd checks the request, marks the
-// instance active so it is not quiet-paused mid-operation (ADR-1151), resumes
-// it if it is quiet-paused, dials the guest's sandbox port and relays frames
+// instance active so it is not quiet-paused mid-operation (ADR-1151), thaws it
+// if it is frozen and resumes it if it is quiet-paused, dials the guest's sandbox port and relays frames
 // both ways until the guest's result or error. vmmd parses no guest
 // filesystem; it relays frames.
 
@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -57,6 +58,17 @@ func (s *Server) SandboxCall(stream vmmdpb.Vmmd_SandboxCallServer) error {
 	instance := start.GetInstance()
 	s.beginActivity(instance)
 	defer s.endActivity(instance)
+	// A session VM RunSandbox keeps reports its calls and is thawed in place;
+	// an instance it does not keep is not a session VM, which the dial
+	// refuses below.
+	if act := s.sandboxActivityFor(instance); act != nil {
+		act.begin()
+		defer func() { act.end(time.Now()) }()
+		if err := s.thawSandbox(ctx, instance, act); err != nil {
+			s.log.Warn("sandbox: thaw failed", "instance", instance, "err", err)
+			return status.Error(codes.Unavailable, "the sandbox could not be thawed; retry")
+		}
+	}
 	if err := s.prepareGuest(ctx, instance); err != nil {
 		return status.Error(codes.Unavailable, "the sandbox is frozen or resuming; retry")
 	}

@@ -451,8 +451,8 @@ type Instance struct {
 	AgentRunOnly bool
 	// SandboxID is the sandbox session a VM was booted for
 	// (ADR-20261027090013); empty for every other VM. Only a VM that carries
-	// it serves sandbox calls, and only for that session. The session boot
-	// path sets it (rollout step 5).
+	// it serves sandbox calls, and only for that session. WakeSandbox sets
+	// it.
 	SandboxID string
 	// AgentRunRelay is the run principal of the VM's relay; host-only.
 	AgentRunRelay *AgentRunRelay `json:"-"`
@@ -3741,8 +3741,11 @@ type WakeRequest struct {
 	// agentRunWaitPauseAfter is the run's model-wait pause delay, accepted
 	// only with agentRunOnly (ADR-20261027090012).
 	agentRunWaitPauseAfter time.Duration
-	RehearsalRunID         string // exact durable containment run; ordinary legacy callers may omit it
-	Instance               string
+	// sandboxID is set only by WakeSandbox (ADR-20261027090013), on top of
+	// ExecutionOnly; it becomes Instance.SandboxID.
+	sandboxID      string
+	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
+	Instance       string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -5369,7 +5372,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
-		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, SandboxID: req.sandboxID, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),

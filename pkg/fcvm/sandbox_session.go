@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sandboxproto"
 )
 
@@ -60,4 +62,80 @@ func (m *Manager) DialSandboxSession(ctx context.Context, instance, sandboxID st
 		return nil, errors.New("fcvm: the vmm cannot dial sandbox sessions")
 	}
 	return dialer.DialSandbox(ctx, instance)
+}
+
+// SandboxWakeRequest is the machine for one sandbox session: the agent-base
+// drive0, the platform sandbox layer (drive1) that holds
+// /etc/faas/sandbox.json, and the size admission chose. No tenant data is in
+// the image; every operation arrives later over SandboxCall.
+type SandboxWakeRequest struct {
+	Instance      string
+	SandboxID     string
+	AccountID     string
+	Plan          api.Plan
+	BaseKey       string
+	LayerKey      string
+	VcpuCount     int
+	MemSizeMiB    int
+	CPUMillicores int
+	// QuietPauseAfter pauses the VM between calls (ADR-20261027090013 §5);
+	// zero keeps it running.
+	QuietPauseAfter time.Duration
+}
+
+// WakeSandbox cold-boots one sandbox session VM on the execution-only path
+// (a fresh jail, cgroup and lease, no tenant network) and returns once
+// guest-init's sandbox server answers, so the first call never races the
+// boot. The VM lives until Destroy.
+func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Instance, error) {
+	if m == nil || m.vmm == nil {
+		return nil, errors.New("fcvm: sandbox sessions are not configured")
+	}
+	if req.Instance == "" || req.SandboxID == "" || req.AccountID == "" || !req.Plan.Valid() || req.BaseKey == "" ||
+		req.LayerKey == "" || req.VcpuCount <= 0 || req.MemSizeMiB <= 0 || req.CPUMillicores <= 0 || req.QuietPauseAfter < 0 {
+		return nil, errors.New("fcvm: incomplete sandbox wake request")
+	}
+	dialer, ok := m.vmm.(SandboxDialer)
+	if !ok {
+		return nil, errors.New("fcvm: the vmm cannot dial sandbox sessions")
+	}
+	inst, err := m.Wake(ctx, WakeRequest{
+		Instance: req.Instance, ExecutionOnly: true, sandboxID: req.SandboxID, AccountID: req.AccountID, Plan: req.Plan,
+		BaseKey: req.BaseKey, LayerKey: req.LayerKey, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
+		CPUMillicores: req.CPUMillicores, QuietPauseAfter: req.QuietPauseAfter,
+	})
+	if err != nil {
+		return nil, err
+	}
+	destroy := func(cause error) (*Instance, error) {
+		destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentRunDestroyTimeout)
+		defer cancel()
+		return nil, errors.Join(cause, m.Destroy(destroyCtx, req.Instance))
+	}
+	if inst == nil || !inst.ExecutionOnly || inst.SandboxID != req.SandboxID || !inst.Lease.Networkless {
+		return destroy(errors.New("fcvm: sandbox wake did not produce a networkless sandbox VM"))
+	}
+	if err := awaitSandboxListener(ctx, dialer, req.Instance); err != nil {
+		return destroy(err)
+	}
+	return inst, nil
+}
+
+// awaitSandboxListener dials the guest's sandbox port until it answers. Wake
+// returns once Firecracker is up, before guest-init listens. The probe
+// connection carries no request; the guest drops it.
+func awaitSandboxListener(ctx context.Context, dialer SandboxDialer, instance string) error {
+	waitCtx, cancel := context.WithTimeout(ctx, agentRunDialWindow)
+	defer cancel()
+	for {
+		conn, err := dialer.DialSandbox(waitCtx, instance)
+		if err == nil {
+			return conn.Close()
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("fcvm: sandbox %s never listened: %w", instance, err)
+		case <-time.After(executionDialStep):
+		}
+	}
 }

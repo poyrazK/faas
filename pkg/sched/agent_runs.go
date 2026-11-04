@@ -51,6 +51,9 @@ type AgentRunConfig struct {
 	// (ADR-20261027090012 §1): vmmd pauses their VM after QuietPauseAfterMillis
 	// of waiting on the relay alone. Off: every run keeps running.
 	WaitPause bool
+	// SandboxLayerKey is the platform sandbox layer (drive1) sandbox
+	// sessions boot with (ADR-20261027090013 §2); empty: no sessions.
+	SandboxLayerKey string
 }
 
 // AgentRunAdmission is one run's machine (ADR-20261027090010 §5), already checked
@@ -163,7 +166,8 @@ func (r *AgentRunner) Run(ctx context.Context, a AgentRunAdmission, run agentrun
 	if err := a.validate(); err != nil {
 		return agentrunproto.Result{}, err
 	}
-	placement, release, err := r.admit(ctx, a)
+	placement, release, err := r.admit(ctx, Request{Instance: AgentRunInstanceID(a.RunID), Plan: a.Plan, RAMMB: a.RAMMB,
+		VCPU: a.VCPU, CPUMillicores: a.CPUMillicores})
 	if err != nil {
 		return agentrunproto.Result{}, err
 	}
@@ -274,11 +278,10 @@ func (r *AgentRunner) captureID(shape agentSnapshotShape) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-func (r *AgentRunner) admit(ctx context.Context, a AgentRunAdmission) (AgentRunPlacement, func(), error) {
-	req := Request{
-		Instance: AgentRunInstanceID(a.RunID), Plan: a.Plan, RAMMB: a.RAMMB, VCPU: a.VCPU,
-		CPUMillicores: a.CPUMillicores, Kind: KindAgentRun, agentPool: r.pool,
-	}
+// admit places req on the agent pool as an agent-run reservation; sandbox
+// sessions are admitted the same way (ADR-20261027090013 §7).
+func (r *AgentRunner) admit(ctx context.Context, req Request) (AgentRunPlacement, func(), error) {
+	req.Kind, req.agentPool = KindAgentRun, r.pool
 	placement, err := r.engine.choosePlacementLocked(ctx, req)
 	if err != nil {
 		return AgentRunPlacement{}, nil, fmt.Errorf("sched: agent run placement: %w", err)

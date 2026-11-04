@@ -56,6 +56,7 @@ const (
 	Vmmd_ExecuteAppTaskStream_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTaskStream"
 	Vmmd_AttachAppTask_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/AttachAppTask"
 	Vmmd_SandboxCall_FullMethodName                             = "/onebox.faas.vmmd.v1.Vmmd/SandboxCall"
+	Vmmd_RunSandbox_FullMethodName                              = "/onebox.faas.vmmd.v1.Vmmd/RunSandbox"
 	Vmmd_WaitJobExit_FullMethodName                             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
 	Vmmd_WarmSnapshot_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/WarmSnapshot"
@@ -240,6 +241,13 @@ type VmmdClient interface {
 	// sandbox port and relays sandboxproto frames both ways until the guest
 	// answers. An instance that is not that sandbox's VM is NotFound.
 	SandboxCall(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SandboxCallRequest, SandboxCallEvent], error)
+	// RunSandbox boots one sandbox session VM and keeps it for the stream's
+	// life (ADR-20261027090013 §4, §5). The first frame is start; booted
+	// follows once the guest's sandbox server listens. The caller may then ask
+	// to freeze the VM or close it; vmmd reports call activity, and a call
+	// that finds the VM frozen thaws it in place and reports thawed. The VM is
+	// destroyed on close and whenever the stream ends.
+	RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunSandboxRequest, RunSandboxEvent], error)
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error)
@@ -1126,6 +1134,19 @@ func (c *vmmdClient) SandboxCall(ctx context.Context, opts ...grpc.CallOption) (
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_SandboxCallClient = grpc.BidiStreamingClient[SandboxCallRequest, SandboxCallEvent]
 
+func (c *vmmdClient) RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunSandboxRequest, RunSandboxEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_RunSandbox_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RunSandboxRequest, RunSandboxEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_RunSandboxClient = grpc.BidiStreamingClient[RunSandboxRequest, RunSandboxEvent]
+
 func (c *vmmdClient) WaitJobExit(ctx context.Context, in *WaitJobExitRequest, opts ...grpc.CallOption) (*JobExitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(JobExitResponse)
@@ -1478,7 +1499,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1497,7 +1518,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1510,7 +1531,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[10], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1523,7 +1544,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[10], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[11], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1536,7 +1557,7 @@ type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, F
 
 func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[11], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[12], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1739,7 +1760,7 @@ func (c *vmmdClient) DatabaseArchiveHold(ctx context.Context, in *DatabaseArchiv
 
 func (c *vmmdClient) ExportDatabaseVolume(ctx context.Context, in *ExportDatabaseVolumeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DatabaseVolumeChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[12], Vmmd_ExportDatabaseVolume_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[13], Vmmd_ExportDatabaseVolume_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1758,7 +1779,7 @@ type Vmmd_ExportDatabaseVolumeClient = grpc.ServerStreamingClient[DatabaseVolume
 
 func (c *vmmdClient) ImportDatabaseVolume(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DatabaseVolumeChunk, ImportDatabaseVolumeResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[13], Vmmd_ImportDatabaseVolume_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[14], Vmmd_ImportDatabaseVolume_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1811,7 +1832,7 @@ func (c *vmmdClient) DatabaseControl(ctx context.Context, in *DatabaseControlReq
 
 func (c *vmmdClient) DatabaseSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[14], Vmmd_DatabaseSession_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[15], Vmmd_DatabaseSession_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1824,7 +1845,7 @@ type Vmmd_DatabaseSessionClient = grpc.BidiStreamingClient[DatabaseSessionFrame,
 
 func (c *vmmdClient) DatabaseReplication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[15], Vmmd_DatabaseReplication_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[16], Vmmd_DatabaseReplication_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1977,6 +1998,13 @@ type VmmdServer interface {
 	// sandbox port and relays sandboxproto frames both ways until the guest
 	// answers. An instance that is not that sandbox's VM is NotFound.
 	SandboxCall(grpc.BidiStreamingServer[SandboxCallRequest, SandboxCallEvent]) error
+	// RunSandbox boots one sandbox session VM and keeps it for the stream's
+	// life (ADR-20261027090013 §4, §5). The first frame is start; booted
+	// follows once the guest's sandbox server listens. The caller may then ask
+	// to freeze the VM or close it; vmmd reports call activity, and a call
+	// that finds the VM frozen thaws it in place and reports thawed. The VM is
+	// destroyed on close and whenever the stream ends.
+	RunSandbox(grpc.BidiStreamingServer[RunSandboxRequest, RunSandboxEvent]) error
 	// WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
 	// The caller supplies the deadline on the gRPC context.
 	WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error)
@@ -2605,6 +2633,9 @@ func (UnimplementedVmmdServer) AttachAppTask(grpc.BidiStreamingServer[AttachAppT
 }
 func (UnimplementedVmmdServer) SandboxCall(grpc.BidiStreamingServer[SandboxCallRequest, SandboxCallEvent]) error {
 	return status.Error(codes.Unimplemented, "method SandboxCall not implemented")
+}
+func (UnimplementedVmmdServer) RunSandbox(grpc.BidiStreamingServer[RunSandboxRequest, RunSandboxEvent]) error {
+	return status.Error(codes.Unimplemented, "method RunSandbox not implemented")
 }
 func (UnimplementedVmmdServer) WaitJobExit(context.Context, *WaitJobExitRequest) (*JobExitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitJobExit not implemented")
@@ -3343,6 +3374,13 @@ func _Vmmd_SandboxCall_Handler(srv interface{}, stream grpc.ServerStream) error 
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_SandboxCallServer = grpc.BidiStreamingServer[SandboxCallRequest, SandboxCallEvent]
+
+func _Vmmd_RunSandbox_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).RunSandbox(&grpc.GenericServerStream[RunSandboxRequest, RunSandboxEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_RunSandboxServer = grpc.BidiStreamingServer[RunSandboxRequest, RunSandboxEvent]
 
 func _Vmmd_WaitJobExit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(WaitJobExitRequest)
@@ -4902,6 +4940,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "SandboxCall",
 			Handler:       _Vmmd_SandboxCall_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "RunSandbox",
+			Handler:       _Vmmd_RunSandbox_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

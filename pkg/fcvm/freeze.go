@@ -174,13 +174,14 @@ func (m *Manager) Freeze(ctx context.Context, instance string, opts FreezeOption
 // request-driven app VMs whose traffic all passes through vmmd's forward
 // path qualify: private-network peers talk guest to guest, a pending
 // waitUntil task needs the guest running, and warm-pool, execution, job,
-// app-task, qualification and builder VMs have lifecycles of their own. The
-// caller holds m.mu.
+// app-task, qualification and builder VMs have lifecycles of their own. A
+// sandbox session VM's calls all pass through vmmd, so it qualifies
+// (ADR-20261027090013 §5). The caller holds m.mu.
 func freezeRefusal(inst *Instance) string {
 	switch {
 	case inst.Paused:
 		return "warm-pool instance"
-	case inst.ExecutionOnly:
+	case inst.ExecutionOnly && inst.SandboxID == "":
 		return "execution instance"
 	case inst.IsJob:
 		return "job instance"

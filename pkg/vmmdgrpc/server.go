@@ -20,6 +20,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -275,6 +276,10 @@ type Server struct {
 	// hostCPU is the host CPU busy window Stats reports (ADR 20261030100950).
 	// The zero value is ready to use.
 	hostCPU hostCPUSampler
+	// sandboxRuns tracks the calls of each sandbox session VM RunSandbox
+	// keeps (ADR-20261027090013 §5), keyed by instance. The zero value is
+	// ready to use.
+	sandboxRuns sync.Map
 
 	vmm VmmdAPI
 	ops *wire.OpsMetrics

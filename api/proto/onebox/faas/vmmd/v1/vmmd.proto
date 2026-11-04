@@ -138,6 +138,14 @@ service Vmmd {
   // answers. An instance that is not that sandbox's VM is NotFound.
   rpc SandboxCall(stream SandboxCallRequest) returns (stream SandboxCallEvent);
 
+  // RunSandbox boots one sandbox session VM and keeps it for the stream's
+  // life (ADR-20261027090013 §4, §5). The first frame is start; booted
+  // follows once the guest's sandbox server listens. The caller may then ask
+  // to freeze the VM or close it; vmmd reports call activity, and a call
+  // that finds the VM frozen thaws it in place and reports thawed. The VM is
+  // destroyed on close and whenever the stream ends.
+  rpc RunSandbox(stream RunSandboxRequest) returns (stream RunSandboxEvent);
+
   // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
   // The caller supplies the deadline on the gRPC context.
   rpc WaitJobExit(WaitJobExitRequest) returns (JobExitResponse);
@@ -3268,6 +3276,71 @@ message AttachAppTaskEvent {
 }
 
 message AttachAppTaskAttached {}
+
+message RunSandboxRequest {
+  oneof frame {
+    RunSandboxStart start = 1;
+    RunSandboxFreeze freeze = 2;
+    RunSandboxClose close = 3;
+  }
+}
+
+message RunSandboxStart {
+  string instance = 1;
+  string sandbox_id = 2;
+  string account_id = 3;
+  string plan = 4;
+  // base_key is the agent base (drive0); layer_key the platform sandbox
+  // layer (drive1) holding /etc/faas/sandbox.json.
+  string base_key = 5;
+  string layer_key = 6;
+  int32 vcpu_count = 7;
+  int32 mem_size_mib = 8;
+  int32 cpu_millicores = 9;
+  // quiet_pause_after_ms pauses the VM between calls; zero keeps it
+  // running.
+  int64 quiet_pause_after_ms = 10;
+}
+
+// RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),
+// returning its reclaimable memory to the host.
+message RunSandboxFreeze {}
+
+message RunSandboxClose {}
+
+// RunSandboxEvent is a server frame on the RunSandbox stream: booted once,
+// then activity, frozen, freeze_refused and thawed as they happen.
+message RunSandboxEvent {
+  oneof frame {
+    RunSandboxBooted booted = 1;
+    RunSandboxActivity activity = 2;
+    RunSandboxFrozen frozen = 3;
+    RunSandboxFreezeRefused freeze_refused = 4;
+    RunSandboxThawed thawed = 5;
+  }
+}
+
+message RunSandboxBooted {
+  WakeMethod method = 1;
+  int64 boot_ms = 2;
+}
+
+// RunSandboxActivity reports the session's calls, at most once a second
+// while they change: how many are in flight and when the last one ended.
+message RunSandboxActivity {
+  int32 calls_in_flight = 1;
+  int64 last_call_ended_unix_ms = 2;
+}
+
+message RunSandboxFrozen {}
+
+// RunSandboxFreezeRefused: a call was in flight, or the VM could not be
+// frozen; it keeps running.
+message RunSandboxFreezeRefused {
+  string reason = 1;
+}
+
+message RunSandboxThawed {}
 
 message SandboxCallRequest {
   oneof message {
