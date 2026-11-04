@@ -28,6 +28,10 @@ func TestLeafHelpNamesPositionalArguments(t *testing.T) {
 		{"traffic status", []string{"gregale release traffic status <slug>"}},
 		{"trusted-publishers add", []string{"gregale registry key create <slug> <name> <pub.pem>"}},
 		{"cors ls", []string{"gregale edge cors list [<slug>]"}},
+		// rc.318 field report: the group listed ls/rm/show while each verb's
+		// usage said list/delete/get.
+		{"edge cors", []string{"gregale edge cors <allow|list|delete|get>"}},
+		{"edge cors show", []string{"gregale edge cors get [<slug>]"}},
 		{"workers status", []string{"gregale worker status [<app>]"}},
 		{"issues get", []string{"gregale debug issue get --app <SLUG> <issue-id>"}},
 		{"runs cancel", []string{"gregale sandbox cancel <id>"}},

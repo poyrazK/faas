@@ -181,7 +181,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 			status = "degraded"
 		}
 		writeJSON(w, statusCode, map[string]any{
-			"ok": ready, "status": status, "instance_id": strings.TrimSpace(os.Getenv("FAAS_INSTANCE_ID")),
+			"ok": ready, "status": status, "instance_id": strings.TrimSpace(r.Header.Get("X-Faas-Instance-Id")),
 			"catalog_revision": revision, "catalog_sha256": digest,
 		})
 		return
