@@ -96,6 +96,7 @@ type appErrorsPublisher struct {
 	issueQueue          []httpIssueRetry
 	issueApps           map[string]int
 	issueKeys           map[string]bool
+	issueRunningApps    map[string]bool
 	issueWake           chan struct{}
 
 	// NotifyEnqueued is called by the recorder after every
@@ -110,14 +111,15 @@ type appErrorsPublisher struct {
 // newAppErrorsPublisher wires a production publisher.
 func newAppErrorsPublisher(rec *appErrorsRecorder, client apidgrpc.AppErrorsClient, ops *wire.OpsMetrics, log *slog.Logger) *appErrorsPublisher {
 	return &appErrorsPublisher{
-		rec:       rec,
-		client:    client,
-		ops:       ops,
-		log:       log,
-		notifier:  make(chan struct{}, 1),
-		issueApps: make(map[string]int),
-		issueKeys: make(map[string]bool),
-		issueWake: make(chan struct{}, 1),
+		rec:              rec,
+		client:           client,
+		ops:              ops,
+		log:              log,
+		notifier:         make(chan struct{}, 1),
+		issueApps:        make(map[string]int),
+		issueKeys:        make(map[string]bool),
+		issueRunningApps: make(map[string]bool),
+		issueWake:        make(chan struct{}, 1),
 	}
 }
 

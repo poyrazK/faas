@@ -358,6 +358,28 @@ func (q *Queries) IssueSlackActionSent(ctx context.Context, db DBTX, arg IssueSl
 	return err
 }
 
+const issueSlackAttemptStart = `-- name: IssueSlackAttemptStart :execrows
+UPDATE issue_team_slack_deliveries d SET attempt=attempt+1,total_attempts=total_attempts+1,updated_at=clock_timestamp()
+WHERE d.id=$1 AND d.claim_id=$2 AND d.status='in_flight'
+AND d.claim_until>clock_timestamp() AND d.expires_at>clock_timestamp() AND d.attempt=$3
+AND EXISTS (SELECT 1 FROM issue_team_slack_destinations dst WHERE dst.id=d.destination_id
+ AND dst.claim_id=d.claim_id AND dst.claim_until>clock_timestamp() AND dst.enabled AND dst.revision=d.destination_revision)
+`
+
+type IssueSlackAttemptStartParams struct {
+	ID              pgtype.UUID
+	ClaimID         pgtype.UUID
+	PreviousAttempt int32
+}
+
+func (q *Queries) IssueSlackAttemptStart(ctx context.Context, db DBTX, arg IssueSlackAttemptStartParams) (int64, error) {
+	result, err := db.Exec(ctx, issueSlackAttemptStart, arg.ID, arg.ClaimID, arg.PreviousAttempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const issueSlackCancelPrevious = `-- name: IssueSlackCancelPrevious :exec
 UPDATE issue_team_slack_deliveries SET status='canceled',last_error='destination_unavailable',claim_id=NULL,claim_until=NULL,updated_at=clock_timestamp()
 WHERE destination_id=$1 AND destination_revision<>$2 AND status IN ('pending','failed','in_flight')
@@ -639,7 +661,7 @@ func (q *Queries) IssueSlackChallengesExpire(ctx context.Context, db DBTX, appID
 }
 
 const issueSlackClaim = `-- name: IssueSlackClaim :exec
-UPDATE issue_team_slack_deliveries SET status='in_flight',attempt=attempt+1,total_attempts=total_attempts+1,claim_id=$2,claim_until=$3,updated_at=clock_timestamp() WHERE id=$1
+UPDATE issue_team_slack_deliveries SET status='in_flight',claim_id=$2,claim_until=$3,updated_at=clock_timestamp() WHERE id=$1
 `
 
 type IssueSlackClaimParams struct {

@@ -124,15 +124,15 @@ func (a *appErrorsReceiver) startHTTPIssue(snapshot *apidpb.IncrementAppErrorReq
 				return err
 			}
 			defer release()
-			outcome, err = recordHTTPIssue(ctx, a.store, snapshot)
+			callCtx, callCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer callCancel()
+			outcome, err = recordHTTPIssue(callCtx, a.store, snapshot)
 			if err == nil && outcome == httpIssueSkipped {
 				return errHTTPIssueSkipped
 			}
 			return err
 		}
-		callCtx, callCancel := context.WithTimeout(ctx, 10*time.Second)
-		err := attempt(callCtx)
-		callCancel()
+		err := attempt(ctx)
 		a.issueRetryMu.Lock()
 		a.issueAttemptCount--
 		a.issueAttemptApps[app]--
@@ -238,9 +238,7 @@ func (a *appErrorsReceiver) releaseHTTPIssueRetry(app string) {
 
 func retryHTTPIssueUntil(ctx context.Context, attempt func(context.Context) error, delay, maxDelay time.Duration) error {
 	for {
-		callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := attempt(callCtx)
-		cancel()
+		err := attempt(ctx)
 		if err == nil || !retryableHTTPIssueError(err) {
 			return err
 		}

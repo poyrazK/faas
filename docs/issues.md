@@ -283,6 +283,8 @@ Issues in a separate bounded in-memory queue and retries them using their
 stable event IDs. It does not retry the legacy counter, whose commit may have
 been ambiguous. The queue holds at most 1,024 records, at most 128 per app,
 for up to an hour; overflow, expiry or a gateway restart can lose records.
+Up to eight retries run concurrently, with at most one retry per app. An apid
+busy with the same app asks the gateway to retry instead of holding a worker.
 Deploy apid before gateways: older apid versions do not report handoff overflow
 and do not implement the retry RPC, so queued records wait until a compatible
 apid is available or expire. Successful handoff is still in memory; a receiver
@@ -295,6 +297,8 @@ serialize before they enter the four-slot telemetry ingest gate. Another 1,024 f
 wait for a retry slot, at most 128 per app. They remain in memory for up to an
 hour from the initial attempt; a full queue, expiry, or process restart can
 still lose records.
+The per-attempt database timeout starts after admission, so time spent waiting
+for the app or telemetry gate does not use the database execution budget.
 The `retry_recovered`, `retry_dropped`, and `retry_skipped` ingestion outcomes
 expose recovery, exhaustion, and events no longer eligible for ingestion.
 
@@ -1019,6 +1023,7 @@ is blocked while weighted events remain, to avoid discarding known weights.
 
 Maintenance runs every minute with bounded batches; while a retention batch is
 full, an independent worker drains further bounded batches once per second.
+Cleanup skips apps with locked app or usage rows so other apps can make progress.
 Expired ingest tokens are also deleted in bounded batches. Detailed occurrences expire
 even when traffic stops. Aggregate issue/release totals and activity survive.
 Expired tokens are removed; app deletion cascades all issue records. A Free
@@ -1550,6 +1555,10 @@ policy and destination revisions remain enabled. Automatic/manual retries reuse
 the same message ID; Slack delivery remains at least once, so ambiguous timeouts
 can still produce duplicates. Failed roots hold later replies until terminal or
 successful, and a channel change starts a new thread.
+Failures before dispatch, including an unavailable token key or a temporary
+readiness-check failure, are retried until delivery expiry without consuming
+the send-attempt budget after all apid workers have been upgraded. Older
+workers still count each claim as an attempt during a rolling upgrade.
 
 Queue plus retained application delivery history is capped at 1,000 records per
 app. The oldest terminal record makes room first. If every slot is live, the new

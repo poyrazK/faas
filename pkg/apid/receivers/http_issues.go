@@ -30,12 +30,19 @@ func (a *appErrorsReceiver) RecordHTTPIssue(ctx context.Context, req *apidpb.Inc
 	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" || req.GetRequestId() == "" || req.GetIssueEventId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "HTTP issue identity required")
 	}
-	release, err := a.acquireIssueWrite(ctx, req.GetAppId())
+	admitCtx, cancelAdmission := context.WithTimeout(ctx, 200*time.Millisecond)
+	release, err := a.acquireIssueWrite(admitCtx, req.GetAppId())
+	cancelAdmission()
 	if err != nil {
-		return nil, status.FromContextError(err).Err()
+		if ctx.Err() != nil {
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}
+		return nil, status.Error(codes.ResourceExhausted, "HTTP issue admission busy")
 	}
 	defer release()
-	outcome, err := recordHTTPIssue(ctx, a.store, req)
+	writeCtx, cancelWrite := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelWrite()
+	outcome, err := recordHTTPIssue(writeCtx, a.store, req)
 	if err != nil {
 		if retryableHTTPIssueError(err) {
 			return nil, status.Error(codes.Unavailable, "HTTP issue recording unavailable")

@@ -71,13 +71,11 @@ func (s *PgStore) CreateIssueToken(ctx context.Context, account, app string, in 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	owner, err := q.IssueLockApp(ctx, tx, issueUUID(app))
+	current, err := lockIssueResourcePolicy(ctx, tx, IssueCredential{AccountID: account, AppID: app})
 	if err != nil {
-		return api.IssueIngestToken{}, mapErr(err)
+		return api.IssueIngestToken{}, err
 	}
-	if issueID(owner.AccountID) != account {
-		return api.IssueIngestToken{}, ErrNotFound
-	}
+	lim.TokensPerApp = min(lim.TokensPerApp, current.TokensPerApp)
 	if _, err = q.IssueDeploymentScope(ctx, tx, sqlc.IssueDeploymentScopeParams{DeploymentID: issueUUID(in.DeploymentID), AppID: issueUUID(app), AccountID: issueUUID(account), Environment: in.Environment}); err != nil {
 		return api.IssueIngestToken{}, mapErr(err)
 	}

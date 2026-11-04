@@ -16,6 +16,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type transientIssueStore struct {
@@ -197,6 +199,28 @@ func TestHTTPFailureOneAppCannotOccupySharedGate(t *testing.T) {
 	otherRelease()
 	cancel()
 	waiters.Wait()
+}
+
+func TestRecordHTTPIssueReportsBusyAdmissionWithoutSpendingWriteDeadline(t *testing.T) {
+	store := &issueCaptureStore{countingAppErrorsStore: &countingAppErrorsStore{plan: api.PlanHobby}}
+	receiver := NewAppErrorsReceiver(store, nil, true)
+	app := uuid.NewString()
+	release, err := receiver.acquireIssueWrite(context.Background(), app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { release() }()
+	req := &apidpb.IncrementAppErrorRequest{AccountId: uuid.NewString(), AppId: app, DeploymentId: uuid.NewString(), RequestId: uuid.NewString(), IssueEventId: uuid.NewString(), RouteTemplate: "/orders", HttpStatus: 500, ErrorClass: "unhandled", Fingerprint: strings.Repeat("a", 64), ReceivedAtUnixMs: time.Now().UnixMilli()}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err = receiver.RecordHTTPIssue(ctx, req); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("busy admission: %v", err)
+	}
+	release()
+	release = func() {}
+	if _, err = receiver.RecordHTTPIssue(ctx, req); err != nil {
+		t.Fatalf("retry after admission: %v", err)
+	}
 }
 
 type issueCaptureStore struct {
@@ -404,7 +428,9 @@ func TestHTTPFailureDoesNotBlockLegacyCountingAndLimitsPerApp(t *testing.T) {
 	req.AppId = uuid.NewString()
 	receiver.HandleOne(context.Background(), req)
 	seen := map[string]int{}
-	for i := 0; i < issueRetryPerApp+1; i++ {
+	// Only one write per app may reach the store at a time, but another app
+	// must be able to progress while the first app's write is blocked.
+	for i := 0; i < 2; i++ {
 		select {
 		case app := <-store.started:
 			seen[app]++
@@ -412,17 +438,25 @@ func TestHTTPFailureDoesNotBlockLegacyCountingAndLimitsPerApp(t *testing.T) {
 			t.Fatal("Issue attempts did not start")
 		}
 	}
-	if seen[firstApp] != issueRetryPerApp || seen[req.AppId] != 1 || len(store.increments) != issueRetryPerApp+2 {
+	if seen[firstApp] != 1 || seen[req.AppId] != 1 || len(store.increments) != issueRetryPerApp+2 {
 		t.Fatalf("issue slots=%v, legacy counts=%d", seen, len(store.increments))
 	}
+	receiver.issueRetryMu.Lock()
+	active, pending := receiver.issueAttemptApps[firstApp], receiver.issuePendingApps[firstApp]
+	receiver.issueRetryMu.Unlock()
+	if active != issueRetryPerApp || pending != 1 {
+		t.Fatalf("first app has %d active and %d pending attempts, want %d and 1", active, pending, issueRetryPerApp)
+	}
 	release.Do(func() { close(store.release) })
-	select {
-	case app := <-store.started:
-		if app != firstApp {
-			t.Fatalf("queued wrong app: %s", app)
+	for i := 0; i < issueRetryPerApp; i++ {
+		select {
+		case app := <-store.started:
+			if app != firstApp {
+				t.Fatalf("queued wrong app: %s", app)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("queued issue never received its first attempt")
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("queued issue never received its first attempt")
 	}
 }
 

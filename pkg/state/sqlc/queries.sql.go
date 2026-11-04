@@ -40944,21 +40944,34 @@ func (q *Queries) IssuePurgeExpiredTokens(ctx context.Context, db DBTX, arg Issu
 }
 
 const issuePurgePlanEvents = `-- name: IssuePurgePlanEvents :execrows
-WITH expired AS (
- SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN apps a ON a.id=e.app_id JOIN app_resource_accounts c ON c.app_id = a.id
- WHERE c.plan=$1 AND e.received_at<$2 ORDER BY e.received_at LIMIT $3 FOR UPDATE OF e SKIP LOCKED
+WITH candidate_apps AS MATERIALIZED (
+ SELECT a.id FROM apps a JOIN app_resource_accounts c ON c.app_id=a.id
+ JOIN LATERAL (SELECT e.received_at FROM issue_events e
+  WHERE e.app_id=a.id AND e.received_at<$1 ORDER BY e.received_at LIMIT 1) oldest ON true
+ WHERE c.plan=$2 ORDER BY oldest.received_at,a.id
+ LIMIT $3 FOR UPDATE OF a SKIP LOCKED
+), locked_usage AS MATERIALIZED (
+ SELECT u.app_id FROM issue_event_usage u JOIN candidate_apps a ON a.id=u.app_id
+ ORDER BY u.app_id FOR UPDATE OF u SKIP LOCKED
+), eligible_apps AS MATERIALIZED (
+ SELECT a.id FROM candidate_apps a
+ WHERE EXISTS (SELECT 1 FROM locked_usage u WHERE u.app_id=a.id)
+ OR NOT EXISTS (SELECT 1 FROM issue_event_usage u WHERE u.app_id=a.id)
+), expired AS (
+ SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN eligible_apps a ON a.id=e.app_id
+ WHERE e.received_at<$1 ORDER BY e.received_at LIMIT $3 FOR UPDATE OF e SKIP LOCKED
 )
 DELETE FROM issue_events e USING expired x WHERE e.app_id=x.app_id AND e.deployment_id=x.deployment_id AND e.event_id=x.event_id
 `
 
 type IssuePurgePlanEventsParams struct {
-	Plan       string
 	Before     pgtype.Timestamptz
+	Plan       string
 	BatchLimit int32
 }
 
 func (q *Queries) IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePurgePlanEventsParams) (int64, error) {
-	result, err := db.Exec(ctx, issuePurgePlanEvents, arg.Plan, arg.Before, arg.BatchLimit)
+	result, err := db.Exec(ctx, issuePurgePlanEvents, arg.Before, arg.Plan, arg.BatchLimit)
 	if err != nil {
 		return 0, err
 	}

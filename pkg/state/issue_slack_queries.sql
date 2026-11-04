@@ -36,7 +36,13 @@ AND (d.claim_until IS NULL OR d.claim_until<=clock_timestamp()) AND (dst.claim_u
 AND NOT EXISTS(SELECT 1 FROM issue_team_slack_deliveries prev WHERE prev.destination_id=d.destination_id AND prev.destination_revision=d.destination_revision AND prev.incident_id=d.incident_id AND prev.channel_id=d.channel_id AND prev.status IN ('pending','failed','in_flight') AND prev.delivery_seq<d.delivery_seq)
 ORDER BY d.delivery_seq LIMIT 1;
 -- name: IssueSlackClaim :exec
-UPDATE issue_team_slack_deliveries SET status='in_flight',attempt=attempt+1,total_attempts=total_attempts+1,claim_id=$2,claim_until=$3,updated_at=clock_timestamp() WHERE id=$1;
+UPDATE issue_team_slack_deliveries SET status='in_flight',claim_id=$2,claim_until=$3,updated_at=clock_timestamp() WHERE id=$1;
+-- name: IssueSlackAttemptStart :execrows
+UPDATE issue_team_slack_deliveries d SET attempt=attempt+1,total_attempts=total_attempts+1,updated_at=clock_timestamp()
+WHERE d.id=sqlc.arg(id) AND d.claim_id=sqlc.arg(claim_id) AND d.status='in_flight'
+AND d.claim_until>clock_timestamp() AND d.expires_at>clock_timestamp() AND d.attempt=sqlc.arg(previous_attempt)
+AND EXISTS (SELECT 1 FROM issue_team_slack_destinations dst WHERE dst.id=d.destination_id
+ AND dst.claim_id=d.claim_id AND dst.claim_until>clock_timestamp() AND dst.enabled AND dst.revision=d.destination_revision);
 -- name: IssueSlackDestinationLease :exec
 UPDATE issue_team_slack_destinations SET claim_id=$2,claim_until=$3 WHERE id=$1;
 -- name: IssueSlackTerminal :exec

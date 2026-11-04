@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
@@ -44,17 +45,25 @@ func issueRetryKey(row appErrorRow) string {
 // runHTTPIssueRetries cannot block fresh legacy batches. The periodic wake
 // handles backoff even when no new retries arrive.
 func (p *appErrorsPublisher) runHTTPIssueRetries(ctx context.Context) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		case <-p.issueWake:
-		}
-		p.retryHTTPIssues(ctx)
+	var workers sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				case <-p.issueWake:
+				}
+				p.retryHTTPIssues(ctx)
+			}
+		}()
 	}
+	workers.Wait()
 }
 
 // Unimplemented is retried for rolling apid upgrades.
@@ -63,14 +72,12 @@ func (p *appErrorsPublisher) retryHTTPIssues(parent context.Context) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
-	defer cancel()
-	for i := 0; i < 32 && ctx.Err() == nil; i++ {
+	for i := 0; i < 32 && parent.Err() == nil; i++ {
 		p.issueMu.Lock()
 		now := time.Now()
 		index := -1
 		for j, entry := range p.issueQueue {
-			if !entry.next.After(now) || !entry.expires.After(now) {
+			if !p.issueRunningApps[entry.row.AppID] && (!entry.next.After(now) || !entry.expires.After(now)) {
 				index = j
 				break
 			}
@@ -80,6 +87,7 @@ func (p *appErrorsPublisher) retryHTTPIssues(parent context.Context) {
 			return
 		}
 		entry := p.issueQueue[index]
+		p.issueRunningApps[entry.row.AppID] = true
 		copy(p.issueQueue[index:], p.issueQueue[index+1:])
 		p.issueQueue[len(p.issueQueue)-1] = httpIssueRetry{}
 		p.issueQueue = p.issueQueue[:len(p.issueQueue)-1]
@@ -88,7 +96,7 @@ func (p *appErrorsPublisher) retryHTTPIssues(parent context.Context) {
 		var err error
 		var response *apidpb.IncrementAppErrorResponse
 		if entry.expires.After(now) {
-			callCtx, callCancel := context.WithTimeout(ctx, 2*time.Second)
+			callCtx, callCancel := context.WithTimeout(parent, 15*time.Second)
 			response, err = client.RecordHTTPIssue(callCtx, appErrorRequest(entry.row))
 			callCancel()
 		} else {
@@ -100,6 +108,7 @@ func (p *appErrorsPublisher) retryHTTPIssues(parent context.Context) {
 		code := status.Code(err)
 		retry := err != nil && entry.expires.After(time.Now()) && code != codes.InvalidArgument && code != codes.NotFound && code != codes.PermissionDenied && code != codes.AlreadyExists
 		p.issueMu.Lock()
+		delete(p.issueRunningApps, entry.row.AppID)
 		if retry {
 			entry.next = time.Now().Add(entry.delay)
 			entry.delay = min(time.Minute, entry.delay*2)
@@ -112,6 +121,10 @@ func (p *appErrorsPublisher) retryHTTPIssues(parent context.Context) {
 			}
 		}
 		p.issueMu.Unlock()
+		select {
+		case p.issueWake <- struct{}{}:
+		default:
+		}
 		if err != nil && !retry {
 			p.log.Warn("HTTP issue retry dropped", "app_id", entry.row.AppID, "err", err)
 			p.ops.ObserveIssueEvent("retry_dropped")

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -96,6 +97,54 @@ type blockingRetryClient struct {
 	batchStreamClient
 	started chan struct{}
 	opened  chan struct{}
+}
+
+type fairRetryClient struct {
+	batchStreamClient
+	busyStarted chan struct{}
+	otherDone   chan struct{}
+	block       chan struct{}
+	busyOnce    sync.Once
+	otherOnce   sync.Once
+}
+
+func (c *fairRetryClient) RecordHTTPIssue(ctx context.Context, req *apidpb.IncrementAppErrorRequest) (*apidpb.IncrementAppErrorResponse, error) {
+	if req.GetAppId() == "busy" {
+		c.busyOnce.Do(func() { close(c.busyStarted) })
+		select {
+		case <-c.block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	} else {
+		c.otherOnce.Do(func() { close(c.otherDone) })
+	}
+	return &apidpb.IncrementAppErrorResponse{Outcome: "accepted"}, nil
+}
+
+func TestAppErrorsPublisherRetriesOtherAppsWhileOneBlocks(t *testing.T) {
+	client := &fairRetryClient{busyStarted: make(chan struct{}), otherDone: make(chan struct{}), block: make(chan struct{})}
+	p := newAppErrorsPublisher(&appErrorsRecorder{}, client, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	rows := make([]appErrorRow, 0, httpIssueRetryAppLimit+1)
+	for i := 0; i < httpIssueRetryAppLimit; i++ {
+		rows = append(rows, appErrorRow{AppID: "busy", DeploymentID: "d", RequestID: "r", IssueEventID: fmt.Sprint(i), HTTPStatus: 500})
+	}
+	rows = append(rows, appErrorRow{AppID: "other", DeploymentID: "d", RequestID: "r", IssueEventID: "other", HTTPStatus: 500})
+	p.queueHTTPIssueRetries(rows)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); p.runHTTPIssueRetries(ctx) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-client.busyStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("busy retry did not start")
+	}
+	select {
+	case <-client.otherDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("busy app blocked another app's retry")
+	}
 }
 
 func (c *blockingRetryClient) RecordHTTPIssue(ctx context.Context, _ *apidpb.IncrementAppErrorRequest) (*apidpb.IncrementAppErrorResponse, error) {
