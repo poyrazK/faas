@@ -12,6 +12,7 @@ elsewhere its calls answer 404 no such API route.
 # ruff: noqa: F401
 from .. import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
+    GREGALE_DEADLINE_MS_HEADER,
     GREGALE_RELEASE_HEADER,
     GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
@@ -46,6 +47,7 @@ from .. import (
     current_gregale_release,
     current_gregale_request_deadline,
     current_idempotency_key,
+    gregale_request_time_remaining_ms,
     install_chain,
     is_faas_error,
     iter_sse,

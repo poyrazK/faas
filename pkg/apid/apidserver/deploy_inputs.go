@@ -531,7 +531,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if hasSourceBuild {
 		kind, dockerfile = state.DeploymentKindDockerfile, true
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest)
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(sourcePath, manifestApp, manifest, s.releasePhaseOff)
 	if releaseProblem != nil {
 		api.WriteProblem(w, releaseProblem)
 		return
