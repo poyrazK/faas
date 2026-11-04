@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-11-03
-- **Amends:** ADR-119, ADR-20261103194727, ADR-20261103230000
+- **Amends:** ADR-119, ADR-20261103194727, ADR-20261104001001
 
 ## Context
 

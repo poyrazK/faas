@@ -1,4 +1,4 @@
-# ADR-20261103230000 · Isolate private-network peering routers
+# ADR-20261104001001 · Isolate private-network peering routers
 
 - **Status:** accepted
 - **Date:** 2026-11-03
