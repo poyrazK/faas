@@ -608,6 +608,22 @@ type RequireAuthnKey struct {
 	// personal key), so a key_changed notification that names the
 	// organization drops only its keys from the gateway cache (H93).
 	OrgID string
+	// AppID is set for a credential bound to one app; it unlocks only that
+	// app.
+	AppID string
+	// ProjectLimited and ProjectIDs: a key limited to projects unlocks only
+	// their apps (ADR-20261104085712).
+	ProjectLimited bool
+	ProjectIDs     []string
+}
+
+// keyOutsideApp reports whether key is bound to another app or limited to
+// projects app is not in, so it may not unlock app.
+func keyOutsideApp(key RequireAuthnKey, app App) bool {
+	if key.AppID != "" && key.AppID != app.ID {
+		return true
+	}
+	return key.ProjectLimited && (app.ProjectID == "" || !slices.Contains(key.ProjectIDs, app.ProjectID))
 }
 
 // RequireAuthnAuditor is the narrow slice of cmd/gatewayd-internal/audit.go's
@@ -2412,6 +2428,22 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 // usage:read for billing tooling opened every private app of the account.
 // It writes the 403 and returns true when the key is refused.
 func (h *Handler) rejectKeyWithoutAppScope(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, accountID string, key RequireAuthnKey, auditKind string) bool {
+	if keyOutsideApp(key, app) {
+		// An app-bound credential or a project-limited key reaches only
+		// its app or its projects' apps, as on the API.
+		h.emitAuthnAudit(r, app, &accountID, auditKind, map[string]any{
+			"app_id":          app.ID,
+			"slug":            r.Host,
+			"key_id":          key.ID,
+			"key_app_id":      key.AppID,
+			"project_limited": key.ProjectLimited,
+		})
+		rec.status = http.StatusForbidden
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Insufficient scope", "this API key is limited to other apps or projects"))
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return true
+	}
 	if keyHasAnyScope(key.Scopes, api.ScopesReadSurface) {
 		return false
 	}

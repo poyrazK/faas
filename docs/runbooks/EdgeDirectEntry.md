@@ -169,7 +169,12 @@ injected failure as soon as it is measured.
   request is forwarded or wakes anything (`EdgeHostRequests*`): twice the
   highest plan's per-app limit, so the gateway's plan limit answers an app
   first. A refusal is `429 rate_limited` with
-  `x-faas-rate-limit-scope: host`.
+  `x-faas-rate-limit-scope: host`. Only a host that has served an app's
+  answer (a 2xx, 101 or 304) gets a bucket of its own; every other name
+  shares one unknown-host bucket, so a flood of random names under the apps
+  wildcard is refused together and cannot push a real host's bucket out. A
+  new app's first requests during such a flood share that bucket until one is
+  answered.
 - **Open connections, new connections a second and TLS handshakes in
   progress**, only with `faas_edge_public_front: none`. A refused connection
   is reset before TLS; a handshake slot is held at most

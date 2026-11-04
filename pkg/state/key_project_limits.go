@@ -3,9 +3,11 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -43,7 +45,9 @@ func (s *PgStore) SetAPIKeyProjectLimit(ctx context.Context, keyID string, proje
 	return mapErr(err)
 }
 
-func (s *PgStore) APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error) {
+// APIKeyProjectLimit is on pgCore so the edge store reads it too: an upload
+// key limited to projects writes only to their apps (ADR-20261104085712).
+func (s *pgCore) APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error) {
 	ids, err := sqlc.New().GetAPIKeyProjectLimit(ctx, s.pool, mustPgUUID(keyID))
 	if err != nil {
 		if err = mapErr(err); errors.Is(err, ErrNotFound) {
@@ -73,6 +77,28 @@ func (s *PgStore) SetCliAuthCodeProjects(ctx context.Context, tokenHash []byte, 
 		return struct{}{}, nil
 	})
 	return err
+}
+
+// copyKeyProjectLimitSQL gives a rotated key's successor the predecessor's
+// project limit, if it has one.
+const copyKeyProjectLimitSQL = `insert into api_key_project_limits (key_id, project_ids)
+select $2::uuid, project_ids from api_key_project_limits where key_id = $1::uuid`
+
+// copyKeyProjectLimitTx runs in a rotation's transaction, so a key limited to
+// projects is never rotated into an account-wide one (ADR-20261104085712).
+func copyKeyProjectLimitTx(ctx context.Context, tx pgx.Tx, oldKeyID, newKeyID string) error {
+	if _, err := tx.Exec(ctx, copyKeyProjectLimitSQL, oldKeyID, newKeyID); err != nil {
+		return fmt.Errorf("copy key project limit: %w", mapErr(err))
+	}
+	return nil
+}
+
+// copyKeyProjectLimitLocked is copyKeyProjectLimitTx for the MemStore; the
+// caller holds m.mu.
+func (m *MemStore) copyKeyProjectLimitLocked(oldKeyID, newKeyID string) {
+	if ids, ok := m.keyProjectLimits[oldKeyID]; ok {
+		m.keyProjectLimits[newKeyID] = slices.Clone(ids)
+	}
 }
 
 func (s *PgStore) CliAuthCodeProjects(ctx context.Context, tokenHash []byte) ([]string, bool, error) {

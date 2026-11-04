@@ -26,11 +26,19 @@ type UploadAuthenticator interface {
 	AuthenticateKey(context.Context, []byte) (state.Account, state.APIKey, error)
 }
 
+// KeyProjectLimits reads the projects an agent or mcp-login key is limited
+// to (ADR-20261104085712).
+type KeyProjectLimits interface {
+	APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error)
+}
+
 type UploadConfig struct {
-	Store          PublicReadStore
-	Routes         state.ObjectUploadRouteStore
-	Buckets        state.ObjectBucketStore
-	Authenticator  UploadAuthenticator
+	Store         PublicReadStore
+	Routes        state.ObjectUploadRouteStore
+	Buckets       state.ObjectBucketStore
+	Authenticator UploadAuthenticator
+	// KeyProjects, when set, keeps a key limited to projects to their apps.
+	KeyProjects    KeyProjectLimits
 	Registry       *Registry
 	Accounting     state.ObjectStorageAccountingStore
 	RequestMetrics state.ObjectStorageProviderUsageStore
@@ -46,6 +54,7 @@ type uploadHandler struct {
 	routes         state.ObjectUploadRouteStore
 	buckets        state.ObjectBucketStore
 	authenticator  UploadAuthenticator
+	keyProjects    KeyProjectLimits
 	registry       *Registry
 	accounting     state.ObjectStorageAccountingStore
 	requestMetrics state.ObjectStorageProviderUsageStore
@@ -81,7 +90,7 @@ func NewUploadHandler(c UploadConfig) (http.Handler, error) {
 	if domain == "" {
 		domain = "gregale.dev"
 	}
-	return &uploadHandler{store: c.Store, routes: c.Routes, buckets: c.Buckets, authenticator: c.Authenticator, registry: c.Registry, accounting: c.Accounting, requestMetrics: c.RequestMetrics, enabled: c.Enabled, appsDomain: domain, next: c.Next, now: c.Now, log: c.Log}, nil
+	return &uploadHandler{store: c.Store, routes: c.Routes, buckets: c.Buckets, authenticator: c.Authenticator, keyProjects: c.KeyProjects, registry: c.Registry, accounting: c.Accounting, requestMetrics: c.RequestMetrics, enabled: c.Enabled, appsDomain: domain, next: c.Next, now: c.Now, log: c.Log}, nil
 }
 
 func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -384,7 +393,27 @@ func (h *uploadHandler) authenticate(w http.ResponseWriter, r *http.Request, app
 		uploadProblem(w, http.StatusForbidden, "an active account and storage write permission for this app are required")
 		return state.Account{}, state.APIKey{}, nil, false
 	}
+	if refused, err := h.keyOutsideProjects(r.Context(), key, app); err != nil {
+		uploadProblem(w, http.StatusServiceUnavailable, "could not check the key's projects; retry shortly")
+		return state.Account{}, state.APIKey{}, nil, false
+	} else if refused {
+		uploadProblem(w, http.StatusForbidden, "the presented API key is limited to other projects")
+		return state.Account{}, state.APIKey{}, nil, false
+	}
 	return acct, key, sum, true
+}
+
+// keyOutsideProjects reports whether key is an agent or mcp-login key limited
+// to projects app is not in (ADR-20261104085712), as the API refuses it.
+func (h *uploadHandler) keyOutsideProjects(ctx context.Context, key state.APIKey, app state.App) (bool, error) {
+	if h.keyProjects == nil || !slices.Contains(key.Scopes, api.ScopeAgent) && key.Label != api.MCPLoginKeyLabel {
+		return false, nil
+	}
+	ids, limited, err := h.keyProjects.APIKeyProjectLimit(ctx, key.ID)
+	if err != nil || !limited {
+		return false, err
+	}
+	return app.ProjectID == "" || !slices.Contains(ids, app.ProjectID), nil
 }
 
 func (h *uploadHandler) lookupApp(r *http.Request) (state.App, error) {
