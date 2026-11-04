@@ -96,17 +96,19 @@ func (p *Poller) watchCPUSaturation(ctx context.Context, rows []InstanceStat) {
 	}
 	p.cpuSaturationMu.Unlock()
 	for _, a := range actions {
-		if err := p.CPUSaturationHandler.CPUSaturated(ctx, a.row, a.used, a.quota, a.sustained); err != nil {
-			if p.Log != nil {
-				p.Log.Warn("instance stats: cpu saturation handler failed", "instance_id", a.row.InstanceID, "app_id", a.row.AppID,
-					"used_millicores", a.used, "quota_millicores", a.quota, "err", err)
+		p.runEnforcement("cpu/"+a.row.InstanceID, func() {
+			if err := p.CPUSaturationHandler.CPUSaturated(ctx, a.row, a.used, a.quota, a.sustained); err != nil {
+				if p.Log != nil {
+					p.Log.Warn("instance stats: cpu saturation handler failed", "instance_id", a.row.InstanceID, "app_id", a.row.AppID,
+						"used_millicores", a.used, "quota_millicores", a.quota, "err", err)
+				}
+				return
 			}
-			continue
-		}
-		p.cpuSaturationMu.Lock()
-		if episode := p.cpuSaturation[a.row.InstanceID]; episode != nil {
-			episode.acted = true
-		}
-		p.cpuSaturationMu.Unlock()
+			p.cpuSaturationMu.Lock()
+			if episode := p.cpuSaturation[a.row.InstanceID]; episode != nil {
+				episode.acted = true
+			}
+			p.cpuSaturationMu.Unlock()
+		})
 	}
 }

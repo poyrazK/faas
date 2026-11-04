@@ -45,12 +45,15 @@ func Requests(next http.Handler, limits RequestLimits, clientAddr func(*http.Req
 // anything: a flood on one app reaches every node that takes its host, and
 // this keeps that app's neighbours served. host names the request's
 // hostname; a request it cannot name passes. limits.TrackedAddrsMax bounds
-// the hostnames tracked.
+// the hostnames tracked. The Host header is the client's to choose, so a
+// hostname the full table cannot track passes rather than share one bucket:
+// a flood of random hostnames must not refuse every tenant's host. Each
+// client stays bounded by the per-address limit in front of this one.
 func Hosts(next http.Handler, limits RequestLimits, host func(*http.Request) (string, bool), refused func(reason string), now func() time.Time) http.Handler {
 	t := newTable[string](limits.PerSecond, limits.Burst, limits.TrackedAddrsMax, now)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if name, ok := host(r); ok {
-			if allowed, remaining := t.take(name); !allowed {
+			if allowed, remaining := t.takeTracked(name); !allowed {
 				refused(ReasonHostRequestRate)
 				w.Header().Set("Retry-After", "1")
 				w.Header().Set("x-faas-rate-limit-scope", "host")

@@ -546,6 +546,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(opsMetrics, pool)
+	edgeCerts, err := startEdgeCertificates(ctx, edgeTLS, pool, probe, edgeMetricsSet.registry, log)
+	if err != nil {
+		return err
+	}
 	probe.SetReadyObserver(func(ready bool, reason string) {
 		opsMetrics.MarkReady("gatewayd-public", ready, reason)
 	})
@@ -890,7 +894,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	if edgeTLS.enabled() {
 		appHost := func(name string) bool { return isAppHost(name, domains) }
-		if listeners.tls, err = openEdgeTLSListener(ctx, edgeTLS, appHost, edgeLimits, edgeTLSErrors.handshakeFailed); err != nil {
+		if listeners.tls, err = openEdgeTLSListener(ctx, edgeTLS, appHost, edgeCerts, edgeLimits, edgeTLSErrors.handshakeFailed); err != nil {
 			listeners.close()
 			return err
 		}

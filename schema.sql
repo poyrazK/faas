@@ -1619,6 +1619,7 @@ CREATE TABLE public.apps (
     labels jsonb DEFAULT '{}'::jsonb NOT NULL,
     github_production_trigger text,
     github_preview_enabled boolean,
+    scaling_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -6125,6 +6126,23 @@ BEGIN
  END IF;
  IF TG_OP='DELETE' AND (NOT EXISTS(SELECT 1 FROM builds WHERE id=OLD.build_id) OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id)) THEN RETURN OLD;END IF;
  RAISE EXCEPTION 'build export is immutable' USING ERRCODE='23514',CONSTRAINT='build_export_publication_immutable';
+END;
+$$;
+
+
+--
+-- Name: bump_app_scaling_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bump_app_scaling_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF ROW(NEW.ram_mb, NEW.cpu_millicores, NEW.max_concurrency, NEW.min_instances)
+     IS DISTINCT FROM ROW(OLD.ram_mb, OLD.cpu_millicores, OLD.max_concurrency, OLD.min_instances) THEN
+    NEW.scaling_revision := OLD.scaling_revision + 1;
+  END IF;
+  RETURN NEW;
 END;
 $$;
 
@@ -31637,6 +31655,19 @@ CREATE TABLE public.app_scaling_policy_scheduler_status (
 
 
 --
+-- Name: app_scaling_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_scaling_receipts (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    request_id uuid NOT NULL,
+    request_hash bytea NOT NULL,
+    response jsonb NOT NULL
+);
+
+
+--
 -- Name: app_secret_revocation_targets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -37206,6 +37237,58 @@ CREATE TABLE public.edge_rules (
     CONSTRAINT edge_rules_name_chk CHECK (((name IS NULL) OR ((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 100)))),
     CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000))),
     CONSTRAINT edge_rules_validate_mode_check CHECK ((validate_mode = ANY (ARRAY['observe'::text, 'warn'::text, 'block'::text])))
+);
+
+
+--
+-- Name: edge_tls_certificates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_tls_certificates (
+    id bigint NOT NULL,
+    names text[] NOT NULL,
+    ca text NOT NULL,
+    account_uri text NOT NULL,
+    serial text NOT NULL,
+    sha256 text NOT NULL,
+    chain_pem text NOT NULL,
+    key_sealed bytea NOT NULL,
+    key_kid text NOT NULL,
+    not_before timestamp with time zone NOT NULL,
+    not_after timestamp with time zone NOT NULL,
+    issued_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_tls_certificates_account_uri_check CHECK (((account_uri ~ '^https://'::text) AND (octet_length(account_uri) <= 512))),
+    CONSTRAINT edge_tls_certificates_ca_check CHECK ((ca = ANY (ARRAY['letsencrypt'::text, 'letsencrypt-staging'::text]))),
+    CONSTRAINT edge_tls_certificates_chain_pem_check CHECK (((octet_length(chain_pem) >= 1) AND (octet_length(chain_pem) <= 65536))),
+    CONSTRAINT edge_tls_certificates_check CHECK ((isfinite(not_after) AND (not_after > not_before))),
+    CONSTRAINT edge_tls_certificates_issued_at_check CHECK (isfinite(issued_at)),
+    CONSTRAINT edge_tls_certificates_key_kid_check CHECK (((octet_length(key_kid) >= 1) AND (octet_length(key_kid) <= 256))),
+    CONSTRAINT edge_tls_certificates_key_sealed_check CHECK (((octet_length(key_sealed) >= 1) AND (octet_length(key_sealed) <= 65536))),
+    CONSTRAINT edge_tls_certificates_names_check CHECK (((cardinality(names) >= 1) AND (cardinality(names) <= 10))),
+    CONSTRAINT edge_tls_certificates_not_before_check CHECK (isfinite(not_before)),
+    CONSTRAINT edge_tls_certificates_serial_check CHECK ((serial ~ '^[0-9a-f]{1,64}$'::text)),
+    CONSTRAINT edge_tls_certificates_sha256_check CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: TABLE edge_tls_certificates; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.edge_tls_certificates IS 'ADR-20261103163954 the apps domains'' certificates; edgednsd is the only writer, the key is sealed to the edge-tls seal domain.';
+
+
+--
+-- Name: edge_tls_certificates_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.edge_tls_certificates ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.edge_tls_certificates_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -58969,6 +59052,14 @@ ALTER TABLE ONLY public.app_scaling_policy_scheduler_status
 
 
 --
+-- Name: app_scaling_receipts app_scaling_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_scaling_receipts
+    ADD CONSTRAINT app_scaling_receipts_pkey PRIMARY KEY (app_id, scope, request_id);
+
+
+--
 -- Name: app_secret_revocation_targets app_secret_revocation_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61646,6 +61737,22 @@ ALTER TABLE ONLY public.edge_rule_set_versions
 
 ALTER TABLE ONLY public.edge_rules
     ADD CONSTRAINT edge_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edge_tls_certificates edge_tls_certificates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_tls_certificates
+    ADD CONSTRAINT edge_tls_certificates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edge_tls_certificates edge_tls_certificates_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_tls_certificates
+    ADD CONSTRAINT edge_tls_certificates_sha256_key UNIQUE (sha256);
 
 
 --
@@ -73974,6 +74081,13 @@ CREATE INDEX edge_rules_route_match_host_scope_idx ON public.edge_rules USING bt
 
 
 --
+-- Name: edge_tls_certificates_names_not_after; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_tls_certificates_names_not_after ON public.edge_tls_certificates USING btree (names, not_after DESC);
+
+
+--
 -- Name: egress_flow_log_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -82602,6 +82716,13 @@ CREATE TRIGGER apps_reserved_slug_allocation_guard BEFORE INSERT OR UPDATE OF sl
 
 
 --
+-- Name: apps apps_scaling_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_scaling_revision BEFORE UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.bump_app_scaling_revision();
+
+
+--
 -- Name: apps apps_slug_hold_check; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -90174,6 +90295,14 @@ ALTER TABLE ONLY public.app_scaling_policy_scheduler_status
 
 ALTER TABLE ONLY public.app_scaling_policy_scheduler_status
     ADD CONSTRAINT app_scaling_policy_scheduler_status_scheduler_node_id_fkey FOREIGN KEY (scheduler_node_id) REFERENCES public.compute_nodes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_scaling_receipts app_scaling_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_scaling_receipts
+    ADD CONSTRAINT app_scaling_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

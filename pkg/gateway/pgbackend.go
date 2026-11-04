@@ -52,8 +52,8 @@ type WarmHintFunc func(appID string) (nodeID string, found bool)
 type Router interface {
 	// ResolveHost maps a request hostname (lowercased, port-stripped) to its
 	// routing app. ok=false means "no app is routed here" (a 404, not an error);
-	// a non-nil error means the lookup itself failed (Postgres down) and the
-	// caller should surface it as a 404 without caching.
+	// a non-nil error means the lookup itself failed (Postgres down). It is
+	// never cached; the host policy lookup retries it and then refuses with 503.
 	ResolveHost(ctx context.Context, host string) (app App, ok bool, err error)
 }
 
@@ -907,6 +907,15 @@ func (b *PGBackend) ObserveEdgeListenerHeartbeat(at time.Time) {
 	}
 }
 
+// ForgetDeletedAppRequestCounts drops a deleted app's request counters
+// (ADR 20261104091530).
+func (b *PGBackend) ForgetDeletedAppRequestCounts(appID string) {
+	if b == nil || b.metrics == nil || appID == "" {
+		return
+	}
+	b.metrics.ForgetAppRequestCounts(appID)
+}
+
 // PreInstantiateAppMetrics publishes the aggregate app/class histogram rows at
 // zero. app_changed calls this before invalidating routing so a newly created
 // app is visible to Prometheus before its first request completes.
@@ -1140,8 +1149,11 @@ const RouteCacheCap = 10_000
 // yields ok=false so the handler writes a 404. A Router error (ADR-190) is
 // answered from the stale tier when the host resolved successfully within
 // FAAS_GATEWAY_ROUTE_STALE_TTL, so a Postgres outage does not take down
-// routes that were invalidated or evicted; without a stale entry it is a
-// 404 as before. A host the store just said routes nowhere is answered from
+// routes that were invalidated or evicted. Without a stale entry the host
+// policy lookup gets the error, so the handler retries it within the cold
+// bound and then refuses with 503 (ADR-20261027085556 amendment 3); Lookup's
+// callers, which have no error path, still treat it as a miss. A host the
+// store just said routes nowhere is answered from
 // memory, and a read of a host this gateway has never seen route spends a
 // per-gateway budget; a read past the budget is errRouteLookupShed
 // (route_miss_guard.go).
@@ -1157,15 +1169,17 @@ func (b *PGBackend) requiresFreshHostPolicy() bool {
 	return ok && router.RequiresFreshHostPolicy()
 }
 
-// Lookup is LookupHostPolicy for callers without an error path: a shed read
-// is a miss there.
+// Lookup is LookupHostPolicy for callers without an error path: a shed or
+// failed read is a miss there.
 func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 	app, found, _ := b.lookup(ctx, host)
 	return app, found
 }
 
-// lookup returns an error only when the route miss guard refused the store
-// read; every other failure is served from the stale tier or is a miss.
+// lookup returns an error when the route miss guard refused the store read,
+// or when a read failed and no last-known-good route answers it, so the host
+// policy lookup retries it and then refuses with 503 instead of calling the
+// host unknown (ADR-20261027085556 amendment 3).
 func (b *PGBackend) lookup(ctx context.Context, host string) (App, bool, error) {
 	matcher, dynamic := b.router.(DynamicRouteHostMatcher)
 	if fresh := b.requiresFreshHostPolicy(); fresh || dynamic && matcher.IsDynamicRouteHost(host) {
@@ -1179,7 +1193,7 @@ func (b *PGBackend) lookup(ctx context.Context, host string) (App, bool, error) 
 			if b.log != nil {
 				b.log.Warn("gateway: authoritative host policy lookup failed", "host", host, "err", err)
 			}
-			return App{}, false, nil
+			return App{}, false, err
 		}
 		if found && !fresh {
 			b.misses.found(host)
@@ -1218,8 +1232,8 @@ func (b *PGBackend) lookup(ctx context.Context, host string) (App, bool, error) 
 				app.PinnedDeploymentScope = target.PinnedDeploymentScope
 				app.RoutedSurfaceID = target.RoutedSurfaceID
 				app.CustomDomainRoute = target.CustomDomain
-				if !b.prepareProductionWeights(ctx, app) {
-					return App{}, false, nil
+				if err := b.prepareProductionWeights(ctx, app); err != nil {
+					return App{}, false, err
 				}
 				if target.CustomDomain {
 					// The registry just confirmed this route, so its stale
@@ -1258,8 +1272,8 @@ func (b *PGBackend) lookup(ctx context.Context, host string) (App, bool, error) 
 		// by app ID would replace production's settings with a stage's.
 		return app, true, nil
 	}
-	if !b.prepareProductionWeights(ctx, app) {
-		return App{}, false, nil
+	if err := b.prepareProductionWeights(ctx, app); err != nil {
+		return App{}, false, err
 	}
 	if !b.routeInvalidations.unchangedSince(app.ID, readSeq) {
 		// The app changed while the read was in flight, so the row may be
@@ -1327,7 +1341,7 @@ func (b *PGBackend) PrepareRouteTarget(ctx context.Context, app App) bool {
 	if app.PinnedDeploymentID != "" || app.DynamicRoute || app.EnvironmentNotReady {
 		return true
 	}
-	if !b.prepareProductionWeights(ctx, app) {
+	if b.prepareProductionWeights(ctx, app) != nil {
 		return false
 	}
 	if _, cached := b.getApp(app.ID); !cached {
@@ -1339,15 +1353,15 @@ func (b *PGBackend) PrepareRouteTarget(ctx context.Context, app App) bool {
 // prepareProductionWeights hydrates weights once before an ordinary route can
 // use targets learned from any scope. Exact deployment routes use their own
 // target sets and do not require production to exist.
-func (b *PGBackend) prepareProductionWeights(ctx context.Context, app App) bool {
+func (b *PGBackend) prepareProductionWeights(ctx context.Context, app App) error {
 	if app.PinnedDeploymentID != "" {
-		return true
+		return nil
 	}
 	if err := b.ensureDeploymentWeights(ctx, app.ID); err != nil {
 		b.log.Warn("gateway: production deployment weights unavailable", "app_id", app.ID, "err", err)
-		return false
+		return err
 	}
-	return true
+	return nil
 }
 
 func (b *PGBackend) ensureDeploymentWeights(ctx context.Context, appID string) error {
@@ -1500,12 +1514,13 @@ func (l *routeInvalidationLog) unchangedSince(appID string, seq uint64) bool {
 	return l.flushed <= seq && l.apps[appID] <= seq
 }
 
-// lookupStale is the Router-error branch of Lookup (ADR-190).
+// lookupStale is the Router-error branch of Lookup (ADR-190). Without a
+// last-known-good route it returns the read's error.
 func (b *PGBackend) lookupStale(ctx context.Context, host string, err error) (App, bool, error) {
 	app, ok, shouldLog := b.stale.Get(host)
 	if !ok {
 		b.log.Warn("gateway: route lookup failed", "host", host, "err", err)
-		return App{}, false, nil
+		return App{}, false, err
 	}
 	valid, _ := b.cachedPlatformTenantRouteValid(ctx, host,
 		RouteTarget{AppID: app.ID, RoutedSurfaceID: app.RoutedSurfaceID}, &app)
