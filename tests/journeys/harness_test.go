@@ -819,18 +819,25 @@ func probeSource(t *testing.T, version string) string {
 // labelled e2ej-<run>-<name> and revoked when the journey ends.
 func (tg *target) scopedKey(t *testing.T, name string, scopes ...string) string {
 	t.Helper()
+	key, _ := tg.scopedKeyWithID(t, name, scopes...)
+	return key
+}
+
+// scopedKeyWithID is scopedKey that also returns the key's id.
+func (tg *target) scopedKeyWithID(t *testing.T, name string, scopes ...string) (key, id string) {
+	t.Helper()
 	args := []string{"keys", "add", tg.slug(name)}
 	if len(scopes) > 0 {
 		args = append(args, "--scopes", strings.Join(scopes, ","))
 	}
 	res := tg.ok(t, time.Minute, args...)
-	key := apiKeyRe.FindString(string(res.stdout))
-	id := str(object(t, res.stdout), "id")
+	key = apiKeyRe.FindString(string(res.stdout))
+	id = str(object(t, res.stdout), "id")
 	if key == "" || id == "" {
 		t.Fatalf("key create printed no key or id")
 	}
 	t.Cleanup(func() { tg.run(t, time.Minute, "key", "delete", id) })
-	return key
+	return key, id
 }
 
 // apiCall sends one request to the public API with a bearer key.
