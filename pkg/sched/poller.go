@@ -3,7 +3,7 @@
 //
 // poller.go — shared interface + envelope for the broker-side
 // data plane that feeds the dispatch tick (commit #14). One file
-// per broker (kafka / nats / redis_streams / sqs_compat / queue)
+// per broker (kafka / nats / redis_streams / queue; sqs_compat is delisted)
 // implements the triggerSource interface; the dispatch tick calls
 // Poll on each source every dispatch-window interval and routes
 // the resulting SourceRecord slice into the batch envelope that
@@ -29,7 +29,6 @@
 //   - nats        js.Msg.Ack() on Ack; js.Msg.Nak(delay) on Nack.
 //   - redis_streams  XAck on Ack; XClaim after visibility-timeout
 //     on Nack.
-//   - sqs_compat  POST .../delete on Ack; POST .../release on Nack.
 package sched
 
 import (
@@ -68,11 +67,16 @@ type SourceRecord struct {
 	// StableIdentifier identifies the broker message across deliveries. The
 	// dispatcher uses it for a configured work policy while Ack/Nack keep the
 	// current ItemIdentifier as the broker delivery handle.
-	StableIdentifier string            `json:"-"`
-	Payload          []byte            `json:"payload"`
-	Headers          map[string]string `json:"headers,omitempty"`
-	Metadata         map[string]any    `json:"metadata,omitempty"`
-	ReceivedAt       time.Time         `json:"received_at"`
+	StableIdentifier string `json:"-"`
+	// LegacyIdentifiers are the item identifiers an earlier release stored
+	// this record under (Kafka partition-offset, NATS stream sequence). The
+	// dispatcher keeps using a stored row of one while it is in progress or,
+	// for Kafka, while its topic matches (ADR-20261101093512).
+	LegacyIdentifiers []string          `json:"-"`
+	Payload           []byte            `json:"payload"`
+	Headers           map[string]string `json:"headers,omitempty"`
+	Metadata          map[string]any    `json:"metadata,omitempty"`
+	ReceivedAt        time.Time         `json:"received_at"`
 }
 
 // PollResult is what a poller's Poll call returns. Records is the

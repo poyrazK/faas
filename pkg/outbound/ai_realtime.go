@@ -510,6 +510,13 @@ func (s *realtimeSession) admitResponse(ctx context.Context, id string, now time
 // the session: the provider stops when its connection closes.
 func (s *realtimeSession) admit(ctx context.Context, now time.Time) (*realtimeResponse, string) {
 	reserve := s.reservation()
+	if !s.integration.AIAllowUnmetered && aiCostCapApplies(s.integration, s.endUser, s.tags, s.traceID) &&
+		!aiModelPriced(s.integration, reserve.estimate) {
+		// ADR 20261027132936: a cost cap cannot count a model with no price.
+		s.h.Metrics.ObserveRejection(s.metricID, unpricedRejection.code)
+		s.closeWith(aiRealtimeClosedCap, unpricedRejection.code, unpricedRejection.title, unpricedRejection.code)
+		return nil, aiRealtimeClosedCap
+	}
 	spec := s.spec
 	spec.AIReservedTokens, spec.AIReservedCostMillicents = reserve.tokens, reserve.cost
 	admitCtx, cancel := context.WithTimeout(ctx, realtimeAdmissionTimeout)

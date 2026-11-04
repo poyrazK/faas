@@ -131,8 +131,13 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 		return ProjectEnvironmentCloneOperation{}, mapProjectCloneSnapshotErr(err)
 	}
 	if request.RequireCompleteInventory {
-		if err := requireCloneSourceInventoryTx(ctx, tx, op, records); err != nil {
+		if err := requireCloneSourceInventoryTx(ctx, tx, op, records, request.QualifiedObjectBackends); err != nil {
 			return ProjectEnvironmentCloneOperation{}, err
+		}
+		if ids := cloneSourceBucketIDs(records); len(ids) > 0 && request.CheckObjectCapacity != nil {
+			if err := request.CheckObjectCapacity(ctx, ids); err != nil {
+				return ProjectEnvironmentCloneOperation{}, err
+			}
 		}
 	}
 	capture, raw, err := cloneConfigurationRoot(op, records)

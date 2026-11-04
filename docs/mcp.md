@@ -113,6 +113,54 @@ The same list is `GET /v1/agent-connections`; revoke with
 Connections made before this list existed show no client name until the agent
 signs in again.
 
+### Connect an agent to an organization
+
+A connection acts in one organization (ADR-20261101225122). When you approve
+it in Gregale, choose your personal account or one of your organizations. The
+list shows each organization where your role can see apps (owner, admin,
+developer or viewer) and whose agent policy allows agents. In an organization:
+
+- the agent sees and uses the organization's apps, not only the ones you
+  created;
+- it can do only what your role allows: a viewer's agent can't deploy, and an
+  agent stops working if you leave the organization;
+- it gets only the capabilities the organization's agent policy allows, even
+  if the client asked for more; consent shows what it gets.
+
+To use another organization, connect the agent again.
+
+### Organization agent policy
+
+Owners and admins decide whether agents may act in their organization, and
+with which capabilities beyond inspection:
+
+```sh
+gregale org agent policy get --org acme
+gregale org agent policy set --org acme --agents allow --capabilities deploy:write,secrets:request
+gregale org agent policy set --org acme --agents deny
+```
+
+The capabilities are `deploy:write`, `secrets:request`, `storage:manage` and
+`postgres:manage`; `--capabilities ""` makes agents read-only. An organization
+that never set a policy allows agents with every capability. The policy
+applies to hosted MCP connections and to organization keys with the `agent`
+scope. Setting a stricter policy revokes, at once, every agent connection it
+no longer allows, and says how many. Each change is recorded in the
+organization's activity.
+
+Owners and admins also see and revoke every member's agents in the
+organization:
+
+```sh
+gregale mcp connection list --org acme
+gregale mcp connection revoke <id> --org acme
+gregale mcp connection revoke --all --org acme
+```
+
+The API is `GET`/`PUT /v1/orgs/{slug}/agent-policy` and
+`/v1/orgs/{slug}/agent-connections`, with `DELETE .../{id}` and
+`POST .../revoke_all`.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes

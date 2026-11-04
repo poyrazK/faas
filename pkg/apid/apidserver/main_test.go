@@ -210,7 +210,7 @@ func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
 		spansIngest{},
 		discardLogger(),
 		true,
-		nil,
+		telemetryIngest{},
 		nil,
 		nil,
 		nil,

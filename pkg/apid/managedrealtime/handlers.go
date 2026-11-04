@@ -278,7 +278,7 @@ func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID 
 	if !s.FairUseEnabled {
 		return 0, nil
 	}
-	acct, err := s.Host.Store().AccountByID(ctx, accountID)
+	acct, err := s.realtimeAccount(ctx, accountID)
 	if err != nil {
 		return 0, fmt.Errorf("realtime account %s plan: %w", accountID, err)
 	}
@@ -302,17 +302,9 @@ func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
 		return fmt.Errorf("list realtime endpoints for app %s: %w", appID, err)
 	}
 	var errs []error
-	accountServing := make(map[string]bool)
+	ctx = withEndpointPass(ctx)
 	for _, row := range rows {
-		serving, err := s.realtimeEndpointOwnerServing(ctx, row, accountServing)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("endpoint %s owner: %w", row.ID, err))
-			continue
-		}
-		if !serving {
-			row.Enabled = false
-		}
-		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
+		if err := s.reconcileManagedRealtimeEndpoint(ctx, row); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -323,6 +315,9 @@ func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) (
 	if len(sealed) == 0 {
 		return nil, nil
 	}
+	if plaintext, ok := s.unsealed.get(sealed); ok {
+		return plaintext, nil
+	}
 	identities := s.Host.HostIdentitiesForUnseal(ctx)
 	if len(identities) == 0 {
 		return nil, errors.New("realtime credential identity unavailable")
@@ -331,6 +326,7 @@ func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) (
 	if err != nil {
 		return nil, fmt.Errorf("realtime credential unseal: %w", err)
 	}
+	s.unsealed.put(sealed, plaintext)
 	return plaintext, nil
 }
 

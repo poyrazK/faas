@@ -13,9 +13,12 @@ import (
 )
 
 type BindingServiceOptions struct {
-	LeaseDuration       time.Duration
-	ProviderTimeout     time.Duration
-	RetryInterval       time.Duration
+	LeaseDuration   time.Duration
+	ProviderTimeout time.Duration
+	RetryInterval   time.Duration
+	// ProvisioningEnabled gates every binding operation. A binding works on a
+	// database that already exists, so production passes the operations gate
+	// here, not the new-database gate (ADR-20261103091657).
 	ProvisioningEnabled func() bool
 	// ProvisioningAllowed optionally narrows an enabled rollout to specific
 	// accounts. It is intended for staging canaries; deletion remains

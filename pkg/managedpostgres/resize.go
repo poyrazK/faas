@@ -192,7 +192,7 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 	if database.EnvironmentCloneOperationID != "" || !validDataResourceID(database.DataResourceID) {
 		return ResizeOperation{}, ErrUnsupported
 	}
-	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, request.AccountID) {
+	if !s.operationsEnabled() || !s.provisioningAllowed(ctx, request.AccountID) {
 		return ResizeOperation{}, ErrProvisioningClosed
 	}
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)

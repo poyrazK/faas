@@ -381,6 +381,15 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	writeJSON(w, http.StatusCreated, appWebhookResponse(row))
 }
 
+// appWebhookOutboxFullProblem names the outbox cap that refused a delivery.
+func appWebhookOutboxFullProblem(full *state.AppWebhookOutboxFullError) *api.Problem {
+	which := api.WebhookBacklogCapCount
+	if full.Bytes {
+		which = api.WebhookBacklogCapBytes
+	}
+	return api.ErrWebhookOutboxFull(which, full.Limit, full.Observed)
+}
+
 // deliverAppEvent is the application-outbox facade. The destination must be a
 // webhook already registered on this app so the existing subscription remains
 // the single source of truth for its signing secret, retry curve, wire format,
@@ -448,7 +457,15 @@ func (s *server) deliverAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		Status:        state.AppWebhookDeliveryPending,
 		NextAttemptAt: now,
 		CreatedAt:     now,
+		// ADR-20261101093517: the account's undelivered backlog is capped.
+		AdmissionMaxPending:      limits.WebhookOutboxMaxPending,
+		AdmissionMaxBacklogBytes: limits.WebhookOutboxMaxBacklogBytes,
 	})
+	var full *state.AppWebhookOutboxFullError
+	if errors.As(err, &full) {
+		api.WriteProblem(w, appWebhookOutboxFullProblem(full))
+		return
+	}
 	if err != nil {
 		s.log.WarnContext(r.Context(), "enqueue application outbox delivery", slog.String("err", err.Error()))
 		api.WriteProblem(w, api.ErrCapacity("could not enqueue outbox delivery"))
@@ -584,6 +601,7 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 			return
 		}
 		params.WebhookSecretSealed = &sealed
+		params.PreviousSecretUntil = webhookSecretOverlapUntil()
 	}
 	row, err := s.store.UpdateAppWebhook(r.Context(), id, params)
 	if err != nil {
@@ -642,9 +660,19 @@ func (s *server) deleteAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// webhookSecretOverlapUntil is when a secret replaced now stops being valid
+// (ADR-20261101093517): until then deliveries carry a second signature made
+// with it, so a receiver can switch secrets after the rotation.
+func webhookSecretOverlapUntil() *time.Time {
+	until := timeNow().UTC().Add(api.WebhookSecretRotationOverlap)
+	return &until
+}
+
 // rotateAppWebhookSecret seals a caller-supplied replacement and overwrites
-// the row in place. The caller can install the same value in its receiver;
-// reads and responses still expose only the masked constant.
+// the row in place. The replaced secret keeps signing deliveries beside the
+// new one for api.WebhookSecretRotationOverlap. The caller can install the
+// same value in its receiver; reads and responses still expose only the
+// masked constant.
 func (s *server) rotateAppWebhookSecret(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.RotateAppWebhookSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -680,7 +708,9 @@ func (s *server) rotateAppWebhookSecret(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, prob)
 		return
 	}
-	row, err := s.store.UpdateAppWebhook(r.Context(), id, state.UpdateAppWebhookParams{WebhookSecretSealed: &sealed})
+	row, err := s.store.UpdateAppWebhook(r.Context(), id, state.UpdateAppWebhookParams{
+		WebhookSecretSealed: &sealed, PreviousSecretUntil: webhookSecretOverlapUntil(),
+	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "webhook not found")

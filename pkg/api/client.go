@@ -3933,34 +3933,48 @@ func (c *Client) UpdateEdgeWAFExclusions(ctx context.Context, id string, req Edg
 	return out, c.do(ctx, "POST", "/v1/edge-rules/"+url.PathEscape(id)+"/waf-exclusions", req, &out)
 }
 
-// ListEdgeRuleLists returns the account's reusable edge-rule lists, without
-// items (ADR-963).
-func (c *Client) ListEdgeRuleLists(ctx context.Context) (ListEdgeRuleListsResponse, error) {
+// edgeRuleListPath is a list URL. A non-empty app names a company app whose
+// organization's lists the call manages (ADR-091 amendment 2026-11-03);
+// empty manages the caller's personal lists.
+func edgeRuleListPath(name, app string) string {
+	path := "/v1/edge-rule-lists"
+	if name != "" {
+		path += "/" + url.PathEscape(name)
+	}
+	if app != "" {
+		path += "?app=" + url.QueryEscape(app)
+	}
+	return path
+}
+
+// ListEdgeRuleLists returns the reusable edge-rule lists, without items
+// (ADR-963): the caller's own, or a company app's when app is set.
+func (c *Client) ListEdgeRuleLists(ctx context.Context, app string) (ListEdgeRuleListsResponse, error) {
 	var out ListEdgeRuleListsResponse
-	return out, c.do(ctx, "GET", "/v1/edge-rule-lists", nil, &out)
+	return out, c.do(ctx, "GET", edgeRuleListPath("", app), nil, &out)
 }
 
 // GetEdgeRuleList returns one list with its items (ADR-963).
-func (c *Client) GetEdgeRuleList(ctx context.Context, name string) (EdgeRuleListResponse, error) {
+func (c *Client) GetEdgeRuleList(ctx context.Context, name, app string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
-	return out, c.do(ctx, "GET", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, &out)
+	return out, c.do(ctx, "GET", edgeRuleListPath(name, app), nil, &out)
 }
 
 // CreateEdgeRuleList creates a list (ADR-963).
-func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest, app string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
-	return out, c.do(ctx, "POST", "/v1/edge-rule-lists", req, &out)
+	return out, c.do(ctx, "POST", edgeRuleListPath("", app), req, &out)
 }
 
 // UpdateEdgeRuleList edits a list (ADR-963).
-func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest, app string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
-	return out, c.do(ctx, "PATCH", "/v1/edge-rule-lists/"+url.PathEscape(name), req, &out)
+	return out, c.do(ctx, "PATCH", edgeRuleListPath(name, app), req, &out)
 }
 
 // DeleteEdgeRuleList deletes an unreferenced list (ADR-963).
-func (c *Client) DeleteEdgeRuleList(ctx context.Context, name string) error {
-	return c.do(ctx, "DELETE", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, nil)
+func (c *Client) DeleteEdgeRuleList(ctx context.Context, name, app string) error {
+	return c.do(ctx, "DELETE", edgeRuleListPath(name, app), nil, nil)
 }
 
 // ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,

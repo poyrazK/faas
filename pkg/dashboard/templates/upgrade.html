@@ -49,13 +49,25 @@
           <form method="POST" action="/dashboard/upgrade" style="margin-top:1rem">
             <input type="hidden" name="csrf_token" value="{{.Data.ConfirmToken}}">
             <input type="hidden" name="plan" value="{{.Data.Target.Plan}}">
-            <button type="submit">Continue to secure checkout ({{.Data.ProviderLabel}})</button>
+            {{if .Data.SubscriptionChange}}
+              <button type="submit">Upgrade now</button>
+            {{else}}
+              <button type="submit">Continue to secure checkout ({{.Data.ProviderLabel}})</button>
+            {{end}}
           </form>
-          <p style="margin-top:0.5rem; font-size:0.9em; color:#666">
-            You will be redirected to {{.Data.ProviderLabel}}, which handles payment and VAT as merchant of record.
-            No card data touches this server. Your plan changes as soon as the payment is confirmed —
-            usually within a minute of finishing checkout.
-          </p>
+          {{if .Data.SubscriptionChange}}
+            <p style="margin-top:0.5rem; font-size:0.9em; color:#666">
+              {{.Data.ProviderLabel}} charges the prorated difference for the rest of this billing period to the
+              payment method on your subscription now. Your plan changes once the charge succeeds; if it fails,
+              nothing changes.
+            </p>
+          {{else}}
+            <p style="margin-top:0.5rem; font-size:0.9em; color:#666">
+              You will be redirected to {{.Data.ProviderLabel}}, which handles payment and VAT as merchant of record.
+              No card data touches this server. Your plan changes as soon as the payment is confirmed —
+              usually within a minute of finishing checkout.
+            </p>
+          {{end}}
         {{else}}
           <p>{{.Data.Reason}}</p>
           {{if .Data.PortalURL}}

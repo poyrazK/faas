@@ -277,6 +277,44 @@ class AuditTest(unittest.TestCase):
             AUDIT.audit(POLICY, snap),
         )
 
+    def test_direct_entry_rule_admits_443_to_compute_nodes_only(self) -> None:
+        entry = POLICY["access"]["direct_entry"]
+        rule = {
+            "name": entry["firewall_rule"],
+            "direction": "INGRESS",
+            "sourceRanges": ["0.0.0.0/0"],
+            "targetTags": [entry["target_tag"]],
+            "allowed": [{"IPProtocol": "tcp", "ports": ["443"]}],
+        }
+        snap = healthy_snapshot()
+        snap["firewalls"].append(copy.deepcopy(rule))
+        snap["instances"][1]["tags"]["items"].append(entry["target_tag"])
+        self.assertEqual(AUDIT.audit(POLICY, snap), [])
+
+        for change, want in [
+            (lambda r: r.update(allowed=[{"IPProtocol": "tcp", "ports": ["80", "443"]}]), "not exactly [443]"),
+            (lambda r: r.update(allowed=[{"IPProtocol": "tcp", "ports": ["22", "443"]}]), "administrative TCP port"),
+            (lambda r: r.update(allowed=[{"IPProtocol": "all"}]), "beyond the listed TCP ports"),
+            (lambda r: r.update(targetTags=[entry["target_tag"], POLICY["access"]["origin_target_tag"]]), "not limited to target tag"),
+            (lambda r: r.update(sourceRanges=["0.0.0.0/0", "::/0"]), "sources beyond 0.0.0.0/0"),
+        ]:
+            snap = healthy_snapshot()
+            drifted = copy.deepcopy(rule)
+            change(drifted)
+            snap["firewalls"].append(drifted)
+            self.assertIn(want, "\n".join(AUDIT.audit(POLICY, snap)))
+
+        snap = healthy_snapshot()
+        snap["instances"][0]["tags"]["items"].append(entry["target_tag"])
+        self.assertIn("for compute nodes only", "\n".join(AUDIT.audit(POLICY, snap)))
+
+        # Any other rule opening 443 to everyone still fails.
+        snap = healthy_snapshot()
+        other = copy.deepcopy(rule)
+        other["name"] = "someone-elses-entry"
+        snap["firewalls"].append(other)
+        self.assertIn("exposes the HTTP origin publicly", "\n".join(AUDIT.audit(POLICY, snap)))
+
     def test_origin_rule_drift_and_public_bypass_fail(self) -> None:
         snap = healthy_snapshot()
         snap["firewalls"][1]["sourceRanges"] = ["0.0.0.0/0"]

@@ -195,6 +195,8 @@ func (p *appErrorsPublisher) flushBatch(ctx context.Context, batch []appErrorRow
 			DeploymentCreatedAt: batch[i].DeploymentCreatedAt,
 			ImageDigest:         batch[i].ImageDigest,
 			RequestId:           batch[i].RequestID,
+			IssueEventId:        batch[i].IssueEventID,
+			IssueTimeBuckets:    batch[i].IssueTimeBuckets,
 			Count:               batch[i].Count,
 			RequestRowOmitted:   batch[i].RequestRowOmitted,
 		}

@@ -75,7 +75,7 @@ func (s *server) beginHostedCheckout(ctx context.Context, acct state.Account, pl
 	if acct.ProviderCustomerID == "" {
 		// Clear another provider's compatibility-cache handles before asking
 		// this backend to resolve/create by Gregale external account ID.
-		custID, cerr := s.billingProvider.CreateCustomer(ctx, acct)
+		custID, cerr := s.createProviderCustomer(ctx, acct)
 		if cerr != nil {
 			s.log.Error("create_customer",
 				"account", acct.ID,

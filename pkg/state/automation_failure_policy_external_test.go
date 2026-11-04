@@ -259,3 +259,35 @@ func TestAutomationFailurePolicyValidationAndPublishedTarget(t *testing.T) {
 		t.Fatalf("unpublished policy accepted: %v", err)
 	}
 }
+
+func TestEventAdmissionChecksUnlatchedFailureThreshold(t *testing.T) {
+	automationFailureStores(t, func(t *testing.T, store state.Store) {
+		app, _ := automationFailureFixture(t, store)
+		ctx := t.Context()
+		policies := store.(state.AutomationFailurePolicyStore)
+		enabled := true
+		if _, err := policies.SetAutomationFailurePolicy(ctx, app.ID, "paid", api.SetAutomationFailurePolicyRequest{Enabled: &enabled, FailureThreshold: 1, MinCompletedRuns: 1, WindowSeconds: 300}); err != nil {
+			t.Fatal(err)
+		}
+		payload, _ := json.Marshal(map[string]any{"specversion": "1.0", "id": uuid.NewString(), "source": "billing.stripe", "type": "invoice.paid", "accountid": app.AccountID, "datacontenttype": "application/json", "time": time.Now().UTC(), "data": map[string]any{"amount": 150}})
+		if err := store.AppendEvent(ctx, "apid", "event.published", &app.AccountID, payload); err != nil {
+			t.Fatal(err)
+		}
+		work, err := store.(state.PublishedEventWorkStore).ClaimDuePublishedEvent(ctx, time.Now().UTC())
+		if err != nil || len(work.RecipientSnapshot) != 1 {
+			t.Fatalf("claim: %+v, %v", work, err)
+		}
+		automationFailureRun(t, store, app.ID, "paid", state.WorkflowRunStatusFailed)
+		policy, err := policies.GetAutomationFailurePolicy(ctx, app.ID, "paid")
+		if err != nil || policy.Paused || policy.ObservedFailures != 1 {
+			t.Fatalf("unlatched policy: %+v, %v", policy, err)
+		}
+		if _, err := store.(state.EventWorkflowStore).AdmitEventWorkflow(ctx, work.ID, work.ClaimToken, work.RecipientSnapshot[0].ID); !errors.Is(err, state.ErrWorkflowEventTargetUnavailable) {
+			t.Fatalf("event admitted despite threshold: %v", err)
+		}
+		policy, err = policies.GetAutomationFailurePolicy(ctx, app.ID, "paid")
+		if err != nil || !policy.Paused || policy.Generation != 1 {
+			t.Fatalf("event admission did not durably latch pause: %+v, %v", policy, err)
+		}
+	})
+}

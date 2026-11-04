@@ -39,6 +39,7 @@ func (s *Service) RunManagedRealtimePush(ctx context.Context) {
 	}
 	client := realtimepush.NewClient()
 	defer client.CloseIdleConnections()
+	tokens := &realtimepush.TokenCache{}
 	log := s.Host.Logger()
 	if log == nil {
 		log = slog.Default()
@@ -83,7 +84,7 @@ func (s *Service) RunManagedRealtimePush(ctx context.Context) {
 					defer func() { free <- struct{}{} }()
 					pass, cancel := context.WithTimeout(ctx, managedRealtimePushJobTimeout)
 					defer cancel()
-					s.deliverManagedRealtimePush(pass, store, client, log, j)
+					s.deliverManagedRealtimePush(pass, store, client, tokens, log, j)
 				}(job)
 			}
 			claimed = len(jobs)
@@ -106,7 +107,7 @@ func (s *Service) RunManagedRealtimePush(ctx context.Context) {
 
 // deliverManagedRealtimePush prepares, sends and completes one claimed
 // delivery.
-func (s *Service) deliverManagedRealtimePush(pass context.Context, store state.ManagedRealtimePushStore, client *http.Client, log *slog.Logger, j state.ManagedRealtimePushDelivery) {
+func (s *Service) deliverManagedRealtimePush(pass context.Context, store state.ManagedRealtimePushStore, client *http.Client, tokens *realtimepush.TokenCache, log *slog.Logger, j state.ManagedRealtimePushDelivery) {
 	preferences, ok := s.Host.Store().(state.ManagedRealtimePushPreferencesStore)
 	if !ok {
 		return
@@ -155,7 +156,7 @@ func (s *Service) deliverManagedRealtimePush(pass context.Context, store state.M
 			cfg.Body = state.ManagedRealtimePushDigestBody(*batch)
 		}
 		sendCtx, stop := context.WithTimeout(pass, 20*time.Second)
-		result = realtimepush.Send(sendCtx, client, cfg, target, realtimepush.Notification{Priority: batch.Priority, Category: batch.Category, DeliveryID: batch.DigestID, EndpointID: batch.EndpointID, MessageID: batch.MessageID, Sequence: batch.Sequence, GroupKey: batch.GroupKey, MessageCount: batch.DigestCount})
+		result = tokens.Send(sendCtx, client, cfg, target, realtimepush.Notification{Priority: batch.Priority, Category: batch.Category, DeliveryID: batch.DigestID, EndpointID: batch.EndpointID, MessageID: batch.MessageID, Sequence: batch.Sequence, GroupKey: batch.GroupKey, MessageCount: batch.DigestCount})
 		stop()
 	}
 	if err := digests.CompleteManagedRealtimePushDigest(pass, batch.DigestID, batch.Lease, result.StatusCode, result.Code, result.Retry, result.InvalidTarget); err != nil && pass.Err() == nil {

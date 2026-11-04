@@ -1211,6 +1211,7 @@ export type { KafkaSASLConfig } from './KafkaSASLConfig.js';
 export type { KafkaSASLMechanism } from './KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './KafkaTLSConfig.js';
 export type { KafkaTriggerConfig } from './KafkaTriggerConfig.js';
+export type { KeyOrg } from './KeyOrg.js';
 export type { LabelChange } from './LabelChange.js';
 export type { LabelsResponse } from './LabelsResponse.js';
 export type { LatestDeploymentsByAppResponse } from './LatestDeploymentsByAppResponse.js';
@@ -2052,8 +2053,12 @@ export type { OperatorRuntimeConfigOperation } from './OperatorRuntimeConfigOper
 export type { OperatorRuntimeConfigRevision } from './OperatorRuntimeConfigRevision.js';
 export type { OrgAccountID } from './OrgAccountID.js';
 export type { OrgActivityResponse } from './OrgActivityResponse.js';
+export type { OrgAgentPolicyRequest } from './OrgAgentPolicyRequest.js';
+export type { OrgAgentPolicyResponse } from './OrgAgentPolicyResponse.js';
 export type { OrgAppListResponse } from './OrgAppListResponse.js';
 export type { OrgAppSummary } from './OrgAppSummary.js';
+export type { OrgBillingEmailRequest } from './OrgBillingEmailRequest.js';
+export type { OrgBillingEmailResponse } from './OrgBillingEmailResponse.js';
 export type { OrgInvitationResponse } from './OrgInvitationResponse.js';
 export type { OrgListResponse } from './OrgListResponse.js';
 export type { OrgMeResponse } from './OrgMeResponse.js';
@@ -3032,6 +3037,7 @@ export type { TrafficRuntimeFeatureStatus } from './TrafficRuntimeFeatureStatus.
 export type { TrafficRuntimeStatus } from './TrafficRuntimeStatus.js';
 export type { TransferOwnershipRequest } from './TransferOwnershipRequest.js';
 export type { Trigger } from './Trigger.js';
+export type { TriggerConsumerStatus } from './TriggerConsumerStatus.js';
 export type { TriggerDeadLetter } from './TriggerDeadLetter.js';
 export type { TriggerDeadLetterReason } from './TriggerDeadLetterReason.js';
 export type { TriggerKind } from './TriggerKind.js';

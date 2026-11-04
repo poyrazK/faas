@@ -84,6 +84,24 @@ func (s *Service) persistPublishedEvent(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
+	if !api.WorkflowEventEnvelopeFits(payload) {
+		// Retained identities accepted before the envelope limit remain
+		// retryable with their original content.
+		if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
+			_, lookupErr := lookup.LookupPublishedEventAcceptance(r.Context(), acct.ID, payload)
+			if lookupErr == nil {
+				s.writePublishedEventReceipt(w, r, acct, envelope)
+				return
+			}
+			if errors.Is(lookupErr, state.ErrConflict) {
+				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+					"Event identity conflict", "source and id already identify an event with different type, schema version, or data"))
+				return
+			}
+		}
+		api.WriteProblem(w, api.ErrWorkflowEventEnvelopeTooLarge())
+		return
+	}
 	if err := s.Host.Store().AppendEvent(r.Context(), "apid", "event.published", &acct.ID, payload); err != nil {
 		if WriteEventStorageCapacity(w, err) {
 			return

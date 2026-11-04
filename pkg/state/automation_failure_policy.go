@@ -14,6 +14,16 @@ import (
 
 var ErrAutomationFailurePolicyConflict = errors.New("automation failure policy or pause generation changed; reload before changing it")
 
+// AutomationFailurePolicyBatchError reports individual policy failures after
+// the entire page was visited. Its accompanying cursor may be advanced; a
+// later full pass must retry the failed policies.
+type AutomationFailurePolicyBatchError struct{ Err error }
+
+func (e *AutomationFailurePolicyBatchError) Error() string {
+	return "one or more automation failure policies could not be evaluated"
+}
+func (e *AutomationFailurePolicyBatchError) Unwrap() error { return e.Err }
+
 type AutomationFailurePolicyStore interface {
 	GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error)
 	SetAutomationFailurePolicy(context.Context, string, string, api.SetAutomationFailurePolicyRequest) (api.AutomationFailurePolicyResponse, error)
@@ -25,6 +35,49 @@ type automationFailureGuard struct {
 	Generation      int64
 	MonitoringSince time.Time
 	PausedAt        *time.Time
+}
+
+func automationFailureBlocksAdmission(out api.AutomationFailurePolicyResponse) bool {
+	return out.Paused || out.Policy.Enabled && out.ObservedFailures >= int64(out.Policy.FailureThreshold) && out.ObservedCompletedRuns >= int64(out.Policy.MinCompletedRuns)
+}
+
+func (m *MemStore) automationFailureBlocksAdmissionLocked(appID, name string, now time.Time) bool {
+	key := appID + "/" + name
+	if m.automationFailureGuards[key].PausedAt != nil {
+		return true
+	}
+	if !m.automationFailurePolicies[key].Enabled {
+		return false
+	}
+	out := m.failurePolicyResponseLocked(appID, name, now)
+	if automationFailureBlocksAdmission(out) {
+		m.latchAutomationFailureLocked(appID, name, out, now)
+		return true
+	}
+	return false
+}
+
+func (m *MemStore) latchAutomationFailureLocked(appID, name string, out api.AutomationFailurePolicyResponse, now time.Time) {
+	key := appID + "/" + name
+	if m.automationFailureGuards == nil {
+		m.automationFailureGuards = map[string]automationFailureGuard{}
+	}
+	g := m.automationFailureGuards[key]
+	if g.PausedAt != nil {
+		return
+	}
+	at := now.UTC()
+	if g.MonitoringSince.IsZero() {
+		g.MonitoringSince = at
+	}
+	g.Generation++
+	g.PausedAt = &at
+	m.automationFailureGuards[key] = g
+	if m.automationFailureHistory == nil {
+		m.automationFailureHistory = map[string][]api.AutomationFailureTransition{}
+	}
+	m.automationFailureHistory[key] = append(m.automationFailureHistory[key], api.AutomationFailureTransition{Generation: g.Generation, State: "paused", Reason: "failure_threshold", RecordedAt: at, Failures: out.ObservedFailures, CompletedRuns: out.ObservedCompletedRuns, PolicyVersion: out.Policy.Version})
+	m.enqueueAutomationFailurePauseLocked(appID, name, g.Generation, out, at)
 }
 
 func defaultAutomationFailurePolicy() api.AutomationFailurePolicy {
@@ -261,15 +314,7 @@ func (m *MemStore) EvaluateAutomationFailurePolicies(ctx context.Context, owner,
 		if out.ObservedFailures < int64(out.Policy.FailureThreshold) || out.ObservedCompletedRuns < int64(out.Policy.MinCompletedRuns) {
 			continue
 		}
-		at := now.UTC()
-		g.Generation++
-		g.PausedAt = &at
-		m.automationFailureGuards[key] = g
-		if m.automationFailureHistory == nil {
-			m.automationFailureHistory = map[string][]api.AutomationFailureTransition{}
-		}
-		m.automationFailureHistory[key] = append(m.automationFailureHistory[key], api.AutomationFailureTransition{Generation: g.Generation, State: "paused", Reason: "failure_threshold", RecordedAt: at, Failures: out.ObservedFailures, CompletedRuns: out.ObservedCompletedRuns, PolicyVersion: out.Policy.Version})
-		m.enqueueAutomationFailurePauseLocked(appID, name, g.Generation, out, at)
+		m.latchAutomationFailureLocked(appID, name, out, now)
 	}
 	if len(keys) == limit {
 		return keys[len(keys)-1], nil

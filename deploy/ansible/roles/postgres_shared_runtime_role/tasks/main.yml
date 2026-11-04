@@ -1,0 +1,124 @@
+---
+# postgres_shared_runtime_role — move the control-plane daemons that run as
+# the shared `faas` OS user onto faas_shared (ADR-20261023104734, contract
+# amendment 2026-11-03). It runs after every role that installs one of these
+# units, so it sees the unit files and owns only its own drop-in.
+
+- name: postgres_shared_runtime_role — find the installed units
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}.service"
+  register: faas_shared_role_unit_files
+  loop: "{{ faas_postgres_shared_runtime_role_units }}"
+
+- name: postgres_shared_runtime_role — select the installed units
+  ansible.builtin.set_fact:
+    faas_shared_role_installed_units: >-
+      {{ faas_shared_role_unit_files.results
+      | selectattr('stat.exists') | map(attribute='item') | list }}
+
+# FAAS_DB_ROLE replaces only the DSN's user, so it works for the peer socket
+# DSN alone; these units also read compute-db.env when it exists.
+- name: postgres_shared_runtime_role — look for a password DSN the runtime role cannot use
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -Eqs
+      - -e
+      - "^(export[[:space:]]+)?(DATABASE_URL|FAAS_DATABASE_URL_DIRECT|FAAS_VMMD_DBURL)=['\"]?postgres(ql)?://[^/@]*:[^/@]*@"
+      - -e
+      - "^(export[[:space:]]+)?(DATABASE_URL|FAAS_DATABASE_URL_DIRECT|FAAS_VMMD_DBURL)=.*password="
+      - /etc/faas/compute-db.env
+  register: faas_shared_role_password_dsn
+  changed_when: false
+  # 0 = a password DSN, 1 = none, 2 = no compute-db.env (socket default).
+  failed_when: faas_shared_role_password_dsn.rc not in [0, 1, 2]
+  no_log: true
+  when:
+    - faas_postgres_runtime_roles_enabled | default(false) | bool
+    - faas_shared_role_installed_units | length > 0
+
+- name: postgres_shared_runtime_role — refuse the runtime role beside a password DSN
+  ansible.builtin.assert:
+    that:
+      - faas_shared_role_password_dsn.rc != 0
+    fail_msg: >-
+      /etc/faas/compute-db.env on this control plane carries a password DSN.
+      FAAS_DB_ROLE replaces only the user, so
+      {{ faas_shared_role_installed_units | join(', ') }} would refuse to start.
+      Point them at postgres:///faas?host=/run/postgresql&user=faas, or leave
+      faas_postgres_runtime_roles_enabled off on this host.
+  when:
+    - faas_postgres_runtime_roles_enabled | default(false) | bool
+    - faas_shared_role_installed_units | length > 0
+
+- name: postgres_shared_runtime_role — prove the faas_shared peer login
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - "postgres:///faas?host=/run/postgresql&user={{ faas_postgres_shared_runtime_role }}"
+      - -c
+      - SELECT current_user
+  become: true
+  become_user: "{{ faas_postgres_shared_runtime_role_os_user }}"
+  register: faas_shared_role_login
+  changed_when: false
+  failed_when: >-
+    faas_shared_role_login.rc != 0 or
+    (faas_shared_role_login.stdout | trim) != faas_postgres_shared_runtime_role
+  when:
+    - faas_postgres_runtime_roles_enabled | default(false) | bool
+    - faas_shared_role_installed_units | length > 0
+
+- name: postgres_shared_runtime_role — create the drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ faas_shared_role_installed_units }}"
+  when: faas_postgres_runtime_roles_enabled | default(false) | bool
+
+- name: postgres_shared_runtime_role — set the database runtime role
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item }}.service.d/zz-faas-db-role.conf"
+    content: |
+      [Service]
+      # ADR-20261023104734: log in as faas_shared, not the schema owner.
+      Environment=FAAS_DB_ROLE={{ faas_postgres_shared_runtime_role }}
+    owner: root
+    group: root
+    mode: "0644"
+  register: faas_shared_role_dropins_set
+  loop: "{{ faas_shared_role_installed_units }}"
+  when: faas_postgres_runtime_roles_enabled | default(false) | bool
+
+- name: postgres_shared_runtime_role — return the units to the owner role when disabled
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d/zz-faas-db-role.conf"
+    state: absent
+  register: faas_shared_role_dropins_removed
+  loop: "{{ faas_postgres_shared_runtime_role_units }}"
+  when: not (faas_postgres_runtime_roles_enabled | default(false) | bool)
+
+- name: postgres_shared_runtime_role — collect the units whose role changed
+  ansible.builtin.set_fact:
+    faas_shared_role_changed_units: >-
+      {{ ((faas_shared_role_dropins_set.results | default([]))
+          + (faas_shared_role_dropins_removed.results | default([])))
+      | selectattr('changed', 'defined') | selectattr('changed')
+      | map(attribute='item') | list }}
+
+- name: postgres_shared_runtime_role — reload systemd after a drop-in change
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: faas_shared_role_changed_units | length > 0
+
+# try-restart leaves a stopped or disabled unit stopped.
+- name: postgres_shared_runtime_role — restart the units whose role changed
+  ansible.builtin.command: "systemctl try-restart {{ item }}.service"  # noqa: command-instead-of-module
+  changed_when: true
+  loop: "{{ faas_shared_role_changed_units }}"

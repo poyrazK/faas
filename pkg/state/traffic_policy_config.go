@@ -1,11 +1,16 @@
 // adr: 570
 package state
 
-import "github.com/onebox-faas/faas/pkg/hostidentity"
+import (
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/hostidentity"
+)
 
 type storeOptions struct {
 	trafficAppsDomain    string
 	trafficScopedBinding bool
+	backgroundPool       *pgxpool.Pool
 }
 
 // StoreOption configures immutable store wiring before its first use.

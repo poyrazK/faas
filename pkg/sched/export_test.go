@@ -119,7 +119,6 @@ var DecodeKafkaConfig = decodeKafkaConfig
 var DecodeNATSConfig = decodeNATSConfig
 var DecodeOperationResult = decodeOperationResult
 var DecodeRedisConfig = decodeRedisConfig
-var DecodeSQSConfig = decodeSQSConfig
 var EnableWarmSnapshot = enableWarmSnapshot
 var EnqueueScopedDemand = enqueueScopedDemand
 var EnvironmentGitOpsJobBindingIntentMatches = environmentGitOpsJobBindingIntentMatches
@@ -314,6 +313,7 @@ var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+var SeedForkTarget = seedForkTarget
 var ReadWakeRPC = readWakeRPC
 
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
@@ -585,10 +585,14 @@ func (r *Loop) ProcessFireNowRequest(p0 context.Context, p1 state.FireNowRequest
 func (r *Loop) RecoverPrimeCandidate(p0 context.Context, p1 string, p2 time.Time) error {
 	return r.recoverPrimeCandidate(p0, p1, p2)
 }
-func (r *Loop) RunInstanceStats(p0 context.Context) { r.runInstanceStats(p0) }
-func (r *Loop) RunPrimeRecovery(p0 context.Context) { r.runPrimeRecovery(p0) }
-func (r *Loop) RunReaper(p0 context.Context)        { r.runReaper(p0) }
-func (r *Loop) RunCronTick(p0 context.Context)      { r.runCronTick(p0) }
+func (r *Loop) RunInstanceStats(p0 context.Context)     { r.runInstanceStats(p0) }
+func (r *Loop) RunPrimeRecovery(p0 context.Context)     { r.runPrimeRecovery(p0) }
+func (r *Loop) RunReaper(p0 context.Context)            { r.runReaper(p0) }
+func (r *Loop) RunCronTick(p0 context.Context)          { r.runCronTick(p0) }
+func (r *Loop) RunScheduledJobsTick(p0 context.Context) { r.runScheduledJobsTick(p0) }
+
+// DrainEngine is the engine a drain wakes apps through.
+func DrainEngine(d *Drain) *Engine { return d.engine }
 func (r *Loop) RecordTriggerConsumerHealth(p0 context.Context, p1 storeLike, p2 sqlc.Trigger, p3 PollResult) {
 	r.recordTriggerConsumerHealth(p0, p1, p2, p3)
 }
@@ -599,6 +603,7 @@ func (r *Loop) RunRetention(p0 context.Context)                                 
 func (r *Loop) RunScaleUp(p0 context.Context)                                   { r.runScaleUp(p0) }
 func (r *Loop) RunServiceRecovery(p0 context.Context)                           { r.runServiceRecovery(p0) }
 func (r *Loop) RunWorkflowRetention(p0 context.Context)                         { r.runWorkflowRetention(p0) }
+func (r *Loop) DispatchWorkflowRetention(p0 context.Context)                    { r.dispatchWorkflowRetention(p0) }
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }
@@ -1106,6 +1111,33 @@ func (e *Engine) MarkRestartInFlight(appID string) func() {
 	}
 }
 
+// Broker trigger delivery (ADR-20261101093512).
+func (r *Loop) TriggerClaimRenewInterval() *time.Duration { return &r.triggerClaimRenewInterval }
+
+var WriteTriggerClaimOutcome = writeTriggerClaimOutcome
+var NATSConsumerConfig = natsConsumerConfig
+var NATSRecordID = natsRecordID
+
+type NATSConfig = natsConfig
+type NATSMsg = natsMsg
+
+const TriggerReasonPayloadTooLarge = triggerReasonPayloadTooLarge
+const TriggerReasonRateLimited = triggerReasonRateLimited
+
+// NewNATSPollerWithMessages is a NATS poller holding msgs in flight, keyed
+// by record ID, without a JetStream consumer.
+func NewNATSPollerWithMessages(msgs map[string]NATSMsg) TriggerSource {
+	return &natsPoller{stream: "events", inFlight: msgs}
+}
+
+// RedeliverNATS puts msg back in flight under id, as a Poll would.
+func RedeliverNATS(src TriggerSource, id string, msg NATSMsg) {
+	p := src.(*natsPoller)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inFlight[id] = msg
+}
+
 // WithCronSweepSlice sets how long one pass of the cron sweep may dispatch.
 func (r *Loop) WithCronSweepSlice(d time.Duration) *Loop { r.cronSweepSlice = d; return r }
 
@@ -1225,4 +1257,21 @@ func ProjectPrivateNetworkForTest(store state.Store, app state.App) AppSpec {
 func StaticEgressWirePolicyForTest(spec AppSpec) (string, bool) {
 	p := spec.toProto()
 	return p.GetStaticEgressIp(), p.GetStaticEgressExcluded()
+}
+
+// RealtimeIdleDelays observes claims of the given sizes on a fresh realtime
+// poller and returns the idle delay after each.
+func RealtimeIdleDelays(sizes []int) []time.Duration {
+	p := &realtimePoller{}
+	now := time.Unix(1_000, 0)
+	out := make([]time.Duration, 0, len(sizes))
+	for _, n := range sizes {
+		batch := state.RealtimeConsumerGroupBatch{Claims: make([]state.RealtimeConsumerGroupClaim, n)}
+		p.observeClaim(batch, now)
+		if p.idle(now) != (p.idleDelay > 0) || p.idle(now.Add(p.idleDelay)) {
+			panic("idle window does not match the delay")
+		}
+		out = append(out, p.idleDelay)
+	}
+	return out
 }

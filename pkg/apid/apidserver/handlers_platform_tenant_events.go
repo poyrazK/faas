@@ -144,6 +144,10 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrCapacity("failed to record event"))
 		return
 	}
+	if !api.WorkflowEventEnvelopeFits(payload) {
+		api.WriteProblem(w, api.ErrWorkflowEventEnvelopeTooLarge())
+		return
+	}
 	store, ok := s.store.(state.TenantPublishedEventStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrInternal("tenant event store unavailable"))

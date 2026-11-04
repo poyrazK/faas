@@ -719,10 +719,12 @@ type Engine struct {
 	earlyFreezeAfterMS atomic.Int64
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
-	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.
-	restorePlacementMu               sync.Mutex
-	restorePlacementInFlight         map[string]int
-	restorePlacementFallbackInFlight map[string]int
+	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns;
+	// restorePlacementLeases holds this engine's shared lease IDs, which the
+	// shared count leaves out because restorePlacementInFlight has them.
+	restorePlacementMu       sync.Mutex
+	restorePlacementInFlight map[string]int
+	restorePlacementLeases   map[string]struct{}
 	// restartMu/restartInFlight coalesce duplicate restart notifications for
 	// one app. The notification is a best-effort hint and can be delivered
 	// more than once, so a second caller waits for the first park+fresh-wake
@@ -778,6 +780,10 @@ type Engine struct {
 	// billing subject, so the spend cap gate reads the right cap without a
 	// store read per wake (ADR-20261030093512).
 	capSubjects spendCapSubjects
+	// planFits remembers, per billing subject, which of its apps are
+	// outside its plan, so wakes refuse them without a store read per wake
+	// (ADR-20261103131742).
+	planFits planFitCache
 	// (obs, cap) cents ride on the (outcome, obs, cap) tuple
 	// admitGate returns. The earlier field-on-Engine shape was
 	// racy across goroutines hitting the cap-reached branch.
@@ -3287,6 +3293,19 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		}
 	}
 
+	// ADR-20261103131742: an app outside its subject's plan (past the
+	// deployed-app limit, oldest kept, or above the plan's RAM) does not
+	// wake, on the request path or an explicit deployment, so a plan that
+	// ended or shrank does not keep the higher plan's entitlements.
+	// Deployment smoke verifies a release and mirror instances are never
+	// metered, as for the spend cap.
+	if !deploymentSmoke && mode != string(state.InstanceModeMirror) {
+		if problem := e.planFitProblem(ctx, app, acct); problem != nil {
+			release()
+			return WakeResult{}, errors.Join(ErrPermanentWake, problem)
+		}
+	}
+
 	// PR-C (issue #462): wake-gate consult. Three short-circuit
 	// outcomes route to typed errors or AtCapacity=true without
 	// touching the ledger or the instances table. The cooldown
@@ -5311,11 +5330,12 @@ func (e *Engine) withAppInstances(r Request) Request {
 	return r
 }
 
-// chooseRestorePlacementLocked snapshots local restore pressure, selects a
-// fitting node, and reserves one in-flight slot before another restore may
-// make a placement decision. When the store supports shared coordination,
-// the fleet-wide lease lasts through the vmmd RPC; local counts remain a
-// fallback if the coordinator is temporarily unavailable.
+// chooseRestorePlacementLocked counts restore pressure, selects a fitting
+// node, and reserves one in-flight slot before another restore on this engine
+// may make a placement decision. When the store keeps shared leases, the
+// other schedds' in-flight restores are read without a lock and this engine's
+// lease lasts through the vmmd RPC (ADR 20261103195512); local counts alone
+// remain the fallback if the store is temporarily unavailable.
 func (e *Engine) chooseRestorePlacementLocked(ctx context.Context, r Request) (Placement, func(), error) {
 	r.restorePressureAware = !r.PrioritizeSnapshotLocality
 	r = e.withAppInstances(r)
@@ -5324,88 +5344,80 @@ func (e *Engine) chooseRestorePlacementLocked(ctx context.Context, r Request) (P
 		return Placement{}, nil, err
 	}
 
-	if coordinator, ok := e.store.(state.SnapshotRestorePressureCoordinator); ok {
-		coordCtx, cancelCoord := context.WithTimeout(ctx, restorePressureCoordinationTimeout)
-		session, err := coordinator.AcquireSnapshotRestorePressure(coordCtx)
-		if err == nil {
-			counts, countsErr := session.ActiveSnapshotRestoreCounts(coordCtx)
-			if countsErr == nil {
-				if counts == nil {
-					counts = make(map[string]int)
-				}
-				e.restorePlacementMu.Lock()
-				for nodeID, inFlight := range e.restorePlacementFallbackInFlight {
-					counts[nodeID] += inFlight
-				}
-				e.restorePlacementMu.Unlock()
-				r.restorePressureByNode = counts
-				placement, chooseErr := snapshot.choose(r)
-				if chooseErr != nil {
-					session.Close()
-					cancelCoord()
-					return Placement{}, nil, chooseErr
-				}
-				sharedRelease, reserveErr := session.ReserveSnapshotRestore(coordCtx, placement.NodeID, restorePressureLeaseTTL)
-				session.Close()
-				cancelCoord()
-				if reserveErr == nil {
-					e.restorePlacementMu.Lock()
-					localRelease := e.reserveLocalRestorePlacementLocked(placement.NodeID, false)
-					e.restorePlacementMu.Unlock()
-					return placement, combineRestorePressureReleases(sharedRelease, localRelease), nil
-				}
-				if ctx.Err() != nil {
-					return Placement{}, nil, ctx.Err()
-				}
-				e.warnRestorePressureFallback("reserve shared lease", reserveErr)
-			} else {
-				session.Close()
-				cancelCoord()
-				if ctx.Err() != nil {
-					return Placement{}, nil, ctx.Err()
-				}
-				e.warnRestorePressureFallback("read shared counts", countsErr)
-			}
-		} else {
-			cancelCoord()
+	leases, shared := e.store.(state.SnapshotRestorePressureLeases)
+	var sharedCounts map[string]int
+	if shared {
+		e.restorePlacementMu.Lock()
+		own := make([]string, 0, len(e.restorePlacementLeases))
+		for leaseID := range e.restorePlacementLeases {
+			own = append(own, leaseID)
+		}
+		e.restorePlacementMu.Unlock()
+		countCtx, cancel := context.WithTimeout(ctx, restorePressureCoordinationTimeout)
+		sharedCounts, err = leases.ActiveSnapshotRestoreCounts(countCtx, own)
+		cancel()
+		if err != nil {
 			if ctx.Err() != nil {
 				return Placement{}, nil, ctx.Err()
 			}
-			e.warnRestorePressureFallback("acquire coordinator", err)
+			e.warnRestorePressureFallback("read shared counts", err)
+			shared = false
 		}
 	}
 
 	e.restorePlacementMu.Lock()
-	defer e.restorePlacementMu.Unlock()
-	r.restorePressureByNode = make(map[string]int, len(e.restorePlacementInFlight))
-	for nodeID, inFlight := range e.restorePlacementInFlight {
-		r.restorePressureByNode[nodeID] = inFlight
+	pressure := make(map[string]int, len(sharedCounts)+len(e.restorePlacementInFlight))
+	for nodeID, inFlight := range sharedCounts {
+		pressure[nodeID] = inFlight
 	}
+	for nodeID, inFlight := range e.restorePlacementInFlight {
+		pressure[nodeID] += inFlight
+	}
+	r.restorePressureByNode = pressure
 	placement, err := snapshot.choose(r)
 	if err != nil {
+		e.restorePlacementMu.Unlock()
 		return Placement{}, nil, err
 	}
-	return placement, e.reserveLocalRestorePlacementLocked(placement.NodeID, true), nil
+	leaseID := ""
+	if shared {
+		leaseID = uuid.NewString()
+	}
+	localRelease := e.reserveLocalRestorePlacementLocked(placement.NodeID, leaseID)
+	e.restorePlacementMu.Unlock()
+	if !shared {
+		return placement, localRelease, nil
+	}
+	sharedRelease, err := leases.ReserveSnapshotRestore(ctx, leaseID, placement.NodeID, restorePressureLeaseTTL)
+	if err != nil {
+		if ctx.Err() != nil {
+			localRelease()
+			return Placement{}, nil, ctx.Err()
+		}
+		e.warnRestorePressureFallback("reserve shared lease", err)
+		return placement, localRelease, nil
+	}
+	return placement, combineRestorePressureReleases(sharedRelease, localRelease), nil
 }
 
 // The vmmd restore RPC is bounded by WakingTimeout (6s); this lease allows
 // process and RPC cleanup time before a crashed schedd's reservation expires.
 const restorePressureLeaseTTL = 30 * time.Second
 
-// Keep coordination lock contention well below the wake budget. A brief
-// store hiccup falls back to local accounting instead of delaying the wake.
+// Bounds the shared count read. A brief store hiccup falls back to local
+// accounting instead of delaying the wake.
 const restorePressureCoordinationTimeout = 250 * time.Millisecond
 
-func (e *Engine) reserveLocalRestorePlacementLocked(nodeID string, fallback bool) func() {
+func (e *Engine) reserveLocalRestorePlacementLocked(nodeID, leaseID string) func() {
 	if e.restorePlacementInFlight == nil {
 		e.restorePlacementInFlight = make(map[string]int)
 	}
 	e.restorePlacementInFlight[nodeID]++
-	if fallback {
-		if e.restorePlacementFallbackInFlight == nil {
-			e.restorePlacementFallbackInFlight = make(map[string]int)
+	if leaseID != "" {
+		if e.restorePlacementLeases == nil {
+			e.restorePlacementLeases = make(map[string]struct{})
 		}
-		e.restorePlacementFallbackInFlight[nodeID]++
+		e.restorePlacementLeases[leaseID] = struct{}{}
 	}
 
 	var once sync.Once
@@ -5418,12 +5430,8 @@ func (e *Engine) reserveLocalRestorePlacementLocked(nodeID string, fallback bool
 			} else {
 				delete(e.restorePlacementInFlight, nodeID)
 			}
-			if fallback {
-				if inFlight := e.restorePlacementFallbackInFlight[nodeID]; inFlight > 1 {
-					e.restorePlacementFallbackInFlight[nodeID] = inFlight - 1
-				} else {
-					delete(e.restorePlacementFallbackInFlight, nodeID)
-				}
+			if leaseID != "" {
+				delete(e.restorePlacementLeases, leaseID)
 			}
 		})
 	}
@@ -7295,7 +7303,7 @@ func (e *Engine) ParkWithReason(ctx context.Context, instanceID, reason string) 
 // rejection. Terminal rows release their reservation; snapshotting and
 // migrating rows keep RAM but no longer consume an app serving slot.
 func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, error) {
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.admissionRepairRows(ctx, appID)
 	if err != nil {
 		return 0, err
 	}
@@ -7331,6 +7339,40 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 	return repaired, nil
 }
 
+// admissionRepairRows returns the instance rows reconcileAppAdmission
+// judges: the rows this ledger holds for appID, read by ID (ADR
+// 20261103131546). Only a held row can be released or moved to snapshot
+// accounting; reading the app's whole wake history, as before, read every
+// retained wake of the busiest apps on each wake refused at their cap. A
+// store without InstancesByIDsReader reads the history.
+func (e *Engine) admissionRepairRows(ctx context.Context, appID string) ([]state.Instance, error) {
+	reader, ok := e.store.(state.InstancesByIDsReader)
+	if !ok {
+		return e.store.ListInstancesForApp(ctx, appID)
+	}
+	held := e.ledger.InstancesForApp(appID)
+	if len(held) == 0 {
+		return nil, nil
+	}
+	rows, err := reader.InstancesByIDs(ctx, held)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]state.Instance, 0, len(rows))
+	for _, id := range held {
+		if ins, ok := rows[id]; ok && ins.AppID == appID {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
+}
+
+// deletedAppCleanupStates are the states ReconcileLifecycleInstance acts on:
+// live rows and rows an account deletion is evicting.
+func deletedAppCleanupStates() []string {
+	return append(state.LiveStates(), string(state.StateEvictingAccountDeleting))
+}
+
 // appMustPark reports whether no instance of app may stay live: the app is
 // evicted_cold, its account is suspended or abuse-held, or its billing
 // subject has reached its monthly spend cap. account is the app's resource
@@ -7338,12 +7380,17 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 // owns its resources, its ID is the creator's and the organization's cap
 // governs (ADR-20261030093512, as spendCapSubject). The cap check is cached
 // and fails open (OverageChecker), so a transient read error never parks an
-// app.
+// app. An app outside its subject's plan parks too (ADR-20261103131742),
+// with the same cached, fail-open read.
 func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.Account) bool {
 	if app.Status == state.AppEvictedCold || account.Status == state.AccountSuspended || account.AbuseHeld() {
 		return true
 	}
-	return e.spendCapReached(ctx, account.ResourceOwnerID())
+	if e.spendCapReached(ctx, account.ResourceOwnerID()) {
+		return true
+	}
+	_, _, over := e.planOverage(ctx, app, account)
+	return over
 }
 
 // ParkApp tears down every live instance of an app whose lifecycle has already
@@ -7656,7 +7703,14 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 	if !e.ownsApp(app) {
 		return 0, nil
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	// ADR 20261103131546: only live and account-deleting rows are acted on,
+	// so a store that can reads those instead of the app's wake history.
+	var instances []state.Instance
+	if reader, ok := e.store.(state.AppInstancesInStatesReader); ok {
+		instances, err = reader.ListAppInstancesInStates(ctx, appID, deletedAppCleanupStates())
+	} else {
+		instances, err = e.store.ListInstancesForApp(ctx, appID)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("sched: deleted-app reconcile: list app %s: %w", appID, err)
 	}

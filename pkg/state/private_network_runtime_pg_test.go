@@ -101,10 +101,13 @@ func TestPgPrivateTransportCollisionAndPinnedScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer single.Close()
-	fresh := state.NewPgStore(single)
+	// A background-work context must retain the connection holding the
+	// private-network session lock, including nested queries and transactions.
+	fresh := state.NewPgStore(single, state.WithBackgroundPool(pool))
+	beforeBackground := pool.Stat().AcquireCount()
 	timeout, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := fresh.WithPrivateNetworkScope(timeout, state.PrivateNetworkPeeringScope(account, "fra1"), func(locked context.Context) error {
+	if err := fresh.WithPrivateNetworkScope(state.WithBackgroundWork(timeout), state.PrivateNetworkPeeringScope(account, "fra1"), func(locked context.Context) error {
 		got, err := fresh.EnsurePrivateNetworkTransportVNI(locked, account, network.ID, "fra1")
 		if err != nil {
 			return err
@@ -113,10 +116,15 @@ func TestPgPrivateTransportCollisionAndPinnedScope(t *testing.T) {
 			t.Fatal("independent controller changed VNI")
 		}
 		return fresh.WithPrivateNetworkScope(locked, state.PrivateNetworkAttachmentScope("app"), func(nested context.Context) error {
-			_, err := fresh.GetPrivateNetwork(nested, account, network.ID)
-			return err
+			if _, err := fresh.GetPrivateNetwork(nested, account, network.ID); err != nil {
+				return err
+			}
+			return fresh.CheckOrgAccess(nested)
 		})
 	}); err != nil {
 		t.Fatalf("pinned pool deadlock: %v", err)
+	}
+	if got := pool.Stat().AcquireCount() - beforeBackground; got != 0 {
+		t.Fatalf("pinned scope acquired %d background connections, want 0", got)
 	}
 }

@@ -13,7 +13,7 @@ import (
 // inventory and the captured configuration come from one snapshot. It fails
 // before an operation exists when the source holds rows in any table the
 // clone cannot copy into an isolated target.
-func requireCloneSourceInventoryTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, records []projectCloneWorkloadRecord) error {
+func requireCloneSourceInventoryTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, records []projectCloneWorkloadRecord, qualifiedBackends []string) error {
 	policies, err := ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil {
 		return err
@@ -48,7 +48,8 @@ func requireCloneSourceInventoryTx(ctx context.Context, tx pgx.Tx, op ProjectEnv
 	for _, table := range tables {
 		present[table] = true
 	}
-	if blockers := cloneInventoryBlockers(policies, present); len(blockers) > 0 {
+	blockers := append(cloneInventoryBlockers(policies, present), cloneBucketBlockers(records, qualifiedBackends)...)
+	if len(blockers) > 0 {
 		return &ProjectEnvironmentCloneInventoryError{Blockers: blockers}
 	}
 	return nil

@@ -11012,13 +11012,15 @@ func (q *Queries) CountManagedPostgresHealth(ctx context.Context, db DBTX, arg C
 
 const countManagedPostgresLifecycleDatabases = `-- name: CountManagedPostgresLifecycleDatabases :one
 SELECT ((SELECT count(*) FROM managed_postgres_databases d
- WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid AND d.state<>'deleted')
+ WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid AND d.state<>'deleted' AND NOT (d.state='deleting' AND d.purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
  JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=$1::uuid
  AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count
 `
 
+// A delete that can no longer be undone frees the database, including a source
+// kept for its restore copies (ADR-20261103091657).
 func (q *Queries) CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countManagedPostgresLifecycleDatabases, accountID)
 	var count int64
@@ -11027,11 +11029,12 @@ func (q *Queries) CountManagedPostgresLifecycleDatabases(ctx context.Context, db
 }
 
 const countManagedPostgresOrgDatabases = `-- name: CountManagedPostgresOrgDatabases :one
-SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=$1::uuid AND state<>'deleted')
+SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=$1::uuid AND state<>'deleted' AND NOT (state='deleting' AND purge_after IS NULL))
  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
  WHERE p.org_id=$1::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count
 `
 
+// Counts as CountManagedPostgresLifecycleDatabases does.
 func (q *Queries) CountManagedPostgresOrgDatabases(ctx context.Context, db DBTX, orgID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, countManagedPostgresOrgDatabases, orgID)
 	var count int64
@@ -38561,7 +38564,10 @@ func (q *Queries) IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddT
 
 const issueApplySplitRule = `-- name: IssueApplySplitRule :one
 WITH selected AS MATERIALIZED (
- SELECT e.id,e.deployment_id,e.occurred_at FROM issue_events e WHERE e.issue_id=$1
+ SELECT e.id,e.deployment_id,e.occurred_at,e.occurrence_count,
+  COALESCE(to_timestamp((e.http_time_buckets->0->>0)::double precision / 1000),e.occurred_at) AS first_at,
+  COALESCE(to_timestamp((e.http_time_buckets->(-1)->>0)::double precision / 1000),e.occurred_at) AS last_at
+ FROM issue_events e WHERE e.issue_id=$1
  AND ($2::text='' OR e.payload->>'exception_type'=$2)
  AND ($3::text='' OR e.payload->>'error_code'=$3)
  AND ($4::text='' OR e.payload->>'route'=$4)
@@ -38574,7 +38580,7 @@ WITH selected AS MATERIALIZED (
   AND (r.source_kind='' OR r.source_kind=e.payload->>'source_kind')
  )
 ), transferred AS MATERIALIZED (
- SELECT deployment_id,count(*)::bigint AS event_count,min(occurred_at) AS first_seen_at,max(occurred_at) AS last_seen_at FROM selected GROUP BY deployment_id
+ SELECT deployment_id,sum(occurrence_count)::bigint AS event_count,min(first_at) AS first_seen_at,max(last_at) AS last_seen_at FROM selected GROUP BY deployment_id
 ), moved AS (
  UPDATE issue_events e SET original_issue_id=COALESCE(e.original_issue_id,e.issue_id),issue_id=$6
  WHERE e.id IN (SELECT s.id FROM selected s)
@@ -38588,12 +38594,12 @@ WITH selected AS MATERIALIZED (
  UPDATE issue_releases r SET event_count=r.event_count-t.event_count FROM transferred t
  WHERE r.issue_id=$1 AND r.deployment_id=t.deployment_id AND r.event_count>t.event_count
 ), reduce_source AS (
- UPDATE app_issues SET event_count=event_count-(SELECT count(*) FROM selected) WHERE id=$1
+ UPDATE app_issues SET event_count=event_count-(SELECT COALESCE(sum(occurrence_count),0)::bigint FROM selected) WHERE id=$1
 ), branch_counts AS (
- UPDATE app_issues SET event_count=(SELECT count(*) FROM selected),first_seen_at=COALESCE((SELECT min(occurred_at) FROM selected),first_seen_at),last_seen_at=COALESCE((SELECT max(occurred_at) FROM selected),last_seen_at)
+ UPDATE app_issues SET event_count=(SELECT COALESCE(sum(occurrence_count),0)::bigint FROM selected),first_seen_at=COALESCE((SELECT min(first_at) FROM selected),first_seen_at),last_seen_at=COALESCE((SELECT max(last_at) FROM selected),last_seen_at)
  WHERE id=$6
 )
-SELECT count(*)::bigint AS moved_event_count FROM selected
+SELECT COALESCE(sum(occurrence_count),0)::bigint AS moved_event_count FROM selected
 `
 
 type IssueApplySplitRuleParams struct {
@@ -38799,6 +38805,15 @@ func (q *Queries) IssueCreate(ctx context.Context, db DBTX, arg IssueCreateParam
 	return i, err
 }
 
+const issueCreateEventUsage = `-- name: IssueCreateEventUsage :exec
+INSERT INTO issue_event_usage(app_id) VALUES($1) ON CONFLICT (app_id) DO NOTHING
+`
+
+func (q *Queries) IssueCreateEventUsage(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, issueCreateEventUsage, appID)
+	return err
+}
+
 const issueCreateSplitGroup = `-- name: IssueCreateSplitGroup :one
 INSERT INTO app_issues(account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at,assignee_account_id,split_source_issue_id,assignee_team_id)
 VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10) RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id, assignee_team_id
@@ -38914,9 +38929,27 @@ func (q *Queries) IssueCreateSplitRule(ctx context.Context, db DBTX, arg IssueCr
 }
 
 const issueDebugRequest = `-- name: IssueDebugRequest :many
-SELECT id FROM request_telemetry WHERE account_id=$1 AND app_id=$2 AND deployment_id=$3
-AND count=1 AND received_at BETWEEN $4 AND $5
-AND (id=$6::uuid OR ($7::text<>'' AND trace_id=$7)) LIMIT 2
+WITH matching_journal AS MATERIALIZED (
+ SELECT j.trace_id FROM request_id_journal j
+ WHERE j.account_id=$1 AND j.app_id=$2
+ AND j.request_id=$7::text AND $7::text<>''
+ AND j.received_at BETWEEN $4 AND $5 AND j.expires_at>now()
+ LIMIT 2
+), matching_audit AS MATERIALIZED (
+ SELECT a.trace_id FROM request_audit_events a
+ WHERE a.account_id=$1 AND a.app_id=$2 AND a.deployment_id=$3
+ AND a.request_id=$7::text AND $7::text<>''
+ AND a.occurred_at BETWEEN $4 AND $5
+ LIMIT 2
+)
+SELECT t.id FROM request_telemetry t WHERE t.account_id=$1 AND t.app_id=$2 AND t.deployment_id=$3
+AND t.count=1 AND t.received_at BETWEEN $4 AND $5
+AND (SELECT count(*) FROM matching_journal)<=1 AND (SELECT count(*) FROM matching_audit)<=1
+AND (NOT EXISTS(SELECT 1 FROM matching_journal WHERE trace_id IS NOT NULL AND trace_id<>t.trace_id))
+AND (NOT EXISTS(SELECT 1 FROM matching_audit WHERE (trace_id<>'' AND trace_id<>t.trace_id)
+ OR ($6::text<>'' AND trace_id='')))
+AND (($6::text<>'' AND t.trace_id=$6) OR
+ ($6::text='' AND (SELECT count(*) FROM matching_journal)=1 AND t.trace_id=(SELECT trace_id FROM matching_journal LIMIT 1))) LIMIT 2
 `
 
 type IssueDebugRequestParams struct {
@@ -38925,10 +38958,11 @@ type IssueDebugRequestParams struct {
 	DeploymentID pgtype.UUID
 	Since        pgtype.Timestamptz
 	Until        pgtype.Timestamptz
-	RequestID    pgtype.UUID
 	TraceID      string
+	RequestID    string
 }
 
+// Both correlation hints must agree with any retained request evidence.
 func (q *Queries) IssueDebugRequest(ctx context.Context, db DBTX, arg IssueDebugRequestParams) ([]pgtype.UUID, error) {
 	rows, err := db.Query(ctx, issueDebugRequest,
 		arg.AccountID,
@@ -38936,8 +38970,8 @@ func (q *Queries) IssueDebugRequest(ctx context.Context, db DBTX, arg IssueDebug
 		arg.DeploymentID,
 		arg.Since,
 		arg.Until,
-		arg.RequestID,
 		arg.TraceID,
+		arg.RequestID,
 	)
 	if err != nil {
 		return nil, err
@@ -39017,16 +39051,21 @@ func (q *Queries) IssueDeploymentScope(ctx context.Context, db DBTX, arg IssueDe
 const issueEnrichAttribution = `-- name: IssueEnrichAttribution :execrows
 UPDATE issue_events SET verified_consumer_id=$1,verified_platform_tenant_id=$2,attribution_checked_at=$3
 WHERE app_id=$4 AND deployment_id=$5 AND event_id=$6
-AND verified_consumer_id IS NULL AND verified_platform_tenant_id IS NULL
+AND verified_consumer_id IS NOT DISTINCT FROM $7
+AND verified_platform_tenant_id IS NOT DISTINCT FROM $8
+AND attribution_checked_at = $9
 `
 
 type IssueEnrichAttributionParams struct {
-	ConsumerID   pgtype.UUID
-	TenantID     pgtype.UUID
-	Now          pgtype.Timestamptz
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	EventID      pgtype.UUID
+	ConsumerID         pgtype.UUID
+	TenantID           pgtype.UUID
+	Now                pgtype.Timestamptz
+	AppID              pgtype.UUID
+	DeploymentID       pgtype.UUID
+	EventID            pgtype.UUID
+	PreviousConsumerID pgtype.UUID
+	PreviousTenantID   pgtype.UUID
+	PreviousCheckedAt  pgtype.Timestamptz
 }
 
 func (q *Queries) IssueEnrichAttribution(ctx context.Context, db DBTX, arg IssueEnrichAttributionParams) (int64, error) {
@@ -39037,6 +39076,9 @@ func (q *Queries) IssueEnrichAttribution(ctx context.Context, db DBTX, arg Issue
 		arg.AppID,
 		arg.DeploymentID,
 		arg.EventID,
+		arg.PreviousConsumerID,
+		arg.PreviousTenantID,
+		arg.PreviousCheckedAt,
 	)
 	if err != nil {
 		return 0, err
@@ -39417,11 +39459,94 @@ func (q *Queries) IssueHasSplitAudit(ctx context.Context, db DBTX, arg IssueHasS
 	return exists, err
 }
 
+const issueHistoricalAttributionEvents = `-- name: IssueHistoricalAttributionEvents :many
+SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id, e.occurrence_count, e.attribution_version, e.occurrence_weight_known, e.http_time_buckets,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i.id=e.issue_id
+WHERE e.attribution_version < 2 AND (e.verified_consumer_id IS NOT NULL OR e.verified_platform_tenant_id IS NOT NULL)
+AND NOT (e.app_id = ANY(COALESCE($1::uuid[], ARRAY[]::uuid[])))
+ORDER BY e.id LIMIT $2
+`
+
+type IssueHistoricalAttributionEventsParams struct {
+	ExcludedAppIds []pgtype.UUID
+	BatchLimit     int32
+}
+
+type IssueHistoricalAttributionEventsRow struct {
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	DeploymentID             pgtype.UUID
+	EventID                  pgtype.UUID
+	IssueID                  pgtype.UUID
+	PayloadHash              string
+	Payload                  []byte
+	OccurredAt               pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	AttributionCheckedAt     pgtype.Timestamptz
+	VerifiedConsumerID       pgtype.UUID
+	VerifiedPlatformTenantID pgtype.UUID
+	OriginalIssueID          pgtype.UUID
+	OccurrenceCount          int64
+	AttributionVersion       int32
+	OccurrenceWeightKnown    bool
+	HttpTimeBuckets          []byte
+	AccountID                pgtype.UUID
+	Environment              string
+}
+
+func (q *Queries) IssueHistoricalAttributionEvents(ctx context.Context, db DBTX, arg IssueHistoricalAttributionEventsParams) ([]IssueHistoricalAttributionEventsRow, error) {
+	rows, err := db.Query(ctx, issueHistoricalAttributionEvents, arg.ExcludedAppIds, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueHistoricalAttributionEventsRow{}
+	for rows.Next() {
+		var i IssueHistoricalAttributionEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.EventID,
+			&i.IssueID,
+			&i.PayloadHash,
+			&i.Payload,
+			&i.OccurredAt,
+			&i.ReceivedAt,
+			&i.AttributionCheckedAt,
+			&i.VerifiedConsumerID,
+			&i.VerifiedPlatformTenantID,
+			&i.OriginalIssueID,
+			&i.OccurrenceCount,
+			&i.AttributionVersion,
+			&i.OccurrenceWeightKnown,
+			&i.HttpTimeBuckets,
+			&i.AccountID,
+			&i.Environment,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const issueImpact = `-- name: IssueImpact :one
-SELECT count(*) AS observed_events,count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
-count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
-FROM issue_events e
-WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND e.occurred_at >= $2 AND e.occurred_at <= $3
+WITH impact_events AS MATERIALIZED (
+ SELECT CASE WHEN e.occurred_at >= $2::timestamptz AND e.occurred_at <= $3::timestamptz THEN e.verified_platform_tenant_id END AS verified_platform_tenant_id, CASE WHEN e.occurred_at >= $2::timestamptz AND e.occurred_at <= $3::timestamptz THEN e.verified_consumer_id END AS verified_consumer_id, issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$2::timestamptz,$3::timestamptz,true,true)::bigint AS occurrence_count FROM issue_events e
+ WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1)
+ AND e.occurred_at >= $2::timestamptz - interval '1 second' AND e.occurred_at <= $3::timestamptz + interval '1 second'
+ AND issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$2::timestamptz,$3::timestamptz,true,true)>0
+), linked_customers AS (
+ SELECT DISTINCT verified_consumer_id FROM impact_events WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+)
+SELECT COALESCE(sum(e.occurrence_count),0)::bigint AS observed_events, (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+ FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS identified_customers,
+ COALESCE(sum(e.occurrence_count - CASE WHEN e.verified_platform_tenant_id IS NOT NULL OR e.verified_consumer_id IS NOT NULL THEN 1 ELSE 0 END),0)::bigint AS unattributed_events,
+ (SELECT count(*) FROM issue_events legacy WHERE legacy.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND legacy.occurred_at >= $2::timestamptz AND legacy.occurred_at <= $3::timestamptz AND NOT legacy.occurrence_weight_known AND legacy.occurrence_count=1 AND legacy.payload->>'source_kind'='http')::bigint AS unknown_http_batches
+FROM impact_events e LEFT JOIN linked_customers l ON l.verified_consumer_id=e.verified_consumer_id
 `
 
 type IssueImpactParams struct {
@@ -39434,19 +39559,32 @@ type IssueImpactRow struct {
 	ObservedEvents      int64
 	IdentifiedCustomers int64
 	UnattributedEvents  int64
+	UnknownHttpBatches  int64
 }
 
 func (q *Queries) IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParams) (IssueImpactRow, error) {
 	row := db.QueryRow(ctx, issueImpact, arg.IssueID, arg.Since, arg.Until)
 	var i IssueImpactRow
-	err := row.Scan(&i.ObservedEvents, &i.IdentifiedCustomers, &i.UnattributedEvents)
+	err := row.Scan(
+		&i.ObservedEvents,
+		&i.IdentifiedCustomers,
+		&i.UnattributedEvents,
+		&i.UnknownHttpBatches,
+	)
 	return i, err
 }
 
 const issueImpactCustomerCount = `-- name: IssueImpactCustomerCount :one
-SELECT count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id))
-FROM issue_events e
-WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND e.occurred_at >= $2 AND e.occurred_at <= $3
+WITH impact_events AS MATERIALIZED (
+ SELECT e.verified_platform_tenant_id,e.verified_consumer_id FROM issue_events e
+ WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1)
+ AND e.occurred_at >= $2 AND e.occurred_at <= $3
+), linked_customers AS (
+ SELECT DISTINCT verified_consumer_id FROM impact_events WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+)
+SELECT (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+ FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS customer_count
+FROM impact_events e LEFT JOIN linked_customers l ON l.verified_consumer_id=e.verified_consumer_id
 `
 
 type IssueImpactCustomerCountParams struct {
@@ -39457,26 +39595,34 @@ type IssueImpactCustomerCountParams struct {
 
 func (q *Queries) IssueImpactCustomerCount(ctx context.Context, db DBTX, arg IssueImpactCustomerCountParams) (int64, error) {
 	row := db.QueryRow(ctx, issueImpactCustomerCount, arg.IssueID, arg.Since, arg.Until)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var customer_count int64
+	err := row.Scan(&customer_count)
+	return customer_count, err
 }
 
 const issueImpactSummaries = `-- name: IssueImpactSummaries :many
-SELECT a.canonical_issue_id AS issue_id,
- count(*) AS observed_events,
- count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
- count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
-FROM issue_group_assignments a JOIN issue_events e ON e.issue_id=a.original_issue_id
-WHERE a.canonical_issue_id = ANY($1::uuid[])
- AND e.occurred_at >= $2::timestamptz AND e.occurred_at <= $3::timestamptz
-GROUP BY a.canonical_issue_id
+WITH impact_events AS MATERIALIZED (
+ SELECT a.canonical_issue_id AS issue_id,CASE WHEN e.occurred_at >= $1::timestamptz AND e.occurred_at <= $2::timestamptz THEN e.verified_platform_tenant_id END AS verified_platform_tenant_id, CASE WHEN e.occurred_at >= $1::timestamptz AND e.occurred_at <= $2::timestamptz THEN e.verified_consumer_id END AS verified_consumer_id, issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$1::timestamptz,$2::timestamptz,true,true)::bigint AS occurrence_count
+ FROM issue_group_assignments a JOIN issue_events e ON e.issue_id=a.original_issue_id
+ WHERE a.canonical_issue_id = ANY($3::uuid[])
+ AND e.occurred_at >= $1::timestamptz - interval '1 second' AND e.occurred_at <= $2::timestamptz + interval '1 second'
+ AND issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$1::timestamptz,$2::timestamptz,true,true)>0
+), linked_customers AS (
+ SELECT DISTINCT issue_id,verified_consumer_id FROM impact_events WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+)
+SELECT e.issue_id, sum(e.occurrence_count)::bigint AS observed_events,
+ (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+   FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS identified_customers,
+ sum(e.occurrence_count - CASE WHEN e.verified_platform_tenant_id IS NOT NULL OR e.verified_consumer_id IS NOT NULL THEN 1 ELSE 0 END)::bigint AS unattributed_events,
+ (SELECT count(*) FROM issue_events legacy JOIN issue_group_assignments la ON la.original_issue_id=legacy.issue_id WHERE la.canonical_issue_id=e.issue_id AND legacy.occurred_at >= $1::timestamptz AND legacy.occurred_at <= $2::timestamptz AND NOT legacy.occurrence_weight_known AND legacy.occurrence_count=1 AND legacy.payload->>'source_kind'='http')::bigint AS unknown_http_batches
+FROM impact_events e LEFT JOIN linked_customers l ON l.issue_id=e.issue_id AND l.verified_consumer_id=e.verified_consumer_id
+GROUP BY e.issue_id
 `
 
 type IssueImpactSummariesParams struct {
-	IssueIds []pgtype.UUID
 	Since    pgtype.Timestamptz
 	Until    pgtype.Timestamptz
+	IssueIds []pgtype.UUID
 }
 
 type IssueImpactSummariesRow struct {
@@ -39484,10 +39630,11 @@ type IssueImpactSummariesRow struct {
 	ObservedEvents      int64
 	IdentifiedCustomers int64
 	UnattributedEvents  int64
+	UnknownHttpBatches  int64
 }
 
 func (q *Queries) IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueImpactSummariesParams) ([]IssueImpactSummariesRow, error) {
-	rows, err := db.Query(ctx, issueImpactSummaries, arg.IssueIds, arg.Since, arg.Until)
+	rows, err := db.Query(ctx, issueImpactSummaries, arg.Since, arg.Until, arg.IssueIds)
 	if err != nil {
 		return nil, err
 	}
@@ -39500,6 +39647,7 @@ func (q *Queries) IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueIm
 			&i.ObservedEvents,
 			&i.IdentifiedCustomers,
 			&i.UnattributedEvents,
+			&i.UnknownHttpBatches,
 		); err != nil {
 			return nil, err
 		}
@@ -39511,9 +39659,24 @@ func (q *Queries) IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueIm
 	return items, nil
 }
 
+const issueInitializeEventUsage = `-- name: IssueInitializeEventUsage :exec
+UPDATE issue_event_usage SET retained_count=$1, initialized=true
+WHERE app_id=$2 AND NOT initialized
+`
+
+type IssueInitializeEventUsageParams struct {
+	RetainedCount int64
+	AppID         pgtype.UUID
+}
+
+func (q *Queries) IssueInitializeEventUsage(ctx context.Context, db DBTX, arg IssueInitializeEventUsageParams) error {
+	_, err := db.Exec(ctx, issueInitializeEventUsage, arg.RetainedCount, arg.AppID)
+	return err
+}
+
 const issueInsertEvent = `-- name: IssueInsertEvent :exec
-INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,original_issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,original_issue_id,payload_hash,payload,occurred_at,received_at,attribution_checked_at,verified_consumer_id,verified_platform_tenant_id,occurrence_count,attribution_version,occurrence_weight_known,http_time_buckets)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11,$12,2,true,$13)
 `
 
 type IssueInsertEventParams struct {
@@ -39528,6 +39691,8 @@ type IssueInsertEventParams struct {
 	ReceivedAt      pgtype.Timestamptz
 	ConsumerID      pgtype.UUID
 	TenantID        pgtype.UUID
+	OccurrenceCount int64
+	HttpTimeBuckets []byte
 }
 
 func (q *Queries) IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsertEventParams) error {
@@ -39543,6 +39708,8 @@ func (q *Queries) IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsert
 		arg.ReceivedAt,
 		arg.ConsumerID,
 		arg.TenantID,
+		arg.OccurrenceCount,
+		arg.HttpTimeBuckets,
 	)
 	return err
 }
@@ -39788,53 +39955,64 @@ func (q *Queries) IssueListActivity(ctx context.Context, db DBTX, arg IssueListA
 const issueListByImpact = `-- name: IssueListByImpact :many
 WITH candidate_issues AS MATERIALIZED (
     SELECT i.id,i.account_id,i.app_id,i.environment,i.fingerprint,i.grouping_version,i.title,i.state,i.assignee_account_id,i.first_seen_at::timestamptz AS first_seen_at,i.last_seen_at::timestamptz AS last_seen_at,i.event_count,i.regression_count,i.resolved_at,i.fixed_deployment_id,i.fixed_deployment_created_at,i.ignored_until,i.split_source_issue_id,i.assignee_team_id FROM issue_group_rollups i
-    WHERE i.app_id = $7
-      AND ($8::text = '' OR i.state = $8)
-      AND ($9::text = '' OR i.environment = $9)
-      AND ($10::uuid IS NULL OR i.assignee_account_id = $10)
-      AND ($11::uuid IS NULL OR i.assignee_team_id = $11)
-      AND (NOT $12::bool OR (i.assignee_account_id IS NULL AND i.assignee_team_id IS NULL))
-      AND ($13::jsonb='{}'::jsonb OR EXISTS(
+    WHERE i.app_id = $9
+      AND ($10::text = '' OR i.state = $10)
+      AND ($11::text = '' OR i.environment = $11)
+      AND ($12::uuid IS NULL OR i.assignee_account_id = $12)
+      AND ($13::uuid IS NULL OR i.assignee_team_id = $13)
+      AND (NOT $14::bool OR (i.assignee_account_id IS NULL AND i.assignee_team_id IS NULL))
+      AND ($15::jsonb='{}'::jsonb OR EXISTS(
         SELECT 1 FROM issue_events tagged JOIN issue_group_assignments assigned ON assigned.original_issue_id=tagged.issue_id
-        WHERE assigned.canonical_issue_id=i.id AND tagged.app_id=$7
-          AND tagged.occurred_at>=$14::timestamptz AND tagged.occurred_at<=$15::timestamptz
-          AND (tagged.payload->'tags') @> $13::jsonb
+        WHERE assigned.canonical_issue_id=i.id AND tagged.app_id=$9
+          AND tagged.occurred_at>=$1::timestamptz - interval '1 second' AND tagged.occurred_at<=$2::timestamptz + interval '1 second'
+          AND issue_window_weight(tagged.occurred_at,tagged.occurrence_count,tagged.http_time_buckets,$1::timestamptz,$2::timestamptz,true,true)>0
+          AND (tagged.payload->'tags') @> $15::jsonb
       ))
-), issue_impact AS (
-    SELECT a.canonical_issue_id AS issue_id,
-           count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
-           count(*) AS observed_events,
-           count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
+), impact_events AS MATERIALIZED (
+    SELECT a.canonical_issue_id AS issue_id, CASE WHEN e.occurred_at >= $1::timestamptz AND e.occurred_at <= $2::timestamptz THEN e.verified_platform_tenant_id END AS verified_platform_tenant_id, CASE WHEN e.occurred_at >= $1::timestamptz AND e.occurred_at <= $2::timestamptz THEN e.verified_consumer_id END AS verified_consumer_id, issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$1::timestamptz,$2::timestamptz,true,true)::bigint AS occurrence_count
       FROM candidate_issues i
       JOIN issue_group_assignments a ON a.canonical_issue_id = i.id
       JOIN issue_events e ON e.issue_id = a.original_issue_id
-     WHERE e.occurred_at >= $14::timestamptz
-       AND e.occurred_at <= $15::timestamptz
-     GROUP BY a.canonical_issue_id
+     WHERE e.occurred_at >= $1::timestamptz - interval '1 second' AND e.occurred_at <= $2::timestamptz + interval '1 second'
+       AND issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,$1::timestamptz,$2::timestamptz,true,true)>0
+), linked_customers AS (
+    SELECT DISTINCT issue_id, verified_consumer_id FROM impact_events
+     WHERE verified_consumer_id IS NOT NULL AND verified_platform_tenant_id IS NOT NULL
+), issue_impact AS (
+    SELECT e.issue_id,
+           (count(DISTINCT e.verified_platform_tenant_id) + count(DISTINCT e.verified_consumer_id)
+             FILTER (WHERE e.verified_platform_tenant_id IS NULL AND l.verified_consumer_id IS NULL))::bigint AS identified_customers,
+           sum(e.occurrence_count)::bigint AS observed_events,
+           sum(e.occurrence_count - CASE WHEN e.verified_platform_tenant_id IS NOT NULL OR e.verified_consumer_id IS NOT NULL THEN 1 ELSE 0 END)::bigint AS unattributed_events
+      FROM impact_events e LEFT JOIN linked_customers l ON l.issue_id=e.issue_id AND l.verified_consumer_id=e.verified_consumer_id
+     GROUP BY e.issue_id
 )
 SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until, i.split_source_issue_id, i.assignee_team_id,
        COALESCE(impact.identified_customers,0)::bigint AS identified_customers,
        COALESCE(impact.observed_events,0)::bigint AS observed_events,
-       COALESCE(impact.unattributed_events,0)::bigint AS unattributed_events
+       COALESCE(impact.unattributed_events,0)::bigint AS unattributed_events,
+       (SELECT count(*) FROM issue_events legacy JOIN issue_group_assignments la ON la.original_issue_id=legacy.issue_id WHERE la.canonical_issue_id=i.id AND legacy.occurred_at >= $1::timestamptz AND legacy.occurred_at <= $2::timestamptz AND NOT legacy.occurrence_weight_known AND legacy.occurrence_count=1 AND legacy.payload->>'source_kind'='http')::bigint AS unknown_http_batches
   FROM candidate_issues i
   LEFT JOIN issue_impact impact ON impact.issue_id = i.id
- WHERE COALESCE(impact.identified_customers,0) >= $1::bigint
+ WHERE COALESCE(impact.identified_customers,0) >= $3::bigint
    AND (
-       (NOT $2::bool AND
-        ($3::timestamptz IS NULL OR (i.last_seen_at,i.id) < ($3,$4::uuid)))
+       (NOT $4::bool AND
+        ($5::timestamptz IS NULL OR (i.last_seen_at,i.id) < ($5,$6::uuid)))
        OR
-       ($2::bool AND
-        ($5::bigint IS NULL OR
-         COALESCE(impact.identified_customers,0) < $5 OR
-         (COALESCE(impact.identified_customers,0) = $5 AND
-          (i.last_seen_at,i.id) < ($3,$4::uuid))))
+       ($4::bool AND
+        ($7::bigint IS NULL OR
+         COALESCE(impact.identified_customers,0) < $7 OR
+         (COALESCE(impact.identified_customers,0) = $7 AND
+          (i.last_seen_at,i.id) < ($5,$6::uuid))))
    )
- ORDER BY CASE WHEN $2::bool THEN COALESCE(impact.identified_customers,0) END DESC,
+ ORDER BY CASE WHEN $4::bool THEN COALESCE(impact.identified_customers,0) END DESC,
           i.last_seen_at DESC,i.id DESC
- LIMIT $6
+ LIMIT $8
 `
 
 type IssueListByImpactParams struct {
+	Since             pgtype.Timestamptz
+	Until             pgtype.Timestamptz
 	MinCustomers      int64
 	SortByImpact      bool
 	CursorTime        pgtype.Timestamptz
@@ -39848,8 +40026,6 @@ type IssueListByImpactParams struct {
 	AssigneeTeamID    pgtype.UUID
 	Unassigned        bool
 	TagFilter         []byte
-	Since             pgtype.Timestamptz
-	Until             pgtype.Timestamptz
 }
 
 type IssueListByImpactRow struct {
@@ -39875,10 +40051,13 @@ type IssueListByImpactRow struct {
 	IdentifiedCustomers      int64
 	ObservedEvents           int64
 	UnattributedEvents       int64
+	UnknownHttpBatches       int64
 }
 
 func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListByImpactParams) ([]IssueListByImpactRow, error) {
 	rows, err := db.Query(ctx, issueListByImpact,
+		arg.Since,
+		arg.Until,
 		arg.MinCustomers,
 		arg.SortByImpact,
 		arg.CursorTime,
@@ -39892,8 +40071,6 @@ func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListB
 		arg.AssigneeTeamID,
 		arg.Unassigned,
 		arg.TagFilter,
-		arg.Since,
-		arg.Until,
 	)
 	if err != nil {
 		return nil, err
@@ -39925,6 +40102,7 @@ func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListB
 			&i.IdentifiedCustomers,
 			&i.ObservedEvents,
 			&i.UnattributedEvents,
+			&i.UnknownHttpBatches,
 		); err != nil {
 			return nil, err
 		}
@@ -39937,7 +40115,7 @@ func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListB
 }
 
 const issueListEvents = `-- name: IssueListEvents :many
-SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id,COALESCE(e.original_issue_id,e.issue_id) AS provenance_issue_id,i.fingerprint,i.grouping_version FROM issue_events e
+SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id, e.occurrence_count, e.attribution_version, e.occurrence_weight_known, e.http_time_buckets,COALESCE(e.original_issue_id,e.issue_id) AS provenance_issue_id,i.fingerprint,i.grouping_version FROM issue_events e
 JOIN app_issues i ON i.id=COALESCE(e.original_issue_id,e.issue_id)
 WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND e.occurred_at >= $2 AND e.occurred_at <= $3
 AND ($4::timestamptz IS NULL OR (e.occurred_at,e.id) < ($4,$5::uuid))
@@ -39967,6 +40145,10 @@ type IssueListEventsRow struct {
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
 	OriginalIssueID          pgtype.UUID
+	OccurrenceCount          int64
+	AttributionVersion       int32
+	OccurrenceWeightKnown    bool
+	HttpTimeBuckets          []byte
 	ProvenanceIssueID        pgtype.UUID
 	Fingerprint              string
 	GroupingVersion          int32
@@ -40002,6 +40184,10 @@ func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEve
 			&i.VerifiedConsumerID,
 			&i.VerifiedPlatformTenantID,
 			&i.OriginalIssueID,
+			&i.OccurrenceCount,
+			&i.AttributionVersion,
+			&i.OccurrenceWeightKnown,
+			&i.HttpTimeBuckets,
 			&i.ProvenanceIssueID,
 			&i.Fingerprint,
 			&i.GroupingVersion,
@@ -40261,21 +40447,54 @@ func (q *Queries) IssueLockApp(ctx context.Context, db DBTX, appID pgtype.UUID) 
 	return i, err
 }
 
+const issueLockEventUsage = `-- name: IssueLockEventUsage :one
+SELECT retained_count, initialized FROM issue_event_usage WHERE app_id=$1 FOR UPDATE
+`
+
+type IssueLockEventUsageRow struct {
+	RetainedCount int64
+	Initialized   bool
+}
+
+func (q *Queries) IssueLockEventUsage(ctx context.Context, db DBTX, appID pgtype.UUID) (IssueLockEventUsageRow, error) {
+	row := db.QueryRow(ctx, issueLockEventUsage, appID)
+	var i IssueLockEventUsageRow
+	err := row.Scan(&i.RetainedCount, &i.Initialized)
+	return i, err
+}
+
+const issueMarkAttributionReviewed = `-- name: IssueMarkAttributionReviewed :exec
+UPDATE issue_events SET attribution_version=2 WHERE id=$1 AND attribution_version<2
+`
+
+func (q *Queries) IssueMarkAttributionReviewed(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, issueMarkAttributionReviewed, id)
+	return err
+}
+
 const issueObserve = `-- name: IssueObserve :one
-UPDATE app_issues SET event_count=event_count+1,first_seen_at=LEAST(first_seen_at,$1),last_seen_at=GREATEST(last_seen_at,$1),
-state=CASE WHEN $2::boolean THEN 'open' ELSE state END,
-regression_count=regression_count+CASE WHEN $2::boolean THEN 1 ELSE 0 END
-WHERE id=$3 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id, assignee_team_id
+UPDATE app_issues SET event_count=event_count+$1::bigint,first_seen_at=LEAST(first_seen_at,$2),last_seen_at=GREATEST(last_seen_at,COALESCE($3::timestamptz,$2)),
+state=CASE WHEN $4::boolean THEN 'open' ELSE state END,
+regression_count=regression_count+CASE WHEN $4::boolean THEN 1 ELSE 0 END
+WHERE id=$5 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id, assignee_team_id
 `
 
 type IssueObserveParams struct {
-	OccurredAt pgtype.Timestamptz
-	Regressed  bool
-	ID         pgtype.UUID
+	OccurrenceCount int64
+	OccurredAt      pgtype.Timestamptz
+	LastOccurredAt  pgtype.Timestamptz
+	Regressed       bool
+	ID              pgtype.UUID
 }
 
 func (q *Queries) IssueObserve(ctx context.Context, db DBTX, arg IssueObserveParams) (AppIssue, error) {
-	row := db.QueryRow(ctx, issueObserve, arg.OccurredAt, arg.Regressed, arg.ID)
+	row := db.QueryRow(ctx, issueObserve,
+		arg.OccurrenceCount,
+		arg.OccurredAt,
+		arg.LastOccurredAt,
+		arg.Regressed,
+		arg.ID,
+	)
 	var i AppIssue
 	err := row.Scan(
 		&i.ID,
@@ -40303,17 +40522,19 @@ func (q *Queries) IssueObserve(ctx context.Context, db DBTX, arg IssueObservePar
 
 const issueObserveRelease = `-- name: IssueObserveRelease :exec
 INSERT INTO issue_releases(issue_id,deployment_id,commit_sha,image_digest,event_count,first_seen_at,last_seen_at)
-VALUES($1,$2,$3,$4,1,$5,$5)
-ON CONFLICT(issue_id,deployment_id) DO UPDATE SET event_count=issue_releases.event_count+1,
+VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::timestamptz,$6))
+ON CONFLICT(issue_id,deployment_id) DO UPDATE SET event_count=issue_releases.event_count+excluded.event_count,
 first_seen_at=LEAST(issue_releases.first_seen_at,excluded.first_seen_at),last_seen_at=GREATEST(issue_releases.last_seen_at,excluded.last_seen_at)
 `
 
 type IssueObserveReleaseParams struct {
-	IssueID      pgtype.UUID
-	DeploymentID pgtype.UUID
-	CommitSha    string
-	ImageDigest  string
-	OccurredAt   pgtype.Timestamptz
+	IssueID         pgtype.UUID
+	DeploymentID    pgtype.UUID
+	CommitSha       string
+	ImageDigest     string
+	OccurrenceCount int64
+	OccurredAt      pgtype.Timestamptz
+	LastOccurredAt  pgtype.Timestamptz
 }
 
 func (q *Queries) IssueObserveRelease(ctx context.Context, db DBTX, arg IssueObserveReleaseParams) error {
@@ -40322,7 +40543,9 @@ func (q *Queries) IssueObserveRelease(ctx context.Context, db DBTX, arg IssueObs
 		arg.DeploymentID,
 		arg.CommitSha,
 		arg.ImageDigest,
+		arg.OccurrenceCount,
 		arg.OccurredAt,
+		arg.LastOccurredAt,
 	)
 	return err
 }
@@ -40339,6 +40562,29 @@ type IssuePurgeEventsParams struct {
 func (q *Queries) IssuePurgeEvents(ctx context.Context, db DBTX, arg IssuePurgeEventsParams) error {
 	_, err := db.Exec(ctx, issuePurgeEvents, arg.AppID, arg.Before)
 	return err
+}
+
+const issuePurgeEventsBounded = `-- name: IssuePurgeEventsBounded :execrows
+WITH expired AS (
+ SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e
+ WHERE e.app_id=$1 AND e.received_at<$2
+ ORDER BY e.received_at LIMIT $3 FOR UPDATE OF e SKIP LOCKED
+)
+DELETE FROM issue_events e USING expired x WHERE e.app_id=x.app_id AND e.deployment_id=x.deployment_id AND e.event_id=x.event_id
+`
+
+type IssuePurgeEventsBoundedParams struct {
+	AppID      pgtype.UUID
+	Before     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) IssuePurgeEventsBounded(ctx context.Context, db DBTX, arg IssuePurgeEventsBoundedParams) (int64, error) {
+	result, err := db.Exec(ctx, issuePurgeEventsBounded, arg.AppID, arg.Before, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const issuePurgeExpiredTokens = `-- name: IssuePurgeExpiredTokens :execrows
@@ -40402,9 +40648,9 @@ func (q *Queries) IssueReparentGroup(ctx context.Context, db DBTX, arg IssueRepa
 }
 
 const issueRequestAttribution = `-- name: IssueRequestAttribution :many
-SELECT DISTINCT consumer_key,platform_tenant_id FROM request_audit_events
+SELECT consumer_key,platform_tenant_id,trace_id FROM request_audit_events
 WHERE account_id=$1 AND app_id=$2 AND deployment_id=$3
-AND request_id=$4 LIMIT 2
+AND request_id=$4 AND occurred_at >= $5 AND occurred_at <= $6 LIMIT 2
 `
 
 type IssueRequestAttributionParams struct {
@@ -40412,11 +40658,14 @@ type IssueRequestAttributionParams struct {
 	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
 	RequestID    string
+	Since        pgtype.Timestamptz
+	Until        pgtype.Timestamptz
 }
 
 type IssueRequestAttributionRow struct {
 	ConsumerKey      string
 	PlatformTenantID pgtype.UUID
+	TraceID          string
 }
 
 func (q *Queries) IssueRequestAttribution(ctx context.Context, db DBTX, arg IssueRequestAttributionParams) ([]IssueRequestAttributionRow, error) {
@@ -40425,6 +40674,8 @@ func (q *Queries) IssueRequestAttribution(ctx context.Context, db DBTX, arg Issu
 		arg.AppID,
 		arg.DeploymentID,
 		arg.RequestID,
+		arg.Since,
+		arg.Until,
 	)
 	if err != nil {
 		return nil, err
@@ -40433,10 +40684,50 @@ func (q *Queries) IssueRequestAttribution(ctx context.Context, db DBTX, arg Issu
 	items := []IssueRequestAttributionRow{}
 	for rows.Next() {
 		var i IssueRequestAttributionRow
-		if err := rows.Scan(&i.ConsumerKey, &i.PlatformTenantID); err != nil {
+		if err := rows.Scan(&i.ConsumerKey, &i.PlatformTenantID, &i.TraceID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueRequestTraceJournal = `-- name: IssueRequestTraceJournal :many
+SELECT trace_id FROM request_id_journal WHERE account_id=$1 AND app_id=$2
+AND request_id=$3 AND received_at >= $4 AND received_at <= $5
+AND expires_at>now() LIMIT 2
+`
+
+type IssueRequestTraceJournalParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	RequestID string
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+}
+
+func (q *Queries) IssueRequestTraceJournal(ctx context.Context, db DBTX, arg IssueRequestTraceJournalParams) ([]pgtype.Text, error) {
+	rows, err := db.Query(ctx, issueRequestTraceJournal,
+		arg.AccountID,
+		arg.AppID,
+		arg.RequestID,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.Text{}
+	for rows.Next() {
+		var trace_id pgtype.Text
+		if err := rows.Scan(&trace_id); err != nil {
+			return nil, err
+		}
+		items = append(items, trace_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -40534,7 +40825,7 @@ func (q *Queries) IssueSetSplitRuleEnabled(ctx context.Context, db DBTX, arg Iss
 
 const issueSplitPreviewCounts = `-- name: IssueSplitPreviewCounts :one
 WITH evidence AS MATERIALIZED (
- SELECT e.id,e.occurred_at,
+ SELECT e.id,e.occurred_at,e.occurrence_count,
   NOT EXISTS (SELECT 1 FROM issue_split_rules r WHERE r.source_issue_id=$2 AND r.enabled
    AND (r.exception_type='' OR r.exception_type=e.payload->>'exception_type')
    AND (r.error_code='' OR r.error_code=e.payload->>'error_code')
@@ -40546,10 +40837,10 @@ WITH evidence AS MATERIALIZED (
   AND ($6::text = '' OR payload->>'source_kind' = $6) AS matches
  FROM issue_events e WHERE e.issue_id = $2
 )
-SELECT count(*)::bigint AS retained_event_count,
- count(*) FILTER (WHERE matches)::bigint AS matching_event_count,
- count(*) FILTER (WHERE matches AND eligible)::bigint AS eligible_event_count,
- count(*) FILTER (WHERE matches AND NOT eligible)::bigint AS shadowed_event_count,
+SELECT COALESCE(sum(occurrence_count),0)::bigint AS retained_event_count,
+ COALESCE(sum(occurrence_count) FILTER (WHERE matches),0)::bigint AS matching_event_count,
+ COALESCE(sum(occurrence_count) FILTER (WHERE matches AND eligible),0)::bigint AS eligible_event_count,
+ COALESCE(sum(occurrence_count) FILTER (WHERE matches AND NOT eligible),0)::bigint AS shadowed_event_count,
  ARRAY(SELECT id FROM evidence WHERE matches AND eligible ORDER BY occurred_at DESC,id DESC LIMIT $1)::uuid[] AS eligible_event_ids,
  ARRAY(SELECT id FROM evidence WHERE matches ORDER BY occurred_at DESC,id DESC LIMIT $1)::uuid[] AS matching_event_ids
 FROM evidence
@@ -40629,14 +40920,35 @@ func (q *Queries) IssueTokenStillValid(ctx context.Context, db DBTX, arg IssueTo
 }
 
 const issueUnattributedEvents = `-- name: IssueUnattributedEvents :many
-SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i.id=e.issue_id
-WHERE e.verified_consumer_id IS NULL AND e.verified_platform_tenant_id IS NULL
-AND e.attribution_checked_at < $1 ORDER BY e.attribution_checked_at LIMIT $2
+WITH eligible AS MATERIALIZED (
+ (SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id, e.occurrence_count, e.attribution_version, e.occurrence_weight_known, e.http_time_buckets FROM issue_events e
+  WHERE (e.verified_consumer_id IS NULL OR e.verified_platform_tenant_id IS NULL)
+  AND NOT (e.app_id = ANY(COALESCE($2::uuid[], ARRAY[]::uuid[])))
+  AND e.attribution_checked_at < $3
+  AND (e.attribution_checked_at <= e.received_at + interval '1 minute'
+       OR e.received_at < $4
+       OR e.attribution_checked_at < $5)
+  ORDER BY e.attribution_checked_at LIMIT $1)
+ UNION ALL
+ (SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id, e.occurrence_count, e.attribution_version, e.occurrence_weight_known, e.http_time_buckets FROM issue_events e
+  WHERE e.verified_consumer_id IS NOT NULL AND e.verified_platform_tenant_id IS NOT NULL
+  AND NOT (e.app_id = ANY(COALESCE($2::uuid[], ARRAY[]::uuid[])))
+  AND e.attribution_checked_at <> 'infinity'::timestamptz
+  AND (e.received_at >= $6 OR e.attribution_checked_at >= $6)
+  AND e.attribution_checked_at < $5
+  ORDER BY e.attribution_checked_at LIMIT $1)
+)
+SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id, e.occurrence_count, e.attribution_version, e.occurrence_weight_known, e.http_time_buckets,i.account_id,i.environment FROM eligible e JOIN app_issues i ON i.id=e.issue_id
+ORDER BY e.attribution_checked_at LIMIT $1
 `
 
 type IssueUnattributedEventsParams struct {
-	Before     pgtype.Timestamptz
-	BatchLimit int32
+	BatchLimit     int32
+	ExcludedAppIds []pgtype.UUID
+	Before         pgtype.Timestamptz
+	WindowStart    pgtype.Timestamptz
+	VerifiedBefore pgtype.Timestamptz
+	FullOldest     pgtype.Timestamptz
 }
 
 type IssueUnattributedEventsRow struct {
@@ -40653,12 +40965,25 @@ type IssueUnattributedEventsRow struct {
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
 	OriginalIssueID          pgtype.UUID
+	OccurrenceCount          int64
+	AttributionVersion       int32
+	OccurrenceWeightKnown    bool
+	HttpTimeBuckets          []byte
 	AccountID                pgtype.UUID
 	Environment              string
 }
 
+// Use the partial and complete indexes separately so old complete rows do not
+// crowd out first checks or force an unbounded scan after deployment.
 func (q *Queries) IssueUnattributedEvents(ctx context.Context, db DBTX, arg IssueUnattributedEventsParams) ([]IssueUnattributedEventsRow, error) {
-	rows, err := db.Query(ctx, issueUnattributedEvents, arg.Before, arg.BatchLimit)
+	rows, err := db.Query(ctx, issueUnattributedEvents,
+		arg.BatchLimit,
+		arg.ExcludedAppIds,
+		arg.Before,
+		arg.WindowStart,
+		arg.VerifiedBefore,
+		arg.FullOldest,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -40680,6 +41005,10 @@ func (q *Queries) IssueUnattributedEvents(ctx context.Context, db DBTX, arg Issu
 			&i.VerifiedConsumerID,
 			&i.VerifiedPlatformTenantID,
 			&i.OriginalIssueID,
+			&i.OccurrenceCount,
+			&i.AttributionVersion,
+			&i.OccurrenceWeightKnown,
+			&i.HttpTimeBuckets,
 			&i.AccountID,
 			&i.Environment,
 		); err != nil {
@@ -42448,7 +42777,7 @@ const listAllEventsPaged = `-- name: ListAllEventsPaged :many
 select id, at, actor, kind, subject, data
 from events
 where ($1 = '' or actor = $1)
-  and ($2 = '' or kind like $2 || '%')
+  and ($2 = '' or starts_with(kind, $2))
   and ($3 = '' or subject = $3::uuid)
   and ($4 = '0001-01-01 00:00:00+00:00'::timestamptz or at >= $4)
 order by at desc, id desc
@@ -42476,17 +42805,18 @@ type ListAllEventsPagedRow struct {
 // Reads the live events table (NOT audit_log — distinct source of
 // truth per ADR-091 §3.7.4). Optional filters:
 //   - $1 actor    — exact match (handler passes "" to skip)
-//   - $2 kind_prefix — LIKE 'prefix%' (handler passes "" to skip)
+//   - $2 kind_prefix — literal prefix (handler passes "" to skip)
 //   - $3 subject  — exact match (handler passes "" to skip)
 //   - $4 since    — RFC 3339 timestamptz (handler passes zero time to skip)
 //   - $5 limit    — top-N rows (handler default 200, cap 500;
 //     cast to int8 so sqlc emits int64 Params and the
 //     handler's int→int64 widening is safe)
+//     kind_prefix is matched literally (starts_with), so '_' and '%' in
+//     a kind are not wildcards.
 //
-// Order: at DESC, id DESC — the id tiebreaker keeps the planner on
-// the (kind, at DESC) index added by 00190_admin_obs_index.sql for
-// kind-prefix queries and avoids an unstable sort on the
-// over-read window.
+// Order: at DESC, id DESC — a backward scan of events_at_id_idx
+// (ADR-20261103094121) returns the newest rows first under any mix
+// of filters, stopping at the limit instead of sorting the table.
 // Subject is uuid (nullable in the schema); the cast is left to
 // the handler so the handler can pass an empty string for "no
 // subject filter" without a NULL literal.
@@ -48869,7 +49199,8 @@ func (q *Queries) ListExpiredCustomerOperationExecutions(ctx context.Context, db
 
 const listFairTenantWorkflowScheduleCandidates = `-- name: ListFairTenantWorkflowScheduleCandidates :many
 SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
-       jsonb_build_array(w.definition)::jsonb AS workflows
+       jsonb_build_array(w.definition)::jsonb AS workflows,
+       coalesce(w.definition->>'name', '')::text AS fair_workflow_name, c.last_admitted_at AS fair_last_admitted_at
 FROM apps a
 JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
@@ -48888,28 +49219,46 @@ WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND a.platform_tenant_req
   AND (NOT coalesce((w.definition->'trigger'->>'tenant_configurable')::boolean, false)
        OR coalesce((c.trigger_snapshot->'tenant_configuration'->'trigger'->>'enabled')::boolean, true))
   AND (c.last_evaluated_at IS NULL OR c.last_evaluated_at < $2::timestamptz)
+  AND ($3::uuid IS NULL OR
+       (coalesce(c.last_admitted_at, '-infinity'::timestamptz), a.id, t.id, coalesce(w.definition->>'name', '')) >
+       (coalesce($4::timestamptz, '-infinity'::timestamptz), $3::uuid,
+        $5::uuid, $6::text))
   AND (EXISTS (SELECT 1 FROM api_consumers c WHERE c.account_id = a.account_id AND c.app_id = a.id
        AND c.platform_tenant_id = t.id AND c.status = 'active' AND c.revoked_at IS NULL)
        OR EXISTS (SELECT 1 FROM tenant_surfaces s WHERE s.account_id = a.account_id AND s.app_id = a.id
        AND s.platform_tenant_id = t.id AND s.status = 'active'))
-ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, w.definition->>'name' LIMIT $3
+ORDER BY c.last_admitted_at NULLS FIRST, a.id, t.id, coalesce(w.definition->>'name', '') LIMIT $7
 `
 
 type ListFairTenantWorkflowScheduleCandidatesParams struct {
-	OwnerNodeID      pgtype.UUID
-	EvaluationMinute pgtype.Timestamptz
-	BatchLimit       int32
+	OwnerNodeID       pgtype.UUID
+	EvaluationMinute  pgtype.Timestamptz
+	AfterAppID        pgtype.UUID
+	AfterAdmittedAt   pgtype.Timestamptz
+	AfterTenantID     pgtype.UUID
+	AfterWorkflowName string
+	BatchLimit        int32
 }
 
 type ListFairTenantWorkflowScheduleCandidatesRow struct {
-	AppID            pgtype.UUID
-	PlatformTenantID pgtype.UUID
-	DeploymentID     pgtype.UUID
-	Workflows        []byte
+	AppID              pgtype.UUID
+	PlatformTenantID   pgtype.UUID
+	DeploymentID       pgtype.UUID
+	Workflows          []byte
+	FairWorkflowName   string
+	FairLastAdmittedAt pgtype.Timestamptz
 }
 
 func (q *Queries) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListFairTenantWorkflowScheduleCandidatesParams) ([]ListFairTenantWorkflowScheduleCandidatesRow, error) {
-	rows, err := db.Query(ctx, listFairTenantWorkflowScheduleCandidates, arg.OwnerNodeID, arg.EvaluationMinute, arg.BatchLimit)
+	rows, err := db.Query(ctx, listFairTenantWorkflowScheduleCandidates,
+		arg.OwnerNodeID,
+		arg.EvaluationMinute,
+		arg.AfterAppID,
+		arg.AfterAdmittedAt,
+		arg.AfterTenantID,
+		arg.AfterWorkflowName,
+		arg.BatchLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -48922,6 +49271,8 @@ func (q *Queries) ListFairTenantWorkflowScheduleCandidates(ctx context.Context, 
 			&i.PlatformTenantID,
 			&i.DeploymentID,
 			&i.Workflows,
+			&i.FairWorkflowName,
+			&i.FairLastAdmittedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -54102,41 +54453,6 @@ func (q *Queries) ListTenantWorkflowScheduleCursors(ctx context.Context, db DBTX
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listTerminalTriggerRecordItems = `-- name: ListTerminalTriggerRecordItems :many
-SELECT item_identifier FROM trigger_records
-WHERE trigger_id = $1
-  AND item_identifier = ANY($2::text[])
-  AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
-`
-
-type ListTerminalTriggerRecordItemsParams struct {
-	TriggerID       pgtype.UUID
-	ItemIdentifiers []string
-}
-
-// A broker may redeliver after Gregale commits a terminal receipt but before
-// the broker acknowledges it. The current delivery handle can be Acked
-// without dispatching the application again.
-func (q *Queries) ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error) {
-	rows, err := db.Query(ctx, listTerminalTriggerRecordItems, arg.TriggerID, arg.ItemIdentifiers)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var item_identifier string
-		if err := rows.Scan(&item_identifier); err != nil {
-			return nil, err
-		}
-		items = append(items, item_identifier)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -61205,7 +61521,7 @@ func (q *Queries) LockUDPListenerAppOwner(ctx context.Context, db DBTX, appID st
 }
 
 const lockWebhookAutomationEndpoint = `-- name: LockWebhookAutomationEndpoint :one
-SELECT id, app_id, account_id, name, provider, token_hash, signing_secret_sealed, delivery_path, enabled, created_at, updated_at FROM inbound_webhook_endpoints
+SELECT id, app_id, account_id, name, provider, token_hash, signing_secret_sealed, delivery_path, enabled, created_at, updated_at, previous_signing_secret_sealed, previous_signing_secret_expires_at FROM inbound_webhook_endpoints
 WHERE id=$1 AND app_id=$2 AND account_id=$3 FOR UPDATE
 `
 
@@ -61230,6 +61546,8 @@ func (q *Queries) LockWebhookAutomationEndpoint(ctx context.Context, db DBTX, ar
 		&i.Enabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PreviousSigningSecretSealed,
+		&i.PreviousSigningSecretExpiresAt,
 	)
 	return i, err
 }
@@ -61833,7 +62151,9 @@ FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.databa
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid
 AND u.window_from>=$2::timestamptz AND u.window_from<$3::timestamptz
 AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
- AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until))
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until)
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers p WHERE p.database_id=w.database_id
+  AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'))
 `
 
 type ManagedPostgresUsageForSubjectParams struct {
@@ -74865,14 +75185,43 @@ func (q *Queries) PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64
 }
 
 const pruneUnownedWorkflowRuns = `-- name: PruneUnownedWorkflowRuns :execrows
-DELETE FROM workflow_runs r WHERE r.finished_at IS NOT NULL
-AND r.finished_at < clock_timestamp()-$1::bigint*interval '1 second'
-AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
-AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+DELETE FROM workflow_runs WHERE id IN (
+ SELECT r.id FROM workflow_runs r WHERE r.finished_at IS NOT NULL
+ AND r.finished_at < clock_timestamp()-$1::bigint*interval '1 second'
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.workflow_run_id=r.id)
+ AND NOT EXISTS(SELECT 1 FROM customer_operation_workflow_executions e WHERE e.run_id=r.id)
+ ORDER BY r.finished_at,r.id LIMIT $2::integer FOR UPDATE OF r SKIP LOCKED
+)
 `
 
-func (q *Queries) PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, retentionSeconds int64) (int64, error) {
-	result, err := db.Exec(ctx, pruneUnownedWorkflowRuns, retentionSeconds)
+type PruneUnownedWorkflowRunsParams struct {
+	RetentionSeconds int64
+	BatchSize        int32
+}
+
+func (q *Queries) PruneUnownedWorkflowRuns(ctx context.Context, db DBTX, arg PruneUnownedWorkflowRunsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneUnownedWorkflowRuns, arg.RetentionSeconds, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneWorkflowEventArchive = `-- name: PruneWorkflowEventArchive :execrows
+DELETE FROM workflow_event_archive WHERE id IN (
+ SELECT id FROM workflow_event_archive
+ WHERE received_at < clock_timestamp()-$1::bigint*interval '1 second'
+ ORDER BY received_at,id LIMIT $2::integer FOR UPDATE SKIP LOCKED
+)
+`
+
+type PruneWorkflowEventArchiveParams struct {
+	RetentionSeconds int64
+	BatchSize        int32
+}
+
+func (q *Queries) PruneWorkflowEventArchive(ctx context.Context, db DBTX, arg PruneWorkflowEventArchiveParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneWorkflowEventArchive, arg.RetentionSeconds, arg.BatchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -83561,6 +83910,11 @@ SELECT jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
+    'versioning_enabled', coalesce((
+        SELECT v.state = 'ready' AND v.observed_status = 'Enabled' AND v.propagation_until IS NOT NULL
+            AND v.propagation_until <= clock_timestamp()
+        FROM object_bucket_versioning v WHERE v.bucket_id = b.id
+    ), false),
     'credentials', coalesce((
         SELECT jsonb_agg(jsonb_build_object('id', c.id::text, 'label', c.label, 'permission', c.permission,
             'managed_app_id', coalesce(c.managed_app_id::text, ''), 'managed_scope', coalesce(c.managed_scope, ''),
@@ -94221,6 +94575,45 @@ func (q *Queries) RenewProjectEnvironmentCloneWorkerLease(ctx context.Context, d
 	return i, err
 }
 
+const renewTriggerRecordClaims = `-- name: RenewTriggerRecordClaims :execrows
+WITH claims AS (
+    SELECT unnest($3::uuid[]) AS id,
+           unnest($4::bigint[]) AS claim_generation
+)
+UPDATE trigger_records r
+   SET claim_expires_at = greatest(r.claim_expires_at,
+       now() + make_interval(secs => $1::double precision))
+  FROM claims
+ WHERE r.id = claims.id AND r.claim_generation = claims.claim_generation
+   AND r.trigger_id = $2::uuid
+   AND r.state = 'claimed' AND r.claim_expires_at > now()
+`
+
+type RenewTriggerRecordClaimsParams struct {
+	LeaseSeconds     float64
+	TriggerID        pgtype.UUID
+	Ids              []pgtype.UUID
+	ClaimGenerations []int64
+}
+
+// Keeps the claims of a batch whose dispatch is still running. A claim lasts
+// ten minutes, but a long-timeout app's batch may wait 16.5; an expired claim
+// could be taken and run again, and its outcome could not be recorded. Only
+// the claim generation the dispatcher holds is renewed, and never one that
+// has already lapsed.
+func (q *Queries) RenewTriggerRecordClaims(ctx context.Context, db DBTX, arg RenewTriggerRecordClaimsParams) (int64, error) {
+	result, err := db.Exec(ctx, renewTriggerRecordClaims,
+		arg.LeaseSeconds,
+		arg.TriggerID,
+		arg.Ids,
+		arg.ClaimGenerations,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const reopenSkippedWorkflowStepsForRetry = `-- name: ReopenSkippedWorkflowStepsForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',input=NULL,output=NULL,next_check_at=NULL,next_retry_at=NULL,
@@ -96376,19 +96769,20 @@ func (q *Queries) RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, a
 const requeueFailedWorkflowStepForRetry = `-- name: RequeueFailedWorkflowStepForRetry :execrows
 UPDATE workflow_steps
 SET status='pending',output=NULL,next_check_at=NULL,next_retry_at=NULL,
-    finished_at=NULL,error=NULL
-WHERE run_id=$1::text::uuid
-  AND step_name=$2::text
+    finished_at=NULL,error=NULL,retry_base=$1::integer
+WHERE run_id=$2::text::uuid
+  AND step_name=$3::text
   AND status IN ('failed','dead')
 `
 
 type RequeueFailedWorkflowStepForRetryParams struct {
-	RunID    string
-	StepName string
+	RetryBase int32
+	RunID     string
+	StepName  string
 }
 
 func (q *Queries) RequeueFailedWorkflowStepForRetry(ctx context.Context, db DBTX, arg RequeueFailedWorkflowStepForRetryParams) (int64, error) {
-	result, err := db.Exec(ctx, requeueFailedWorkflowStepForRetry, arg.RunID, arg.StepName)
+	result, err := db.Exec(ctx, requeueFailedWorkflowStepForRetry, arg.RetryBase, arg.RunID, arg.StepName)
 	if err != nil {
 		return 0, err
 	}
@@ -104426,6 +104820,66 @@ func (q *Queries) TriggerRecordInScope(ctx context.Context, db DBTX, arg Trigger
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const triggerRecordStatesByItems = `-- name: TriggerRecordStatesByItems :many
+SELECT r.item_identifier, r.state, r.next_fire_at, r.claim_expires_at,
+       coalesce(r.metadata->>'topic', '')::text AS topic,
+       coalesce(d.reason, '')::text AS dead_letter_reason
+FROM trigger_records r
+LEFT JOIN trigger_dead_letter d ON d.record_id = r.id
+WHERE r.trigger_id = $1::uuid
+  AND r.item_identifier = ANY($2::text[])
+`
+
+type TriggerRecordStatesByItemsParams struct {
+	TriggerID       pgtype.UUID
+	ItemIdentifiers []string
+}
+
+type TriggerRecordStatesByItemsRow struct {
+	ItemIdentifier   string
+	State            string
+	NextFireAt       pgtype.Timestamptz
+	ClaimExpiresAt   pgtype.Timestamptz
+	Topic            string
+	DeadLetterReason string
+}
+
+// The stored state of the records one broker poll handed back. A broker may
+// redeliver after Gregale commits a terminal receipt (succeeded, ended by a
+// work policy, or dead-lettered) but before the broker settles it; the
+// dispatcher settles that delivery without dispatching the application
+// again. dead_letter_reason lets a Kafka seek-to-offset trigger keep holding
+// a poison record while an exhausted one commits; next_fire_at and
+// claim_expires_at tell a broker that redelivers on its own when a cooling
+// retry, or a record another dispatcher holds, can run; topic maps a record
+// stored under an earlier release's item identifier (ADR-20261101093512).
+func (q *Queries) TriggerRecordStatesByItems(ctx context.Context, db DBTX, arg TriggerRecordStatesByItemsParams) ([]TriggerRecordStatesByItemsRow, error) {
+	rows, err := db.Query(ctx, triggerRecordStatesByItems, arg.TriggerID, arg.ItemIdentifiers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TriggerRecordStatesByItemsRow{}
+	for rows.Next() {
+		var i TriggerRecordStatesByItemsRow
+		if err := rows.Scan(
+			&i.ItemIdentifier,
+			&i.State,
+			&i.NextFireAt,
+			&i.ClaimExpiresAt,
+			&i.Topic,
+			&i.DeadLetterReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const tryEdgeRuleAccountMutationLock = `-- name: TryEdgeRuleAccountMutationLock :one
