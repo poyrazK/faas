@@ -173,6 +173,10 @@ type Querier interface {
 	ApplyDeploymentRuntimeUpgradeCutover(ctx context.Context, db DBTX, arg ApplyDeploymentRuntimeUpgradeCutoverParams) (int64, error)
 	// Enable exactly the declared subscriptions of the app.
 	ApplyEventSubscriptionIntent(ctx context.Context, db DBTX, arg ApplyEventSubscriptionIntentParams) ([]ApplyEventSubscriptionIntentRow, error)
+	// An edge frame's bytes, served by a gateway for an app without an instance,
+	// count as the app's egress (ADR-20261104132753): tx_bytes and net_tx_bytes
+	// under the app's edge usage ID, md5('gregale-edge-egress:' || app id).
+	ApplyGatewayEdgeUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayEdgeUsageEventParams) (int64, error)
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	ApplyMCPNotificationAction(ctx context.Context, db DBTX, arg ApplyMCPNotificationActionParams) error
 	// Change only the debugger workflow state for one app-scoped observation.
@@ -274,6 +278,12 @@ type Querier interface {
 	BootstrapObjectStorageTimeline(ctx context.Context, db DBTX) error
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
+	// Builder time this UTC month of the account that pays for an app
+	// (ADR-20261104132753): every build of that payer's apps that started at or
+	// after month_start, a running one counted up to now. A coalesced build ran
+	// no builder of its own. The payer is an organization only when it owns its
+	// resources, as bind_app_usage_owner decides.
+	BuildSecondsThisMonthForApp(ctx context.Context, db DBTX, arg BuildSecondsThisMonthForAppParams) (BuildSecondsThisMonthForAppRow, error)
 	// issue #667 / ADR-078 — atomically apply delta to the instance's
 	// `tail_count` column and return the post-update value. The
 	// GREATEST(…, 0) floor mirrors DecrementInstanceTailCount's safety
@@ -4360,6 +4370,7 @@ type Querier interface {
 	LockReadinessNotification(ctx context.Context, db DBTX, arg LockReadinessNotificationParams) ([]byte, error)
 	LockReadinessSubscription(ctx context.Context, db DBTX, arg LockReadinessSubscriptionParams) (CustomerWorkflowReadinessSubscription, error)
 	LockReadinessSubscriptionLease(ctx context.Context, db DBTX, arg LockReadinessSubscriptionLeaseParams) (pgtype.UUID, error)
+	LockRealtimeEgressSync(ctx context.Context, db DBTX) error
 	LockRegressionActionReceipt(ctx context.Context, db DBTX, arg LockRegressionActionReceiptParams) (LockRegressionActionReceiptRow, error)
 	LockReleaseAdditionAccount(ctx context.Context, db DBTX, accountID string) (string, error)
 	LockReleaseAdditionProject(ctx context.Context, db DBTX, arg LockReleaseAdditionProjectParams) (string, error)
@@ -7304,6 +7315,11 @@ type Querier interface {
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
 	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)
 	SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	// Realtime fan-out counts as the app's egress (ADR-20261104132753). Every
+	// realtime_usage_hours row only grows, so this appends, under the app's
+	// realtime usage ID, the month's delivered bytes not yet appended. The caller
+	// holds LockRealtimeEgressSync in the same transaction.
+	SyncRealtimeEgressUsage(ctx context.Context, db DBTX, arg SyncRealtimeEgressUsageParams) (int64, error)
 	SynchronousRollbackRequiresBindingCheck(ctx context.Context, db DBTX, arg SynchronousRollbackRequiresBindingCheckParams) (bool, error)
 	SyntheticCheckRunStats(ctx context.Context, db DBTX, arg SyntheticCheckRunStatsParams) (SyntheticCheckRunStatsRow, error)
 	TakeManagedPostgresRestoreSlot(ctx context.Context, db DBTX, arg TakeManagedPostgresRestoreSlotParams) (ManagedPostgresDatabase, error)

@@ -256,6 +256,9 @@ holds up to 32.
 
 ## Fair-use limits
 
+Messages delivered to subscribers count toward the app's monthly egress,
+like the app's own traffic ([plans](plans.md#what-each-limit-means)).
+
 Realtime has no separate charge. Gregale bills compute, and realtime channels,
 consumer groups and delivery are included in every paid plan. Limits apply only
 where realtime holds real capacity on our servers:

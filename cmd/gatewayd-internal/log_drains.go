@@ -122,6 +122,10 @@ type appLogDrainManager struct {
 	// log-drains capability is off (ADR-20261023115741); its running
 	// workers retire at the next reconcile. Nil delivers every drain.
 	capabilityAllowed func(capability, accountID string) bool
+	// edgeEgress meters each delivered line's bytes as the app's egress
+	// (ADR-20261104132753): a drain sends them from Gregale's network on the
+	// app's behalf. Nil meters nothing.
+	edgeEgress func(appID string, n int64)
 
 	mu                      sync.Mutex
 	shutdownMu              sync.Mutex
@@ -361,6 +365,9 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 			})
 		},
 		OnDelivered: func(record logdrain.Record) {
+			if m.edgeEgress != nil {
+				m.edgeEgress(spec.AppID, int64(len(record.Line)))
+			}
 			standardObserver.delivered(record)
 			standardHealth.delivered(record)
 			m.metrics.ObserveLogDrainDelivered(spec.AppID, string(spec.Kind))

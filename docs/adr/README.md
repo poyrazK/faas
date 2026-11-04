@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261104132753: Bytes sent without an instance count as egress, and builds have a monthly quota](20261104132753-edge-realtime-egress-and-build-minutes.md) — accepted; response-cache hits, stale serves, respond rules, log drain deliveries and realtime fan-out count toward the app's egress ceiling and overage, and each plan has monthly build minutes (Free 300, Hobby 1,000, Pro 3,000, Scale 10,000)
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)
 - [ADR-20261104002000: Serialize rollback recovery](20261104002000-rollback-recovery-serialization.md) — accepted; automatic rollback checks the observed serving release, configuration restoration commits atomically, guards paginate, edge reads hold its mutation lock, database compensation reconciles actual traffic, project rollback conditionally restores all traffic, checked rollback rechecks release controls, and monitor intent commits with its incident link.
 

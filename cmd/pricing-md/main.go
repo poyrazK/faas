@@ -53,7 +53,7 @@ func render() string {
 	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.\n")
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
 	b.WriteString("- **After a plan ends or shrinks**, for example when a subscription lapses, the plan's limits still bind: your oldest deployed apps up to its deployed-app limit keep serving, and other apps, or any app set above its RAM, park and stop waking until they fit. Delete apps, lower an app's RAM (`gregale app APP --ram MB`) or upgrade. A downgrade you request is refused until your apps fit.\n")
-	b.WriteString("- **App egress / month** is the data your apps send each month. It is not charged; an account or organization that reaches its plan's egress stops serving until the month ends or it upgrades.\n")
+	b.WriteString("- **App egress / month** is the data your apps send each month, including what Gregale sends for them without waking an instance: responses served from the [response cache](cache.md), fixed edge responses, [log drain](logs.md) deliveries and [realtime](#managed-realtime) messages to subscribers. It is not charged; an account or organization that reaches its plan's egress stops serving until the month ends or it upgrades.\n")
 	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (")
 	var caps []string
 	for _, plan := range api.Plans {
@@ -79,6 +79,17 @@ func render() string {
 			continue
 		}
 		fmt.Fprintf(&b, "| **%s** | %d | %s |\n", titlePlan(plan), l.DeveloperApps, formatDuration(l.DeveloperLeaseMaxHours*3600))
+	}
+	b.WriteString("\n## Builds\n\n")
+	b.WriteString("Builds are free. Each plan includes builder time per UTC month, shared by every app of the account or organization that pays for them; a running build counts up to now. A build that would start past it is refused with `plan_limit_build_minutes` until the month ends or the plan grows. Deploying a prebuilt image builds nothing and still works.\n\n")
+	b.WriteString("| Plan | Build minutes / month |\n")
+	b.WriteString("|---|---:|\n")
+	for _, plan := range api.Plans {
+		l, ok := api.LimitsFor(plan)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "| **%s** | %s |\n", titlePlan(plan), formatThousands(int64(l.BuildMinutesPerMonth)))
 	}
 	b.WriteString("\n## Managed realtime\n\n")
 	b.WriteString("Realtime is included on every paid plan at no extra charge: Gregale bills compute, and channels, consumer groups and delivery are software. Limits apply only where realtime holds real capacity. Retained history is bounded per endpoint, and functions triggered by channel messages bill as normal compute.\n\n")

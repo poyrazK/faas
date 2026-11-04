@@ -20,7 +20,7 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 - **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.
 - **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.
 - **After a plan ends or shrinks**, for example when a subscription lapses, the plan's limits still bind: your oldest deployed apps up to its deployed-app limit keep serving, and other apps, or any app set above its RAM, park and stop waking until they fit. Delete apps, lower an app's RAM (`gregale app APP --ram MB`) or upgrade. A downgrade you request is refused until your apps fit.
-- **App egress / month** is the data your apps send each month. It is not charged; an account or organization that reaches its plan's egress stops serving until the month ends or it upgrades.
+- **App egress / month** is the data your apps send each month, including what Gregale sends for them without waking an instance: responses served from the [response cache](cache.md), fixed edge responses, [log drain](logs.md) deliveries and [realtime](#managed-realtime) messages to subscribers. It is not charged; an account or organization that reaches its plan's egress stops serving until the month ends or it upgrades.
 - **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (Hobby $2, Pro $10, Scale $30); `gregale billing spend-cap` raises or clears it.
 - **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md). Functions default to 30s on every plan; any app or function can set its own value from 10s up to twice the plan default.
 - **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within 3s and an app request within 30s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and 30s.
@@ -35,6 +35,17 @@ Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync r
 | **Hobby** | 2 | 72h |
 | **Pro** | 5 | 168h |
 | **Scale** | 10 | 336h |
+
+## Builds
+
+Builds are free. Each plan includes builder time per UTC month, shared by every app of the account or organization that pays for them; a running build counts up to now. A build that would start past it is refused with `plan_limit_build_minutes` until the month ends or the plan grows. Deploying a prebuilt image builds nothing and still works.
+
+| Plan | Build minutes / month |
+|---|---:|
+| **Free** | 300 |
+| **Hobby** | 1,000 |
+| **Pro** | 3,000 |
+| **Scale** | 10,000 |
 
 ## Managed realtime
 
