@@ -17403,6 +17403,27 @@ const (
 	PublicBlockListRefreshInterval = 30 * time.Second
 )
 
+// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
+// domains' certificate from Let's Encrypt with DNS-01 and renews it
+// EdgeCertificateRenewBefore its expiry, checking every
+// EdgeCertificateCheckInterval. A failed order is retried after
+// EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
+// Encrypt allows 5 failed validations per account, hostname and hour, and 5
+// certificates for the same names in 7 days, so a fault must not turn into a
+// loop. One order solves at most EdgeCertificateOrderTimeout, which covers
+// DNS propagation, and names at most EdgeCertificateNamesMax names. A
+// certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
+// so the Certificate Transparency watch can tell ours from anyone else's.
+const (
+	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateRetryMin        = time.Hour
+	EdgeCertificateRetryMax        = 12 * time.Hour
+	EdgeCertificateOrderTimeout    = 10 * time.Minute
+	EdgeCertificateNamesMax        = 10
+	EdgeCertificateKeepAfterExpiry = 90 * 24 * time.Hour
+)
+
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
 // surface. A Limits value built without the field (zero) falls back to the
 // verified cap rather than refusing every pending hostname.

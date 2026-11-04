@@ -9,9 +9,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/edgecert"
 	"github.com/onebox-faas/faas/pkg/edgedns"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// withCert returns env with a complete certificate configuration, then
+// overrides applied.
+func withCert(env, overrides map[string]string) map[string]string {
+	out := map[string]string{
+		"FAAS_EDGEDNS_CERT_NAMES":            "gregale.dev, *.Gregale.dev",
+		"FAAS_EDGEDNS_CERT_ZONE_ID":          "zone-1",
+		"FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE": "/run/credentials/faas-edgednsd.service/acme_account_key",
+		"FAAS_EDGEDNS_CERT_RECIPIENT_FILE":   "/run/credentials/faas-edgednsd.service/edge_tls_recipient",
+	}
+	for k, v := range env {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
+}
 
 func TestConfigFromEnv(t *testing.T) {
 	base := map[string]string{
@@ -67,6 +86,25 @@ func TestConfigFromEnv(t *testing.T) {
 		{name: "a bad address", env: with("FAAS_EDGEDNS_NODE_ADDRESSES", "gregale-compute-1=not-an-ip"), wantErr: "<node>=<address>"},
 		{name: "no token", env: with("FAAS_EDGEDNS_CF_TOKEN_FILE", ""), wantErr: "TOKEN_FILE"},
 		{name: "too short an interval", env: with("FAAS_EDGEDNS_INTERVAL", "100ms"), wantErr: "at least 1s"},
+		{name: "no certificate by default", env: base, check: func(t *testing.T, c config) {
+			if c.cert.enabled() {
+				t.Fatalf("cert = %+v, want off", c.cert)
+			}
+		}},
+		{name: "certificate", env: withCert(base, nil), check: func(t *testing.T, c config) {
+			if !c.cert.enabled() || strings.Join(c.cert.names, ",") != "*.gregale.dev,gregale.dev" || c.cert.ca != edgecert.CALetsEncryptStaging || c.cert.zoneID != "zone-1" {
+				t.Fatalf("cert = %+v; want both names, staging first", c.cert)
+			}
+		}},
+		{name: "certificate from production", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_CA": "letsencrypt"}), check: func(t *testing.T, c config) {
+			if c.cert.ca != edgecert.CALetsEncrypt {
+				t.Fatalf("ca = %q", c.cert.ca)
+			}
+		}},
+		{name: "an unknown CA", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_CA": "zerossl"}), wantErr: "FAAS_EDGEDNS_ACME_CA"},
+		{name: "a certificate without its files", env: withCert(base, map[string]string{"FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE": "", "FAAS_EDGEDNS_CERT_ZONE_ID": ""}), wantErr: "FAAS_EDGEDNS_CERT_ZONE_ID, FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE"},
+		{name: "a bad certificate name", env: withCert(base, map[string]string{"FAAS_EDGEDNS_CERT_NAMES": "*.*.gregale.dev"}), wantErr: "FAAS_EDGEDNS_CERT_NAMES"},
+		{name: "certificate settings without names", env: with("FAAS_EDGEDNS_ACME_CA", "letsencrypt"), wantErr: "names no host"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := configFromEnv(func(k string) string { return tc.env[k] })
