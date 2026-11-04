@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/edgecert"
 	"github.com/onebox-faas/faas/pkg/edgedns"
 )
 
@@ -24,7 +25,21 @@ type config struct {
 	interval    time.Duration
 	edgePort    string
 	metricsAddr string
+	cert        certConfig
 }
+
+// certConfig is the apps domains' certificate (ADR-20261103163954 §3). Its
+// zero value orders nothing.
+type certConfig struct {
+	names          []string
+	zoneID         string
+	ca             string
+	email          string
+	accountKeyFile string
+	recipientFile  string
+}
+
+func (c certConfig) enabled() bool { return len(c.names) > 0 }
 
 // configFromEnv reads edgednsd's settings, which the edgednsd role renders
 // from the manifest:
@@ -37,7 +52,9 @@ type config struct {
 //   - FAAS_EDGEDNS_CF_TOKEN_FILE: the Zone > DNS: Edit token;
 //   - FAAS_EDGEDNS_DRY_RUN: anything but "0" only logs the changes;
 //   - FAAS_EDGEDNS_INTERVAL, FAAS_EDGEDNS_EDGE_CONTROL_PORT and
-//     FAAS_EDGEDNS_METRICS_ADDR, with defaults.
+//     FAAS_EDGEDNS_METRICS_ADDR, with defaults;
+//   - the certificate's settings (certConfigFromEnv), off unless
+//     FAAS_EDGEDNS_CERT_NAMES names a host.
 func configFromEnv(getenv func(string) string) (config, error) {
 	c := config{
 		public:      map[string]netip.Addr{},
@@ -94,6 +111,66 @@ func configFromEnv(getenv func(string) string) (config, error) {
 			return config{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_METRICS_ADDR %q: %w", raw, err)
 		}
 		c.metricsAddr = raw
+	}
+	cert, err := certConfigFromEnv(getenv)
+	if err != nil {
+		return config{}, err
+	}
+	c.cert = cert
+	return c, nil
+}
+
+// certConfigFromEnv reads the certificate's settings:
+//
+//   - FAAS_EDGEDNS_CERT_NAMES: the certificate's names, "*.<apps domain>,...";
+//     empty orders nothing;
+//   - FAAS_EDGEDNS_CERT_ZONE_ID: the zone the DNS-01 challenges go to;
+//   - FAAS_EDGEDNS_ACME_CA: letsencrypt-staging (the default) or letsencrypt;
+//   - FAAS_EDGEDNS_ACME_EMAIL: the account's contact, optional;
+//   - FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE: the ACME account's private key;
+//   - FAAS_EDGEDNS_CERT_RECIPIENT_FILE: the edge-tls seal domain's
+//     recipient, which the key is sealed to.
+//
+// Settings without names are a mistake: no certificate would be ordered.
+func certConfigFromEnv(getenv func(string) string) (certConfig, error) {
+	c := certConfig{
+		zoneID:         strings.TrimSpace(getenv("FAAS_EDGEDNS_CERT_ZONE_ID")),
+		ca:             strings.TrimSpace(getenv("FAAS_EDGEDNS_ACME_CA")),
+		email:          strings.TrimSpace(getenv("FAAS_EDGEDNS_ACME_EMAIL")),
+		accountKeyFile: strings.TrimSpace(getenv("FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE")),
+		recipientFile:  strings.TrimSpace(getenv("FAAS_EDGEDNS_CERT_RECIPIENT_FILE")),
+	}
+	raw := splitList(getenv("FAAS_EDGEDNS_CERT_NAMES"))
+	if len(raw) == 0 {
+		if c.zoneID != "" || c.ca != "" || c.email != "" || c.accountKeyFile != "" || c.recipientFile != "" {
+			return certConfig{}, errors.New("edgednsd: certificate settings are set but FAAS_EDGEDNS_CERT_NAMES names no host")
+		}
+		return certConfig{}, nil
+	}
+	names, err := edgecert.NormalizeNames(raw)
+	if err != nil {
+		return certConfig{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_CERT_NAMES: %w", err)
+	}
+	c.names = names
+	switch c.ca {
+	case "":
+		c.ca = edgecert.CALetsEncryptStaging
+	case edgecert.CALetsEncrypt, edgecert.CALetsEncryptStaging:
+	default:
+		return certConfig{}, fmt.Errorf("edgednsd: FAAS_EDGEDNS_ACME_CA %q is not %s or %s", c.ca, edgecert.CALetsEncryptStaging, edgecert.CALetsEncrypt)
+	}
+	var missing []string
+	for _, setting := range []struct{ env, value string }{
+		{"FAAS_EDGEDNS_CERT_ZONE_ID", c.zoneID},
+		{"FAAS_EDGEDNS_ACME_ACCOUNT_KEY_FILE", c.accountKeyFile},
+		{"FAAS_EDGEDNS_CERT_RECIPIENT_FILE", c.recipientFile},
+	} {
+		if setting.value == "" {
+			missing = append(missing, setting.env)
+		}
+	}
+	if len(missing) > 0 {
+		return certConfig{}, fmt.Errorf("edgednsd: the certificate needs %s", strings.Join(missing, ", "))
 	}
 	return c, nil
 }

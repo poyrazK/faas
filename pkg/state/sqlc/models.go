@@ -4610,6 +4610,22 @@ type EdgeRuleSetVersion struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+// ADR-20261103163954 the apps domains' certificates; edgednsd is the only writer, the key is sealed to the edge-tls seal domain.
+type EdgeTlsCertificate struct {
+	ID         int64
+	Names      []string
+	Ca         string
+	AccountUri string
+	Serial     string
+	Sha256     string
+	ChainPem   string
+	KeySealed  []byte
+	KeyKid     string
+	NotBefore  pgtype.Timestamptz
+	NotAfter   pgtype.Timestamptz
+	IssuedAt   pgtype.Timestamptz
+}
+
 type EgressFlowLog struct {
 	ID         int64
 	ObservedAt pgtype.Timestamptz

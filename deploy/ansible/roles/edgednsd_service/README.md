@@ -25,7 +25,32 @@ The role installs two secrets at 0400 root under `/etc/faas/secrets/edgednsd/`:
 - **An optional env file**, `faas_edgednsd_env_src`, for example a
   `DATABASE_URL` for another login. Without it, edgednsd logs in like the
   other control-plane daemons: peer authentication as `faas` over the local
-  socket. It only reads `compute_nodes`.
+  socket. It reads `compute_nodes` and, with a certificate configured,
+  writes `edge_tls_certificates`.
+
+## The apps domains' certificate
+
+With `faas_edgednsd_certificate_names` set (for example `["*.gregale.dev"]`),
+edgednsd also keeps the apps domains' publicly trusted certificate
+(ADR-20261103163954 §3). It orders the certificate from Let's Encrypt with
+the DNS-01 challenge in the zone `faas_edgednsd_certificate_zone_id`, with the
+same token, and renews it 30 days before it expires. Each certificate gets a
+new ECDSA P-256 key, sealed to the `edge-tls` seal domain before it is
+stored; only the compute edges hold that identity, so edgednsd cannot read
+the key back.
+
+- `faas_edgednsd_acme_ca` is `letsencrypt-staging` until the path is proven,
+  then `letsencrypt`.
+- The role creates the ACME account key once, at
+  `/etc/faas/secrets/edgednsd/acme-account.key` (0400 root), and never
+  replaces or removes it: the zone's CAA records name that account. Back it
+  up with the other control-plane secrets.
+- The `edge-tls` recipient must be staged first
+  (`gregalectl seal-domain init --domain edge-tls`, then the seal_domains
+  role); the role refuses to configure a certificate without it.
+- `edge_certificate_acme_account_info{account_uri}` reports the account URI
+  for the CAA records, and `edge_certificate_orders_total{result}` and
+  `edge_certificate_stored_expiry_timestamp_seconds` how ordering goes.
 
 In dry run, edgednsd logs each change it would make and counts it in
 `edge_dns_changes_total{dry_run="true"}`. Read those before going live. See

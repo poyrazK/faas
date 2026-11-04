@@ -8,6 +8,11 @@
 // node's edge on the private network, and lets pkg/edgedns move the records.
 // It starts in dry run: it logs and counts what it would change until
 // FAAS_EDGEDNS_DRY_RUN=0.
+//
+// With FAAS_EDGEDNS_CERT_NAMES set it also keeps the apps domains'
+// publicly trusted certificate (ADR-20261103163954 §3): it orders it from
+// Let's Encrypt with the DNS-01 challenge, through the same token, and
+// stores it with its key sealed to the compute edges.
 package main
 
 import (
@@ -21,6 +26,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/edgecert"
 	"github.com/onebox-faas/faas/pkg/edgedns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -66,6 +72,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 		probe:    edgedns.HTTPProbe{Client: &http.Client{Timeout: edgedns.ProbeTimeout}},
 		public:   cfg.public,
 		edgePort: cfg.edgePort,
+	}
+	if cfg.cert.enabled() {
+		certs, err := newCertManager(cfg.cert, dns, edgecert.NewPgStore(pool), edgecert.NewMetrics(ops.Registry()), log)
+		if err != nil {
+			return err
+		}
+		go certs.Run(ctx)
+		log.Info("edgednsd: certificate on", "names", strings.Join(cfg.cert.names, ","), "ca", cfg.cert.ca)
 	}
 	log.Info("edgednsd: running", "names", len(cfg.names), "nodes", len(cfg.public), "dry_run", cfg.dryRun, "interval", cfg.interval)
 
