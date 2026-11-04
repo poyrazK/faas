@@ -24,6 +24,22 @@ func (s *server) applyBindingRuntimeInventory(parent context.Context, r *http.Re
 		appendBindingRuntimeIssue(inventory, "runtime_freshness", "Runtime configuration freshness could not be read.")
 	} else {
 		inventory.RuntimeFreshness = projectBindingRuntime(runtime, time.Now().UTC())
+		if id, _ := parent.Value(preparedBindingRollbackKey{}).(string); id != "" {
+			found := false
+			for _, row := range runtime.Deployments {
+				found = found || row.ID == id
+			}
+			if !found {
+				// The complete reader includes every resident deployment,
+				// regardless of status. An absent prepared target has none.
+				d, err := s.store.DeploymentByID(ctx, id)
+				if err != nil || d.AppID != app.ID || !preparedBindingRollback(parent, d) {
+					appendBindingRuntimeIssue(inventory, "runtime_freshness", "The prepared rollback target changed.")
+				} else {
+					inventory.RuntimeFreshness.Deployments = append(inventory.RuntimeFreshness.Deployments, api.BindingRuntimeDeployment{DeploymentID: d.ID, Scope: recoveryScope(d.Scope), DeploymentStatus: string(d.Status), Status: "inactive"})
+				}
+			}
+		}
 	}
 	if len(wakeIDs) == 0 {
 		return

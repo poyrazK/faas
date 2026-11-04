@@ -5650,7 +5650,7 @@ BEGIN
    RAISE EXCEPTION 'binding facts changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
   END IF;
   SELECT * INTO d FROM deployments WHERE id=(f->>'deployment_id')::uuid AND app_id=(f->>'app_id')::uuid;
-  IF d.id IS NULL OR d.status<>'live' OR d.scope<>f->>'scope' OR coalesce(d.rootfs_key,'')='' OR coalesce(d.image_digest,'')='' THEN
+  IF d.id IS NULL OR (d.status<>'live' AND NOT (d.status='snapshotting' AND d.traffic_percent=0 AND d.rollback_prepared_at IS NOT NULL)) OR d.scope<>f->>'scope' OR coalesce(d.rootfs_key,'')='' OR coalesce(d.image_digest,'')='' THEN
    RAISE EXCEPTION 'binding deployment changed' USING ERRCODE='23514',CONSTRAINT='binding_release_changed';
   END IF;
   IF NULLIF(f->>'valid_until','')::timestamptz <= clock_timestamp() THEN

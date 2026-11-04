@@ -396,7 +396,6 @@ ListUnplacedApps
 ListVerifiedTenantHostnamesForSurface
 ListWorkflowRuns
 LiveCrashCaptureDeploymentIDs
-LiveDeploymentForScope
 LiveDeployments
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes

@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261104002000: Serialize rollback recovery](20261104002000-rollback-recovery-serialization.md) — accepted; automatic rollback checks the observed serving release, configuration restoration commits atomically, guards paginate, edge reads hold its mutation lock, database compensation reconciles actual traffic, project rollback conditionally restores all traffic, checked rollback rechecks release controls, and monitor intent commits with its incident link.
+
 - [ADR-20261104023000: GitOps workload admission and Job draining](20261104023000-gitops-workload-admission-and-job-draining.md) — inherit project ownership, reject duplicate physical mappings and stop schedule admission before draining accepted work
 
 - [ADR-20261104015055: GitOps report redaction and release recovery guards](20261104015055-gitops-report-redaction-and-release-recovery-guards.md) — redact public plan values, guard retirement cutover and preserve durable gateway acknowledgements during replay

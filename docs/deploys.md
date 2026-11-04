@@ -523,6 +523,12 @@ email, like a database restore), then
 `GET /v1/apps/{slug}/database-switches/{id}` and
 `POST /v1/apps/{slug}/database-switches/{id}/cancel` (also `postgres:manage`).
 
+An enforced binding release policy also applies to a database-restoring
+rollback. The switch checks the currently published bindings before changing
+the serving code and again before restoring the previous code if it aborts.
+The cutover separately verifies the restored database's staged credentials.
+Missing binding evidence blocks the code change; the policy remains enforced.
+
 ## Release gates
 
 Gregale already stops a release whose 5xx rate, latency, crashes or memory
