@@ -3,13 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Body for /confirm — a single 6-digit TOTP code.
+ * Body for /confirm — a TOTP code and the existing password, if set.
  */
 export type MFAConfirmRequest = {
   /**
    * 6-digit rotating code from the authenticator app.
    */
   totp: string;
+  /**
+   * Required when the account already has a password; authorizes the new factor.
+   */
+  current_password?: string;
   /**
    * Dashboard CSRF token. The dashboard sets a
    * `faas_csrf` cookie on every authenticated response; the

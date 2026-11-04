@@ -4,6 +4,7 @@ package state_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -38,7 +39,8 @@ func wildcardAllowlistEndsWithItsClaim(t *testing.T, store state.Store) {
 	claims := store.(interface {
 		CreateCustomDomainIfUnderQuota(ctx context.Context, domain, appID, token string, appLimit, accountLimit int) (state.CustomDomain, error)
 	})
-	if _, err := claims.CreateCustomDomainIfUnderQuota(ctx, wildcard, squatter.ID, "squatter-token", 10, 10); err != nil {
+	stale, err := claims.CreateCustomDomainIfUnderQuota(ctx, wildcard, squatter.ID, "squatter-token", 10, 10)
+	if err != nil {
 		t.Fatal(err)
 	}
 	hosts := store.(interface {
@@ -56,6 +58,22 @@ func wildcardAllowlistEndsWithItsClaim(t *testing.T, store state.Store) {
 	}
 	if allowed, err := hosts.CustomDomainTLSHostAllowed(ctx, wildcard, "api."+zone); err != nil || !allowed {
 		t.Fatalf("api.%s may hold a certificate = %v, %v; want the owner's names unrestricted", zone, allowed, err)
+	}
+	current, err := store.DomainByName(ctx, wildcard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hosts.SetCustomDomainTLSAllowedHostsForClaim(ctx, current, []string{"api"}); err != nil {
+		t.Fatal(err)
+	}
+	// Both PUT and DELETE from an already-authorized old request must fail.
+	for _, names := range [][]string{{"decoy"}, nil} {
+		if err := hosts.SetCustomDomainTLSAllowedHostsForClaim(ctx, stale, names); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("stale claim mutation = %v, want ErrNotFound", err)
+		}
+		if names, err := hosts.CustomDomainTLSAllowedHosts(ctx, wildcard); err != nil || len(names) != 1 || names[0] != "api" {
+			t.Fatalf("stale claim changed the new owner's allowlist: %v, %v", names, err)
+		}
 	}
 }
 

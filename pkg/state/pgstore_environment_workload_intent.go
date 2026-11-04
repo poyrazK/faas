@@ -62,9 +62,7 @@ func (s *PgStore) EnvironmentWorkloadIntentByJob(ctx context.Context, accountID,
 	if _, err := uuid.Parse(jobID); err != nil {
 		return EnvironmentWorkloadIntent{}, ErrInvalidArgument
 	}
-	var raw []byte
-	err := s.pool.QueryRow(ctx, `SELECT to_jsonb(w) FROM app_environment_workload_intents w
-WHERE w.account_id=$1::uuid AND w.job_id=$2::uuid`, accountID, jobID).Scan(&raw)
+	raw, err := sqlc.New().EnvironmentWorkloadIntentForOwnedJob(ctx, s.pool, sqlc.EnvironmentWorkloadIntentForOwnedJobParams{AccountID: mustPgUUID(accountID), JobID: mustPgUUID(jobID)})
 	if err != nil {
 		return EnvironmentWorkloadIntent{}, mapErr(err)
 	}

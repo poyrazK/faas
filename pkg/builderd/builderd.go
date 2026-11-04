@@ -1473,6 +1473,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// emitted) — that's the path the `failure_class` UX copy
 		// already covers; markFailedEx is the typed-code addition.
 		failureCode, failurePkg := out.FailureCode, out.FailurePkg
+		if fc == state.FailureUserError && failureCode == "" && platformBaseFetchFailed(out.LogTail, runtimeBaseRef) {
+			// The builder could not fetch Gregale's own runtime base: the
+			// customer's source never ran, so this is not their failure.
+			fc = state.FailureInfra
+		}
 		if failureCode == "" && fc == state.FailureUserError {
 			failureCode, failurePkg = classifyBuildOutput(out.LogTail)
 		}

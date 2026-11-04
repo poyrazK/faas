@@ -144,3 +144,22 @@ func (m *MemStore) managedRealtimePresenceSnapshotLocked(endpointID, channel str
 	sort.Slice(result, func(i, j int) bool { return result[i].MemberID < result[j].MemberID })
 	return result
 }
+
+func (m *MemStore) RenewManagedRealtimePresenceLease(ctx context.Context, endpointID, channel, nodeID, connectionID string, expiresAt time.Time) (bool, error) {
+	if validateManagedRealtimeHistoryRequest(endpointID, channel) != nil || nodeID == "" || connectionID == "" || len(connectionID) > 128 {
+		return false, ErrManagedRealtimePresenceInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := managedRealtimePresenceKey{endpointID: endpointID, channel: channel, nodeID: nodeID, connectionID: connectionID}
+	lease, ok := m.managedRealtimePresence[key]
+	if !ok || !lease.ExpiresAt.After(time.Now().UTC()) {
+		return false, nil
+	}
+	lease.ExpiresAt = expiresAt
+	m.managedRealtimePresence[key] = lease
+	return true, nil
+}

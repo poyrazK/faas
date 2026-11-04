@@ -129,7 +129,7 @@ func (m *MemStore) ActivateEnvironmentGitOpsWorkloadGraph(ctx context.Context, l
 		}
 		job := m.jobs[member.JobID]
 		previousJobs[job.ID] = job
-		job.Status = "active"
+		job.Status, job.EnvironmentGitSourceID = "active", graph.SourceID
 		job.UpdatedAt = time.Now().UTC()
 		m.jobs[job.ID] = job
 	}

@@ -1,8 +1,11 @@
 package datapipeline
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -72,8 +75,8 @@ func backfillOwner(ctx context.Context, p Pipeline, tx pgx.Tx, r relation) (stri
 	return owner, nil
 }
 
-// Source values are canonical JSON from the locked, caught-up batch. Populate
-// typed records on the mirror, but assign only approved new columns. A missing
+// Source values are arrays of nullable text from the locked, caught-up batch.
+// Restore their types on the mirror, but assign only approved new columns. A missing
 // target row or an old-column mismatch still fails whole-row verification.
 func backfillVerificationRows(ctx context.Context, p Pipeline, tx pgx.Tx, r relation, columns []column, data []json.RawMessage) (int64, error) {
 	if len(data) == 0 {
@@ -89,21 +92,33 @@ func backfillVerificationRows(ctx context.Context, p Pipeline, tx pgx.Tx, r rela
 	if _, err = tx.Exec(ctx, "SET LOCAL ROLE "+ident(owner)); err != nil {
 		return 0, err
 	}
-	assignments, old, next, keys := []string{}, []string{}, []string{}, []string{}
+	assignments, old, next, keys, values := []string{}, []string{}, []string{}, []string{}, []string{}
+	for i, col := range r.Columns {
+		if col.Key || slices.ContainsFunc(columns, func(c column) bool { return c.Name == col.Name }) {
+			values = append(values, "(v.value->>"+strconv.Itoa(i)+")::"+col.Type+" AS "+ident(col.Name))
+		}
+	}
 	for _, col := range columns {
 		name := ident(col.Name)
 		assignments = append(assignments, name+"=s."+name)
-		old = append(old, "d."+name)
-		next = append(next, "s."+name)
+		old = append(old, "d."+name+"::text")
+		next = append(next, "s."+name+"::text")
 	}
 	for _, key := range primaryColumns(r) {
 		keys = append(keys, collated("d."+ident(key.Name), key)+"="+collated("s."+ident(key.Name), key))
 	}
-	encoded, _ := json.Marshal(data)
+	// Preserve the captured byte budget: escaping every '<', '>' or '&' again
+	// can otherwise expand a bounded row sixfold in each concurrent backfill.
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err = encoder.Encode(data); err != nil {
+		return 0, err
+	}
 	query := "UPDATE " + tableIdent(r.Name) + " d SET " + strings.Join(assignments, ",") +
-		" FROM pg_catalog.jsonb_populate_recordset(NULL::" + tableIdent(r.Name) + ",$1::jsonb) s WHERE " + strings.Join(keys, " AND ") +
-		" AND pg_catalog.to_jsonb(ROW(" + strings.Join(old, ",") + ")) IS DISTINCT FROM pg_catalog.to_jsonb(ROW(" + strings.Join(next, ",") + "))"
-	tag, err := tx.Exec(ctx, query, encoded)
+		" FROM (SELECT " + strings.Join(values, ",") + " FROM pg_catalog.jsonb_array_elements($1::jsonb) v(value)) s WHERE " + strings.Join(keys, " AND ") +
+		" AND ROW(" + strings.Join(old, ",") + ") IS DISTINCT FROM ROW(" + strings.Join(next, ",") + ")"
+	tag, err := tx.Exec(ctx, query, encoded.Bytes())
 	if err != nil {
 		return 0, err
 	}

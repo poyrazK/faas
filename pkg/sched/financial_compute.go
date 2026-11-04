@@ -97,6 +97,12 @@ func (e *Engine) loadStrictComputePreload(ctx context.Context, apps []state.App)
 	return pre
 }
 
+// nothingLive reports that the preload read app's live instances and found
+// none. It is false when there is no preload, so callers fall back to reading.
+func (p *strictComputePreload) nothingLive(app state.App) bool {
+	return p != nil && len(p.rows[app.ID]) == 0
+}
+
 // strictComputeLeaseChecked reports whether the sweep reads an instance's
 // lease: a resident instance past its boot.
 func strictComputeLeaseChecked(ins state.Instance) bool {

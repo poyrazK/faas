@@ -22,12 +22,11 @@ test('server symbolication sends immutable generated coordinates and rejects con
     fetch:(async(_url,options)=>{events.push(JSON.parse(String(options?.body)));return new Response('{}',{status:events.length===1?503:202});}) as typeof fetch});
   const cause = new Error('payment failed');cause.stack='Error: payment failed\n    at a (/app/dist/chunk-a.js:1:11)';
   reporter.captureException(new Error('wrapper',{cause}));
-  assert.equal(await reporter.flush(),false);assert.equal(await reporter.flush(),true);
+  assert.equal(await reporter.flush(),false);assert.equal(await reporter.close(3000),true);
   assert.deepEqual(events[0],events[1]);
   assert.equal(events[0]?.symbolication_strategy,'deployment-source-maps-v1');
   const reportedCause=(events[0]?.causes as Array<{frames:Array<{column?:number}>}>)[0]!;
   assert.equal(reportedCause.frames[0]?.column,11);
-  await reporter.close();
   assert.throws(()=>createIssueReporter({baseURL:'https://api.gregale.dev',app:'exports',token:'g_issue_test',
     symbolicationStrategy:'deployment-source-maps-v1'}),/Server symbolication requires/);
   assert.throws(()=>createIssueReporter({baseURL:'https://api.gregale.dev',app:'exports',token:'g_issue_test',
@@ -102,14 +101,13 @@ test('source-map capture keeps raw evidence, drops source content, and retries a
   error.stack = 'Error: payment failed\n    at a (/app/dist/chunk-a.js:1:1)\n    at caller (/app/dist/other.js:3:9)';
   reporter.captureException(error);
   assert.equal(await reporter.flush(), false);
-  assert.equal(await reporter.flush(), true);
+  assert.equal(await reporter.close(3000), true);
   assert.deepEqual(requests[0], requests[1]);
   assert.equal(requests[0]?.stack_trace, error.stack);
   assert.deepEqual((requests[0]?.frames as unknown[])[0], { file: '/app/src/checkout.ts', function: 'charge', line: 10, in_app: true });
   assert.equal(JSON.stringify(requests).includes('PRIVATE_SOURCE_CONTENT'), false);
   assert.equal(reporter.stats().mappedFrames, 1);
   assert.equal(reporter.stats().unmappedFrames, 1);
-  await reporter.close();
   assert.throws(() => createIssueReporter({
     baseURL: 'https://api.gregale.dev', app: 'exports', token: 'g_issue_test', sourceMaps,
   }), /require failure-site-v1/);

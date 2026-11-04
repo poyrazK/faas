@@ -46,8 +46,8 @@ func (s *PostgresStore) ClaimScheduledDelete(ctx context.Context, accountID, dat
 	if err != nil {
 		return Database{}, mapPostgresError(err)
 	}
-	if dependants.HasBindings || dependants.HasRestoreDescendants || dependants.HasCloneSnapshotHolds || dependants.HasCloneWriteFenceHolds {
-		return Database{}, ErrConflict
+	if err := lifecycleDependantsError(dependants); err != nil {
+		return Database{}, err
 	}
 	row, err = q.ClaimManagedPostgresScheduledDelete(ctx, tx, sqlc.ClaimManagedPostgresScheduledDeleteParams{
 		AccountID: account, DatabaseID: id, LeaseToken: leaseToken, LeaseUntil: databaseNullableTime(leaseUntil),

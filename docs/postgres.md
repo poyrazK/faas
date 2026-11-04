@@ -168,8 +168,9 @@ restore can target now. The earliest is the later of the database's creation
 and the start of its restore window.
 
 Attach the restored database under its own environment key when you want an
-app to read it. A source cannot be deleted while a database restored from it
-exists.
+app to read it. A source you delete while a database restored from it exists
+is kept until that copy is gone; see
+[Delete, recover and purge](#delete-recover-and-purge).
 
 The restored database counts toward your plan's database limit. When the
 account is at its limit, one restore may still go one database past it, on
@@ -186,9 +187,10 @@ every plan:
   delete is scheduled.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
-- A copy cannot replace its source: the source cannot be deleted while the
-  copy exists. To keep restored rows on a one-database plan, copy them back
-  into the source, then purge the copy.
+- A copy can replace its source on a one-database plan: detach the source's
+  apps and purge it. The source no longer counts, so the copy becomes an
+  ordinary database. The source is kept, with its name and storage, until the
+  copy is deleted.
 - A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
   never uses the slot: its copy becomes the app's database, so the account
   needs room for it inside the limit.
@@ -250,7 +252,19 @@ days before it erases it.
 Until it is purged, a deleted database:
 - still counts toward your plan's database limit;
 - keeps its name, so creating another database with that name returns 409;
-- uses nothing from your compute allowance or storage pool.
+- uses nothing from your compute allowance or storage pool, unless it has a
+  restored copy (below).
+
+A database you restored a copy from, for example the original database after
+a rollback that restored it, can be deleted while the copy lives. The copy is
+stored inside the original, so:
+- the 7 days to recover it run as usual, and its usage keeps counting, because
+  it includes the copy's;
+- after that, or at once with `--purge`, it stays in `deleting`, with
+  `last_error_code` `restore_copies_remain`. It no longer counts toward your
+  database limit, and can no longer be recovered;
+- it is deleted for good once you delete its copies. Until then its name stays
+  taken, and the storage it holds stays in your storage pool.
 
 Undelete applies the same plan check as create. A database your current plan
 no longer allows, for example after a downgrade, cannot be recovered.

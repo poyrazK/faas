@@ -71,7 +71,10 @@ def sync_detailed(
     download receipts, cancel). When the active provider exposes
     customer sessions, the server creates a short-lived authenticated
     portal URL. Otherwise it renders the operator's
-    `FAAS_BILLING_PORTAL_URL` template.
+    `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+    that can cancel the subscription and replace the card, so the route
+    takes an admin credential, MFA, a verified email and, for a dashboard
+    session, a step-up within the last 5 minutes.
 
     The response also carries a `payment_method` block — the card-on-file summary (brand, last-4,
     expiry).
@@ -107,7 +110,10 @@ def sync(
     download receipts, cancel). When the active provider exposes
     customer sessions, the server creates a short-lived authenticated
     portal URL. Otherwise it renders the operator's
-    `FAAS_BILLING_PORTAL_URL` template.
+    `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+    that can cancel the subscription and replace the card, so the route
+    takes an admin credential, MFA, a verified email and, for a dashboard
+    session, a step-up within the last 5 minutes.
 
     The response also carries a `payment_method` block — the card-on-file summary (brand, last-4,
     expiry).
@@ -139,7 +145,10 @@ async def asyncio_detailed(
     download receipts, cancel). When the active provider exposes
     customer sessions, the server creates a short-lived authenticated
     portal URL. Otherwise it renders the operator's
-    `FAAS_BILLING_PORTAL_URL` template.
+    `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+    that can cancel the subscription and replace the card, so the route
+    takes an admin credential, MFA, a verified email and, for a dashboard
+    session, a step-up within the last 5 minutes.
 
     The response also carries a `payment_method` block — the card-on-file summary (brand, last-4,
     expiry).
@@ -173,7 +182,10 @@ async def asyncio(
     download receipts, cancel). When the active provider exposes
     customer sessions, the server creates a short-lived authenticated
     portal URL. Otherwise it renders the operator's
-    `FAAS_BILLING_PORTAL_URL` template.
+    `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+    that can cancel the subscription and replace the card, so the route
+    takes an admin credential, MFA, a verified email and, for a dashboard
+    session, a step-up within the last 5 minutes.
 
     The response also carries a `payment_method` block — the card-on-file summary (brand, last-4,
     expiry).

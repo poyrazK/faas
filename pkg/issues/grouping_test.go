@@ -4,10 +4,20 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+func TestIssueTitleFitsDatabaseLimitAfterRedaction(t *testing.T) {
+	now := time.Now().UTC()
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: now, ExceptionType: "Error", Message: strings.Repeat("é", 1024)}
+	_, _, title, err := Normalize(event, now, api.PlanPro.IssueLimits())
+	if err != nil || len(title) > api.IssueMessageMaxBytes || !utf8.ValidString(title) {
+		t.Fatalf("title bytes=%d valid=%v err=%v", len(title), utf8.ValidString(title), err)
+	}
+}
 
 func TestIssueGroupingAcrossReleases(t *testing.T) {
 	now := time.Now().UTC()
@@ -51,6 +61,23 @@ func TestIssueRecurrenceExcludesOldAndLateEvents(t *testing.T) {
 	in := api.Issue{State: "resolved", ResolvedAt: &now, FixedDeploymentID: "v43"}
 	if Recurs(in, "v42", now.Add(time.Minute)) || Recurs(in, "v43", now.Add(-time.Minute)) || !Recurs(in, "v43", now.Add(time.Minute)) {
 		t.Fatal("incorrect release-aware recurrence")
+	}
+}
+
+func TestIssueFutureClockSkewUsesReceiptTime(t *testing.T) {
+	now := time.Now().UTC()
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: now.Add(30 * time.Second), ExceptionType: "Error"}
+	out, _, _, err := Normalize(event, now, api.PlanHobby.IssueLimits())
+	if err != nil || !out.OccurredAt.Equal(now) {
+		t.Fatalf("future occurrence = %v, %v; want receipt time", out.OccurredAt, err)
+	}
+	rule := api.IssueFrequencyAlertRule{Enabled: true, WindowSeconds: 60, MinimumEvents: 1}
+	if !FrequencyRuleMatches(rule, api.Issue{State: "open"}, out.OccurredAt, now) {
+		t.Fatal("accepted clock skew suppressed alert evaluation")
+	}
+	event.OccurredAt = now.Add(api.IssueMaxClockSkew + time.Second)
+	if _, _, _, err = Normalize(event, now, api.PlanHobby.IssueLimits()); err == nil {
+		t.Fatal("accepted a timestamp beyond the clock-skew limit")
 	}
 }
 

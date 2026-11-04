@@ -220,9 +220,19 @@ func (s *server) deleteProject(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, problem)
 		return
 	}
-	if err := s.store.DeleteProject(r.Context(), project.ID); err != nil {
+	checked, ok := s.store.(state.CheckedProjectDeleteStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("guarded project deletion is unavailable"))
+		return
+	}
+	if err := checked.DeleteProjectIfNoStages(r.Context(), acct.ID, project.ID); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectNotFound(project.Slug))
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Project deletion is blocked",
+				"project resources changed; inspect its environments and running clones before deleting"))
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not delete project"))

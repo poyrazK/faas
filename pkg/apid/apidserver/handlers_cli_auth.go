@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/agentconnections"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -210,13 +211,9 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 	}
 	label, scopes, ttl := browserAuthCredential(req.Code)
 	expiresAt := time.Now().UTC().Add(ttl)
-	k, err := h.srv.store.CreateAPIKeyWithExpiryAndProvenance(
-		r.Context(), accountID, keyHash, label, scopes,
-		&expiresAt, clientIPFromRequest(r), logsanitize.Field(r.UserAgent()), nil,
-	)
-	if err != nil {
-		h.log.Error("cli_auth.create_key", "err", err)
-		api.WriteProblem(w, api.ErrCapacity("could not persist key"))
+	k, scopes, p := h.createBrowserAuthKey(r, req, accountID, keyHash, label, scopes, expiresAt)
+	if p != nil {
+		api.WriteProblem(w, p)
 		return
 	}
 	h.srv.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
@@ -250,6 +247,59 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		ExpiresAt: expiresAt.Format(time.RFC3339),
 		Account:   h.srv.accountResponse(r.Context(), acct, r),
 	})
+}
+
+// createBrowserAuthKey mints the exchanged key. A hosted MCP sign-in bound to
+// a shared organization at approval gets that organization's key, holding
+// only the scopes the organization's agent policy allows
+// (ADR-20261101225122).
+func (h *cliAuthHandlers) createBrowserAuthKey(r *http.Request, req api.CliAuthExchangeRequest, accountID string, keyHash []byte, label string, scopes []string, expiresAt time.Time) (state.APIKey, []string, *api.Problem) {
+	ip, ua := clientIPFromRequest(r), logsanitize.Field(r.UserAgent())
+	orgID, err := h.browserAuthOrg(r, req)
+	if err != nil {
+		h.log.Error("cli_auth.code_org", "err", err)
+		return state.APIKey{}, nil, api.ErrCapacity("could not read the sign-in's organization")
+	}
+	if orgID == "" {
+		k, err := h.srv.store.CreateAPIKeyWithExpiryAndProvenance(r.Context(), accountID, keyHash, label, scopes, &expiresAt, ip, ua, nil)
+		if err != nil {
+			h.log.Error("cli_auth.create_key", "err", err)
+			return state.APIKey{}, nil, api.ErrCapacity("could not persist key")
+		}
+		return k, scopes, nil
+	}
+	policy, err := agentconnections.PolicyFor(r.Context(), h.srv.store, orgID, accountID)
+	if errors.Is(err, agentconnections.ErrNotAgentMember) || errors.Is(err, agentconnections.ErrAgentsNotAllowed) {
+		return state.APIKey{}, nil, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Agents can't act in this organization", err.Error()+"; connect the agent again and choose another organization")
+	}
+	acct, aerr := h.srv.store.AccountByID(r.Context(), accountID)
+	if err != nil || aerr != nil {
+		h.log.Error("cli_auth.org_policy", "err", errors.Join(err, aerr))
+		return state.APIKey{}, nil, api.ErrCapacity("could not check the organization's agent policy")
+	}
+	scopes = agentconnections.CapScopes(policy, scopes)
+	activity := newOrgAPIKeyActivity(r, acct, orgID, "api_key.created", map[string]any{"scopes": scopes, "reason": "mcp_sign_in"})
+	k, err := h.srv.createOrgAPIKeyWithActivity(r.Context(), acct, orgID, keyHash, label, scopes, &expiresAt, ip, ua, nil, activity)
+	if err != nil {
+		h.log.Error("cli_auth.create_org_key", "err", err)
+		return state.APIKey{}, nil, api.ErrCapacity("could not persist key")
+	}
+	return k, scopes, nil
+}
+
+// browserAuthOrg is the shared organization a hosted MCP sign-in's code was
+// bound to at approval, or "" for the personal one.
+func (h *cliAuthHandlers) browserAuthOrg(r *http.Request, req api.CliAuthExchangeRequest) (string, error) {
+	store, ok := h.srv.store.(state.OrgAgentStore)
+	hash, valid := normalizeCliAuthCode(req.Code)
+	if !ok || !valid || !isMCPAuthCode(req.Code) {
+		return "", nil
+	}
+	orgID, err := store.CliAuthCodeOrg(r.Context(), hash)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	return orgID, err
 }
 
 // renderCliAuthPage handles GET /cli-auth?code=…. The route is mounted
@@ -332,6 +382,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 			"AccountEmail":    acct.Email,
 			"MCP":             isMCPAuthCode(raw),
 			"MCPCapabilities": mcpCapabilities(raw),
+			"MCPOrgs":         h.mcpOrgChoices(r, acct.ID, raw),
 			// The hosted bridge asks to have the browser back (ADR-20261028205920).
 			"ReturnMCP": isMCPAuthCode(raw) && r.URL.Query().Get("return") == "mcp" && h.srv.hostedMCPContinueURL() != "",
 		},
@@ -392,6 +443,9 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if !h.bindMCPOrg(w, r, acct.ID, rawCode, hash) {
+		return
+	}
 	// Atomically claim the code for this account. ClaimCliAuthCode
 	// transitions pending → consumed + account_id in one SQL.
 	if err := h.srv.store.ClaimCliAuthCode(r.Context(), hash, acct.ID); err != nil {

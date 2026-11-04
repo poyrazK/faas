@@ -3,6 +3,7 @@ package apidserver_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -100,5 +101,47 @@ func TestProtectedEnvironmentRefusesDirectReleases(t *testing.T) {
 	}
 	if p := srv.ApprovalTrafficProblemForTest(ctx, app, dark); p == nil || p.Code != api.CodeProjectEnvironmentApprovalRequired {
 		t.Fatalf("giving a staged release traffic in a protected environment = %+v", p)
+	}
+}
+
+// Publishing a release set serves its members at once, so they meet the
+// release guards an activation does (ADR-20261019071733 amendment 10).
+func TestPublishedReleaseSetMembersMeetTheReleaseGuards(t *testing.T) {
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
+		AccountID: acct.ID, ProjectID: project.ID, Slug: "preprod", Protected: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dark := func(scope string) state.Deployment {
+		t.Helper()
+		d, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: scope, Kind: state.DeploymentKindImage,
+			Status: state.DeployLive, TrafficPercent: 0, TrafficPercentExplicit: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	members := func(d state.Deployment) []state.ProjectReleaseMember {
+		return []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: d.ID}}
+	}
+	if p := srv.ReleaseSetMembersGuardProblemForTest(ctx, "preprod", members(dark("preprod"))); p == nil || p.Code != api.CodeProjectEnvironmentApprovalRequired {
+		t.Fatalf("publishing a staged release in a protected environment = %+v", p)
+	}
+	production := dark("production")
+	if p := srv.ReleaseSetMembersGuardProblemForTest(ctx, "production", members(production)); p != nil {
+		t.Fatalf("publishing an unguarded staged production release = %+v", p)
+	}
+	if _, err := store.SetReleaseApprovalPolicy(ctx, state.ReleaseApprovalPolicy{AppID: app.ID, AccountID: acct.ID,
+		RequiredApprovals: 1, AfterStage: 1, TimeoutMinutes: 60, Approvers: state.ReleaseApproversAdmin}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if p := srv.ReleaseSetMembersGuardProblemForTest(ctx, "production", members(production)); p == nil || p.Code != api.CodeReleaseApprovalCanaryRequired {
+		t.Fatalf("publishing a staged release of an app requiring approvals = %+v", p)
+	}
+	bad := []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: "not-a-uuid"}}
+	if p := srv.ReleaseSetMembersGuardProblemForTest(ctx, "production", bad); p == nil || p.Code != api.CodeValidation {
+		t.Fatalf("an invalid member = %+v, want validation", p)
 	}
 }

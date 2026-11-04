@@ -30,5 +30,9 @@ export type CreateNativeLinearIssueTicketRequest = {
    * Optional known Linear issue URL that also requests recovery and must match the UUID lookup.
    */
   recovery_url?: string;
+  /**
+   * Slug used when recovering a legacy Linear receipt created before the app was renamed.
+   */
+  original_app_slug?: string;
 };
 

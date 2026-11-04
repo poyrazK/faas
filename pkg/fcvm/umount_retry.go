@@ -1,7 +1,9 @@
 package fcvm
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"os/exec"
 	"time"
 )
@@ -23,10 +25,17 @@ const (
 
 // umountRetryBusy runs umount(8) on mountpoint, retrying while the mount is
 // still present for up to umountBusyRetryBudget. It returns nil once the
-// mount is gone, whatever the individual attempts reported.
+// mount is gone, whatever the individual attempts reported. A final failure
+// carries umount's own message (for example "target is busy").
 func umountRetryBusy(mountpoint string) error {
 	return retryUmountWhileMounted(mountpoint,
-		func(mp string) error { return exec.Command("umount", mp).Run() },
+		func(mp string) error {
+			out, err := exec.Command("umount", mp).CombinedOutput()
+			if err != nil && len(bytes.TrimSpace(out)) > 0 {
+				return fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
+			}
+			return err
+		},
 		func(mp string) (bool, error) {
 			current, err := resourceMountAt(mp)
 			return current != nil, err

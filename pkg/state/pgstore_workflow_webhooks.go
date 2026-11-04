@@ -56,7 +56,7 @@ func webhookAutomationDefinitionTx(ctx context.Context, tx pgx.Tx, appID, name s
 	}
 	spec, reason, err := webhookAutomationDefinition(live.Workflows, records, name, api.Plan(live.Plan))
 	if err == nil {
-		paused, pauseErr := q.AutomationFailurePaused(ctx, tx, sqlc.AutomationFailurePausedParams{AppID: mustPgUUID(appID), Name: name})
+		paused, _, pauseErr := automationFailureBlocksAdmissionPG(ctx, tx, appID, name, time.Now().UTC())
 		if pauseErr != nil {
 			return nil, "", "", pauseErr
 		}

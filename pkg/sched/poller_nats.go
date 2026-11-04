@@ -10,10 +10,19 @@
 // on consumer restart (JetStream's "at-least-once" guarantee).
 //
 // Nack: Msg.NakWithDelay(delay) — broker-side redelivery with a
-// delay window. The dispatcher's retry FSM passes the
-// trigger_records.next_fire_at - now() delta as the delay so a
-// retry row in trigger_records and a Nak in the broker stay in
-// sync (same wake-up time on both sides of the dispatch seam).
+// delay window. The dispatcher's retry FSM passes the record's
+// trigger_records.next_fire_at (NackUntil) so a retry row in
+// trigger_records and a Nak in the broker stay in sync: the record
+// comes back when it is due, not every 2 s while it cools. The
+// consumer has no MaxDeliver: the trigger's max_attempts decides when
+// a record is dead-lettered (and then terminated), so cooling
+// redeliveries and batch carry-over cannot make the server drop a
+// record that is still `retry` (ADR-20261101093512).
+//
+// Record IDs are stream/sequence@timestamp: a recreated stream restarts
+// its sequences, and the stream name and stored time keep a new message
+// from reusing an old record's ID. Records stored before that used the
+// bare sequence.
 //
 // Connection sharing: many kind=nats triggers share one
 // nats.Conn. Per-trigger state is the durable Consumer handle —
@@ -41,6 +50,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -140,6 +150,9 @@ type natsPoller struct {
 
 	mu       sync.Mutex
 	inFlight map[string]natsMsg
+	// due remembers when a record NackUntil held is due, so an early
+	// redelivery of it waits out the rest of its retry delay.
+	due map[string]time.Time
 	// seqFallback is an atomic-ish counter incremented under mu
 	// and used to disambiguate seqStr when msg.Metadata() returns
 	// an error or nil (e.g. legacy un-acked JetStream messages).
@@ -213,12 +226,7 @@ func newNATSPoller(broker *natsBroker, t sqlc.Trigger) (triggerSource, error) {
 	if cfg.Durable == "" {
 		cfg.Durable = "faas-" + t.ID.String()
 	}
-	consumer, err := broker.js.CreateOrUpdateConsumer(context.Background(), cfg.Stream, jetstream.ConsumerConfig{
-		Name:          cfg.Durable,
-		FilterSubject: cfg.Subject,
-		AckPolicy:     jetstream.AckExplicitPolicy,
-		MaxDeliver:    25,
-	})
+	consumer, err := broker.js.CreateOrUpdateConsumer(context.Background(), cfg.Stream, natsConsumerConfig(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("nats_poller: create consumer %s/%s: %w", cfg.Stream, cfg.Durable, err)
 	}
@@ -231,6 +239,36 @@ func newNATSPoller(broker *natsBroker, t sqlc.Trigger) (triggerSource, error) {
 		batchMax: 100,
 		inFlight: map[string]natsMsg{},
 	}, nil
+}
+
+// natsConsumerConfig is the durable consumer a NATS trigger reads. It
+// starts at the stream's first message (DeliverAll) when it is created, and
+// a recreated trigger, with a new id, gets a new consumer that starts there
+// again. MaxDeliver is unlimited: with the old 25, redeliveries during a
+// retry's backoff used up the deliveries around attempt 5 and the server
+// dropped the message while its record stayed `retry` with no dead letter.
+// The dispatcher dead-letters at the trigger's max_attempts and terminates
+// the message then (ADR-20261101093512). An existing consumer is updated in
+// place; its deliver policy is unchanged.
+func natsConsumerConfig(cfg natsConfig) jetstream.ConsumerConfig {
+	return jetstream.ConsumerConfig{
+		Name:          cfg.Durable,
+		FilterSubject: cfg.Subject,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		DeliverPolicy: jetstream.DeliverAllPolicy,
+		MaxDeliver:    -1,
+	}
+}
+
+// natsRecordID identifies a message across redeliveries: its stream and
+// stream sequence, plus the time the stream stored it, so a recreated
+// stream whose sequences restart does not reuse an earlier record's ID.
+func natsRecordID(stream string, seq uint64, stored time.Time) string {
+	id := fmt.Sprintf("%s/%d", stream, seq)
+	if !stored.IsZero() {
+		id += fmt.Sprintf("@%d", stored.UnixMilli())
+	}
+	return id
 }
 
 // Kind returns the trigger kind this poller handles.
@@ -269,14 +307,21 @@ func (n *natsPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		var (
 			seqStr      string
 			stableID    string
+			legacyIDs   []string
 			receivedAt  = time.Now()
 			deliveryNum uint64
 		)
 		if md, mdErr := msg.Metadata(); mdErr == nil && md != nil {
-			seqStr = fmt.Sprintf("%d", md.Sequence.Stream)
+			stream := md.Stream
+			if stream == "" {
+				stream = n.stream
+			}
+			seqStr = natsRecordID(stream, md.Sequence.Stream, md.Timestamp)
+			legacyIDs = []string{fmt.Sprintf("%d", md.Sequence.Stream)}
 			if md.Sequence.Stream > 0 {
 				stableID = seqStr
 			}
+			meta["stream"] = stream
 			meta["sequence"] = md.Sequence.Stream
 			meta["delivery_count"] = md.NumDelivered
 			if !md.Timestamp.IsZero() {
@@ -299,12 +344,13 @@ func (n *natsPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 			seqStr = fmt.Sprintf("seq-fallback-%d", fb)
 		}
 		out = append(out, SourceRecord{
-			ItemIdentifier:   seqStr,
-			StableIdentifier: stableID,
-			Payload:          msg.Data(),
-			Headers:          hdrs,
-			Metadata:         meta,
-			ReceivedAt:       receivedAt,
+			ItemIdentifier:    seqStr,
+			StableIdentifier:  stableID,
+			LegacyIdentifiers: legacyIDs,
+			Payload:           msg.Data(),
+			Headers:           hdrs,
+			Metadata:          meta,
+			ReceivedAt:        receivedAt,
 		})
 		// Stash the message handle so Ack/Nack can find it.
 		n.mu.Lock()
@@ -334,19 +380,72 @@ func (n *natsPoller) Ack(_ context.Context, _ sqlc.Trigger, ids []string) error 
 			firstErr = fmt.Errorf("nats_poller: ack %s: %w", id, err)
 		}
 		delete(n.inFlight, id)
+		delete(n.due, id)
 	}
 	return firstErr
 }
 
-// Nack signals broker-side redelivery with a delay. poison_record
-// becomes Term (drop without re-deliver); everything else
-// becomes NakWithDelay(2s).
-//
-// 2s is a fixed broker-side delay window — the per-record
-// next_fire_at on the trigger_records row carries the
-// application-level retry timing. The broker-side Nak delay is
-// only there to give the broker's redelivery loop sane spacing
-// without re-fetching immediately.
+// NackUntil holds retried messages at the server until their retry is due
+// (until[i] for ids[i]), so a cooling retry spends no deliveries.
+func (n *natsPoller) NackUntil(_ context.Context, _ sqlc.Trigger, ids []string, until []time.Time) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	now := time.Now()
+	if n.due == nil {
+		n.due = map[string]time.Time{}
+	}
+	var firstErr error
+	for i, id := range ids {
+		msg, ok := n.inFlight[id]
+		if !ok {
+			continue
+		}
+		n.due[id] = until[i]
+		if err := msg.NakWithDelay(max(until[i].Sub(now), 0)); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("nats_poller: nak %s: %w", id, err)
+		}
+		delete(n.inFlight, id)
+	}
+	n.forgetPastDueLocked(now)
+	return firstErr
+}
+
+// Defer hands messages the batch left out straight back to the server.
+func (n *natsPoller) Defer(_ context.Context, _ sqlc.Trigger, ids []string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var firstErr error
+	for _, id := range ids {
+		msg, ok := n.inFlight[id]
+		if !ok {
+			continue
+		}
+		if err := msg.NakWithDelay(0); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("nats_poller: nak %s: %w", id, err)
+		}
+		delete(n.inFlight, id)
+	}
+	return firstErr
+}
+
+// forgetPastDueLocked drops due times that passed long ago, for messages
+// that never came back (a trigger change, another node). Caller holds n.mu.
+func (n *natsPoller) forgetPastDueLocked(now time.Time) {
+	if len(n.due) < 1024 {
+		return
+	}
+	for id, at := range n.due {
+		if at.Before(now.Add(-time.Hour)) {
+			delete(n.due, id)
+		}
+	}
+}
+
+// Nack signals broker-side redelivery with a delay. poison_record and
+// max_attempts become Term (drop without re-deliver); everything else
+// becomes NakWithDelay: the rest of the record's retry delay when
+// NackUntil set one (an early redelivery while it cools), else
+// api.TriggerBrokerEarlyRedeliveryDelay (2 s) of spacing.
 func (n *natsPoller) Nack(_ context.Context, _ sqlc.Trigger, ids []string, reason string) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -360,10 +459,16 @@ func (n *natsPoller) Nack(_ context.Context, _ sqlc.Trigger, ids []string, reaso
 		switch reason {
 		case triggerReasonMaxAttempts:
 			err = msg.TermWithReason("max_attempts")
+			delete(n.due, id)
 		case triggerReasonPoisonRecord:
 			err = msg.TermWithReason("poison")
+			delete(n.due, id)
 		default:
-			err = msg.NakWithDelay(2 * time.Second)
+			delay := api.TriggerBrokerEarlyRedeliveryDelay
+			if rest := time.Until(n.due[id]); rest > delay {
+				delay = rest
+			}
+			err = msg.NakWithDelay(delay)
 		}
 		if err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("nats_poller: nack %s: %w", id, err)

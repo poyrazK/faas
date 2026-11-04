@@ -1,4 +1,4 @@
-// adr: 20261102081618
+// adr: 20261102081618, 20261103163954
 package daemonunitspec
 
 import (
@@ -33,6 +33,9 @@ func TestGatewaydPublicEdgeDirectEntry(t *testing.T) {
 	if defaults["faas_edge_entry"] != "tunnel" {
 		t.Errorf("faas_edge_entry defaults to %v, want tunnel; the manifest turns direct entry on per cell", defaults["faas_edge_entry"])
 	}
+	if defaults["faas_edge_public_front"] != "cloudflare" {
+		t.Errorf("faas_edge_public_front defaults to %v, want cloudflare", defaults["faas_edge_public_front"])
+	}
 	if enable := read("tasks/enable.yml"); !strings.Contains(enable, "require the direct-entry TLS material") {
 		t.Error("the role must check the TLS material before it renders direct entry")
 	}
@@ -54,30 +57,56 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 		"Environment=FAAS_EDGE_PUBLIC_TLS_KEY_FILE=%d/edge_tls_key\n",
 		"Environment=FAAS_EDGE_PUBLIC_TLS_CLIENT_CA_FILE=%d/edge_tls_client_ca\n",
 	}
-	for _, entry := range []string{"tunnel", "both", ""} {
-		t.Run("entry="+entry, func(t *testing.T) {
-			values := map[string]any{"faas_edge_control_plane_target": "http://10.42.0.1:8090"}
-			for k, v := range defaults {
+	render := func(t *testing.T, overrides map[string]any) string {
+		t.Helper()
+		values := map[string]any{"faas_edge_control_plane_target": "http://10.42.0.1:8090"}
+		for k, v := range defaults {
+			values[k] = v
+		}
+		for k, v := range overrides {
+			if v == nil {
+				delete(values, k)
+			} else {
 				values[k] = v
 			}
+		}
+		encoded, err := json.Marshal(values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output, err := exec.Command("python3", "-c", script, filepath.Join(roleDir, "templates", "99-faas-edge.conf.j2"), string(encoded)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("standard Jinja render failed: %v: %s", err, output)
+		}
+		return string(output)
+	}
+	const noFront = "Environment=FAAS_EDGE_PUBLIC_FRONT=none\n"
+	for _, entry := range []string{"tunnel", "both", ""} {
+		t.Run("entry="+entry, func(t *testing.T) {
+			var value any = entry
 			if entry == "" {
-				delete(values, "faas_edge_entry")
-			} else {
-				values["faas_edge_entry"] = entry
+				value = nil
 			}
-			encoded, err := json.Marshal(values)
-			if err != nil {
-				t.Fatal(err)
-			}
-			output, err := exec.Command("python3", "-c", script, filepath.Join(roleDir, "templates", "99-faas-edge.conf.j2"), string(encoded)).CombinedOutput()
-			if err != nil {
-				t.Fatalf("standard Jinja render failed: %v: %s", err, output)
-			}
+			output := render(t, map[string]any{"faas_edge_entry": value})
 			for _, line := range want {
-				if got := strings.Contains(string(output), line); got != (entry == "both") {
+				if got := strings.Contains(output, line); got != (entry == "both") {
 					t.Errorf("%q rendered = %v, want %v:\n%s", line, got, entry == "both", output)
 				}
 			}
+			if strings.Contains(output, noFront) {
+				t.Errorf("the default front rendered %q:\n%s", noFront, output)
+			}
 		})
 	}
+	// ADR-20261103163954 §2: with no front the edge serves clients directly
+	// and still verifies the zone's client certificate when given, so it
+	// keeps every setting and gains the front switch.
+	t.Run("entry=both front=none", func(t *testing.T) {
+		output := render(t, map[string]any{"faas_edge_entry": "both", "faas_edge_public_front": "none"})
+		for _, line := range append(want, noFront) {
+			if !strings.Contains(output, line) {
+				t.Errorf("%q not rendered:\n%s", line, output)
+			}
+		}
+	})
 }

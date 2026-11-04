@@ -1,15 +1,43 @@
 package apidserver_test
 
 import (
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestIssueQuotaResponseRetryability(t *testing.T) {
+	for _, tc := range []struct {
+		resource    string
+		rate        bool
+		status      int
+		retry, code string
+	}{
+		{"events", false, http.StatusTooManyRequests, "60", "issue_quota_exceeded"},
+		{"events_per_minute", true, http.StatusTooManyRequests, "60", "issue_rate_limited"},
+		{"issues", false, http.StatusConflict, "", "issue_quota_exceeded"},
+	} {
+		t.Run(tc.resource, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			apidserver.WriteIssueErrorForTest(w, &state.IssueLimitError{Resource: tc.resource, Limit: 1, Observed: 2, Rate: tc.rate})
+			var problem api.Problem
+			if err := json.Unmarshal(w.Body.Bytes(), &problem); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != tc.status || w.Header().Get("Retry-After") != tc.retry || problem.Code != tc.code {
+				t.Fatalf("status=%d retry=%q problem=%+v", w.Code, w.Header().Get("Retry-After"), problem)
+			}
+		})
+	}
+}
 
 func TestParseIssueListFilter(t *testing.T) {
 	accountID := uuid.NewString()

@@ -291,6 +291,115 @@ export class KeysService {
     });
   }
   /**
+   * List the agents acting in an organization.
+   * Hosted MCP connections bound to the organization and its API keys
+   * with the `agent` scope that still work, newest first, with the
+   * member who connected each. Owners and admins only.
+   *
+   * @returns AgentConnectionsResponse The organization's connected agents.
+   * @throws ApiError
+   */
+  public static listOrgAgentConnections({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AgentConnectionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/agent-connections',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke every agent acting in an organization.
+   * Revokes the API key of every agent acting in the organization; each
+   * must sign in again. Owners and admins only. Each revocation is
+   * recorded in the organization's activity.
+   *
+   * @returns AgentConnectionsRevokeAllResponse How many of the organization's connections were revoked.
+   * @throws ApiError
+   */
+  public static revokeAllOrgAgentConnections({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AgentConnectionsRevokeAllResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/revoke_all',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke one agent acting in an organization.
+   * Revokes the agent's API key; the agent must sign in again. Owners and
+   * admins only. An id that is not one of the organization's agents is
+   * 404.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeOrgAgentConnection({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The API key id of an agent acting in the organization.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{slug}/agent-connections/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * List API keys minted against the active org.
    * Returns every key the org owns (active + grace + revoked).
    * Mirrors `GET /v1/keys`; the canonical path. The `org_id`

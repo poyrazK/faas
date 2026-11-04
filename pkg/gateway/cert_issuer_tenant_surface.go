@@ -348,19 +348,18 @@ func (i *TenantSurfaceCertIssuer) RequestCertForWildcardDomain(ctx context.Conte
 	if !d.Verified() {
 		return nil
 	}
+	ctx = state.WithCustomDomainProbe(ctx, d)
 	if err := i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertPending, time.Time{}, "", d.DNSLastCheckedAt); err != nil {
 		return err
 	}
 	if i.le == nil {
 		errMsg := "cert engine unwired: wildcard DNS-01 issuer is not configured"
-		_ = i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt)
-		return nil
+		return i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt)
 	}
 	notAfter, err := i.le.Issue(ctx, domain)
 	if err != nil {
 		errMsg := fmt.Sprintf("certmagic wildcard Issue: %v", err)
-		_ = i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt)
-		return err
+		return errors.Join(err, i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertFailed, time.Time{}, errMsg, d.DNSLastCheckedAt))
 	}
 	return i.store.UpdateCustomDomainCertStatus(ctx, domain, state.CustomDomainCertIssued, notAfter, "", d.DNSLastCheckedAt)
 }

@@ -146,7 +146,7 @@ func TestServiceSnapshotAffinityMatchesLivePickerAndProofOmitsRandomSelection(t 
 	for _, key := range []string{"one", "two"} {
 		r := httptest.NewRequest(http.MethodGet, "http://orders.internal/health", nil)
 		r = r.WithContext(WithServicePolicyRoutingInputs(r.Context(), ServicePolicyRoutingInputs{ReleaseValid: true, SelectionKey: key}))
-		if proxy.pinServicePolicy(httptest.NewRecorder(), r, "client", "orders", true) {
+		if proxy.pinServicePolicy(httptest.NewRecorder(), r, "client", "orders", true, nil) {
 			t.Fatal("pin failed")
 		}
 		if got := TrafficPolicyRevision(r.Context()); proof == "" {

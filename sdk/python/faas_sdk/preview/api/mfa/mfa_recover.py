@@ -43,6 +43,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -67,10 +72,10 @@ def sync_detailed(
 ) -> Response[MFARecoverResponse | Problem]:
     """Burn a recovery code to regain access.
 
-     Use when the customer's TOTP device is lost. Removes
-    one matching SHA-256 hash from the stored set; if the
-    customer burns the last code, /recover still works but
-    /disable via recovery_code no longer does.
+     Use when an enrolled customer's TOTP device is lost. Removes
+    one matching recovery-code hash from the stored set. The last
+    code is reserved for disabling MFA via recovery_code instead.
+    Pending setup material does not authorize recovery.
 
     Args:
         body (MFARecoverRequest): Body for /recover — one of the 10 recovery codes the
@@ -104,10 +109,10 @@ def sync(
 ) -> MFARecoverResponse | Problem | None:
     """Burn a recovery code to regain access.
 
-     Use when the customer's TOTP device is lost. Removes
-    one matching SHA-256 hash from the stored set; if the
-    customer burns the last code, /recover still works but
-    /disable via recovery_code no longer does.
+     Use when an enrolled customer's TOTP device is lost. Removes
+    one matching recovery-code hash from the stored set. The last
+    code is reserved for disabling MFA via recovery_code instead.
+    Pending setup material does not authorize recovery.
 
     Args:
         body (MFARecoverRequest): Body for /recover — one of the 10 recovery codes the
@@ -136,10 +141,10 @@ async def asyncio_detailed(
 ) -> Response[MFARecoverResponse | Problem]:
     """Burn a recovery code to regain access.
 
-     Use when the customer's TOTP device is lost. Removes
-    one matching SHA-256 hash from the stored set; if the
-    customer burns the last code, /recover still works but
-    /disable via recovery_code no longer does.
+     Use when an enrolled customer's TOTP device is lost. Removes
+    one matching recovery-code hash from the stored set. The last
+    code is reserved for disabling MFA via recovery_code instead.
+    Pending setup material does not authorize recovery.
 
     Args:
         body (MFARecoverRequest): Body for /recover — one of the 10 recovery codes the
@@ -171,10 +176,10 @@ async def asyncio(
 ) -> MFARecoverResponse | Problem | None:
     """Burn a recovery code to regain access.
 
-     Use when the customer's TOTP device is lost. Removes
-    one matching SHA-256 hash from the stored set; if the
-    customer burns the last code, /recover still works but
-    /disable via recovery_code no longer does.
+     Use when an enrolled customer's TOTP device is lost. Removes
+    one matching recovery-code hash from the stored set. The last
+    code is reserved for disabling MFA via recovery_code instead.
+    Pending setup material does not authorize recovery.
 
     Args:
         body (MFARecoverRequest): Body for /recover — one of the 10 recovery codes the

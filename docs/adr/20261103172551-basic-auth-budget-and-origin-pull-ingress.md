@@ -37,17 +37,15 @@ A sixth edge-security review found:
 
 ## Decision
 
-1. **A wrong-guess budget per client and app.** One client source (an IPv4
-   address or IPv6 /64, the trusted hop's address) may present
-   `GatewayFailedBasicAuthPerSourcePerApp` (10) wrong credentials to one app
-   per `GatewayFailedBasicAuthWindow` (one minute). Past it the gateway
-   answers 429 `auth_rate_limited` with `Retry-After`, without comparing, and
-   audits `instances.public_auth_throttled`. Successful sign-ins and unseal
-   failures do not spend it. The budget is per app, so a lockout on one app
-   does not reach another. A request without a trusted client address has no
-   budget, as in bearer mode. A newly set basic-auth password is at least
-   `AppPublicAuthBasicPassMinBytes` (12) bytes; existing credentials keep
-   working until they are next changed.
+1. **A wrong-guess budget per client and app.** Bug hunt H76 (#6498) landed
+   this first, and this record adopts it: one client prefix (IPv4 /24 or
+   IPv6 /64) may present `PublicAuthBasicFailuresPerWindow` (10) wrong
+   passwords to one app per `PublicAuthBasicFailureWindow` (one minute). Past
+   it the gateway answers 429 `auth_rate_limited` with `Retry-After`, without
+   comparing. The budget is per app, so a lockout on one app does not reach
+   another. A newly set basic-auth password is at least
+   `PublicAuthBasicPassMinBytes` (12) bytes; existing credentials keep working
+   until they are next changed.
 2. **Cloudflare ingress requires the zone's client certificate.** The
    public_edge role refuses to deploy a platform site that admits Cloudflare
    (`faas_public_edge_cloudflare_only`, or custom-domain TLS) without
@@ -71,6 +69,7 @@ A sixth edge-security review found:
   sets the opt-out. Every zone the platform site serves (the platform, apps,
   deployment-preview and alias domains) needs the client certificate
   uploaded, signed by the same CA.
-- A client that mistypes a basic-auth password ten times in a minute waits a
-  minute. Clients behind one NAT share the budget per app.
+- A client that mistypes a basic-auth password ten times in a minute waits
+  until the failures age out. Clients in one /24 (IPv4) or /64 (IPv6) share
+  the budget per app.
 - A request to set a basic-auth password shorter than 12 bytes gets 422.

@@ -29,29 +29,58 @@ type TriggerBatchClaimer interface {
 	ClaimTriggerRecordsByItems(context.Context, string, []string) ([]sqlc.TriggerRecord, error)
 }
 
-// TriggerTerminalRecordReader lets the dispatcher acknowledge a broker
-// redelivery whose durable receipt was already completed or ended by a work
-// policy. It never returns dead-letter rows, whose broker poison strategy may
-// intentionally seek and await an operator retry.
-type TriggerTerminalRecordReader interface {
-	ListTerminalTriggerRecordItems(context.Context, string, []string) ([]string, error)
+// TriggerRecordItemState is the stored state of one trigger record, found by
+// its item identifier.
+type TriggerRecordItemState struct {
+	Item  string
+	State string
+	// NextFireAt is when a pending or retry record is due.
+	NextFireAt time.Time
+	// ClaimExpiresAt is when a claimed record's claim lapses.
+	ClaimExpiresAt time.Time
+	// Topic is the Kafka topic the record's metadata names, "" otherwise.
+	Topic string
+	// DeadLetterReason is the record's dead-letter reason, "" without one.
+	DeadLetterReason string
 }
 
-func (s *PgStore) ListTerminalTriggerRecordItems(ctx context.Context, triggerID string, items []string) ([]string, error) {
+// TriggerRecordStateReader lets the dispatcher settle a broker redelivery
+// whose record is already terminal (succeeded, ended by a work policy or
+// dead-lettered) without dispatching the application again, hold one whose
+// retry is still cooling, and find a record stored under an earlier
+// release's item identifier (ADR-20261101093512). Items without a record are
+// left out.
+type TriggerRecordStateReader interface {
+	TriggerRecordStatesByItems(ctx context.Context, triggerID string, items []string) ([]TriggerRecordItemState, error)
+}
+
+// TriggerClaimRenewer keeps the claims of a batch whose dispatch is still
+// running. Each record renews only while it is claimed under generations[i]
+// and its claim has not lapsed; the claim then lasts at least lease from now.
+// It returns how many claims it renewed.
+type TriggerClaimRenewer interface {
+	RenewTriggerRecordClaims(ctx context.Context, triggerID string, ids []string, generations []int64, lease time.Duration) (int64, error)
+}
+
+func (s *PgStore) TriggerRecordStatesByItems(ctx context.Context, triggerID string, items []string) ([]TriggerRecordItemState, error) {
 	if len(items) == 0 {
 		return nil, nil
 	}
-	terminal, err := s.triggerQueries().ListTerminalTriggerRecordItems(ctx, s.pool,
-		sqlc.ListTerminalTriggerRecordItemsParams{
-			TriggerID: mustPgUUID(triggerID), ItemIdentifiers: items,
-		})
+	rows, err := s.triggerQueries().TriggerRecordStatesByItems(ctx, s.pool,
+		sqlc.TriggerRecordStatesByItemsParams{TriggerID: mustPgUUID(triggerID), ItemIdentifiers: items})
 	if err != nil {
-		return nil, fmt.Errorf("state: list terminal trigger records: %w", err)
+		return nil, fmt.Errorf("state: trigger record states: %w", err)
 	}
-	return terminal, nil
+	out := make([]TriggerRecordItemState, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, TriggerRecordItemState{Item: row.ItemIdentifier, State: row.State,
+			NextFireAt: row.NextFireAt.Time, ClaimExpiresAt: row.ClaimExpiresAt.Time,
+			Topic: row.Topic, DeadLetterReason: row.DeadLetterReason})
+	}
+	return out, nil
 }
 
-func (m *MemStore) ListTerminalTriggerRecordItems(_ context.Context, triggerID string, items []string) ([]string, error) {
+func (m *MemStore) TriggerRecordStatesByItems(_ context.Context, triggerID string, items []string) ([]TriggerRecordItemState, error) {
 	if len(items) == 0 {
 		return nil, nil
 	}
@@ -61,17 +90,67 @@ func (m *MemStore) ListTerminalTriggerRecordItems(_ context.Context, triggerID s
 	for _, item := range items {
 		allowed[item] = true
 	}
-	var terminal []string
+	reasons := make(map[pgtype.UUID]string, len(m.triggerDeadLetters))
+	for _, dl := range m.triggerDeadLetters {
+		reasons[dl.RecordID] = dl.Reason
+	}
+	var out []TriggerRecordItemState
 	for _, record := range m.records {
 		if record.TriggerID.String() != triggerID || !allowed[record.ItemIdentifier] {
 			continue
 		}
-		switch record.State {
-		case "succeeded", "superseded", "cancelled", "expired":
-			terminal = append(terminal, record.ItemIdentifier)
+		var meta struct {
+			Topic any `json:"topic"`
 		}
+		_ = json.Unmarshal(record.Metadata, &meta)
+		topic, _ := meta.Topic.(string)
+		out = append(out, TriggerRecordItemState{Item: record.ItemIdentifier, State: record.State,
+			NextFireAt: record.NextFireAt.Time, ClaimExpiresAt: record.ClaimExpiresAt.Time,
+			Topic: topic, DeadLetterReason: reasons[record.ID]})
 	}
-	return terminal, nil
+	return out, nil
+}
+
+func (s *PgStore) RenewTriggerRecordClaims(ctx context.Context, triggerID string, ids []string, generations []int64, lease time.Duration) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if len(ids) != len(generations) {
+		return 0, fmt.Errorf("state: renew trigger claims: %d ids, %d generations", len(ids), len(generations))
+	}
+	pgIDs := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		pgIDs = append(pgIDs, mustPgUUID(id))
+	}
+	n, err := s.triggerQueries().RenewTriggerRecordClaims(ctx, s.pool, sqlc.RenewTriggerRecordClaimsParams{
+		LeaseSeconds: lease.Seconds(), TriggerID: mustPgUUID(triggerID), Ids: pgIDs, ClaimGenerations: generations,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("state: renew trigger claims: %w", err)
+	}
+	return n, nil
+}
+
+func (m *MemStore) RenewTriggerRecordClaims(_ context.Context, triggerID string, ids []string, generations []int64, lease time.Duration) (int64, error) {
+	if len(ids) != len(generations) {
+		return 0, fmt.Errorf("state: renew trigger claims: %d ids, %d generations", len(ids), len(generations))
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	until := time.Now().UTC().Add(lease)
+	var renewed int64
+	for i, id := range ids {
+		r, ok := m.records[id]
+		if !ok || r.TriggerID.String() != triggerID || !memTriggerClaimCurrent(r, generations[i]) {
+			continue
+		}
+		if r.ClaimExpiresAt.Time.Before(until) {
+			r.ClaimExpiresAt = pgtypeFromTime(until)
+			m.records[id] = r
+		}
+		renewed++
+	}
+	return renewed, nil
 }
 
 func (s *PgStore) ClaimTriggerRecordsByItems(ctx context.Context, triggerID string, items []string) ([]sqlc.TriggerRecord, error) {

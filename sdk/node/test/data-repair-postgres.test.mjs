@@ -150,7 +150,7 @@ test('capture readiness observes restricted writer sessions without writes or re
   let roleCreated=false;
   const writerPool=(setting='')=>({connect:async()=>{
     const client=await writers.connect();
-    try {await client.query('RESET ROLE');await client.query("SET session_replication_role='origin';SET default_transaction_read_only='off'");
+    try {await client.query('RESET ROLE');await client.query("SET session_replication_role='origin';SET default_transaction_read_only='off';SET TIME ZONE 'Europe/Istanbul'");
       if(setting)await client.query(setting);
       await client.query(`SET ROLE "${role}"`);return client;
     }catch(error){client.release(true);throw error;}
@@ -159,7 +159,7 @@ test('capture readiness observes restricted writer sessions without writes or re
     await owner.query(await readFile(process.env.GREGALE_DATA_REPAIR_SCHEMA,'utf8'));await owner.query(operationReceiptSchema);
     await owner.query(`CREATE TABLE public.gregale_customer_operation_inbox(LIKE public.gregale_operation_inbox INCLUDING ALL);
       ALTER TABLE public.gregale_customer_operation_inbox ALTER COLUMN platform_tenant_id SET NOT NULL;
-      CREATE TABLE products(id bigint PRIMARY KEY,category text);SELECT gregale_repair.enroll('products',ARRAY['category']);INSERT INTO products(id,category) VALUES(1,'old'),(2,'old')`);
+      CREATE TABLE products(id bigint PRIMARY KEY,category text,stamp timestamptz DEFAULT '2026-11-03T10:00:00Z'::timestamptz);SELECT gregale_repair.enroll('products',ARRAY['category']);INSERT INTO products(id,category) VALUES(1,'old'),(2,'old')`);
     await owner.query(`CREATE ROLE "${role}" NOLOGIN`);roleCreated=true;
     const grants=await readFile(new URL('../../data-repair-tests/writer-grants.sql',import.meta.url),'utf8');
     await owner.query(grants.replaceAll('__WRITER_ROLE__',`"${role}"`));

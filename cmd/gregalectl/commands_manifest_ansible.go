@@ -225,7 +225,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 		}
 		body += databases.hostVars(host, hostScheddTarget)
-		body += renderComputeEdgeVars(m.PublicEdge, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		body += renderComputeEdgeVars(m.PublicEdge, host, postgresListenAddress, computeAllowedCIDRs)
 		if host.Role == roleControlPlane {
 			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts)
 		}
@@ -756,7 +756,8 @@ func renderWorkloadIdentityVars(w manifest.WorkloadIdentity) string {
 	return fmt.Sprintf("faas_workload_identity_source_dir: %q\n", w.SourceDir)
 }
 
-func renderComputeEdgeVars(edge manifest.PublicEdge, role, controlPlaneAddress string, computeCIDRs []string) string {
+func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, controlPlaneAddress string, computeCIDRs []string) string {
+	role := host.Role
 	if !edge.ComputeNodes || controlPlaneAddress == "" {
 		return ""
 	}
@@ -789,25 +790,54 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, role, controlPlaneAddress s
 			fmt.Fprintf(&b, "faas_edge_entry: %q\n", edge.Entry)
 			b.WriteString("faas_cloudflare_origin_only: true\n")
 		}
+		// ADR-20261103163954 §6: with nothing in front, clients reach the
+		// edge on the entry address, which takes 443 from everyone and
+		// nothing else, and the edge applies the client limits itself. The
+		// entry-address rules take precedence over the Cloudflare-only ones
+		// above, which stay as the fail-closed fallback.
+		if edge.NoFront() {
+			fmt.Fprintf(&b, "faas_edge_public_front: %q\n", edge.Front)
+			b.WriteString("faas_edge_client_limits: true\n")
+			fmt.Fprintf(&b, "faas_public_entry_addrs: [%s]\n", quotedYAMLList([]string{host.EntryAddress()}))
+		}
 	}
 	return b.String()
 }
 
 // renderEdgeDNSVars turns on edgednsd on the control plane
 // (ADR-20261102081618 §3) with the managed names and each compute host's
-// public address under the name it registers with.
+// public address under the name it registers with. Under front: none the
+// names are DNS-only, apart from the proxied ones, and point at the entry
+// addresses (ADR-20261103163954 §1).
 func renderEdgeDNSVars(edge manifest.PublicEdge, hosts []manifest.Host) string {
 	if edge.DNS == nil || !edge.DirectEntry() {
 		return ""
 	}
-	names := make([]string, 0, len(edge.DNS.Names))
+	proxied := map[string]bool{}
+	for _, name := range edge.DNS.Proxied {
+		proxied[name] = true
+	}
+	names := make([]string, 0, len(edge.DNS.Names)+len(edge.DNS.Proxied))
 	for _, name := range edge.DNS.Names {
-		names = append(names, edge.DNS.ZoneID+":"+name)
+		entry := edge.DNS.ZoneID + ":" + name
+		if edge.NoFront() && !proxied[name] {
+			entry += ":dns-only"
+		}
+		names = append(names, entry)
+	}
+	for _, name := range edge.DNS.Proxied {
+		if !slices.Contains(edge.DNS.Names, name) {
+			names = append(names, edge.DNS.ZoneID+":"+name)
+		}
 	}
 	var addresses []string
 	for _, h := range hosts {
-		if h.Role == roleComputeOnly && h.PublicIPv4 != "" {
-			addresses = append(addresses, canonicalComputeNodeName(h.Name, roleTemplating.Role(h.Role))+"="+h.PublicIPv4)
+		addr := h.PublicIPv4
+		if edge.NoFront() {
+			addr = h.EntryAddress()
+		}
+		if h.Role == roleComputeOnly && addr != "" {
+			addresses = append(addresses, canonicalComputeNodeName(h.Name, roleTemplating.Role(h.Role))+"="+addr)
 		}
 	}
 	var b strings.Builder

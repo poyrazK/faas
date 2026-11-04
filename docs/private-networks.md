@@ -37,10 +37,11 @@ network+2). When the fabric flag is enabled, schedd first asks every vmmd
 hosting the app to reconcile a dedicated, account-scoped host bridge for that
 network, then activates app routes. A bridge failure leaves the attachment in
 `error` and traffic blocked. Ready Gregale-owned attachments now get a
-node-local private veth side-link into the `gpn-*` bridge, with the stable
-network member address allocated at attach time. Private ingress is DNATed to
-the guest's fixed `10.0.0.2:8080` contract and guest-originated private traffic
-is SNATed back to that member address; the existing `br-tenants` veth remains
+node-local private veth side-link into the `gpn-*` bridge. Each VM receives a
+unique member address; the app's stable attach-time address is a service IP
+with one owner. Private ingress is DNATed to the guest's fixed `10.0.0.2`
+address and configured application port. Guest-originated private traffic is
+SNATed to the instance's member address; the existing `br-tenants` veth remains
 the public-egress path. Cross-node transport is converged separately by the
 regional `gpx-*` VXLAN link described below.
 Set
@@ -127,13 +128,14 @@ routable underlay). This is disabled by default and does not call DigitalOcean:
 [compute_node]
 private_network_transport_enabled = true
 private_network_transport_interface = "tailscale0"
+private_network_transport_mtu = 1230
 private_network_transport_peers = ["100.64.0.11", "100.64.0.12"]
 overlay_ip = "100.64.0.10"
 ```
 
 `FAAS_PRIVATE_NETWORK_TRANSPORT_*` environment variables provide the same
-overrides. vmmd derives a stable `gpx-*` link and VNI per account/network,
-installs static peer FDB entries, and removes the link before deleting the
+overrides. vmmd derives a stable `gpx-*` link name and loads its reserved VNI
+from the regional allocator, installs static peer FDB entries, and removes the link before deleting the
 bridge. Once every active node has registered an overlay address, schedd
 authoritatively refreshes each node's regional peer set and vmmd flushes stale
 FDB entries before replacing the current set. During a rolling upgrade, an
@@ -147,6 +149,13 @@ as transport drift and schedd keeps the attachment fail-closed until the next
 reconcile repairs it; older vmmds without the probe remain compatible during
 the rolling upgrade.
 
+Every node in a region must use the same private-fabric MTU. The default 1230
+fits a 1280-byte encrypted underlay after Ethernet and IPv4/UDP/VXLAN overhead.
+Set `private_network_transport_mtu` or `FAAS_PRIVATE_NETWORK_TRANSPORT_MTU` to
+override it. vmmd rejects an underlay that cannot carry the configured size,
+repairs the private links' MTU, and limits TCP MSS in both directions. Guest
+network settings and public egress keep their existing values.
+
 Legacy external-network attachments still use the operator-managed connector
 and are enabled in schedd with
 `FAAS_PRIVATE_NETWORK_ENABLED=1` plus a `FAAS_PRIVATE_NETWORKS` JSON registry,
@@ -154,3 +163,17 @@ for example `[{"id":"corp-vpc","region":"fra1","ready":true}]`. This
 keeps cloud credentials out of the control plane while the provider adapter is
 rolled out; a future connector can replace the registry without changing the
 customer-facing attachment contract.
+
+Private-network replicas use separate instance source addresses. The app's stable
+private address belongs to one production replica at a time; direct connections
+to that address reach its current owner. Internal HTTP service routing continues
+to balance across eligible replicas. Allow capacity for one address per instance
+in addition to each app's stable address. Promotion waits for confirmed network
+cleanup of the previous owner; a lost node requires fencing before ownership can
+be retired safely. Network/app deletion may wait for that cleanup.
+
+Regional VXLAN identifiers are allocated durably and remain reserved after a
+network is deleted. Upgrade the control plane and every vmmd in the region and
+drain legacy private-network guests before using these runtime identities. See
+[the runtime identity decision](adr/20261104000101-private-network-runtime-identities.md)
+for ordering, recovery and mixed-version requirements.
