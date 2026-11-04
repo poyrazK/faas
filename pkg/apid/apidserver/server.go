@@ -117,8 +117,11 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	dataRepair                             repairapi.Managed
-	rehearsalNetworkEnabled                bool
+	dataRepair              repairapi.Managed
+	rehearsalNetworkEnabled bool
+	// environmentBranchContainmentEnabled admits contained environment
+	// branches (ADR-20261031193635 slice 6a).
+	environmentBranchContainmentEnabled    bool
 	rehearsalSimulationEnabled             bool
 	rehearsalWorkersEnabled                bool
 	rehearsalWorkerFaultsEnabled           bool

@@ -58,7 +58,7 @@ func TestEnvironmentBranchPublishesParentBuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, body := range []string{`{"slug":"pr-7","ttl":"5m"}`, `{"slug":"pr-7","egress":"contained"}`, `{"slug":"production"}`, `{"slug":"Not A Slug"}`} {
+	for _, body := range []string{`{"slug":"pr-7","ttl":"5m"}`, `{"slug":"pr-7","egress":"simulated"}`, `{"slug":"production"}`, `{"slug":"Not A Slug"}`} {
 		req, rec := environmentBranchRequest(http.MethodPost, "production", body)
 		srv.createProjectEnvironmentBranch(rec, req, acct)
 		if rec.Code != http.StatusBadRequest {
@@ -151,5 +151,22 @@ func TestEnvironmentBranchPublishesParentBuilds(t *testing.T) {
 	}
 	if _, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "pr-8"); err == nil {
 		t.Fatal("expired branch survived the sweep")
+	}
+
+	// Contained egress (slice 6a) waits for the operator gate.
+	req, rec = environmentBranchRequest(http.MethodPost, "production", `{"slug":"pr-9","egress":"contained"}`)
+	srv.createProjectEnvironmentBranch(rec, req, acct)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), api.CodeEnvironmentBranchUnavailable) {
+		t.Fatalf("contained with the gate off: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	srv.environmentBranchContainmentEnabled = true
+	req, rec = environmentBranchRequest(http.MethodPost, "production", `{"slug":"pr-9","egress":"contained"}`)
+	srv.createProjectEnvironmentBranch(rec, req, acct)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("contained branch status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	response = api.ProjectEnvironmentResponse{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || response.Branch == nil || response.Branch.Egress != api.EnvironmentBranchEgressContained {
+		t.Fatalf("contained branch response = %s, %v", rec.Body.String(), err)
 	}
 }

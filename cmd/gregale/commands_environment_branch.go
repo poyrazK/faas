@@ -11,7 +11,7 @@ import (
 
 // adr: 20261031193635 — environment branches.
 
-const environmentBranchUsage = "usage: gregale environment branch <project-slug> <environment-slug> [--from <environment>] [--ttl <duration>]\n" +
+const environmentBranchUsage = "usage: gregale environment branch <project-slug> <environment-slug> [--from <environment>] [--ttl <duration>] [--egress live|contained]\n" +
 	"       gregale environment branch <project-slug> --list [--from <environment>]"
 
 // gregale environment branch <project> <name> --from production. The branch
@@ -24,6 +24,7 @@ func cmdProjectsEnvironmentBranch(args []string) int {
 	from := fs.String("from", "production", "parent environment")
 	ttl := fs.String("ttl", "", "time to live, such as 24h (default 168h, 1h to 720h)")
 	list := fs.Bool("list", false, "list the parent's branches instead of creating one")
+	egress := fs.String("egress", "", "outbound traffic: live (default) or contained, which reaches only the branch's own services")
 	if err := fs.Parse(flags); err != nil || len(positional) < 1 || len(positional) > 2 || *list == (len(positional) == 2) {
 		PrintUsage(os.Stderr, environmentBranchUsage, "projects environments")
 		return 1
@@ -48,8 +49,11 @@ func cmdProjectsEnvironmentBranch(args []string) int {
 	if _, err := api.ParseEnvironmentBranchTTL(*ttl); err != nil {
 		return printErr("Invalid --ttl", err)
 	}
+	if *egress != "" && *egress != api.EnvironmentBranchEgressLive && *egress != api.EnvironmentBranchEgressContained {
+		return printErr("Invalid --egress", fmt.Errorf("--egress must be live or contained"))
+	}
 	environment, err := client.CreateProjectEnvironmentBranch(context.Background(), positional[0], *from, api.CreateProjectEnvironmentBranchRequest{
-		Slug: positional[1], TTL: *ttl,
+		Slug: positional[1], TTL: *ttl, Egress: *egress,
 	})
 	if err != nil {
 		return printErr("Could not branch environment", err)

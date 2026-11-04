@@ -28,6 +28,13 @@ func (c *Client) ListProjectEnvironmentBranches(ctx context.Context, projectSlug
 
 const (
 	EnvironmentBranchEgressLive = "live"
+	// EnvironmentBranchEgressContained keeps a branch's guests to the
+	// platform services of their branch (ADR-20261031193635 section 7).
+	EnvironmentBranchEgressContained = "contained"
+	// EnvironmentBranchContainmentEnv is apid's operator gate for contained
+	// branches: set it to 1 only once every serving vmmd, schedd and
+	// gatewayd-internal enforces the contained profile.
+	EnvironmentBranchContainmentEnv = "FAAS_ENVIRONMENT_BRANCH_CONTAINMENT"
 
 	// CodeEnvironmentBranchUnavailable: branches are switched off.
 	CodeEnvironmentBranchUnavailable = "environment_branch_unavailable"
@@ -40,6 +47,10 @@ const (
 	// CodeEnvironmentBranchPrivateNetwork: a project cannot have both
 	// environment branches and a workload on a private network yet.
 	CodeEnvironmentBranchPrivateNetwork = "environment_branch_private_network_unsupported"
+	// CodeEnvironmentBranchContainedObjects: a contained branch cannot use
+	// object storage yet; its overlay buckets are served by the public S3
+	// gateway, which contained guests do not reach.
+	CodeEnvironmentBranchContainedObjects = "environment_branch_contained_objects_unsupported"
 	// CodeEnvironmentBranchHasBranches: delete the branches of an
 	// environment before the environment itself.
 	CodeEnvironmentBranchHasBranches = "environment_has_branches"

@@ -105009,8 +105009,8 @@ components:
           description: Time to live, a duration such as 24h between 1h and 720h. Defaults to 168h.
         egress:
           type: string
-          enum: [live]
-          description: Outbound traffic from the branch. Only live is available.
+          enum: [live, contained]
+          description: Outbound traffic from the branch. live (the default) behaves like a stage. contained reaches only the branch's own platform services (service calls inside the branch, the branch's managed PostgreSQL copies and the platform resolver) and takes no host-mediated action; it is refused for a parent with object storage, and is available only where the operator enabled it.
 
     ProjectEnvironmentBranchResponse:
       description: How an environment branches from its parent.

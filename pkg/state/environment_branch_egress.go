@@ -31,7 +31,7 @@ type EnvironmentBranchEgressPolicy struct {
 // Contained reports whether the branch's instances get the contained network
 // profile: both contained and simulated egress do.
 func (p EnvironmentBranchEgressPolicy) Contained() bool {
-	return p.Mode == EnvironmentBranchEgressContained || p.Mode == EnvironmentBranchEgressSimulated
+	return environmentBranchEgressContained(p.Mode)
 }
 
 // EnvironmentBranchDatabaseEndpoint is one host and port of a managed

@@ -46,7 +46,18 @@ var (
 	// attachment is per app and vmmd applies it to every instance of the app,
 	// so a branch instance would join the parent's network.
 	ErrProjectEnvironmentBranchPrivateNetwork = fmt.Errorf("%w: environment branches and private networks cannot share a project yet", ErrConflict)
+	// ErrProjectEnvironmentBranchContainedObjects refuses a contained or
+	// simulated branch of an environment with object storage
+	// (ADR-20261031193635 slice 6a): overlay buckets are served by the
+	// shared public S3 gateway, which the contained profile does not reach.
+	ErrProjectEnvironmentBranchContainedObjects = fmt.Errorf("%w: contained environment branches cannot use object storage yet", ErrConflict)
 )
+
+// environmentBranchEgressContained reports egress modes with the contained
+// network profile.
+func environmentBranchEgressContained(mode string) bool {
+	return mode == EnvironmentBranchEgressContained || mode == EnvironmentBranchEgressSimulated
+}
 
 // ProjectEnvironmentBranch is one branch row joined with its environment and
 // parent slugs.

@@ -67,3 +67,30 @@ func environmentBranchEgress(t *testing.T, s contractTestStore) {
 		t.Fatalf("a deleted branch's deployment must be refused, got %v", err)
 	}
 }
+
+// A contained branch cannot use object storage yet: overlay buckets are served
+// by the public S3 gateway, which the contained profile does not reach.
+func TestMemContainedEnvironmentBranchRefusesObjectStorage(t *testing.T) {
+	s := state.NewMemStore()
+	ctx := context.Background()
+	acct, project, _, live := seedProjectEnvironmentBranch(t, s, "branch-objects@example.com")
+	if err := s.PutManagedObjectStorageSecret(ctx, state.AppSecret{AccountID: acct.ID, AppID: live.AppID, Scope: "production",
+		Key: "FILES_BUCKET", Ciphertext: []byte("sealed"), ManagedObjectStorageCredentialID: uuid.NewString()}); err != nil {
+		t.Fatal(err)
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	create := func(slug, mode string) error {
+		_, _, _, err := s.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
+			AccountID: acct.ID, ProjectID: project.ID, ParentSlug: "production", Slug: slug,
+			ExpiresAt: time.Now().Add(time.Hour), EgressMode: mode,
+			MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
+		}, limits)
+		return err
+	}
+	if err := create("pr-2", state.EnvironmentBranchEgressContained); !errors.Is(err, state.ErrProjectEnvironmentBranchContainedObjects) {
+		t.Fatalf("contained branch with object storage: %v", err)
+	}
+	if err := create("pr-3", state.EnvironmentBranchEgressLive); err != nil {
+		t.Fatalf("live branch with object storage: %v", err)
+	}
+}

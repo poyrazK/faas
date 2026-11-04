@@ -49,6 +49,9 @@ func checkProjectEnvironmentBranchManagedBindings(ctx context.Context, tx pgx.Tx
 	if err != nil {
 		return 0, mapErr(err)
 	}
+	if objects > 0 && clone.branch != nil && environmentBranchEgressContained(clone.branch.EgressMode) {
+		return 0, ErrProjectEnvironmentBranchContainedObjects
+	}
 	return postgres + objects, nil
 }
 

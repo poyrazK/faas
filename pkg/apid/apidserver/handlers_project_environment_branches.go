@@ -62,9 +62,8 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 	if egress == "" {
 		egress = api.EnvironmentBranchEgressLive
 	}
-	if egress != api.EnvironmentBranchEgressLive {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid environment branch egress",
-			"egress must be live; contained and simulated egress are not available yet"))
+	if problem := s.environmentBranchEgressProblem(egress); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
@@ -166,6 +165,10 @@ func (s *server) environmentBranchCreateProblem(ctx context.Context, acct state.
 	switch {
 	case errors.Is(err, state.ErrProjectEnvironmentBranchPrivateNetwork):
 		return environmentBranchPrivateNetworkProblem()
+	case errors.Is(err, state.ErrProjectEnvironmentBranchContainedObjects):
+		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchContainedObjects,
+			"Contained environment branch cannot use object storage",
+			"the parent environment binds object storage; contained branches reach only their branch's services, and overlay buckets are served by the public S3 gateway. Create the branch with live egress.")
 	case errors.As(err, &managed):
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchManagedData,
 			"Environment branch cannot copy the parent's managed data",
@@ -298,4 +301,21 @@ func (s *server) deleteProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 func environmentHasBranchesProblem(slug string) *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchHasBranches, "Environment has branches",
 		"delete the branches of "+slug+" before deleting it")
+}
+
+// environmentBranchEgressProblem admits live egress, and contained egress
+// once the operator gate is on (ADR-20261031193635 slice 6a). Simulated
+// egress needs the rehearsal simulation broker and is not available yet.
+func (s *server) environmentBranchEgressProblem(egress string) *api.Problem {
+	switch {
+	case egress == api.EnvironmentBranchEgressLive:
+		return nil
+	case egress == api.EnvironmentBranchEgressContained && s.environmentBranchContainmentEnabled:
+		return nil
+	case egress == api.EnvironmentBranchEgressContained:
+		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchUnavailable, "Contained environment branches are unavailable",
+			"contained egress is not enabled on this platform; create the branch with live egress")
+	}
+	return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid environment branch egress",
+		"egress must be live or contained; simulated egress is not available yet")
 }
