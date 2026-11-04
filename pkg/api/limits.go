@@ -13368,6 +13368,10 @@ func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
 	return min(l.PerInstanceConcurrency(requestedPerInstanceConcurrency), PostgresPoolMaxPerInstance)
 }
 
+// PostgresPoolMaxAccepted is the largest GREGALE_POSTGRES_POOL_MAX the SDKs
+// and the binding check accept; a larger value is ignored as unset.
+const PostgresPoolMaxAccepted = 1000
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after
@@ -17381,8 +17385,10 @@ const (
 	// RateLimitBurst, so the gateway's plan limit answers an app first;
 	// this ceiling bounds what one host costs an edge where no plan limit
 	// applies, such as public bucket reads served before the gateway. At
-	// most EdgeHostTrackedMax hostnames are tracked; the rest share one
-	// bucket.
+	// most EdgeHostTrackedMax hostnames are tracked. The Host header is the
+	// client's to choose, so a hostname the full table cannot track passes
+	// instead of sharing one bucket that a flood of random names would drain
+	// for every tenant (hunt 38); the per-address limit still bounds it.
 	EdgeHostRequestsPerSecond       = 1000
 	EdgeHostRequestsBurst           = 4000
 	EdgeHostTrackedMax              = 100_000
