@@ -25,6 +25,11 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 		var domain state.CustomDomain
 		domain, err = store.DomainByName(r.Context(), strings.ToLower(r.PathValue("domain")))
 		appID = domain.AppID
+		if err == nil {
+			// Keep the claim that supplied the authorized app. A later handler
+			// reload must not widen this grant after a hostname is reassigned.
+			*r = *r.WithContext(state.WithCustomDomainProbe(r.Context(), domain))
+		}
 	case strings.HasPrefix(path, "/v1/crons/") && id != "":
 		var cron state.Cron
 		cron, err = store.CronByID(r.Context(), id)

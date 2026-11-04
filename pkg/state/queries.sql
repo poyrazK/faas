@@ -1364,6 +1364,33 @@ where a.account_id = $1 order by d.domain;
 -- name: MarkDomainVerified :exec
 update custom_domains set verified_at = now() where domain = $1;
 
+-- name: FindForeignVerifiedWildcardForClaim :one
+-- The caller holds the domain publication guard and destination app lock.
+SELECT d.domain::text FROM custom_domains d
+JOIN apps holder ON holder.id = d.app_id
+JOIN apps claimant ON claimant.id = sqlc.arg(app_id)::text::uuid
+LEFT JOIN orgs holder_org ON holder_org.id = holder.org_id
+LEFT JOIN orgs claimant_org ON claimant_org.id = claimant.org_id
+WHERE d.verified_at IS NOT NULL AND d.domain = ANY(sqlc.arg(names)::text[]::citext[])
+  AND (CASE WHEN holder.org_id IS NOT NULL AND NOT holder_org.personal_org
+       THEN 'org:' || holder.org_id::text ELSE 'account:' || holder.account_id::text END)
+   <> (CASE WHEN claimant.org_id IS NOT NULL AND NOT claimant_org.personal_org
+       THEN 'org:' || claimant.org_id::text ELSE 'account:' || claimant.account_id::text END)
+ORDER BY length(d.domain) DESC, d.domain LIMIT 1;
+
+-- name: ListCustomDomainsForActor :many
+select d.domain::text as domain, d.app_id::text as app_id, d.challenge_token,
+       d.verified_at, d.cert_status::text as cert_status, d.cert_expires_at,
+       coalesce(d.cert_last_error, '')::text as cert_last_error,
+       d.dns_last_checked_at, d.cert_failed_at, d.verification_next_check_at,
+       d.verification_expires_at, d.verification_attempts,
+       coalesce(d.environment_id::text, '')::text as environment_id
+from custom_domains d join apps a on a.id = d.app_id
+where a.account_id = $1 or exists (
+    select 1 from org_memberships m where m.org_id = a.org_id
+    and m.account_id = $1 and m.removed_at is null)
+order by d.domain;
+
 -- name: DeleteCustomDomain :exec
 delete from custom_domains where domain = $1;
 
@@ -9795,7 +9822,12 @@ WHERE d.domain=sqlc.arg(domain)::text::citext AND (NOT sqlc.arg(challenge_bound)
     (d.challenge_token=sqlc.arg(token)::text AND d.verified_at IS NULL AND d.verification_expires_at>now()));
 
 -- name: MarkTrafficDomainVerified :execrows
-UPDATE custom_domains SET verified_at=now()
+UPDATE custom_domains SET verified_at=now(),
+ cert_status=CASE WHEN sqlc.arg(challenge_bound)::boolean THEN 'pending' ELSE cert_status END,
+ cert_expires_at=CASE WHEN sqlc.arg(challenge_bound)::boolean THEN NULL ELSE cert_expires_at END,
+ cert_last_error=CASE WHEN sqlc.arg(challenge_bound)::boolean THEN NULL ELSE cert_last_error END,
+ cert_failed_at=CASE WHEN sqlc.arg(challenge_bound)::boolean THEN NULL ELSE cert_failed_at END,
+ dns_last_checked_at=CASE WHEN sqlc.arg(challenge_bound)::boolean THEN clock_timestamp() ELSE dns_last_checked_at END
 WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::uuid
   AND (NOT sqlc.arg(challenge_bound)::boolean OR
     (challenge_token=sqlc.arg(token)::text AND verified_at IS NULL AND verification_expires_at>clock_timestamp()));
@@ -10008,7 +10040,8 @@ SELECT host::text FROM (
 ORDER BY host LIMIT (sqlc.arg(max_inputs)::integer+1);
 
 -- name: DeleteTrafficCustomDomain :execrows
-DELETE FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::uuid;
+DELETE FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::uuid
+ AND (NOT sqlc.arg(claim_bound)::boolean OR challenge_token=sqlc.arg(token)::text);
 
 -- name: ReadTrafficGlobalRouteAccounts :many
 SELECT DISTINCT account_id FROM edge_rules WHERE enabled AND kind='route'
@@ -27870,3 +27903,165 @@ WHERE runtime_secret_signatures.signature IS DISTINCT FROM EXCLUDED.signature;
 -- name: ReadRuntimeSecretSignatures :many
 SELECT ciphertext_sha256, signature FROM runtime_secret_signatures
 WHERE ciphertext_sha256 = ANY(sqlc.arg(digests)::bytea[]);
+
+-- name: ReadCustomDomainProbeClaim :one
+SELECT (verified_at IS NOT NULL)::boolean AS verified, cert_status::text AS status, dns_last_checked_at
+FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext
+AND app_id=sqlc.arg(app_id)::text::uuid AND challenge_token=sqlc.arg(token)::text;
+
+-- name: UpdateCustomDomainProbeCert :execrows
+UPDATE custom_domains SET cert_status=sqlc.arg(status)::text,
+ cert_expires_at=sqlc.narg(expires_at)::timestamptz,
+ cert_last_error=nullif(sqlc.arg(last_error)::text,''),
+ dns_last_checked_at=sqlc.narg(checked_at)::timestamptz,
+ cert_failed_at=CASE WHEN sqlc.arg(status)::text='failed' AND cert_status IS DISTINCT FROM 'failed'
+   THEN coalesce(sqlc.narg(checked_at)::timestamptz,now())
+   WHEN sqlc.arg(status)::text='failed' THEN cert_failed_at ELSE NULL END
+WHERE domain=sqlc.arg(domain)::text::citext
+ AND (NOT sqlc.arg(claim_bound)::boolean OR (app_id=nullif(sqlc.arg(app_id)::text,'')::uuid AND challenge_token=sqlc.arg(token)::text))
+ AND (NOT sqlc.arg(claim_bound)::boolean OR sqlc.narg(checked_at)::timestamptz IS NULL OR dns_last_checked_at IS NULL OR dns_last_checked_at <= sqlc.narg(checked_at)::timestamptz);
+
+-- name: MarkCustomDomainProbeDrifted :execrows
+UPDATE custom_domains SET
+ verified_at=NULL, cert_status='dns_drifted', cert_expires_at=NULL,
+ cert_last_error=nullif(sqlc.arg(reason)::text,''), dns_last_checked_at=sqlc.narg(checked_at)::timestamptz,
+ cert_failed_at=NULL, last_cert_issuance_failed_email_at=NULL,
+ verification_next_check_at=CASE WHEN sqlc.arg(transition)::boolean THEN now() ELSE verification_next_check_at END,
+ verification_attempts=CASE WHEN sqlc.arg(transition)::boolean THEN 0 ELSE verification_attempts END,
+ verification_expires_at=CASE WHEN sqlc.arg(transition)::boolean THEN now()+interval '7 days' ELSE verification_expires_at END
+WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::text::uuid
+ AND challenge_token=sqlc.arg(token)::text
+ AND ((sqlc.arg(transition)::boolean AND verified_at IS NOT NULL)
+   OR (NOT sqlc.arg(transition)::boolean AND verified_at IS NULL AND cert_status='dns_drifted'))
+ AND (dns_last_checked_at IS NULL OR dns_last_checked_at<=sqlc.narg(checked_at)::timestamptz);
+
+-- name: UpsertCustomDomainProbeObservation :execrows
+-- Hold the matching claim through the observation write, so a replacement
+-- cannot be installed between the ownership check and the upsert.
+WITH claim AS (
+ SELECT domain FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext
+ AND app_id=sqlc.arg(app_id)::text::uuid AND challenge_token=sqlc.arg(token)::text FOR SHARE
+)
+INSERT INTO domain_doctor_observations (domain,surface_id,observed_at,dns_record_found,points_to_gregale,
+ caa_permits,ipv6_conflict,observed_target,observed_aaaa,caa_observed,cert_state,cert_not_after,last_error,dns_checked_at,cert_checked_at)
+SELECT claim.domain,(sqlc.arg(observation)::jsonb->>'surface_id')::uuid,
+ (sqlc.arg(observation)::jsonb->>'observed_at')::timestamptz,
+ (sqlc.arg(observation)::jsonb->>'dns_record_found')::boolean,
+ (sqlc.arg(observation)::jsonb->>'points_to_gregale')::boolean,
+ (sqlc.arg(observation)::jsonb->>'caa_permits')::boolean,
+ (sqlc.arg(observation)::jsonb->>'ipv6_conflict')::boolean,
+ sqlc.arg(observation)::jsonb->>'observed_target',sqlc.arg(observation)::jsonb->>'observed_aaaa',
+ sqlc.arg(observation)::jsonb->>'caa_observed',sqlc.arg(observation)::jsonb->>'cert_state',
+ (sqlc.arg(observation)::jsonb->>'cert_not_after')::timestamptz,
+ sqlc.arg(observation)::jsonb->>'last_error',(sqlc.arg(observation)::jsonb->>'dns_checked_at')::timestamptz,
+ (sqlc.arg(observation)::jsonb->>'cert_checked_at')::timestamptz FROM claim
+ON CONFLICT (domain) DO UPDATE SET
+ surface_id=coalesce(excluded.surface_id,domain_doctor_observations.surface_id),
+ observed_at=excluded.observed_at,dns_record_found=excluded.dns_record_found,points_to_gregale=excluded.points_to_gregale,
+ caa_permits=excluded.caa_permits,ipv6_conflict=excluded.ipv6_conflict,
+ observed_target=excluded.observed_target,observed_aaaa=excluded.observed_aaaa,caa_observed=excluded.caa_observed,
+ cert_state=excluded.cert_state,cert_not_after=excluded.cert_not_after,last_error=excluded.last_error,
+ dns_checked_at=excluded.dns_checked_at,cert_checked_at=excluded.cert_checked_at;
+
+-- name: ReadCustomDomainProbeObservation :one
+SELECT CASE WHEN o.domain IS NULL THEN NULL ELSE jsonb_build_object(
+ 'Domain',o.domain,'SurfaceID',coalesce(o.surface_id::text,''),'ObservedAt',o.observed_at,
+ 'DNSRecordFound',o.dns_record_found,'PointsToGregale',o.points_to_gregale,'CAAPermits',o.caa_permits,
+ 'IPv6Conflict',o.ipv6_conflict,'ObservedTarget',coalesce(o.observed_target,''),'ObservedAAAA',coalesce(o.observed_aaaa,''),
+ 'CAAObserved',coalesce(o.caa_observed,''),'CertState',o.cert_state,'CertNotAfter',o.cert_not_after,
+ 'LastError',coalesce(o.last_error,''),'DNSCheckedAt',o.dns_checked_at,'CertCheckedAt',o.cert_checked_at
+ ) END::jsonb AS data FROM custom_domains d
+ LEFT JOIN domain_doctor_observations o ON o.domain=d.domain
+ WHERE d.domain=sqlc.arg(domain)::text::citext AND d.app_id=sqlc.arg(app_id)::text::uuid
+ AND d.challenge_token=sqlc.arg(token)::text;
+
+-- name: ClearCustomDomainProbeObservation :exec
+DELETE FROM domain_doctor_observations WHERE domain=sqlc.arg(domain)::text::citext AND surface_id IS NULL;
+
+-- name: ClaimCustomDomainProbeFailureEmail :execrows
+UPDATE custom_domains SET last_cert_issuance_failed_email_at=sqlc.arg(at)::timestamptz
+WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::text::uuid AND challenge_token=sqlc.arg(token)::text
+ AND cert_status='failed' AND cert_failed_at<=sqlc.arg(at)::timestamptz-interval '15 minutes'
+ AND (last_cert_issuance_failed_email_at IS NULL OR last_cert_issuance_failed_email_at<sqlc.arg(at)::timestamptz-interval '24 hours');
+
+-- name: KnownCustomDomainTLSHost :one
+SELECT EXISTS (
+ SELECT 1 FROM custom_domain_tls_hosts h JOIN custom_domains d ON d.domain=h.wildcard_domain
+ WHERE h.host=sqlc.arg(host)::text AND d.domain=sqlc.arg(domain)::text::citext AND d.verified_at IS NOT NULL
+ AND (sqlc.arg(expected_app)::text='' OR (d.app_id=nullif(sqlc.arg(expected_app)::text,'')::uuid AND d.challenge_token=sqlc.arg(expected_token)::text))
+ AND (sqlc.arg(probe)::boolean
+   OR NOT EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts a WHERE a.wildcard_domain=d.domain)
+   OR EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts a WHERE a.wildcard_domain=d.domain AND a.name=sqlc.arg(name)::text))
+)::boolean AS known;
+
+-- name: LockCustomDomainTLSAdmissionClaim :one
+SELECT (d.verified_at IS NOT NULL)::boolean AS verified, d.app_id::text AS app_id,
+ d.challenge_token::text AS token, coalesce(a.org_id,a.account_id)::text AS owner_id
+FROM custom_domains d JOIN apps a ON a.id=d.app_id
+WHERE d.domain=sqlc.arg(domain)::text::citext FOR NO KEY UPDATE OF d;
+
+-- name: CustomDomainTLSAdmissionAllowed :one
+-- Run after locking the claim: an allowlist writer may have committed while
+-- that lock was being acquired, so this read needs its own fresh snapshot.
+SELECT (sqlc.arg(probe)::boolean
+ OR NOT EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts h WHERE h.wildcard_domain=sqlc.arg(domain)::text::citext)
+ OR EXISTS(SELECT 1 FROM custom_domain_tls_allowed_hosts h WHERE h.wildcard_domain=sqlc.arg(domain)::text::citext AND h.name=sqlc.arg(name)::text))::boolean AS allowed;
+
+-- name: ReleaseCustomDomainProbeFailureEmail :exec
+UPDATE custom_domains SET last_cert_issuance_failed_email_at=NULL
+WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::text::uuid
+ AND challenge_token=sqlc.arg(token)::text AND last_cert_issuance_failed_email_at=sqlc.arg(at)::timestamptz;
+
+-- name: ReadCustomDomainProbeAllowedHosts :one
+SELECT coalesce(array_agg(h.name::text ORDER BY h.name) FILTER (WHERE h.name IS NOT NULL), '{}')::text[] AS names
+FROM custom_domains d LEFT JOIN custom_domain_tls_allowed_hosts h ON h.wildcard_domain=d.domain
+WHERE d.domain=sqlc.arg(domain)::text::citext AND d.app_id=sqlc.arg(app_id)::text::uuid
+ AND d.challenge_token=sqlc.arg(token)::text GROUP BY d.domain;
+
+-- name: FindCustomDomainTenantOverlap :one
+SELECT h.hostname::text FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+WHERE s.status <> 'deleted'
+ AND right(lower(h.hostname::text),length(sqlc.arg(suffix)::text)+1)='.'||lower(sqlc.arg(suffix)::text)
+ORDER BY h.hostname LIMIT 1;
+
+-- name: FindTenantHostnameWildcardOverlap :one
+SELECT domain::text FROM custom_domains
+WHERE domain=ANY(sqlc.arg(names)::citext[])
+ AND (verified_at IS NOT NULL OR verification_expires_at IS NULL OR verification_expires_at>clock_timestamp())
+ORDER BY length(domain::text) DESC,domain LIMIT 1;
+
+-- name: RecordCustomDomainVerificationCheck :execrows
+UPDATE custom_domains SET dns_last_checked_at=sqlc.arg(checked_at)::timestamptz
+WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::text::uuid
+ AND challenge_token=sqlc.arg(token)::text AND verified_at IS NULL
+ AND (dns_last_checked_at IS NULL OR dns_last_checked_at<=sqlc.arg(checked_at)::timestamptz);
+
+-- name: SetCustomDomainDefault :one
+INSERT INTO app_default_domains(app_id,domain)
+SELECT sqlc.arg(app_id)::text::uuid,domain FROM custom_domains
+WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::text::uuid
+ AND environment_id IS NULL AND verified_at IS NOT NULL AND domain NOT LIKE '*.%'
+ AND (NOT sqlc.arg(claim_bound)::boolean OR challenge_token=sqlc.arg(token)::text)
+ON CONFLICT(app_id) DO UPDATE SET domain=excluded.domain,updated_at=now() RETURNING 1;
+
+-- name: RetryCustomDomainVerificationClaim :execrows
+UPDATE custom_domains SET verification_next_check_at=now(),verification_attempts=0
+WHERE domain=sqlc.arg(domain)::text::citext AND verified_at IS NULL AND verification_expires_at>now()
+ AND (NOT sqlc.arg(claim_bound)::boolean OR (app_id=nullif(sqlc.arg(app_id)::text,'')::uuid AND challenge_token=sqlc.arg(token)::text));
+
+-- name: ReadTenantSurfaceTrafficOwner :one
+SELECT account_id, coalesce(app_id::text,'')::text AS app_id
+FROM tenant_surfaces WHERE id=sqlc.arg(surface_id)::uuid;
+
+-- name: FindForeignVerifiedDomainForTenantHostname :one
+SELECT d.domain::text FROM custom_domains d
+JOIN apps holder ON holder.id=d.app_id
+LEFT JOIN apps claimant ON claimant.id=nullif(sqlc.arg(app_id)::text,'')::uuid
+LEFT JOIN orgs holder_org ON holder_org.id=holder.org_id
+LEFT JOIN orgs claimant_org ON claimant_org.id=claimant.org_id
+WHERE d.verified_at IS NOT NULL AND d.domain=sqlc.arg(hostname)::text::citext
+ AND (claimant.id IS NULL OR
+  (CASE WHEN holder.org_id IS NOT NULL AND NOT holder_org.personal_org
+    THEN 'org:'||holder.org_id::text ELSE 'account:'||holder.account_id::text END)
+  <> (CASE WHEN claimant.org_id IS NOT NULL AND NOT claimant_org.personal_org
+    THEN 'org:'||claimant.org_id::text ELSE 'account:'||claimant.account_id::text END));

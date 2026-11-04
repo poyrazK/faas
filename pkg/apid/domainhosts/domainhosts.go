@@ -20,7 +20,7 @@ func Read(ctx context.Context, store any, d state.CustomDomain) (api.CustomDomai
 	if problem != nil {
 		return api.CustomDomainHostsResponse{}, problem
 	}
-	names, err := hosts.CustomDomainTLSAllowedHosts(ctx, d.Domain)
+	names, err := hosts.CustomDomainTLSAllowedHosts(state.WithCustomDomainProbe(ctx, d), d.Domain)
 	if err != nil {
 		return api.CustomDomainHostsResponse{}, storeProblem(err, "could not read the host allowlist")
 	}
@@ -46,7 +46,7 @@ func Replace(ctx context.Context, store any, d state.CustomDomain, req api.SetCu
 		return api.CustomDomainHostsResponse{}, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid host name", err.Error())
 	}
-	if err := hosts.SetCustomDomainTLSAllowedHosts(ctx, d.Domain, names); err != nil {
+	if err := hosts.SetCustomDomainTLSAllowedHostsForClaim(ctx, d, names); err != nil {
 		return api.CustomDomainHostsResponse{}, storeProblem(err, "could not save the host allowlist")
 	}
 	return response(d.Domain, names), nil
@@ -58,7 +58,7 @@ func Clear(ctx context.Context, store any, d state.CustomDomain) *api.Problem {
 	if problem != nil {
 		return problem
 	}
-	if err := hosts.SetCustomDomainTLSAllowedHosts(ctx, d.Domain, nil); err != nil {
+	if err := hosts.SetCustomDomainTLSAllowedHostsForClaim(ctx, d, nil); err != nil {
 		return storeProblem(err, "could not clear the host allowlist")
 	}
 	return nil
@@ -78,7 +78,7 @@ func allowlistStore(store any, d state.CustomDomain) (state.CustomDomainTLSAllow
 }
 
 func storeProblem(err error, detail string) *api.Problem {
-	if errors.Is(err, state.ErrNotFound) {
+	if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrStaleCustomDomainProbe) {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such domain")
 	}
 	return api.ErrCapacity(detail)

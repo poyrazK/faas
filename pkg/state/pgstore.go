@@ -14068,26 +14068,12 @@ func (s *pgCore) DomainByName(ctx context.Context, domain string) (CustomDomain,
 // ownership predicate is repeated here so callers cannot bypass the handler's
 // account check with a direct store call.
 func (s *PgStore) SetDefaultCustomDomain(ctx context.Context, appID, domain string) error {
-	var marker int
-	err := s.pool.QueryRow(ctx, `
-		insert into app_default_domains (app_id, domain)
-		select $1, domain
-		  from custom_domains
-		 where domain = $2
-		   and app_id = $1
-		   and environment_id is null
-		   and verified_at is not null
-		   and domain not like '*.%'
-		on conflict (app_id) do update
-		   set domain = excluded.domain, updated_at = now()
-		 returning 1`, appID, domain).Scan(&marker)
-	if errors.Is(err, pgx.ErrNoRows) {
+	claim, bound := CustomDomainProbe(ctx)
+	if bound && (probeDomainMatches(claim, domain) != nil || claim.AppID != appID) {
 		return ErrNotFound
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err := sqlc.New().SetCustomDomainDefault(ctx, s.pool, sqlc.SetCustomDomainDefaultParams{AppID: appID, Domain: domain, ClaimBound: bound, Token: claim.ChallengeToken})
+	return mapErr(err)
 }
 
 func (s *PgStore) IsDefaultCustomDomain(ctx context.Context, appID, domain string) (bool, error) {
@@ -14206,26 +14192,8 @@ func (s *PgStore) MarkDomainVerifiedIfChallenge(ctx context.Context, domain, tok
 }
 
 func (s *PgStore) UpdateCustomDomainCertStatus(ctx context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {
-	tag, err := s.pool.Exec(ctx, `
-		update custom_domains
-		   set cert_status = $2,
-		       cert_expires_at = $3,
-		       cert_last_error = $4,
-		       dns_last_checked_at = $5,
-		       cert_failed_at = case
-		         when $2 = 'failed' and cert_status is distinct from 'failed'
-		           then coalesce($5, now())
-		         when $2 = 'failed' then cert_failed_at
-		         else null
-		       end
-		 where domain = $1`, domain, string(status), nullableTime(expiresAt), nullableStr(lastError), nullableTime(dnsCheckedAt))
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	claim, _ := CustomDomainProbe(ctx)
+	return s.updateCustomDomainProbeCert(ctx, claim, domain, status, expiresAt, lastError, dnsCheckedAt)
 }
 
 func (s *PgStore) DeleteCustomDomain(ctx context.Context, domain string) error {
@@ -14238,10 +14206,8 @@ func (s *PgStore) DeleteCustomDomain(ctx context.Context, domain string) error {
 // UpsertDoctorObservation writes (or refreshes) the
 // per-domain observation row. The poller is the sole
 // writer. ON CONFLICT (domain) DO UPDATE means a second
-// pass overwrites every field; the handler reads the
-// latest row, so "race" between poller and handler
-// is benign (the handler may see a slightly older row
-// or a slightly newer one, both are correct).
+// pass overwrites every field. Legacy custom-domain probes carry their
+// claim identity in ctx; their reads and writes reject replacement claims.
 //
 // The COALESCE on $2 keeps the surface_id stable across
 // passes: the poller enumerates both legacy custom_domains
@@ -14251,6 +14217,9 @@ func (s *PgStore) DeleteCustomDomain(ctx context.Context, domain string) error {
 // The legacy case (surface_id="" passed in) is translated
 // to nil at the store boundary so the column gets NULL.
 func (s *PgStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctorObservation) error {
+	if claim, bound := CustomDomainProbe(ctx); bound {
+		return s.upsertCustomDomainProbe(ctx, claim, obs)
+	}
 	var surfaceID any
 	if obs.SurfaceID != "" {
 		surfaceID = obs.SurfaceID
@@ -14303,6 +14272,9 @@ func (s *PgStore) UpsertDoctorObservation(ctx context.Context, obs DomainDoctorO
 // caller is responsible for the stale-check against
 // observed_at vs FAAS_DOMAIN_DOCTOR_TTL_SECONDS.
 func (s *PgStore) GetDoctorObservation(ctx context.Context, domain string) (DomainDoctorObservation, error) {
+	if claim, bound := CustomDomainProbe(ctx); bound {
+		return s.readCustomDomainProbe(ctx, claim, domain)
+	}
 	var obs DomainDoctorObservation
 	var surfaceID, observedTarget, observedAAAA, caaObserved, lastError *string
 	var certNotAfter, dnsCheckedAt, certCheckedAt *time.Time

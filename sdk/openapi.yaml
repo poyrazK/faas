@@ -31687,6 +31687,8 @@ components:
         challenge_token: {type: [string, "null"]}
         verified: {type: boolean}
         verified_at: {type: [string, "null"], format: date-time}
+        verification_expires_at: {type: string, format: date-time, description: "Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof."}
+        verification_expired: {type: boolean, description: "True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS instructions are omitted; resume domain setup to recreate the claim."}
         txt_record: {type: [string, "null"]}
         default: {type: boolean, description: "True when this domain is the app's default. Set via `gregale domains set-default`."}
         cert_not_after: {type: [string, "null"], format: date-time, description: "Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the cert expiry renders against this field."}
