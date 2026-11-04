@@ -36,18 +36,28 @@ const (
 )
 
 // sandboxActivity is one session VM's calls. thawMu serializes the thaw of a
-// frozen VM between concurrent calls.
+// frozen VM between concurrent calls. outbox carries the events a workspace
+// persist sends on the session's stream, and persists its answers by request
+// ID; done closes when the stream's server loop ends.
 type sandboxActivity struct {
+	sandboxID string
+	plan      api.Plan
+
 	mu        sync.Mutex
 	inFlight  int
 	lastEnded time.Time
 	dirty     bool
 	thawMu    sync.Mutex
 	thawed    chan struct{}
+
+	outbox   chan *vmmdpb.RunSandboxEvent
+	done     chan struct{}
+	persists sandboxPersists
 }
 
-func newSandboxActivity() *sandboxActivity {
-	return &sandboxActivity{thawed: make(chan struct{}, 1)}
+func newSandboxActivity(sandboxID string, plan api.Plan) *sandboxActivity {
+	return &sandboxActivity{sandboxID: sandboxID, plan: plan, thawed: make(chan struct{}, 1),
+		outbox: make(chan *vmmdpb.RunSandboxEvent), done: make(chan struct{})}
 }
 
 func (a *sandboxActivity) begin() {
@@ -115,13 +125,24 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		opErr = err
 		return grpcerr.ToStatus(toProblem(err))
 	}
-	act := newSandboxActivity()
-	s.sandboxRuns.Store(wake.Instance, act)
 	defer func() {
-		s.sandboxRuns.Delete(wake.Instance)
 		destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sandboxDestroyTimeout)
 		defer cancel()
 		_ = sandboxVMM.Destroy(destroyCtx, wake.Instance)
+	}()
+	// A session from a persisted workspace is booted only once its archive
+	// is unpacked: a session without its files is not the one asked for.
+	if key := first.GetStart().GetWorkspaceKey(); key != "" {
+		if problem := s.hydrateSandboxWorkspace(ctx, wake, key); problem != nil {
+			opErr = problem
+			return grpcerr.ToStatus(problem)
+		}
+	}
+	act := newSandboxActivity(wake.SandboxID, wake.Plan)
+	s.sandboxRuns.Store(wake.Instance, act)
+	defer func() {
+		close(act.done)
+		s.sandboxRuns.Delete(wake.Instance)
 	}()
 	if err := stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Booted{Booted: &vmmdpb.RunSandboxBooted{
 		Method: wakeMethodFrom(inst.Method), BootMs: time.Since(started).Milliseconds(),
@@ -170,7 +191,12 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 				return nil
 			case msg.GetFreeze() != nil:
 				ev = s.freezeSandbox(ctx, instance)
+			case msg.GetPersistGrant() != nil:
+				act.persists.deliver(msg.GetPersistGrant().GetRequestId(), msg)
+			case msg.GetPersistRecorded() != nil:
+				act.persists.deliver(msg.GetPersistRecorded().GetRequestId(), msg)
 			}
+		case ev = <-act.outbox:
 		case <-act.thawed:
 			ev = &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Thawed{Thawed: &vmmdpb.RunSandboxThawed{}}}
 		case <-ticker.C:

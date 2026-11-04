@@ -55580,6 +55580,7 @@ CREATE TABLE public.sandbox_sessions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     closed_at timestamp with time zone,
+    workspace_snapshot_id uuid,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_instance_id_check CHECK (((instance_id IS NULL) OR ((char_length(instance_id) >= 1) AND (char_length(instance_id) <= 128)))),
@@ -55603,6 +55604,39 @@ CREATE TABLE public.sandbox_sessions (
 --
 
 COMMENT ON TABLE public.sandbox_sessions IS 'ADR-20261027090013 sandbox sessions; apid inserts queued intents, closes queued ones and requests the close of live ones; agentd (ADR-20261027090014) owns every other transition.';
+
+
+--
+-- Name: sandbox_workspace_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_workspace_snapshots (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    sandbox_id uuid NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    storage_key text NOT NULL,
+    reserved_bytes bigint NOT NULL,
+    bytes bigint,
+    sha256 text,
+    expires_at timestamp with time zone NOT NULL,
+    delete_requested_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    ready_at timestamp with time zone,
+    CONSTRAINT sandbox_workspace_snapshots_check CHECK (((bytes IS NULL) OR ((bytes >= 0) AND (bytes <= reserved_bytes)))),
+    CONSTRAINT sandbox_workspace_snapshots_ready_check CHECK (((state = 'ready'::text) = ((ready_at IS NOT NULL) AND (bytes IS NOT NULL) AND (sha256 IS NOT NULL)))),
+    CONSTRAINT sandbox_workspace_snapshots_reserved_bytes_check CHECK ((reserved_bytes > 0)),
+    CONSTRAINT sandbox_workspace_snapshots_sha256_check CHECK (((sha256 IS NULL) OR (sha256 ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT sandbox_workspace_snapshots_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'ready'::text]))),
+    CONSTRAINT sandbox_workspace_snapshots_storage_key_check CHECK (((char_length(storage_key) >= 1) AND (char_length(storage_key) <= 512)))
+);
+
+
+--
+-- Name: TABLE sandbox_workspace_snapshots; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sandbox_workspace_snapshots IS 'ADR-20261027090013 step 7 persisted sandbox workspaces; agentd inserts, completes and deletes rows; apid reads them and sets delete_requested_at.';
 
 
 --
@@ -69560,6 +69594,22 @@ ALTER TABLE ONLY public.sandbox_sessions
 
 
 --
+-- Name: sandbox_workspace_snapshots sandbox_workspace_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_workspace_snapshots
+    ADD CONSTRAINT sandbox_workspace_snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sandbox_workspace_snapshots sandbox_workspace_snapshots_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_workspace_snapshots
+    ADD CONSTRAINT sandbox_workspace_snapshots_storage_key_key UNIQUE (storage_key);
+
+
+--
 -- Name: saved_route_requirements saved_route_requirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80070,6 +80120,34 @@ CREATE INDEX sandbox_sessions_live_idx ON public.sandbox_sessions USING btree (a
 --
 
 CREATE INDEX sandbox_sessions_queue_idx ON public.sandbox_sessions USING btree (created_at, id) WHERE (state = 'queued'::text);
+
+
+--
+-- Name: sandbox_workspace_snapshots_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_workspace_snapshots_account_idx ON public.sandbox_workspace_snapshots USING btree (account_id, created_at DESC, id DESC);
+
+
+--
+-- Name: sandbox_workspace_snapshots_delete_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_workspace_snapshots_delete_idx ON public.sandbox_workspace_snapshots USING btree (delete_requested_at) WHERE (delete_requested_at IS NOT NULL);
+
+
+--
+-- Name: sandbox_workspace_snapshots_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_workspace_snapshots_expiry_idx ON public.sandbox_workspace_snapshots USING btree (expires_at);
+
+
+--
+-- Name: sandbox_workspace_snapshots_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_workspace_snapshots_pending_idx ON public.sandbox_workspace_snapshots USING btree (created_at) WHERE (state = 'pending'::text);
 
 
 --
@@ -102932,6 +103010,14 @@ ALTER TABLE ONLY public.sandbox_sessions
 
 ALTER TABLE ONLY public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_tenant_fkey FOREIGN KEY (account_id, tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_workspace_snapshots sandbox_workspace_snapshots_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_workspace_snapshots
+    ADD CONSTRAINT sandbox_workspace_snapshots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

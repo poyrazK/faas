@@ -50,7 +50,7 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 	}
 	admission := sched.SandboxAdmission{SandboxID: start.GetSandboxId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
 		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
-		Network: start.GetNetworkMode()}
+		Network: start.GetNetworkMode(), WorkspaceKey: start.GetWorkspaceKey()}
 	ctx := stream.Context()
 	var sendMu sync.Mutex
 	send := func(ev *scheddpb.SandboxRunEvent) error {
@@ -92,6 +92,14 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		},
 		Thawed: func(context.Context) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Thawed{Thawed: &scheddpb.SandboxRunThawed{}}})
+		},
+		PersistRequested: func(_ context.Context, requestID string) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PersistRequested{
+				PersistRequested: &scheddpb.SandboxRunPersistRequested{RequestId: requestID}}})
+		},
+		PersistDone: func(_ context.Context, d sched.SandboxPersistDone) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PersistDone{PersistDone: &scheddpb.SandboxRunPersistDone{
+				RequestId: d.RequestID, SnapshotId: d.SnapshotID, Bytes: d.Bytes, Sha256: d.SHA256, Failed: d.Failed}}})
 		},
 	}
 	opErr = s.sandboxRuns.RunSandbox(ctx, admission, placed, hooks, frames.control)
@@ -137,6 +145,15 @@ func watchSandboxFrames(ctx context.Context, stream scheddpb.Schedd_RunSandboxSe
 				req = sched.SandboxFreeze
 			case frame.GetClose() != nil:
 				req = sched.SandboxClose
+			case frame.GetPersistGrant() != nil:
+				g := frame.GetPersistGrant()
+				req = sched.SandboxControl{Op: sched.SandboxOpPersistGrant, PersistGrant: &sched.SandboxPersistGrant{
+					RequestID: g.GetRequestId(), SnapshotID: g.GetSnapshotId(), StorageKey: g.GetStorageKey(), MaxBytes: g.GetMaxBytes(),
+					ExpiresAtUnixMs: g.GetExpiresAtUnixMs(), Refusal: g.GetRefusal()}}
+			case frame.GetPersistRecorded() != nil:
+				r := frame.GetPersistRecorded()
+				req = sched.SandboxControl{Op: sched.SandboxOpPersistRecorded, PersistRecorded: &sched.SandboxPersistRecorded{
+					RequestID: r.GetRequestId(), Recorded: r.GetRecorded()}}
 			default:
 				continue
 			}

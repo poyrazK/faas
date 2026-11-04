@@ -38,6 +38,9 @@ type fakeVmmd struct {
 	mu    sync.Mutex
 	seen  []sandboxproto.Request
 	files map[string][]byte
+	// persists are the persist requests seen; persistErr fails them.
+	persists   []*vmmdpb.PersistSandboxWorkspaceRequest
+	persistErr error
 }
 
 func (f *fakeVmmd) SandboxCall(stream vmmdpb.Vmmd_SandboxCallServer) error {
@@ -120,6 +123,15 @@ func (f *fakeVmmd) guest(_ context.Context, req sandboxproto.Request, call *sand
 		}
 	case sandboxproto.OpFileRename:
 		return struct{}{}, nil
+	case sandboxproto.OpArchiveExtract:
+		n, err := call.ReadUpload(io.Discard, 1<<20)
+		if err != nil {
+			return nil, err
+		}
+		if n > req.MaxBytes {
+			return nil, &sandboxproto.GuestError{Code: sandboxproto.CodeTooLarge, Message: "too large"}
+		}
+		return sandboxproto.ArchiveResult{Bytes: n, Entries: 2}, nil
 	}
 	return nil, &sandboxproto.GuestError{Code: sandboxproto.CodeNotFound, Message: req.Path + " does not exist"}
 }

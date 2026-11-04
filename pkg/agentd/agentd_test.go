@@ -57,7 +57,8 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 	for _, name := range []string{"20261029093503390_agent_runs.sql", "20261029093510563_agent_run_execution.sql",
 		"20261029093517736_agent_run_model_access.sql", "20261029093524909_agent_run_checkout.sql", "20261029093538256_agent_deliveries.sql", "20261029093545429_agent_delivery_destinations.sql", "20261029093606948_agent_run_workflow_steps.sql",
 		"20261030205907043_agent_version_pause_during_model_calls.sql",
-		"20261031122245453_agent_run_usage.sql", "20261104123540000_sandbox_sessions.sql"} {
+		"20261031122245453_agent_run_usage.sql", "20261104123540000_sandbox_sessions.sql",
+		"20261104194554000_sandbox_workspace_snapshots.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

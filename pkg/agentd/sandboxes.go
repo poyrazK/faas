@@ -24,6 +24,7 @@ import (
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // SandboxStore is the sandbox_sessions surface agentd writes;
@@ -36,6 +37,10 @@ type SandboxStore interface {
 	RequeueSandbox(ctx context.Context, id, token string) error
 	FinishSandbox(ctx context.Context, id, token, state, code, message string) error
 	ExpireSandboxLeases(ctx context.Context) (requeued, failed, expired int64, err error)
+	ReserveSandboxSnapshot(ctx context.Context, r agentstore.SnapshotReservation) (agentstore.SandboxSnapshot, error)
+	CompleteSandboxSnapshot(ctx context.Context, id string, bytes int64, sha256 string) error
+	DeleteSandboxSnapshot(ctx context.Context, id string) error
+	SweepableSandboxSnapshots(ctx context.Context, pendingTTL time.Duration, limit int) ([]agentstore.SweepableSandboxSnapshot, error)
 }
 
 // SandboxSchedd opens RunSandbox streams; scheddpb.ScheddClient implements
@@ -54,6 +59,10 @@ type SandboxConfig struct {
 	// IdleFreeze is how long a session goes without calls before its VM is
 	// frozen; SandboxIdleFreezeSec unless set.
 	IdleFreeze time.Duration
+	// Workspaces is the artifact store persisted workspaces are kept in
+	// (ADR-20261027090013 step 7); the sweep deletes their archives from
+	// it. Without it sessions persist nothing.
+	Workspaces storage.StorageBackend
 }
 
 func (c SandboxConfig) withDefaults() SandboxConfig {
@@ -77,6 +86,9 @@ const (
 	sandboxOutcomeRejected  = "rejected"
 	sandboxOutcomeVMLost    = "vm_lost"
 	sandboxOutcomeUnplanned = "plan_has_no_sessions"
+	// sandboxOutcomeWorkspace: the persisted workspace the session starts
+	// from is gone or could not be unpacked.
+	sandboxOutcomeWorkspace = "workspace_unavailable"
 )
 
 // Sandboxes drives one replica's sandbox sessions.
@@ -149,13 +161,14 @@ func (s *Sandboxes) claim(ctx context.Context) (agentstore.SandboxClaim, bool, e
 	})
 }
 
-// SweepOnce handles expired session leases once.
+// SweepOnce handles expired session leases once, and deletes persisted
+// workspaces past their retention or asked to be deleted.
 func (s *Sandboxes) SweepOnce(ctx context.Context) error {
 	requeued, failed, expired, err := s.store.ExpireSandboxLeases(ctx)
 	if requeued+failed+expired > 0 {
 		s.log.Info("agentd: expired sandbox leases", "requeued", requeued, "failed", failed, "expired", expired)
 	}
-	return err
+	return errors.Join(err, s.sweepSnapshots(ctx))
 }
 
 func (s *Sandboxes) sweep(ctx context.Context) {
@@ -189,6 +202,9 @@ type session struct {
 	lease        agentstore.SandboxLease
 	// end is the decided terminal state and outcome, once there is one.
 	end *sessionEnd
+	// persists maps each workspace persist's request to the snapshot
+	// reserved for it, so a report names only this session's reservations.
+	persists map[string]string
 }
 
 type sessionEnd struct{ state, code, message string }
@@ -216,6 +232,10 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeUnplanned, "the account's plan has no sandbox sessions"})
 		return
 	}
+	if claim.WorkspaceMissing {
+		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeWorkspace, "the snapshot the session starts from was deleted or expired"})
+		return
+	}
 	vcpu := api.AgentRunVCPUMax[plan.PlanIndex()]
 	streamCtx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -232,12 +252,12 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	}
 	if err := send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Start{Start: &scheddpb.SandboxRunStart{
 		SandboxId: claim.ID, AccountId: claim.AccountID, Plan: claim.Plan, RamMb: int32(claim.RAMMB), Vcpu: int32(vcpu),
-		CpuMillicores: int32(vcpu * 1000), NetworkMode: claim.Network,
+		CpuMillicores: int32(vcpu * 1000), NetworkMode: claim.Network, WorkspaceKey: claim.WorkspaceKey,
 	}}}); err != nil {
 		s.requeue(ctx, claim, err)
 		return
 	}
-	ss := &session{claim: claim, lease: claim.SandboxLease, lastActivity: s.now()}
+	ss := &session{claim: claim, lease: claim.SandboxLease, lastActivity: s.now(), persists: map[string]string{}}
 	closeVM := func() {
 		_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Close{Close: &scheddpb.SandboxRunClose{}}})
 	}
@@ -264,6 +284,8 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		// The replica is stopping; the lease lapses and the sweeper decides.
 	case ready:
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeVMLost, "the session's VM ended unexpectedly"})
+	case code == codes.DataLoss:
+		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeWorkspace, "the session's persisted workspace could not be unpacked"})
 	case code == codes.FailedPrecondition || code == codes.InvalidArgument:
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeRejected, "the session is outside the account's plan"})
 	default:
@@ -329,6 +351,10 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			ss.mu.Lock()
 			ss.frozen, ss.lastActivity = false, s.now()
 			ss.mu.Unlock()
+		case ev.GetPersistRequested() != nil:
+			go s.grantPersist(ctx, ss, ev.GetPersistRequested().GetRequestId(), send)
+		case ev.GetPersistDone() != nil:
+			go s.recordPersist(ctx, ss, ev.GetPersistDone(), send)
 		}
 	}
 }

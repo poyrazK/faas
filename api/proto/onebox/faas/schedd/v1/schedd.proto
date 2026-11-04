@@ -324,8 +324,10 @@ service Schedd {
   // start; after placed (the reservation is held, nothing booted) schedd
   // waits for proceed, which agentd sends once it has recorded the session's
   // placement. Then agentd may freeze or close the session; schedd relays
-  // vmmd's booted, activity, frozen, freeze_refused and thawed events. The
-  // VM is destroyed and the reservation released when the stream ends.
+  // vmmd's booted, activity, frozen, freeze_refused and thawed events, and
+  // relays a workspace persist's request and done events up and agentd's
+  // grant and recorded answers down. The VM is destroyed and the
+  // reservation released when the stream ends.
   rpc RunSandbox(stream SandboxRunRequest) returns (stream SandboxRunEvent);
   // ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
   // memory-pressure report: MemAvailable fell to the pressure share of
@@ -1250,6 +1252,8 @@ message SandboxRunRequest {
     AgentRunProceed proceed = 2;
     SandboxRunFreeze freeze = 3;
     SandboxRunClose close = 4;
+    SandboxRunPersistGrant persist_grant = 5;
+    SandboxRunPersistRecorded persist_recorded = 6;
   }
 }
 
@@ -1264,6 +1268,9 @@ message SandboxRunStart {
   int32 cpu_millicores = 6;
   // network_mode is "none" or "registries" (ADR-20261027090013 §6).
   string network_mode = 7;
+  // workspace_key is the persisted workspace the session starts from
+  // (ADR-20261027090013 step 7).
+  string workspace_key = 8;
 }
 
 message SandboxRunFreeze {}
@@ -1278,6 +1285,8 @@ message SandboxRunEvent {
     SandboxRunFrozen frozen = 4;
     SandboxRunFreezeRefused freeze_refused = 5;
     SandboxRunThawed thawed = 6;
+    SandboxRunPersistRequested persist_requested = 7;
+    SandboxRunPersistDone persist_done = 8;
   }
 }
 
@@ -1294,6 +1303,35 @@ message SandboxRunFreezeRefused {
 }
 
 message SandboxRunThawed {}
+
+// The workspace persist exchange (ADR-20261027090013 step 7), relayed
+// between vmmd and agentd: see vmmd's RunSandboxPersist* messages.
+message SandboxRunPersistRequested {
+  string request_id = 1;
+}
+
+message SandboxRunPersistGrant {
+  string request_id = 1;
+  string snapshot_id = 2;
+  string storage_key = 3;
+  int64 max_bytes = 4;
+  int64 expires_at_unix_ms = 5;
+  // refusal is an RFC 7807 problem as JSON.
+  bytes refusal = 6;
+}
+
+message SandboxRunPersistDone {
+  string request_id = 1;
+  string snapshot_id = 2;
+  int64 bytes = 3;
+  string sha256 = 4;
+  bool failed = 5;
+}
+
+message SandboxRunPersistRecorded {
+  string request_id = 1;
+  bool recorded = 2;
+}
 
 message AgentRunRequest {
   oneof frame {

@@ -24,8 +24,12 @@ type SandboxClaim struct {
 	Plan      string
 	RAMMB     int
 	// Network is the session's network mode (ADR-20261027090013 §6).
-	Network    string
-	LeaseToken string
+	Network string
+	// WorkspaceKey is the archive of the persisted workspace the session
+	// starts from; WorkspaceMissing marks one whose snapshot is gone.
+	WorkspaceKey     string
+	WorkspaceMissing bool
+	LeaseToken       string
 	SandboxLease
 }
 
@@ -74,7 +78,8 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 	if err != nil {
 		return SandboxClaim{}, false, fmt.Errorf("read claimed session: %w", err)
 	}
-	return SandboxClaim{ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode, LeaseToken: token,
+	return SandboxClaim{ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
+		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, LeaseToken: token,
 		SandboxLease: SandboxLease{CloseRequested: row.CloseRequested, IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second,
 			ExpiresAt: row.ExpiresAt.Time.UTC()}}, true, nil
 }

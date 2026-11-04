@@ -30,6 +30,8 @@ type fakeSandboxSchedd struct {
 	starts  []*scheddpb.SandboxRunStart
 	freezes int
 	closes  int
+	// persists is what agentd answered the "persist" script's exchanges.
+	persists []persistAnswer
 }
 
 func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
@@ -47,6 +49,8 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 		return status.Error(codes.ResourceExhausted, "no capacity")
 	case "reject":
 		return status.Error(codes.FailedPrecondition, "outside the plan")
+	case "no-workspace":
+		return status.Error(codes.DataLoss, "the workspace could not be unpacked")
 	}
 	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Placed{Placed: &scheddpb.AgentRunPlaced{
 		Instance: "sandbox-" + start.GetSandboxId(), NodeId: "agents-1"}}}); err != nil {
@@ -61,6 +65,11 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 	if script == "lose-vm" {
 		time.Sleep(50 * time.Millisecond)
 		return status.Error(codes.Unavailable, "vmmd went away")
+	}
+	if script == "persist" {
+		if err := f.persist(stream); err != nil {
+			return err
+		}
 	}
 	for {
 		frame, err := stream.Recv()

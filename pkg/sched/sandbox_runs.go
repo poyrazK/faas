@@ -37,6 +37,9 @@ type SandboxAdmission struct {
 	// Network is the session's network mode (ADR-20261027090013 §6); empty
 	// is none, what an agentd from before network modes sends.
 	Network string
+	// WorkspaceKey is the persisted workspace the session starts from
+	// (ADR-20261027090013 step 7).
+	WorkspaceKey string
 }
 
 // network is the mode the session boots with.
@@ -60,15 +63,58 @@ type SandboxSpec struct {
 	CPUMillicores   int
 	QuietPauseAfter time.Duration
 	Network         string
+	WorkspaceKey    string
 }
 
-// SandboxControl is a request agentd sends a live session's VM.
-type SandboxControl int
+// SandboxControl is a request agentd sends a live session's VM: a freeze,
+// a close, or an answer to a workspace persist (ADR-20261027090013 step 7).
+type SandboxControl struct {
+	Op              SandboxOp
+	PersistGrant    *SandboxPersistGrant
+	PersistRecorded *SandboxPersistRecorded
+}
+
+// SandboxOp is what a SandboxControl asks.
+type SandboxOp int
 
 const (
-	SandboxFreeze SandboxControl = iota + 1
-	SandboxClose
+	SandboxOpFreeze SandboxOp = iota + 1
+	SandboxOpClose
+	SandboxOpPersistGrant
+	SandboxOpPersistRecorded
 )
+
+// SandboxFreeze and SandboxClose are the controls without a payload.
+var (
+	SandboxFreeze = SandboxControl{Op: SandboxOpFreeze}
+	SandboxClose  = SandboxControl{Op: SandboxOpClose}
+)
+
+// SandboxPersistGrant is agentd's answer to a persist request: a reserved
+// snapshot, or Refusal, a problem as JSON.
+type SandboxPersistGrant struct {
+	RequestID       string
+	SnapshotID      string
+	StorageKey      string
+	MaxBytes        int64
+	ExpiresAtUnixMs int64
+	Refusal         []byte
+}
+
+// SandboxPersistDone is vmmd's report of a written archive, or Failed.
+type SandboxPersistDone struct {
+	RequestID  string
+	SnapshotID string
+	Bytes      int64
+	SHA256     string
+	Failed     bool
+}
+
+// SandboxPersistRecorded is agentd's record of a written archive.
+type SandboxPersistRecorded struct {
+	RequestID string
+	Recorded  bool
+}
 
 // SandboxActivity is vmmd's report of a session's calls.
 type SandboxActivity struct {
@@ -84,6 +130,9 @@ type SandboxHooks struct {
 	Frozen        func(ctx context.Context) error
 	FreezeRefused func(ctx context.Context, reason string) error
 	Thawed        func(ctx context.Context) error
+	// PersistRequested and PersistDone relay a workspace persist's events.
+	PersistRequested func(ctx context.Context, requestID string) error
+	PersistDone      func(ctx context.Context, d SandboxPersistDone) error
 }
 
 type sandboxVMMClient interface {
@@ -129,7 +178,8 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	}
 	spec := SandboxSpec{Instance: placement.Instance, SandboxID: a.SandboxID, AccountID: a.AccountID, Plan: a.Plan,
 		BaseKey: r.cfg.BaseKey, LayerKey: r.cfg.SandboxLayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB,
-		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network()}
+		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network(),
+		WorkspaceKey: a.WorkspaceKey}
 	if err := router.RunSandbox(ctx, placement.NodeID, spec, hooks, control); err != nil {
 		return fmt.Errorf("sched: sandbox %s on node %s: %w", a.SandboxID, placement.NodeID, err)
 	}
@@ -181,6 +231,7 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		Instance: spec.Instance, SandboxId: spec.SandboxID, AccountId: spec.AccountID, Plan: string(spec.Plan),
 		BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB),
 		CpuMillicores: int32(spec.CPUMillicores), QuietPauseAfterMs: spec.QuietPauseAfter.Milliseconds(), NetworkMode: spec.Network,
+		WorkspaceKey: spec.WorkspaceKey,
 	}}}); err != nil {
 		return liftErr(err)
 	}
@@ -194,9 +245,9 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 				if !ok {
 					return
 				}
-				msg := &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Freeze{Freeze: &vmmdpb.RunSandboxFreeze{}}}
-				if req == SandboxClose {
-					msg = &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Close{Close: &vmmdpb.RunSandboxClose{}}}
+				msg := sandboxControlFrame(req)
+				if msg == nil {
+					continue
 				}
 				if stream.Send(msg) != nil {
 					return
@@ -258,6 +309,16 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 			}
 		case event.GetThawed() != nil:
 			err = call(hooks.Thawed)
+		case event.GetPersistRequested() != nil:
+			if hooks.PersistRequested != nil {
+				err = hooks.PersistRequested(ctx, event.GetPersistRequested().GetRequestId())
+			}
+		case event.GetPersistDone() != nil:
+			if hooks.PersistDone != nil {
+				d := event.GetPersistDone()
+				err = hooks.PersistDone(ctx, SandboxPersistDone{RequestID: d.GetRequestId(), SnapshotID: d.GetSnapshotId(),
+					Bytes: d.GetBytes(), SHA256: d.GetSha256(), Failed: d.GetFailed()})
+			}
 		default:
 			return errors.New("sched: sandbox stream returned an empty event")
 		}
@@ -265,4 +326,27 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 			return err
 		}
 	}
+}
+
+// sandboxControlFrame is the vmmd frame for one control, or nil for one
+// without a payload it needs.
+func sandboxControlFrame(req SandboxControl) *vmmdpb.RunSandboxRequest {
+	switch req.Op {
+	case SandboxOpFreeze:
+		return &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Freeze{Freeze: &vmmdpb.RunSandboxFreeze{}}}
+	case SandboxOpClose:
+		return &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Close{Close: &vmmdpb.RunSandboxClose{}}}
+	case SandboxOpPersistGrant:
+		if g := req.PersistGrant; g != nil {
+			return &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_PersistGrant{PersistGrant: &vmmdpb.RunSandboxPersistGrant{
+				RequestId: g.RequestID, SnapshotId: g.SnapshotID, StorageKey: g.StorageKey, MaxBytes: g.MaxBytes,
+				ExpiresAtUnixMs: g.ExpiresAtUnixMs, Refusal: g.Refusal}}}
+		}
+	case SandboxOpPersistRecorded:
+		if r := req.PersistRecorded; r != nil {
+			return &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_PersistRecorded{PersistRecorded: &vmmdpb.RunSandboxPersistRecorded{
+				RequestId: r.RequestID, Recorded: r.Recorded}}}
+		}
+	}
+	return nil
 }

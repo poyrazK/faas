@@ -146,6 +146,14 @@ service Vmmd {
   // destroyed on close and whenever the stream ends.
   rpc RunSandbox(stream RunSandboxRequest) returns (stream RunSandboxEvent);
 
+  // PersistSandboxWorkspace archives a session's workspace to the artifact
+  // store (ADR-20261027090013 step 7). vmmd asks agentd, on the session's
+  // RunSandbox stream, for a reservation within the account's snapshot
+  // quota, streams the guest's archive to the reserved key, and answers once
+  // agentd has recorded the snapshot. A refused reservation is
+  // FailedPrecondition carrying the limit problem.
+  rpc PersistSandboxWorkspace(PersistSandboxWorkspaceRequest) returns (PersistSandboxWorkspaceResponse);
+
   // WaitJobExit waits for the guest job supervisor's terminal vsock receipt.
   // The caller supplies the deadline on the gRPC context.
   rpc WaitJobExit(WaitJobExitRequest) returns (JobExitResponse);
@@ -3282,6 +3290,8 @@ message RunSandboxRequest {
     RunSandboxStart start = 1;
     RunSandboxFreeze freeze = 2;
     RunSandboxClose close = 3;
+    RunSandboxPersistGrant persist_grant = 4;
+    RunSandboxPersistRecorded persist_recorded = 5;
   }
 }
 
@@ -3304,6 +3314,11 @@ message RunSandboxStart {
   // registries boots the VM with DNS-gated egress to package registries
   // and git hosts on TCP 443.
   string network_mode = 11;
+  // workspace_key is a persisted workspace's archive in the artifact store
+  // (ADR-20261027090013 step 7), unpacked into /workspace before booted; a
+  // failure to unpack it is FailedPrecondition with the problem code
+  // sandbox_workspace_unavailable.
+  string workspace_key = 12;
 }
 
 // RunSandboxFreeze asks vmmd to freeze the idle VM in place (ADR-1151),
@@ -3321,6 +3336,8 @@ message RunSandboxEvent {
     RunSandboxFrozen frozen = 3;
     RunSandboxFreezeRefused freeze_refused = 4;
     RunSandboxThawed thawed = 5;
+    RunSandboxPersistRequested persist_requested = 6;
+    RunSandboxPersistDone persist_done = 7;
   }
 }
 
@@ -3345,6 +3362,57 @@ message RunSandboxFreezeRefused {
 }
 
 message RunSandboxThawed {}
+
+// RunSandboxPersistRequested asks agentd for room for one workspace
+// archive; request_id pairs it with the grant.
+message RunSandboxPersistRequested {
+  string request_id = 1;
+}
+
+// RunSandboxPersistGrant is agentd's answer: a snapshot reserved under
+// storage_key for at most max_bytes, or refusal, an RFC 7807 problem as
+// JSON.
+message RunSandboxPersistGrant {
+  string request_id = 1;
+  string snapshot_id = 2;
+  string storage_key = 3;
+  int64 max_bytes = 4;
+  int64 expires_at_unix_ms = 5;
+  bytes refusal = 6;
+}
+
+// RunSandboxPersistDone reports the archive written, or failed when it was
+// not; agentd then records or drops the snapshot.
+message RunSandboxPersistDone {
+  string request_id = 1;
+  string snapshot_id = 2;
+  int64 bytes = 3;
+  string sha256 = 4;
+  bool failed = 5;
+}
+
+// RunSandboxPersistRecorded: agentd recorded the snapshot as ready, or
+// could not, in which case vmmd deletes the archive.
+message RunSandboxPersistRecorded {
+  string request_id = 1;
+  bool recorded = 2;
+}
+
+message PersistSandboxWorkspaceRequest {
+  string instance = 1;
+  string sandbox_id = 2;
+  // path is the directory to archive, relative to /workspace; empty is the
+  // whole workspace.
+  string path = 3;
+}
+
+message PersistSandboxWorkspaceResponse {
+  string snapshot_id = 1;
+  int64 bytes = 2;
+  string sha256 = 3;
+  int64 entries = 4;
+  int64 expires_at_unix_ms = 5;
+}
 
 message SandboxCallRequest {
   oneof message {

@@ -27,6 +27,10 @@ type fakeSandboxRunner struct {
 	admission sched.SandboxAdmission
 	booted    chan struct{}
 	err       error
+	// persist asks for a workspace persist after booting; recorded is
+	// agentd's record of it.
+	persist  bool
+	recorded chan sched.SandboxPersistRecorded
 }
 
 func (f *fakeSandboxRunner) RunSandbox(ctx context.Context, a sched.SandboxAdmission, placed func(sched.AgentRunPlacement) error, hooks sched.SandboxHooks, control <-chan sched.SandboxControl) error {
@@ -40,16 +44,26 @@ func (f *fakeSandboxRunner) RunSandbox(ctx context.Context, a sched.SandboxAdmis
 	close(f.booted)
 	_ = hooks.Booted(ctx, "WAKE_COLD_BOOT", 700)
 	_ = hooks.Activity(ctx, sched.SandboxActivity{LastCallEnded: time.UnixMilli(1_800_000_000_000)})
+	if f.persist {
+		_ = hooks.PersistRequested(ctx, "req-1")
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case req := <-control:
-			if req == sched.SandboxClose {
+			switch req.Op {
+			case sched.SandboxOpClose:
 				return nil
+			case sched.SandboxOpPersistGrant:
+				g := req.PersistGrant
+				_ = hooks.PersistDone(ctx, sched.SandboxPersistDone{RequestID: g.RequestID, SnapshotID: g.SnapshotID, Bytes: g.MaxBytes - 1, SHA256: g.StorageKey})
+			case sched.SandboxOpPersistRecorded:
+				f.recorded <- *req.PersistRecorded
+			default:
+				_ = hooks.Frozen(ctx)
+				_ = hooks.Thawed(ctx)
 			}
-			_ = hooks.Frozen(ctx)
-			_ = hooks.Thawed(ctx)
 		}
 	}
 }
@@ -142,6 +156,7 @@ func TestRunSandboxStatusCodes(t *testing.T) {
 		{"off", nil, codes.Unimplemented},
 		{"no capacity", &fakeSandboxRunner{err: api.NewProblem(503, api.CodeCapacity, "Full", "no node")}, codes.ResourceExhausted},
 		{"outside the plan", &fakeSandboxRunner{err: &sched.AgentRunInvalidError{Reason: "x"}}, codes.FailedPrecondition},
+		{"workspace unavailable", &fakeSandboxRunner{err: api.NewProblem(409, api.CodeSandboxWorkspaceUnavailable, "x", "gone")}, codes.DataLoss},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stream, err := sandboxScheddClient(t, tc.runner).RunSandbox(context.Background())
@@ -155,5 +170,58 @@ func TestRunSandboxStatusCodes(t *testing.T) {
 				t.Fatalf("err = %v, want %s", err, tc.want)
 			}
 		})
+	}
+}
+
+// adr: 20261027090013 step 7 — schedd relays a workspace persist's request
+// and done events up to agentd, and its grant and record down to vmmd.
+func TestRunSandboxRelaysAPersist(t *testing.T) {
+	runner := &fakeSandboxRunner{booted: make(chan struct{}), persist: true, recorded: make(chan sched.SandboxPersistRecorded, 1)}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stream, err := sandboxScheddClient(t, runner).RunSandbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := sandboxRunStart()
+	start.GetStart().WorkspaceKey = "agents/workspaces/acct/s.tar.gz"
+	for _, r := range []*scheddpb.SandboxRunRequest{start, {Frame: &scheddpb.SandboxRunRequest_Proceed{Proceed: &scheddpb.AgentRunProceed{}}}} {
+		if err := stream.Send(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	next := func(ok func(*scheddpb.SandboxRunEvent) bool) *scheddpb.SandboxRunEvent {
+		t.Helper()
+		for {
+			ev, err := stream.Recv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ok(ev) {
+				return ev
+			}
+		}
+	}
+	req := next(func(e *scheddpb.SandboxRunEvent) bool { return e.GetPersistRequested() != nil })
+	if req.GetPersistRequested().GetRequestId() != "req-1" {
+		t.Fatalf("requested %v", req)
+	}
+	if err := stream.Send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_PersistGrant{PersistGrant: &scheddpb.SandboxRunPersistGrant{
+		RequestId: "req-1", SnapshotId: "snap", StorageKey: "key", MaxBytes: 10}}}); err != nil {
+		t.Fatal(err)
+	}
+	done := next(func(e *scheddpb.SandboxRunEvent) bool { return e.GetPersistDone() != nil }).GetPersistDone()
+	if done.GetRequestId() != "req-1" || done.GetSnapshotId() != "snap" || done.GetBytes() != 9 || done.GetSha256() != "key" {
+		t.Fatalf("done %v", done)
+	}
+	if err := stream.Send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_PersistRecorded{PersistRecorded: &scheddpb.SandboxRunPersistRecorded{
+		RequestId: "req-1", Recorded: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-runner.recorded; got.RequestID != "req-1" || !got.Recorded {
+		t.Fatalf("recorded %+v", got)
+	}
+	if runner.admission.WorkspaceKey != "agents/workspaces/acct/s.tar.gz" {
+		t.Fatalf("admission %+v", runner.admission)
 	}
 }

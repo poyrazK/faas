@@ -50,6 +50,9 @@ type Claims struct {
 	// ExecTimeoutMaxMillis and ExecOutputMaxBytes bound one command.
 	ExecTimeoutMaxMillis int64 `json:"et,omitempty"`
 	ExecOutputMaxBytes   int64 `json:"eo,omitempty"`
+	// WorkspaceMaxBytes bounds what one workspace archive unpacks
+	// (SandboxWorkspaceMaxMB).
+	WorkspaceMaxBytes int64 `json:"wb,omitempty"`
 }
 
 // Placed reports whether the token routes to a booted session.

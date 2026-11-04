@@ -224,5 +224,20 @@ CREATE TABLE sandbox_sessions (
  last_activity_at timestamptz NOT NULL DEFAULT now(),
  created_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now(),
- closed_at timestamptz
+ closed_at timestamptz,
+ workspace_snapshot_id uuid
+);
+CREATE TABLE sandbox_workspace_snapshots (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ sandbox_id uuid NOT NULL,
+ state text NOT NULL DEFAULT 'pending',
+ storage_key text NOT NULL,
+ reserved_bytes bigint NOT NULL,
+ bytes bigint,
+ sha256 text,
+ expires_at timestamptz NOT NULL,
+ delete_requested_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ ready_at timestamptz
 );

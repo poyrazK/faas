@@ -212,29 +212,45 @@ type PlatformTenant struct {
 }
 
 type SandboxSession struct {
-	ID               pgtype.UUID
-	AccountID        pgtype.UUID
-	TenantID         pgtype.UUID
-	Kind             string
-	Preset           string
-	RamMb            int32
-	NetworkMode      string
-	State            string
-	IdleTimeoutSec   int32
-	ExpiresAt        pgtype.Timestamptz
-	Labels           []byte
-	OutcomeCode      pgtype.Text
-	OutcomeMessage   pgtype.Text
-	LeaseOwner       pgtype.Text
-	LeaseToken       pgtype.Text
-	LeaseExpiresAt   pgtype.Timestamptz
-	NodeID           pgtype.Text
-	InstanceID       pgtype.Text
-	CloseRequestedAt pgtype.Timestamptz
-	LastActivityAt   pgtype.Timestamptz
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	ClosedAt         pgtype.Timestamptz
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	TenantID            pgtype.UUID
+	Kind                string
+	Preset              string
+	RamMb               int32
+	NetworkMode         string
+	State               string
+	IdleTimeoutSec      int32
+	ExpiresAt           pgtype.Timestamptz
+	Labels              []byte
+	OutcomeCode         pgtype.Text
+	OutcomeMessage      pgtype.Text
+	LeaseOwner          pgtype.Text
+	LeaseToken          pgtype.Text
+	LeaseExpiresAt      pgtype.Timestamptz
+	NodeID              pgtype.Text
+	InstanceID          pgtype.Text
+	CloseRequestedAt    pgtype.Timestamptz
+	LastActivityAt      pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	ClosedAt            pgtype.Timestamptz
+	WorkspaceSnapshotID pgtype.UUID
+}
+
+type SandboxWorkspaceSnapshot struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	SandboxID         pgtype.UUID
+	State             string
+	StorageKey        string
+	ReservedBytes     int64
+	Bytes             pgtype.Int8
+	Sha256            pgtype.Text
+	ExpiresAt         pgtype.Timestamptz
+	DeleteRequestedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	ReadyAt           pgtype.Timestamptz
 }
 
 type WorkflowEvent struct {

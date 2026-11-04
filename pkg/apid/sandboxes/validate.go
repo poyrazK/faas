@@ -21,11 +21,10 @@ import (
 // of an unknown-field error.
 type createBody struct {
 	api.CreateSandboxRequest
-	Image      json.RawMessage `json:"image"`
-	Manifest   json.RawMessage `json:"manifest"`
-	SnapshotID json.RawMessage `json:"snapshot_id"`
-	Env        json.RawMessage `json:"env"`
-	Ports      json.RawMessage `json:"ports"`
+	Image    json.RawMessage `json:"image"`
+	Manifest json.RawMessage `json:"manifest"`
+	Env      json.RawMessage `json:"env"`
+	Ports    json.RawMessage `json:"ports"`
 }
 
 // notYet names each field sessions do not take yet, and what to use.
@@ -36,7 +35,6 @@ var notYet = []struct {
 }{
 	{"image", func(b createBody) json.RawMessage { return b.Image }, "seller images are not available for sessions yet; name a preset"},
 	{"manifest", func(b createBody) json.RawMessage { return b.Manifest }, "manifests are not available yet; write files once the session is ready"},
-	{"snapshot_id", func(b createBody) json.RawMessage { return b.SnapshotID }, "persisted workspaces are not available yet"},
 	{"env", func(b createBody) json.RawMessage { return b.Env }, "session environment is not available yet"},
 	{"ports", func(b createBody) json.RawMessage { return b.Ports }, "exposed ports are not available yet"},
 }
@@ -56,6 +54,13 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 	in := body.CreateSandboxRequest
 	a := agentstore.SandboxAdmission{AccountID: acct.ID, Kind: in.Kind, Preset: in.Preset, Labels: in.Labels,
 		QueuedMax: api.AgentRunQueuedPerAccount[idx]}
+	if in.SnapshotID != "" {
+		id, err := uuid.Parse(in.SnapshotID)
+		if err != nil {
+			return a, api.ErrValidation("snapshot_id must be a sandbox snapshot ID")
+		}
+		a.WorkspaceSnapshotID = id.String()
+	}
 	checks := []func() *api.Problem{
 		func() *api.Problem { return validKind(&a) },
 		func() *api.Problem { return validPreset(acct.Plan, &a, in.RAMMB) },

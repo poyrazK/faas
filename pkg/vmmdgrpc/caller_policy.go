@@ -34,7 +34,8 @@ var schedulerOnlyMethods = map[string]string{
 // authorizes at gatewayd-internal before it calls (ADR-20261027090013 §4). A
 // certificate caller must be gatewayd-internal.
 var gatewayOnlyMethods = map[string]string{
-	vmmdpb.Vmmd_SandboxCall_FullMethodName: "sandbox session calls",
+	vmmdpb.Vmmd_SandboxCall_FullMethodName:             "sandbox session calls",
+	vmmdpb.Vmmd_PersistSandboxWorkspace_FullMethodName: "sandbox workspace persists",
 }
 
 // CallerPolicyUnaryInterceptor enforces the caller policy on unary RPCs.

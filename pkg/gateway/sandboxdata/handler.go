@@ -73,6 +73,8 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/sandboxes/{id}/files:remove", h.fileChange(sandboxproto.OpFileRemove))
 	mux.HandleFunc("POST /v1/sandboxes/{id}/files:mkdir", h.fileChange(sandboxproto.OpFileMkdir))
 	mux.HandleFunc("POST /v1/sandboxes/{id}/files:rename", h.fileChange(sandboxproto.OpFileRename))
+	mux.HandleFunc("POST /v1/sandboxes/{id}/workspace:hydrate", h.workspaceHydrate)
+	mux.HandleFunc("POST /v1/sandboxes/{id}/workspace:persist", h.workspacePersist)
 }
 
 // claims verifies the call's session token for the session in its path.
@@ -192,36 +194,13 @@ func callProblem(err error) *api.Problem {
 	return api.NewProblem(http.StatusServiceUnavailable, api.CodeInternal, "Sandbox unavailable", "the session could not take the call; retry")
 }
 
-// guestRefusals maps each guest refusal to its status and problem code.
-var guestRefusals = map[string]struct {
-	status int
-	code   string
-}{
-	sandboxproto.CodeInvalidRequest:   {http.StatusBadRequest, api.CodeValidation},
-	sandboxproto.CodeNotFound:         {http.StatusNotFound, api.CodeSandboxEntryNotFound},
-	sandboxproto.CodeExists:           {http.StatusConflict, api.CodeSandboxPathExists},
-	sandboxproto.CodeOutsideWorkspace: {http.StatusForbidden, api.CodeSandboxOutsideWorkspace},
-	sandboxproto.CodeNotADirectory:    {http.StatusBadRequest, api.CodeSandboxNotADirectory},
-	sandboxproto.CodeIsADirectory:     {http.StatusBadRequest, api.CodeSandboxIsADirectory},
-	sandboxproto.CodeNotEmpty:         {http.StatusConflict, api.CodeSandboxDirectoryNotEmpty},
-	sandboxproto.CodeTooLarge:         {http.StatusRequestEntityTooLarge, api.CodeSandboxTooLarge},
-	sandboxproto.CodeLimit:            {http.StatusTooManyRequests, api.CodeSandboxBusy},
-	sandboxproto.CodeUnsupported:      {http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
-	sandboxproto.CodeStartFailed:      {http.StatusUnprocessableEntity, api.CodeSandboxCommandStartFailed},
-}
-
-// guestProblem maps the guest's error frame; a guest failure that is not a
-// refusal is the platform's.
+// guestProblem maps the guest's error frame.
 func guestProblem(body []byte) *api.Problem {
 	var e sandboxproto.ErrorFrame
 	if err := sandboxproto.DecodeStrict(body, &e); err != nil {
 		return api.NewProblem(http.StatusBadGateway, api.CodeInternal, "Sandbox failed", "the session sent an unreadable error")
 	}
-	r, ok := guestRefusals[e.Code]
-	if !ok {
-		return api.NewProblem(http.StatusBadGateway, api.CodeInternal, "Sandbox failed", "the session could not complete the call")
-	}
-	return api.NewProblem(r.status, r.code, "Sandbox refused the call", e.Message)
+	return sandboxproto.Problem(e)
 }
 
 // limitProblem refuses a value over the plan cap the token carries.

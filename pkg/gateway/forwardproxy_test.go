@@ -589,6 +589,9 @@ func (f *fakeVmmdClient) RunSandbox(context.Context, ...grpc.CallOption) (grpc.B
 func (f *fakeVmmdClient) SandboxCall(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.SandboxCallRequest, vmmdpb.SandboxCallEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "sandbox sessions are not used by gateway tests")
 }
+func (f *fakeVmmdClient) PersistSandboxWorkspace(context.Context, *vmmdpb.PersistSandboxWorkspaceRequest, ...grpc.CallOption) (*vmmdpb.PersistSandboxWorkspaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "sandbox sessions are not used by gateway tests")
+}
 func (f *fakeVmmdClient) RunAgent(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.RunAgentRequest, vmmdpb.RunAgentEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "agent runs are not used by gateway tests")
 }

@@ -361,8 +361,10 @@ type ScheddClient interface {
 	// start; after placed (the reservation is held, nothing booted) schedd
 	// waits for proceed, which agentd sends once it has recorded the session's
 	// placement. Then agentd may freeze or close the session; schedd relays
-	// vmmd's booted, activity, frozen, freeze_refused and thawed events. The
-	// VM is destroyed and the reservation released when the stream ends.
+	// vmmd's booted, activity, frozen, freeze_refused and thawed events, and
+	// relays a workspace persist's request and done events up and agentd's
+	// grant and recorded answers down. The VM is destroyed and the
+	// reservation released when the stream ends.
 	RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SandboxRunRequest, SandboxRunEvent], error)
 	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
 	// memory-pressure report: MemAvailable fell to the pressure share of
@@ -1118,8 +1120,10 @@ type ScheddServer interface {
 	// start; after placed (the reservation is held, nothing booted) schedd
 	// waits for proceed, which agentd sends once it has recorded the session's
 	// placement. Then agentd may freeze or close the session; schedd relays
-	// vmmd's booted, activity, frozen, freeze_refused and thawed events. The
-	// VM is destroyed and the reservation released when the stream ends.
+	// vmmd's booted, activity, frozen, freeze_refused and thawed events, and
+	// relays a workspace persist's request and done events up and agentd's
+	// grant and recorded answers down. The VM is destroyed and the
+	// reservation released when the stream ends.
 	RunSandbox(grpc.BidiStreamingServer[SandboxRunRequest, SandboxRunEvent]) error
 	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
 	// memory-pressure report: MemAvailable fell to the pressure share of

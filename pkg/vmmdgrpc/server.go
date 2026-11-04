@@ -280,6 +280,9 @@ type Server struct {
 	// keeps (ADR-20261027090013 §5), keyed by instance. The zero value is
 	// ready to use.
 	sandboxRuns sync.Map
+	// sandboxStorage keeps persisted sandbox workspaces (ADR-20261027090013
+	// step 7); nil persists none. See WithSandboxWorkspaces.
+	sandboxStorage storage.StorageBackend
 
 	vmm VmmdAPI
 	ops *wire.OpsMetrics

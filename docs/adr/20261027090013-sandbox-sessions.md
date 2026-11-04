@@ -406,7 +406,7 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
    - **Credentials.** The token is the only credential. The gateway verifies it with apid's public key (see step 5's token keys), so no call reads Postgres. A missing, forged, expired or other-session token answers `404`, like an absent route.
    - **Problem codes.** Guest refusals get stable codes of their own: `sandbox_entry_not_found`, `sandbox_path_exists`, `sandbox_path_outside_workspace`, `sandbox_not_a_directory`, `sandbox_is_a_directory`, `sandbox_directory_not_empty`, `sandbox_too_large`, `sandbox_busy` and `sandbox_command_start_failed`. A session no longer on its node is `sandbox_not_found`.
    - **Not yet:**
-     - the terminal (`stdin`, the WebSocket) and the archive routes, which come with step 7;
+     - the terminal (`stdin`, the WebSocket), which comes with the interactive attach; the archive routes came with step 7;
      - the workspace scratch drive and setting `SandboxID`, which come with step 5's boot path;
      - a token check in vmmd as well, like attach's, which comes with step 5: the boot path can hand vmmd a key derived for that session alone;
      - the memory integral, which comes with step 11;
@@ -467,6 +467,22 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - Mirrors that serve only port 80 are unreachable. This affects many apt mirrors, so `apt` needs HTTPS sources.
      - Private registries and custom git hosts are not yet configurable.
 7. Workspace persist and hydrate.
+   - **As built (local branch, no PR yet).** Two switches gate it: agentd's `FAAS_AGENTD_SANDBOX_WORKSPACES` (next to `FAAS_AGENTD_SANDBOXES`), and vmmd's artifact store, which every node has.
+   - **`POST …/workspace:hydrate?path=`** (gatewayd-internal) unpacks the uploaded tar.gz into the workspace through `SandboxCall` `archive_extract`. The unpacked size is capped at the plan's `SandboxWorkspaceMaxMB`, which the session token now carries (`wb`), and the entry count at `SandboxArchiveEntriesMax`. A token minted before the cap was added gets `409 sandbox_not_ready`, so the caller reads the session again.
+   - **`POST …/workspace:persist`** (body `{path?}`) reaches the node's vmmd through `PersistSandboxWorkspace`, a gateway-only local data method. Before writing, vmmd asks agentd for a reservation over the session's `RunSandbox` stream: `persist_requested` → `persist_grant`. schedd relays each message both ways and keeps no state.
+     - **Reservation.** agentd holds the account's agent lock and inserts a pending `sandbox_workspace_snapshots` row (migration `20261104194554000`, expand). The reservation is whatever is left of `SandboxSnapshotBytesPerAccount`, at most `SandboxWorkspaceMaxMB`. Pending rows count their full reservation against the quota, and ready rows count their actual size. A full quota is refused as `agent_limit`.
+     - **Write.** vmmd streams the guest's `archive_create` straight into the artifact store at `agents/workspaces/<account>/<snapshot>.tar.gz`, then reports `persist_done`. agentd marks the row ready with its size and digest, and only for a reservation this session's stream made. agentd answers `persist_recorded`.
+     - **Answer.** vmmd answers `{snapshot_id, bytes, sha256, entries, expires_at}` only after the snapshot is recorded, so every ID a caller holds can be used. If the write fails or the snapshot is not recorded, vmmd deletes the archive and tells agentd to drop the reservation.
+   - **Starting from a snapshot.** `POST /v1/sandboxes` takes `snapshot_id`, which must be the account's own, ready, unexpired and not being deleted; otherwise it is `404 sandbox_snapshot_not_found`.
+     - The claim carries the archive's key (`workspace_key` on both starts). vmmd unpacks it before `booted`.
+     - A snapshot deleted after the create, or an archive that cannot be unpacked, fails the session as `workspace_unavailable`. vmmd returns `sandbox_workspace_unavailable`, which schedd maps to `DataLoss`. The session is never started empty and never requeued. vmmd also refuses a key outside the session account's prefix.
+   - **Snapshots API** (apid, agents capability): `GET /v1/sandbox-snapshots` (newest first, paged with `before`), `GET` and `DELETE /v1/sandbox-snapshots/{id}`. A delete sets `delete_requested_at`, and the snapshot is hidden and unusable from then on.
+   - **Retention.** agentd's sweep deletes the archive first, then the row, for three kinds of snapshot: those past `SandboxSnapshotRetentionDays`, those apid was asked to delete, and pending ones older than `SandboxSnapshotPendingSec` (1 h). The pending timeout outlasts `SandboxPersistTimeoutSec` (30 min). A delete that fails keeps the row, so the next sweep retries it.
+   - **Known gaps:**
+     - vmmd's artifact store is the node's read-through cache, so a persisted or restored archive also lands in that node's cache until LRU eviction.
+     - A 20 GB archive streams for minutes; gatewayd-internal's response timeouts apply to persist and hydrate just as they do to long `exec` calls.
+     - Snapshot bytes are not billed yet (step 11).
+     - `sandbox_workspace_archive_bytes` is not emitted yet.
 8. Exposed ports and preview URLs: the preview domain, per-port DNAT, the gateway host route, tokens, and rate limits (§11).
 9. `GregaleSandboxClient` (with `resolveExposedPort`) and the PR-triage example.
 10. The E2B-compatible shim, template import, and a migration guide with the coverage table (§12, §13).

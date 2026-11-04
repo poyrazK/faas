@@ -44,6 +44,8 @@ func TestAgentsHiddenUntilReleased(t *testing.T) {
 			e.do(t, http.MethodPatch, sandbox, nil, nil),
 			e.do(t, http.MethodDelete, sandbox, nil, nil),
 			e.do(t, http.MethodPut, sandbox, nil, nil),
+			e.do(t, http.MethodGet, "/v1/sandbox-snapshots", nil, nil),
+			e.do(t, http.MethodDelete, "/v1/sandbox-snapshots/00000000-0000-4000-8000-0000000000cc", nil, nil),
 		}
 	}
 	// The internal tier default: nobody.

@@ -20,3 +20,7 @@ func (*stubVmmdClient) RunSandbox(context.Context, ...grpc.CallOption) (grpc.Bid
 func (*stubVmmdClient) SandboxCall(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.SandboxCallRequest, vmmdpb.SandboxCallEvent], error) {
 	return nil, status.Error(codes.Unimplemented, "sandbox sessions are not used by HTTP gateway tests")
 }
+
+func (*stubVmmdClient) PersistSandboxWorkspace(context.Context, *vmmdpb.PersistSandboxWorkspaceRequest, ...grpc.CallOption) (*vmmdpb.PersistSandboxWorkspaceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "sandbox sessions are not used by HTTP gateway tests")
+}

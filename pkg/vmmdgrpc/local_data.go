@@ -26,17 +26,18 @@ import (
 // the lifecycle and scheduler-only ones, is refused on the local data socket.
 // TestLocalDataMethodsCoverTheGateway keeps the list in step with the gateway.
 var localDataMethods = map[string]bool{
-	vmmdpb.Vmmd_ForwardHTTPStream_FullMethodName:    true,
-	vmmdpb.Vmmd_ForwardRawStream_FullMethodName:     true,
-	vmmdpb.Vmmd_ForwardTCPStream_FullMethodName:     true,
-	vmmdpb.Vmmd_ForwardUDPStream_FullMethodName:     true,
-	vmmdpb.Vmmd_Ping_FullMethodName:                 true,
-	vmmdpb.Vmmd_AllowResolvedEgress_FullMethodName:  true,
-	vmmdpb.Vmmd_AttachAppTask_FullMethodName:        true,
-	vmmdpb.Vmmd_SandboxCall_FullMethodName:          true,
-	vmmdpb.Vmmd_InflightRequestTrace_FullMethodName: true,
-	vmmdpb.Vmmd_Logs_FullMethodName:                 true,
-	vmmdpb.Vmmd_ResolveServiceCaller_FullMethodName: true,
+	vmmdpb.Vmmd_ForwardHTTPStream_FullMethodName:       true,
+	vmmdpb.Vmmd_ForwardRawStream_FullMethodName:        true,
+	vmmdpb.Vmmd_ForwardTCPStream_FullMethodName:        true,
+	vmmdpb.Vmmd_ForwardUDPStream_FullMethodName:        true,
+	vmmdpb.Vmmd_Ping_FullMethodName:                    true,
+	vmmdpb.Vmmd_AllowResolvedEgress_FullMethodName:     true,
+	vmmdpb.Vmmd_AttachAppTask_FullMethodName:           true,
+	vmmdpb.Vmmd_SandboxCall_FullMethodName:             true,
+	vmmdpb.Vmmd_PersistSandboxWorkspace_FullMethodName: true,
+	vmmdpb.Vmmd_InflightRequestTrace_FullMethodName:    true,
+	vmmdpb.Vmmd_Logs_FullMethodName:                    true,
+	vmmdpb.Vmmd_ResolveServiceCaller_FullMethodName:    true,
 }
 
 // LocalDataServerOptions are the grpc.Server options of the local data

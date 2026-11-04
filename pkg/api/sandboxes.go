@@ -81,6 +81,14 @@ const (
 	// background commands as it can.
 	CodeSandboxBusy               = "sandbox_busy"
 	CodeSandboxCommandStartFailed = "sandbox_command_start_failed"
+
+	// Persisted workspaces (ADR-20261027090013 step 7).
+	// CodeSandboxSnapshotNotFound: no such snapshot, or one not ready,
+	// expired or being deleted.
+	CodeSandboxSnapshotNotFound = "sandbox_snapshot_not_found"
+	// CodeSandboxWorkspaceUnavailable: a session's persisted workspace could
+	// not be unpacked when it booted, or a persist could not be recorded.
+	CodeSandboxWorkspaceUnavailable = "sandbox_workspace_unavailable"
 )
 
 // CreateSandboxRequest creates a sandbox session from a harness preset.
@@ -96,6 +104,8 @@ type CreateSandboxRequest struct {
 	IdleTimeoutS int               `json:"idle_timeout_s,omitempty"`
 	LifetimeS    int               `json:"lifetime_s,omitempty"`
 	Labels       map[string]string `json:"labels,omitempty"`
+	// SnapshotID starts the session from a persisted workspace.
+	SnapshotID string `json:"snapshot_id,omitempty"`
 }
 
 // SandboxNetwork is a session's egress (ADR-20261027090013 §6).
@@ -131,6 +141,52 @@ type Sandbox struct {
 	ClosedAt         *time.Time        `json:"closed_at,omitempty"`
 	Token            string            `json:"token,omitempty"`
 	TokenExpiresAt   *time.Time        `json:"token_expires_at,omitempty"`
+	// SnapshotID is the persisted workspace the session started from.
+	SnapshotID string `json:"snapshot_id,omitempty"`
+}
+
+// SandboxSnapshot is a persisted workspace (ADR-20261027090013 step 7): a
+// tar.gz of a session's workspace in Gregale's artifact store, kept until
+// ExpiresAt (SandboxSnapshotRetentionDays) and counted against
+// SandboxSnapshotBytesPerAccount. A session created with its ID starts with
+// the archive unpacked into /workspace.
+type SandboxSnapshot struct {
+	ID        string     `json:"id"`
+	SandboxID string     `json:"sandbox_id"`
+	State     string     `json:"state"`
+	Bytes     int64      `json:"bytes,omitempty"`
+	SHA256    string     `json:"sha256,omitempty"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	CreatedAt time.Time  `json:"created_at"`
+	ReadyAt   *time.Time `json:"ready_at,omitempty"`
+}
+
+// SandboxSnapshotList is a page of persisted workspaces, newest first.
+type SandboxSnapshotList struct {
+	Items      []SandboxSnapshot `json:"items"`
+	NextBefore string            `json:"next_before,omitempty"`
+}
+
+// PersistSandboxWorkspaceRequest is the body of workspace:persist. Path is
+// the directory to archive, relative to /workspace; empty is all of it.
+type PersistSandboxWorkspaceRequest struct {
+	Path string `json:"path,omitempty"`
+}
+
+// PersistSandboxWorkspaceResponse answers workspace:persist.
+type PersistSandboxWorkspaceResponse struct {
+	SnapshotID string    `json:"snapshot_id"`
+	Bytes      int64     `json:"bytes"`
+	SHA256     string    `json:"sha256"`
+	Entries    int64     `json:"entries"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
+
+// HydrateSandboxWorkspaceResponse answers workspace:hydrate: the unpacked
+// bytes and entries.
+type HydrateSandboxWorkspaceResponse struct {
+	Bytes   int64 `json:"bytes"`
+	Entries int64 `json:"entries"`
 }
 
 // SandboxOutcome says how a session ended.

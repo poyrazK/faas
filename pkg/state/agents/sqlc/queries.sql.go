@@ -246,6 +246,26 @@ func (q *Queries) CloseQueuedSandboxSession(ctx context.Context, db DBTX, arg Cl
 	return result.RowsAffected(), nil
 }
 
+const completeSandboxSnapshot = `-- name: CompleteSandboxSnapshot :execrows
+UPDATE sandbox_workspace_snapshots SET state='ready', bytes=$1::bigint, sha256=$2::text, ready_at=now()
+ WHERE id=$3::text::uuid AND state='pending' AND delete_requested_at IS NULL
+ AND $1::bigint <= reserved_bytes
+`
+
+type CompleteSandboxSnapshotParams struct {
+	Bytes      int64
+	Sha256     string
+	SnapshotID string
+}
+
+func (q *Queries) CompleteSandboxSnapshot(ctx context.Context, db DBTX, arg CompleteSandboxSnapshotParams) (int64, error) {
+	result, err := db.Exec(ctx, completeSandboxSnapshot, arg.Bytes, arg.Sha256, arg.SnapshotID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countActiveAgents = `-- name: CountActiveAgents :one
 SELECT count(*)::integer FROM agents WHERE account_id=$1::text::uuid AND state='active'
 `
@@ -310,6 +330,18 @@ func (q *Queries) CountQueuedSandboxSessions(ctx context.Context, db DBTX, accou
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const deleteSandboxSnapshot = `-- name: DeleteSandboxSnapshot :execrows
+DELETE FROM sandbox_workspace_snapshots WHERE id=$1::text::uuid
+`
+
+func (q *Queries) DeleteSandboxSnapshot(ctx context.Context, db DBTX, snapshotID string) (int64, error) {
+	result, err := db.Exec(ctx, deleteSandboxSnapshot, snapshotID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const endAgentDeliveryAttempt = `-- name: EndAgentDeliveryAttempt :one
@@ -938,7 +970,8 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 const getSandboxSession = `-- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
-  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id
  FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
 
@@ -948,26 +981,27 @@ type GetSandboxSessionParams struct {
 }
 
 type GetSandboxSessionRow struct {
-	ID               string
-	AccountID        string
-	TenantID         string
-	Kind             string
-	Preset           string
-	RamMb            int32
-	NetworkMode      string
-	State            string
-	IdleTimeoutSec   int32
-	ExpiresAt        pgtype.Timestamptz
-	Labels           []byte
-	OutcomeCode      pgtype.Text
-	OutcomeMessage   pgtype.Text
-	CloseRequestedAt pgtype.Timestamptz
-	LastActivityAt   pgtype.Timestamptz
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	ClosedAt         pgtype.Timestamptz
-	NodeID           string
-	InstanceID       string
+	ID                  string
+	AccountID           string
+	TenantID            string
+	Kind                string
+	Preset              string
+	RamMb               int32
+	NetworkMode         string
+	State               string
+	IdleTimeoutSec      int32
+	ExpiresAt           pgtype.Timestamptz
+	Labels              []byte
+	OutcomeCode         pgtype.Text
+	OutcomeMessage      pgtype.Text
+	CloseRequestedAt    pgtype.Timestamptz
+	LastActivityAt      pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	ClosedAt            pgtype.Timestamptz
+	NodeID              string
+	InstanceID          string
+	WorkspaceSnapshotID string
 }
 
 func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandboxSessionParams) (GetSandboxSessionRow, error) {
@@ -994,27 +1028,36 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 		&i.ClosedAt,
 		&i.NodeID,
 		&i.InstanceID,
+		&i.WorkspaceSnapshotID,
 	)
 	return i, err
 }
 
 const getSandboxSessionClaim = `-- name: GetSandboxSessionClaim :one
 SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, sb.network_mode, sb.idle_timeout_sec, sb.expires_at,
-  (sb.close_requested_at IS NOT NULL)::boolean AS close_requested
- FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id WHERE sb.id=$1::text::uuid
+  (sb.close_requested_at IS NOT NULL)::boolean AS close_requested,
+  coalesce(ws.storage_key, '')::text AS workspace_key,
+  (sb.workspace_snapshot_id IS NOT NULL AND (ws.id IS NULL OR ws.state <> 'ready' OR ws.delete_requested_at IS NOT NULL))::boolean AS workspace_missing
+ FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
+ LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
+ WHERE sb.id=$1::text::uuid
 `
 
 type GetSandboxSessionClaimRow struct {
-	ID             string
-	AccountID      string
-	Plan           string
-	RamMb          int32
-	NetworkMode    string
-	IdleTimeoutSec int32
-	ExpiresAt      pgtype.Timestamptz
-	CloseRequested bool
+	ID               string
+	AccountID        string
+	Plan             string
+	RamMb            int32
+	NetworkMode      string
+	IdleTimeoutSec   int32
+	ExpiresAt        pgtype.Timestamptz
+	CloseRequested   bool
+	WorkspaceKey     string
+	WorkspaceMissing bool
 }
 
+// A session that starts from a persisted workspace carries its archive's
+// key; workspace_missing marks one whose snapshot is gone or deleted.
 func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID string) (GetSandboxSessionClaimRow, error) {
 	row := db.QueryRow(ctx, getSandboxSessionClaim, sessionID)
 	var i GetSandboxSessionClaimRow
@@ -1027,6 +1070,54 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.IdleTimeoutSec,
 		&i.ExpiresAt,
 		&i.CloseRequested,
+		&i.WorkspaceKey,
+		&i.WorkspaceMissing,
+	)
+	return i, err
+}
+
+const getSandboxSnapshot = `-- name: GetSandboxSnapshot :one
+SELECT id::text AS id,account_id::text AS account_id,sandbox_id::text AS sandbox_id,state,storage_key,reserved_bytes,
+  coalesce(bytes, 0)::bigint AS bytes,coalesce(sha256, '')::text AS sha256,expires_at,delete_requested_at,created_at,ready_at
+ FROM sandbox_workspace_snapshots WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type GetSandboxSnapshotParams struct {
+	SnapshotID string
+	AccountID  string
+}
+
+type GetSandboxSnapshotRow struct {
+	ID                string
+	AccountID         string
+	SandboxID         string
+	State             string
+	StorageKey        string
+	ReservedBytes     int64
+	Bytes             int64
+	Sha256            string
+	ExpiresAt         pgtype.Timestamptz
+	DeleteRequestedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	ReadyAt           pgtype.Timestamptz
+}
+
+func (q *Queries) GetSandboxSnapshot(ctx context.Context, db DBTX, arg GetSandboxSnapshotParams) (GetSandboxSnapshotRow, error) {
+	row := db.QueryRow(ctx, getSandboxSnapshot, arg.SnapshotID, arg.AccountID)
+	var i GetSandboxSnapshotRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.SandboxID,
+		&i.State,
+		&i.StorageKey,
+		&i.ReservedBytes,
+		&i.Bytes,
+		&i.Sha256,
+		&i.ExpiresAt,
+		&i.DeleteRequestedAt,
+		&i.CreatedAt,
+		&i.ReadyAt,
 	)
 	return i, err
 }
@@ -1366,23 +1457,24 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 }
 
 const insertSandboxSession = `-- name: InsertSandboxSession :one
-INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels)
+INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id)
 VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
   $5::integer,$6::text,$7::integer,$8::timestamptz,
-  $9::jsonb)
+  $9::jsonb,$10::text::uuid)
 RETURNING id::text AS id
 `
 
 type InsertSandboxSessionParams struct {
-	AccountID      string
-	TenantID       pgtype.Text
-	Kind           string
-	Preset         string
-	RamMb          int32
-	NetworkMode    string
-	IdleTimeoutSec int32
-	ExpiresAt      pgtype.Timestamptz
-	Labels         []byte
+	AccountID           string
+	TenantID            pgtype.Text
+	Kind                string
+	Preset              string
+	RamMb               int32
+	NetworkMode         string
+	IdleTimeoutSec      int32
+	ExpiresAt           pgtype.Timestamptz
+	Labels              []byte
+	WorkspaceSnapshotID pgtype.Text
 }
 
 func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
@@ -1396,10 +1488,38 @@ func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertS
 		arg.IdleTimeoutSec,
 		arg.ExpiresAt,
 		arg.Labels,
+		arg.WorkspaceSnapshotID,
 	)
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertSandboxSnapshot = `-- name: InsertSandboxSnapshot :exec
+INSERT INTO sandbox_workspace_snapshots (id,account_id,sandbox_id,storage_key,reserved_bytes,expires_at)
+VALUES ($1::text::uuid,$2::text::uuid,$3::text::uuid,$4::text,
+  $5::bigint,$6::timestamptz)
+`
+
+type InsertSandboxSnapshotParams struct {
+	SnapshotID    string
+	AccountID     string
+	SandboxID     string
+	StorageKey    string
+	ReservedBytes int64
+	ExpiresAt     pgtype.Timestamptz
+}
+
+func (q *Queries) InsertSandboxSnapshot(ctx context.Context, db DBTX, arg InsertSandboxSnapshotParams) error {
+	_, err := db.Exec(ctx, insertSandboxSnapshot,
+		arg.SnapshotID,
+		arg.AccountID,
+		arg.SandboxID,
+		arg.StorageKey,
+		arg.ReservedBytes,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const listActiveAgents = `-- name: ListActiveAgents :many
@@ -1721,7 +1841,8 @@ func (q *Queries) ListClaimableSandboxSessions(ctx context.Context, db DBTX, max
 const listSandboxSessions = `-- name: ListSandboxSessions :many
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
-  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id
  FROM sandbox_sessions
  WHERE account_id=$1::text::uuid
  AND ($2::text IS NULL OR state=$2::text)
@@ -1738,26 +1859,27 @@ type ListSandboxSessionsParams struct {
 }
 
 type ListSandboxSessionsRow struct {
-	ID               string
-	AccountID        string
-	TenantID         string
-	Kind             string
-	Preset           string
-	RamMb            int32
-	NetworkMode      string
-	State            string
-	IdleTimeoutSec   int32
-	ExpiresAt        pgtype.Timestamptz
-	Labels           []byte
-	OutcomeCode      pgtype.Text
-	OutcomeMessage   pgtype.Text
-	CloseRequestedAt pgtype.Timestamptz
-	LastActivityAt   pgtype.Timestamptz
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	ClosedAt         pgtype.Timestamptz
-	NodeID           string
-	InstanceID       string
+	ID                  string
+	AccountID           string
+	TenantID            string
+	Kind                string
+	Preset              string
+	RamMb               int32
+	NetworkMode         string
+	State               string
+	IdleTimeoutSec      int32
+	ExpiresAt           pgtype.Timestamptz
+	Labels              []byte
+	OutcomeCode         pgtype.Text
+	OutcomeMessage      pgtype.Text
+	CloseRequestedAt    pgtype.Timestamptz
+	LastActivityAt      pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	ClosedAt            pgtype.Timestamptz
+	NodeID              string
+	InstanceID          string
+	WorkspaceSnapshotID string
 }
 
 // Newest first; a page continues before the (created_at, id) of the last row.
@@ -1797,6 +1919,78 @@ func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSand
 			&i.ClosedAt,
 			&i.NodeID,
 			&i.InstanceID,
+			&i.WorkspaceSnapshotID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSandboxSnapshots = `-- name: ListSandboxSnapshots :many
+SELECT id::text AS id,account_id::text AS account_id,sandbox_id::text AS sandbox_id,state,storage_key,reserved_bytes,
+  coalesce(bytes, 0)::bigint AS bytes,coalesce(sha256, '')::text AS sha256,expires_at,delete_requested_at,created_at,ready_at
+ FROM sandbox_workspace_snapshots
+ WHERE account_id=$1::text::uuid AND delete_requested_at IS NULL
+ AND ($2::timestamptz IS NULL OR (created_at, id) < ($2::timestamptz, $3::text::uuid))
+ ORDER BY created_at DESC, id DESC LIMIT $4::integer
+`
+
+type ListSandboxSnapshotsParams struct {
+	AccountID       string
+	BeforeCreatedAt pgtype.Timestamptz
+	BeforeID        pgtype.Text
+	MaxRows         int32
+}
+
+type ListSandboxSnapshotsRow struct {
+	ID                string
+	AccountID         string
+	SandboxID         string
+	State             string
+	StorageKey        string
+	ReservedBytes     int64
+	Bytes             int64
+	Sha256            string
+	ExpiresAt         pgtype.Timestamptz
+	DeleteRequestedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	ReadyAt           pgtype.Timestamptz
+}
+
+// Newest first, without the ones apid asked to delete; a page continues
+// before the (created_at, id) of the last row.
+func (q *Queries) ListSandboxSnapshots(ctx context.Context, db DBTX, arg ListSandboxSnapshotsParams) ([]ListSandboxSnapshotsRow, error) {
+	rows, err := db.Query(ctx, listSandboxSnapshots,
+		arg.AccountID,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSandboxSnapshotsRow{}
+	for rows.Next() {
+		var i ListSandboxSnapshotsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.SandboxID,
+			&i.State,
+			&i.StorageKey,
+			&i.ReservedBytes,
+			&i.Bytes,
+			&i.Sha256,
+			&i.ExpiresAt,
+			&i.DeleteRequestedAt,
+			&i.CreatedAt,
+			&i.ReadyAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1829,6 +2023,45 @@ func (q *Queries) ListSettleableAgentRuns(ctx context.Context, db DBTX, maxRows 
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSweepableSandboxSnapshots = `-- name: ListSweepableSandboxSnapshots :many
+SELECT id::text AS id, storage_key FROM sandbox_workspace_snapshots
+ WHERE expires_at <= now() OR delete_requested_at IS NOT NULL
+  OR (state='pending' AND created_at < now()-make_interval(secs=>$1::double precision))
+ ORDER BY created_at LIMIT $2::integer
+`
+
+type ListSweepableSandboxSnapshotsParams struct {
+	PendingTtlSeconds float64
+	MaxRows           int32
+}
+
+type ListSweepableSandboxSnapshotsRow struct {
+	ID         string
+	StorageKey string
+}
+
+// What agentd's sweep deletes: archives past their retention, ones apid
+// asked to delete, and reservations never completed within pending_ttl.
+func (q *Queries) ListSweepableSandboxSnapshots(ctx context.Context, db DBTX, arg ListSweepableSandboxSnapshotsParams) ([]ListSweepableSandboxSnapshotsRow, error) {
+	rows, err := db.Query(ctx, listSweepableSandboxSnapshots, arg.PendingTtlSeconds, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSweepableSandboxSnapshotsRow{}
+	for rows.Next() {
+		var i ListSweepableSandboxSnapshotsRow
+		if err := rows.Scan(&i.ID, &i.StorageKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -2223,6 +2456,25 @@ func (q *Queries) RequestSandboxSessionClose(ctx context.Context, db DBTX, arg R
 	return result.RowsAffected(), nil
 }
 
+const requestSandboxSnapshotDelete = `-- name: RequestSandboxSnapshotDelete :execrows
+UPDATE sandbox_workspace_snapshots SET delete_requested_at=coalesce(delete_requested_at, now())
+ WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type RequestSandboxSnapshotDeleteParams struct {
+	SnapshotID string
+	AccountID  string
+}
+
+// apid's delete is a request; agentd's sweep deletes the archive and the row.
+func (q *Queries) RequestSandboxSnapshotDelete(ctx context.Context, db DBTX, arg RequestSandboxSnapshotDeleteParams) (int64, error) {
+	result, err := db.Exec(ctx, requestSandboxSnapshotDelete, arg.SnapshotID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const requeueAgentRun = `-- name: RequeueAgentRun :execrows
 UPDATE agent_runs SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, started_at=NULL, updated_at=now()
  WHERE id=$1::text::uuid AND lease_token=$2::text AND state='starting'
@@ -2345,6 +2597,21 @@ func (q *Queries) RevokeAgentCallbacks(ctx context.Context, db DBTX, arg RevokeA
 	var revoked_at pgtype.Timestamptz
 	err := row.Scan(&revoked_at)
 	return revoked_at, err
+}
+
+const sandboxSnapshotBytesUsed = `-- name: SandboxSnapshotBytesUsed :one
+SELECT coalesce(sum(coalesce(bytes, reserved_bytes)), 0)::bigint FROM sandbox_workspace_snapshots
+ WHERE account_id=$1::text::uuid
+`
+
+// ADR-20261027090013 step 7: an account's persisted workspaces count their
+// size once ready and their reservation while pending, until agentd deletes
+// them.
+func (q *Queries) SandboxSnapshotBytesUsed(ctx context.Context, db DBTX, accountID string) (int64, error) {
+	row := db.QueryRow(ctx, sandboxSnapshotBytesUsed, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const setSandboxSessionFrozen = `-- name: SetSandboxSessionFrozen :execrows

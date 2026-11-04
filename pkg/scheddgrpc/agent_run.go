@@ -142,6 +142,10 @@ func agentRunStatus(err error) error {
 	switch {
 	case errors.As(err, &problem) && problem.Code == api.CodeCapacity:
 		return status.Error(codes.ResourceExhausted, "no agent-pool node has capacity for this run")
+	case errors.As(err, &problem) && problem.Code == api.CodeSandboxWorkspaceUnavailable:
+		// A sandbox session whose persisted workspace could not be unpacked
+		// (ADR-20261027090013 step 7): retrying cannot help it.
+		return status.Error(codes.DataLoss, problem.Detail)
 	case errors.Is(err, errAgentRunNotProceeded):
 		return status.Error(codes.Aborted, "the run was cancelled before it booted")
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):

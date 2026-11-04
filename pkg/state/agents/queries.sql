@@ -425,23 +425,25 @@ SELECT clock_timestamp()::timestamptz AS now;
 SELECT count(*)::integer FROM sandbox_sessions WHERE account_id=sqlc.arg(account_id)::text::uuid AND state='queued';
 
 -- name: InsertSandboxSession :one
-INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels)
+INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id)
 VALUES (sqlc.arg(account_id)::text::uuid,sqlc.narg(tenant_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(preset)::text,
   sqlc.arg(ram_mb)::integer,sqlc.arg(network_mode)::text,sqlc.arg(idle_timeout_sec)::integer,sqlc.arg(expires_at)::timestamptz,
-  sqlc.arg(labels)::jsonb)
+  sqlc.arg(labels)::jsonb,sqlc.narg(workspace_snapshot_id)::text::uuid)
 RETURNING id::text AS id;
 
 -- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
-  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id
  FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: ListSandboxSessions :many
 -- Newest first; a page continues before the (created_at, id) of the last row.
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
-  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id
+  coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id
  FROM sandbox_sessions
  WHERE account_id=sqlc.arg(account_id)::text::uuid
  AND (sqlc.narg(state)::text IS NULL OR state=sqlc.narg(state)::text)
@@ -477,9 +479,15 @@ UPDATE sandbox_sessions SET state='starting', lease_token=sqlc.arg(lease_token):
  WHERE id=sqlc.arg(session_id)::text::uuid AND state='queued';
 
 -- name: GetSandboxSessionClaim :one
+-- A session that starts from a persisted workspace carries its archive's
+-- key; workspace_missing marks one whose snapshot is gone or deleted.
 SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, sb.network_mode, sb.idle_timeout_sec, sb.expires_at,
-  (sb.close_requested_at IS NOT NULL)::boolean AS close_requested
- FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id WHERE sb.id=sqlc.arg(session_id)::text::uuid;
+  (sb.close_requested_at IS NOT NULL)::boolean AS close_requested,
+  coalesce(ws.storage_key, '')::text AS workspace_key,
+  (sb.workspace_snapshot_id IS NOT NULL AND (ws.id IS NULL OR ws.state <> 'ready' OR ws.delete_requested_at IS NOT NULL))::boolean AS workspace_missing
+ FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
+ LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
+ WHERE sb.id=sqlc.arg(session_id)::text::uuid;
 
 -- name: MarkSandboxSessionReady :execrows
 -- The VM is up: record where it runs, so a read mints a token that reaches it.
@@ -526,3 +534,51 @@ UPDATE sandbox_sessions SET state='failed', outcome_code='lease_lost',
 UPDATE sandbox_sessions SET state='expired', outcome_code='lifetime', outcome_message='the session ended before it started',
   closed_at=now(), updated_at=now()
  WHERE state='queued' AND expires_at <= now();
+
+-- name: SandboxSnapshotBytesUsed :one
+-- ADR-20261027090013 step 7: an account's persisted workspaces count their
+-- size once ready and their reservation while pending, until agentd deletes
+-- them.
+SELECT coalesce(sum(coalesce(bytes, reserved_bytes)), 0)::bigint FROM sandbox_workspace_snapshots
+ WHERE account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: InsertSandboxSnapshot :exec
+INSERT INTO sandbox_workspace_snapshots (id,account_id,sandbox_id,storage_key,reserved_bytes,expires_at)
+VALUES (sqlc.arg(snapshot_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(sandbox_id)::text::uuid,sqlc.arg(storage_key)::text,
+  sqlc.arg(reserved_bytes)::bigint,sqlc.arg(expires_at)::timestamptz);
+
+-- name: CompleteSandboxSnapshot :execrows
+UPDATE sandbox_workspace_snapshots SET state='ready', bytes=sqlc.arg(bytes)::bigint, sha256=sqlc.arg(sha256)::text, ready_at=now()
+ WHERE id=sqlc.arg(snapshot_id)::text::uuid AND state='pending' AND delete_requested_at IS NULL
+ AND sqlc.arg(bytes)::bigint <= reserved_bytes;
+
+-- name: DeleteSandboxSnapshot :execrows
+DELETE FROM sandbox_workspace_snapshots WHERE id=sqlc.arg(snapshot_id)::text::uuid;
+
+-- name: GetSandboxSnapshot :one
+SELECT id::text AS id,account_id::text AS account_id,sandbox_id::text AS sandbox_id,state,storage_key,reserved_bytes,
+  coalesce(bytes, 0)::bigint AS bytes,coalesce(sha256, '')::text AS sha256,expires_at,delete_requested_at,created_at,ready_at
+ FROM sandbox_workspace_snapshots WHERE id=sqlc.arg(snapshot_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: ListSandboxSnapshots :many
+-- Newest first, without the ones apid asked to delete; a page continues
+-- before the (created_at, id) of the last row.
+SELECT id::text AS id,account_id::text AS account_id,sandbox_id::text AS sandbox_id,state,storage_key,reserved_bytes,
+  coalesce(bytes, 0)::bigint AS bytes,coalesce(sha256, '')::text AS sha256,expires_at,delete_requested_at,created_at,ready_at
+ FROM sandbox_workspace_snapshots
+ WHERE account_id=sqlc.arg(account_id)::text::uuid AND delete_requested_at IS NULL
+ AND (sqlc.narg(before_created_at)::timestamptz IS NULL OR (created_at, id) < (sqlc.narg(before_created_at)::timestamptz, sqlc.narg(before_id)::text::uuid))
+ ORDER BY created_at DESC, id DESC LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: RequestSandboxSnapshotDelete :execrows
+-- apid's delete is a request; agentd's sweep deletes the archive and the row.
+UPDATE sandbox_workspace_snapshots SET delete_requested_at=coalesce(delete_requested_at, now())
+ WHERE id=sqlc.arg(snapshot_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: ListSweepableSandboxSnapshots :many
+-- What agentd's sweep deletes: archives past their retention, ones apid
+-- asked to delete, and reservations never completed within pending_ttl.
+SELECT id::text AS id, storage_key FROM sandbox_workspace_snapshots
+ WHERE expires_at <= now() OR delete_requested_at IS NOT NULL
+  OR (state='pending' AND created_at < now()-make_interval(secs=>sqlc.arg(pending_ttl_seconds)::double precision))
+ ORDER BY created_at LIMIT sqlc.arg(max_rows)::integer;

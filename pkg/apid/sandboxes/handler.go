@@ -31,6 +31,9 @@ type Store interface {
 	Sandboxes(ctx context.Context, accountID string, f agentstore.SandboxFilter) ([]agentstore.Sandbox, error)
 	UpdateSandboxTimeouts(ctx context.Context, accountID, id string, idleTimeoutSec int, expiresAt time.Time) (agentstore.Sandbox, error)
 	CloseSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
+	SandboxSnapshot(ctx context.Context, accountID, id string) (agentstore.SandboxSnapshot, error)
+	SandboxSnapshots(ctx context.Context, accountID string, f agentstore.SandboxSnapshotFilter) ([]agentstore.SandboxSnapshot, error)
+	RequestSandboxSnapshotDelete(ctx context.Context, accountID, id string) error
 }
 
 // Handler serves the sandbox routes. Without a store or a token signer they
@@ -207,7 +210,7 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
 		Network: api.SandboxNetwork{Mode: sb.NetworkMode}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
-		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt}
+		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID}
 	if out.Labels == nil {
 		out.Labels = map[string]string{}
 	}
@@ -225,7 +228,8 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 	idx := acct.Plan.PlanIndex()
 	token, err := h.Tokens.Sign(sandboxtoken.Claims{SandboxID: sb.ID, AccountID: sb.AccountID, TenantID: sb.TenantID,
 		NodeID: sb.NodeID, InstanceID: sb.InstanceID, IssuedAt: now, ExpiresAt: expires,
-		ExecTimeoutMaxMillis: int64(api.SandboxExecTimeoutMaxSec[idx]) * 1000, ExecOutputMaxBytes: int64(api.SandboxExecOutputMaxBytes[idx])})
+		ExecTimeoutMaxMillis: int64(api.SandboxExecTimeoutMaxSec[idx]) * 1000, ExecOutputMaxBytes: int64(api.SandboxExecOutputMaxBytes[idx]),
+		WorkspaceMaxBytes: int64(api.SandboxWorkspaceMaxMB[idx]) << 20})
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Error("sign sandbox token", "sandbox_id", sb.ID, "err", err)
@@ -248,6 +252,9 @@ func (h *Handler) problem(acct state.Account, operation string, err error) *api.
 		return api.NewProblem(http.StatusConflict, api.CodeSandboxEnded, "Sandbox ended", "the session closed, expired or failed")
 	case errors.Is(err, agentstore.ErrTenantNotFound):
 		return api.NewProblem(http.StatusNotFound, api.CodeAgentTenantNotFound, "Tenant not found", "the account has no such platform tenant")
+	case errors.Is(err, agentstore.ErrSnapshotUnavailable):
+		return api.NewProblem(http.StatusNotFound, api.CodeSandboxSnapshotNotFound, "Snapshot not found",
+			"the account has no such snapshot ready to start from; it may have expired or been deleted")
 	case errors.Is(err, agentstore.ErrTenantInactive):
 		return api.NewProblem(http.StatusConflict, api.CodeAgentTenantInactive, "Tenant not active", "the tenant is suspended")
 	}

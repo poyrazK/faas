@@ -57,6 +57,9 @@ type Sandbox struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	ClosedAt       *time.Time
+	// WorkspaceSnapshotID is the persisted workspace the session started
+	// from, if any.
+	WorkspaceSnapshotID string
 }
 
 // SandboxAdmission is a session to admit. QueuedMax is the plan's
@@ -72,6 +75,9 @@ type SandboxAdmission struct {
 	ExpiresAt      time.Time
 	Labels         map[string]string
 	QueuedMax      int
+	// WorkspaceSnapshotID starts the session from a persisted workspace,
+	// which must be the account's and ready.
+	WorkspaceSnapshotID string
 }
 
 // SandboxFilter narrows a session listing. Before pages backwards from a
@@ -93,6 +99,11 @@ func (s *Store) CreateSandbox(ctx context.Context, a SandboxAdmission) (Sandbox,
 		if err := s.checkTenant(ctx, tx, a.AccountID, a.TenantID); err != nil {
 			return err
 		}
+		if a.WorkspaceSnapshotID != "" {
+			if err := s.usableSnapshot(ctx, tx, a.AccountID, a.WorkspaceSnapshotID); err != nil {
+				return err
+			}
+		}
 		runs, err := s.q.CountQueuedAgentRuns(ctx, tx, a.AccountID)
 		if err != nil {
 			return fmt.Errorf("count queued runs: %w", err)
@@ -106,7 +117,7 @@ func (s *Store) CreateSandbox(ctx context.Context, a SandboxAdmission) (Sandbox,
 		}
 		id, err = s.q.InsertSandboxSession(ctx, tx, sqlc.InsertSandboxSessionParams{AccountID: a.AccountID, TenantID: optText(a.TenantID),
 			Kind: a.Kind, Preset: a.Preset, RamMb: int32(a.RAMMB), NetworkMode: a.NetworkMode, IdleTimeoutSec: int32(a.IdleTimeoutSec),
-			ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels})
+			ExpiresAt: pgtype.Timestamptz{Time: a.ExpiresAt, Valid: true}, Labels: labels, WorkspaceSnapshotID: optText(a.WorkspaceSnapshotID)})
 		if err != nil {
 			return fmt.Errorf("insert sandbox session: %w", err)
 		}
@@ -217,7 +228,7 @@ func sandboxFrom(row sqlc.ListSandboxSessionsRow) (Sandbox, error) {
 		ExpiresAt: row.ExpiresAt.Time.UTC(), OutcomeCode: row.OutcomeCode.String, OutcomeMessage: row.OutcomeMessage.String,
 		CloseRequestedAt: optTime(row.CloseRequestedAt), LastActivityAt: row.LastActivityAt.Time.UTC(),
 		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(), ClosedAt: optTime(row.ClosedAt),
-		NodeID: row.NodeID, InstanceID: row.InstanceID}
+		NodeID: row.NodeID, InstanceID: row.InstanceID, WorkspaceSnapshotID: row.WorkspaceSnapshotID}
 	if err := json.Unmarshal(row.Labels, &sb.Labels); err != nil {
 		return Sandbox{}, fmt.Errorf("decode sandbox labels: %w", err)
 	}

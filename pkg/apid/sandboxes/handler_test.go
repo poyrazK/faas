@@ -38,6 +38,8 @@ type fakeStore struct {
 	sessions []agentstore.Sandbox
 	queued   int // queued agent runs, which share the cap
 	err      error
+	// snapshots are persisted workspaces, newest first.
+	snapshots []agentstore.SandboxSnapshot
 }
 
 func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmission) (agentstore.Sandbox, error) {
@@ -55,10 +57,14 @@ func (f *fakeStore) CreateSandbox(_ context.Context, a agentstore.SandboxAdmissi
 	if queued >= a.QueuedMax {
 		return agentstore.Sandbox{}, &agentstore.LimitError{Limit: "AgentRunQueuedPerAccount", Max: a.QueuedMax, Observed: queued}
 	}
+	if a.WorkspaceSnapshotID != "" && !f.usable(a.AccountID, a.WorkspaceSnapshotID) {
+		return agentstore.Sandbox{}, agentstore.ErrSnapshotUnavailable
+	}
 	now := f.now()
 	sb := agentstore.Sandbox{ID: fmt.Sprintf("00000000-0000-0000-0000-%012d", len(f.sessions)+1), AccountID: a.AccountID, TenantID: a.TenantID,
 		Kind: a.Kind, Preset: a.Preset, RAMMB: a.RAMMB, NetworkMode: a.NetworkMode, State: agentstore.SandboxQueued,
-		IdleTimeoutSec: a.IdleTimeoutSec, ExpiresAt: a.ExpiresAt, Labels: a.Labels, CreatedAt: now, UpdatedAt: now, LastActivityAt: now}
+		IdleTimeoutSec: a.IdleTimeoutSec, ExpiresAt: a.ExpiresAt, Labels: a.Labels, CreatedAt: now, UpdatedAt: now, LastActivityAt: now,
+		WorkspaceSnapshotID: a.WorkspaceSnapshotID}
 	f.sessions = append([]agentstore.Sandbox{sb}, f.sessions...)
 	return sb, nil
 }
@@ -236,7 +242,8 @@ func TestCreateRules(t *testing.T) {
 		{"a manifest", pro(), `{"preset":"codex","manifest":{"entries":[]}}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
 		{"environment", pro(), `{"preset":"codex","env":{"A":"1"}}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
 		{"ports", pro(), `{"preset":"codex","ports":[3000]}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
-		{"a snapshot", pro(), `{"preset":"codex","snapshot_id":"s-1"}`, http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
+		{"a malformed snapshot", pro(), `{"preset":"codex","snapshot_id":"s-1"}`, http.StatusBadRequest, api.CodeValidation},
+		{"an unknown snapshot", pro(), `{"preset":"codex","snapshot_id":"` + unknownSnapshot + `"}`, http.StatusNotFound, api.CodeSandboxSnapshotNotFound},
 		{"a reserved label", pro(), `{"preset":"codex","labels":{"gregale.dev/app":"x"}}`, http.StatusBadRequest, ""},
 		{"an unknown field", pro(), `{"preset":"codex","gpu":true}`, http.StatusBadRequest, ""},
 	} {
