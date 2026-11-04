@@ -90,6 +90,13 @@ jobs:
           filter: blob:none
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # Match full CI's disk preparation: restoring the Go/lint cache can
+      # fill the runner before lint starts. This job uses none of these toolchains.
+      - name: free runner disk before restoring the lint cache
+        run: |
+          df -h .
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h .
       # The light tier owns the go-lint family (golangci-lint analysis cache
       # included): main pushes save it, pull requests only restore it.
       - name: restore Go build + lint cache
