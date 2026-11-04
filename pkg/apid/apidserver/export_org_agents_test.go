@@ -20,11 +20,21 @@ var (
 // postCliAuthForTest does, choosing the organization the connection acts in.
 func PostCliAuthWithOrgForTest(t *testing.T, srv http.Handler, code, email, cookieValue, formValue, org string) *httptest.ResponseRecorder {
 	t.Helper()
+	return PostCliAuthFormForTest(t, srv, code, email, cookieValue, formValue, url.Values{"org": {org}})
+}
+
+// PostCliAuthFormForTest approves a code on the approval page with the
+// approval form's other fields (org, project).
+func PostCliAuthFormForTest(t *testing.T, srv http.Handler, code, email, cookieValue, formValue string, fields url.Values) *httptest.ResponseRecorder {
+	t.Helper()
 	h, ok := srv.(*cliAuthTestServer)
 	if !ok {
-		t.Fatal("PostCliAuthWithOrgForTest: unexpected handler type")
+		t.Fatal("PostCliAuthFormForTest: unexpected handler type")
 	}
-	form := url.Values{"code": {strings.ReplaceAll(code, "-", "")}, "email": {email}, middleware.FormFieldName: {formValue}, "org": {org}}
+	form := url.Values{"code": {strings.ReplaceAll(code, "-", "")}, "email": {email}, middleware.FormFieldName: {formValue}}
+	for name, values := range fields {
+		form[name] = values
+	}
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/cli-auth", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")

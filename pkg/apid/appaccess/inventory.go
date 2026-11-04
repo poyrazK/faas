@@ -22,7 +22,7 @@ func VisibleAppsContext(ctx context.Context, store Store, actor state.Account, a
 	_, key, _ := authmw.AccountFromCtx(ctx)
 	visible := make([]state.App, 0, len(apps))
 	for _, app := range apps {
-		if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID) {
+		if key != nil && (key.AppID != "" && key.AppID != app.ID || key.OrgID != "" && app.OrgID != "" && key.OrgID != app.OrgID || authmw.AppOutsideKeyProjects(key, app)) {
 			continue
 		}
 		if app.OrgID == "" && (app.AccountID != actor.ID || key != nil && key.OrgID != "" && !personalKey(ctx, store, key.OrgID, actor.ID)) {

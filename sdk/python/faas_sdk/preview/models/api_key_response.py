@@ -53,6 +53,8 @@ class APIKeyResponse:
     """Predecessor key id when this row was minted by rotateKey. Absent on a fresh mint."""
     plaintext: None | str | Unset = UNSET
     """PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again."""
+    projects: list[str] | Unset = UNSET
+    """Project slugs the key was limited to, on the create response of a limited agent key."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -115,6 +117,10 @@ class APIKeyResponse:
         else:
             plaintext = self.plaintext
 
+        projects: list[str] | Unset = UNSET
+        if not isinstance(self.projects, Unset):
+            projects = self.projects
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -140,6 +146,8 @@ class APIKeyResponse:
             field_dict["rotated_from_id"] = rotated_from_id
         if plaintext is not UNSET:
             field_dict["plaintext"] = plaintext
+        if projects is not UNSET:
+            field_dict["projects"] = projects
 
         return field_dict
 
@@ -246,6 +254,8 @@ class APIKeyResponse:
 
         plaintext = _parse_plaintext(d.pop("plaintext", UNSET))
 
+        projects = cast(list[str], d.pop("projects", UNSET))
+
         api_key_response = cls(
             id=id,
             org_id=org_id,
@@ -259,6 +269,7 @@ class APIKeyResponse:
             revoked_at=revoked_at,
             rotated_from_id=rotated_from_id,
             plaintext=plaintext,
+            projects=projects,
         )
 
         api_key_response.additional_properties = d
