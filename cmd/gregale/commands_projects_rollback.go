@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const projectsRollbackUsage = "usage: gregale projects rollback <slug> (--dry-run | --yes) [--acknowledge-releases] [--timeout 10m]"
+const projectsRollbackUsage = "usage: gregale project rollback <slug> (--dry-run | --yes) [--acknowledge-releases] [--timeout 10m]"
 
 // projectRollbackStep is one service's rollback in a project rollback.
 type projectRollbackStep struct {
