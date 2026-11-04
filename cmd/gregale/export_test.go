@@ -2667,3 +2667,8 @@ var WithEntry = withEntry
 // GitHub connector commands (ADR-20261101160300).
 var CmdGithub = cmdGithub
 var CmdGithubSetup = cmdGithubSetup
+
+var McpNativeDrainBudget = mcpNativeDrainBudget
+var McpNativeDrainableWorkerIDs = mcpNativeDrainableWorkerIDs
+
+var McpNativeWorkerIDs = mcpNativeWorkerIDs

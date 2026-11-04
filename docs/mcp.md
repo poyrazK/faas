@@ -2834,6 +2834,12 @@ endpoint for changing catalogs. In a multi-replica app, register the same
 definitions in each serving process and make any runtime mutation on every
 replica.
 
+The Node starter supports visible-ASCII catalog names that coincide with
+JavaScript prototype properties, including `constructor` and `__proto__`.
+Replacing the sample `customer_record` resource uses the supplied URI/template,
+handler and completion callbacks. Custom handlers enforce ownership of their
+application data; the original sample retains its own ownership checks.
+
 For a serving guard against catalog drift, set the same
 `MCP_CATALOG_EXPECTED_SHA256` environment value on every serving replica. Start
 one instance without the pin and read `catalog_sha256` from `/healthz`, then
@@ -2845,6 +2851,13 @@ on load-balancer sampling or trust an app-supplied instance ID. The digest cover
 sorted advertised tool, resource, and prompt definitions, OAuth per-entry allow-lists, and
 whether durable Tasks are enabled; it excludes handler code and the local
 revision counter. `/healthz` reports `catalog_revision` and `catalog_sha256`.
+Node registration snapshots Standard Schema input/output JSON representations,
+including nested Zod `.meta()` values, while preserving validation and prompt
+completion callbacks. Later metadata or registry mutations leave that registration
+unchanged; use the explicit replacement APIs to publish a change. Input/argument
+contracts use the input representation and output contracts use the output
+representation. Review catalog pins when upgrading schemas whose two
+representations differ.
 With a pin configured, a mismatch returns HTTP 503 from `/healthz` and blocks
 MCP endpoint requests until the process has the expected catalog. A runtime
 catalog mutation therefore needs a coordinated pin update or a restart with
@@ -3335,6 +3348,10 @@ after changing a resource so clients can re-read it. With the default local
 adapter, publisher events reach streams on that web process; multi-replica apps
 should connect a shared event adapter. Notification streams still reconcile on
 `--interval`, and servers without URI subscriptions use polling.
+
+The Node starter counts pending Task/resource subscription setup toward its
+128-stream process limit. Disconnects, setup errors and drain release reservations.
+Asynchronous resource registrations that finish after cancellation are immediately disposed.
 
 Use the same authorization context for both captures: a caller's scopes can change
 which definitions are visible. Review catalog metadata before committing it; it is supplied
@@ -4478,6 +4495,12 @@ require the manual upgrade procedure above. Unsupported projects are rejected
 before control-plane requests or release journal creation; read-only journal
 status remains available.
 
+The web app must have an explicit, non-secret `MCP_TASK_NAMESPACE` matching the
+local release binding. The adapter checks it before deployment, during endpoint
+verification, immediately before promotion, and before each previous-worker park.
+A protocol-ready web app
+connected to another Task queue cannot qualify the release.
+
 The observer must have a non-secret `MCP_TASK_NAMESPACE` matching the local
 release binding and a non-secret `MCP_TASKS_SCALING_APP_SLUG` matching
 `observer_metric_app`. A fresh heartbeat from another namespace or destination
@@ -4511,7 +4534,20 @@ apps must be distinct. The worker source must start `npm run start:tasks-worker`
 and use a worker manifest; the web source must use the web-only Task role.
 All apps and local migration/runtime bindings must share the same Task namespace,
 database schema, ownership secret and required key ring. Previous worker stop
-grace must exceed the Task shutdown deadline (30 seconds by default).
+grace must exceed every running replica's actual Task shutdown deadline. Node
+defaults to 10 seconds and applies `MCP_DRAIN_TIMEOUT_SECONDS` before the config
+value. The startup event reports that effective value as `shutdownTimeoutMs`.
+Native checks require a valid receipt for each current instance before promotion
+and each park, including candidate retirement. Missing, invalid or conflicting
+receipts block the action. Workers refresh the same immutable process receipt
+every ten seconds. When retained receipts have left the instance's live log
+buffer, the CLI follows a bounded live window for up to thirty seconds and
+requires a valid receipt for every current running replica. Older workers still
+work while their startup receipt is retained; update them to refresh receipts
+before relying on native handoffs after log eviction. Previous worker pools may
+already be scaled to zero: they require no receipt, and their recorded deployment
+is still checked before promotion and conditional parking. A pool that restarts
+during the rollout must pass the running-replica receipt and stop-grace checks.
 
 The adapter deploys candidate workers into a separate app because an in-place
 worker deployment can retire the previous generation before readiness is checked.
@@ -4532,6 +4568,12 @@ previous worker apps and the gate verifies registrations
 have disappeared. The adapter never parks the web or observer apps.
 
 Keep the journal and its `.gate` checkpoint outside both source directories.
+Source roots are resolved through symlinks before checking containment and
+fingerprinting, so an aliased parent directory cannot admit a journal inside
+either deployment source.
+The native adapter binds its versioned `.gate` checkpoint to the source
+fingerprint as the release ID. The gate persists replacement IDs and completion
+so retries can reuse the same generation without starting extra workers.
 They contain deployment/worker IDs and progress, never credentials. Use
 `gregale mcp server tasks deploy status --plan release.json --state release-state.json`
 to inspect progress; rerun the same release command with the same source files,
