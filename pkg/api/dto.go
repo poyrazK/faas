@@ -4363,6 +4363,9 @@ type APIKeyResponse struct {
 	RotatedFromID string   `json:"rotated_from_id,omitempty"` // predecessor key id
 	// Plaintext appears ONLY on the create + rotate responses, never persisted.
 	Plaintext string `json:"plaintext,omitempty"`
+	// Projects are the slugs of the projects an agent key is limited to;
+	// absent for an unlimited key (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // DeployTokenResponse is the redacted representation of a per-app CI
@@ -4459,6 +4462,9 @@ type GraceWindowResponse struct {
 type CreateKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // CreateOrgAPIKeyRequest is the body of POST /v1/orgs/{slug}/keys
@@ -4473,6 +4479,9 @@ type CreateKeyRequest struct {
 type CreateOrgAPIKeyRequest struct {
 	Label  string   `json:"label,omitempty"`
 	Scopes []string `json:"scopes,omitempty"`
+	// Projects limits an agent key to these projects' apps, by slug
+	// (ADR-20261104085712).
+	Projects []string `json:"projects,omitempty"`
 }
 
 // ListOrgAPIKeysResponse is the body of GET /v1/orgs/{slug}/keys

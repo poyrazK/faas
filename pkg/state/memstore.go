@@ -1380,6 +1380,7 @@ type MemStore struct {
 	// Store (this interface) so the sqlc vs memstore parity holds.
 	orgs             map[string]Org
 	orgAgentPolicies map[string]OrgAgentPolicy // ADR-20261101225122
+	keyProjectLimits map[string][]string       // ADR-20261104085712
 	orgsBySlug       map[string]string         // lower(slug) -> id
 	memberships      map[orgAccountKey]OrgMembership
 	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation

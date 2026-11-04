@@ -600,6 +600,11 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						return
 					}
 				}
+				// ADR-20261104085712: an agent or mcp-login key limited to
+				// projects reaches only their apps and routes.
+				if m.limitKeyToProjects(w, r, acct, &key) {
+					return
+				}
 				*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
 				// TouchKeyLastUsed is observability, not auth —
 				// detached context + bounded timeout so a slow PG
@@ -1647,7 +1652,7 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 			"Not found", "no such app"))
 		return state.App{}, false
 	}
-	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" && p.Key.AppID != app.ID {
+	if p, ok := principalFrom(r); ok && p.Key != nil && (p.Key.AppID != "" && p.Key.AppID != app.ID || AppOutsideKeyProjects(p.Key, app)) {
 		// App-bound deploy tokens must not be usable against another
 		// app in the same account. Collapse the mismatch to the same
 		// 404 shape as a cross-account slug probe.

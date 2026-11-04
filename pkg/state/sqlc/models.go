@@ -809,6 +809,13 @@ type ApiKeyAgentClient struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+// ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.
+type ApiKeyProjectLimit struct {
+	KeyID      pgtype.UUID
+	ProjectIds []pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+}
+
 type App struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -2791,6 +2798,7 @@ type CliAuthCode struct {
 	CreatedAt  pgtype.Timestamptz
 	DeviceHash []byte
 	OrgID      pgtype.UUID
+	ProjectIds []pgtype.UUID
 }
 
 type CloneCheckpointAdmissionGuard struct {
