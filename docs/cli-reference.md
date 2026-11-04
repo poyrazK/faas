@@ -4782,6 +4782,33 @@ gregale app scale my-api --plan --ram 512 --out scale-change.json
 gregale app scale my-api --apply scale-change.json --confirm
 ```
 
+### app scaling
+
+Read, guard or recover scaling configuration; prints JSON
+
+`gregale app scaling [--env <ENV>] [--receipt <UUID>] [--request-id <UUID>] [--expected-revision <REVISION>] [--expected-app-id <UUID>] [--expected-environment-id <UUID>] [--ram <MB>] [--cpu-millicores <MILLICORES>] [--max-concurrency <COUNT>] [--min <COUNT>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--env <ENV>` | named project environment (also --environment) |  |
+| `--receipt <UUID>` | recover a request receipt without writing |  |
+| `--request-id <UUID>` | stable UUID reused with the original write body |  |
+| `--expected-revision <REVISION>` | reviewed scaling revision |  |
+| `--expected-app-id <UUID>` | immutable app UUID required for writes |  |
+| `--expected-environment-id <UUID>` | immutable environment UUID required for named writes |  |
+| `--ram <MB>` | RAM in MB |  |
+| `--cpu-millicores <MILLICORES>` | CPU allowance |  |
+| `--max-concurrency <COUNT>` | maximum instance count |  |
+| `--min <COUNT>` | minimum warm instance count, including zero |  |
+
+Examples:
+
+```sh
+gregale app scaling my-api
+gregale app scaling my-api --expected-app-id 612e5aba-cd70-49e7-b29a-e5f73c29dcf2 --expected-revision 3 --request-id 4ed5f921-9eae-4bd0-a7ab-f851d38f745b --ram 512
+gregale app scaling my-api --receipt 4ed5f921-9eae-4bd0-a7ab-f851d38f745b
+```
+
 ### app costs
 
 Show this app&#39;s attributed usage costs and source coverage

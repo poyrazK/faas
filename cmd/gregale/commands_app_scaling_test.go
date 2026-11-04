@@ -43,9 +43,9 @@ func TestAppScalingReadApplyRecoverCLI(t *testing.T) {
 	t.Setenv("FAAS_API", backend.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
 	for _, args := range [][]string{
-		{"app", "alpha", "scaling", "--environment", "staging"},
-		{"app", "alpha", "scaling", "--environment", "staging", "--expected-app-id", requestID, "--request-id", requestID, "--expected-revision", "3", "--expected-environment-id", requestID, "--min", "0"},
-		{"app", "alpha", "scaling", "--environment", "staging", "--receipt", requestID},
+		{"app", "scaling", "alpha", "--environment", "staging"},
+		{"app", "scaling", "alpha", "--environment", "staging", "--expected-app-id", requestID, "--request-id", requestID, "--expected-revision", "3", "--expected-environment-id", requestID, "--min", "0"},
+		{"app", "scaling", "alpha", "--environment", "staging", "--receipt", requestID},
 	} {
 		if code := main.Run(args); code != 0 {
 			t.Fatalf("%v exit %d", args, code)
