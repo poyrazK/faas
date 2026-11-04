@@ -983,6 +983,12 @@ whole quota. A replica that cannot take the lock skips that tick.
 - Each Neon project gets `settings.quota.compute_time_seconds` set to its own
   use plus what the account has left. A restore is a branch inside its source's
   project, so the two share one quota.
+- Neon checks a quota only when its counters move, about every 25 minutes, so
+  what the account has left first keeps back each database's largest size for
+  30 minutes (1,800 CU-s for development, 3,600 for burstable, 7,200 for
+  production). A busy database is therefore suspended up to that much before
+  the ceiling, not that much after it (ADR-20261025094915 amendment
+  2026-11-04).
 - When nothing is left, every quota equals its project's use, and Neon suspends
   the computes until the quota is raised or the counters reset on the 1st. A
   cap never deletes a database.
@@ -1115,7 +1121,9 @@ The run creates a disposable database, probes it, and deletes it. The probe:
    the largest-to-smallest size ratio plus a quarter, so the quota and the
    ledger count the same compute-unit seconds.
 3. Sets the quota to the counter and waits for the compute to suspend; a
-   connection must then fail.
+   connection must then fail. Neon suspends only when its counters next move,
+   so steps 2 and 3 each wait up to 35 minutes, and the run defaults to a
+   150-minute timeout (`FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT` overrides it).
 4. Raises the quota and waits for a connection to wake the compute.
 5. Checks that `logical_size_bytes` did not change.
 

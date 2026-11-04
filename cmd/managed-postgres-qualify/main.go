@@ -290,6 +290,11 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 	return liveQualification{registry: registry, backend: backend, resourceID: resourceID, spec: spec, timeout: timeout, close: closeFactories}, true
 }
 
+// computeCapQualifyTimeout covers the compute cap probe, which waits a whole
+// Neon counter lag twice (over an hour), on top of provisioning and the usage
+// checks. FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT still overrides it.
+const computeCapQualifyTimeout = 150 * time.Minute
+
 // runComputeCap qualifies compute caps (ADR-20261025094915 decision 10) on a
 // disposable resource and writes the artifact that
 // FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on requires. It is separate from the
@@ -300,11 +305,15 @@ func runComputeCap(getenv func(string) string, output, errorOutput io.Writer) in
 		return 2
 	}
 	defer live.close()
+	timeout := live.timeout
+	if strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")) == "" {
+		timeout = computeCapQualifyTimeout
+	}
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), live.backend.Provider, managedpostgres.QualificationOptions{
 		ProviderName: live.backend.Driver,
 		ResourceID:   live.resourceID,
 		Spec:         live.spec,
-		Timeout:      live.timeout,
+		Timeout:      timeout,
 		Mutating:     true,
 		ComputeCap:   true,
 	})
