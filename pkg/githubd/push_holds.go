@@ -57,7 +57,7 @@ func (s *Service) pushServicesWaitingForDatabase(ctx context.Context, project st
 	if len(postgres) == 0 {
 		return nil, nil
 	}
-	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(project.AccountID))
+	env, err := reposcan.ReadProjectEnv(fsys, s.scanOptions(project.AccountID), scan.Workloads)
 	if err != nil {
 		return nil, fmt.Errorf("githubd: read compose environment: %w", err)
 	}

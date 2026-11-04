@@ -1960,6 +1960,12 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
+- [ADR-20261103230000: Pipeline safety controls and retirement refresh retry](20261103230000-pipeline-safety-controls-and-retirement-refresh-retry.md) — local/staging; source-independent safety controls, billing-grace reader reductions and bounded retirement API refresh retries
+- [ADR-20261103225803: Pipeline cancellation, serving API readiness and UUID identity](20261103225803-pipeline-cancellation-readiness-and-uuid-identity.md) — local/staging; destination-only verification cancellation, serving-environment API readiness and canonical UUID identity
+- [ADR-20261103222240: Bounded scans and manual verification attempts](20261103222240-pipeline-bounded-scans-and-manual-verification-attempts.md) — local/staging; server-bounded verification batches and stable manual verification attempts
+- [ADR-20261103220000: Pipeline pause, subscription ownership and verification limits](20261103220000-pipeline-pause-ownership-and-verification-limits.md) — local/staging; all-generation pause, strict subscription ownership and a 1 MiB verification key limit
+- [ADR-20261103210000: Pipeline value fidelity and bounded queue scheduling](20261103210000-pipeline-value-fidelity-and-worker-scheduling.md) — local/staging; lossless nullable row encoding and independent worker queues bounded to 8 pipeline, 2 check and 2 setup operations
+- [ADR-20261103200000: Pipeline replica identity and unfinished generation cleanup](20261103200000-pipeline-replica-identity-and-retirement.md) — local/staging; immediate primary-key replica identity and resumable cleanup of every unfinished generation
 
 - [ADR-20261017190802: Reviewed source-backed scheduled Jobs](20261017190802-gitops-source-scheduled-jobs.md)
 

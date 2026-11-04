@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"maps"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -107,9 +108,13 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	environmentApps := m.projectEnvironmentAppIDsLocked(accountID, projectID, environment)
 	count := 0
 	for _, app := range m.apps {
 		if app.ProjectID != projectID || app.AccountID != accountID || app.Status == AppDeleted || app.PreviewOfSlug != "" {
+			continue
+		}
+		if !slices.Contains(environmentApps, app.ID) {
 			continue
 		}
 		if omitted[app.ID] {
@@ -271,12 +276,7 @@ func (m *MemStore) deactivateProjectReleaseSet(ctx context.Context, accountID, p
 }
 
 func (m *MemStore) validateProjectReleaseFallbackLocked(projectID, environment string, expected []ProjectReleaseMember) error {
-	appIDs := make([]string, 0)
-	for _, app := range m.apps {
-		if app.ProjectID == projectID && app.Status != AppDeleted && app.PreviewOfSlug == "" {
-			appIDs = append(appIDs, app.ID)
-		}
-	}
+	appIDs := m.projectEnvironmentAppIDsLocked(m.projects[projectID].AccountID, projectID, environment)
 	return m.validateProjectReleaseFallbackForAppsLocked(appIDs, environment, expected)
 }
 
@@ -362,9 +362,13 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 	if allowGitOpsReplacement {
 		excluded = m.workloadReleaseExclusionsLocked(EnvironmentGitSource{AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment})
 	}
+	environmentApps := m.projectEnvironmentAppIDsLocked(accountID, projectID, environment)
 	count := 0
 	for _, app := range m.apps {
 		if excluded[app.ID] || app.ProjectID != projectID || app.AccountID != accountID || app.Status == AppDeleted || app.PreviewOfSlug != "" {
+			continue
+		}
+		if !slices.Contains(environmentApps, app.ID) {
 			continue
 		}
 		count++

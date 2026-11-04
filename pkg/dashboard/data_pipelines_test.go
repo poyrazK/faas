@@ -11,7 +11,7 @@ import (
 )
 
 func TestDataPipelinesRenderCompatibilityAndFreshness(t *testing.T) {
-	data := DataPipelinesData{Enabled: true, CSRFToken: "bound-token", ConnectionID: "source", ConnectionRevision: 2,
+	data := DataPipelinesData{Enabled: true, ReadersEnabled: true, VerificationCancelEnabled: true, CSRFToken: "bound-token", ConnectionID: "source", ConnectionRevision: 2,
 		Check: &api.DataConnectionCheck{ConnectionID: "source", DatabaseID: "mirror", State: "passed", Fresh: true, Capacity: &api.DataPipelineCapacity{State: "ready"}, Tables: []api.DataSourceTable{
 			{Name: "orders", Supported: true, Columns: []api.DataSourceColumn{{Name: "id", Type: "int8", PrimaryKey: true}}},
 			{Name: "<script>secret</script>", Issues: []api.DataConnectionIssue{{Message: "Unsupported column", Column: "<img onerror=alert(1)>"}}},
@@ -104,5 +104,53 @@ func TestDataPipelineDataAPISetupRenderProgressAndAuthenticatedExample(t *testin
 	}
 	if strings.Contains(body, "gregale data-api create DATA_API_NAME") {
 		t.Fatal("ready API still asks for CLI deployment")
+	}
+}
+
+func TestDataPipelineGracePeriodRetainsReaderControls(t *testing.T) {
+	data := DataPipelinesData{ReadersEnabled: true, Readers: []DataPipelineReaders{{PipelineID: "pipeline", Name: "orders", Revision: 2, CanRequest: true, CanApprove: true, CanDiscard: true, State: "preview", Removed: []string{"alice"}}}}
+	out := httptest.NewRecorder()
+	if err := Render(out, slog.Default(), "nonce", Page{Body: "data_pipelines", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	body := out.Body.String()
+	for _, want := range []string{"readers_preview", "readers_approve", "readers_discard", "only remove current subjects"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("billing grace hid reader control %q", want)
+		}
+	}
+	if strings.Contains(body, ">Start pipeline</button>") {
+		t.Fatal("billing grace enabled pipeline creation")
+	}
+}
+
+func TestDataPipelineGracePeriodRetainsVerificationCancellation(t *testing.T) {
+	for _, allowed := range []bool{true, false} {
+		data := DataPipelinesData{VerificationCancelEnabled: allowed, Verifications: []DataPipelineVerificationItem{{PipelineID: "pipeline", Name: "orders", Revision: 2, ID: "run", State: "running", CanCancel: true, CanRetry: true}}}
+		out := httptest.NewRecorder()
+		if err := Render(out, slog.Default(), "nonce", Page{Body: "data_pipelines", Data: data}); err != nil {
+			t.Fatal(err)
+		}
+		body := out.Body.String()
+		if strings.Contains(body, "Stop verification</button>") != allowed {
+			t.Fatal("verification cancellation did not follow existing-pipeline eligibility", allowed)
+		}
+		if strings.Contains(body, "Retry verification</button>") {
+			t.Fatal("cancellation eligibility exposed deployment-gated retry")
+		}
+	}
+}
+
+func TestDataPipelineRetirementRefreshRetryUsesApprovedScope(t *testing.T) {
+	data := DataPipelinesData{Enabled: true, SchemaChanges: []DataPipelineSchemaChange{{PipelineID: "pipeline", Name: "orders", Revision: 3, CancellationID: "approved-retirement", CancellationTable: "customers", CancellationState: "approved", CancellationStage: "archived", TableRemoval: true, CanRetryCancellation: true}}}
+	out := httptest.NewRecorder()
+	if err := Render(out, slog.Default(), "nonce", Page{Body: "data_pipelines", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	body := out.Body.String()
+	for _, want := range []string{"Retry API refresh", `value="approved-retirement"`, `value="table_removal_approve"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing refresh retry scope %q", want)
+		}
 	}
 }

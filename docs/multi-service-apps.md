@@ -4,6 +4,10 @@ A repository with several services (a Compose file, a workspace, or folders
 such as `services/api` and `services/web`) deploys as one **project**: one
 plan, one review, and services that can call each other by name.
 
+Each service counts toward your plan's app limit. Free supports a project
+with one service. A project with two or more services requires Hobby or higher
+and enough remaining app capacity; projects do not add a separate allowance.
+
 ## Deploy the repository
 
 From the repository root:
@@ -33,6 +37,14 @@ gregale deploy --repo octo/shop --ref main --project
 Add `--only api,web` or `--exclude worker` to deploy part of the project, and
 `--diff` to see the plan without changing anything.
 
+Persisted exclusions also apply to previews and match allocated app slugs as well
+as service names and roots. If every service requested by `--only` is excluded,
+the deployment stops with `project_selection_empty`. Clear or adjust the persisted
+exclusions before retrying. A protected environment approval covers the exact
+reviewed selection; changing filters requires a fresh scan and approval. Plans
+created before selection binding was added must also be scanned again before
+approval in a protected environment.
+
 `gregale project get` lists each service with its app, its latest deployment
 and the services it declares it calls:
 
@@ -51,6 +63,44 @@ each one. Where the [service map](service-map.md) is available to your
 account, it also shows the measured calls between the project's services over
 the last hour: volume, errors, p95 latency, and how often a call woke a parked
 service.
+
+## Deploy to a named environment
+
+For an existing stage:
+
+```sh
+gregale deploy --project --environment staging
+```
+
+Deploying a project to a named stage updates the selected services in that
+stage's workload settings. It does not change existing production app settings,
+source checkpoints, routes or triggers, and omitting a service leaves its app
+and deployments intact. New services reserve app capacity and deploy only in
+the selected stage. Shared service renames go through a production project plan.
+Each stage deploy creates a deployment for every selected service and pins its stage settings;
+deploying that source to production still creates its own deployments.
+
+A service configured only in a named stage is preserved when a production
+deploy omits it, and still counts toward the app limit. Selecting it in a
+production deploy establishes production membership. Later production plans
+can remove that shared app, affecting all its environments; review those
+removals before applying. Delete an unused stage-only app explicitly to free
+its capacity.
+
+Safe releases and release graphs include the selected environment's services.
+A service confined to another stage does not block the release. Promotion
+checks both the source and destination membership: a destination service missing
+from the source still blocks promotion so it cannot disappear silently.
+
+Production deploys advance existing saved production workload settings in the
+same transaction as the app update. New deployments pin those updated settings;
+older deployments keep their original settings for recovery.
+
+Source change detection follows the build context. Workspace and convention
+builds, and Compose builds using Railpack, include the whole repository, so a
+root lockfile or shared package edit redeploys the affected project services.
+Compose Dockerfile builds use their declared build context. The first deploy
+after this change refreshes the stored source hashes once.
 
 ## What becomes a service
 
@@ -75,8 +125,8 @@ Datastore images in Compose (`postgres`, `redis`, `mysql`, `mongo` and similar)
 are not run as apps.
 
 Where [managed PostgreSQL](managed-postgres.md) is available to your account, a
-`postgres` service becomes a managed database named `<project>-<service>`
-(for example `shop-db`), created and bound by the deploy
+`postgres` service becomes a managed database named `<project>-<service>` in
+production (for example `shop-db`), created and bound by the deploy
 ([ADR-20261025111824](adr/20261025111824-compose-postgres-as-managed-database.md)).
 Each service whose Compose variable points at it, such as
 `DATABASE_URL: postgres://app:secret@db:5432/app`, gets that variable bound;
@@ -91,6 +141,14 @@ project the database belongs to the organization, and the deploy needs a role
 and key that may create and bind organization databases (`postgres:manage`);
 otherwise the plan lists the service with the reason `permission`
 ([ADR-20261026151530](adr/20261026151530-compose-postgres-org-projects.md)).
+
+Each named environment gets a separate default database. Its name includes the
+project, environment and service with a short hash, and the plan shows the exact
+name. These databases count toward the database limit; an exhausted limit leaves
+the stage database unprovisioned. Existing scoped variables and bindings retain
+their configured database, including bindings created before this isolation rule.
+Review and change any older stage binding that intentionally or accidentally
+points at production before running migrations there.
 
 Other datastores, and `postgres` where managed PostgreSQL is not available, are
 listed under **Managed (not provisioned)** with the variable your services
@@ -139,6 +197,21 @@ the next push deploys them
   step must use the same `build:` (context, Dockerfile, args) or `image:` as a
   waiting service that serves requests, must have a `command:` and must not
   publish ports; chained steps and two steps for one service fail the plan.
+
+  The step's environment declarations become defaults for its owner. With
+  `x-gregale-env-import: true`, eligible plain values are imported there;
+  the owner's explicit declarations and values already configured on the
+  app keep precedence. Secret values still require secret configuration.
+  A managed database binding uses the variable the step declared, including
+  a custom variable such as `DB_CONNECTION`.
+
+  An explicit migration `entrypoint:` is retained in its release command.
+  Its supported secret-file mounts are added to the owning service, so they
+  are available during the release command and while the service runs. A mount
+  that conflicts with the owner's secret source or permissions fails the plan.
+  The migration's `user:` and `working_dir:` must match its owner's settings,
+  including when one side inherits the image default. The plan rejects a mismatch
+  because the release command runs in the owner's runtime.
 
 Each service keeps its name inside the project. Its app slug is the same name,
 or `<project>-<name>` when the name is reserved (`api`, `admin`, …) or taken by

@@ -46,6 +46,87 @@ func TestIssueOTLPThroughProductionRouter(t *testing.T) {
 	}
 }
 
+func TestIssueOTLPPartialSuccessPreservesValidRecords(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-otlp-partial")
+	token := apidserver.IssueCreateToken(t, e, app.Slug, apidserver.IssueSeedDeployment(t, e, app, 1))
+	headers := map[string]string{"Authorization": "Bearer " + token.Token}
+	stamp := fmt.Sprint(time.Now().UnixNano())
+	attrs := []any{map[string]any{"key": "exception.type", "value": map[string]string{"stringValue": "DateError"}}}
+	good := map[string]any{"timeUnixNano": stamp, "attributes": attrs}
+	bad := map[string]any{"attributes": attrs}
+	logs := map[string]any{"resourceLogs": []any{map[string]any{"scopeLogs": []any{map[string]any{"logRecords": []any{good, bad}}}}}}
+	path := "/v1/apps/" + app.Slug + "/issue-events/otlp/logs"
+	for range 2 {
+		w := e.Do(t, "POST", path, logs, headers)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"rejectedLogRecords":"1"`) {
+			t.Fatalf("partial log export: %d %s", w.Code, w.Body.String())
+		}
+	}
+	metrics := apidserver.ScrapeOpsMetrics(t, *(*e.S()).Ops())
+	if !strings.Contains(metrics, `apid_pg_handler_test_issue_events_recorded_total{outcome="invalid"} 2`) {
+		t.Fatalf("partial rejections missing from metrics: %s", metrics)
+	}
+	list := apidserver.IssueDecode[api.ListIssuesResponse](t, e.Do(t, "GET", "/v1/apps/"+app.Slug+"/issues", nil, nil), 200)
+	if len(list.Items) != 1 || list.Items[0].EventCount != 1 {
+		t.Fatalf("valid log not saved exactly once: %+v", list.Items)
+	}
+	badSpan := map[string]any{"traceId": strings.Repeat("1", 32), "spanId": strings.Repeat("2", 16), "events": []any{map[string]any{"name": "exception", "timeUnixNano": stamp, "attributes": attrs}, map[string]any{"name": "exception", "attributes": attrs}}}
+	goodSpan := map[string]any{"traceId": strings.Repeat("3", 32), "spanId": strings.Repeat("4", 16), "events": []any{map[string]any{"name": "exception", "timeUnixNano": stamp, "attributes": attrs}}}
+	traces := map[string]any{"resourceSpans": []any{map[string]any{"scopeSpans": []any{map[string]any{"spans": []any{badSpan, goodSpan}}}}}}
+	w := e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events/otlp/traces", traces, headers)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"rejectedSpans":"1"`) {
+		t.Fatalf("partial trace export: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestIssueIngestionSanitizesNULBeforePostgres(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-nul-text")
+	token := apidserver.IssueCreateToken(t, e, app.Slug, apidserver.IssueSeedDeployment(t, e, app, 1))
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: "before\x00after"}
+	result := apidserver.IssueDecode[api.IssueEventResponse](t, apidserver.IssueSend(t, e, app.Slug, token, event), 202)
+	detail := apidserver.IssueDecode[api.IssueDetail](t, e.Do(t, "GET", "/v1/apps/"+app.Slug+"/issues/"+result.IssueID, nil, nil), 200)
+	if len(detail.Events) != 1 || detail.Events[0].Message != "before\uFFFDafter" {
+		t.Fatalf("unexpected retained evidence: %+v", detail.Events)
+	}
+}
+
+func TestIssueNearLimitPayloadFitsRetainedJSONB(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	app := apidserver.SeedPGApp(t, e, "issue-jsonb-size")
+	token := apidserver.IssueCreateToken(t, e, app.Slug, apidserver.IssueSeedDeployment(t, e, app, 1))
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", SourceKind: "exception"}
+	for length := 140; length <= 220; length++ {
+		frames := make([]api.IssueFrame, api.IssueMaxFrames)
+		for i := range frames {
+			frames[i] = api.IssueFrame{File: strings.Repeat("a", length), Function: "f", Line: 1, InApp: true}
+		}
+		event.Frames = frames
+		event.Causes = make([]api.IssueCause, api.IssueMaxCauses)
+		for i := range event.Causes {
+			event.Causes[i] = api.IssueCause{ExceptionType: "Error", Frames: frames}
+		}
+		raw, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		remaining := api.IssueEventMaxBytes - 8 - len(raw)
+		if remaining >= 0 && remaining <= api.IssueMessageMaxBytes {
+			event.Message = strings.Repeat("m", remaining)
+			break
+		}
+	}
+	raw, err := json.Marshal(event)
+	if err != nil || len(raw) > api.IssueEventMaxBytes || len(raw) < api.IssueEventMaxBytes-100 {
+		t.Fatalf("test payload size %d: %v", len(raw), err)
+	}
+	w := apidserver.IssueSend(t, e, app.Slug, token, event)
+	if w.Code != 202 {
+		t.Fatalf("near-limit event rejected: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestIssueCredentialContextAndQuotaBoundaries(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanHobby)
 	app := apidserver.SeedPGApp(t, e, "issue-boundary")
