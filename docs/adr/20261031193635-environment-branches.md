@@ -375,8 +375,47 @@ or `production` (refused for branches).
     keyed by app and have no environment.
 
   A branch receives only traffic addressed to its own hostnames.
-- **`contained`** puts branch instances in the rehearsal contained network: no outbound
-  traffic except to platform services in the branch.
+- **`contained`** gives branch instances no outbound traffic except to platform services in
+  the branch. As built in slice 6a, it is its own profile, not the rehearsal network: a
+  rehearsal run is keyed by app and authorizes through run membership, while a branch shares
+  its app with production.
+  - **Authority.** vmmd reads every app wake's policy from the deployment it boots
+    (deployment scope, then the project environment, then `egress_mode`). A request field
+    can only ask for containment, never waive it. A deployment whose environment is gone
+    is refused, since it may be a contained branch deleted mid-wake. Uncontained answers
+    are cached per deployment, because a deployment's scope and its branch's egress never
+    change. schedd asks for the profile (`AppSpec.environment_branch_contained`) and
+    destroys a runtime that does not echo it (`WakeResponse.environment_branch_contained`).
+    An older vmmd ignores the field, so it never serves a contained branch.
+  - **Enforcement.** A separate `inet gregale_branch` table has a forward hook at priority
+    -10 with policy drop. It admits connection replies, published ingress, the bridge's
+    canonical service proxy (TCP 10081, which resolves a branch caller's targets inside the
+    branch, #6034), the bridge resolver (port 53), and the `branch_db` set. The
+    `branch_db` set holds IPv4 address and port pairs of the managed databases bound in the
+    branch's scope. vmmd adds them only when the guest resolves one of those names:
+    `AllowResolvedEgressRequest.name`, matched against
+    `EnvironmentBranchDatabaseEndpoints`. A nameless answer from an older resolver adds
+    nothing. The table is installed in the same atomic nft transaction as the ordinary
+    rules, before guest execution. It is rebuilt by flushing its chain, never the table,
+    so a re-render keeps the set. Resident resumes recheck the policy and reinstall the
+    profile, and adoption refuses a contained guest. The ordinary chains still apply after
+    it, so the profile can only narrow them. IPv6 has no exception.
+  - **Host-mediated channels.** The outbound relay, workload identity tokens and event
+    publishing are refused (`ErrEnvironmentBranchExternalActionDenied`): IP policy cannot
+    constrain a vsock channel.
+  - **Refused combinations.** A parent with object storage is refused (409
+    `environment_branch_contained_objects_unsupported`). Overlay buckets are served by
+    the shared public S3 gateway, and admitting it would let a hard-coded production key
+    through; a branch-scoped gateway path is a follow-up. Also refused: rehearsal
+    enrollment, static egress, managed native admission, the build/export and
+    disposable-execution modes, and a runtime without atomic nft transactions.
+  - **Rollout.** apid accepts `egress: contained` only with
+    `FAAS_ENVIRONMENT_BRANCH_CONTAINMENT=1`. Set it once every serving vmmd, schedd and
+    gatewayd-internal runs this release, and `test-metal` has passed on the native host.
+    Leaving the gate off later does not remove enforcement from existing contained
+    branches.
+  - **Known limit.** The bridge resolver still forwards public lookups, so DNS queries
+    leave the node. Containment is about side effects, not adversarial exfiltration.
 - **`simulated`** is `contained` plus the rehearsal simulation broker (HTTP and Resend
   today) and side-effect capture: events, queue messages, webhooks and mail are recorded,
   not sent. `gregale test rehearse` can then target a branch.
@@ -419,7 +458,7 @@ or `production` (refused for branches).
 | 3 | Overlay buckets with `live_parent` consistency, created by the branch data reconciler; overlay-bucket cleanup. `as_of` and read-through copy are follow-ups. | Read-through, write isolation, tombstones, merged listing. Parent unchanged. Nothing copied at branch time. The bucket and its credential are gone after delete. |
 | 4 | Network and identity scoping. Service calls, egress and identity come from #6034 and #6044, which key on the deployment scope. Built here: branches and private networks refuse each other per project. Branch instances without the parent's attachments are a follow-up. | A branch caller never reaches a production service or private network. |
 | 5 | Restore with a new identity (opt-in) from a lazily made credential-free capture of the parent deployment (section 3). Splits into 5a, the capture (placeholder managed secrets, `branch-capture` identity, its own `environment_branch_captures` table that production lookups cannot read), and 5b, the restore (tmpfs identity file, digest acknowledgement, lineage checks). Both need `test-metal`. | No real parent credential in any memory a branch restores. Production never restores a credential-free capture. Identity digest acknowledged; a wrong or missing digest cold-boots. |
-| 6 | `contained` and `simulated` egress. | Rehearsal conformance against a branch. |
+| 6 | `contained` and `simulated` egress. 6a (built): the contained profile, its authority and the operator gate (section 7). 6b: `simulated`, the rehearsal simulation broker and side-effect capture keyed by branch. | 6a: public TCP and non-branch bridge ports are dropped while the service proxy, resolver and the branch's own database are reached, after resets too (`TestMetalEnvironmentBranchContainedProfile`). 6b: rehearsal conformance against a branch. |
 
 ## Consequences
 
