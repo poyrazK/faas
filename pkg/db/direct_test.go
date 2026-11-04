@@ -194,6 +194,7 @@ var pooledAcquireOK = map[string]string{
 	"pkg/db/pgtest/template.go":                          "test harness; never runs against a pooler",
 	"pkg/db/pgtest/migration_statements.go":              "test harness: one connection for a NO TRANSACTION migration file; never runs against a pooler",
 	"pkg/state/pgstore_ratelimit.go":                     "atomic shared-rate statements, released on every path; no LISTEN, session lock, or other session state",
+	"pkg/state/private_network_coordination.go":          "MemStore's scope gate is a semaphore permit, not a connection; the PgStore scope lock goes through acquireSessionAdvisoryLockConn",
 	"pkg/e2etest/postgresprobe/pool.go":                  "private customer pools: reads and explicit transactions are pooler-safe; Acquire only borrows semaphore permits",
 	"pkg/managedpostgres/neon/checkpoint_connections.go": "private customer maintenance pool: opened from the authenticated direct provider endpoint, never the control-plane transaction pooler",
 	"pkg/livequery/checkpoint.go":                        "livequeryd's own pool to the customer database it serves (beside it in the database VM, or the compiler's direct URL), never the control-plane transaction pooler; the pinned connection only describes statements (unnamed Prepare) and reads catalogs",
