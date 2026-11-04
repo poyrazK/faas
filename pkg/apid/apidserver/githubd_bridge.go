@@ -94,6 +94,9 @@ type githubdBridge struct {
 	// agentSteps reports whether an account may deploy workflow agent steps
 	// (ADR-20261027090010 §1); nil refuses them.
 	agentSteps func(state.Account) bool
+	// releasePhaseOff refuses a push that declares a release command while
+	// FAAS_RELEASE_PHASE_ENABLED is off on apid.
+	releasePhaseOff bool
 }
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
@@ -354,7 +357,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if buildErr != nil {
 		return nil, buildErr
 	}
-	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest)
+	releaseCommand, releaseProblem := resolveSourceReleaseCommand(req.SourcePath, app, manifest, g.releasePhaseOff)
 	if releaseProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: release command: %s", releaseProblem.Detail)
 	}
@@ -832,7 +835,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -842,6 +845,8 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		stagingRoot: filepath.Join(stagingRoot, "build-sources"),
 		spoolRoot:   spool,
 		agentSteps:  agentSteps,
+
+		releasePhaseOff: releasePhaseOff,
 	})
 }
 

@@ -5088,8 +5088,10 @@ func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return App{}, err
 	}
+	// A soft-deleted app keeps its slug until it is purged, as the
+	// apps_slug_key UNIQUE (slug) constraint does in Postgres.
 	for _, a := range m.apps {
-		if a.Slug == app.Slug && a.Status != AppDeleted {
+		if a.Slug == app.Slug {
 			return App{}, fmt.Errorf("state: slug %q already taken", app.Slug)
 		}
 	}
@@ -5278,8 +5280,9 @@ func (m *MemStore) prepareAppIfUnderQuotaLocked(app App, limits api.Limits, apps
 	}
 	// 1. Return the slug collision before quota. Deploy clients use this
 	// signal to fetch and continue with an app they previously reserved.
+	// A soft-deleted app still holds its slug (apps_slug_key in Postgres).
 	for _, a := range apps {
-		if a.Slug == app.Slug && a.Status != AppDeleted {
+		if a.Slug == app.Slug {
 			return App{}, ErrConflict
 		}
 	}
@@ -7334,7 +7337,7 @@ func (m *MemStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug st
 	}
 	for i := range m.apps {
 		other := m.apps[i]
-		if other.ID != found.ID && other.Slug == newSlug && other.Status != AppDeleted {
+		if other.ID != found.ID && other.Slug == newSlug {
 			return App{}, ErrConflict
 		}
 	}
@@ -10225,7 +10228,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		}
 		if d.Status != DeployLive {
 			for _, other := range m.deployments {
-				if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Revision > d.Revision {
+				if outpaces(other, d) {
 					m.putDeploymentLocked(id, m.supersedeOutpacedDeploymentLocked(d))
 					return ErrDeploymentSuperseded
 				}

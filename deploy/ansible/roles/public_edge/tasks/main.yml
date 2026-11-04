@@ -356,7 +356,13 @@
           @direct not remote_ip {{ faas_public_edge_cloudflare_cidrs | join(' ') }}
           route {
               abort @direct
-              reverse_proxy {{ faas_ai_gateway_public_upstream }}
+              # Only Cloudflare reaches this route: pin its client address
+              # as the one X-Forwarded-For outboundd's unknown-token limiter
+              # keys on (bug hunt H82). Without it every caller looks like
+              # its Cloudflare edge.
+              reverse_proxy {{ faas_ai_gateway_public_upstream }} {
+                  header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+              }
           }
       {% else %}
           reverse_proxy {{ faas_ai_gateway_public_upstream }}

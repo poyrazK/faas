@@ -336,6 +336,22 @@ gregale env set --app shop-api STRIPE_KEY=sk_live_…
 or pass a `--secrets-file` to `gregale deploy`, which supplies its keys to every
 selected service.
 
+A value every service needs, such as a shared API key or log level, can be set
+once for the project instead of once per service. Every service of the
+environment receives it at its next boot, including services added later, and
+a service that sets the same key itself keeps its own value:
+
+```sh
+printf 'PAYMENTS_KEY=%s\n' "$PAYMENTS_KEY" | \
+  gregale environment secrets set shop production --from-stdin
+gregale environment config set shop production --file production.json --yes
+```
+
+Deployments in the `default` scope read the `production` environment's values.
+See [Project environment secrets](secrets.md#project-environment-secrets) and
+[Shared project configuration](env.md#shared-project-configuration)
+([ADR-20261103172200](adr/20261103172200-project-service-delete-rollback-shared-values.md)).
+
 To copy the plain values from `environment:` instead of typing them again,
 opt in at the top of the Compose file:
 
@@ -381,7 +397,14 @@ change before anything is applied:
   still lists it in `depends_on` fails the plan. A GitHub push never removes a
   service: the app keeps serving its last release, and the push's GitHub check
   says a reviewed deploy removes it. A service hidden by an inactive Compose
-  `profiles:` entry counts as removed. A removed app can be restored for 7 days.
+  `profiles:` entry counts as removed. A removed app can be restored for 7 days
+  with `gregale app restore <slug>`. Until it is restored or purged, the app
+  keeps its name: a push that brings the service back does not deploy it, and
+  its GitHub check says to restore the app or give the service another app name.
+- **Deleting one service** with `gregale app delete` is refused while another
+  service of the project calls it (a service binding) or lists it in
+  `depends_on`, and the error names them. Remove the service from Compose and
+  run a reviewed deploy, which shows its dependents in the same plan.
 - **Renaming** a service keeps its app when you say what it was called before:
 
   ```yaml
@@ -402,6 +425,35 @@ change before anything is applied:
   keeps running as a standalone app, with its domains, environment values and
   crons. Detached apps are no longer one project, so they cannot call each
   other by service name; delete them with `gregale app delete`.
+
+## Roll back
+
+Each service rolls back on its own, to its previous live deployment:
+
+```sh
+gregale rollback shop-api
+```
+
+To roll the whole project back, preview the order and then run it:
+
+```sh
+gregale project rollback shop --dry-run
+gregale project rollback shop --yes
+```
+
+Every service rolls back to its previous live deployment, one at a time, after
+the services it depends on, as a deploy brings them up. Each step waits until
+the service serves its previous release. The command stops at the first
+service that fails, and names the services already rolled back and those still
+on their current release; roll those back with `gregale rollback <slug>`. A
+rollback across a release command (a migration) needs
+`--acknowledge-releases`, as for one app.
+
+A project rollback is a sequence of per-service rollbacks, not one atomic
+switch: for a moment, a rolled-back service can receive calls from a service
+still on its newer release. Keep service APIs compatible across one release,
+or use environment release sets ([preview](env.md)), which switch every
+service's route together.
 
 ## Pull request previews
 

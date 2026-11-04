@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/billing"
+	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -352,6 +353,20 @@ func hostCredentialIdentities() []*age.X25519Identity {
 	return nil
 }
 
+// managedPostgresCapNoticeReady refuses compute cap enforcement while the
+// cap notice email cannot be sent: enforcement suspends a subject's
+// databases at its ceiling, and the threshold email is the customer's only
+// warning (bug hunt H88). The notice goes through the internal mail
+// producer outbox behind its own opt-in.
+func managedPostgresCapNoticeReady(getenv func(string) string) error {
+	if internalmail.ManagedPostgresCapOutboxEnabled(getenv) {
+		return nil
+	}
+	return fmt.Errorf("%s=on suspends databases at their ceiling, and customers are warned only by the cap notice email: "+
+		"set %s=1 with the internal mail producer outbox enabled, or keep enforcement at shadow",
+		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv)
+}
+
 // loadManagedPostgresCapEnforcer builds the compute cap enforcer
 // (ADR-20261025094915). Each subject's ceiling is its plan's monthly compute
 // allowance, or twice it with overage on; the enforcer intersects it with the
@@ -379,6 +394,9 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		Ceiling:          managedPostgresCapLimits(store, accountStore, hooks.overage()),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
+		if err := managedPostgresCapNoticeReady(getenv); err != nil {
+			return nil, err
+		}
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
 		if err != nil {
 			return nil, fmt.Errorf("%s=on needs a readable %s: %w", managedpostgres.CapEnforcementEnv, managedpostgres.CapQualificationPathEnv, err)
