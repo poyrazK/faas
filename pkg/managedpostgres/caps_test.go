@@ -47,6 +47,15 @@ func TestPlanComputeCaps(t *testing.T) {
 		{name: "a held suspension is not rewritten", ceiling: 25 * hour, ledger: 25 * hour,
 			scopes:   []computeCapScope{{used: 25 * hour, quota: 25 * hour}},
 			wantUsed: 25 * hour, wantRemaining: 0, wantTargets: []int64{25 * hour}, wantApply: []bool{false}},
+		{name: "preview databases get what is left of 80% of the ceiling", ceiling: 25 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: 10 * hour}, {used: 5 * hour, preview: true}},
+			wantUsed: 15 * hour, wantRemaining: 10 * hour, wantTargets: []int64{20 * hour, 10 * hour}, wantApply: []bool{true, true}},
+		{name: "at 80% preview databases are held and production keeps the last fifth", ceiling: 25 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: 15 * hour, quota: 20 * hour}, {used: 5 * hour, quota: 10 * hour, preview: true}},
+			wantUsed: 20 * hour, wantRemaining: 5 * hour, wantTargets: []int64{20 * hour, 5 * hour}, wantApply: []bool{false, true}},
+		{name: "a raised ceiling lifts the preview hold", ceiling: 50 * hour, ledger: 0,
+			scopes:   []computeCapScope{{used: 15 * hour, quota: 20 * hour}, {used: 5 * hour, quota: 5 * hour, preview: true}},
+			wantUsed: 20 * hour, wantRemaining: 30 * hour, wantTargets: []int64{45 * hour, 25 * hour}, wantApply: []bool{true, true}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -334,5 +343,54 @@ func TestCapEnforcerPoolsAnOrganizationAcrossNamespaces(t *testing.T) {
 	// One ceiling lookup and one pool for the organization, not one per namespace.
 	if len(asked) != 1 || asked[0] != "org" || summary.Accounts != 1 || summary.ScopesShadowed != 2 {
 		t.Fatalf("ceilings asked for %v, summary %+v; want one org pool", asked, summary)
+	}
+}
+
+// adr: 20261102123523 — an account's PR preview databases are held once its
+// compute reaches 80% of its ceiling.
+func TestCapEnforcerHoldsPreviewDatabasesAtEightyPercent(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	month := monthStart(now)
+	run := func(t *testing.T, limits CapLimits) map[string]int64 {
+		t.Helper()
+		provider := &capTestProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, set: map[string]int64{},
+			observed: map[string]ComputeCapObservation{
+				"proj-live": {Scope: "live", PeriodStart: month, UsedUnitSeconds: 14000},
+				"proj-pr":   {Scope: "pr", PeriodStart: month, UsedUnitSeconds: 1000},
+			}}
+		registry := testRegistry(t, provider, func(config *Config) {
+			config.Usage = UsageConfig{Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600,
+				StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 1 << 40,
+				MaxMonthlyComputeUnitSeconds: 1 << 40, MaxMonthlyStorageByteSeconds: 1 << 50, MaxMonthlyEgressBytes: 1 << 40}
+		})
+		backend, err := registry.Default("us-east-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		live := Database{ID: "db-live", AccountID: "acct", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, ProviderResourceID: "proj-live", State: StateReady}
+		preview := live
+		preview.ID, preview.ProviderResourceID = "db-pr", "proj-pr"
+		preview.Preview = PreviewOwner{SourceDatabaseID: live.ID, EnvironmentID: "project-1", PRNumber: 7}
+		store := &capTestStore{databases: []Database{live, preview}, ledger: map[string]int64{"acct": 15000}}
+		enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
+			Mode: CapEnforcementOn, Now: func() time.Time { return now }, Qualification: testCapQualification(backend),
+			Ceiling: func(context.Context, string) (CapLimits, error) { return limits, nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := enforcer.Enforce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return provider.set
+	}
+	// 15000 of 18000 is past 80% (14400): the preview database is held at
+	// its use, and production may run to the ceiling.
+	if set := run(t, CapLimits{Allowance: 18000, Ceiling: 18000}); set["proj-pr"] != 1000 || set["proj-live"] != 17000 {
+		t.Fatalf("quotas at 80%% = %v; want the preview held at 1000 and production at 17000", set)
+	}
+	// Overage doubles the ceiling, and with it the previews' 80%.
+	if set := run(t, CapLimits{Allowance: 18000, Ceiling: 36000, Overage: true}); set["proj-pr"] != 1000+28800-15000 || set["proj-live"] != 14000+36000-15000 {
+		t.Fatalf("quotas with overage = %v", set)
 	}
 }

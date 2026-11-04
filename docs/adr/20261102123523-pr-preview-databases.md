@@ -71,13 +71,15 @@
      - No plan number changes, so the financial model is unchanged. Preview databases use the account's pooled compute and are metered like any database.
   6. **Previews never take what production needs.**
      - **Storage:**
-       - The storage pool leaves preview databases out of its sum, as it does the restore slot's copy. Each stops at its own spec limit instead.
+       - The storage pool leaves preview databases out of its sum, as it does the restore slot's copy. Each stops at its own spec limit instead: the provider object it gets is created with that limit (a Neon project's logical size quota, a database VM's volume).
        - An empty preview database is its own provider object, Neon project or database VM.
        - A copy on Neon is a branch of its source's project, so it also stops at that project's water level.
      - **Compute:**
-       - Once the account's pooled compute reaches 80% of its monthly allowance (the existing `80%` threshold), apid holds its preview databases. The hold is the provider hold a scheduled delete uses: the compute stops and connections are refused.
-       - The hold lifts at the next UTC month, or when an upgrade or overage raises the allowance.
-       - Production databases keep today's caps.
+       - Once the account's pooled compute reaches 80% of its compute ceiling (the allowance, or twice it with overage on), its preview databases are held.
+       - The hold is the compute cap's own quota (ADR-20261025094915): a provider object holding only preview databases gets what the account has left of 80% of the ceiling instead of what it has left of the whole ceiling. The provider suspends its compute at that quota between sweeps, and connections are refused.
+       - The hold lifts with the provider's next monthly counters, or when an upgrade or overage raises the ceiling.
+       - It follows the compute cap's mode: shadow logs it, on applies it. A backend without compute quotas (the native backend today) caps nothing, previews included.
+       - Production databases keep today's caps. A provider object a preview database shares with production (a `copy` branched in its source's Neon project) keeps production's quota; step 5 decides how a copy is held.
   7. **Visibility.**
      - Preview databases are listed with the account's databases. The view marks them (`preview`: source database ID, PR number), omitted for every other database.
      - Customers can read, connect to and delete them. Binding them to another app, restoring from them and setting their `previews` are refused with `409 managed_postgres_preview_database`.
@@ -101,7 +103,7 @@
 
      Organization-owned databases are not set up in this step: setup and the setting route use the account's personal ownership, as developer-session databases do.
   3b. **The sweep** (`previewdb.RunSweep`) for preview databases whose environment closed while a teardown stopped midway, or while an older apid tore it down. It pages through the undeleted preview databases across accounts and checks each against its account's undeleted previews (`ListPreviewsForAccount`); an account whose previews cannot be listed keeps its databases. It is not behind the flag: it only removes preview databases.
-  4. **Guards:** the storage pool exclusion and the compute hold (decision 6).
+  4. **Guards:** the storage pool leaves preview databases out of its sum, and the compute cap gives preview-only provider objects 80% of the ceiling (decision 6), both in `CapEnforcer`.
   5. **`copy`.**
   6. **Launch:** customer docs, the dashboard, a `tests/journeys` journey (preview with an empty database migrated by its release command, torn down with the PR), then `beta`.
 - **Release skew:**
@@ -112,7 +114,7 @@
   - An account can hold more databases than `DatabasesMax` while previews are open. Each one is a scale-to-zero development database inside the account's pooled compute, and it is gone when its PR is.
   - On Neon, an empty preview database is a new project (a few seconds to create), and a copy is a branch (shared pages until written).
   - On the native backend (ADR-1027), both are a database VM. A copy is a full restore with no shared pages, so its storage costs what its source does.
-  - A held preview database fails its preview's queries for the rest of the month. That is the point of the hold: production keeps the last fifth of the allowance.
+  - A held preview database fails its preview's queries for the rest of the month. That is the point of the hold: production keeps the last fifth of the ceiling.
   - The source database cannot be deleted at Neon while a copy exists. Deleting it through Gregale removes the copies first.
 - **Rejected alternatives:**
   - **The setting in the repository** (`.gregale/project.yaml` or Compose). A PR could turn on `copy` and read production data.
