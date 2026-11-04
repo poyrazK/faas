@@ -39,6 +39,8 @@ func (s *server) environmentGitSourceForRequest(r *http.Request, acct state.Acco
 		if errors.Is(err, state.ErrNotFound) {
 			return state.EnvironmentGitSource{}, projectNotFound(r.PathValue("slug"))
 		}
+		// The caller sees a retryable 503; operators keep the store's cause.
+		s.log.Warn("environment gitops: project read failed", "account", acct.ID, "err", err)
 		return state.EnvironmentGitSource{}, api.ErrCapacity("Could not read the project.")
 	}
 	store, ok := s.store.(state.EnvironmentGitOpsStore)
@@ -50,6 +52,7 @@ func (s *server) environmentGitSourceForRequest(r *http.Request, acct state.Acco
 		if errors.Is(err, state.ErrNotFound) {
 			return source, api.NewProblem(http.StatusNotFound, "environment_git_source_not_found", "Git source not found", "No Git source is bound to this project environment.")
 		}
+		s.log.Warn("environment gitops: Git source read failed", "project", project.ID, "err", err)
 		return source, api.ErrCapacity("Could not read the environment Git source.")
 	}
 	return source, nil

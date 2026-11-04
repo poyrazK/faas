@@ -50,6 +50,7 @@ func (j *nativeGitOpsJourney) run(t *testing.T) {
 		// Activation is deliberately distinct from serving: a real customer
 		// queue delivery is required before this mixed graph can be applied.
 		j.waitActivated(t, j.source.ApprovedRevisionID, j.source.Generation)
+		j.waitWorkerRunning(t)
 		firstDelivery := j.sendQueue(t, 0)
 		j.bindingID = firstDelivery.QueueBindingID
 		j.waitQueue(t, firstDelivery, false)
@@ -212,6 +213,11 @@ func (j *nativeGitOpsJourney) approve(t *testing.T, sha string) api.ApproveEnvir
 	return approved
 }
 
+// statusUnavailableTolerance bounds how long the status API may keep answering
+// its retryable 503 (a store read that failed or timed out) before the journey
+// fails. A single 503 in thousands of polls is part of the status contract.
+const statusUnavailableTolerance = 30 * time.Second
+
 func (j *nativeGitOpsJourney) waitStatus(t *testing.T, phase string, timeout time.Duration, ready func(api.EnvironmentGitOpsStatusResponse) bool) api.EnvironmentGitOpsStatusResponse {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
@@ -219,6 +225,7 @@ func (j *nativeGitOpsJourney) waitStatus(t *testing.T, phase string, timeout tim
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	var last api.EnvironmentGitOpsStatusResponse
+	var unavailableSince time.Time
 	for {
 		j.checkTraffic(t)
 		current, err := j.client.GetEnvironmentGitOps(ctx, j.project.Slug, "production")
@@ -228,11 +235,23 @@ func (j *nativeGitOpsJourney) waitStatus(t *testing.T, phase string, timeout tim
 			if ctx.Err() != nil {
 				t.Fatalf("%s timed out: source=%+v evidence=%+v%s", phase, last.Source, last.WorkloadEvidence, j.timeoutDiagnostics(t, last))
 			}
-			t.Fatalf("%s status: %v", phase, err)
-		}
-		last = current
-		if ready(last) {
-			return last
+			var apiErr *api.APIError
+			if !errors.As(err, &apiErr) || apiErr.Problem.Code != api.CodeCapacity {
+				t.Fatalf("%s status: %v", phase, err)
+			}
+			if unavailableSince.IsZero() {
+				unavailableSince = time.Now()
+			}
+			if time.Since(unavailableSince) > statusUnavailableTolerance {
+				t.Fatalf("%s status unavailable for over %s: %v", phase, statusUnavailableTolerance, err)
+			}
+			t.Logf("GitOps native resilience: %s status retryable: %v", phase, err)
+		} else {
+			unavailableSince = time.Time{}
+			last = current
+			if ready(last) {
+				return last
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -447,6 +466,34 @@ func (j *nativeGitOpsJourney) assertGatewayBody(t *testing.T, expected string) {
 	body, status := doGetWithHost(t, j.h.HTTPClient(), gatewayAppURL(j.h, j.app.Slug), j.app.Slug+".apps.test.example", 30*time.Second)
 	if status != http.StatusOK || !strings.Contains(string(body), expected) {
 		t.Fatalf("healthy gateway lost its selected revision: status=%d body=%s", status, body)
+	}
+}
+
+// waitWorkerRunning waits for the activated graph's worker to run before the
+// first customer delivery. On the n2 acceptance host a worker cold boot takes
+// 20-50 s, longer than the queue's retry window (five attempts in about 20 s),
+// so a delivery sent earlier dead-letters before any worker can take it. This
+// is a native acceptance limitation (ADR 20261023093000 acceptance record);
+// without a running worker after five minutes the delivery is sent anyway.
+func (j *nativeGitOpsJourney) waitWorkerRunning(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		var running int
+		err := j.h.Pool.QueryRow(ctx, `SELECT count(*) FROM instances WHERE app_id=$1 AND state=$2`,
+			j.worker.ID, string(state.StateRunning)).Scan(&running)
+		if err == nil && running > 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Logf("GitOps native resilience: no running worker after 5m (last read error %v); sending the first delivery anyway", err)
+			return
+		case <-ticker.C:
+		}
 	}
 }
 

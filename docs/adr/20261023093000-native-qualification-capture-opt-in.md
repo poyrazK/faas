@@ -380,6 +380,25 @@ ADR-568 requires.
     workload spec, matching the PgStore snapshot. The in-memory snapshot
     now also applies it when a workload spec exists. A deployment without
     a frozen runtime is unchanged.
+- 2026-11-03, n2, rerun with 700bd792ce:
+  - Both graphs passed `baseline_serving`. The first resilience wakes were
+    cut after about 7 s. gatewayd-internal's 10 s edge-listener heartbeat
+    fired `compute_node_changed`, and each gateway closed its cached schedd
+    client mid-wake. Main had fixed the trigger on 10-27
+    (`20261027213512170`); afc9e184d9 merges main into this branch.
+- 2026-11-04, n2, merged branch afc9e184d9 on an idle host:
+  - github's status poll got one retryable 503 (`Could not read the
+    project.`); the journey treated any status error as fatal, and apid did
+    not log the cause.
+  - gitlab's first queue delivery dead-lettered. Five attempts ran in about
+    20 s while the scale-from-zero push worker was still cold-booting, which
+    takes 20-50 s on n2.
+  - The journey now tolerates the status API's retryable 503 for up to 30 s
+    and waits for a running worker before the first delivery. apid logs the
+    store error behind a GitOps status 503. Queue retry semantics are
+    unchanged; a delivery sent while a queue-woken worker still boots can use
+    up its attempts on a slow host. That is a native acceptance limitation,
+    not covered here.
 - Pending: the n2 native GitOps journey through the resilience phases.
 
 ## Rejected alternatives
