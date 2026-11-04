@@ -399,6 +399,27 @@ ADR-568 requires.
     unchanged; a delivery sent while a queue-woken worker still boots can use
     up its attempts on a slow host. That is a native acceptance limitation,
     not covered here.
+- 2026-11-04, n2, rerun with c887b47359 and 94fe3d7d85. The two reruns before
+  it had reused an `e2e.test` built from afc9e184d9, so those journey changes
+  had not run.
+  - Both graphs passed `baseline_serving`, and gitlab passed
+    `source_outage_restart`.
+  - github's first customer requests got 404 `No such app`. The host's route
+    read ran past 250 ms in an organization read. With no last-known-good
+    route, the gateway's cached host path called the host unknown, so the
+    retry of ADR-20261027085556 amendment 2 never ran. Amendment 3 returns
+    the read's error on that path; the lookup retries it within the cold bound
+    and then refuses with 503.
+  - gitlab's superseding revision (generation 3) never activated. Liveness
+    destroyed the worker's qualification original while the native capture
+    held it paused to copy the frozen drive (n2's filesystem cannot reflink),
+    so the capture was cancelled. The failed attempt then held its claim past
+    the activation wait.
+  - The native capture now suspends the guest's liveness, readiness and
+    framework-ready probes while it holds the guest paused, as the measured
+    runtime capture does. A completed capture resumes the guest and restarts
+    them; a failed one leaves them stopped, and the original is retired with
+    its attempt.
 - Pending: the n2 native GitOps journey through the resilience phases.
 
 ## Rejected alternatives

@@ -289,6 +289,61 @@ func TestNativeQualificationSnapshotCohortOwnsResumeAndBackingPublication(t *tes
 	}
 }
 
+// A guest paused for a native capture answers no probe. n2, 2026-11-04: the
+// worker's frozen-drive copy outlasted the liveness default and liveness
+// destroyed the original mid-capture.
+func TestNativeQualificationCaptureSuspendsProbesWhileGuestIsPaused(t *testing.T) {
+	for _, outcome := range []string{"complete", "failed"} {
+		t.Run(outcome, func(t *testing.T) {
+			m, j, frame, ctx, original, _ := qualificationCaptureFixture(t)
+			var starts, cancels atomic.Int32
+			m.WithLivenessProbes(NewLivenessRegistry(), LivenessProbeConfig{PeriodSeconds: 5, ConsecutiveFailures: 3}).
+				WithLivenessProbeStarter(func(context.Context, string, int, string, LivenessProbeConfig) context.CancelFunc {
+					starts.Add(1)
+					return func() { cancels.Add(1) }
+				})
+			m.startLivenessLoop(ctx, frame.InstanceID, 1, nil)
+			v := &qualificationCohortVMM{qualificationCaptureVMM: original}
+			v.produce = func(ctx context.Context, _ Lease, backing BackingIdentity) (SnapshotInfo, error) {
+				if starts.Load() != 1 || cancels.Load() != 1 {
+					return SnapshotInfo{}, errors.New("liveness probed the paused original")
+				}
+				if outcome == "failed" {
+					return SnapshotInfo{}, errors.New("modeled native capture failure")
+				}
+				permit, _ := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit)
+				keys := qualificationSnapshotProof(permit.Incoming, SnapshotInfo{})
+				for _, key := range []string{keys.StorageKey, keys.VMStateStorageKey, keys.DriveStorageKey} {
+					if err := m.storage.Put(ctx, key, bytes.NewReader([]byte("modeled original capture"))); err != nil {
+						return SnapshotInfo{}, err
+					}
+				}
+				body, err := json.Marshal(backing)
+				if err != nil {
+					return SnapshotInfo{}, err
+				}
+				return SnapshotInfo{MemBytes: 1024, VMStateBytes: 64, StoredBytes: 12288}, m.storage.Put(ctx, keys.BackingStorageKey, bytes.NewReader(body))
+			}
+			m.vmm = v
+			_, err := m.CaptureEnvironmentQualification(ctx, frame)
+			if (err == nil) != (outcome == "complete") {
+				t.Fatal(err)
+			}
+			incoming, readErr := j.read(frame.InstanceID)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if capture, readErr := j.readCapture(incoming); readErr != nil || capture.CompletedAt.IsZero() != (outcome == "failed") {
+				t.Fatal("capture outcome was not recorded", readErr)
+			}
+			// A completed capture resumed the guest; a failed one is retired paused.
+			if want := map[string]int32{"complete": 2, "failed": 1}[outcome]; starts.Load() != want || cancels.Load() != 1 {
+				t.Fatalf("liveness starts=%d cancels=%d, want %d and 1", starts.Load(), cancels.Load(), want)
+			}
+		})
+	}
+}
+
 func TestNativeQualificationCaptureJournalPinsVersionAtStartAndCompletion(t *testing.T) {
 	m, j, frame, _, _, _ := qualificationCaptureFixture(t)
 	incoming, err := j.read(frame.InstanceID)
