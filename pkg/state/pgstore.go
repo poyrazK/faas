@@ -28403,10 +28403,10 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 		// in the deleted tombstone state; remove those tombstones explicitly
 		// before the apps/accounts sentinels so GDPR deletion can complete.
 		{"managed_postgres_usage", `delete from managed_postgres_usage where account_id = $1 and database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where o.personal_org)`},
-		// Usage imports and accounting reconciliations of the personal
-		// database tombstones removed below reference them without a cascade.
-		{"managed_postgres_usage_imports", `delete from managed_postgres_usage_imports where database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where d.account_id = $1 and o.personal_org and d.state = 'deleted')`},
-		{"managed_postgres_accounting_reconciliations", `delete from managed_postgres_accounting_reconciliations where database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where d.account_id = $1 and o.personal_org and d.state = 'deleted')`},
+		// Usage imports and accounting reconciliations are not deleted here:
+		// their append-only triggers refuse while the account row exists. Their
+		// key to the tombstones is deferred, and they cascade from the
+		// account's namespace once the account row is gone.
 		{"managed_postgres_bindings", `delete from managed_postgres_bindings where account_id = $1 and database_id in (select d.id from managed_postgres_databases d join orgs o on o.id=d.org_id where o.personal_org) and state = 'deleted'`},
 		{"managed_postgres_databases", `delete from managed_postgres_databases where account_id = $1 and org_id in (select id from orgs where personal_org) and state = 'deleted'`},
 		{"custom_domains", `delete from custom_domains
