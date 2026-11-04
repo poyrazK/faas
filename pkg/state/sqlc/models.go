@@ -3994,6 +3994,7 @@ type Deployment struct {
 	MailFailureAppRevision     pgtype.Int8
 	MailFailureSuccessRevision pgtype.Int8
 	PromotedAt                 pgtype.Timestamptz
+	RollbackReleaseReview      []byte
 }
 
 type DeploymentAlias struct {

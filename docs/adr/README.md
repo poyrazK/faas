@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261104140000: Fence rollback execution and reconcile outcomes](20261104140000-rollback-execution-fences-and-outcomes.md) — accepted; database-switch code writes validate leases, plain rollback reviews are preparation-bound, project rollback retains contract checks, and outcome sweeps reconcile fairly.
+
 - [ADR-20261104110000: Retain rollback release and contract evidence](20261104110000-rollback-release-and-contract-evidence.md) — accepted; checked cutover validates acknowledged release runs, contract gates cover production scopes and serving baselines, and historical contracts survive readiness.
 
 - [ADR-20261104085150: Log volume has a per-plan hourly allowance](20261104085150-log-volume-allowance.md) — accepted; vmmd drops an instance's log lines past its plan's hourly byte allowance (Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB) after one notice line, and each log drain delivers at most 1 MiB/s (4 MiB burst)

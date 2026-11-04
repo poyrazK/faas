@@ -28277,3 +28277,38 @@ FROM deployment_openapi_snapshots WHERE deployment_id=sqlc.arg(deployment_id)::u
 
 -- name: ReadStartingReleaseApp :one
 SELECT app_id FROM app_tasks WHERE id=sqlc.arg(task_id)::text::uuid AND kind='release';
+
+-- name: LockDatabaseSwitchExecution :one
+-- Acquire ownership's row lock before evaluating the clock, including after a wait.
+WITH locked AS MATERIALIZED (
+ SELECT id,app_id,scope,lease_token,lease_until,phase,target_deployment_id,from_deployment_id
+ FROM release_database_switches WHERE id=sqlc.arg(id)::uuid FOR SHARE
+)
+SELECT id FROM locked
+WHERE app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text
+ AND lease_token=sqlc.arg(token)::text AND lease_until>clock_timestamp()
+ AND phase=sqlc.arg(phase)::text AND phase NOT IN ('completed','failed','cancelled')
+ AND (target_deployment_id=sqlc.arg(deployment_id)::uuid OR from_deployment_id=sqlc.arg(deployment_id)::uuid);
+
+-- name: WritePreparedRollbackReleaseReview :exec
+UPDATE deployments SET rollback_release_review=jsonb_build_object(
+ 'prepared_epoch',extract(epoch FROM rollback_prepared_at),'runs',sqlc.arg(review)::jsonb)
+WHERE id=sqlc.arg(deployment_id)::uuid AND rollback_prepared_at IS NOT NULL;
+
+-- name: ReadPreparedRollbackReleaseReview :one
+SELECT CASE WHEN rollback_prepared_at IS NULL THEN NULL::jsonb
+ WHEN rollback_release_review->'prepared_epoch'=to_jsonb(extract(epoch FROM rollback_prepared_at))
+ THEN rollback_release_review->'runs' ELSE '[]'::jsonb END AS review
+FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid;
+
+-- name: ListPreparingRollbackOutcomes :many
+SELECT jsonb_build_object('ID',id,'AccountID',account_id,'AppID',app_id,'Scope',scope,
+ 'TargetDeploymentID',target_deployment_id,'FromDeploymentID',coalesce(from_deployment_id::text,''),
+ 'Trigger',trigger,'Status',status,'RequestedAt',requested_at,'FinishedAt',finished_at,
+ 'RecoveryMS',recovery_ms,'AuditID',coalesce(audit_id,0),'ErrorCode',error_code,'Error',error) AS record
+FROM deployment_rollbacks WHERE status='preparing'
+ AND (sqlc.arg(after_id)::text='' OR (requested_at,id::text)>(sqlc.arg(after_at)::timestamptz,sqlc.arg(after_id)::text))
+ORDER BY requested_at,id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: LockRollbackOutcomeTarget :one
+SELECT status,rollout_completed_at FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid FOR UPDATE;

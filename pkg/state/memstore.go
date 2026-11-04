@@ -211,6 +211,7 @@ type MemStore struct {
 	nextInvocationAttemptID                    int64
 	checkedRollbacks                           map[string]api.RollbackOperation
 	checkedRollbackReleaseReviews              map[string][]ReleaseRun
+	plainRollbackReleaseReviews                map[string][]ReleaseRun
 	alertRollbacks                             map[string]api.AlertRollback
 	alertHistoricalClaims                      map[string]string
 	recoveryPredecessors                       map[string]string
@@ -10103,6 +10104,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	if !ok {
 		return ErrNotFound
 	}
+	if err = m.checkDatabaseSwitchLeaseLocked(ctx, d); err != nil {
+		return err
+	}
 	if len(expectedServingID) > 0 && (expectedServingID[0] == "" || !m.deploymentActivationServingMatchesLocked(d, expectedServingID[0])) {
 		return ErrConflict
 	}
@@ -10192,6 +10196,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		m.putDeploymentLocked(id, d)
 		delete(m.rollbackPrepared, id)
 		return ErrDeploymentSuperseded
+	}
+	if err = m.checkPlainRollbackReleasesLocked(ctx, d); err != nil {
+		return err
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!d.Kind.RequiresLatestRevision() || d.Revision <= 0) {
@@ -11184,6 +11191,9 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
 	}
+	if err := m.checkDatabaseSwitchLeaseLocked(ctx, target); err != nil {
+		return Deployment{}, err
+	}
 	if current := expectedRollbackCurrent(ctx); current != "" {
 		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
 		if !rollbackPairValid(r, target, m.deployments[current], m.rollbackRowsLocked(r)) {
@@ -11237,6 +11247,11 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 		m.rollbackPrepared = map[string]time.Time{}
 	}
 	m.rollbackPrepared[targetDeploymentID] = now
+	if m.plainRollbackReleaseReviews == nil {
+		m.plainRollbackReleaseReviews = map[string][]ReleaseRun{}
+	}
+	m.plainRollbackReleaseReviews[targetDeploymentID] = append([]ReleaseRun(nil), checkedRollbackReleaseReview(ctx)...)
+
 	return target, nil
 }
 

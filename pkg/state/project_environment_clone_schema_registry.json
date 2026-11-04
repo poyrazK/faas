@@ -5465,6 +5465,7 @@
       "revision",
       "rollback_on_5xx",
       "rollback_prepared_at",
+      "rollback_release_review",
       "rollout_aborted_at",
       "rollout_aborted_reason",
       "rollout_completed_at",

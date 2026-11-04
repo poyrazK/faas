@@ -3995,6 +3995,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}
+	if errors.Is(promoteErr, state.ErrRollbackCrossesRelease) || errors.Is(promoteErr, state.ErrRollbackTargetDatabaseRestored) {
+		code, detail := api.CodeRollbackCrossesRelease, "Release commands started after this rollback was reviewed. Review migration history and submit a new rollback with acknowledgement."
+		if errors.Is(promoteErr, state.ErrRollbackTargetDatabaseRestored) {
+			code, detail = api.CodeRollbackTargetDatabaseRestored, "This deployment's release command was undone by a database restore."
+		}
+		failed, err := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
+		if err != nil {
+			return fmt.Errorf("imaged: record rollback release refusal: %w", err)
+		}
+		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, failed.Status)
+		return nil
+	}
 	if errors.Is(promoteErr, state.ErrDeploymentSuperseded) {
 		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeploySuperseded)
 		return nil

@@ -2675,6 +2675,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	target, current, mode, crossed := plan.target, plan.current, plan.mode, plan.crossed
 	var err error
 	priorTargetStatus := target.Status
+	if req.AcknowledgeReleases {
+		ctx = state.WithRollbackReleaseReview(ctx, crossed)
+	}
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
 		if errors.Is(err, state.ErrCheckedRollbackChanged) {
