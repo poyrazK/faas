@@ -36,6 +36,15 @@ type VersionedObjectLister interface {
 	ListSnapshotObjectVersions(context.Context, string, string, int32) (ObjectVersionPage, error)
 }
 
+// EnvironmentCloneQualifiedProvider marks a backend whose buckets environment
+// clones may copy (ADR-20261103160000). Only the S3-compatible provider is
+// qualified; other drivers stay refused until qualified.
+type EnvironmentCloneQualifiedProvider interface {
+	QualifiedForEnvironmentClones() bool
+}
+
+func (*S3) QualifiedForEnvironmentClones() bool { return true }
+
 var ErrAmbiguousObjectSnapshot = errors.New("object storage: ambiguous object versions at capture time")
 
 // CaptureObjectManifest reconstructs the live key set at a point in time. A

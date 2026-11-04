@@ -21,11 +21,16 @@ import (
 // or a recover's release of the provider hold.
 const pgDatabaseWait = 10 * time.Minute
 
+// pgIdleSuspend is the provider's idle suspend timeout for a scale-to-zero
+// database (docs/managed-postgres.md: 300 seconds).
+const pgIdleSuspend = 5 * time.Minute
+
 // postgresJourney is the state TestManagedPostgres's steps share.
 type postgresJourney struct {
 	tg               *target
 	app, base        string
 	region           string
+	classes          []string // service classes the plan offers
 	databaseLimit    int
 	db, restored     string // database names
 	bindings         map[string]string
@@ -54,7 +59,7 @@ func TestManagedPostgres(t *testing.T) {
 		j.waitReady(t, j.db)
 	})
 	s.step("deploy_app", func(t *testing.T) {
-		receipt := tg.deploy(t, j.app, "--path", postgresProbeSource(t))
+		receipt := tg.deploy(t, j.app, "--path", postgresProbeSource(t, ""))
 		j.base = strings.TrimRight(str(receipt, "app_url"), "/")
 		if j.base == "" {
 			j.base = tg.appURL(j.app)
@@ -68,6 +73,9 @@ func TestManagedPostgres(t *testing.T) {
 		j.firstAt = j.write(t, "DATABASE_URL", "first")
 		j.expectRows(t, "DATABASE_URL", "first")
 	})
+	s.check("credential_rotation", j.rotateCredential)
+	s.check("resize", j.resize)
+	s.check("idle_wake", j.idleWake)
 	s.step("restore_point_in_time", j.restoreBetweenWrites)
 	s.step("purge_restored", func(t *testing.T) {
 		if j.restore == "" {
@@ -92,6 +100,10 @@ func (j *postgresJourney) available(t *testing.T) {
 		t.Fatalf("managed PostgreSQL provisioning is closed for this account: %s", compact(doc))
 	}
 	j.region, j.databaseLimit = str(doc, "region"), int(num(doc, "database_limit"))
+	classes, _ := field(doc, "service_classes").([]any)
+	for _, class := range classes {
+		j.classes = append(j.classes, fmt.Sprint(class))
+	}
 	if j.region == "" || j.databaseLimit < 1 {
 		t.Fatalf("no region or database allowance: %s", compact(doc))
 	}
@@ -116,19 +128,27 @@ func (j *postgresJourney) waitReady(t *testing.T, name string) map[string]any {
 // the app so its instances start with the new secret.
 func (j *postgresJourney) attach(t *testing.T, name, key string) {
 	t.Helper()
-	binding := object(t, j.tg.ok(t, 2*time.Minute, "postgres", "attach", name, j.app, "--env", key).stdout)
-	j.bindings[name] = str(binding, "id")
+	j.bindings[name] = j.bind(t, name, key)
+	j.tg.ok(t, 12*time.Minute, "app", j.app, "restart", "--fresh", "--wait", "--timeout", "10m")
+}
+
+// bind binds name to the app as key and waits until the binding is ready.
+// It returns the binding's ID; extra flags (--access) go to attach.
+func (j *postgresJourney) bind(t *testing.T, name, key string, extra ...string) string {
+	t.Helper()
+	args := append([]string{"postgres", "attach", name, j.app, "--env", key}, extra...)
+	id := str(object(t, j.tg.ok(t, 2*time.Minute, args...).stdout), "id")
 	eventually(t, key+" binding ready", 5*time.Minute, 5*time.Second, func() (bool, string) {
 		list := object(t, j.tg.ok(t, time.Minute, "postgres", "bindings", "list", name).stdout)
 		items, _ := field(list, "items").([]any)
 		for _, item := range items {
-			if str(item, "id") == j.bindings[name] {
+			if str(item, "id") == id {
 				return str(item, "state") == "ready", compact(item)
 			}
 		}
 		return false, compact(list)
 	})
-	j.tg.ok(t, 12*time.Minute, "app", j.app, "restart", "--fresh", "--wait", "--timeout", "10m")
+	return id
 }
 
 // detach deletes the app's binding to name and waits until it is gone: a
@@ -193,13 +213,59 @@ func (j *postgresJourney) expectRows(t *testing.T, key string, want ...string) {
 	}
 }
 
+// rotateCredential rotates the app's binding and restarts the app on the new
+// credential; the rows must still be there.
+func (j *postgresJourney) rotateCredential(t *testing.T) {
+	id := j.bindings[j.db]
+	before := object(t, j.tg.ok(t, time.Minute, "postgres", "bindings", "get", id).stdout)
+	rotated := object(t, j.tg.ok(t, 7*time.Minute, "postgres", "bindings", "rotate", id, "--wait").stdout)
+	if num(rotated, "credential_generation") <= num(before, "credential_generation") || str(rotated, "rotation_pending") == "true" {
+		t.Fatalf("rotation did not finish with a new credential: before %s, after %s", compact(before), compact(rotated))
+	}
+	j.tg.ok(t, 12*time.Minute, "app", j.app, "restart", "--fresh", "--wait", "--timeout", "10m")
+	j.expectRows(t, "DATABASE_URL", "first")
+}
+
+// resize moves the database to burstable when the plan offers it (Pro and
+// Scale); the rows must survive the compute change.
+func (j *postgresJourney) resize(t *testing.T) {
+	if !slices.Contains(j.classes, "burstable") {
+		t.Skipf("the plan offers %v, no class to resize to", j.classes)
+	}
+	h := randomHex(t, 32)
+	request := h[0:8] + "-" + h[8:12] + "-4" + h[13:16] + "-a" + h[17:20] + "-" + h[20:32]
+	j.tg.ok(t, 2*time.Minute, "postgres", "resize", j.db, "--class", "burstable", "--request-id", request)
+	eventually(t, "resize succeeded", 10*time.Minute, 10*time.Second, func() (bool, string) {
+		doc := object(t, j.tg.ok(t, time.Minute, "postgres", "resize-status", j.db, request).stdout)
+		if code := str(doc, "last_error_code"); code != "" {
+			t.Fatalf("resize failed with %s: %s", code, compact(doc))
+		}
+		return str(doc, "state") == "succeeded", compact(doc)
+	})
+	if doc := object(t, j.tg.ok(t, time.Minute, "postgres", "get", j.db).stdout); str(doc, "service_class") != "burstable" {
+		t.Errorf("resized database reads as %s", compact(doc))
+	}
+	j.expectRows(t, "DATABASE_URL", "first")
+}
+
+// idleWake leaves the app and the database idle past the database's suspend
+// timeout, then times the first read: both wake for it (#6146 PG-07, the
+// application-plus-database wake latency).
+func (j *postgresJourney) idleWake(t *testing.T) {
+	time.Sleep(pgIdleSuspend + time.Minute)
+	doc := object(t, j.tg.ok(t, time.Minute, "postgres", "get", j.db).stdout)
+	t.Logf("compute state after %s idle: %q", pgIdleSuspend+time.Minute, str(doc, "health.compute_state"))
+	start := time.Now()
+	j.expectRows(t, "DATABASE_URL", "first")
+	t.Logf("metric postgres_idle_wake_read_s=%.1f", time.Since(start).Seconds())
+}
+
 // restoreBetweenWrites writes a second row 20 s after the first, restores
 // the point halfway between them into a new database, and reads it through
-// a second binding: it must hold the first row only.
+// a second binding: it must hold the first row only. On a one-database plan
+// the copy goes past the limit and holds the restore slot
+// (ADR-20261031123259).
 func (j *postgresJourney) restoreBetweenWrites(t *testing.T) {
-	if j.databaseLimit < 2 {
-		t.Skipf("the plan allows %d database; a restore needs room for a second", j.databaseLimit)
-	}
 	first, err := time.Parse(time.RFC3339Nano, j.firstAt)
 	if err != nil {
 		t.Fatalf("first row time %q: %v", j.firstAt, err)
@@ -216,6 +282,9 @@ func (j *postgresJourney) restoreBetweenWrites(t *testing.T) {
 	doc := j.waitReady(t, j.restored)
 	if str(doc, "restore_point_in_time") == "" {
 		t.Errorf("restored database does not record its point in time: %s", compact(doc))
+	}
+	if j.databaseLimit == 1 && str(doc, "restore_slot_until") == "" {
+		t.Errorf("a restore past a one-database limit does not hold the restore slot: %s", compact(doc))
 	}
 	j.attach(t, j.restored, "RESTORED_DATABASE_URL")
 	j.expectRows(t, "RESTORED_DATABASE_URL", "first")
@@ -280,8 +349,12 @@ func (j *postgresJourney) purge(t *testing.T, name string) {
 	} else if state := str(object(t, res.stdout), "state"); state == "deleted" {
 		return
 	}
-	if id := j.bindings[name]; id != "" {
-		j.tg.run(t, time.Minute, "postgres", "bindings", "delete", id)
+	// A database switch moves the app's bindings to the restored copy, so
+	// the journey does not know every binding's ID: delete what is listed.
+	if ids := j.liveBindings(t, name); len(ids) > 0 {
+		for _, id := range ids {
+			j.tg.run(t, time.Minute, "postgres", "bindings", "delete", id)
+		}
 		time.Sleep(30 * time.Second)
 	}
 	if res := j.tg.run(t, time.Minute, "postgres", "delete", name, "--purge", "--yes"); res.exit != 0 {
@@ -289,10 +362,28 @@ func (j *postgresJourney) purge(t *testing.T, name string) {
 	}
 }
 
+// liveBindings lists name's bindings that are not deleted. It is for
+// cleanups, so a failed list returns none.
+func (j *postgresJourney) liveBindings(t *testing.T, name string) []string {
+	res := j.tg.run(t, time.Minute, "postgres", "bindings", "list", name)
+	if res.exit != 0 {
+		return nil
+	}
+	items, _ := field(object(t, res.stdout), "items").([]any)
+	var ids []string
+	for _, item := range items {
+		if str(item, "state") != "deleted" {
+			ids = append(ids, str(item, "id"))
+		}
+	}
+	return ids
+}
+
 // postgresProbeSource copies testdata/postgres-probe into a fresh
 // directory, so its source digest is fixed and later runs hit the build
-// cache.
-func postgresProbeSource(t *testing.T) string {
+// cache. A non-empty release adds a Procfile whose release command is
+// `node server.js migrate <release>`.
+func postgresProbeSource(t *testing.T, release string) string {
 	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join("testdata", "postgres-probe")
@@ -307,6 +398,12 @@ func postgresProbeSource(t *testing.T) string {
 		}
 		if err := os.WriteFile(filepath.Join(dir, e.Name()), b, 0o644); err != nil {
 			t.Fatalf("write postgres probe source: %v", err)
+		}
+	}
+	if release != "" {
+		procfile := "web: node server.js\nrelease: node server.js migrate " + release + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "Procfile"), []byte(procfile), 0o644); err != nil {
+			t.Fatalf("write postgres probe Procfile: %v", err)
 		}
 	}
 	return dir

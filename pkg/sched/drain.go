@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +51,9 @@ type applicationStatusError struct {
 func (e applicationStatusError) Error() string { return e.err.Error() }
 func (e applicationStatusError) Unwrap() error { return e.err }
 
+// Is makes an application status failure count as ErrAppAnswered.
+func (e applicationStatusError) Is(target error) bool { return target == ErrAppAnswered }
+
 // ErrDispatchRefused marks a 5xx answer from gatewayd-internal's dispatch
 // endpoint. The endpoint answers 200 with the app's response whenever the
 // app received the request, so a 5xx means the gateway refused or failed
@@ -65,6 +67,19 @@ type dispatchRefusedError struct{ err error }
 func (e dispatchRefusedError) Error() string        { return e.err.Error() }
 func (e dispatchRefusedError) Unwrap() error        { return e.err }
 func (e dispatchRefusedError) Is(target error) bool { return target == ErrDispatchRefused }
+
+// ErrAppAnswered marks a delivery that failed on the app's own answer: an
+// error status or a runner exception inside the gateway's 200 envelope. The
+// cron delivery metric counts it as app_error, not as a platform failure.
+var ErrAppAnswered = errors.New("sched: the app answered with an error")
+
+// appAnsweredError marks an app answer that is not an applicationStatusError
+// (an ordinary 5xx), keeping its message while matching ErrAppAnswered.
+type appAnsweredError struct{ err error }
+
+func (e appAnsweredError) Error() string        { return e.err.Error() }
+func (e appAnsweredError) Unwrap() error        { return e.err }
+func (e appAnsweredError) Is(target error) bool { return target == ErrAppAnswered }
 
 // ErrPermanentWake is the sentinel for wake errors that the drain
 // will never recover from (no such app, app PARKED, account deleted).
@@ -169,13 +184,28 @@ type Drain struct {
 	slotsOnce sync.Once
 	slots     *drainSlots
 	inline    sync.WaitGroup
+	// round is where the walk of the due backlog resumes on the next tick
+	// (ADR-20261101091437).
+	round dueRound
 	// accts caches Active(account_id) lookups for the suspended-skip
 	// check (Move 2). One entry per account; the 5s TTL collapses the
 	// 64-row batch's per-row AccountByID into ≤0.2 RPS at Meta's
 	// "everyone suspends at once" worst case.
 	accts              *acctCache
 	trafficRevocations *trafficrevocation.Registry
+	// tickInterval is Run's safety tick; leaseRecoveryInterval spaces the
+	// lease recovery sweeps (DefaultDrainLeaseRecoveryInterval).
+	tickInterval          time.Duration
+	leaseRecoveryInterval time.Duration
 }
+
+// DefaultDrainLeaseRecoveryInterval spaces the drain's lease recovery: the
+// event acknowledgment expiry (with its retention prunes) and the requeue of
+// rows whose dispatch lease expired. Those leases run 30 s and longer, so a
+// few seconds' delay changes nothing visible. Run used to recover on every
+// tick and on every invocation_due notification: about a dozen statements a
+// second per schedd while idle, and a dozen more per enqueued invocation.
+const DefaultDrainLeaseRecoveryInterval = 5 * time.Second
 
 // DefaultDrainDispatchConcurrency is deliberately small: it removes the
 // serial scheduler bottleneck without allowing one noisy account to consume
@@ -241,7 +271,20 @@ func WithDrainRetryAfter(s int) DrainOption { return func(d *Drain) { d.retryAft
 func WithDrainDispatchConcurrency(n int) DrainOption {
 	return func(d *Drain) { d.dispatchConcurrency = n }
 }
-func WithDrainNow(now func() time.Time) DrainOption    { return func(d *Drain) { d.now = now } }
+func WithDrainNow(now func() time.Time) DrainOption { return func(d *Drain) { d.now = now } }
+
+// WithDrainCadence sets Run's safety tick and lease recovery spacing; a
+// non-positive value keeps the default.
+func WithDrainCadence(tick, leaseRecovery time.Duration) DrainOption {
+	return func(d *Drain) {
+		if tick > 0 {
+			d.tickInterval = tick
+		}
+		if leaseRecovery > 0 {
+			d.leaseRecoveryInterval = leaseRecovery
+		}
+	}
+}
 func WithDrainLogger(l *slog.Logger) DrainOption       { return func(d *Drain) { d.log = l } }
 func WithDrainGatewaySynth(g GatewaySynth) DrainOption { return func(d *Drain) { d.gateway = g } }
 func WithDrainNotifier(n Notifier) DrainOption         { return func(d *Drain) { d.notifier = n } }
@@ -257,17 +300,19 @@ func WithDrainAppTaskCoordinator(c *AppTaskCoordinator) DrainOption {
 // per tick, 60s wake lease, 5s retry-after, real clock.
 func NewDrain(store state.Store, engine *Engine, opts ...DrainOption) *Drain {
 	d := &Drain{
-		store:               store,
-		engine:              engine,
-		now:                 time.Now,
-		batchSize:           64,
-		wakeLeaseSeconds:    60,
-		retryAfterSeconds:   5,
-		dispatchConcurrency: DefaultDrainDispatchConcurrency,
-		longSlots:           make(chan struct{}, DefaultDrainLongDispatches),
-		longQueueApps:       map[string]bool{},
-		log:                 slog.Default(),
-		financialAdmission:  state.CheckFinancialBudgetAdmissionForScope,
+		store:                 store,
+		engine:                engine,
+		now:                   time.Now,
+		batchSize:             64,
+		wakeLeaseSeconds:      60,
+		retryAfterSeconds:     5,
+		dispatchConcurrency:   DefaultDrainDispatchConcurrency,
+		longSlots:             make(chan struct{}, DefaultDrainLongDispatches),
+		longQueueApps:         map[string]bool{},
+		log:                   slog.Default(),
+		financialAdmission:    state.CheckFinancialBudgetAdmissionForScope,
+		tickInterval:          time.Second,
+		leaseRecoveryInterval: DefaultDrainLeaseRecoveryInterval,
 	}
 	for _, o := range opts {
 		o(d)
@@ -306,11 +351,16 @@ func (d *Drain) emitDeadLetter(ctx context.Context, inv state.Invocation, reason
 // (in case a notify is dropped or the LISTEN connection hiccups — pg_notify
 // is fire-and-forget over a single LISTEN session).
 //
-// Both paths call tick(). tick() drains the due queue in 64-row batches
-// until either the slice is shorter than the batch or no rows remain.
+// Both paths call tickDue, which drains the due queue in 64-row batches
+// until either the slice is shorter than the batch or no rows remain. The
+// notifications already queued behind the one handled are dropped first:
+// every enqueued invocation sends one, and a single walk lists them all.
+// Lease recovery runs on the safety tick, at most every
+// leaseRecoveryInterval.
 func (d *Drain) Run(ctx context.Context, notif <-chan db.Notification) error {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(d.tickInterval)
 	defer ticker.Stop()
+	recovery := drainLeaseRecovery{every: d.leaseRecoveryInterval}
 	for {
 		select {
 		case <-ctx.Done():
@@ -326,16 +376,67 @@ func (d *Drain) Run(ctx context.Context, notif <-chan db.Notification) error {
 			if n.Channel != db.NotifyInvocationDue {
 				continue
 			}
-			d.Tick(ctx)
-		case <-ticker.C:
-			d.Tick(ctx)
+			coalesceInvocationDue(notif)
+			d.tickDue(ctx)
+		case now := <-ticker.C:
+			if recovery.due(now) {
+				d.Tick(ctx)
+			} else {
+				d.tickDue(ctx)
+			}
 		}
 	}
 }
 
-// Tick is the per-cycle drain walk. Public so tests can drive it
-// without spinning Run().
+// drainLeaseRecovery spaces Run's lease recovery sweeps.
+type drainLeaseRecovery struct {
+	every time.Duration
+	last  time.Time
+}
+
+// due reports whether a recovery sweep should run at now, and if so records
+// it. The first call is always due.
+func (r *drainLeaseRecovery) due(now time.Time) bool {
+	if !r.last.IsZero() && now.Sub(r.last) < r.every {
+		return false
+	}
+	r.last = now
+	return true
+}
+
+// coalesceInvocationDue drops the notifications already queued on notif.
+func coalesceInvocationDue(notif <-chan db.Notification) {
+	for {
+		select {
+		case _, ok := <-notif:
+			if !ok {
+				return
+			}
+		default:
+			return
+		}
+	}
+}
+
+// Tick is one full drain cycle: start-deadline expiry, lease recovery, then
+// the due walk. Public so tests can drive it without spinning Run().
 func (d *Drain) Tick(ctx context.Context) {
+	d.expireDue(ctx)
+	d.recoverExpiredLeases(ctx)
+	d.walkDue(ctx)
+}
+
+// tickDue is Tick without lease recovery: what an invocation_due
+// notification, or a safety tick between recoveries, needs.
+func (d *Drain) tickDue(ctx context.Context) {
+	d.expireDue(ctx)
+	d.walkDue(ctx)
+}
+
+// expireDue retires work past its start deadline and dispatches due
+// exclusive operations. It runs before every walk: claiming does not
+// re-check these deadlines.
+func (d *Drain) expireDue(ctx context.Context) {
 	if expirer, ok := d.store.(state.ScheduledInvocationDeadlineStore); ok {
 		if count, err := expirer.ExpireUnstartedScheduledCronInvocations(ctx, d.now(), d.batchSize); err != nil {
 			d.log.Warn("drain: expire scheduled cron invocations", "err", err)
@@ -351,6 +452,11 @@ func (d *Drain) Tick(ctx context.Context) {
 			d.log.Warn("drain: expire pending keyed work", "err", err)
 		}
 	}
+}
+
+// recoverExpiredLeases expires event acknowledgments past their lease and
+// requeues rows whose dispatch lease ran out.
+func (d *Drain) recoverExpiredLeases(ctx context.Context) {
 	// A crashed schedd/gateway can leave a row in dispatching after its
 	// wake/invoke lease expires. Requeue those rows before reading pending
 	// work so the next scheduler tick can make progress. The store update is
@@ -369,95 +475,28 @@ func (d *Drain) Tick(ctx context.Context) {
 			d.log.Warn("drain: reclaimed expired invocations", "count", reclaimed)
 		}
 	}
-	// Page through the due backlog with a (due_at, id) cursor. Rows this
-	// scheduler cannot claim — another node's app, an account at its async
-	// cap — stay pending with an unchanged due_at. Re-listing from the head
-	// returned the same full page forever: the tick spun on the database
-	// and every row behind that page, for every other tenant, starved.
-	// The walk is bounded (maxDuePagesPerTick), so it also lists only apps
-	// this node may claim: otherwise more than a walk's worth of other
-	// nodes' rows at the head hid this node's own work for good.
-	pager, paged := d.store.(dueInvocationPager)
-	now := d.now()
-	after := state.InvocationDueCursor{OwnerNodeID: d.engine.claimNodeID()}
-	var prevPage string
+}
+
+// walkDue lists and dispatches the due invocations this node may claim.
+func (d *Drain) walkDue(ctx context.Context) {
+	// Walk the due backlog (ADR-20261101091437). Rows this scheduler cannot
+	// dispatch now (an account at its async cap, an app past its share or
+	// behind a busy queue lane) stay pending with an unchanged due_at, so a
+	// walk that always restarted at the head listed them again every tick
+	// and never reached the rows behind them. Each tick lists the head of the
+	// backlog and resumes the rest of its walk where the previous tick
+	// stopped.
+	//
 	// Tenant fairness (ADR-20261027160930): rows go round-robin across their
 	// apps onto the shared pool, and the walk lists the next page without
 	// waiting for this one. A row whose app is past its share waits for the
 	// end of the walk, so it cannot hold the pages behind it.
 	var tick sync.WaitGroup
 	var extra []state.Invocation
-walk:
-	for page := 0; ; page++ {
-		var (
-			rows []state.Invocation
-			err  error
-		)
-		if paged {
-			rows, err = pager.ListDueInvocationsAfter(ctx, now, after, d.batchSize)
-		} else {
-			rows, err = d.store.ListDueInvocations(ctx, d.now(), d.batchSize)
-		}
-		if err != nil {
-			d.log.Warn("drain: list-due", "err", err)
-			break
-		}
-		if len(rows) == 0 {
-			break
-		}
-		if !paged {
-			// A store without a cursor can only re-list from the head;
-			// an identical page means nothing in it could be claimed.
-			key := invocationPageKey(rows)
-			if key == prevPage {
-				break
-			}
-			prevPage = key
-		}
-		byApp := map[string][]state.Invocation{}
-		order := []string{}
-		for _, r := range rows {
-			if _, seen := byApp[r.AppID]; !seen {
-				order = append(order, r.AppID)
-			}
-			byApp[r.AppID] = append(byApp[r.AppID], r)
-		}
-		queueRowsByApp := make(map[string][]state.Invocation)
-		queueTriggers := make(map[string][]sqlc.Trigger)
-		queueTriggerSkipped := false
-		for _, inv := range interleaveByApp(order, byApp) {
-			if inv.Source == state.InvocationQueue || inv.Source == state.InvocationDelayedTask {
-				if inv.EnvironmentID == "" && inv.WorkPolicyName == "" && d.queueSourceBound(ctx, inv, queueTriggers) {
-					queueTriggerSkipped = true
-					continue
-				}
-				// Each app's FIFO queue messages run in order on its lane.
-				if inv.Source == state.InvocationQueue && inv.WorkPolicyName == "" {
-					queueRowsByApp[inv.AppID] = append(queueRowsByApp[inv.AppID], inv)
-					continue
-				}
-			}
-			if !d.handOff(ctx, inv, false, time.Time{}, &tick) {
-				extra = append(extra, inv)
-			}
-		}
-		for _, appID := range order {
-			d.handOffLane(ctx, appID, queueRowsByApp[appID], &tick)
-		}
-		// A bound queue trigger owns its source rows; the trigger poller
-		// will claim them on its event-driven tick. Stopping here prevents
-		// the generic drain from repeatedly selecting the same pending rows
-		// while the push consumer is processing them.
-		if queueTriggerSkipped || len(rows) < d.batchSize {
-			break
-		}
-		if paged {
-			if page+1 >= maxDuePagesPerTick {
-				break walk
-			}
-			last := rows[len(rows)-1]
-			after = state.InvocationDueCursor{DueAt: last.DueAt, ID: last.ID, OwnerNodeID: after.OwnerNodeID}
-		}
+	if pager, paged := d.store.(dueInvocationPager); paged {
+		extra = d.walkDueBacklog(ctx, pager, &tick)
+	} else {
+		extra = d.walkDueFromHead(ctx, &tick)
 	}
 	// Rows past their app's share take the slots left free beyond the others'
 	// share, until the tick's wait ends; the rest stay pending for a later
@@ -700,25 +739,6 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 	}
 }
 
-// maxDuePagesPerTick bounds one tick's walk of the due backlog; the next
-// tick starts again from the head.
-const maxDuePagesPerTick = 32
-
-// dueInvocationPager is implemented by stores that can resume the due walk
-// after a keyset cursor (PgStore, MemStore).
-type dueInvocationPager interface {
-	ListDueInvocationsAfter(ctx context.Context, now time.Time, after state.InvocationDueCursor, limit int) ([]state.Invocation, error)
-}
-
-func invocationPageKey(rows []state.Invocation) string {
-	var b strings.Builder
-	for _, r := range rows {
-		b.WriteString(r.ID)
-		b.WriteByte(',')
-	}
-	return b.String()
-}
-
 func (d *Drain) queueSourceBound(ctx context.Context, inv state.Invocation, cache map[string][]sqlc.Trigger) bool {
 	triggers, ok := cache[inv.AppID]
 	if !ok {
@@ -799,6 +819,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if !d.engine.ownsApp(app) {
 		return
 	}
+	if d.cronRunOrphaned(ctx, inv) {
+		if _, err := d.store.CancelPendingInvocation(ctx, inv.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
+			d.log.Warn("drain: cancel a deleted cron's run", "inv", inv.ID, "err", err)
+		}
+		return
+	}
 	if err := d.financialAdmission(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
 		// Keep pending work and its attempt count intact. A held budget is
 		// an admission decision, not a failed customer execution. The row
@@ -807,6 +833,16 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// rows of them hid other tenants' work behind them.
 		_ = d.store.FailInvocation(ctx, inv.ID, "held by the app's compute budget", financialHoldDeferral, 0)
 		d.log.Debug("drain: preview budget admission deferred", "inv", inv.ID, "app_id", app.ID)
+		return
+	}
+	// A billing subject at its monthly spend cap refuses the wake (HTTP 402).
+	// Its pending work waits, as its queued job tasks do (ADR-1162 amendment
+	// 2026-11-03): retrying the refusal spent the row's attempts and
+	// dead-lettered crons, delayed tasks and webhooks the customer had not
+	// lost. The row moves back by a minute without spending an attempt.
+	if d.engine.spendCapReached(ctx, d.engine.spendCapSubject(ctx, app)) {
+		_ = d.store.FailInvocation(ctx, inv.ID, "held by the spend cap", financialHoldDeferral, 0)
+		d.log.Debug("drain: spend cap reached; deferred", "inv", inv.ID, "app_id", app.ID)
 		return
 	}
 	// ADR-20261023115741: a capability switched off for the account holds
@@ -1077,7 +1113,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted())
-		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr, err)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
@@ -1160,7 +1196,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
-		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
+		d.observeScheduledFailure(inv, retryAfter, budget, failErr, err)
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
@@ -1236,7 +1272,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		d.log.Warn("drain: fail classified cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
-	d.observeScheduledFailure(inv, retryAfter, budget, nil)
+	d.observeScheduledFailure(inv, retryAfter, budget, nil, ErrAppAnswered)
 	if retryAfter == 0 {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1262,7 +1298,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 		d.log.Warn("drain: settle uncertain cron invocation", "inv", logsanitize.Field(inv.ID), "action", decision.Action, "err", err)
 		return
 	}
-	d.observeScheduledFailure(inv, retryAfter, budget, nil)
+	d.observeScheduledFailure(inv, retryAfter, budget, nil, dispatchErr)
 	if decision.Action == "hold" {
 		d.emitDone(ctx, inv, state.InvocationFailed)
 	} else if budget > 0 && inv.Attempts >= budget {
@@ -1310,13 +1346,19 @@ func (d *Drain) observeScheduledClaim(inv state.Invocation) {
 	d.ops.ObserveDelayedTaskScheduleLag(d.now().Sub(scheduledAt))
 }
 
-func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr error) {
+// observeScheduledFailure counts a failed delivery attempt. cause is the
+// delivery error; a final failure the app answered counts as app_error for
+// crons (delayed tasks keep failed).
+func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Duration, budget int, failErr, cause error) {
 	if failErr != nil {
 		return
 	}
 	outcome := wire.DelayedTaskDispatchRetry
 	if retryAfter == 0 {
 		outcome = wire.DelayedTaskDispatchFailed
+		if errors.Is(cause, ErrAppAnswered) {
+			outcome = wire.CronDeliveryAppError
+		}
 	} else if budget > 0 && inv.Attempts >= budget {
 		outcome = wire.DelayedTaskDispatchDeadLetter
 	}
@@ -1328,6 +1370,9 @@ func (d *Drain) observeScheduledFailure(inv state.Invocation, retryAfter time.Du
 func (d *Drain) observeScheduledDispatch(inv state.Invocation, outcome string) {
 	switch inv.Source {
 	case state.InvocationDelayedTask:
+		if outcome == wire.CronDeliveryAppError {
+			outcome = wire.DelayedTaskDispatchFailed
+		}
 		d.ops.ObserveDelayedTaskDispatch(outcome)
 	case state.InvocationCron:
 		d.ops.ObserveCronDelivery(outcome)
@@ -1513,6 +1558,23 @@ func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryP
 	}
 	return dispatch.RetryPolicy{BaseSeconds: api.EventDeliveryRetryBaseSeconds,
 		MaxSeconds: maxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
+}
+
+// cronRunOrphaned reports a queued cron run whose cron is gone. Every cron run
+// is queued with its cron's id; deleting the cron sets it to NULL
+// (invocations_cron_id_fkey), and a soft-deleted app's crons read as missing.
+// DeleteCron cancels its own runs, but a cron removed by a deploy's
+// gregale.yaml, a project apply or an app's deletion left its queued and
+// retrying runs to reach the app (crons audit 2026-11-02).
+func (d *Drain) cronRunOrphaned(ctx context.Context, inv state.Invocation) bool {
+	if inv.Source != state.InvocationCron {
+		return false
+	}
+	if inv.CronID == nil {
+		return true
+	}
+	_, err := d.store.CronByID(ctx, *inv.CronID)
+	return errors.Is(err, state.ErrNotFound)
 }
 
 // financialHoldDeferral is how far a row of an app held by its compute

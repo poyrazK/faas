@@ -34,11 +34,12 @@ gatewayd_retry_budget_required: false
 # ADR-831 amendment 17: one browser-challenge signing key for the gateway
 # fleet, set once through Ansible Vault (64 hex digits: `openssl rand -hex
 # 32`). CD stages it from the GATEWAYD_EDGE_CHALLENGE_KEY environment secret
-# (scripts/ci/edge_challenge_key_vars.sh), with _required set. The role copies it to a root-only systemd credential on each gateway
-# node. Without it each gateway signs with its own host's session key and
-# refuses the challenge passes the others issue. Set
-# gatewayd_edge_challenge_key_required=true from the run that precedes
-# releasing edge_challenge, so a host missing the variable fails the play.
+# (scripts/ci/edge_challenge_key_vars.sh), with _required set, and the
+# deploy fails without the secret. The role copies it to a root-only systemd
+# credential on each gateway node. It is the gateway fleet key
+# (ADR-20261102191500): it also signs managed deadlines, and
+# gatewayd-internal refuses to start without it. A host given none (a
+# single-gateway dev box) gets a key of its own, made once.
 gatewayd_edge_challenge_key: ""
 gatewayd_edge_challenge_key_required: false
 
@@ -63,6 +64,15 @@ gatewayd_service_tcp_listen: ""
 # ADR-576 customer-visible switch: answer <service>.svc.gregale with service
 # addresses. Requires gatewayd_service_tcp_listen.
 gatewayd_service_tcp_dns: false
+# ADR-1027: the app route to managed databases. Bind the same bridge address
+# as gatewayd_service_proxy_listen on the reserved port 10083 and list the
+# database nodes' pgproxyd listeners on the overlay (host:port). Enable
+# together with vmmd database_route_enabled and the nftables role's
+# faas_database_route_enabled. The host suffix makes guest DNS answer
+# <database-id>.<suffix> with the route.
+gatewayd_database_route_listen: ""
+gatewayd_database_route_upstreams: []
+gatewayd_database_route_host_suffix: ""
 
 # Path of the rendered config file on the box. The alertmanager role
 # uses the same shape (am_config_path) for the alertmanager.yml drop.
@@ -109,3 +119,7 @@ faas_dev_bridge_enabled: false
 # as given.
 faas_realtime_live_tls_managed: false
 faas_realtime_live_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
+# ADR-20261102081618 §5: serve the requests a compute edge forwarded from this
+# node's instances first, and name every node of the app for the edges. The
+# manifest's public_edge.local_first sets it on compute nodes.
+faas_gateway_edge_local_first: false

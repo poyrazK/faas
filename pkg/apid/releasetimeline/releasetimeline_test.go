@@ -174,6 +174,79 @@ func TestRolledBackReleaseHasNoWatchPassed(t *testing.T) {
 	}
 }
 
+// adr: 1448 — a regression the watch found but did not roll back is shown;
+// the watch is never reported as passed (release review 2026-10-31).
+func TestKeptRegressionIsNotAPassedWatch(t *testing.T) {
+	kept := decision(api.RolloutDecisionAbort, api.RolloutRuleAbortPostReleaseP95, "p95 700 ms vs 40 ms", 100, at(25))
+	kept.RollbackSkipped = api.CodeRollbackCrossesRelease
+	in := releasetimeline.Inputs{Watched: true, WatchWindow: 30 * time.Minute, Now: at(120),
+		Stable: &releasetimeline.Release{ID: "d1", Revision: 41},
+		Deployment: live(func(d *api.DeploymentResponse) {
+			d.RolloutState, d.RolloutCompletedAt, d.RolloutDecision = "complete", ptr(at(10)), kept
+		}),
+	}
+	got := releasetimeline.Build(in)
+	if got.Phase != api.ReleasePhaseReleased || !strings.Contains(got.Summary, "a regression was found after the rollout (p95 700 ms vs 40 ms) and Gregale did not roll back") {
+		t.Fatalf("phase = %s %q", got.Phase, got.Summary)
+	}
+	var regressed bool
+	for _, e := range got.Events {
+		if e.Kind == api.ReleaseEventWatchPassed {
+			t.Fatalf("a kept regression passed its watch: %+v", got.Events)
+		}
+		regressed = regressed || e.Kind == api.ReleaseEventWatchRegressed && e.At == at(25).Format(time.RFC3339) && e.Decision != nil
+	}
+	if !regressed {
+		t.Fatalf("events = %+v, want the regression at its decision time", got.Events)
+	}
+}
+
+// adr: 1445 amendment 4 — a release whose automatic rollback failed still
+// serves; the recorded rollback reason does not make it "Rolled back".
+func TestFailedAutomaticRollbackIsNotARollback(t *testing.T) {
+	failed := decision(api.RolloutDecisionAbort, api.RolloutRuleAbortPostRelease5xx, "first-wake 5xx", 100, at(30))
+	failed.RollbackSkipped = api.RollbackSkippedFailed
+	in := releasetimeline.Inputs{Watched: true, WatchWindow: 30 * time.Minute, Now: at(120), AutoRollbackReason: "threshold_exceeded",
+		Stable: &releasetimeline.Release{ID: "d1", Revision: 41},
+		Deployment: live(func(d *api.DeploymentResponse) {
+			d.RolloutState, d.RolloutCompletedAt, d.RolloutDecision = "complete", ptr(at(10)), failed
+		}),
+	}
+	got := releasetimeline.Build(in)
+	if got.Phase != api.ReleasePhaseReleased || !strings.Contains(got.Summary, "did not restore the previous release") {
+		t.Fatalf("phase = %s %q, want released and still serving", got.Phase, got.Summary)
+	}
+}
+
+// adr: 1445 amendment 5 — a release replaced inside its window was watched
+// only until then, and the timeline says so instead of a full-window pass.
+func TestWatchEndsWhenANewerReleaseReplacesIt(t *testing.T) {
+	in := releasetimeline.Inputs{Watched: true, WatchWindow: 30 * time.Minute, Now: at(120),
+		Stable:     &releasetimeline.Release{ID: "d1", Revision: 41},
+		ReplacedBy: &releasetimeline.Release{ID: "d3", Revision: 43, At: at(20)},
+		Deployment: live(func(d *api.DeploymentResponse) {
+			d.Status, d.TrafficPercent, d.RolloutState, d.RolloutCompletedAt = "superseded", 0, "complete", ptr(at(10))
+		}),
+	}
+	got := releasetimeline.Build(in)
+	var passed string
+	for _, e := range got.Events {
+		if e.Kind == api.ReleaseEventWatchPassed {
+			passed = e.Summary
+		}
+	}
+	if passed != "Post-release watch ended when v43 replaced it: no regression in 10 minutes" {
+		t.Fatalf("watch event = %q, want it to end at the replacement", passed)
+	}
+	in.ReplacedBy.At = at(90)
+	got = releasetimeline.Build(in)
+	for _, e := range got.Events {
+		if e.Kind == api.ReleaseEventWatchPassed && e.Summary != "Post-release watch passed: no regression in 30 minutes" {
+			t.Fatalf("a release replaced after its window = %q, want a full-window pass", e.Summary)
+		}
+	}
+}
+
 func TestScheduleAndUnknownAuditKinds(t *testing.T) {
 	in := releasetimeline.Inputs{Now: at(200), Deployment: live(func(d *api.DeploymentResponse) {
 		d.ScheduledRelease = &api.ScheduledRelease{State: api.ScheduledReleaseStateBlocked, ReleaseAt: at(60).Format(time.RFC3339),

@@ -195,6 +195,10 @@ func (p *appErrorsPublisher) flushBatch(ctx context.Context, batch []appErrorRow
 			DeploymentCreatedAt: batch[i].DeploymentCreatedAt,
 			ImageDigest:         batch[i].ImageDigest,
 			RequestId:           batch[i].RequestID,
+			IssueEventId:        batch[i].IssueEventID,
+			IssueTimeBuckets:    batch[i].IssueTimeBuckets,
+			Count:               batch[i].Count,
+			RequestRowOmitted:   batch[i].RequestRowOmitted,
 		}
 		if err := stream.Send(req); err != nil {
 			return err
@@ -277,7 +281,7 @@ func (p *appErrorsPublisher) recordSuccess() {
 func (p *appErrorsPublisher) ringLen() int {
 	p.rec.ringMu.Lock()
 	defer p.rec.ringMu.Unlock()
-	return p.rec.len
+	return len(p.rec.queue)
 }
 
 // Close releases the underlying client connection. Safe to call multiple times.

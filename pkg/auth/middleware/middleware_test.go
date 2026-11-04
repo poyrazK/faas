@@ -1069,6 +1069,102 @@ func TestRequireSession_BindingMismatch_NotArmed_NoRevoke(t *testing.T) {
 	}
 }
 
+// TestRequireSession_BindingRequestDrift pins what the per-request
+// half of the ADR-076 check compares. The browser family must match
+// the one the session was issued to; the client IP must NOT be
+// compared. The console reaches apid through Vercel, whose egress
+// address changes between requests, so rc.321's exact-IP recompute
+// revoked every console session one request after sign-in.
+func TestRequireSession_BindingRequestDrift(t *testing.T) {
+	const chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	const hash = "aaaabbbbccccddddaaaabbbbccccdddd"
+	cases := []struct {
+		name         string
+		issuedUA     string
+		requests     []struct{ remoteAddr, ua string }
+		wantPass     bool
+		wantFamilies [2]string // expected, presented (only when !wantPass)
+	}{
+		{
+			name:     "proxy egress address changes, same browser",
+			issuedUA: chrome,
+			requests: []struct{ remoteAddr, ua string }{
+				{"3.120.10.1:443", chrome},
+				{"18.192.44.7:443", chrome},
+				{"[2a05:d014::1]:443", chrome},
+			},
+			wantPass: true,
+		},
+		{
+			name:     "cookie replayed from another client family",
+			issuedUA: chrome,
+			requests: []struct{ remoteAddr, ua string }{
+				{"3.120.10.1:443", "curl/8.7.1"},
+			},
+			wantFamilies: [2]string{"chrome", "curl"},
+		},
+		{
+			name:     "no issued user agent skips the family check",
+			issuedUA: "",
+			requests: []struct{ remoteAddr, ua string }{
+				{"3.120.10.1:443", "curl/8.7.1"},
+			},
+			wantPass: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			authn := newFakeAuthn()
+			authn.acctByID["acct-1"] = mkActiveAccount("acct-1")
+			audit := &fakeAuditor{}
+			sess := &fakeSessions{env: session.Envelope{AccountID: "acct-1", Sid: "sid-1", BindingHash: hash}}
+			lookups := &fakeLookups{sess: state.Session{
+				ID:          "sid-1",
+				AccountID:   "acct-1",
+				IssuedIP:    "3.120.10.1",
+				IssuedUA:    tc.issuedUA,
+				BindingHash: hash,
+			}}
+			mw := authmw.New(authn, sess, lookups, audit,
+				slog.New(slog.NewTextHandler(io.Discard, nil)),
+				middleware.NewLimiter(middleware.AuthLimitConfig{}),
+				func() []byte { return make([]byte, 32) })
+			hits := 0
+			h := mw.RequireSession(func(_ http.ResponseWriter, _ *http.Request, _ state.Account) { hits++ })
+
+			for i, req := range tc.requests {
+				rec := httptest.NewRecorder()
+				r := mkRequest("GET", "/v1/apps", map[string]string{"User-Agent": req.ua}, map[string]string{"faas_sid": "valid-cookie"})
+				r.RemoteAddr = req.remoteAddr
+				h(rec, r)
+				want := http.StatusOK
+				if !tc.wantPass {
+					want = http.StatusUnauthorized
+				}
+				if rec.Code != want {
+					t.Fatalf("request %d from %s: status = %d, want %d", i, req.remoteAddr, rec.Code, want)
+				}
+			}
+
+			rows := audit.rowsOf("auth.session.binding_mismatch")
+			if tc.wantPass {
+				if hits != len(tc.requests) || len(lookups.revokeCalls) != 0 || len(rows) != 0 {
+					t.Fatalf("hits = %d, revokes = %d, audit rows = %d; want %d, 0, 0",
+						hits, len(lookups.revokeCalls), len(rows), len(tc.requests))
+				}
+				return
+			}
+			if hits != 0 || len(lookups.revokeCalls) != 1 || len(rows) != 1 {
+				t.Fatalf("hits = %d, revokes = %d, audit rows = %d; want 0, 1, 1", hits, len(lookups.revokeCalls), len(rows))
+			}
+			if got := rows[0].data; got["expected_ua_family"] != tc.wantFamilies[0] || got["presented_ua_family"] != tc.wantFamilies[1] {
+				t.Errorf("audit families = (%v, %v), want (%s, %s)",
+					got["expected_ua_family"], got["presented_ua_family"], tc.wantFamilies[0], tc.wantFamilies[1])
+			}
+		})
+	}
+}
+
 func TestRequireSession_NoCredentialsReturns401(t *testing.T) {
 	mw := newMW(t, newFakeAuthn(), nil, nil, nil)
 	hits := 0

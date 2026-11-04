@@ -30,7 +30,9 @@ func (s *server) getManagedPostgresCapabilities(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresCapabilitiesView(discovery, limits, s.applicationAuthEnabled(flagSubject(r, acct))))
+	view := managedPostgresCapabilitiesView(discovery, limits, s.applicationAuthEnabled(flagSubject(r, acct)))
+	view.StorageResize = view.StorageResize && s.storageResizes().Allows(acct.ID) // a preview until launch
+	writeJSON(w, http.StatusOK, view)
 }
 
 // managedPostgresCapabilitiesView lists the `auth` credential mode only
@@ -66,6 +68,7 @@ func managedPostgresCapabilitiesView(d managedpostgres.CapabilityDiscovery, limi
 	sort.Strings(out.CredentialAccess)
 	out.ScaleToZeroUpdate = c.ScaleToZeroUpdate && c.ScaleToZero && len(out.ServiceClasses) > 0
 	out.ClassResize = c.ClassResize && len(out.ServiceClasses) > 1
+	out.StorageResize = c.StorageResize && len(out.ServiceClasses) > 0
 	out.ProvisioningEnabled = d.ProvisioningEnabled && len(out.ServiceClasses) > 0
 	out.ScaleToZero, out.AlwaysOn, out.PooledConnections = c.ScaleToZero, limits.AlwaysOnAllowed, c.PooledConnections
 	out.StorageLimitBytes = limits.StorageLimitBytes

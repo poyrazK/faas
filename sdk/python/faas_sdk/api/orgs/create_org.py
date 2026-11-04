@@ -49,6 +49,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 409:
         response_409 = Problem.from_dict(response.json())
 
@@ -94,7 +99,8 @@ def sync_detailed(
     `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
     trimmed-non-empty (1..256 chars). Personal orgs cannot be
     created via this endpoint — every account already has a
-    personal org (backfill).
+    personal org (backfill). A new org starts on the Free plan,
+    and an account may own one Free org at a time.
 
     Args:
         idempotency_key (str | Unset):
@@ -137,7 +143,8 @@ def sync(
     `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
     trimmed-non-empty (1..256 chars). Personal orgs cannot be
     created via this endpoint — every account already has a
-    personal org (backfill).
+    personal org (backfill). A new org starts on the Free plan,
+    and an account may own one Free org at a time.
 
     Args:
         idempotency_key (str | Unset):
@@ -175,7 +182,8 @@ async def asyncio_detailed(
     `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
     trimmed-non-empty (1..256 chars). Personal orgs cannot be
     created via this endpoint — every account already has a
-    personal org (backfill).
+    personal org (backfill). A new org starts on the Free plan,
+    and an account may own one Free org at a time.
 
     Args:
         idempotency_key (str | Unset):
@@ -216,7 +224,8 @@ async def asyncio(
     `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3..32 chars); name is
     trimmed-non-empty (1..256 chars). Personal orgs cannot be
     created via this endpoint — every account already has a
-    personal org (backfill).
+    personal org (backfill). A new org starts on the Free plan,
+    and an account may own one Free org at a time.
 
     Args:
         idempotency_key (str | Unset):

@@ -3,7 +3,7 @@ import https from 'node:https'
 import { closeSync, openSync, readSync } from 'node:fs'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import pg from 'pg'
-import { limits } from './config.mjs'
+import { limits, UnsafeConfiguration } from './config.mjs'
 import { addResponseBytes } from './usage.mjs'
 
 // File storage (ADR-20261021101510). Rows in <schema>.storage_objects record
@@ -154,12 +154,12 @@ export function unsafeStorageTable(row) {
 }
 
 export async function checkStorageTable(connection, schema) {
-  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.healthProbeMs })
+  const client = new pg.Client({ connectionString: connection, statement_timeout: limits.queryMs, connectionTimeoutMillis: limits.queryMs })
   await client.connect()
   try {
     const { rows } = await client.query(storageTableQuery, [schema, storageTable])
     const unsafe = unsafeStorageTable(rows[0])
-    if (unsafe) throw new Error(`File storage is not installed: ${unsafe}`)
+    if (unsafe) throw new UnsafeConfiguration(`File storage is not installed: ${unsafe}`)
   } finally { await client.end() }
 }
 

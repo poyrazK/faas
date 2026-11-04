@@ -43,6 +43,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // execer is the minimal pgxpool contract the rollup needs:
@@ -125,8 +127,10 @@ func RollupOnce(ctx context.Context, db execer, windowStart, windowEnd time.Time
 // RollupLoop ticks RollupOnce on interval. Each tick rolls both the previous
 // complete UTC day and the current partial UTC day. Recomputing the complete
 // day repairs late-arriving rows; recomputing today makes the customer-facing
-// default useful within one interval. ON CONFLICT overwrites totals, so ticks
-// and process restarts cannot double count.
+// default useful within one interval. The first tick and then one tick an hour
+// also recompute the earlier days meterd's catch-up can still write
+// (lateDailyRollupWindows). ON CONFLICT overwrites totals, so ticks and
+// process restarts cannot double count.
 //
 // Errors are logged Warn and retried on the next tick — a
 // persistent failure shows up as a flood of WARN logs that an
@@ -153,7 +157,9 @@ func RollupLoop(ctx context.Context, db execer, interval time.Duration, log *slo
 	if len(observers) > 0 {
 		observer = observers[0]
 	}
-	runDailyRollups(ctx, db, time.Now().UTC(), log, "initial", observer)
+	now := time.Now().UTC()
+	runDailyRollups(ctx, db, append(lateDailyRollupWindows(now), dailyRollupWindows(now)...), log, "initial", observer)
+	lateRolled := now
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -161,9 +167,36 @@ func RollupLoop(ctx context.Context, db execer, interval time.Duration, log *slo
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			runDailyRollups(ctx, db, time.Now().UTC(), log, "tick", observer)
+			now := time.Now().UTC()
+			windows := dailyRollupWindows(now)
+			if now.Sub(lateRolled) >= lateRollupInterval {
+				windows = append(lateDailyRollupWindows(now), windows...)
+				lateRolled = now
+			}
+			runDailyRollups(ctx, db, windows, log, "tick", observer)
 		}
 	}
+}
+
+// lateRollupInterval is how often the loop also recomputes the days before
+// yesterday: meterd rolls a missed minute up to api.MeterUsageFinalAfter late
+// (H5-55), so after an outage of more than a day its catch-up rows land in
+// days the yesterday-and-today windows no longer cover, and usage_daily, the
+// daily usage pages and daily cost alerts stayed short of what was billed.
+// Hourly keeps the extra scans off every 5-minute tick (ADR-20261101113742).
+const lateRollupInterval = time.Hour
+
+// lateDailyRollupWindows are the complete UTC days before yesterday that
+// meterd can still write usage for, oldest first.
+func lateDailyRollupWindows(now time.Time) []dailyRollupWindow {
+	now = now.UTC()
+	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(-24 * time.Hour)
+	earliest := now.Add(-api.MeterUsageFinalAfter)
+	var out []dailyRollupWindow
+	for day := time.Date(earliest.Year(), earliest.Month(), earliest.Day(), 0, 0, 0, 0, time.UTC); day.Before(yesterday); day = day.Add(24 * time.Hour) {
+		out = append(out, dailyRollupWindow{start: day, end: day.Add(24 * time.Hour)})
+	}
+	return out
 }
 
 type dailyRollupWindow struct {
@@ -180,8 +213,8 @@ func dailyRollupWindows(now time.Time) []dailyRollupWindow {
 	}
 }
 
-func runDailyRollups(ctx context.Context, db execer, now time.Time, log *slog.Logger, phase string, observer RollupObserver) {
-	for _, window := range dailyRollupWindows(now) {
+func runDailyRollups(ctx context.Context, db execer, windows []dailyRollupWindow, log *slog.Logger, phase string, observer RollupObserver) {
+	for _, window := range windows {
 		started := time.Now()
 		_, err := RollupOnce(ctx, db, window.start, window.end)
 		if observer != nil {

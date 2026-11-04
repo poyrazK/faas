@@ -1,6 +1,7 @@
 package appaccess
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -23,14 +25,27 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 		var domain state.CustomDomain
 		domain, err = store.DomainByName(r.Context(), strings.ToLower(r.PathValue("domain")))
 		appID = domain.AppID
+		if err == nil {
+			// Keep the claim that supplied the authorized app. A later handler
+			// reload must not widen this grant after a hostname is reassigned.
+			*r = *r.WithContext(state.WithCustomDomainProbe(r.Context(), domain))
+		}
 	case strings.HasPrefix(path, "/v1/crons/") && id != "":
 		var cron state.Cron
 		cron, err = store.CronByID(r.Context(), id)
 		appID = cron.AppID
+	case strings.HasPrefix(path, "/v1/cron-fire-now-requests/") && validID(r.PathValue("request_id")):
+		appID, err = fireNowRequestApp(r, store)
 	case strings.HasPrefix(path, "/v1/edge-rules/") && id != "":
 		var rule state.EdgeRule
 		rule, err = store.GetEdgeRuleByID(r.Context(), id)
 		appID = rule.AppID
+	case companyListPath(path) && r.URL.Query().Get("app") != "":
+		// Edge-rule lists and CORS presets are account objects; ?app=<slug>
+		// manages a company app's own (ADR-091 amendment 2026-11-03,
+		// review round 9) with the member's organization role on it.
+		app, err := store.AppBySlug(r.Context(), r.URL.Query().Get("app"))
+		return app, true, err
 	case strings.HasPrefix(path, "/v1/invocations/") && id != "":
 		var invocation state.Invocation
 		invocation, err = store.InvocationByID(r.Context(), id)
@@ -49,6 +64,55 @@ func indirectlyAddressedApp(r *http.Request, store Store, actorID string) (state
 	}
 	app, err := store.AppByID(r.Context(), appID)
 	return app, true, err
+}
+
+// previewStatusReads are the PR preview status reads a credential bound to the
+// production app may make (ADR-20261102203228).
+var previewStatusReads = map[string]bool{
+	"GET /v1/preview/{slug}":             true,
+	"GET /v1/preview/{slug}/environment": true,
+}
+
+// previewAccessApp is the app a preview route is authorized against: the
+// preview, except for a status read made with a credential bound to one app,
+// which reads its own app's previews and is authorized against the preview's
+// production app (ADR-20261102203228).
+func previewAccessApp(r *http.Request, store Store, preview state.App) string {
+	if !previewStatusReads[r.Pattern] || preview.PreviewOfSlug == "" {
+		return preview.ID
+	}
+	_, key, _, ok := authmw.PrincipalFrom(r)
+	if !ok || key == nil || key.AppID == "" {
+		return preview.ID
+	}
+	parent, err := store.AppBySlug(r.Context(), preview.PreviewOfSlug)
+	if err != nil || parent.ID != key.AppID || parent.AccountID != preview.AccountID {
+		return preview.ID
+	}
+	return parent.ID
+}
+
+// fireNowRequestApp resolves the app behind a manual cron run's request. A
+// missing request or cron is left to the handler, which answers its own 404.
+func fireNowRequestApp(r *http.Request, store Store) (string, error) {
+	requests, ok := store.(interface {
+		GetFireNowRequest(context.Context, string) (state.FireNowRequest, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	request, err := requests.GetFireNowRequest(r.Context(), r.PathValue("request_id"))
+	if errors.Is(err, state.ErrFireNowRequestNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	cron, err := store.CronByID(r.Context(), request.CronID)
+	if err != nil {
+		return "", missing(err)
+	}
+	return cron.AppID, nil
 }
 
 // ownedResourceApp resolves the app behind resource URLs whose handlers check
@@ -80,7 +144,10 @@ func ownedResourceApp(r *http.Request, store Store, actorID string) (string, err
 		return id, nil
 	case strings.HasPrefix(path, "/v1/preview/") && r.PathValue("slug") != "":
 		preview, err := store.AppBySlug(ctx, r.PathValue("slug"))
-		return preview.ID, missing(err)
+		if err != nil {
+			return "", missing(err)
+		}
+		return previewAccessApp(r, store, preview), nil
 	case strings.HasPrefix(path, "/v1/freezes/") && validID(id):
 		freezes, ok := store.(state.ReleaseFreezeStore)
 		if !ok {
@@ -131,4 +198,15 @@ func missing(err error) error {
 		return nil
 	}
 	return err
+}
+
+// companyListPath is an edge-rule list or CORS preset URL, which addresses a
+// company app by its ?app= query.
+func companyListPath(path string) bool {
+	for _, prefix := range []string{"/v1/edge-rule-lists", "/v1/cors-presets"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }

@@ -81,10 +81,10 @@ def sync_detailed(
 ) -> Response[Problem | ReleaseFreeze]:
     """Lift a deploy freeze on an app.
 
-     Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or
-    `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they
-    created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted
-    freeze on this app has this ID.
+     Lifts a freeze on this app. Needs the admin scope (a signed-in session or an admin key). Freezes on
+    all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a
+    company app a member who deploys may lift a window they created; any other freeze needs an owner or
+    admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID.
 
     Args:
         slug (str):
@@ -118,10 +118,10 @@ def sync(
 ) -> Problem | ReleaseFreeze | None:
     """Lift a deploy freeze on an app.
 
-     Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or
-    `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they
-    created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted
-    freeze on this app has this ID.
+     Lifts a freeze on this app. Needs the admin scope (a signed-in session or an admin key). Freezes on
+    all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a
+    company app a member who deploys may lift a window they created; any other freeze needs an owner or
+    admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID.
 
     Args:
         slug (str):
@@ -150,10 +150,10 @@ async def asyncio_detailed(
 ) -> Response[Problem | ReleaseFreeze]:
     """Lift a deploy freeze on an app.
 
-     Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or
-    `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they
-    created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted
-    freeze on this app has this ID.
+     Lifts a freeze on this app. Needs the admin scope (a signed-in session or an admin key). Freezes on
+    all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a
+    company app a member who deploys may lift a window they created; any other freeze needs an owner or
+    admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID.
 
     Args:
         slug (str):
@@ -185,10 +185,10 @@ async def asyncio(
 ) -> Problem | ReleaseFreeze | None:
     """Lift a deploy freeze on an app.
 
-     Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or
-    `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they
-    created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted
-    freeze on this app has this ID.
+     Lifts a freeze on this app. Needs the admin scope (a signed-in session or an admin key). Freezes on
+    all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a
+    company app a member who deploys may lift a window they created; any other freeze needs an owner or
+    admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID.
 
     Args:
         slug (str):

@@ -139,6 +139,21 @@ func TestReleasedByDefaultIgnoresAccountRules(t *testing.T) {
 	}
 }
 
+func TestEveryAccountRequiresAllAncestorsWithoutNarrowingRules(t *testing.T) {
+	if !load(t, nil).EveryAccount("workflows") || load(t, nil).EveryAccount("automations") {
+		t.Fatal("tier defaults should decide when no flag is configured")
+	}
+	id, parent := child(t)
+	deny := false
+	set := platformflags.NewSet(map[string]platformflags.Definition{
+		flagKey(t, id):     {Enabled: true, Default: true},
+		flagKey(t, parent): {Enabled: true, Default: true, Rules: []platformflags.Rule{{ID: "deny", Accounts: []string{"acct-1"}, Value: &deny}}},
+	})
+	if load(t, set).EveryAccount(id) {
+		t.Fatal("a parent rule can exclude an account even when the default is on")
+	}
+}
+
 func TestNilDeciderAllowsEverything(t *testing.T) {
 	var d *capflags.Decider
 	if !d.Enabled("queues", platformflags.Subject{}) || !d.Released("queues") || d.Known("queues") {
@@ -166,5 +181,26 @@ func TestBootstrapReleaseAll(t *testing.T) {
 		if _, ok := seeded[spec.Key]; ok && !spec.Generated {
 			t.Errorf("release-all seeded hand-written flag %s; its own bootstrap decides", spec.Key)
 		}
+	}
+}
+
+func TestEnabledByRuleCountsOnlyARuleOrOptIn(t *testing.T) {
+	on := true
+	set := platformflags.NewSet(map[string]platformflags.Definition{
+		flagKey(t, "managed-postgres"): {Enabled: true, Default: true, Rules: []platformflags.Rule{{ID: "owner", Accounts: []string{"acct-1"}, Value: &on}}},
+	})
+	d := load(t, set)
+	if !d.EnabledByRule("managed-postgres", platformflags.Subject{AccountID: "acct-1"}) {
+		t.Error("the account the rule names is enabled by the rule")
+	}
+	if !d.Enabled("managed-postgres", platformflags.Subject{AccountID: "acct-2"}) || d.EnabledByRule("managed-postgres", platformflags.Subject{AccountID: "acct-2"}) {
+		t.Error("an account only the default enables is not enabled by a rule")
+	}
+	if load(t, nil).EnabledByRule("managed-postgres", platformflags.Subject{AccountID: "acct-1"}) {
+		t.Error("the catalog tier default is not a rule")
+	}
+	var nilDecider *capflags.Decider
+	if nilDecider.EnabledByRule("managed-postgres", platformflags.Subject{AccountID: "acct-1"}) {
+		t.Error("a nil decider names no account")
 	}
 }

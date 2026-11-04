@@ -14,6 +14,9 @@ import (
 type NodeMemoryShadow struct {
 	ReservedMB int
 	MeasuredMB int
+	// Frozen counts the node's frozen instances, which peers cap per node
+	// (FrozenMaxPerNode, ADR 20261101091815).
+	Frozen int
 }
 
 // memoryShadow sums both bookings over the instances that count toward a
@@ -38,6 +41,7 @@ func memoryShadow(instances []state.Instance, rows []InstanceStat, bridgeMB map[
 		s := out[in.NodeID]
 		s.ReservedMB += api.BillableRAMMB(in.RAMMB)
 		if state.State(in.State) == state.StateFrozen {
+			s.Frozen++
 			// A paused VM cannot grow; its floor is FrozenChargeFloorMB
 			// (ADR 20261031143521).
 			s.MeasuredMB += api.FrozenChargeMB(in.RAMMB, sample)
@@ -69,14 +73,43 @@ func (p *Poller) publishMemoryShadowWithBridges(instances []state.Instance, rows
 	if p.rssHistory == nil {
 		p.rssHistory = newRSSHistory()
 	}
-	charged := make([]InstanceStat, len(rows))
-	live := make(map[string]struct{}, len(rows))
-	for i, row := range rows {
-		if row.RSSMB >= 0 { // false for NaN, an unmeasured instance
-			row.RSSMB = p.rssHistory.chargeSample(row.InstanceID, row.RSSMB, asOf)
+	// A paused VM cannot grow, and a thaw re-admits its full reservation, so
+	// a frozen instance is charged its latest sample, not the window's p95:
+	// the memory a compression frees reaches admission with the next sample,
+	// not ten minutes later (ADR 20261031190030).
+	frozen := make(map[string]struct{})
+	for _, in := range instances {
+		if state.State(in.State) == state.StateFrozen {
+			frozen[in.ID] = struct{}{}
 		}
-		charged[i] = row
-		live[row.InstanceID] = struct{}{}
+	}
+	charged := make([]InstanceStat, 0, len(rows))
+	sampled := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if row.RSSMB >= 0 { // false for NaN, an unmeasured instance
+			charge := p.rssHistory.chargeSample(row.InstanceID, row.RSSMB, asOf)
+			if _, isFrozen := frozen[row.InstanceID]; !isFrozen {
+				row.RSSMB = charge
+			}
+			sampled[row.InstanceID] = struct{}{}
+		}
+		charged = append(charged, row)
+	}
+	// A gap in the samples (a vmmd restart, a late stream batch) used to
+	// charge every instance its full reservation, which on a node booked past
+	// its ceiling refused every wake until samples returned. An instance
+	// sampled within MeasuredChargeHoldSeconds keeps its recent charge
+	// instead (ADR 20261101091815).
+	live := make(map[string]struct{}, len(instances))
+	for _, in := range instances {
+		live[in.ID] = struct{}{}
+		if _, ok := sampled[in.ID]; ok {
+			continue
+		}
+		_, isFrozen := frozen[in.ID]
+		if held, ok := p.rssHistory.held(in.ID, asOf, isFrozen); ok {
+			charged = append(charged, InstanceStat{InstanceID: in.ID, RSSMB: held})
+		}
 	}
 	p.rssHistory.retain(live)
 	shadow := memoryShadow(instances, charged, bridgeMB)
@@ -100,6 +133,31 @@ type memoryShadowSnapshot struct {
 
 func (r *Reader) replaceMemoryShadow(byNode map[string]NodeMemoryShadow, asOf time.Time) {
 	r.shadow.Store(&memoryShadowSnapshot{byNode: byNode, asOf: asOf})
+}
+
+// MemoryReport is the node's measured charge and frozen instances from the
+// latest tick, and the time that tick read the instances, under MeasuredMB's
+// freshness; the node's own scheduler publishes it for its peers (ADR
+// 20261101091815).
+func (r *Reader) MemoryReport(nodeID string, now time.Time) (measuredMB, frozen int, asOf time.Time, ok bool) {
+	snap := r.shadow.Load()
+	if snap == nil || now.Sub(snap.asOf) > time.Duration(api.MeasuredAdmissionSampleMaxAgeMillis)*time.Millisecond {
+		return 0, 0, time.Time{}, false
+	}
+	s, ok := snap.byNode[nodeID]
+	return s.MeasuredMB, s.Frozen, snap.asOf, ok
+}
+
+// ReservedMB is the node's Σ(ram_mb + 8) over its resident instances from the
+// latest tick, every owner's, under MeasuredMB's freshness: 0 for a node with
+// none. fcvm_resident_ram_pct reports it over the node's ceiling (ADR
+// 20261102072403).
+func (r *Reader) ReservedMB(nodeID string, now time.Time) (int, bool) {
+	snap := r.shadow.Load()
+	if snap == nil || now.Sub(snap.asOf) > time.Duration(api.MeasuredAdmissionSampleMaxAgeMillis)*time.Millisecond {
+		return 0, false
+	}
+	return snap.byNode[nodeID].ReservedMB, true
 }
 
 // MeasuredMB is the node's ADR-909 measured charge from the latest tick and

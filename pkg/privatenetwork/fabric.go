@@ -97,7 +97,9 @@ func BuildFabricPlan(spec FabricSpec) (FabricPlan, error) {
 		GatewayCIDR: gatewayCIDR,
 		Setup: [][]string{
 			{"ip", "link", "add", "dev", bridge, "type", "bridge"},
-			{"ip", "addr", "replace", gatewayCIDR.String(), "dev", bridge},
+			// Gateways live in the isolated router namespace. Remove the
+			// legacy root address during upgrade and leave this bridge L2-only.
+			{"ip", "addr", "flush", "dev", bridge},
 			{"ip", "link", "set", "dev", bridge, "up"},
 		},
 		Teardown: [][]string{{"ip", "link", "del", "dev", bridge}},

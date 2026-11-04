@@ -88,6 +88,7 @@ func (m *MemStore) forgetOwnedOperationWorkflowLocked(runID string) {
 	delete(m.workflowRuns, runID)
 	delete(m.workflowSteps, runID)
 	delete(m.workflowEvents, runID)
+	delete(m.workflowEventApps, runID)
 	delete(m.workflowResumes, runID)
 	delete(m.workflowRunLeases, runID)
 	for key := range m.workflowStepAttempts {

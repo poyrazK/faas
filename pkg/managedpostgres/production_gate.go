@@ -57,7 +57,8 @@ func LoadProductionApproval(getenv func(string) string) ProductionApproval {
 
 // ProductionReadiness checks the production gate's preconditions without
 // provider IO: provisioning switched on, usage metering on, both fleet
-// ceilings set, a single default backend matching the pin, and an approval
+// ceilings set, a per-account database limit no plan exceeds, a single
+// default backend matching the pin, and an approval
 // window that has started, has not ended and spans at most the approval
 // maximum. Reasons are stable codes for operators.
 func (r *Registry) ProductionReadiness(approval ProductionApproval, now time.Time) QualificationReadiness {
@@ -74,6 +75,11 @@ func (r *Registry) ProductionReadiness(approval ProductionApproval, now time.Tim
 	}
 	if !r.Fleet().Complete() {
 		add("fleet_policy_incomplete")
+	}
+	if r.MaxDatabasesPerAccount < api.ManagedPostgresPlanDatabasesMax() {
+		// apid takes the lower of this and the plan's limit, so a smaller
+		// value silently sells a plan fewer databases.
+		add("database_limit_below_plan")
 	}
 	regions := r.Regions()
 	if len(regions) != 1 {
@@ -101,10 +107,11 @@ func (r *Registry) ProductionReadiness(approval ProductionApproval, now time.Tim
 	return QualificationReadiness{Ready: len(reasons) == 0, Reasons: reasons}
 }
 
-// NewProvisioningGate is the rollout gate for customer provisioning. In
-// production it opens only while ProductionReadiness holds, so an approval
-// that expires closes new provisioning without touching existing databases;
-// every other environment keeps the staging qualification gate.
+// NewProvisioningGate is the rollout gate for new databases. In production it
+// opens only while ProductionReadiness holds, so an approval that expires
+// closes new provisioning without touching existing databases, which
+// NewOperationsGate governs; every other environment keeps the staging
+// qualification gate.
 func NewProvisioningGate(registry *Registry, getenv func(string) string, now func() time.Time) func() bool {
 	if !ProductionEnvironmentActive(getenv) {
 		return NewStagingProvisioningGate(registry, getenv, now)
@@ -115,5 +122,22 @@ func NewProvisioningGate(registry *Registry, getenv func(string) string, now fun
 	approval := LoadProductionApproval(getenv)
 	return func() bool {
 		return registry.ProductionReadiness(approval, now().UTC()).Ready
+	}
+}
+
+// NewOperationsGate is the gate for work on databases that already exist:
+// their bindings and credential rotation, resize, restore and database
+// switches, and finishing a database that admission already reserved
+// (ADR-20261103091657). In production it follows the operator's
+// provisioning_enabled switch alone, so an approval that lapses, or a
+// backend change that awaits a new one, closes new databases without
+// stranding a customer's recovery or a credential rotation. Every other
+// environment keeps the staging qualification gate for both.
+func NewOperationsGate(registry *Registry, getenv func(string) string, now func() time.Time) func() bool {
+	if !ProductionEnvironmentActive(getenv) {
+		return NewStagingProvisioningGate(registry, getenv, now)
+	}
+	return func() bool {
+		return registry != nil && registry.ProvisioningEnabled
 	}
 }

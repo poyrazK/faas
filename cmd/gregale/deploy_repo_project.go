@@ -128,9 +128,9 @@ func deployConnectedRepoProject(ctx context.Context, d connectedRepoProjectDeplo
 	if saveErr := session.rememberProjectApply(apply); saveErr != nil {
 		return renderProjectDeployReceipt(plan, apply, session, false, saveErr)
 	}
-	timedOut := false
+	var timeouts []projectWaitTimeout
 	if d.wait && len(apply.Builds) > 0 {
-		apply, timedOut = waitForProjectApply(ctx, client, apply, d.waitTimeout)
+		apply, timeouts = waitForProjectApplyTimeouts(ctx, client, apply, d.waitTimeout)
 	}
-	return renderProjectDeployReceipt(plan, apply, session, timedOut, nil)
+	return renderProjectDeployReceiptAfterWait(plan, apply, session, timeouts)
 }

@@ -95,7 +95,7 @@ def sync_detailed(
     customer's plan — a CI consumer can preview a fresh deploy the
     same way the CLI does.
 
-    Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+    Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
     endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
     Schema-break detection is text-only (handler / entrypoint
@@ -149,7 +149,7 @@ def sync(
     customer's plan — a CI consumer can preview a fresh deploy the
     same way the CLI does.
 
-    Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+    Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
     endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
     Schema-break detection is text-only (handler / entrypoint
@@ -198,7 +198,7 @@ async def asyncio_detailed(
     customer's plan — a CI consumer can preview a fresh deploy the
     same way the CLI does.
 
-    Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+    Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
     endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
     Schema-break detection is text-only (handler / entrypoint
@@ -250,7 +250,7 @@ async def asyncio(
     customer's plan — a CI consumer can preview a fresh deploy the
     same way the CLI does.
 
-    Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+    Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
     endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
     Schema-break detection is text-only (handler / entrypoint

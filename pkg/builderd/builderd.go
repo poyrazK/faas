@@ -73,6 +73,12 @@ var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in
 // implementation.
 var ErrNoSlot = errors.New("builderd: no builder slot available")
 
+// ErrCoalesced is returned when a build that missed the cache is deferred
+// behind an identical build another claim is already building
+// (ADR-20261102100000). Like ErrNoSlot, the row is back in the queue; it is
+// claimed again once that build is done, on the node whose cache holds it.
+var ErrCoalesced = errors.New("builderd: deferred behind an identical running build")
+
 // ErrDraining is returned when a new build arrives after builderd has begun
 // shutting down. The durable queue remains the source of truth, so rejecting
 // new work here lets the next builderd instance claim it cleanly.
@@ -1110,6 +1116,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 
 	}
 	b.emitBuildLog(ctx, build.ID, "[build] cache "+cacheOutcome+", scheduling vm\n")
+	if b.deferBehindIdenticalBuild(ctx, build, cacheAvailable && !reuseOptedIn, cacheKeySHA256) {
+		return BuildResult{}, ErrCoalesced
+	}
 
 	// Slot allocation (CLAUDE.md: builds never outrank tenant wakes).
 	slot, releaseSlot, acquired := b.acquireSlot()
@@ -1464,6 +1473,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// emitted) — that's the path the `failure_class` UX copy
 		// already covers; markFailedEx is the typed-code addition.
 		failureCode, failurePkg := out.FailureCode, out.FailurePkg
+		if fc == state.FailureUserError && failureCode == "" && platformBaseFetchFailed(out.LogTail, runtimeBaseRef) {
+			// The builder could not fetch Gregale's own runtime base: the
+			// customer's source never ran, so this is not their failure.
+			fc = state.FailureInfra
+		}
 		if failureCode == "" && fc == state.FailureUserError {
 			failureCode, failurePkg = classifyBuildOutput(out.LogTail)
 		}
@@ -1642,6 +1656,40 @@ func (b *Builderd) lookupCurrentCacheEntry(recipe BuildCacheRecipe, environment 
 
 type buildCacheOutcomeWriter interface {
 	SetBuildCacheOutcome(context.Context, string, string, string) error
+}
+
+// deferBehindIdenticalBuild requeues build to wait for an identical build (the
+// same cache key) that an earlier claim is building, so the image is built
+// once and this build takes the cache hit (ADR-20261102100000). Services of a
+// project that share a build context, such as web, worker and beat on
+// `build: .`, otherwise build the same image side by side and hold builder
+// slots other services wait for. It waits only for a build claimed earlier,
+// so two identical builds never wait for each other, and whenever it cannot
+// tell it reports false and the build proceeds as before. A claim that is no
+// longer current (cancelled, or taken over) stops here.
+func (b *Builderd) deferBehindIdenticalBuild(ctx context.Context, build state.Build, cacheable bool, keySHA256 string) bool {
+	store, ok := b.store.(state.BuildCoalescingStore)
+	if !ok || !cacheable || keySHA256 == "" {
+		return false
+	}
+	producer, err := store.RunningIdenticalBuild(ctx, build, keySHA256)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			b.log.Warn("builderd: look up an identical running build (building anyway)", "build", build.ID, "err", err)
+		}
+		return false
+	}
+	err = store.DeferBuildBehind(ctx, build, producer)
+	b.pipeline.observeRequeue(ctx, requeueIdenticalBuild, err)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return true
+	case err != nil:
+		b.log.Warn("builderd: defer behind an identical build (building anyway)", "build", build.ID, "producer", producer, "err", err)
+		return false
+	}
+	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[build] build %s is already building this image; waiting to reuse its result\n", producer))
+	return true
 }
 
 // observeCacheOutcome persists the decision before the terminal build write

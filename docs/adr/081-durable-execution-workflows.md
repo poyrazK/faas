@@ -10,6 +10,8 @@
   seven-day limits below describe the original scope.
 - **Extended by [ADR-263](263-authenticated-workflow-callbacks.md):**
   `wait_for_callback` adds account-authorized, per-run one-time completion.
+- **Amended 2026-11-02:** a step attempt Gregale refused before the app
+  received it never ends the step (see the amendment at the end).
 - **Superseded (in part, PR-E):** prose referred to the monolithic
   `cmd/gatewayd/` daemon split by ADR-070 into `gatewayd-public` (TLS-only
   edge) and `gatewayd-internal` (routing + wake + proxy). Body is preserved
@@ -696,3 +698,47 @@ first, both consumers follow.
   migration PR.
 
 ADR-432 adds [event-triggered workflow starts](432-event-workflow-starts.md).
+
+## Amendment 2026-11-02: attempts Gregale refused before delivery
+
+PulseWatch (production, 2026-10-31) saw workflow steps lose attempts, and a
+step with one or two attempts end `dead`, when gatewayd-internal's dispatch
+endpoint answered `503 traffic_revocation_unavailable` or
+`traffic_policy_unavailable` before the step's handler ran. Those refusals
+come from a traffic-security read timing out (250 ms) or gateways briefly
+disagreeing, and clear within seconds. §2 counted every failed attempt
+against `max_attempts`, so a platform blip could spend a step's whole budget
+without the app ever receiving the request. Plain HTTP cron runs already
+retry the same refusals (ADR-20261026201726 amendment 2026-10-29).
+
+Decision:
+
+- A step attempt that ends with a 5xx from the dispatch endpoint
+  (`sched.ErrDispatchRefused`: a failed wake, an unavailable traffic-security
+  check) was refused before the app received it. The endpoint answers 200
+  with the app's response whenever the app received the request. Such an
+  attempt never ends the step while the step has made fewer than
+  `max_attempts + api.WorkflowStepPlatformRetries` (2) attempts; it retries
+  instead of going `dead`.
+- A refused attempt retries after the step's backoff and no sooner than
+  `api.WorkflowStepPlatformRetryDelay` (5 s): a one-second retry tends to
+  meet the same refusal.
+- Everything else keeps §2: an attempt the app answered (including its own
+  5xx inside the gateway's 200 envelope), a 4xx refusal, a dispatch that
+  timed out in flight, and outbound integration steps, which do not go
+  through the gateway.
+- `for_each` items and resumed runs re-check before each attempt that a crash
+  has not used up their attempts. That check now admits a scheduled retry up
+  to the same bound. Starting an attempt clears `next_retry_at`, so a pending
+  step that still has one holds a retry this policy scheduled; a crashed
+  attempt leaves none and is still ended at `max_attempts`.
+
+What it does not do: a refused attempt still advances the attempt number
+(`X-Faas-Workflow-Attempt`, the attempt history), so an early refusal
+followed by app failures can still give the app fewer than `max_attempts`
+deliveries. Counting refusals exactly needs a marker on
+`workflow_step_attempts`. The bound keeps an app the gateway keeps refusing,
+for example a deployment it cannot wake, from retrying forever.
+
+Verification: `TestWorkflowStepRefusedBeforeDeliveryIsRetried` in
+`pkg/sched/workflow_platform_retry_test.go`.

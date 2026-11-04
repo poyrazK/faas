@@ -35,6 +35,10 @@ func (s *Service) ReconcileObjectStorageComputeTriggers(w http.ResponseWriter, r
 		BucketProblem(w, objectstorage.ErrUnavailable)
 		return
 	}
+	if len(request.Triggers) > 0 && !acct.Plan.TriggersAllowed() {
+		api.WriteProblem(w, api.ErrPlanTriggersNotAllowed(acct.Plan))
+		return
+	}
 	out, err := st.ReconcileObjectBucketComputeTriggers(r.Context(), b.AccountID, b.AppID, b.ID, request)
 	if errors.Is(err, state.ErrObjectNotificationInvalid) {
 		api.WriteProblem(w, api.ErrValidation("invalid compute triggers, filters or destination"))

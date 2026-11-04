@@ -84,7 +84,9 @@ func TestCLIRegressionAutomationFailsBeforeInputOrRequests(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", testAPIKey('a'))
 	osStdin = forbiddenAutomationInput{t}
-	for _, args := range [][]string{{"login"}, {"start"}, {"account", "delete"}, {"apps", "--yes=false", "demo"}, {"triggers", "delete", "trigger-1"}, {"orgs", "rm", "demo"}, {"billing", "cancel"}, {"signup"}, {"mfa", "disable"}} {
+	// mfa disable is absent: it only prints the dashboard link that finishes
+	// in a browser, reads no input and sends no request (commands_mfa_test.go).
+	for _, args := range [][]string{{"login"}, {"start"}, {"account", "delete"}, {"apps", "--yes=false", "demo"}, {"triggers", "delete", "trigger-1"}, {"orgs", "rm", "demo"}, {"billing", "cancel"}, {"signup"}} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			stderr, restore := captureStderr(t)
 			var out bytes.Buffer

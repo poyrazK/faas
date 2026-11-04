@@ -49,12 +49,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
@@ -106,7 +106,7 @@ func (e *ResponseTruncatedError) Error() string {
 	return fmt.Sprintf("API response was truncated: expected %d bytes, received %d", e.Expected, e.Received)
 }
 
-var cookieOnlyPathRE = regexp.MustCompile(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
+var cookieOnlyPathRE = lazyregexp.New(`^(/v1/auth/(sessions|capabilities)(/.*)?|/dashboard/account/set-password|/v1/admin/status/incidents(?:/[^/]+/updates)?)(?:\?.*)?$`)
 
 // Client is a typed wrapper over the v1 REST API. Construct with
 // NewClient (30s default timeout) or NewClientWithDeployTimeout
@@ -231,6 +231,23 @@ func NewClientWithDeployTimeout(baseURL, token string, deployTimeout time.Durati
 // callers can swap transport-level knobs (TLS, retries) without
 // depending on a private field.
 func (c *Client) HTTPClient() *http.Client { return c.http }
+
+// WrapTransport replaces the transport of every HTTP client c sends with
+// (JSON, streams and uploads) by wrap(current), so a caller can stamp
+// headers or watch responses on all of them. It returns c.
+func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) *Client {
+	for _, cli := range []*http.Client{c.http, c.deployHTTP} {
+		if cli == nil {
+			continue
+		}
+		base := cli.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		cli.Transport = wrap(base)
+	}
+	return c
+}
 
 // BaseURL returns the URL prefix the client was constructed with.
 func (c *Client) BaseURL() string { return c.baseURL }
@@ -762,7 +779,10 @@ func (c *Client) PostAccountMfaEnroll(ctx context.Context) (MFAEnrollResponse, e
 // ConfirmMFA finishes enrollment with the customer's first 6-digit
 // TOTP code. On success the server stamps mfa_enrolled_at, clears
 // mfa_required, and re-issues the session cookie without
-// mfa_pending. Idempotent on retry.
+// mfa_pending. An already-confirmed enrollment returns a conflict; use
+// verification for subsequent challenges. This method requires a session
+// and its action-bound CSRF token, plus CurrentPassword when the account has
+// one; the CLI opens the browser form instead.
 func (c *Client) PostAccountMfaConfirm(ctx context.Context, req MFAConfirmRequest) (MFAConfirmResponse, error) {
 	var out MFAConfirmResponse
 	return out, c.do(ctx, "POST", "/v1/account/mfa/confirm", req, &out)
@@ -839,6 +859,14 @@ func (c *Client) PostAccountLogout(ctx context.Context) error {
 func (c *Client) ListApps(ctx context.Context) ([]AppResponse, error) {
 	var out []AppResponse
 	return out, c.do(ctx, "GET", "/v1/apps", nil, &out)
+}
+
+// ListAppsSelected lists the apps a label selector picks
+// (ADR-20261031100025). An apid without labels ignores the selector and
+// returns every app, so callers match the returned labels again.
+func (c *Client) ListAppsSelected(ctx context.Context, selector string) ([]AppResponse, error) {
+	var out []AppResponse
+	return out, c.do(ctx, "GET", "/v1/apps?"+url.Values{"selector": {selector}}.Encode(), nil, &out)
 }
 
 // CreateApp creates an app.
@@ -1684,8 +1712,8 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 // output byte-for-byte — a CI consumer parsing either path
 // agrees.
 //
-// Read-only: auth chain on the server is apps:read (no MFA, no
-// deploy:write required). The handler does not call CreateApp /
+// Read-only: auth chain on the server is apps:read or deploy:write (no
+// MFA). The handler does not call CreateApp /
 // CreateDeployment / anything in the write path.
 func (c *Client) Diff(ctx context.Context, slug string, req DiffRequest) (DiffResponse, error) {
 	var out DiffResponse
@@ -2954,6 +2982,28 @@ func (c *Client) SetDefaultDomain(ctx context.Context, domain string) (CustomDom
 	return c.PostDomainsDomainDefault(ctx, domain)
 }
 
+// GetDomainHosts returns a wildcard custom domain's host allowlist (ADR-520
+// amendment 2). Backed by GET /v1/domains/{domain}/hosts.
+func (c *Client) GetDomainHosts(ctx context.Context, domain string) (CustomDomainHostsResponse, error) {
+	var out CustomDomainHostsResponse
+	return out, c.do(ctx, "GET", "/v1/domains/"+domain+"/hosts", nil, &out)
+}
+
+// SetDomainHosts replaces a wildcard custom domain's host allowlist: only the
+// listed names below it get certificates. Backed by PUT
+// /v1/domains/{domain}/hosts.
+func (c *Client) SetDomainHosts(ctx context.Context, domain string, names []string) (CustomDomainHostsResponse, error) {
+	var out CustomDomainHostsResponse
+	return out, c.do(ctx, "PUT", "/v1/domains/"+domain+"/hosts", SetCustomDomainHostsRequest{Names: names}, &out)
+}
+
+// ClearDomainHosts removes a wildcard custom domain's host allowlist, so every
+// name below it may get a certificate again. Backed by DELETE
+// /v1/domains/{domain}/hosts.
+func (c *Client) ClearDomainHosts(ctx context.Context, domain string) error {
+	return c.do(ctx, "DELETE", "/v1/domains/"+domain+"/hosts", nil, nil)
+}
+
 // RetryDomainVerification re-arms a pending domain after its bounded polling
 // backoff or retry budget expires. The server returns 202 with no response
 // body; mutating-call idempotency is supplied by Client.do.
@@ -3068,6 +3118,19 @@ func (c *Client) ListCrons(ctx context.Context, slug string) ([]CronResponse, er
 	var out []CronResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
+
+// ListCronsSelected lists the crons a label selector picks, on the app named
+// by slug or, when slug is empty, on every app (ADR-20261031100025). An apid
+// without labels ignores the selector, so callers match the returned labels
+// again.
+func (c *Client) ListCronsSelected(ctx context.Context, slug, selector string) ([]CronResponse, error) {
+	q := url.Values{"selector": {selector}}
+	if slug != "" {
+		q.Set("slug", slug)
+	}
+	var out []CronResponse
+	return out, c.do(ctx, "GET", "/v1/crons?"+q.Encode(), nil, &out)
+}
 func (c *Client) CreateCron(ctx context.Context, slug string, req CreateCronRequest) (CronResponse, error) {
 	var out CronResponse
 	return out, c.do(ctx, "POST", "/v1/crons", req, &out)
@@ -3120,6 +3183,22 @@ func (c *Client) ListJobs(ctx context.Context, pagination ...int) (ListJobsRespo
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListJobsSelected returns one page of the jobs a label selector picks
+// (ADR-20261031100025); limit and offset page the matches, and zero uses the
+// server default. An apid without labels ignores the selector and pages every
+// job, so callers match the returned labels again.
+func (c *Client) ListJobsSelected(ctx context.Context, selector string, limit, offset int) (ListJobsResponse, error) {
+	q := url.Values{"selector": {selector}}
+	if limit != 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset != 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	var out ListJobsResponse
+	return out, c.do(ctx, "GET", "/v1/jobs?"+q.Encode(), nil, &out)
 }
 
 // CreateJob creates a new job under the calling account. Idempotent
@@ -3739,6 +3818,16 @@ func (c *Client) ListEdgeRulesForApp(ctx context.Context, slug string) ([]EdgeRu
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules", nil, &out)
 }
 
+// ListCoveringEdgeRulesForApp is ListEdgeRulesForApp plus the rules of the
+// account's other apps whose host pattern can cover the app's hosts, which
+// the gateway applies there too (ADR-091 amendment 2026-10-31). Each rule
+// carries its own app_id. An apid that predates the parameter returns the
+// app's own rules.
+func (c *Client) ListCoveringEdgeRulesForApp(ctx context.Context, slug string) ([]EdgeRuleResponse, error) {
+	var out []EdgeRuleResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules?covering=true", nil, &out)
+}
+
 // CreateEdgeRule attaches a new rule to the slug's app. Plan-kind
 // gate (jwt|ip → 402 plan_edge_rule_kind_not_allowed) and per-app
 // quota (402 plan_limit_edge_rules) surface on this call. Action is
@@ -3847,34 +3936,48 @@ func (c *Client) UpdateEdgeWAFExclusions(ctx context.Context, id string, req Edg
 	return out, c.do(ctx, "POST", "/v1/edge-rules/"+url.PathEscape(id)+"/waf-exclusions", req, &out)
 }
 
-// ListEdgeRuleLists returns the account's reusable edge-rule lists, without
-// items (ADR-963).
-func (c *Client) ListEdgeRuleLists(ctx context.Context) (ListEdgeRuleListsResponse, error) {
+// edgeRuleListPath is a list URL. A non-empty app names a company app whose
+// organization's lists the call manages (ADR-091 amendment 2026-11-03);
+// empty manages the caller's personal lists.
+func edgeRuleListPath(name, app string) string {
+	path := "/v1/edge-rule-lists"
+	if name != "" {
+		path += "/" + url.PathEscape(name)
+	}
+	if app != "" {
+		path += "?app=" + url.QueryEscape(app)
+	}
+	return path
+}
+
+// ListEdgeRuleLists returns the reusable edge-rule lists, without items
+// (ADR-963): the caller's own, or a company app's when app is set.
+func (c *Client) ListEdgeRuleLists(ctx context.Context, app string) (ListEdgeRuleListsResponse, error) {
 	var out ListEdgeRuleListsResponse
-	return out, c.do(ctx, "GET", "/v1/edge-rule-lists", nil, &out)
+	return out, c.do(ctx, "GET", edgeRuleListPath("", app), nil, &out)
 }
 
 // GetEdgeRuleList returns one list with its items (ADR-963).
-func (c *Client) GetEdgeRuleList(ctx context.Context, name string) (EdgeRuleListResponse, error) {
+func (c *Client) GetEdgeRuleList(ctx context.Context, name, app string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
-	return out, c.do(ctx, "GET", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, &out)
+	return out, c.do(ctx, "GET", edgeRuleListPath(name, app), nil, &out)
 }
 
 // CreateEdgeRuleList creates a list (ADR-963).
-func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+func (c *Client) CreateEdgeRuleList(ctx context.Context, req CreateEdgeRuleListRequest, app string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
-	return out, c.do(ctx, "POST", "/v1/edge-rule-lists", req, &out)
+	return out, c.do(ctx, "POST", edgeRuleListPath("", app), req, &out)
 }
 
 // UpdateEdgeRuleList edits a list (ADR-963).
-func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest) (EdgeRuleListResponse, error) {
+func (c *Client) UpdateEdgeRuleList(ctx context.Context, name string, req UpdateEdgeRuleListRequest, app string) (EdgeRuleListResponse, error) {
 	var out EdgeRuleListResponse
-	return out, c.do(ctx, "PATCH", "/v1/edge-rule-lists/"+url.PathEscape(name), req, &out)
+	return out, c.do(ctx, "PATCH", edgeRuleListPath(name, app), req, &out)
 }
 
 // DeleteEdgeRuleList deletes an unreferenced list (ADR-963).
-func (c *Client) DeleteEdgeRuleList(ctx context.Context, name string) error {
-	return c.do(ctx, "DELETE", "/v1/edge-rule-lists/"+url.PathEscape(name), nil, nil)
+func (c *Client) DeleteEdgeRuleList(ctx context.Context, name, app string) error {
+	return c.do(ctx, "DELETE", edgeRuleListPath(name, app), nil, nil)
 }
 
 // ListEdgeRuleSetVersions returns the app's recorded edge-rule set versions,
@@ -4455,9 +4558,12 @@ func (c *Client) ListKeys(ctx context.Context) ([]APIKeyResponse, error) {
 	var out []APIKeyResponse
 	return out, c.do(ctx, "GET", "/v1/keys", nil, &out)
 }
-func (c *Client) CreateKey(ctx context.Context, label string, scopes []string) (APIKeyResponse, error) {
+
+// CreateKey mints an account key; projects limits an agent key to those
+// projects' apps (ADR-20261104085712).
+func (c *Client) CreateKey(ctx context.Context, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/keys", CreateKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 func (c *Client) DeleteKey(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/keys/"+id, nil, nil)
@@ -4515,10 +4621,11 @@ func (c *Client) ListOrgAPIKeys(ctx context.Context, slug string) (ListOrgAPIKey
 // CreateOrgAPIKey mints a new API key against the org. Returns the
 // standard APIKeyResponse — plaintext is present on this single
 // response and never returned again. `scopes` is optional; nil
-// defaults to ["admin"] on the server side (mirrors CreateKey).
-func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string) (APIKeyResponse, error) {
+// defaults to ["admin"] on the server side (mirrors CreateKey). projects
+// limits an agent key to those projects' apps (ADR-20261104085712).
+func (c *Client) CreateOrgAPIKey(ctx context.Context, slug, label string, scopes []string, projects ...string) (APIKeyResponse, error) {
 	var out APIKeyResponse
-	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes}, &out)
+	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/keys", CreateOrgAPIKeyRequest{Label: label, Scopes: scopes, Projects: projects}, &out)
 }
 
 // GetOrgAPIKey fetches a single key by id within the org. Cross-org
@@ -8208,6 +8315,38 @@ func (c *Client) GetAppStatus(ctx context.Context, slug, environment string) (Re
 	}
 	var out ResourceStatus
 	err := c.do(ctx, "GET", path, nil, &out)
+	return out, err
+}
+
+// UpdateAppLabels sets and removes an app's labels in one write and returns
+// every label it carries after it (ADR-20261031100025).
+func (c *Client) UpdateAppLabels(ctx context.Context, slug string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/apps/"+url.PathEscape(slug)+"/labels", change, &out)
+	return out, err
+}
+
+// UpdateDatabaseLabels sets and removes a managed database's labels
+// (ADR-20261031100025, preview).
+func (c *Client) UpdateDatabaseLabels(ctx context.Context, id string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/postgres/databases/"+url.PathEscape(id)+"/labels", change, &out)
+	return out, err
+}
+
+// UpdateCronLabels sets and removes a cron's labels (ADR-20261031100025,
+// preview).
+func (c *Client) UpdateCronLabels(ctx context.Context, id string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/crons/"+url.PathEscape(id)+"/labels", change, &out)
+	return out, err
+}
+
+// UpdateJobLabels sets and removes a job's labels (ADR-20261031100025,
+// preview).
+func (c *Client) UpdateJobLabels(ctx context.Context, name string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/jobs/"+url.PathEscape(name)+"/labels", change, &out)
 	return out, err
 }
 

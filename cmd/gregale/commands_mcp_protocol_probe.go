@@ -265,8 +265,9 @@ func qualifyMCPProtocolPublicRoles(ctx context.Context, endpointURL, endpointPat
 		return []mcpRoleProtocolReport{{Name: "public", Error: "MCP public endpoint is invalid for protocol qualification"}}
 	}
 	u.Path, u.RawPath = endpointPath, ""
-	reports := make([]mcpRoleProtocolReport, 0, len(roles))
-	for _, role := range roles {
+	reports := make([]mcpRoleProtocolReport, len(roles))
+	runMCPVerificationJobs(ctx, len(roles), func(ctx context.Context, index int) {
+		role := roles[index]
 		report := qualifyMCPProtocolEndpoint(ctx, u.String(), role, timeout)
 		if report.Qualified {
 			for _, replica := range exact.Replicas {
@@ -282,8 +283,8 @@ func qualifyMCPProtocolPublicRoles(ctx context.Context, endpointURL, endpointPat
 				}
 			}
 		}
-		reports = append(reports, report)
-	}
+		reports[index] = report
+	})
 	return reports
 }
 
@@ -314,10 +315,14 @@ func qualifyMCPProtocolDeployment(ctx context.Context, client *api.Client, slug,
 	}
 	roleDigests := make(map[string]string, len(roles))
 	checkedIDs := make(map[string]struct{}, len(expected))
-	for _, instanceID := range expected {
+	roleReports := make([]mcpRoleProtocolReport, len(expected)*len(roles))
+	runMCPVerificationJobs(ctx, len(roleReports), func(ctx context.Context, index int) {
+		roleReports[index] = qualifyMCPProtocolInstance(ctx, client, slug, deploymentID, expected[index/len(roles)], u.Host, endpointPath, roles[index%len(roles)], timeout)
+	})
+	for instanceIndex, instanceID := range expected {
 		replica := mcpReplicaProtocolReport{InstanceID: instanceID, Qualified: true, Roles: make([]mcpRoleProtocolReport, 0, len(roles))}
-		for _, role := range roles {
-			roleReport := qualifyMCPProtocolInstance(ctx, client, slug, deploymentID, instanceID, u.Host, endpointPath, role, timeout)
+		for roleIndex := range roles {
+			roleReport := roleReports[instanceIndex*len(roles)+roleIndex]
 			replica.Roles = append(replica.Roles, roleReport)
 			if !roleReport.Qualified {
 				replica.Qualified = false

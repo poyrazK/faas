@@ -636,9 +636,10 @@ type OpsMetrics struct {
 	issueEventsRecorded *prometheus.CounterVec
 	// requestTelemetryRecorded (ADR-127 PR-B) — counter the
 	// apid gRPC handler (cmd/apid/grpc_server_request_telemetry.go)
-	// increments per outcome. outcome ∈ {inserted, rate_limited,
-	// db_error}. `inserted` is the §12 customer-telemetry-ingest
-	// panel (rate over 5m). `rate_limited` is the per-account
+	// increments per outcome. outcome ∈ {inserted, not_retained,
+	// rate_limited, db_error}. `inserted` is the §12 customer-telemetry-ingest
+	// panel (rate over 5m). `not_retained` is a row whose plan keeps no
+	// request telemetry (usage only). `rate_limited` is the per-account
 	// token-bucket overflow path (DebugTelemetryRequestsPerMinute
 	// exceeded). `db_error` is the per-row INSERT failure path.
 	// The closed label set keeps cardinality bounded.
@@ -670,7 +671,8 @@ type OpsMetrics struct {
 	// counter the gatewayd-public OTel handler increments when
 	// the apid AuthenticateKey RPC rejects the bearer token or
 	// the plan doesn't include telemetry. reason ∈
-	// {unauthenticated, plan_disabled, internal}. Single-registry:
+	// {unauthenticated, forbidden, not_released, plan_disabled,
+	// internal}. Single-registry:
 	// registered on every daemon; only gatewayd-public increments
 	// via IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures *prometheus.CounterVec
@@ -4358,7 +4360,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Customer-facing automatic error grouping ingest outcomes (ADR-096), labelled by outcome ∈ {ok, redaction_failed, rate_limited, db_error}. `ok` is the §12 customer-error-ingest panel (rate over 5m). `redaction_failed` is the tripwire for pkg/redact panicking — MUST stay at 0. `rate_limited` is the LRU-cardinality backstop firing when an app exceeds CardinalityLimit fingerprints. `db_error` is the publisher's per-row drop signal — incremented for EVERY row of a failed flush batch (the batch is drained before flushBatch is called, so failures always lose data; per-row observe gives the §12 panel an accurate outage timeline rather than only the 5th-consecutive-failure tripwire). Single-registry: registered on every daemon; only gatewayd-internal + apid increment via ObserveAppErrorsRecorded.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, appErrorsRecorded)
-	issueEventsRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_issue_events_recorded_total", Help: "Gregale Issues accepted, duplicate, quota, rate, conflict, or persistence outcomes; no customer identifiers."}, []string{"outcome"})
+	issueEventsRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_issue_events_recorded_total", Help: "Gregale Issues ingestion and bounded HTTP retry outcomes; no customer identifiers."}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, issueEventsRecorded)
 	// ADR-127 PR-B: production debugger ingest outcomes.
 	// outcome ∈ {inserted, rate_limited, db_error}. `inserted`
@@ -4384,7 +4386,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// increments via IncrementGatewaydPublicOtelSpansIngested.
 	gatewaydPublicOtelSpansIngested := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_spans_ingested_total",
-		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid}. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
+		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid, buffer_full}. `buffer_full` counts traces rejected because the account or the process already buffers its maximum of traces between flushes. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansIngested)
 	// ADR-127 PR-D: truncation tripwire. Fires once per OTLP
@@ -4404,7 +4406,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_otel_auth_failures_total",
-		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
+		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, forbidden, not_released, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `forbidden` is a key that cannot write traces (no admin, deploy:write or metrics:write scope, or a company key whose holder may no longer deploy there). `not_released` is the tracing capability being off for the account. `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
 	}, []string{"reason"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelAuthFailures)
 	// ADR-127 PR-D: apid-side SpansWriter RPC outcomes. outcome
@@ -6482,7 +6484,9 @@ var (
 	// (ADR-1741).
 	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
-		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining"}
+		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining",
+		// ADR 20261031190030: frozen VMs yield memory to admission.
+		"admission", "refused_wake"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
 	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}
@@ -11323,7 +11327,7 @@ func (m *OpsMetrics) ObserveIssueEvent(outcome string) {
 		return
 	}
 	switch outcome {
-	case "accepted", "duplicate", "quota_exceeded", "rate_limited", "conflict", "db_error":
+	case "accepted", "duplicate", "invalid", "quota_exceeded", "rate_limited", "conflict", "db_error", "retry_recovered", "retry_dropped", "retry_skipped":
 	default:
 		return
 	}

@@ -152,3 +152,10 @@ func (c *RealtimeHistoryClientImpl) Close() error {
 	}
 	return c.conn.Close()
 }
+
+// CredentialMatcher asks apid, over the same connection, whether a stored
+// credential hash matches a presented token: apid serves its Auth service
+// on the listeners realtimed reaches (ADR 20261029202403 amendment 1).
+func (c *RealtimeHistoryClientImpl) CredentialMatcher() *CredentialMatcher {
+	return NewCredentialMatcher(NewAuthClient(c.conn))
+}

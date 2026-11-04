@@ -86,6 +86,8 @@ func unavailableDetail(reason string) string {
 		return "The app's account is inactive. Deployment readiness remains unverified."
 	case "plan_not_allowed":
 		return "The account's plan does not allow workflow execution. Deployment readiness remains unverified."
+	case "workflows_not_released":
+		return "Workflows are unavailable for this account. Contact support before starting this automation."
 	case "maintenance":
 		return "The app is in maintenance. Deployment readiness remains unverified."
 	case "tenant_required":

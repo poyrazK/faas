@@ -244,6 +244,9 @@ check says previews are off.
 `preview_bot_prs` (default off) and `preview_draft_prs` (default on) decide
 whether pull requests opened by bots such as Dependabot and Renovate, and draft
 pull requests, get previews. The PR's author decides, not whoever pushed to it.
+A PR head is held to the plan a project deploy applies: a service whose
+declared memory, replicas, image process or lifecycle settings the plan does
+not allow gets no preview, and the `gregale-preview` check names the limit.
 A skipped pull request gets a neutral `gregale-preview` check that says why;
 with draft previews off, a draft gets its preview when it is marked ready for
 review. A pull request whose preview is live and whose next head is skipped
@@ -345,6 +348,7 @@ to the target branch and triggers the normal deployment event.
 - ADR-20261026090000 (environment allowance, environment-wide destroy, setup failures on the PR, gate sync).
 - ADR-20261031090000 (route contract on previews, turning previews off tears them down).
 - ADR-20261031120000 (new services' gates and org, skipped heads retire the preview, production protocols, no custom domains).
+- ADR-20261031180000 (PR heads held to the plan, tenant and security gates on previews).
 - `docs/runbooks/PreviewSubdomainRouting.md` — operator
   recovery for routing failures.
 - `pkg/githubd` — webhook receiver (PR-A surface).
@@ -401,14 +405,18 @@ A preview gets the rest of its configuration from two places
   gregale env set --app shop-api --env pr-preview STRIPE_KEY=sk_test_…
   ```
 
-  They override the PR's Compose values. Changing a value reaches each preview
+  They override the PR's Compose values. Anyone who can open a pull request
+  runs code with these values, so they can read them: keep test credentials
+  here, never production ones. Changing a value reaches each preview
   at its next build. Removing one from `pr-preview` does not remove it from
   open previews. Managed database and storage credentials are never given to
   previews. `pr-preview` cannot be the name of a project environment.
 
 Previews keep their production app's access and egress gates: password,
-IP allowlist, signed-request and consumer-auth requirements, the egress
-allowlist, the app's visibility, and its declared-route contract: when
+API key (`require_authn` and bearer public auth),
+IP allowlist, signed-request, consumer-auth and platform-tenant requirements,
+the egress allowlist, the security posture policy for deploys, the app's
+visibility, and its declared-route contract: when
 production answers only the routes its imported OpenAPI document declares, so
 do its previews, held to the production app's document. A gate changed on the
 production app applies to its live previews at once. Previews also serve the
@@ -445,6 +453,36 @@ developer previews and legacy PR previews with no recorded set. The CLI's
 `preview show` and `preview wait` use the recorded set when available and
 fall back to app-level status for those older previews.
 
+A pull request's CI can read its preview without a stored key
+([ADR-20261102203228](adr/20261102203228-ci-reads-its-preview-status.md)).
+With `permissions: id-token: write`, exchange the job's GitHub OIDC token for a
+preview-read bearer of the production app, then poll the environment until it
+is live:
+
+```bash
+BEARER=$(curl -sf -X POST https://api.gregale.dev/v1/auth/oidc/exchange \
+  -H 'Content-Type: application/json' \
+  -d "{\"provider\":\"github\",\"token\":\"$OIDC_TOKEN\",\"aud\":\"gregale\",\"app\":\"shop-api\",\"capability\":\"preview-read\"}" \
+  | jq -r .bearer)
+for _ in $(seq 90); do
+  status=$(curl -sf -H "Authorization: Bearer $BEARER" \
+    "https://api.gregale.dev/v1/preview/pr-$PR_NUMBER-shop-api/environment")
+  case "$(jq -r .phase <<<"$status")" in
+    live) exit 0 ;;
+    failed | closed) echo "$status"; exit 1 ;;
+  esac
+  sleep 10
+done
+exit 1
+```
+
+`gregale preview wait` reads the preview app as well, so it needs an
+account-wide credential.
+
+The bearer reads only the status of that app's previews, from any branch or
+pull request run. A per-app deploy token can read its app's previews too, but
+do not store one where pull request workflows can read it: it deploys.
+
 Gregale denies that boundary by default. The proxy returns
 `403 application/problem+json` with code
 `preview_production_dependency_denied` before endpoint discovery or wake-up,
@@ -470,5 +508,6 @@ preview-to-preview and preview-to-production counters.
 ## Builds, lifetime and indexing
 
 - **Builds.** A pull request's preview builds use at most half of the account's hourly deploy limit, so production deploys keep the other half. Builders take every other queued build before a preview build.
-- **Lifetime.** Deleting a production app tears down its PR previews on the preview janitor's next pass, within five minutes.
+- **Lifetime.** Deleting a production app tears down its PR previews on the preview janitor's next pass, within five minutes. So does uninstalling the GitHub App or removing the repository from it, for every service of the repository's PR environments ([ADR-20261102100001](adr/20261102100001-previews-withhold-gate-credentials.md)). The project is then disconnected from the installation; reconnecting one of its apps to the same repository reconnects the project.
+- **Credentials.** A preview runs the pull request's code, so the credential a password or API-key gate verifies does not reach it: the gateway removes the `Authorization` header before the request reaches a preview. Production apps still receive it.
 - **Indexing.** Previews answer every request with `X-Robots-Tag: noindex, nofollow` and serve a `robots.txt` that disallows everything.

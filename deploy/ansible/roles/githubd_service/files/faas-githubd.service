@@ -30,6 +30,7 @@ Environment=FAAS_CI_AUTOMATION_ENABLED=0
 Environment=FAAS_HOST_AGE_IDENTITY_PATH=%d/faas_fleet_age_identity
 Environment=FAAS_HOST_AGE_PUB=%d/faas_fleet_age_recipient
 Environment=FAAS_GITHUB_APP_KEY_PATH=%d/faas_github_app_key_unit
+Environment=FAAS_APID_GITHUBD_BRIDGE_SOCK=/run/faas/apid-githubd.sock
 LoadCredential=faas_fleet_age_identity:/etc/faas/secrets/fleet.age
 LoadCredential=faas_host_age_identity:/etc/faas/secrets/host.age
 LoadCredential=faas_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub

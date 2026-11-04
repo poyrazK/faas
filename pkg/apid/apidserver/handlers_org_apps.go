@@ -2,8 +2,10 @@ package apidserver
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -27,6 +29,10 @@ func (s *server) listOrgApps(w http.ResponseWriter, r *http.Request, _ state.Acc
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list workspace apps"))
 		return
+	}
+	// A key limited to projects lists only their apps (ADR-20261104085712).
+	if _, key, _ := authmw.AccountFromContext(r); key != nil && key.ProjectLimited {
+		apps = slices.DeleteFunc(apps, func(app state.App) bool { return authmw.AppOutsideKeyProjects(key, app) })
 	}
 	writeOrgAppList(w, apps)
 }

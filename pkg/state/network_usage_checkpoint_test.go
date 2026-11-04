@@ -50,6 +50,37 @@ func TestMemStoreAppendNetworkUsageObservationIsRestartSafe(t *testing.T) {
 	}
 }
 
+// adr: 20261101113742 — a vmmd or interface restart counts from zero again,
+// so the first reading after it is new egress, not a regression to drop.
+func TestMemStoreAppendNetworkUsageObservationCountsCounterReset(t *testing.T) {
+	store := state.NewMemStore()
+	minute := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	observe := func(at time.Time, tx, rx int64) (int64, int64) {
+		t.Helper()
+		if err := store.AppendUsage(t.Context(), "account", "app", "instance", at, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		dtx, drx, err := store.AppendNetworkUsageObservation(t.Context(), "account", "app", "instance", at, tx, true, rx, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return dtx, drx
+	}
+	if tx, rx := observe(minute, 1_000, 400); tx != 1_000 || rx != 400 {
+		t.Fatalf("first observation = (%d, %d), want (1000, 400)", tx, rx)
+	}
+	if tx, rx := observe(minute.Add(time.Minute), 30, 12); tx != 30 || rx != 12 {
+		t.Fatalf("observation after a counter reset = (%d, %d), want the whole new value (30, 12)", tx, rx)
+	}
+	if tx, rx := observe(minute.Add(2*time.Minute), 80, 20); tx != 50 || rx != 8 {
+		t.Fatalf("observation after the reset baseline = (%d, %d), want (50, 8)", tx, rx)
+	}
+	rows, err := store.UsageByMonth(t.Context(), "account", minute)
+	if err != nil || len(rows) != 1 || rows[0].NetTxBytes != 1_080 || rows[0].NetRxBytes != 420 {
+		t.Fatalf("monthly usage = (%+v, %v), want net tx/rx 1080/420", rows, err)
+	}
+}
+
 func TestMemStoreAppendNetworkUsageObservationDoesNotAdvanceWithoutBaseRow(t *testing.T) {
 	store := state.NewMemStore()
 	minute := time.Date(2026, 9, 11, 2, 10, 0, 0, time.UTC)

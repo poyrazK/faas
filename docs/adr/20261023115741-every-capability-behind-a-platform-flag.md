@@ -217,3 +217,17 @@ runtime-config watcher, as vmmd does, and decides `profile-captures` for a
 deployment's account, plan and organization before stamping on-demand
 collectors into its guest manifest (ADR-1155). An unreleased account's
 runtimes keep no collector preload.
+
+## Amendment (2026-11-01): templates and gregale.yaml in the CLI
+
+`GET /v1/templates` already leaves out a template whose `gregale.yaml` turns
+on a capability the account does not have. `gregale init --list` and the
+`init` picker now do the same from the CLI's capability view, mapping a
+manifest to capabilities through the catalog's `settings` and
+`capgate.ManifestSettings`. Listed templates name the secrets of a service
+the customer brings (`cron-worker` needs Upstash and QStash). A deploy whose
+template or `gregale.yaml` turns on a hidden capability is refused before
+any app or upload exists, after asking the server when the cached view does
+not already release the capability. Before, `queue-worker` created the app
+and its release, then failed on the gated queue-binding route with a bare
+`no such API route` (#5756).

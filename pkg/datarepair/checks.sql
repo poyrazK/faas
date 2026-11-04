@@ -4,6 +4,71 @@ ALTER TABLE gregale_repair.plans ADD COLUMN IF NOT EXISTS check_failure jsonb
 ALTER TABLE gregale_repair.plans ADD COLUMN IF NOT EXISTS apply_checks jsonb
  CHECK (apply_checks IS NULL OR jsonb_typeof(apply_checks)='object');
 
+-- Strip a statement terminator only outside SQL strings, quoted identifiers,
+-- dollar quotes and nested comments. Preserve the original policy bytes/digest.
+CREATE OR REPLACE FUNCTION gregale_repair.check_query(statement_sql text) RETURNS text
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog AS $$
+DECLARE i integer:=1; total integer:=length(statement_sql); terminator integer:=0;
+ c text; quote text; marker text; matches text[]; closing integer; depth integer;
+ escaped boolean; closed boolean;
+BEGIN
+ IF statement_sql IS NULL OR octet_length(statement_sql)>__CHECK_POLICY_BYTES__ OR
+  statement_sql !~* '^[[:space:]]*SELECT[[:space:]]' THEN
+  RAISE EXCEPTION 'repair_invalid_checks' USING ERRCODE='22023'; END IF;
+ WHILE i<=total LOOP
+  c:=substr(statement_sql,i,1);
+  IF c ~ '[[:space:]]' THEN i:=i+1; CONTINUE; END IF;
+  IF substr(statement_sql,i,2)='--' THEN
+   i:=i+2;
+   WHILE i<=total AND substr(statement_sql,i,1) NOT IN (chr(10),chr(13)) LOOP i:=i+1; END LOOP;
+   CONTINUE;
+  END IF;
+  IF substr(statement_sql,i,2)='/*' THEN
+   depth:=1; i:=i+2;
+   WHILE i<=total AND depth>0 LOOP
+    IF substr(statement_sql,i,2)='/*' THEN depth:=depth+1; i:=i+2;
+    ELSIF substr(statement_sql,i,2)='*/' THEN depth:=depth-1; i:=i+2;
+    ELSE i:=i+1; END IF;
+   END LOOP;
+   IF depth<>0 THEN RAISE EXCEPTION 'repair_invalid_checks' USING ERRCODE='22023'; END IF;
+   CONTINUE;
+  END IF;
+  IF c=';' THEN
+   IF terminator=0 THEN terminator:=i; END IF;
+   i:=i+1; CONTINUE;
+  END IF;
+  IF terminator>0 THEN RAISE EXCEPTION 'repair_invalid_checks' USING ERRCODE='22023'; END IF;
+  IF c IN ('''','"') THEN
+   quote:=c;
+   escaped:=quote='''' AND (current_setting('standard_conforming_strings')='off' OR
+    (i>1 AND substr(statement_sql,i-1,1) IN ('e','E') AND (i=2 OR (substr(statement_sql,i-2,1) !~ '[[:alnum:]_$]' AND ascii(substr(statement_sql,i-2,1))<128))));
+   i:=i+1; closed:=false;
+   WHILE i<=total LOOP
+    c:=substr(statement_sql,i,1);
+    IF c=quote THEN
+     IF substr(statement_sql,i+1,1)=quote THEN i:=i+2;
+     ELSE i:=i+1; closed:=true; EXIT; END IF;
+    ELSIF escaped AND c=chr(92) THEN i:=i+2;
+    ELSE i:=i+1; END IF;
+   END LOOP;
+   IF NOT closed THEN RAISE EXCEPTION 'repair_invalid_checks' USING ERRCODE='22023'; END IF;
+   CONTINUE;
+  END IF;
+  IF c=chr(36) AND (i=1 OR (substr(statement_sql,i-1,1) !~ '[[:alnum:]_$]' AND ascii(substr(statement_sql,i-1,1))<128)) THEN
+   -- PostgreSQL validates the delimiter and the complete SELECT after this
+   -- lexical pass. Accept delimiter candidates containing Unicode tags too.
+   matches:=regexp_match(substr(statement_sql,i),'^([$][^$[:space:]]*[$])');
+   IF matches IS NOT NULL THEN
+    marker:=matches[1]; closing:=strpos(substr(statement_sql,i+length(marker)),marker);
+    IF closing=0 THEN RAISE EXCEPTION 'repair_invalid_checks' USING ERRCODE='22023'; END IF;
+    i:=i+length(marker)+closing-1+length(marker); CONTINUE;
+   END IF;
+  END IF;
+  i:=i+1;
+ END LOOP;
+ RETURN CASE WHEN terminator>0 THEN left(statement_sql,terminator-1) ELSE statement_sql END;
+END $$;
+
 CREATE OR REPLACE FUNCTION gregale_repair.valid_check_manifest(manifest jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog AS $$
 DECLARE c jsonb; names text[]:='{}';
@@ -85,8 +150,8 @@ BEGIN
   state:='not_run';
   IF NOT failed THEN
    BEGIN
-    query:=regexp_replace(c->>'sql',';[[:space:]]*$','');
-    EXECUTE format('SELECT row_to_json(q),pg_typeof(q.value)::oid FROM (%s%s) q(value)',query,E'\n') INTO STRICT value_row,value_type;
+    query:=gregale_repair.check_query(c->>'sql');
+    EXECUTE format('SELECT row_to_json(q.*),pg_typeof(q.value)::oid FROM (%s%s) q(value)',query,E'\n') INTO STRICT value_row,value_type;
     SELECT count(*) INTO columns_count FROM json_object_keys(value_row);
     state:=CASE WHEN value_type<>16 OR columns_count<>1 THEN 'error'
      WHEN (value_row->'value')::jsonb='true'::jsonb THEN 'passed' ELSE 'failed' END;

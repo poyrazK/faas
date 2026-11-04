@@ -20,7 +20,7 @@ func TestHandleInvocationDispatch_WorkflowRequiresAuthenticatedActiveStep(t *tes
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	tok, err := internalsvc.Mint("schedd", 30*time.Second, nil, priv, internalsvc.KidFromPub(pub))
+	tok, err := internalsvc.Mint("schedd", 30*time.Second, map[string]any{"app_id": "app-1"}, priv, internalsvc.KidFromPub(pub))
 	if err != nil {
 		t.Fatalf("mint token: %v", err)
 	}

@@ -107,16 +107,28 @@ func TestDeployment(t *testing.T) {
 	}{
 		{"building", api.DeploymentResponse{Status: "building"}, map[string]want{
 			"Ready": {"False", "building", false}, "Progressing": {"True", "building", false}, "RolledOut": {"False", "building", false}}, ""},
-		{"live without stages", api.DeploymentResponse{Status: "live"}, map[string]want{
+		{"live without stages", api.DeploymentResponse{Status: "live", TrafficPercent: 100}, map[string]want{
 			"Ready": {"True", "live", false}, "Progressing": {"False", "complete", false}, "RolledOut": {"True", "rolled_out", false}}, ""},
-		{"live while readiness runs", api.DeploymentResponse{Status: "live", StageState: readiness("running")}, map[string]want{
+		{"live while readiness runs", api.DeploymentResponse{Status: "live", TrafficPercent: 100, StageState: readiness("running")}, map[string]want{
 			"Ready": {"False", "verifying", false}, "Progressing": {"True", "verifying", false}}, ""},
-		{"live after readiness", api.DeploymentResponse{Status: "live", StageState: readiness("completed")}, map[string]want{
+		{"live after readiness", api.DeploymentResponse{Status: "live", TrafficPercent: 100, StageState: readiness("completed")}, map[string]want{
 			"Ready": {"True", "live", false}}, ""},
-		{"rolling out", api.DeploymentResponse{Status: "live", CanaryTotalSteps: 3, CanaryStep: 1, RolloutState: "rolling_out"}, map[string]want{
+		{"rolling out", api.DeploymentResponse{Status: "live", TrafficPercent: 5, CanaryTotalSteps: 3, CanaryStep: 1, RolloutState: "rolling_out"}, map[string]want{
 			"Ready": {"True", "live", false}, "Progressing": {"True", "rolling_out", false}, "RolledOut": {"False", "rolling_out", false}}, ""},
-		{"rolled out", api.DeploymentResponse{Status: "live", CanaryTotalSteps: 3, RolloutState: "complete", RolloutCompletedAt: &completedAt}, map[string]want{
+		{"rolled out", api.DeploymentResponse{Status: "live", TrafficPercent: 100, CanaryTotalSteps: 3, RolloutState: "complete", RolloutCompletedAt: &completedAt}, map[string]want{
 			"Progressing": {"False", "complete", false}, "RolledOut": {"True", "rolled_out", false}}, "2026-10-30T14:59:00Z"},
+		{"traffic split share", api.DeploymentResponse{Status: "live", TrafficPercent: 30, RolloutState: "complete", RolloutCompletedAt: &completedAt}, map[string]want{
+			"RolledOut": {"True", "rolled_out", false}}, "2026-10-30T14:59:00Z"},
+		// deploy --no-traffic: ready on its own URL, not rolled out until promoted.
+		{"staged with no traffic", api.DeploymentResponse{Status: "live", TrafficPercent: 0, RolloutState: "complete", RolloutCompletedAt: &completedAt}, map[string]want{
+			"Ready": {"True", "live", false}, "Progressing": {"False", "complete", false}, "RolledOut": {"False", "staged", false}}, ""},
+		{"staged in the default scope", api.DeploymentResponse{Status: "live", Scope: "default", TrafficPercent: 0, RolloutState: "complete"}, map[string]want{
+			"RolledOut": {"False", "staged", false}}, ""},
+		// A project environment serves its release set's members at 0%.
+		{"release set member", api.DeploymentResponse{Status: "live", Scope: "staging", TrafficPercent: 0, RolloutState: "complete", RolloutCompletedAt: &completedAt}, map[string]want{
+			"RolledOut": {"True", "rolled_out", false}}, "2026-10-30T14:59:00Z"},
+		{"production release set member", api.DeploymentResponse{Status: "live", Scope: "production", TrafficPercent: 0, RolloutState: "complete", RolloutCompletedAt: &completedAt}, map[string]want{
+			"RolledOut": {"True", "rolled_out", false}}, "2026-10-30T14:59:00Z"},
 		{"rollout aborted", api.DeploymentResponse{Status: "live", CanaryTotalSteps: 3, RolloutState: "aborted", RolloutAbortedReason: "error rate 9%"}, map[string]want{
 			"RolledOut": {"False", "rollout_aborted", true}}, ""},
 		{"failed", api.DeploymentResponse{Status: "failed", Error: "build exited 1"}, map[string]want{

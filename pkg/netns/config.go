@@ -32,6 +32,7 @@ const (
 	LegacyServiceProxyPort  = 10080        // compatibility for persisted bindings (ADR-169)
 	ServiceProxyHTTPSPort   = 443          // opt-in private HTTPS service proxy on HostBridgeIP
 	ServiceDiscoveryDNSPort = 53           // guest service-name resolver on HostBridgeIP (ADR-170)
+	DatabaseRoutePort       = 5432         // managed-database route port on DatabaseRouteAddress (ADR-1027); mirrors api.DatabaseRoutePort
 	TenantBridge            = "br-tenants" // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
 	// value in the per-netns forward-chain argv, so goconst demands
@@ -70,6 +71,15 @@ var DefaultServiceAddressCIDR netip.Prefix
 // SetDefaultServiceAddressCIDR is vmmd's boot-time setter for
 // DefaultServiceAddressCIDR. Pass the zero prefix to disable.
 func SetDefaultServiceAddressCIDR(prefix netip.Prefix) { DefaultServiceAddressCIDR = prefix }
+
+// DefaultDatabaseRouteAddress is seeded by vmmd before any network is
+// prepared (ADR-1027). The zero address keeps the database route off: no
+// netns admits it, and the host renders no database NAT.
+var DefaultDatabaseRouteAddress netip.Addr
+
+// SetDefaultDatabaseRouteAddress is vmmd's boot-time setter for
+// DefaultDatabaseRouteAddress. Pass the zero address to disable.
+func SetDefaultDatabaseRouteAddress(addr netip.Addr) { DefaultDatabaseRouteAddress = addr }
 
 // SetDefaultHostBridgeIP is the boot-time setter for the per-host
 // bridge IP. Mirrors the pattern of pkg/fcvm.SetHostIPBase: callers
@@ -110,10 +120,14 @@ type Config struct {
 	// PrivateVethHost/PrivateVethPeer are an additive side-link for a
 	// Gregale-owned network. The public veth above remains attached to
 	// br-tenants; this pair is attached to the account-scoped gpn-* bridge.
-	PrivateVethHost       string
-	PrivateVethPeer       string
-	PrivateNetworkBridge  string
-	PrivateNetworkAddress netip.Addr
+	PrivateVethHost              string
+	PrivateVethPeer              string
+	PrivateNetworkBridge         string
+	PrivateNetworkAddress        netip.Addr
+	PrivateNetworkServiceAddress netip.Addr
+	PrivateNetworkID             string
+	PrivateNetworkAppID          string
+	PrivateNetworkAccountID      string
 	// GuestAppPort is the port the customer process binds inside the guest.
 	// The host-facing identity remains fixed at :8080; prerouting translates
 	// that stable port to this deployment-specific target. Zero or an invalid
@@ -181,6 +195,9 @@ type Config struct {
 	// they do not change the default public-egress policy: attaching a VPC
 	// augments connectivity rather than silently removing internet access.
 	PrivateNetworkCIDRs []netip.Prefix
+	// PrivateNetworkMTU is the common regional private-fabric MTU. Zero keeps
+	// the local/provider default. It affects only the private side-link.
+	PrivateNetworkMTU int
 	// PrivateNetworkAllowedCIDRs is an opt-in security policy for the
 	// Gregale-owned side-link. Empty means legacy allow-all within the
 	// attached network CIDRs; populated ranges are admitted symmetrically.
@@ -255,6 +272,10 @@ type Config struct {
 	// (ADR-576). The host DNATs that traffic onto the tenant-bridge service
 	// listeners. The zero prefix admits nothing.
 	ServiceAddressCIDR netip.Prefix
+	// DatabaseRouteAddress admits guest TCP to the managed-database route
+	// on api.DatabaseRoutePort (ADR-1027). The host DNATs it onto the
+	// forwarder that relays to pgproxyd. The zero address admits nothing.
+	DatabaseRouteAddress netip.Addr
 }
 
 // NewConfig fills the constant fields (tap name, /16) around the allocated names
@@ -280,8 +301,9 @@ func NewConfigWithBridge(instance, netnsName, vethHost, vethPeer string, hostIP,
 		ServiceProxyHTTPS: DefaultServiceProxyHTTPS,
 		// ADR-576: part of Config so a prepared namespace (ADR-149) built
 		// before the switch flipped is never reused without the admission.
-		ServiceAddressCIDR: DefaultServiceAddressCIDR,
-		HostBits:           16,
+		ServiceAddressCIDR:   DefaultServiceAddressCIDR,
+		DatabaseRouteAddress: DefaultDatabaseRouteAddress,
+		HostBits:             16,
 	}
 }
 
@@ -310,10 +332,27 @@ func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
 		// Private ingress targets the stable allocated app address. DNAT
 		// happens before local-delivery routing, so the address can remain
 		// owned by the private veth while the guest keeps its fixed tap IP.
-		rules = append(rules, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
-			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", port, "dnat", "to", target))
+		for _, address := range c.privateIngressAddresses() {
+			rules = append(rules, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
+				"ip", "daddr", address.String(), "tcp", "dport", port, "dnat", "to", target))
+		}
 	}
 	return rules
+}
+
+// databaseRouteRules admits guest TCP to the database route's one port
+// (ADR-1027) and drops everything else sent to the address. Like a service
+// address it is a platform hop, so the accept precedes every ADR-361/373
+// egress rule, and the per-instance conntrack cap still bounds it.
+func (c Config) databaseRouteRules(nft func(...string) []string) [][]string {
+	addr := c.DatabaseRouteAddress
+	if !addr.IsValid() || !addr.Is4() {
+		return nil
+	}
+	return [][]string{
+		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "tcp", "dport", strconv.Itoa(DatabaseRoutePort), "accept"),
+		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "drop"),
+	}
 }
 
 // serviceAddressRules admits guest TCP to private service addresses
@@ -443,6 +482,10 @@ func privateNetworkRouteCommands(c Config) [][]string {
 		args := []string{"ip", "netns", "exec", c.Netns, "ip", "route", "replace", prefix.String()}
 		if c.privateNetworkEnabled() {
 			dev = c.PrivateVethPeer
+			if !prefix.Contains(c.PrivateNetworkAddress) {
+				gateway := c.PrivateNetworkCIDRs[0].Masked().Addr().Next()
+				args = append(args, "via", gateway.String())
+			}
 			args = append(args, "dev", dev, "src", c.PrivateNetworkAddress.String())
 		} else {
 			args = append(args, "via", c.HostBridgeIP.String(), "dev", dev)
@@ -495,7 +538,7 @@ func (c Config) PrivateNetworkSetupCommands() [][]string {
 	prefix := c.PrivateNetworkCIDRs[0]
 	nx := []string{"ip", "netns", "exec", c.Netns}
 	inNetns := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
-	return [][]string{
+	cmds := [][]string{
 		// The private side-link is deliberately additive: public egress
 		// keeps using VethHost/VethPeer and br-tenants.
 		{"ip", "link", "add", c.PrivateVethHost, "type", "veth", "peer", "name", c.PrivateVethPeer},
@@ -505,6 +548,10 @@ func (c Config) PrivateNetworkSetupCommands() [][]string {
 		inNetns("ip", "addr", "add", fmt.Sprintf("%s/%d", c.PrivateNetworkAddress, prefix.Bits()), "dev", c.PrivateVethPeer),
 		inNetns("ip", "link", "set", c.PrivateVethPeer, "up"),
 	}
+	if c.PrivateNetworkServiceAddress.IsValid() {
+		cmds = append(cmds, inNetns("ip", "addr", "replace", c.PrivateNetworkServiceAddress.String()+"/32", "dev", c.PrivateVethPeer))
+	}
+	return append(cmds, c.PrivateNetworkMTUCommands()...)
 }
 
 func (c Config) privateNetworkEnabled() bool {
@@ -544,7 +591,6 @@ func (c Config) privateNetworkEnabled() bool {
 func (c Config) NftCommands() [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
-	port := fmt.Sprintf("%d", AppPort)
 	// Builder (not a literal slice) so the optional §7 conntrack-cap
 	// rule can be appended without leaving a nil element when
 	// ConntrackCap == 0.
@@ -625,6 +671,7 @@ func (c Config) NftCommands() [][]string {
 	// accept the deny would drop every reply and no published request would
 	// ever complete. Guest-INITIATED (ct state new) traffic still falls through
 	// to the denies, so lateral movement stays blocked.
+	cmds = append(cmds, c.privateNetworkMSSCommands(nft)...)
 	add("add", "rule", "ip", "faas", "forward", "ct", "state", "established,related", "accept")
 	if c.QualificationOnly && c.HostBridgeIP.IsValid() {
 		// The node-local readiness and smoke probes use the bridge address as
@@ -722,7 +769,7 @@ func (c Config) NftCommands() [][]string {
 			if len(c.PrivateNetworkAllowedCIDRs) > 0 {
 				args = append(args, "ip", "saddr", "{", strings.Join(prefixStrings(c.PrivateNetworkAllowedCIDRs), ","), "}")
 			}
-			args = append(args, "ip", "daddr", GuestIP, "tcp", "dport", port, "accept")
+			args = append(args, "ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(c.guestAppPort()), "ct", "status", "dnat", "accept")
 			add(args...)
 			if len(c.PrivateNetworkAllowedCIDRs) > 0 {
 				add("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop")
@@ -756,6 +803,7 @@ func (c Config) NftCommands() [][]string {
 				"meta", "l4proto", "udp", "ct", "status", "dnat", "accept")
 		}
 		cmds = append(cmds, c.serviceAddressRules(nft)...)
+		cmds = append(cmds, c.databaseRouteRules(nft)...)
 	}
 
 	// Lateral-movement deny (spec §11 + ADR-023 + ADR-034) — the v4
@@ -1211,25 +1259,25 @@ func (c Config) PrivateNetworkNftCommands() [][]string {
 	port := strconv.Itoa(c.guestAppPort())
 	forward := []string{"insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer}
 	if len(c.PrivateNetworkFirewallRules) > 0 {
-		cmds := make([][]string, 0, len(c.PrivateNetworkFirewallRules)+2)
+		// Insert the drop first so later head-inserted accepts precede it.
+		cmds := [][]string{nft("insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop")}
 		for _, rule := range c.privateFirewallIngressRules(func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }) {
 			if len(rule) > 5 {
 				rule[5] = "insert"
 			}
 			cmds = append(cmds, rule)
 		}
-		cmds = append(cmds, nft("insert", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop"))
 		cmds = append(cmds, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
 			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", strconv.Itoa(AppPort),
 			"dnat", "to", fmt.Sprintf("%s:%s", GuestIP, port)))
 		cmds = append(cmds, nft("add", "rule", "ip", "faas", "postrouting", "oifname", c.PrivateVethPeer,
 			"ip", "saddr", GuestIP, "snat", "to", c.PrivateNetworkAddress.String()))
-		return cmds
+		return append(cmds, c.privateServiceDNAT(nft)...)
 	}
 	if len(c.PrivateNetworkAllowedCIDRs) > 0 {
 		forward = append(forward, "ip", "saddr", "{", strings.Join(prefixStrings(c.PrivateNetworkAllowedCIDRs), ","), "}")
 	}
-	forward = append(forward, "ip", "daddr", GuestIP, "tcp", "dport", strconv.Itoa(AppPort), "accept")
+	forward = append(forward, "ip", "daddr", GuestIP, "tcp", "dport", port, "ct", "status", "dnat", "accept")
 	cmds := [][]string{
 		nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer,
 			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", strconv.Itoa(AppPort),
@@ -1241,7 +1289,7 @@ func (c Config) PrivateNetworkNftCommands() [][]string {
 	if len(c.PrivateNetworkAllowedCIDRs) > 0 {
 		cmds = append(cmds, nft("add", "rule", "ip", "faas", "forward", "iifname", c.PrivateVethPeer, "drop"))
 	}
-	return cmds
+	return append(cmds, c.privateServiceDNAT(nft)...)
 }
 
 // denySet returns the DenySet to render against. Falls back to
@@ -1597,4 +1645,19 @@ func (c Config) TcResetCommands() [][]string {
 		{"tc", "qdisc", "del", "dev", c.VethHost, "root"},
 		{"ip", "netns", "exec", c.Netns, "tc", "qdisc", "del", "dev", c.VethPeer, "root"},
 	}
+}
+
+func (c Config) privateIngressAddresses() []netip.Addr {
+	addresses := []netip.Addr{c.PrivateNetworkAddress}
+	if c.PrivateNetworkServiceAddress.IsValid() && c.PrivateNetworkServiceAddress != c.PrivateNetworkAddress {
+		addresses = append(addresses, c.PrivateNetworkServiceAddress)
+	}
+	return addresses
+}
+
+func (c Config) privateServiceDNAT(nft func(...string) []string) [][]string {
+	if !c.PrivateNetworkServiceAddress.IsValid() {
+		return nil
+	}
+	return [][]string{nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.PrivateVethPeer, "ip", "daddr", c.PrivateNetworkServiceAddress.String(), "tcp", "dport", strconv.Itoa(AppPort), "dnat", "to", fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort()))}
 }

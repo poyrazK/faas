@@ -39,6 +39,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -222,8 +223,7 @@ func (r *Reader) Lookup(ip net.IP) (country string, ok bool, err error) {
 }
 
 // BootAt is the wall-clock time of the most recent successful
-// (re)load. The gateway's Prometheus gauge `geoip_db_age_seconds`
-// is computed at scrape time as time.Since(r.BootAt()).Seconds().
+// (re)load. Staleness of the data itself is BuildTime.
 // Returns the zero time if the reader has never been opened
 // (the Watcher is still on its first attempt).
 func (r *Reader) BootAt() time.Time {
@@ -233,6 +233,26 @@ func (r *Reader) BootAt() time.Time {
 	r.curMu.RLock()
 	defer r.curMu.RUnlock()
 	return r.bootAt
+}
+
+// BuildTime is when the loaded database was built (its metadata
+// build_epoch), or the zero time when none is loaded. DB-IP builds the
+// country file monthly, so its age says how stale the country data is;
+// BootAt only says when this process read the file.
+func (r *Reader) BuildTime() time.Time {
+	if r == nil {
+		return time.Time{}
+	}
+	r.curMu.RLock()
+	defer r.curMu.RUnlock()
+	if r.cur == nil {
+		return time.Time{}
+	}
+	epoch := r.cur.Metadata.BuildEpoch
+	if epoch == 0 || epoch > math.MaxInt64 {
+		return time.Time{}
+	}
+	return time.Unix(int64(epoch), 0)
 }
 
 // Source is the provenance label of the loaded DB. Matches the

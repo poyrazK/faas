@@ -37,12 +37,19 @@ type PublicReadConfig struct {
 	// decisions and batches their counts (ADR-20261030075301 step 2). Build
 	// it with the registry's AnonymousReadPolicy.
 	ReadAdmitter *ReadAdmitter
-	Enabled      func() bool
-	AppsDomain   string
-	Next         http.Handler
-	HTTPClient   *http.Client
-	Now          func() time.Time
-	Log          *slog.Logger
+	// Transfers paces object bodies to the edge's part of its node's port
+	// share on a compute node; nil leaves them unpaced (ADR-20261031122757
+	// step 7).
+	Transfers *TransferLimiter
+	// HostLookups bounds store reads for hostnames never seen naming an
+	// app; nil leaves them unbounded (ADR-20261103163954 §4).
+	HostLookups *HostLookupBudget
+	Enabled     func() bool
+	AppsDomain  string
+	Next        http.Handler
+	HTTPClient  *http.Client
+	Now         func() time.Time
+	Log         *slog.Logger
 }
 
 type publicReadHandler struct {
@@ -51,6 +58,7 @@ type publicReadHandler struct {
 	requestMetrics state.ObjectStorageProviderUsageStore
 	accounting     state.ObjectStorageAccountingStore
 	readAdmitter   *ReadAdmitter
+	transfers      *TransferLimiter
 	enabled        func() bool
 	appsDomain     string
 	next           http.Handler
@@ -58,6 +66,7 @@ type publicReadHandler struct {
 	now            func() time.Time
 	log            *slog.Logger
 	mounts         *publicMountCache
+	hostLookups    *HostLookupBudget
 	limiters       *publicReadLimiters
 }
 
@@ -101,10 +110,10 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 	}
 	return &publicReadHandler{
 		store: c.Store, registry: c.Registry, requestMetrics: c.RequestMetrics,
-		accounting: c.Accounting, readAdmitter: c.ReadAdmitter, enabled: c.Enabled,
+		accounting: c.Accounting, readAdmitter: c.ReadAdmitter, transfers: c.Transfers, enabled: c.Enabled,
 		appsDomain: appsDomain, next: c.Next,
 		client: c.HTTPClient, now: c.Now, log: c.Log,
-		mounts: newPublicMountCache(), limiters: newPublicReadLimiters(),
+		mounts: newPublicMountCache(), hostLookups: c.HostLookups, limiters: newPublicReadLimiters(),
 	}, nil
 }
 
@@ -136,6 +145,10 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bucket, key, matched, err := h.lookup(r)
+	if errors.Is(err, errHostLookupShed) {
+		writeHostLookupShed(w)
+		return
+	}
 	if err != nil {
 		if matched {
 			http.Error(w, "invalid object path", http.StatusBadRequest)
@@ -246,6 +259,7 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.registry.Accounting.GatewaySafety() {
 		body = io.LimitReader(body, response.ContentLength)
 	}
+	body = h.transfers.Reader(r.Context(), body, TransferDownload)
 	n, _ := io.Copy(w, body)
 	if !h.registry.Accounting.GatewaySafety() {
 		if err := RecordDeliveredEgress(r.Context(), h.requestMetrics, bucket.ID, n, h.now()); err != nil {
@@ -329,6 +343,7 @@ func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]stat
 	}
 	var buckets []state.ObjectBucket
 	if found {
+		h.hostLookups.found(host)
 		all, err := h.store.ListObjectBuckets(ctx, app.AccountID, app.ID)
 		if err != nil {
 			return nil, err
@@ -339,6 +354,17 @@ func (h *publicReadHandler) hostMounts(ctx context.Context, host string) ([]stat
 	return buckets, nil
 }
 
+// errHostLookupShed is a host lookup refused by the new-host budget. It is
+// answered 503, never passed on as a miss: the host may be a real app's.
+var errHostLookupShed = errors.New("object storage public read: host lookup shed: new-host lookup budget spent")
+
+// writeHostLookupShed answers a request whose host lookup was shed.
+func writeHostLookupShed(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeTrafficPolicyUnavailable,
+		"Traffic policy unavailable", "Gregale could not look up this host right now. Retry shortly."))
+}
+
 func (h *publicReadHandler) hostApp(ctx context.Context, host string) (state.App, bool, error) {
 	var app state.App
 	var err error
@@ -347,8 +373,14 @@ func (h *publicReadHandler) hostApp(ctx context.Context, host string) (state.App
 		if slug == "" || strings.Contains(slug, ".") {
 			return state.App{}, false, nil
 		}
+		if !h.hostLookups.admit(host) {
+			return state.App{}, false, errHostLookupShed
+		}
 		app, err = h.store.AppBySlug(ctx, slug)
 	} else {
+		if !h.hostLookups.admit(host) {
+			return state.App{}, false, errHostLookupShed
+		}
 		domain, domainErr := h.store.DomainByName(ctx, host)
 		if domainErr != nil {
 			if errors.Is(domainErr, state.ErrNotFound) {

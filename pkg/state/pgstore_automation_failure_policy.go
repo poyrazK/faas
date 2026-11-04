@@ -6,8 +6,14 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+const (
+	automationFailurePolicyItemTimeout = 3 * time.Second
+	automationFailurePolicyPageBudget  = 3 * time.Second
 )
 
 func failurePolicyResponsePG(ctx context.Context, db sqlc.DBTX, appID, name string, now time.Time) (api.AutomationFailurePolicyResponse, error) {
@@ -35,6 +41,55 @@ func failurePolicyResponsePG(ctx context.Context, db sqlc.DBTX, appID, name stri
 	out.WaitingRuns = signals.WaitingRuns
 	out.RetainedEvents, err = q.AutomationFailureRetainedEvents(ctx, db, sqlc.AutomationFailureRetainedEventsParams{AppID: appID, Name: name})
 	return out, err
+}
+
+// Call with the app admission lock held. An unlatched threshold must still
+// stop automatic admissions when the background evaluator is slow or failing.
+func automationFailureAdmissionStatePG(ctx context.Context, tx pgx.Tx, appID, name string, now time.Time) (api.AutomationFailurePolicyResponse, error) {
+	q := sqlc.New()
+	raw, err := q.GetAutomationFailurePolicy(ctx, tx, sqlc.GetAutomationFailurePolicyParams{AppID: mustPgUUID(appID), Name: name, HistoryLimit: 0})
+	var out api.AutomationFailurePolicyResponse
+	if err != nil {
+		return out, mapErr(err)
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return out, err
+	}
+	if out.Paused || !out.Policy.Enabled {
+		return out, nil
+	}
+	since := now.Add(-time.Duration(out.Policy.WindowSeconds) * time.Second)
+	if out.MonitoringSince != nil && out.MonitoringSince.After(since) {
+		since = *out.MonitoringSince
+	}
+	signals, err := q.AutomationFailureSignals(ctx, tx, sqlc.AutomationFailureSignalsParams{AppID: mustPgUUID(appID), Name: name, SinceAt: objectUsageTime(since), NowAt: objectUsageTime(now)})
+	if err != nil {
+		return out, err
+	}
+	out.ObservedFailures, out.ObservedCompletedRuns = signals.Failures, signals.CompletedRuns
+	return out, nil
+}
+
+// The caller must commit a newly latched pause even when it defers an event.
+func automationFailureBlocksAdmissionPG(ctx context.Context, tx pgx.Tx, appID, name string, now time.Time) (blocked, latched bool, err error) {
+	out, err := automationFailureAdmissionStatePG(ctx, tx, appID, name, now)
+	if err != nil {
+		return false, false, err
+	}
+	if out.Paused {
+		return true, false, nil
+	}
+	if !automationFailureBlocksAdmission(out) {
+		return false, false, nil
+	}
+	q := sqlc.New()
+	if err := q.EnsureAutomationFailureGuard(ctx, tx, sqlc.EnsureAutomationFailureGuardParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
+		return false, false, err
+	}
+	if err := q.LatchAutomationFailurePause(ctx, tx, sqlc.LatchAutomationFailurePauseParams{AppID: mustPgUUID(appID), Name: name, NowAt: objectUsageTime(now), Failures: out.ObservedFailures, CompletedRuns: out.ObservedCompletedRuns, PolicyVersion: out.Policy.Version}); err != nil {
+		return false, false, err
+	}
+	return true, true, nil
 }
 func failurePolicyTargetPG(ctx context.Context, db sqlc.DBTX, appID, name string) error {
 	exists, err := sqlc.New().AutomationFailureTargetExists(ctx, db, sqlc.AutomationFailureTargetExistsParams{AppID: mustPgUUID(appID), Name: name})
@@ -153,15 +208,37 @@ func (s *PgStore) EvaluateAutomationFailurePolicies(ctx context.Context, owner, 
 	if err != nil {
 		return after, err
 	}
+	var failures []error
+	started := time.Now()
+	processed := 0
+	last := after
 	for _, row := range rows {
-		if err = s.evaluateAutomationFailurePolicy(ctx, row.AppID, row.Name, now); err != nil {
-			return after, err
+		itemCtx, cancel := context.WithTimeout(ctx, automationFailurePolicyItemTimeout)
+		err = s.evaluateAutomationFailurePolicy(itemCtx, row.AppID, row.Name, now)
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				if processed == 0 {
+					return after, ctx.Err()
+				}
+				return last, &AutomationFailurePolicyBatchError{Err: errors.Join(append(failures, ctx.Err())...)}
+			}
+			failures = append(failures, err)
+		}
+		processed++
+		last = row.AppID + "/" + row.Name
+		if processed < len(rows) && time.Since(started) >= automationFailurePolicyPageBudget {
+			break
 		}
 	}
-	if len(rows) == limit {
-		return rows[len(rows)-1].AppID + "/" + rows[len(rows)-1].Name, nil
+	next := ""
+	if processed < len(rows) || len(rows) == limit {
+		next = last
 	}
-	return "", nil
+	if len(failures) > 0 {
+		return next, &AutomationFailurePolicyBatchError{Err: errors.Join(failures...)}
+	}
+	return next, nil
 }
 func (s *PgStore) evaluateAutomationFailurePolicy(ctx context.Context, appID, name string, now time.Time) error {
 	tx, err := s.pool.Begin(ctx)
@@ -181,7 +258,7 @@ func (s *PgStore) evaluateAutomationFailurePolicy(ctx context.Context, appID, na
 	if err = q.EnsureAutomationFailureGuard(ctx, tx, sqlc.EnsureAutomationFailureGuardParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
 		return err
 	}
-	out, err := failurePolicyResponsePG(ctx, tx, appID, name, now)
+	out, err := automationFailureAdmissionStatePG(ctx, tx, appID, name, now)
 	if err != nil {
 		return err
 	}

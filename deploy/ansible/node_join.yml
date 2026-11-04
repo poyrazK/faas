@@ -798,11 +798,14 @@
       # ADR-1343 §4: a node that runs the app edge also holds back the edge
       # daemons' CPU and RAM. --edge is passed only then, so a fleet without
       # the edge keeps working with an operator binary that predates it.
+      # ADR-20261031122757: a node that also runs the S3 gateway holds back
+      # the gateway's too (--object-gateway, only with --edge).
       ansible.builtin.command:
         argv: >-
           {{ ['/usr/local/bin/gregalectl', 'compute-nodes', 'sizing',
               '--role', faas_box_role | default('compute-only', true), '--json']
-             + (['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else []) }}
+             + (['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else [])
+             + (['--object-gateway'] if (faas_object_gateway_on_compute_nodes | default(false) | bool) else []) }}
       changed_when: false
       register: faas_node_sizing_raw
 
@@ -1020,12 +1023,15 @@
         group: root
       when: (faas_join_rollout_phase | default('full')) != 'activate'
 
+    # Read-only, so it runs in every phase: an activation that converges roles
+    # runs from the top (ADR-20261025095348), and the adoption decision before
+    # the drain reads this. Skipped, it left a result without stat and failed
+    # the rc.315 activation of fsn-2.
     - name: Inspect the active vmmd binary before runtime pre-stage
       ansible.builtin.stat:
         path: /opt/faas/current/bin/vmmd
         follow: true
       register: faas_join_active_vmmd
-      when: (faas_join_rollout_phase | default('full')) != 'activate'
 
     # ADR-20261024085817: the pre-stage adopts the candidate's runtime base
     # generations into this node's cache, and the serving vmmd refuses every
@@ -1046,7 +1052,11 @@
           - faas-vmmd.service
       register: faas_join_serving_vmmd_pid
       changed_when: false
-      when: faas_join_active_vmmd.stat.exists
+      # Activation already pre-staged during preparation; the drain repeats
+      # this check below for every mode.
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
+        - faas_join_active_vmmd.stat.exists
 
     - name: Compare the serving vmmd's runtime base generations with the candidate's
       ansible.builtin.command:
@@ -1061,6 +1071,7 @@
       changed_when: false
       failed_when: faas_join_base_generations.rc not in [0, 3, 4]
       when:
+        - (faas_join_rollout_phase | default('full')) != 'activate'
         - faas_join_active_vmmd.stat.exists
         - (faas_join_serving_vmmd_pid.stdout | default('0') | trim) not in ['', '0']
 
@@ -1536,6 +1547,26 @@
         state: started
       when: (faas_join_drain_base_generations.rc | default(0)) in [3, 4]
 
+    # ADR-1343: the edge socket stays open while the edge restarts, so tunnel
+    # requests queue, and a queued request starts the edge, which wants
+    # gatewayd-internal, which wants vmmd and realtimed. During a drained
+    # install that started the old release's daemons mid-install: on
+    # production-us (rc.319 fsn-3, 2026-11-04) the old gateway crash-looped
+    # into its start limit and the restart below was refused. A drained node
+    # takes no tunnel traffic: stop its connector so Cloudflare sends the
+    # cell's requests to the other replicas, then close the socket.
+    - name: Take the drained node's app edge out of the tunnel before the install
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      when:
+        - not (faas_join_skip_drain | bool)
+        - faas_edge_on_compute_nodes | default(false) | bool
+      loop:
+        - faas-cloudflared.service
+        - faas-gatewayd-public-edge.socket
+        - faas-gatewayd-public-edge.service
+
     # A no-drain rollout keeps every daemon serving through the install and
     # restarts them once below: stopping them here would stop vmmd, and the
     # node's gateway, for the whole install.
@@ -1552,7 +1583,13 @@
         - faas-schedd.service
         - faas-vmmd.service
 
-    - name: Install the verified release while keeping the row drained
+    # A drained rollout keeps the row out of service until readiness passes.
+    # A no-drain restart never leaves service, so its row stays active: an
+    # unavailable row makes the scheduler evacuate the node. On production-us
+    # (rc.312 and rc.313, 2026-10-31) it parked every guest on fsn-2 seconds
+    # before vmmd restarted; the restarted vmmd adopted them, and its orphan
+    # reaper then killed them because their rows were parked.
+    - name: Install the verified release, keeping a drained row drained
       ansible.builtin.command:
         argv:
           - /usr/local/bin/gregalectl
@@ -1566,7 +1603,7 @@
           - "{{ faas_join_database_node }}"
           - --role
           - compute-only
-          - --defer-activation
+          - "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"
       register: faas_release_install
       changed_when: faas_release_install.rc == 0
       failed_when: >-
@@ -1615,7 +1652,7 @@
           - "{{ faas_join_database_node }}"
           - --role
           - compute-only
-          - --defer-activation
+          - "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"
       when: >-
         faas_release_install.rc != 0 and
         'SBoM gate requires a prior baseline' in
@@ -1876,6 +1913,19 @@
         - faas-gatewayd-internal.service
         - faas-builderd.service
         - faas-imaged.service
+
+    # The restarted gatewayd-internal already wants the edge; the connector
+    # (and the socket, on a node whose edge was taken out above) come back
+    # here. The connector stays inactive without its tunnel token.
+    - name: Return the node's app edge to the tunnel
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+      when: faas_edge_on_compute_nodes | default(false) | bool
+      loop:
+        - faas-gatewayd-public-edge.socket
+        - faas-gatewayd-public-edge.service
+        - faas-cloudflared.service
 
     - name: Wait for vmmd's local socket on single-box targets
       ansible.builtin.wait_for:

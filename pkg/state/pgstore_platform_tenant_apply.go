@@ -124,6 +124,15 @@ func planPlatformTenantApply(ctx context.Context, tx pgx.Tx, in ApplyPlatformTen
 	if err := planPlatformTenantSurfaces(ctx, tx, in, &result); err != nil {
 		return ApplyPlatformTenantResult{}, err
 	}
+	for _, item := range result.Surfaces {
+		for _, host := range item.Hostnames {
+			if host.Action == "create" {
+				if err := checkPublicTenantHostnameClaim(ctx, tx, host.Hostname.Hostname, item.Surface.AppID); err != nil {
+					return ApplyPlatformTenantResult{}, err
+				}
+			}
+		}
+	}
 	return result, nil
 }
 

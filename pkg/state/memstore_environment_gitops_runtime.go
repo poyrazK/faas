@@ -12,16 +12,38 @@ import (
 
 var _ EnvironmentGitOpsRuntimeStore = (*MemStore)(nil)
 
-func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) []EnvironmentGitOpsRuntimeTarget {
+func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) ([]EnvironmentGitOpsRuntimeTarget, error) {
 	desired, err := desiredEnvironmentRevision(memory.revisions[memory.source.ApprovedRevisionID])
 	if err != nil {
-		return []EnvironmentGitOpsRuntimeTarget{{UnqualifiedWorkloads: 1}}
+		return nil, err
 	}
 	targets := []EnvironmentGitOpsRuntimeTarget{}
-	for resource, appID := range memory.resources {
-		if _, wanted := desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")]; !wanted {
-			continue
+	needsEvidence := false
+	for _, target := range m.gitOpsRuntimeTargetsInScopeLocked(memory) {
+		if _, wanted := desired.Definition.Workloads[strings.TrimPrefix(target.Resource, "workload/")]; wanted {
+			targets = append(targets, target)
+			needsEvidence = needsEvidence || target.UnqualifiedWorkloads != 0
 		}
+	}
+	if needsEvidence {
+		evidence, err := m.currentEnvironmentGitOpsWorkloadEvidenceLocked(memory.source.AccountID, memory.source.ID)
+		if err != nil {
+			return nil, err
+		}
+		if environmentGitOpsWorkloadsConverged(evidence) {
+			for i := range targets {
+				targets[i].UnqualifiedWorkloads = 0
+			}
+		}
+	}
+	return targets, nil
+}
+
+// Durable effects still own their original scope when a later definition
+// omits the workload. Recovery must observe those residents and snapshots too.
+func (m *MemStore) gitOpsRuntimeTargetsInScopeLocked(memory *environmentGitOpsMemory) []EnvironmentGitOpsRuntimeTarget {
+	targets := []EnvironmentGitOpsRuntimeTarget{}
+	for resource, appID := range memory.resources {
 		if appID == "" {
 			continue
 		}
@@ -97,7 +119,7 @@ func (m *MemStore) ObserveEnvironmentGitOpsRuntime(_ context.Context, lease Envi
 	if err != nil {
 		return nil, err
 	}
-	return m.gitOpsRuntimeTargetsLocked(memory), nil
+	return m.gitOpsRuntimeTargetsLocked(memory)
 }
 
 func (m *MemStore) insertGitOpsRuntimeEffectLocked(memory *environmentGitOpsMemory, lease EnvironmentGitOpsLease, plan environmentsync.Plan, appID string, required time.Time) {
@@ -154,7 +176,11 @@ func (m *MemStore) EnsureEnvironmentGitOpsRuntime(_ context.Context, lease Envir
 			appsPending[effect.AppID] = true
 		}
 	}
-	for _, target := range m.gitOpsRuntimeTargetsLocked(memory) {
+	targets, err := m.gitOpsRuntimeTargetsLocked(memory)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
 		if !target.Fresh() && !appsPending[target.AppID] {
 			m.insertGitOpsRuntimeEffectLocked(memory, lease, plan, target.AppID, target.RequiredAt)
 		}
@@ -202,9 +228,12 @@ func (m *MemStore) ReconcileEnvironmentGitOpsRuntime(_ context.Context, lease En
 	if !exists || effect.CompletedAt != nil {
 		return EnvironmentGitOpsRuntimeProgress{}, ErrConflict
 	}
-	m.markEnvironmentRuntimeChangedAndSnapshotsLocked(effect.AppID, effect.Environment, effect.RequiredAt)
+	enforcing := memory.source.Spec.Mode == "enforce"
+	if enforcing {
+		m.markEnvironmentRuntimeChangedAndSnapshotsLocked(effect.AppID, effect.Environment, effect.RequiredAt)
+	}
 	var target *EnvironmentGitOpsRuntimeTarget
-	targets := m.gitOpsRuntimeTargetsLocked(memory)
+	targets := m.gitOpsRuntimeTargetsInScopeLocked(memory)
 	for i := range targets {
 		if targets[i].AppID == effect.AppID {
 			target = &targets[i]
@@ -214,12 +243,12 @@ func (m *MemStore) ReconcileEnvironmentGitOpsRuntime(_ context.Context, lease En
 	if target == nil {
 		return EnvironmentGitOpsRuntimeProgress{}, ErrConflict
 	}
-	if target.RequiredAt.After(effect.RequiredAt) {
+	if enforcing && target.RequiredAt.After(effect.RequiredAt) {
 		effect.RequiredAt, effect.WakeID, effect.RequestedAt, effect.NextRequestAt = target.RequiredAt, newID(), nil, time.Now()
 		m.markEnvironmentRuntimeChangedAndSnapshotsLocked(effect.AppID, effect.Environment, target.RequiredAt)
 		// The pending effect must carry the new boundary while re-observing.
 		memory.runtime[id] = effect
-		targets = m.gitOpsRuntimeTargetsLocked(memory)
+		targets = m.gitOpsRuntimeTargetsInScopeLocked(memory)
 		for i := range targets {
 			if targets[i].AppID == effect.AppID {
 				target = &targets[i]
@@ -231,7 +260,7 @@ func (m *MemStore) ReconcileEnvironmentGitOpsRuntime(_ context.Context, lease En
 	now := time.Now().UTC()
 	if target.Fresh() {
 		effect.CompletedAt = &now
-	} else if lease.Source.Spec.Mode == "enforce" && target.StaleResidents > 0 && !effect.NextRequestAt.After(now) {
+	} else if enforcing && target.StaleResidents > 0 && !effect.NextRequestAt.After(now) {
 		effect.RequestedAt, effect.NextRequestAt = &now, now.Add(api.EnvironmentGitOpsRuntimeRefreshRetry)
 		progress.Request = &EnvironmentGitOpsRuntimeRequest{AppID: effect.AppID, Scope: effect.Environment, WakeID: effect.WakeID}
 	}

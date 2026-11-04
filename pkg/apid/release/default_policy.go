@@ -42,10 +42,12 @@ const (
 // ApplyDefault makes a health-gated rollout the default for a production
 // release (ADR-1446). It only fills fields the request left unset:
 // an explicit canary, traffic_percent, or rollback_on_5xx always wins, and
-// `canary: {preset: "none"}` opts one deploy out. It applies only to the
-// default scope of a request-mode, non-preview app whose release_policy is
-// not "immediate" and which already serves a live deployment; a first
-// deploy has nothing to compare with or roll back to.
+// `canary: {preset: "none"}` opts one deploy out. It applies only to a
+// production scope (the default scope, or a project's production
+// environment: the scopes freezes and approvals treat as production) of a
+// request-mode, non-preview app whose release_policy is not "immediate" and
+// which already serves a live deployment in that scope; a first deploy has
+// nothing to compare with or roll back to (ADR-1446 amendment 1).
 //
 // Lookup failures fall back to the legacy immediate deploy: a default must
 // never make a deploy fail where the explicit flag-free deploy succeeded, so
@@ -59,7 +61,7 @@ func ApplyDefault(ctx context.Context, store any, log *slog.Logger, app state.Ap
 	if !ok {
 		return PolicyNotApplied
 	}
-	if _, err := lookup.LiveDeploymentForScope(ctx, app.ID, api.DefaultEnvScope); err != nil {
+	if _, err := lookup.LiveDeploymentForScope(ctx, app.ID, policyScope(req)); err != nil {
 		if !errors.Is(err, state.ErrNotFound) {
 			log.Warn("default release policy: live deployment lookup failed; deploying immediately",
 				"app_id", app.ID, "err", err)
@@ -101,10 +103,24 @@ func defaultEligible(app state.App, req *api.CreateDeploymentRequest) bool {
 		// and jobs serve no request traffic to compare.
 		return false
 	}
-	if req.Environment != "" || (req.Scope != "" && req.Scope != api.DefaultEnvScope) {
+	if !state.IsProductionScope(policyScope(req)) {
 		return false
 	}
 	return req.RollbackOn5xx == nil || (req.Canary == nil && req.TrafficPercent == nil)
+}
+
+// policyScope is the deployment scope a request releases into. apid resolves
+// an environment to its scope before the policy runs; an unresolved
+// environment name is its scope's slug.
+func policyScope(req *api.CreateDeploymentRequest) string {
+	scope := strings.TrimSpace(req.Scope)
+	if scope == "" {
+		scope = strings.TrimSpace(req.Environment)
+	}
+	if scope == "" {
+		return api.DefaultEnvScope
+	}
+	return scope
 }
 
 func canaryWorkerReady(ctx context.Context, store any, log *slog.Logger) bool {
@@ -122,7 +138,8 @@ func canaryWorkerReady(ctx context.Context, store any, log *slog.Logger) bool {
 
 // ApplyDefaultToEnqueue applies the default release policy to a GitHub App
 // push, which carries no rollout fields of its own. A push to a
-// named environment scope or to a service, worker, or job app is unchanged.
+// non-production environment scope or to a service, worker, or job app is
+// unchanged.
 func ApplyDefaultToEnqueue(ctx context.Context, store any, log *slog.Logger, app state.App, plan api.Plan, scope string, p *apidsource.EnqueueParams) PolicyOutcome {
 	req := &api.CreateDeploymentRequest{Scope: scope}
 	outcome := ApplyDefault(ctx, store, log, app, plan, req)
@@ -145,4 +162,18 @@ func ApplyDefaultToEnqueue(ctx context.Context, store any, log *slog.Logger, app
 	now := time.Now().UTC()
 	p.CanaryStepStartedAt = &now
 	return outcome
+}
+
+// DefaultRollbackOn5xx reports whether a release into scope that names no
+// rollback policy gets first-wake 5xx rollback and the post-release watch by
+// default: what ApplyDefault fills in, without the canary. A project
+// environment promotion uses it (ADR-1446 amendment 2): the promotion's
+// protected approval already stands in for the apps' approval policies, and
+// a canary would hold the release for them a second time.
+func DefaultRollbackOn5xx(ctx context.Context, store any, log *slog.Logger, app state.App, plan api.Plan, scope string) bool {
+	req := &api.CreateDeploymentRequest{Scope: scope, Canary: &api.CanaryPresetSpec{Preset: "none"}}
+	if ApplyDefault(ctx, store, log, app, plan, req) == PolicyNotApplied {
+		return false
+	}
+	return req.RollbackOn5xx != nil && *req.RollbackOn5xx
 }

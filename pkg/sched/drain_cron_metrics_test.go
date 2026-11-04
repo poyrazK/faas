@@ -15,6 +15,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+// adr: 20261026201726
+//
 // A plain HTTP cron run that fails ends failed on its single attempt; one
 // that succeeds counts as success. Both record first-claim lag from the
 // scheduled time.
@@ -30,10 +32,17 @@ func TestDrain_ObservesCronLagAndOutcomes(t *testing.T) {
 	if err != nil || len(apps) == 0 {
 		t.Fatalf("ListAllApps: %v / %d apps", err, len(apps))
 	}
+	// A cron run carries its cron's id; the drain cancels one whose cron is
+	// gone instead of delivering it.
+	cron, err := store.CreateCron(ctx, apps[0].ID, "0 * * * *", "/tick", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
+	cronID := cron.ID
 	enqueue := func(scheduledAt time.Time) {
 		t.Helper()
 		if _, err := store.EnqueueInvocation(ctx, state.Invocation{
-			AppID: apps[0].ID, AccountID: apps[0].AccountID,
+			AppID: apps[0].ID, AccountID: apps[0].AccountID, CronID: &cronID,
 			Source: state.InvocationCron, Method: http.MethodPost, Path: "/tick",
 			DueAt: scheduledAt, ScheduledAt: &scheduledAt,
 			RetryPolicyJSON: json.RawMessage(`{"max_attempts":1}`),
@@ -48,6 +57,10 @@ func TestDrain_ObservesCronLagAndOutcomes(t *testing.T) {
 	synth.Transient().Store(false)
 	enqueue(now.Add(-3 * time.Second))
 	d.Tick(ctx)
+	enqueue(now.Add(-2 * time.Second))
+	synth.AppStatus().Store(404)
+	d.Tick(ctx)
+	synth.AppStatus().Store(0)
 
 	rec := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -55,10 +68,11 @@ func TestDrain_ObservesCronLagAndOutcomes(t *testing.T) {
 	for _, want := range []string{
 		`schedd_cron_delivery_total{outcome="failed"} 1`,
 		`schedd_cron_delivery_total{outcome="success"} 1`,
+		`schedd_cron_delivery_total{outcome="app_error"} 1`,
 		`schedd_cron_delivery_total{outcome="retry"} 0`,
-		`schedd_cron_schedule_lag_seconds_bucket{le="2.5"} 0`,
-		`schedd_cron_schedule_lag_seconds_bucket{le="30"} 2`,
-		`schedd_cron_schedule_lag_seconds_count 2`,
+		`schedd_cron_schedule_lag_seconds_bucket{le="2.5"} 1`,
+		`schedd_cron_schedule_lag_seconds_bucket{le="30"} 3`,
+		`schedd_cron_schedule_lag_seconds_count 3`,
 		`schedd_delayed_task_dispatch_total{outcome="success"} 0`,
 	} {
 		if !strings.Contains(body, want) {

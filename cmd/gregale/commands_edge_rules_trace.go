@@ -189,7 +189,9 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("Invalid trace input", err)
 	}
-	rules, err := client.ListEdgeRulesForApp(context.Background(), input.App)
+	// The account's other apps' rules whose host pattern covers this host
+	// apply too (ADR-091 amendment 2026-10-31).
+	rules, err := client.ListCoveringEdgeRulesForApp(context.Background(), input.App)
 	if err != nil {
 		return printErr("List failed", err)
 	}
@@ -248,7 +250,11 @@ func cmdEdgeRulesTrace(args []string) int {
 	}
 	if names := edgeruletrace.ReferencedEdgeRuleLists(contextRules); len(names) > 0 {
 		for _, name := range names {
-			list, listErr := client.GetEdgeRuleList(context.Background(), name)
+			// A company app's organization lists, then the caller's own.
+			list, listErr := client.GetEdgeRuleList(context.Background(), name, input.App)
+			if isNotFound(listErr) {
+				list, listErr = client.GetEdgeRuleList(context.Background(), name, "")
+			}
 			if listErr != nil && !isNotFound(listErr) {
 				return printErr("Edge rule list lookup failed", listErr)
 			}

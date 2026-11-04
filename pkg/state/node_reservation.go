@@ -71,6 +71,31 @@ import (
 // row to read here.
 var ErrNodeCapacity = errors.New("state: compute node at admission ceiling")
 
+// Resources NodeCapacityResource names, the blocker resources of the
+// scheduler's own refusals.
+const (
+	NodeCapacityRAM  = "ram_mb"
+	NodeCapacityVCPU = "vcpu"
+	NodeCapacityCPU  = "cpu_millicores"
+)
+
+// NodeCapacityResource names the resource an ErrNodeCapacity refusal ran out
+// of. admission_reserve_node tags its vCPU and CPU refusals' detail with
+// resource=vcpu or resource=cpu; a RAM refusal carries no tag. It returns ""
+// for any other error (ADR 20261031190030).
+func NodeCapacityResource(err error) string {
+	if !errors.Is(err, ErrNodeCapacity) {
+		return ""
+	}
+	switch text := err.Error(); {
+	case strings.Contains(text, "resource=vcpu"):
+		return NodeCapacityVCPU
+	case strings.Contains(text, "resource=cpu"):
+		return NodeCapacityCPU
+	}
+	return NodeCapacityRAM
+}
+
 // nodeReservationLockClass namespaces this file's advisory locks.
 //
 // PostgreSQL keeps two disjoint advisory-lock spaces: the single-bigint form
@@ -322,6 +347,27 @@ func (m *MemStore) checkNodeAdmissionReservationLocked(ctx context.Context, node
 	}
 	node, ok := m.computeNodes[nodeID]
 	if !ok {
+		return nil
+	}
+	usedVCPU, usedCPU := m.nodeLiveComputeLocked(nodeID, time.Now())
+	return nodeComputeRefusal(nodeID, compute, int64(node.VCPUBudget), usedVCPU,
+		nodeCPUBudgetMillicores(int64(node.VPCPUs)), usedCPU)
+}
+
+// checkThawReservationLocked mirrors PgStore.reserveThawDB: a frozen VM going
+// back into service books its plan RAM and ctx's thaw compute against its
+// node like an admission (ADR 20261102072403).
+func (m *MemStore) checkThawReservationLocked(ctx context.Context, instanceID, nodeID string) error {
+	ins, ok := m.instances[instanceID]
+	if !ok || ins.NodeID != nodeID {
+		return nil
+	}
+	percent, compute := thawAdmission(ctx, nodeID)
+	if err := m.checkNodeReservationWithinLocked(nodeID, string(StateRunning), ins.RAMMB, percent); err != nil {
+		return err
+	}
+	node, ok := m.computeNodes[nodeID]
+	if !ok || compute.VCPU == 0 && compute.CPUMillicores == 0 {
 		return nil
 	}
 	usedVCPU, usedCPU := m.nodeLiveComputeLocked(nodeID, time.Now())

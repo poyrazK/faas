@@ -22,7 +22,7 @@ func waitMCPAccessConvergence(ctx context.Context, client *Client, slug, appID, 
 		}
 		edge := status.EdgeRules
 		if edge.State == "active" && edge.DesiredRevision > 0 && edge.ServingGateways > 0 && edge.AppliedGateways == edge.ServingGateways && edge.PendingGateways == 0 && edge.StaleGateways == 0 {
-			rules, err := client.ListEdgeRules(ctx)
+			rules, err := client.ListCoveringEdgeRulesForApp(ctx, slug)
 			if err != nil {
 				return check
 			}

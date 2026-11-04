@@ -78,8 +78,10 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 	}
 	p, err := images.BeginImagePreparation(ctx, dep.ID, node)
 	if errors.Is(err, state.ErrNotFound) {
-		return nil
-	} // legacy in-flight or already handed off
+		// Legacy in-flight or already handed off. A handed-off release
+		// held for approval resumes here (ADR-20261020085706 amendment 12).
+		return h.resumeReleaseApprovalHold(ctx, dep)
+	}
 	if errors.Is(err, state.ErrImagePreparationNotOwned) {
 		return db.ErrNotificationNotOwned
 	}

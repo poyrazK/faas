@@ -243,6 +243,12 @@ func (s *udpDeploymentFixture) ListInstancesForApp(context.Context, string) ([]s
 	return s.instances, nil
 }
 
+// ListLiveInstancesForApps keeps the resolver's live-only read (O20) on
+// this fixture's instances rather than the embedded store's.
+func (s *udpDeploymentFixture) ListLiveInstancesForApps(ctx context.Context, _ []string) ([]state.Instance, error) {
+	return s.ListInstancesForApp(ctx, "")
+}
+
 func TestUDPTargetResolverPinsServingDeploymentOnWarmAndColdPaths(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -324,6 +330,11 @@ type cancelingUDPInstances struct {
 func (s cancelingUDPInstances) ListInstancesForApp(context.Context, string) ([]state.Instance, error) {
 	s.cancel()
 	return []state.Instance{{ID: "guest", AppID: "app", DeploymentID: "deployment", NodeID: "node", State: string(state.StateRunning)}}, nil
+}
+
+// ListLiveInstancesForApps is the resolver's live-only read (O20).
+func (s cancelingUDPInstances) ListLiveInstancesForApps(ctx context.Context, _ []string) ([]state.Instance, error) {
+	return s.ListInstancesForApp(ctx, "")
 }
 func TestUDPTargetResolverRejectsCancellationAfterInstanceRead(t *testing.T) {
 	store := state.NewMemStore()

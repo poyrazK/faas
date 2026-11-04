@@ -445,6 +445,14 @@ Preparation rechecks the full witness transactionally before publication. See
 
 ## Per-user request rate limits
 
+> **Runtime limits are per instance.** The rate limits, per-user and
+> server-key concurrency, and anonymous budgets below are counted inside each
+> running instance of the Data API. An app that scales to N instances admits
+> up to N times each limit for one client. For a limit that holds for the app
+> as a whole, add an edge [`throttle`](edge-rules.md#throttle) rule keyed by
+> `jwt_subject` or `ip`: edge buckets are counted across every gateway. Monthly
+> caps already count every instance.
+
 Enable an optional policy through the Data API deployment environment:
 
 ```sh
@@ -923,7 +931,8 @@ gregale data-api create notes-data --database notes-db \
 
 The command reserves an ordinary app, attaches a restricted `DATABASE_URL`
 binding, seals the authentication settings, enables plan-gated PostgreSQL egress
-and uploads the Data API template through the normal builder/deploy path.
+and deploys the Data API runtime the control plane serves through the normal
+builder/deploy path ([Runtime versions and upgrades](#runtime-versions-and-upgrades)).
 Creation and `--resume` set `require_authn=false` and change owner-key
 `public_auth.mode=bearer` to `open` so application JWTs reach the runtime verifier.
 Other explicitly configured ingress restrictions remain in place on resume.
@@ -940,8 +949,42 @@ The API verifies the database's TLS certificate against the public root store
 also registers `before_checkpoint` and `after_restore` hooks, so a parked API
 holds no database connection: the first request after a wake waits while the
 API reconnects, within the request deadline. For an API created before these
-hooks existed, `data-api create NAME ... --resume` (or `data-api deploy` for a
-single-app project) adds them with the current runtime.
+hooks existed, `gregale data-api deploy NAME` adds them with the current runtime.
+
+### Runtime versions and upgrades
+
+The platform owns the Data API runtime. `data-api create` and `data-api deploy`
+download the runtime the control plane currently serves
+(`GET /v1/apps/{slug}/data-api/runtime`) and deploy it, so the runtime does not
+depend on the CLI release you have installed. Only a control plane that predates
+the runtime route makes the CLI fall back to the runtime it carries, and it says
+so. Any other download failure stops the deploy.
+
+A running API reports the version it was built from as `runtime_version` on
+`/healthz`. `gregale data-api health NAME` compares it with the version the
+control plane serves. A different version, or a runtime old enough to report
+none, is listed as `runtime_not_current`. The finding leaves the health status
+unchanged, because the old runtime still serves requests. To upgrade the
+runtime without changing anything else, run:
+
+```sh
+gregale data-api deploy notes-data
+```
+
+For a single-app project, pass `--migrations` as usual. The release task then
+runs your migrations against the upgraded runtime.
+
+### Delete an API
+
+```sh
+gregale data-api delete notes-data --yes
+```
+
+This revokes the app's managed PostgreSQL bindings, which closes their database
+credentials, and then deletes the app. `gregale app delete` refuses an app that
+still has a live database binding (`app_has_postgres_bindings`), because the
+credential would outlive the app. The database and its data are kept. Delete
+the database separately with `gregale postgres delete`.
 
 ## Define your application schema and authorization
 
@@ -1474,6 +1517,94 @@ Each route asks PostgreSQL first, as the caller:
   created before `object_key` existed needs
   `gregale data-api storage export --upgrade` applied as a migration.
 
+## Change hooks
+
+Change hooks run your code when data changes: every committed insert, update
+and delete of a hooked table becomes a Gregale event, and any app can
+subscribe to it with `event_triggers` or start a workflow from it. Delivery
+uses the event router's retries, dead-letter queue and replay.
+
+1. Add the change event table with a migration, then hook tables. Hooking
+   needs a primary key:
+
+   ```sh
+   gregale data-api hooks export > migrations/0006_change_hooks.sql
+   ```
+
+   ```sql
+   SELECT gregale_hooks.enable('api.orders');
+   SELECT gregale_hooks.enable('api.users', exclude => ARRAY['password_hash']);
+   SELECT gregale_hooks.enable('api.audit_log', payload => 'keys');
+   ```
+
+2. Turn publishing on. The command prints the event source, `app.<UUID>` of
+   the Data API app:
+
+   ```sh
+   gregale data-api hooks enable shop-data
+   ```
+
+3. Subscribe from any app in your account. Types are
+   `<schema>.<table>.inserted|updated|deleted`, so `api.orders.*` matches every
+   change of one table and `*.deleted` every deletion. To handle each row's
+   changes one at a time, in commit order:
+
+   ```yaml
+   work_policies:
+     - name: order-changes
+       max_running_per_key: 1
+       pending_updates: all
+   event_triggers:
+     - source: app.8c0a63d2-5a7e-4b8f-9a55-2f8a3c1d9e01
+       type: api.orders.*
+       work_policy: order-changes
+       work_key: data.key.id
+       ordered: true
+   ```
+
+An event's `data` holds the change:
+
+```json
+{"schema": "api", "table": "orders", "op": "update", "key": {"id": 7},
+ "new": {"id": 7, "status": "paid"}, "old": {"id": 7, "status": "new"},
+ "changed": ["status"], "sequence": 1042, "txid": 88123}
+```
+
+- **What is recorded.** The trigger records a change inside the writing
+  transaction, so a rolled-back write publishes nothing. Writes through the
+  Data API, your backends and migrations are all recorded. An update that
+  changes no included column records nothing. `exclude` keeps columns out of
+  every event; `payload => 'keys'` sends only the key and changed column
+  names. Rows over 64 KiB are left out and the event says `"truncated": true`;
+  read the row by its key.
+- **Delivery.** At least once. The Data API publishes changes in the order
+  they were recorded and retries the first one that fails before anything
+  after it, so each row's changes arrive in commit order. Event IDs are
+  stable: deduplicate side effects by them. Changes are published promptly
+  after writes through the API; changes made elsewhere publish while the
+  Data API is running, within 30 seconds.
+- **Backfills.** `SET LOCAL gregale_hooks.skip = 'on';` in a migration's
+  transaction records nothing for it.
+- **Failures.** An event the platform refuses, such as one that does not match
+  a registered event schema, stays in `api.gregale_change_events` with
+  `failed_at` and `failure_code` and does not hold back later events. Fix the
+  cause, then run `SELECT gregale_hooks.retry_failed();` or
+  `SELECT gregale_hooks.discard_failed();` with the migration binding.
+  Retried events publish after newer changes of the same rows.
+- **Isolation.** The change event table is the Data API's: the REST API
+  answers 404 for it, generated types leave it out, and its row-level security
+  admits only the Data API's own relay.
+- **Production only.** Events carry no environment, so only the Data API's
+  production deployment publishes them. A stage or preview deployment's
+  runtime is refused and its recorded changes stay in the table; a cloned
+  environment that copied the setting publishes nothing.
+- **Turning it off.** `gregale_hooks.disable('api.orders')` stops recording a
+  table. `gregale data-api hooks disable shop-data` stops publishing; recorded
+  changes wait in the table.
+- **Cost.** Each hooked write adds one row insert in its transaction. Events
+  count toward your account's event limits like any publication. See
+  [ADR 20261022121642](adr/20261022121642-data-api-change-hooks.md).
+
 ## Aggregates
 
 Aggregate queries are off by default. Turn them on with:
@@ -1516,7 +1647,7 @@ The app holds two bindings to the same database:
 - `MIGRATION_DATABASE_URL` uses the `migration` login, which is delivered only
   to release tasks.
 
-The CLI uploads the pinned runtime together with your `migrations` directory and
+The CLI uploads the control plane's current runtime together with your `migrations` directory and
 declares `release: node migrations/release.mjs`. Every deployment therefore
 applies migrations first, and its new instances load the new schema when they
 start; no separate refresh is needed. Ship later schema changes with:

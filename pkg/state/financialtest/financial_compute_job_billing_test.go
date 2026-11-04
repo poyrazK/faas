@@ -57,7 +57,7 @@ func TestFinancialComputeJobFundedBilling(t *testing.T) {
 				t.Fatal(err)
 			}
 			var quantity int64
-			for _, row := range financialRowsWithContext(t, t.Context(), store, f.account.ID, head) {
+			for _, row := range financialRowsInPeriod(t, t.Context(), store, f.account.ID, start, end, head) {
 				if row.InstanceID != l.InstanceID {
 					continue
 				}

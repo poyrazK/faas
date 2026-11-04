@@ -6,7 +6,6 @@ package vmmdgrpc
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"net/netip"
 	"time"
@@ -131,7 +130,7 @@ func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteracti
 	invalid := func(detail string) *api.Problem {
 		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid interactive job", detail)
 	}
-	if len(in.GetAttachTokenSha256()) != sha256.Size {
+	if !validAttachDigest(in.GetAttachTokenSha256()) {
 		return nil, invalid("attach_token_sha256 must be a SHA-256 digest")
 	}
 	if req.GetTaskTimeoutSec() > fcvm.JobInteractiveMaxTaskTimeoutSec {
@@ -398,6 +397,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
 		PrivateNetworkID:            app.GetPrivateNetworkId(),
 		PrivateNetworkAddress:       app.GetPrivateNetworkAddress(),
+		StaticEgressIP:              app.GetStaticEgressIp(),
+		StaticEgressExcluded:        app.GetStaticEgressExcluded(),
 		// tier-2 PR-B: schedd fans UpdateEgressAllowlist out by
 		// app_id, so the live Instance needs to remember which app
 		// it was woken for. The scheduler already knows the app
@@ -578,6 +579,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
 		PrivateNetworkID:            app.GetPrivateNetworkId(),
 		PrivateNetworkAddress:       app.GetPrivateNetworkAddress(),
+		StaticEgressIP:              app.GetStaticEgressIp(),
+		StaticEgressExcluded:        app.GetStaticEgressExcluded(),
 		// tier-2 PR-B: see toWakeRequest. The cold-boot path is
 		// the first boot of a deploy; setting AppID here means
 		// the very first UpdateEgressAllowlist fan-out finds the

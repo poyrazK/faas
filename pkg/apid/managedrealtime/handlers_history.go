@@ -93,6 +93,9 @@ func (s *Service) AppendManagedRealtimeRetainedMessage(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrRealtimeInvalid("ttl_seconds must be between zero and 86400"))
 		return
 	}
+	if !s.allowRealtimeWrites(w, acct, 1) {
+		return
+	}
 	if request.TTLSeconds > 0 {
 		if expiring, ok := s.Host.Store().(state.ManagedRealtimeExpiringStore); ok {
 			message, err = expiring.AppendManagedRealtimeChannelExpiring(r.Context(), row.ID, channel, data, request.Binary, request.IdempotencyKey, request.Metadata, request.ExpectedSequence, request.TTLSeconds)
@@ -224,7 +227,8 @@ func (s *Service) writeManagedRealtimeHistoryError(w http.ResponseWriter, r *htt
 		return
 	}
 	if errors.Is(err, state.ErrManagedRealtimeEventSchemaLimit) {
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Event schema limit reached", "an endpoint can register 64 immutable schema versions"))
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeCapacity, "Event schema limit reached",
+			fmt.Sprintf("an event type can register %d immutable schema versions and an endpoint %d; see https://gregale.dev/docs/realtime", api.RealtimeEventSchemaVersionsPerEventType, api.RealtimeEventSchemasPerEndpoint)))
 		return
 	}
 	var account *state.ManagedRealtimeRetainedChannelLimitError

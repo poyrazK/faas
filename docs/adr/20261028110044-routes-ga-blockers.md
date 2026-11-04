@@ -218,3 +218,168 @@ A third review found these gaps, two of them in this ADR's own changes.
   with `capability_not_released`.
 - A route health report read while the enforced guard holds the canary adds
   `hold.since` and `hold.aborts_at`. The CLI prints them.
+
+## Amendment 3 (2026-10-29): warm latency and platform refusals
+
+A fourth review found that route evidence charged the candidate for things it
+did not cause.
+
+1. **Cold boots biased the latency check.** A scale-to-zero canary with a small
+   traffic share cold boots far more often than the stable deployment, and
+   schedd keeps only service canaries warm. The guard's p95 included cold boot
+   time, so a healthy function canary could look slower than stable, be held
+   and then aborted at the hold deadline.
+2. **Platform refusals counted as release errors.** A 5xx the gateway returned
+   because a Gregale dependency could not admit the request (node admission,
+   traffic policy, rate-limit or revocation state unavailable) counted as a
+   server error for whichever deployment was selected. A control-plane blip
+   during a canary or after a release could hold a canary or roll back a
+   production release.
+3. **Published alert docs linked to unpublished pages.** `docs/alerts.md` is
+   published; its route alert section linked to the unpublished route
+   monitoring and route health pages and did not say the features are a
+   preview.
+
+**Decision.**
+
+- The canary guard ranks latency only over requests that did not cold boot:
+  aggregate evidence, pooled windows, customer cohorts, investigation examples
+  and latency diagnostics all use the same warm requests. Each latency window
+  reports the count as `latency_requests`, and the 100-request latency minimum
+  applies to it. Error counts and rates still include every request. Cold-boot
+  latency stays compared by Safe Deploy's circuit breaker
+  (`abort_cold_boot_p95`), which compares cold boots with cold boots. The
+  production monitor keeps end-to-end latency, cold boots included: it checks
+  a budget the customer chose, with no stable deployment to skew against.
+- The gateway marks a request telemetry row `platform_refusal` when it answered
+  with a 5xx, its traffic decision was `refused`, and the refusal reason is
+  `node_admission_unavailable`, `policy_unavailable`, `rate_limit_unavailable`
+  or `security_unavailable`. Route health, its customer cohorts, client-error
+  signals, investigations and the production monitor skip these rows.
+  Deadlines, open circuits, `capacity`, `node_capacity` (a 429 at the app's own
+  request limit) and failed wakes or boots still count: a candidate can cause
+  each of them. The column is an expand-only migration with a `false` default;
+  apid stores the flag only on a 5xx.
+- The alerts page names the route alerts as a preview and links neither
+  unpublished page until the features are promoted.
+
+**Consequences.**
+
+- Until a node's gatewayd runs this release, its platform refusals still count.
+- Saved history and reports from before this amendment have no
+  `latency_requests` and are evaluated over all requests, as they were made.
+- Route health latency investigations (ADR-497) now show no cold boots and no
+  wake boot timings: the requests they explain did not cold boot. Production
+  monitor incident diagnostics keep both.
+- A route whose traffic is mostly cold boots on either side may lack 100 warm
+  requests and stay unknown on latency, which holds an enforced canary until the
+  hold deadline. Synthetic probes (ADR-847), which keep the canary warm, make
+  that less likely.
+- The dashboard has no production route monitoring page yet; that is
+  frontend work tracked outside this ADR.
+
+## Amendment 4 (2026-11-02): route labels, open minutes and promotions
+
+A fifth review found evidence that never arrived or was anchored too early.
+
+1. **Route evidence depended on the per-route metrics opt-in.** The gateway
+   labeled request telemetry only for apps with `route_metrics_enabled`, an
+   opt-in presented as per-route Prometheus series (ADR-093). An app without it,
+   for example one created before ADR-093 or one whose owner turned the series
+   off, recorded every request as `__route_other__`. Its guard windows were
+   always unknown, so an enforced canary was held and then aborted at the hold
+   deadline, and its monitor never decided anything.
+2. **Selected routes could lose their label.** Each app has 50 labels per
+   gateway. A label idle for an hour can be reused, and only declared routes
+   (OpenAPI, `gregale.yaml`) are protected. A low-traffic guarded route, the
+   case pooled evidence exists for, could fold into `__route_other__` on an app
+   with many routes or one that answers every probed path.
+3. **Minute collapse held route removal forever.** With
+   `FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE=1` (ADR-20261101085552), the
+   gateway reported every open minute's requests as pending. Every app with
+   traffic kept a per-app pending gap refreshed on each heartbeat, so route
+   removal's coverage check always blocked it.
+4. **Manual promotions never anchored the monitor.** A traffic change that
+   took a deployment to 100%, such as promoting a release staged with
+   `--no-traffic`, recorded no time. The monitor anchored on the deployment's
+   creation, so an error-budget incident right after the promotion was skipped
+   as `outside_rollback_window`.
+
+**Decision.**
+
+- Request telemetry labels routes for every app with request telemetry,
+  whatever its per-route metrics setting; per-route Prometheus series still
+  follow the opt-in.
+- The gateway reserves labels for the routes an app's route health guard or
+  production monitor selects (at most 40). Such a label is never replaced, and
+  a full set with no idle label gives up its least recently seen unselected
+  label. gatewayd-internal reads the selections (`RouteLabelPins`) and caches
+  them for a minute; a failed read keeps the last known selections and retries
+  after 10 seconds. Selections never change how a request is handled.
+- Coverage counts as pending only requests in closed minutes that have not
+  shipped. A minute still within its grace is read by no window yet: route
+  evidence waits `RouteHealthIngestionLag` and route removal two minutes, and
+  each tick ships closed minutes before it reports coverage.
+- `deployments.promoted_at` records when a traffic change last took a
+  deployment to 100%, from below (manual splits, binding promotions and staged
+  promotions all use that path). The monitor's observation anchor and its
+  rollback window include it.
+
+**Consequences.**
+
+- Apps without per-route metrics now write one telemetry row per route
+  bucket instead of one `__route_other__` bucket; the 50-label cap still
+  bounds them.
+- A selected route can displace a busy unselected route's label; that route's
+  requests then count under `__route_other__` and its Prometheus series end.
+- A gateway that fails before shipping an open minute loses it as before; the
+  restart resets its coverage, so route evidence and removal still see the gap.
+- Releases promoted before this amendment have no `promoted_at`; the monitor
+  keeps anchoring them on their recorded rollout times.
+
+## Amendment 5 (2026-11-02): named deployments, long-lived responses, pin reads
+
+A sixth review found traffic that route evidence should not count and a pin
+cache on the request path.
+
+1. **Requests that named their deployment counted as production evidence.**
+   Every deployment has a preview URL (`https://deploy-44-my-api.gregale.dev`),
+   deployments can have alias URLs, and project releases accept revision pins.
+   Their requests were ordinary telemetry for that deployment. CI smoke tests,
+   QA sessions and negative tests against a canary's URL counted as canary
+   evidence, and the same against the serving deployment's URL could open a
+   production incident and, with automatic rollback on, roll back a healthy
+   release.
+2. **Long-lived responses counted their lifetime as latency.** A request's
+   latency runs until the handler returns, so a WebSocket or a declared stream
+   recorded its whole connection. A latency budget or relative check on such a
+   route could never pass.
+3. **Pin reads blocked requests.** Amendment 4's pin cache took one mutex on
+   every request and read the store inside the request that found an entry
+   expired, with a 500 ms timeout.
+
+**Decision.**
+
+- Request telemetry records `deployment_pinned` when the gateway served a
+  deployment preview or alias URL (`PinnedDeploymentID` without a
+  `PublicEnvironmentID`) or a revision pin, and `long_lived` when the response
+  outlived its request budget (`streamDetached`: a WebSocket upgrade or a
+  declared stream). An environment URL, a project release and production
+  routing are not pinned.
+- Route health, its customer cohorts, client-error signals, investigations and
+  the production monitor skip pinned requests. Every reader counts a
+  long-lived response as a request and its errors, but leaves its duration out
+  of latency; a side reports `latency_requests` whenever it ranked fewer
+  requests than it counted, and the latency minimum applies to that count.
+- A lookup only reads the pin cache. An app's first lookup and each expiry
+  start one background read; lookups keep the last known pins meanwhile.
+
+**Consequences.**
+
+- A guarded route's evidence no longer includes traffic sent to the
+  deployment's own URL; a route used only through such URLs has no evidence.
+- A route that only serves long-lived responses has no latency evidence and
+  stays unknown on latency checks.
+- Until a node's gatewayd runs this release, its rows carry neither flag.
+- An app's first request after a gateway starts can still fold a selected
+  route into `__route_other__` while its pins load.

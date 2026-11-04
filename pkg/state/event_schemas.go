@@ -7,14 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/edgevalidate"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var eventSchemaVersionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+var eventSchemaVersionPattern = lazyregexp.New(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 var (
 	ErrEventSchemaRequired = errors.New("event schema version is required")

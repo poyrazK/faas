@@ -186,7 +186,7 @@
       "name": "Capability acceptance: delivery",
       "category": "delivery",
       "description": "Each released delivery capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["alert-rollbacks", "apps", "builds", "deploy-diff", "deploy-freezes", "deploy-overrides", "deploy-queue-controls", "deploy-scans", "deploy-tokens", "deployment-aliases", "environment-clones", "environment-gitops", "environment-promotions", "environment-release-sets", "environments", "gitlab-deploys", "kubernetes-manifests", "projects", "registry-credentials", "release-approvals", "release-commands", "release-gates", "rollback", "scheduled-releases", "service-migration", "source-ref-deploys", "starter-templates", "stateless-contract", "traffic-mirroring"],
+      "capabilities": ["alert-rollbacks", "apps", "builds", "deploy-diff", "deploy-freezes", "deploy-overrides", "deploy-queue-controls", "deploy-scans", "deploy-tokens", "deployment-aliases", "environment-clones", "environment-gitops", "environment-promotions", "environment-release-sets", "environments", "gitlab-deploys", "kubernetes-manifests", "projects", "registry-credentials", "release-approvals", "release-commands", "release-gates", "resource-labels", "rollback", "scheduled-releases", "service-migration", "source-ref-deploys", "starter-templates", "stateless-contract", "traffic-mirroring"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_scheduled_releases_test.go::TestScheduledReleaseLines"},
@@ -202,6 +202,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_project_environment_promotion_test.go::TestProjectEnvironmentPromotionBlockedWhilePastDue"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_project_release_sets_test.go::TestPublishProjectReleaseSetRequiresCompleteLiveGraph"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_projects_test.go::TestProjectEnvironmentCloneCopiesScopedStateAtomically"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_resource_labels_test.go::TestAppLabelsAPI"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_IDOR"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_templates_test.go::TestListTemplates_ReturnsAllNames"},
@@ -451,7 +452,9 @@
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengeSolvePassesRouteGates"},
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengePassCoversTheHostForTheAccount"},
         {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_routing_test.go::TestChallengeSolveRefusesForeignTokens"},
-        {"kind": "test", "locator": "cmd/gatewayd-internal/edge_challenge_key_test.go::TestEdgeChallengeSecret"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/edge_challenge_key_test.go::TestLoadGatewayFleetKey"},
+        {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestChallengePassSurvivesAShadowingCookie"},
+        {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestChallengedPreflightIsAnsweredAtTheEdge"},
         {"kind": "runbook", "locator": "docs/runbooks/FaasEdgeChallenge.md"},
         {"kind": "runbook", "locator": "docs/security.md"}
       ]
@@ -467,6 +470,7 @@
         {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxRefusesBoxedClientAcrossPaths"},
         {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxThresholdWindowAndExpiry"},
         {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxPerAppCap"},
+        {"kind": "test", "locator": "pkg/gateway/edge_security_review_test.go::TestWAFCookieOnlyDetectionBlocksWithoutBoxing"},
         {"kind": "test", "locator": "pkg/apid/edgerules/penalty_test.go::TestCreateValidatesAndStoresPenalty"},
         {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgePenaltyBoxFlag"},
         {"kind": "test", "locator": "cmd/gatewayd-internal/penalty_box_share_test.go::TestPenaltyBoxSharedAcrossGateways"},
@@ -563,6 +567,7 @@
       "targets": [{"metric": "p95", "operator": "lte", "value": 180, "unit": "seconds"}],
       "evidence": [
         {"kind": "test", "locator": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"},
+        {"kind": "test", "locator": "pkg/githubd/app_binding_push_test.go::TestPushDeploysAppBoundWithoutProject"},
         {"kind": "test", "locator": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"},
         {"kind": "test", "locator": "cmd/e2e/preview_e2e_test.go::TestPreview_E2E_HappyPath_PreviewAppsByParent"},
         {"kind": "test", "locator": "cmd/e2e/github_webhook_deploy_e2e_test.go::TestE2E_GitHubWebhookEnqueuesDeployments"},

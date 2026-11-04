@@ -53,6 +53,7 @@ def healthy_snapshot() -> dict:
     backup_sa = POLICY["backup"]["writer_service_account"]
     control = instance(POLICY["control_plane"]["instance"], POLICY["control_plane"]["service_account"])
     control["tags"]["items"].append(POLICY["access"]["origin_target_tag"])
+    control["tags"]["items"].append(POLICY["access"]["custom_domain_tls"]["target_tag"])
     compute = instance("faas-compute-node-1", compute_sa)
     compute_peer = instance("faas-compute-node-2", compute_sa, zone="europe-west3-c")
     disks = []
@@ -101,6 +102,15 @@ def healthy_snapshot() -> dict:
                 "targetTags": [POLICY["access"]["origin_target_tag"]],
                 "allowed": [{"IPProtocol": "tcp", "ports": ["80", "443"]}],
             },
+        ] + [
+            {
+                "name": name,
+                "direction": "INGRESS",
+                "sourceRanges": ["0.0.0.0/0" if family == "ipv4" else "::/0"],
+                "targetTags": [POLICY["access"]["custom_domain_tls"]["target_tag"]],
+                "allowed": [{"IPProtocol": "tcp", "ports": ["80", "443"]}],
+            }
+            for family, name in POLICY["access"]["custom_domain_tls"]["firewall_rules"].items()
         ],
         "project_iam": {
             "bindings": [
@@ -277,6 +287,44 @@ class AuditTest(unittest.TestCase):
             AUDIT.audit(POLICY, snap),
         )
 
+    def test_direct_entry_rule_admits_443_to_compute_nodes_only(self) -> None:
+        entry = POLICY["access"]["direct_entry"]
+        rule = {
+            "name": entry["firewall_rule"],
+            "direction": "INGRESS",
+            "sourceRanges": ["0.0.0.0/0"],
+            "targetTags": [entry["target_tag"]],
+            "allowed": [{"IPProtocol": "tcp", "ports": ["443"]}],
+        }
+        snap = healthy_snapshot()
+        snap["firewalls"].append(copy.deepcopy(rule))
+        snap["instances"][1]["tags"]["items"].append(entry["target_tag"])
+        self.assertEqual(AUDIT.audit(POLICY, snap), [])
+
+        for change, want in [
+            (lambda r: r.update(allowed=[{"IPProtocol": "tcp", "ports": ["80", "443"]}]), "not exactly [443]"),
+            (lambda r: r.update(allowed=[{"IPProtocol": "tcp", "ports": ["22", "443"]}]), "administrative TCP port"),
+            (lambda r: r.update(allowed=[{"IPProtocol": "all"}]), "beyond the listed TCP ports"),
+            (lambda r: r.update(targetTags=[entry["target_tag"], POLICY["access"]["origin_target_tag"]]), "not limited to target tag"),
+            (lambda r: r.update(sourceRanges=["0.0.0.0/0", "::/0"]), "sources beyond 0.0.0.0/0"),
+        ]:
+            snap = healthy_snapshot()
+            drifted = copy.deepcopy(rule)
+            change(drifted)
+            snap["firewalls"].append(drifted)
+            self.assertIn(want, "\n".join(AUDIT.audit(POLICY, snap)))
+
+        snap = healthy_snapshot()
+        snap["instances"][0]["tags"]["items"].append(entry["target_tag"])
+        self.assertIn("for compute nodes only", "\n".join(AUDIT.audit(POLICY, snap)))
+
+        # Any other rule opening 443 to everyone still fails.
+        snap = healthy_snapshot()
+        other = copy.deepcopy(rule)
+        other["name"] = "someone-elses-entry"
+        snap["firewalls"].append(other)
+        self.assertIn("exposes the HTTP origin publicly", "\n".join(AUDIT.audit(POLICY, snap)))
+
     def test_origin_rule_drift_and_public_bypass_fail(self) -> None:
         snap = healthy_snapshot()
         snap["firewalls"][1]["sourceRanges"] = ["0.0.0.0/0"]
@@ -285,6 +333,31 @@ class AuditTest(unittest.TestCase):
         self.assertIn("exposes the HTTP origin publicly", failures)
         self.assertIn("does not match pinned Cloudflare ipv4 ranges", failures)
         self.assertIn("is not limited to target tag", failures)
+
+
+    def test_custom_domain_exception_is_control_plane_only(self) -> None:
+        snap = healthy_snapshot()
+        snap["instances"][1]["tags"]["items"].append(POLICY["access"]["custom_domain_tls"]["target_tag"])
+        self.assertIn("must belong only", "\n".join(AUDIT.audit(POLICY, snap)))
+
+    def test_custom_domain_exception_rejects_broad_rules(self) -> None:
+        for changes in (
+            {"targetTags": []},
+            {"targetTags": ["gregale-custom-domain-edge", "another-host"]},
+            {"targetServiceAccounts": ["another-account"]},
+            {"allowed": [{"IPProtocol": "all"}]},
+            {"allowed": [{"IPProtocol": "tcp", "ports": ["80-443"]}]},
+            {"disabled": True},
+        ):
+            with self.subTest(changes=changes):
+                snap = healthy_snapshot()
+                snap["firewalls"][-1].update(changes)
+                self.assertIn("must allow only public TCP/80,443", "\n".join(AUDIT.audit(POLICY, snap)))
+
+    def test_custom_domain_public_rules_require_explicit_policy(self) -> None:
+        policy = copy.deepcopy(POLICY)
+        policy["access"]["custom_domain_tls"]["enabled"] = False
+        self.assertIn("exposes the HTTP origin publicly", "\n".join(AUDIT.audit(policy, healthy_snapshot())))
 
 
 if __name__ == "__main__":

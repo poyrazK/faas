@@ -260,17 +260,29 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	return resolved, true, nil
 }
 
-func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
-	if clones, ok := r.store.(interface {
+// cloneTargetNotReady returns errProjectEnvironmentCloneNotReady while a clone
+// into the environment is unfinished. Every host that reaches a deployment in
+// that environment checks it, not only the environment's own host.
+func (r pgRouter) cloneTargetNotReady(ctx context.Context, accountID, projectID, slug string) error {
+	clones, ok := r.store.(interface {
 		ProjectEnvironmentCloneTargetOperation(context.Context, string, string, string) (state.ProjectEnvironmentCloneOperation, error)
-	}); ok && (r.fullEnvironmentClones == nil || r.fullEnvironmentClones()) {
-		op, err := clones.ProjectEnvironmentCloneTargetOperation(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
-		if err != nil && !errors.Is(err, state.ErrNotFound) {
-			return state.Deployment{}, false, err
-		}
-		if err == nil && op.Status != state.CloneOperationReady {
-			return state.Deployment{}, false, errProjectEnvironmentCloneNotReady
-		}
+	})
+	if !ok || projectID == "" || state.IsProductionScope(slug) || (r.fullEnvironmentClones != nil && !r.fullEnvironmentClones()) {
+		return nil
+	}
+	op, err := clones.ProjectEnvironmentCloneTargetOperation(ctx, accountID, projectID, slug)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return err
+	}
+	if err == nil && op.Status != state.CloneOperationReady {
+		return errProjectEnvironmentCloneNotReady
+	}
+	return nil
+}
+
+func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
+	if err := r.cloneTargetNotReady(ctx, environment.AccountID, environment.ProjectID, environment.Slug); err != nil {
+		return state.Deployment{}, false, err
 	}
 	if reader, ok := r.store.(interface {
 		ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error)
@@ -342,6 +354,11 @@ func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel stri
 	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
 		return gateway.App{}, false, nil
 	}
+	if err := r.cloneTargetNotReady(ctx, app.AccountID, app.ProjectID, deployment.Scope); errors.Is(err, errProjectEnvironmentCloneNotReady) {
+		return gateway.App{}, false, nil
+	} else if err != nil {
+		return gateway.App{}, false, err
+	}
 	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !found {
 		return resolved, found, err
@@ -377,6 +394,13 @@ func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision i
 	}
 	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentPreviewActive() {
 		return gateway.App{}, false, nil
+	}
+	// A preview of a deployment in an unfinished clone target fails closed
+	// exactly like the environment's own host.
+	if err := r.cloneTargetNotReady(ctx, app.AccountID, app.ProjectID, deployment.Scope); errors.Is(err, errProjectEnvironmentCloneNotReady) {
+		return gateway.App{}, false, nil
+	} else if err != nil {
+		return gateway.App{}, false, err
 	}
 	resolved, ok, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !ok {
@@ -494,7 +518,7 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 	if bound && (binding.SurfaceID != surface.ID || binding.AppID != surface.AppID || binding.AccountID != surface.AccountID) {
 		return gateway.App{}, false, errors.New("platform tenant hostname binding changed during resolution")
 	}
-	if bound && binding.Suspended {
+	if bound && binding.Verified && binding.Suspended {
 		return gateway.App{}, false, errPlatformTenantSuspended
 	}
 	if !bound {
@@ -1088,7 +1112,9 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyAccountDeleted,
 		db.NotifyTrafficSecurityChanged,
 	}
-	notif, err := db.SubscribeWithReconnect(ctx, pool, channels, log)
+	// With resync: a LISTEN reconnect or a full hub buffer loses notifications
+	// (ADR-1344 §5 rule 3), and the route and app caches have no TTL.
+	notif, err := db.SubscribeWithResync(ctx, pool, channels, log)
 	if err != nil {
 		log.Error("gatewayd: subscribe invalidations", "err", err)
 		// subscribed stays open: /readyz must keep reporting 503 rather
@@ -1116,6 +1142,8 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		defer ticker.Stop()
 		heartbeat = ticker.C
 	}
+	resync := resyncFlusher{interval: resyncFlushInterval}
+	var resyncDue <-chan time.Time
 	// Reconnect wrapper owns its own cancel via the deferred goroutine.
 	for {
 		select {
@@ -1123,10 +1151,23 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 			return
 		case <-heartbeat:
 			touchEdgeListenerHeartbeat(ctx, pool, inv, gatewayNode, log)
+		case <-resyncDue:
+			resyncDue = nil
+			flushAfterMissedNotifications(inv, log)
+			resync.flushed(time.Now())
 		case n, ok := <-notif:
 			if !ok {
 				// Defensive — wrapper keeps open until ctx cancels.
 				return
+			}
+			if n.Channel == db.ResyncChannel {
+				if now, wait := resync.request(time.Now()); now {
+					flushAfterMissedNotifications(inv, log)
+					resync.flushed(time.Now())
+				} else if resyncDue == nil {
+					resyncDue = time.After(wait)
+				}
+				continue
 			}
 			if n.Channel == db.NotifyDeploymentRouteChanged {
 				payload, applied := handleDeploymentRouteInvalidation(ctx, inv, n.Payload, log)
@@ -1141,6 +1182,44 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 				ackEdgeRuleInvalidation(ctx, pool, n.Payload, gatewayNode, log)
 			}
 		}
+	}
+}
+
+// resyncFlushInterval bounds how often missed notifications flush the caches:
+// a cold burst that keeps overflowing the hub's buffer gets one flush at once
+// and one at the end of the interval, not a re-resolve of every host per drop.
+const resyncFlushInterval = 5 * time.Second
+
+// resyncFlusher rate-limits flushAfterMissedNotifications.
+type resyncFlusher struct {
+	interval time.Duration
+	last     time.Time
+}
+
+// request reports whether to flush now, or else how long until the next
+// flush may run.
+func (f *resyncFlusher) request(now time.Time) (bool, time.Duration) {
+	if f.last.IsZero() || now.Sub(f.last) >= f.interval {
+		return true, 0
+	}
+	return false, f.interval - now.Sub(f.last)
+}
+
+func (f *resyncFlusher) flushed(now time.Time) { f.last = now }
+
+// flushAfterMissedNotifications reloads every notification-driven cache after
+// deliveries may have been lost. Without it a missed app_changed,
+// domain_changed, app_delete or account_deleted kept the old require-authn,
+// basic-auth, allowlist and maintenance settings, a deleted app or a removed
+// domain on this gateway until restart: those caches have no TTL.
+func flushAfterMissedNotifications(inv invalidator, log *slog.Logger) {
+	log.Warn("gatewayd: invalidation notifications may have been missed; flushing routing caches")
+	inv.FlushRoutes()
+	inv.ResetEdgeRules()
+	inv.InvalidatePublicAuth()
+	inv.InvalidateResponseCacheAll()
+	if refresher, ok := inv.(interface{ RequestTrafficRevocationRefresh() }); ok {
+		refresher.RequestTrafficRevocationRefresh()
 	}
 }
 

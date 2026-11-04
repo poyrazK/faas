@@ -2,6 +2,7 @@
 
 Date: 2026-10-31
 Status: Accepted
+Amended by: [ADR 20261101030512](20261101030512-event-subscriptions-go-live.md) (the declared set takes effect when the release is live)
 Related: [ADR 20261029093000](20261029093000-event-ga-gate.md) (event GA gate), [ADR 20261027125625](20261027125625-events-kill-switch.md) (events kill switch)
 
 ## Context
@@ -76,6 +77,10 @@ The owner chose (2026-10-31):
    - **When checked:** after the deploy has written and disabled its
      subscriptions. Of two concurrent deploys in one account, the later count
      sees both, so no lock is needed.
+   - **Where checked:** on every path that adds or re-enables a
+     subscription, including the ones in decision 2 that do not reconcile.
+     Otherwise repeated stage deploys or batch creates would pile
+     subscriptions past the caps.
    - **Over a cap:** the deploy fails with `403
      plan_event_subscription_quota` (limit and observed value) and rolls back.
    - **Shrinking is allowed:** the check fails only a deploy that added or

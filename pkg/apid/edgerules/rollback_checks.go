@@ -52,6 +52,9 @@ func (s *Service) restoredRuleProblem(ctx context.Context, acct state.Account, a
 	if _, prob := api.NormalizeEdgeRuleMatchMethods(rule.MatchMethods); prob != nil {
 		return prob
 	}
+	if prob := s.AppBoundHostProblem(ctx, app, rule.MatchHost); prob != nil {
+		return prob
+	}
 	if prob := s.kindProblem(acct, kind); prob != nil {
 		return prob
 	}
@@ -60,8 +63,13 @@ func (s *Service) restoredRuleProblem(ctx context.Context, acct state.Account, a
 			return prob
 		}
 	}
-	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, rule.Match); prob != nil {
+	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, app, rule.Match); prob != nil {
 		return prob
+	}
+	if rule.Kind == state.EdgeRuleKindCORSA && rule.Action.CORS != nil {
+		if prob := s.CorsPresetRefProblem(ctx, acct.ID, app, rule.Action.CORS.CorsPresetID); prob != nil {
+			return prob
+		}
 	}
 	// The stored route and async actions carry the wire field names, so they
 	// marshal back into the shapes the create-time checks read.

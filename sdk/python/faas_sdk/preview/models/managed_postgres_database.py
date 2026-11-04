@@ -11,6 +11,10 @@ from ..models.managed_postgres_database_availability import (
     ManagedPostgresDatabaseAvailability,
     check_managed_postgres_database_availability,
 )
+from ..models.managed_postgres_database_plan_excess import (
+    ManagedPostgresDatabasePlanExcess,
+    check_managed_postgres_database_plan_excess,
+)
 from ..models.managed_postgres_database_service_class import (
     ManagedPostgresDatabaseServiceClass,
     check_managed_postgres_database_service_class,
@@ -20,6 +24,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.managed_postgres_health import ManagedPostgresHealth
+    from ..models.managed_postgres_restore_range import ManagedPostgresRestoreRange
 
 
 T = TypeVar("T", bound="ManagedPostgresDatabase")
@@ -51,6 +56,17 @@ class ManagedPostgresDatabase:
     deleted_at: datetime.datetime | None | Unset = UNSET
     restorable_until: datetime.datetime | Unset = UNSET
     """Set while the database's delete is scheduled: it can be undeleted until then, and is purged after."""
+    restore_slot_until: datetime.datetime | Unset = UNSET
+    """Set while a restored database is one past the plan's database limit. It becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled at this time."""
+    plan_excess: ManagedPostgresDatabasePlanExcess | Unset = UNSET
+    """Set while the plan no longer includes this database, for example after a subscription ended, and it is
+    suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept),
+    service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or
+    resizing to an included class resumes it."""
+    restore_range: ManagedPostgresRestoreRange | Unset = UNSET
+    """The span a point-in-time restore from this database can target now. Absent while the database cannot be
+    restored from."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -114,6 +130,18 @@ class ManagedPostgresDatabase:
         if not isinstance(self.restorable_until, Unset):
             restorable_until = self.restorable_until.isoformat()
 
+        restore_slot_until: str | Unset = UNSET
+        if not isinstance(self.restore_slot_until, Unset):
+            restore_slot_until = self.restore_slot_until.isoformat()
+
+        plan_excess: str | Unset = UNSET
+        if not isinstance(self.plan_excess, Unset):
+            plan_excess = self.plan_excess
+
+        restore_range: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.restore_range, Unset):
+            restore_range = self.restore_range.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -144,12 +172,19 @@ class ManagedPostgresDatabase:
             field_dict["deleted_at"] = deleted_at
         if restorable_until is not UNSET:
             field_dict["restorable_until"] = restorable_until
+        if restore_slot_until is not UNSET:
+            field_dict["restore_slot_until"] = restore_slot_until
+        if plan_excess is not UNSET:
+            field_dict["plan_excess"] = plan_excess
+        if restore_range is not UNSET:
+            field_dict["restore_range"] = restore_range
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.managed_postgres_health import ManagedPostgresHealth
+        from ..models.managed_postgres_restore_range import ManagedPostgresRestoreRange
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -242,6 +277,27 @@ class ManagedPostgresDatabase:
         else:
             restorable_until = datetime.datetime.fromisoformat(_restorable_until)
 
+        _restore_slot_until = d.pop("restore_slot_until", UNSET)
+        restore_slot_until: datetime.datetime | Unset
+        if isinstance(_restore_slot_until, Unset):
+            restore_slot_until = UNSET
+        else:
+            restore_slot_until = datetime.datetime.fromisoformat(_restore_slot_until)
+
+        _plan_excess = d.pop("plan_excess", UNSET)
+        plan_excess: ManagedPostgresDatabasePlanExcess | Unset
+        if isinstance(_plan_excess, Unset):
+            plan_excess = UNSET
+        else:
+            plan_excess = check_managed_postgres_database_plan_excess(_plan_excess)
+
+        _restore_range = d.pop("restore_range", UNSET)
+        restore_range: ManagedPostgresRestoreRange | Unset
+        if isinstance(_restore_range, Unset):
+            restore_range = UNSET
+        else:
+            restore_range = ManagedPostgresRestoreRange.from_dict(_restore_range)
+
         managed_postgres_database = cls(
             id=id,
             name=name,
@@ -261,6 +317,9 @@ class ManagedPostgresDatabase:
             last_error_code=last_error_code,
             deleted_at=deleted_at,
             restorable_until=restorable_until,
+            restore_slot_until=restore_slot_until,
+            plan_excess=plan_excess,
+            restore_range=restore_range,
         )
 
         managed_postgres_database.additional_properties = d

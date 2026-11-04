@@ -32,6 +32,11 @@ from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .agent_client_request import AgentClientRequest
+from .agent_connection_response import AgentConnectionResponse
+from .agent_connection_response_kind import AgentConnectionResponseKind
+from .agent_connections_response import AgentConnectionsResponse
+from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
@@ -53,6 +58,7 @@ from .api_key_export_response_scopes_item import APIKeyExportResponseScopesItem
 from .api_key_response import APIKeyResponse
 from .api_key_response_scopes_item import APIKeyResponseScopesItem
 from .api_key_response_status import APIKeyResponseStatus
+from .app_agent_binding import AppAgentBinding
 from .app_binding_inventory import AppBindingInventory
 from .app_binding_inventory_item import AppBindingInventoryItem
 from .app_binding_inventory_item_type import AppBindingInventoryItemType
@@ -60,6 +66,9 @@ from .app_binding_inventory_service_binding_source import AppBindingInventorySer
 from .app_binding_inventory_service_targets import AppBindingInventoryServiceTargets
 from .app_configured_resources import AppConfiguredResources
 from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
+from .app_cost_coverage import AppCostCoverage
+from .app_cost_meter import AppCostMeter
+from .app_costs_response import AppCostsResponse
 from .app_deploy_settings_condition import AppDeploySettingsCondition
 from .app_deploy_settings_condition_expected_settings import AppDeploySettingsConditionExpectedSettings
 from .app_effective_limits import AppEffectiveLimits
@@ -121,9 +130,22 @@ from .app_manifest_secret_reload_signal_type_2_type_1 import AppManifestSecretRe
 from .app_manifest_secret_reload_signal_type_3_type_1 import AppManifestSecretReloadSignalType3Type1
 from .app_metrics_response import AppMetricsResponse
 from .app_metrics_response_range import AppMetricsResponseRange
+from .app_operation_check import AppOperationCheck
+from .app_operation_check_status import AppOperationCheckStatus
+from .app_operation_preview import AppOperationPreview
+from .app_operation_preview_admission import AppOperationPreviewAdmission
+from .app_operation_preview_authorization import AppOperationPreviewAuthorization
+from .app_operation_preview_checks import AppOperationPreviewChecks
+from .app_operation_preview_operation import AppOperationPreviewOperation
+from .app_operation_preview_schema_version import AppOperationPreviewSchemaVersion
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
 from .app_registry_credential_response import AppRegistryCredentialResponse
 from .app_release_review import AppReleaseReview
+from .app_resource_inventory_binding import AppResourceInventoryBinding
+from .app_resource_inventory_item import AppResourceInventoryItem
+from .app_resource_inventory_response import AppResourceInventoryResponse
+from .app_resource_inventory_response_kind import AppResourceInventoryResponseKind
+from .app_resource_inventory_response_schema_version import AppResourceInventoryResponseSchemaVersion
 from .app_response import AppResponse
 from .app_response_app_protocol import AppResponseAppProtocol
 from .app_response_consumer_auth_mode import AppResponseConsumerAuthMode
@@ -211,6 +233,7 @@ from .billing_status_response import BillingStatusResponse
 from .billing_status_response_account_status import BillingStatusResponseAccountStatus
 from .billing_status_response_mode import BillingStatusResponseMode
 from .billing_status_response_plan import BillingStatusResponsePlan
+from .billing_status_response_scheduled_plan import BillingStatusResponseScheduledPlan
 from .binding_adoption_counts import BindingAdoptionCounts
 from .binding_application_ack_target import BindingApplicationAckTarget
 from .binding_application_ack_target_application_ack import BindingApplicationAckTargetApplicationAck
@@ -329,6 +352,7 @@ from .config_revision_source import ConfigRevisionSource
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
+from .confirm_email_verification_body import ConfirmEmailVerificationBody
 from .connection_budget_capacity import ConnectionBudgetCapacity
 from .connection_budget_capacity_source import ConnectionBudgetCapacitySource
 from .connection_budget_capacity_state import ConnectionBudgetCapacityState
@@ -377,6 +401,7 @@ from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
+from .create_deploy_token_request_scopes_item import CreateDeployTokenRequestScopesItem
 from .create_deployment_files_body import CreateDeploymentFilesBody
 from .create_deployment_files_body_kind import CreateDeploymentFilesBodyKind
 from .create_deployment_files_body_runtime import CreateDeploymentFilesBodyRuntime
@@ -433,6 +458,7 @@ from .cron_response_suspended_reason import CronResponseSuspendedReason
 from .cron_run import CronRun
 from .cron_run_outcome import CronRunOutcome
 from .csrf_token_response import CSRFTokenResponse
+from .custom_domain_hosts_response import CustomDomainHostsResponse
 from .custom_domain_response import CustomDomainResponse
 from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
@@ -671,6 +697,9 @@ from .edge_waf_review_response import EdgeWAFReviewResponse
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_edge_attack_mode_request import EnableEdgeAttackModeRequest
+from .env_batch_request import EnvBatchRequest
+from .env_batch_request_values import EnvBatchRequestValues
+from .env_batch_response import EnvBatchResponse
 from .env_diff_cell import EnvDiffCell
 from .env_diff_kind import EnvDiffKind
 from .env_diff_response import EnvDiffResponse
@@ -813,10 +842,12 @@ from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
+from .get_app_operation_preview_operation import GetAppOperationPreviewOperation
 from .get_app_pre_auth_observations_range import GetAppPreAuthObservationsRange
 from .get_app_request_analytics_group_by import GetAppRequestAnalyticsGroupBy
 from .get_app_request_analytics_timeseries_group_by import GetAppRequestAnalyticsTimeseriesGroupBy
 from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
+from .get_app_resource_inventory_kind import GetAppResourceInventoryKind
 from .get_app_wake_timeline_pagination import GetAppWakeTimelinePagination
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
@@ -841,6 +872,7 @@ from .git_hub_install_status_deploy_branches import GitHubInstallStatusDeployBra
 from .git_hub_install_status_health import GitHubInstallStatusHealth
 from .git_hub_install_status_state import GitHubInstallStatusState
 from .git_hub_install_status_sync_result import GitHubInstallStatusSyncResult
+from .git_hub_installation_summary import GitHubInstallationSummary
 from .git_hub_webhook_activity import GitHubWebhookActivity
 from .git_hub_webhook_activity_status import GitHubWebhookActivityStatus
 from .grace_window_response import GraceWindowResponse
@@ -936,6 +968,7 @@ from .kafka_sasl_config import KafkaSASLConfig
 from .kafka_sasl_mechanism import KafkaSASLMechanism
 from .kafka_tls_config import KafkaTLSConfig
 from .kafka_trigger_config import KafkaTriggerConfig
+from .key_org import KeyOrg
 from .latest_deployments_by_app_response import LatestDeploymentsByAppResponse
 from .list_account_workflow_attention_dependency_status import ListAccountWorkflowAttentionDependencyStatus
 from .list_account_workflow_attention_priority import ListAccountWorkflowAttentionPriority
@@ -1022,6 +1055,7 @@ from .managed_postgres_connection_budget_version import ManagedPostgresConnectio
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
+from .managed_postgres_database_plan_excess import ManagedPostgresDatabasePlanExcess
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
 from .managed_postgres_health import ManagedPostgresHealth
@@ -1033,6 +1067,7 @@ from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
 from .managed_postgres_resize_target_class import ManagedPostgresResizeTargetClass
+from .managed_postgres_restore_range import ManagedPostgresRestoreRange
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
 from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
@@ -1630,9 +1665,14 @@ from .operation_workflow_verification_duration import OperationWorkflowVerificat
 from .operation_workflow_verification_performance import OperationWorkflowVerificationPerformance
 from .org_activity_response import OrgActivityResponse
 from .org_activity_response_data import OrgActivityResponseData
+from .org_agent_policy_request import OrgAgentPolicyRequest
+from .org_agent_policy_request_allowed_scopes_item import OrgAgentPolicyRequestAllowedScopesItem
+from .org_agent_policy_response import OrgAgentPolicyResponse
 from .org_app_list_response import OrgAppListResponse
 from .org_app_summary import OrgAppSummary
 from .org_app_summary_type import OrgAppSummaryType
+from .org_billing_email_request import OrgBillingEmailRequest
+from .org_billing_email_response import OrgBillingEmailResponse
 from .org_invitation_response import OrgInvitationResponse
 from .org_invitation_response_role import OrgInvitationResponseRole
 from .org_invitation_response_status import OrgInvitationResponseStatus
@@ -1959,6 +1999,7 @@ from .request_analytics_response_group_by import RequestAnalyticsResponseGroupBy
 from .request_analytics_route import RequestAnalyticsRoute
 from .request_analytics_route_deployment_observation import RequestAnalyticsRouteDeploymentObservation
 from .request_analytics_route_method import RequestAnalyticsRouteMethod
+from .request_analytics_telemetry_gap import RequestAnalyticsTelemetryGap
 from .request_analytics_timeseries_point import RequestAnalyticsTimeseriesPoint
 from .request_analytics_timeseries_response import RequestAnalyticsTimeseriesResponse
 from .request_analytics_timeseries_response_bucket import RequestAnalyticsTimeseriesResponseBucket
@@ -2156,6 +2197,7 @@ from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
 from .set_binding_release_policy_request_mode import SetBindingReleasePolicyRequestMode
+from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
@@ -2576,6 +2618,11 @@ __all__ = (
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AgentClientRequest",
+    "AgentConnectionResponse",
+    "AgentConnectionResponseKind",
+    "AgentConnectionsResponse",
+    "AgentConnectionsRevokeAllResponse",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
@@ -2597,6 +2644,7 @@ __all__ = (
     "APIKeyResponse",
     "APIKeyResponseScopesItem",
     "APIKeyResponseStatus",
+    "AppAgentBinding",
     "AppBindingInventory",
     "AppBindingInventoryItem",
     "AppBindingInventoryItemType",
@@ -2604,6 +2652,9 @@ __all__ = (
     "AppBindingInventoryServiceTargets",
     "AppConfiguredResources",
     "AppConfiguredResourcesCpuMillicores",
+    "AppCostCoverage",
+    "AppCostMeter",
+    "AppCostsResponse",
     "AppDeploySettingsCondition",
     "AppDeploySettingsConditionExpectedSettings",
     "AppEffectiveLimits",
@@ -2669,9 +2720,22 @@ __all__ = (
     "AppManifestSecretReloadSignalType3Type1",
     "AppMetricsResponse",
     "AppMetricsResponseRange",
+    "AppOperationCheck",
+    "AppOperationCheckStatus",
+    "AppOperationPreview",
+    "AppOperationPreviewAdmission",
+    "AppOperationPreviewAuthorization",
+    "AppOperationPreviewChecks",
+    "AppOperationPreviewOperation",
+    "AppOperationPreviewSchemaVersion",
     "AppRegistryCredentialListResponse",
     "AppRegistryCredentialResponse",
     "AppReleaseReview",
+    "AppResourceInventoryBinding",
+    "AppResourceInventoryItem",
+    "AppResourceInventoryResponse",
+    "AppResourceInventoryResponseKind",
+    "AppResourceInventoryResponseSchemaVersion",
     "AppResponse",
     "AppResponseAppProtocol",
     "AppResponseConsumerAuthMode",
@@ -2755,6 +2819,7 @@ __all__ = (
     "BillingStatusResponseAccountStatus",
     "BillingStatusResponseMode",
     "BillingStatusResponsePlan",
+    "BillingStatusResponseScheduledPlan",
     "BindingAdoptionCounts",
     "BindingApplicationAckTarget",
     "BindingApplicationAckTargetApplicationAck",
@@ -2871,6 +2936,7 @@ __all__ = (
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
+    "ConfirmEmailVerificationBody",
     "ConnectionBudgetCapacity",
     "ConnectionBudgetCapacitySource",
     "ConnectionBudgetCapacityState",
@@ -2931,6 +2997,7 @@ __all__ = (
     "CreateDeploymentRequestTagType2Type1",
     "CreateDeploymentRequestTagType3Type1",
     "CreateDeployTokenRequest",
+    "CreateDeployTokenRequestScopesItem",
     "CreateEdgeRuleListRequest",
     "CreateEdgeRuleListRequestKind",
     "CreateEdgeRuleRequest",
@@ -2973,6 +3040,7 @@ __all__ = (
     "CronRun",
     "CronRunOutcome",
     "CSRFTokenResponse",
+    "CustomDomainHostsResponse",
     "CustomDomainResponse",
     "CustomMetricListResponse",
     "CustomMetricRequest",
@@ -3211,6 +3279,9 @@ __all__ = (
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnableEdgeAttackModeRequest",
+    "EnvBatchRequest",
+    "EnvBatchRequestValues",
+    "EnvBatchResponse",
     "EnvDiffCell",
     "EnvDiffKind",
     "EnvDiffResponse",
@@ -3341,10 +3412,12 @@ __all__ = (
     "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
     "GetAppMetricsRange",
+    "GetAppOperationPreviewOperation",
     "GetAppPreAuthObservationsRange",
     "GetAppRequestAnalyticsGroupBy",
     "GetAppRequestAnalyticsTimeseriesGroupBy",
     "GetAppRequestAnalyticsTimeseriesMethod",
+    "GetAppResourceInventoryKind",
     "GetAppsMetricsRange",
     "GetAppWakeTimelinePagination",
     "GetBuildSbomResponse200",
@@ -3363,6 +3436,7 @@ __all__ = (
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
+    "GitHubInstallationSummary",
     "GitHubInstallMutationRequest",
     "GitHubInstallStatus",
     "GitHubInstallStatusDeployBranches",
@@ -3464,6 +3538,7 @@ __all__ = (
     "KafkaSASLMechanism",
     "KafkaTLSConfig",
     "KafkaTriggerConfig",
+    "KeyOrg",
     "LatestDeploymentsByAppResponse",
     "ListAccountWorkflowAttentionDependencyStatus",
     "ListAccountWorkflowAttentionPriority",
@@ -3542,6 +3617,7 @@ __all__ = (
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
+    "ManagedPostgresDatabasePlanExcess",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
     "ManagedPostgresHealth",
@@ -3553,6 +3629,7 @@ __all__ = (
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
     "ManagedPostgresResizeTargetClass",
+    "ManagedPostgresRestoreRange",
     "ManagedPostgresUsageResponse",
     "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",
@@ -4044,9 +4121,14 @@ __all__ = (
     "OperationWorkflowVerificationPerformance",
     "OrgActivityResponse",
     "OrgActivityResponseData",
+    "OrgAgentPolicyRequest",
+    "OrgAgentPolicyRequestAllowedScopesItem",
+    "OrgAgentPolicyResponse",
     "OrgAppListResponse",
     "OrgAppSummary",
     "OrgAppSummaryType",
+    "OrgBillingEmailRequest",
+    "OrgBillingEmailResponse",
     "OrgInvitationResponse",
     "OrgInvitationResponseRole",
     "OrgInvitationResponseStatus",
@@ -4355,6 +4437,7 @@ __all__ = (
     "RequestAnalyticsRoute",
     "RequestAnalyticsRouteDeploymentObservation",
     "RequestAnalyticsRouteMethod",
+    "RequestAnalyticsTelemetryGap",
     "RequestAnalyticsTimeseriesPoint",
     "RequestAnalyticsTimeseriesResponse",
     "RequestAnalyticsTimeseriesResponseBucket",
@@ -4546,6 +4629,7 @@ __all__ = (
     "SetAccountEgressAllowlistExtraRequest",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",
+    "SetCustomDomainHostsRequest",
     "SetDeploymentAliasRequest",
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",

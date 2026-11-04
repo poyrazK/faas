@@ -25,7 +25,7 @@
 | `synthetic` | `check` (a synthetic check's name), `max_failure_percent` (0–100, default `api.ReleaseGateDefaultMaxFailurePercent` = 10), `min_samples` (default `api.ReleaseGateDefaultSyntheticMinSamples` = 6) | The candidate answered at least `min_samples` probes, more than `max_failure_percent` of them failed, and its failure rate is higher than the stable revision's over the same window. |
 | `metric_change` | `metric`, `comparison` (`above` or `below`), `max_change_percent` (1–1000), `min_samples` | Both windows have at least `min_samples` values, the earlier average is not zero, and the average moved in the gate's direction by more than `max_change_percent` percent of the earlier average. |
 
-A probe passes when the gateway proves the response came from the probed revision and its status is the check's `expected_status`, or any 2xx when the check names none, the rule the check's scheduled runs use. A disabled check is not probed, so its gate is not judged. Deleting a synthetic check deletes the gates that use it, as deleting an SLO does.
+A probe passes when the gateway proves the response came from the probed revision and its status is the check's `expected_status`, or any 2xx when the check names none, the rule the check's scheduled runs use. A check that a gate probes is not paused or deleted until the gate is removed (amendment 1).
 
 ### Probing
 
@@ -60,3 +60,7 @@ A gate with too few candidate probes, too few values in either window, or a metr
 
 - An app with synthetic gates sends at most `ReleaseGatesPerAppMax × 2 × 2` = 40 probes a minute while a canary runs.
 - A release without a canary (the immediate policy, or a plan without traffic splits) has no synthetic gate protection. Its synthetic checks keep running on their schedule and alert as before.
+
+## Amendment 1 (2026-10-31): a gated synthetic check is not paused or deleted
+
+Removing a gate needs `org.manage_app_security`, but deleting its synthetic check cascaded to the gate and pausing the check left the gate never judged, and the member who created an app may change its checks. Pausing or deleting a check that a gate probes now answers `409` naming the gates, as deleting an SLO a gate judges does ([ADR-20261019071734](20261019071734-release-gates-on-customer-signals.md) amendment 2). Resuming a check is always allowed. The foreign key still cascades when the app itself is deleted.

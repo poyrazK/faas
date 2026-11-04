@@ -407,6 +407,35 @@ func TestIsDeploySubmissionRequest(t *testing.T) {
 	}
 }
 
+// TestIsAppLifecycleRequest pins Hunt 31 H31-13: app delete and restore wait
+// for the account's traffic lock behind deploys, so apid lifts them off its
+// 5 s default; a delete queued behind a deploy answered 503.
+func TestIsAppLifecycleRequest(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodDelete, "/v1/apps/demo", true},
+		{http.MethodPost, "/v1/apps/demo/restore", true},
+		{http.MethodDelete, "/v1/apps/", false},
+		{http.MethodDelete, "/v1/apps/demo/secrets/KEY", false},
+		{http.MethodDelete, "/v1/apps/demo/domains/example.com", false},
+		{http.MethodGet, "/v1/apps/demo", false},
+		{http.MethodPost, "/v1/apps/demo", false},
+		{http.MethodPost, "/v1/postgres/databases/abc/restore", false},
+		{http.MethodPost, "/v1/account/restore", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+"_"+tc.path, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, tc.path, nil)
+			if got := IsAppLifecycleRequest(r); got != tc.want {
+				t.Fatalf("IsAppLifecycleRequest(%s %s) = %v, want %v", tc.method, tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestIsAccountExportRequest pins H14-120: both account exports assemble the
 // whole account before answering, so apid lifts them off its 5 s default; on
 // production-us a 44-app account's export failed with 503 on every attempt.
@@ -448,6 +477,17 @@ func TestIsLongWaitRequest(t *testing.T) {
 		{http.MethodGet, "/v1/apps/demo/policy/status", true},
 		{http.MethodPost, "/v1/projects/scan/source-ref", true},
 		{http.MethodPost, "/v1/apps/demo/deployments/dev-source", true},
+		// Handlers with their own longer timeouts that the 5 s default cut.
+		{http.MethodPost, "/v1/notification-channels/c1/test", true},
+		{http.MethodPost, "/v1/apps/demo/alert-presets/latency/test", true},
+		{http.MethodPost, "/v1/invoices/backfill", true},
+		{http.MethodPost, "/v1/invoices/in_1/refresh", true},
+		{http.MethodGet, "/v1/apps/demo/profiles/heap", true},
+		{http.MethodGet, "/v1/apps/demo/health", true},
+		{http.MethodGet, "/oauth/slack/callback", true},
+		{http.MethodPost, "/v1/deployments/d1/promote", true},
+		{http.MethodPost, "/v1/apps/demo/issues/i1/native-tickets", true},
+		{http.MethodGet, "/v1/invoices/in_1/refresh", false},
 		{http.MethodPost, "/v1/apps/demo/queues/jobs/leases:ack", false},
 		{http.MethodGet, "/v1/apps/demo/queues/jobs/leases", false},
 		{http.MethodPost, "/v1/apps/demo/queues//leases", false},

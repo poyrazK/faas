@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // AppManifestPath is where imaged writes the manifest inside the app layer and
@@ -551,7 +552,7 @@ func (c *PreAuthRateLimitConfig) ValidateRoutes() error {
 	return nil
 }
 
-var versionAffinityCookieNameRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
+var versionAffinityCookieNameRe = lazyregexp.New(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
 
 // ValidateVersionAffinityCookieName keeps the configured lookup unambiguous
 // and bounded. The empty name disables cookie-derived affinity.
@@ -589,7 +590,7 @@ type WorkloadPort struct {
 	Internal bool `json:"internal,omitempty"`
 }
 
-var workloadPortNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
+var workloadPortNameRe = lazyregexp.New(`^[a-z0-9][a-z0-9-]{0,30}$`)
 
 // EffectiveProtocol maps the omitted protocol used by old callers to TCP.
 func (p WorkloadPort) EffectiveProtocol() WorkloadPortProtocol {
@@ -597,6 +598,18 @@ func (p WorkloadPort) EffectiveProtocol() WorkloadPortProtocol {
 		return WorkloadPortTCP
 	}
 	return WorkloadPortProtocol(strings.ToLower(string(p.Protocol)))
+}
+
+// IsInternalWorkloadPort reports whether the current manifest reserves this
+// protocol/port for private service traffic. A previously published listener
+// must stop admitting traffic even if its old name differs from the manifest.
+func IsInternalWorkloadPort(ports []WorkloadPort, protocol WorkloadPortProtocol, port int) bool {
+	for _, declared := range ports {
+		if declared.Internal && declared.EffectiveProtocol() == protocol && declared.Port == port {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateWorkloadPorts validates the bounded listener contract and rejects

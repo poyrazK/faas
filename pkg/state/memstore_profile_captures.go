@@ -13,9 +13,26 @@ import (
 
 type memProfileCapture struct {
 	accountID string
+	// pool is the quota and storage pool (ProfileCaptureLimits.Pool).
+	pool      string
 	capture   api.ProfileCapture
 	claimedAt time.Time
 	blobs     []ProfileCaptureBlob
+}
+
+// inPool reports whether the capture counts in pool; one stored without a
+// pool counts in its account's.
+func (r *memProfileCapture) inPool(pool string) bool {
+	return r.poolID() == pool
+}
+
+// poolID is the pool the capture counts in; rows from before pools count in
+// their account's.
+func (r *memProfileCapture) poolID() string {
+	if r.pool == "" {
+		return r.accountID
+	}
+	return r.pool
 }
 
 func copyProfileCapture(c api.ProfileCapture) api.ProfileCapture {
@@ -40,27 +57,28 @@ func (m *MemStore) profileCaptureLocked(accountID, appID, id string) (*memProfil
 	return row, true
 }
 
-func (m *MemStore) CreateProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture, storageLimit int64) error {
-	return m.insertProfileCapture(accountID, appID, c, 0, storageLimit)
+func (m *MemStore) CreateProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture, limits ProfileCaptureLimits) error {
+	return m.insertProfileCapture(accountID, appID, c, 0, limits)
 }
 
-func (m *MemStore) QueueAutomaticProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration, storageLimit int64) error {
+func (m *MemStore) QueueAutomaticProfileCapture(_ context.Context, accountID, appID string, c api.ProfileCapture, minInterval time.Duration, limits ProfileCaptureLimits) error {
 	if c.Trigger == "" || c.Trigger == api.ProfileCaptureTriggerManual || minInterval <= 0 {
 		return fmt.Errorf("automatic profile capture needs a trigger and minimum interval")
 	}
-	return m.insertProfileCapture(accountID, appID, c, minInterval, storageLimit)
+	return m.insertProfileCapture(accountID, appID, c, minInterval, limits)
 }
 
-func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration, storageLimit int64) error {
+func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration, limits ProfileCaptureLimits) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.profileInvestigationOwnedLocked(accountID, appID) {
 		return ErrNotFound
 	}
+	pool := limits.pool(accountID)
 	automatic := c.Automatic()
 	var recent int64
 	for _, row := range m.profileCaptures {
-		if row.accountID == accountID && row.capture.Automatic() == automatic && !row.capture.CreatedAt.Before(c.CreatedAt.Add(-time.Hour)) {
+		if row.inPool(pool) && row.capture.Automatic() == automatic && !row.capture.CreatedAt.Before(c.CreatedAt.Add(-time.Hour)) {
 			recent++
 		}
 		if row.capture.AppID == appID && !row.capture.Done() {
@@ -80,7 +98,7 @@ func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCa
 	var usage profileCaptureUsage
 	var candidates []*memProfileCapture
 	for _, row := range m.profileCaptures {
-		if row.accountID != accountID {
+		if !row.inPool(pool) {
 			continue
 		}
 		bytes := int64(0)
@@ -117,7 +135,7 @@ func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCa
 		}
 		rotatable = append(rotatable, rotatableProfileCapture{ID: row.capture.ID, Bytes: bytes})
 	}
-	rotate, err := planProfileCaptureStorage(usage, automatic, storageLimit, rotatable)
+	rotate, err := planProfileCaptureStorage(usage, automatic, limits.StorageBytes, rotatable)
 	if err != nil {
 		return err
 	}
@@ -133,7 +151,7 @@ func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCa
 		stored.Trigger = api.ProfileCaptureTriggerManual
 	}
 	stored.Profiles, stored.CompletedAt = []api.ProfileCaptureProfile{}, nil
-	m.profileCaptures[c.ID] = &memProfileCapture{accountID: accountID, capture: stored}
+	m.profileCaptures[c.ID] = &memProfileCapture{accountID: accountID, pool: pool, capture: stored}
 	return nil
 }
 
@@ -210,9 +228,15 @@ func (m *MemStore) ProfileCaptureBlobs(_ context.Context, accountID, appID, id s
 func (m *MemStore) ClaimProfileCapture(_ context.Context, now time.Time) (ClaimedProfileCapture, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	running := map[string]int{}
+	for _, row := range m.profileCaptures {
+		if row.capture.Status == api.ProfileCaptureCapturing {
+			running[row.poolID()]++
+		}
+	}
 	var next *memProfileCapture
 	for _, row := range m.profileCaptures {
-		if row.capture.Status != api.ProfileCaptureQueued {
+		if row.capture.Status != api.ProfileCaptureQueued || running[row.poolID()] >= api.ProfileCaptureMaxRunningPerPool {
 			continue
 		}
 		if next == nil || profileCaptureClaimsBefore(row.capture, next.capture) {
@@ -295,7 +319,8 @@ func (m *MemStore) StampProfileCaptureOOM(_ context.Context, appID, instanceID s
 	var newest *memProfileCapture
 	for _, row := range m.profileCaptures {
 		c := row.capture
-		if c.AppID != appID || c.InstanceID != instanceID || c.CreatedAt.Before(since) || !slices.Contains(c.Kinds, api.ProfileKindHeap) {
+		if c.AppID != appID || c.InstanceID != instanceID || c.CreatedAt.Before(since) || !slices.Contains(c.Kinds, api.ProfileKindHeap) ||
+			c.Status != api.ProfileCaptureCapturing && c.Status != api.ProfileCaptureReady {
 			continue
 		}
 		if newest == nil || c.CreatedAt.After(newest.capture.CreatedAt) || c.CreatedAt.Equal(newest.capture.CreatedAt) && c.ID < newest.capture.ID {
@@ -375,7 +400,7 @@ func (m *MemStore) ExpireProfileCaptures(_ context.Context, now time.Time) (int6
 			c.Status, c.Reason, c.CompletedAt = api.ProfileCaptureFailed, profileCaptureInterruptedReason, &completed
 			n++
 		}
-		if c.ExpiresAt.Before(now) {
+		if app, ok := m.apps[c.AppID]; c.ExpiresAt.Before(now) || ok && app.Status == AppDeleted {
 			delete(m.profileCaptures, id)
 			n++
 		}

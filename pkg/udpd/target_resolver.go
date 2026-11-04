@@ -48,7 +48,7 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("select raw ingress deployment: %w", err)
 	}
-	instances, err := r.Store.ListInstancesForApp(ctx, route.AppID)
+	instances, err := state.ListLiveInstancesForApp(ctx, r.Store, route.AppID)
 	if err != nil {
 		return gateway.Target{}, err
 	}
@@ -96,6 +96,9 @@ func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) e
 	if app.MaintenanceMode {
 		return errors.New("UDP app is in maintenance mode")
 	}
+	if app.Visibility == api.AppVisibilityInternal {
+		return errors.New("UDP app is internal")
+	}
 	intent, err := r.Store.UDPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
 	if err != nil {
 		return err
@@ -109,7 +112,7 @@ func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) e
 		if name == "" {
 			name = fmt.Sprintf("udp-%d", port.Port)
 		}
-		if port.EffectiveProtocol() == api.WorkloadPortUDP && port.Port == route.GuestPort && name == route.ListenerName {
+		if !port.Internal && port.EffectiveProtocol() == api.WorkloadPortUDP && port.Port == route.GuestPort && name == route.ListenerName {
 			declared = true
 			break
 		}

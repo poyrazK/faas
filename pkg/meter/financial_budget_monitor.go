@@ -24,15 +24,15 @@ func (l *Loop) RunFinancialBudgetsOnce(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	accounts, err := l.store.ListAllAccounts(ctx)
+	subjects, err := financialBudgetSubjects(ctx, l.store)
 	if err != nil {
 		return err
 	}
 	now := l.now().UTC()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	var failures []error
-	for _, account := range accounts {
-		rows, err := policies.ListFinancialBudgets(ctx, account.ID)
+	for _, subject := range subjects {
+		rows, err := policies.ListFinancialBudgets(ctx, subject)
 		if err != nil {
 			failures = append(failures, err)
 			continue
@@ -46,7 +46,7 @@ func (l *Loop) RunFinancialBudgetsOnce(ctx context.Context) error {
 		if len(active) == 0 {
 			continue
 		}
-		report, readErr := billing.ReadFinancialCosts(ctx, l.store, account.ID, start, now)
+		report, readErr := billing.ReadFinancialCosts(ctx, l.store, subject, start, now)
 		for _, p := range active {
 			e := financial.BudgetEvaluation{PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), AsOf: start, EvaluatedAt: now, Reasons: []string{"cost_evaluation_unavailable"}}
 			var evalErr error
@@ -56,7 +56,7 @@ func (l *Loop) RunFinancialBudgetsOnce(ctx context.Context) error {
 			if evalErr != nil {
 				e = financial.BudgetEvaluation{PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), AsOf: start, EvaluatedAt: now, Reasons: []string{"cost_evaluation_unavailable"}}
 			}
-			commitErr := monitor.RecordFinancialBudgetEvaluation(ctx, account.ID, p.ID, p.Revision, e)
+			commitErr := monitor.RecordFinancialBudgetEvaluation(ctx, subject, p.ID, p.Revision, e)
 			if !errors.Is(commitErr, state.ErrConflict) {
 				failures = append(failures, commitErr)
 			}
@@ -65,6 +65,25 @@ func (l *Loop) RunFinancialBudgetsOnce(ctx context.Context) error {
 		failures = append(failures, readErr)
 	}
 	return errors.Join(failures...)
+}
+
+// financialBudgetSubjects is every billing subject, account or organization
+// that owns its resources, whose budgets meterd evaluates (ADR-20261031211500).
+// A store that lists the subjects with enabled monitored budgets answers in
+// one read; otherwise every billing subject is listed.
+func financialBudgetSubjects(ctx context.Context, store state.Store) ([]string, error) {
+	if lister, ok := store.(state.FinancialBudgetSubjectLister); ok {
+		return lister.ListFinancialBudgetMonitoredSubjects(ctx)
+	}
+	accounts, err := state.ListBillingResourceAccounts(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		out = append(out, account.ID)
+	}
+	return out, nil
 }
 
 // RunFinancialBudgetDeliveriesOnce keeps provider latency off the sampling and
@@ -103,7 +122,12 @@ func (l *Loop) sendFinancialBudgetEmails(ctx context.Context, claim func(context
 		if err != nil {
 			return errors.Join(append(failures, err)...)
 		}
-		account, err := l.store.AccountByID(ctx, a.AccountID)
+		// An organization's budget alerts its billing contact, as its spend
+		// cap notice does (ADR-20261031211500).
+		account, err := state.BillingResourceAccount(ctx, l.store, a.AccountID)
+		if err == nil && account.Email == "" {
+			err = errors.New("financial budget alert has no billing contact")
+		}
 		if err == nil {
 			sendCtx, cancel := context.WithTimeout(ctx, api.FinancialBudgetAlertSendTimeout)
 			_, noop := l.mailer.(noopDunningSender)

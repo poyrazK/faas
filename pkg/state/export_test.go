@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -1146,3 +1147,30 @@ var LiveServiceProxyIdentities = liveServiceProxyIdentities
 
 // OperatorIntents exposes the MemStore's operator intents to tests.
 func (r *MemStore) OperatorIntents() map[string]OperatorIntent { return r.operatorIntents }
+
+// Keyed credential families (ADR 20261029202403 amendment 1).
+var (
+	AcknowledgmentToken      = acknowledgmentToken
+	AcknowledgmentMatches    = acknowledgmentMatches
+	AcknowledgmentDigest     = acknowledgmentDigest
+	ObjectUploadGrantLookups = objectUploadGrantLookups
+)
+
+// BeginTrafficBindingForTest opens the app binding transaction a deploy uses,
+// so a test can time its analysis bound (Hunt 31 H31-11).
+func (s *PgStore) BeginTrafficBindingForTest(ctx context.Context, account, appID string) (pgx.Tx, error) {
+	tx, err := s.beginTrafficBinding(ctx, TrafficPolicyWriterAppBinding, account, nil, appID)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// SeedLegacyWorkflowEvent inserts a retained event as written by an older
+// version, before the current event payload limit existed.
+func (m *MemStore) SeedLegacyWorkflowEvent(event WorkflowEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.workflowEvents[event.RunID] = append(m.workflowEvents[event.RunID], event)
+	m.workflowEventApps[event.RunID] = m.workflowRuns[event.RunID].AppID
+}

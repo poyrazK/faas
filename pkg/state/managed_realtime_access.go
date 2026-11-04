@@ -111,7 +111,7 @@ func (s *PgStore) ChangeManagedRealtimeAccess(ctx context.Context, ep, principal
 	// The handler decides which auth modes may use access controls: OIDC
 	// endpoints, plus any endpoint once ticket preview is enabled (ADR-1117).
 	var endpoint string
-	if err = tx.QueryRow(ctx, `SELECT id FROM managed_realtime_endpoints WHERE id=$1 FOR UPDATE`, ep).Scan(&endpoint); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT id FROM managed_realtime_endpoints WHERE id=$1 FOR NO KEY UPDATE`, ep).Scan(&endpoint); err != nil {
 		return ManagedRealtimeAccess{}, mapErr(err)
 	}
 	row, err := readRealtimeAccessPG(ctx, tx, ep, principal)
@@ -138,6 +138,9 @@ func (s *PgStore) ChangeManagedRealtimeAccess(ctx context.Context, ep, principal
 	raw, _ := json.Marshal(row.DeniedChannels)
 	_, err = tx.Exec(ctx, `INSERT INTO managed_realtime_principal_access(endpoint_id,principal,denied_channels,sessions_revoked_before,revision,updated_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(endpoint_id,principal) DO UPDATE SET denied_channels=excluded.denied_channels,sessions_revoked_before=excluded.sessions_revoked_before,revision=excluded.revision,updated_at=excluded.updated_at`, ep, principal, raw, row.SessionsRevokedBefore, row.Revision, row.UpdatedAt)
 	if err != nil {
+		return row, err
+	}
+	if err = notifyRealtimeAccessChangedPG(ctx, tx, ep, principal); err != nil {
 		return row, err
 	}
 	return row, tx.Commit(ctx)

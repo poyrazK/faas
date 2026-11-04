@@ -2,10 +2,7 @@ package state
 
 import (
 	"context"
-	"errors"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // CustomDomainDNSDriftStore is the optional state mutation used by the
@@ -22,63 +19,31 @@ type CustomDomainDNSDriftStore interface {
 // does not count as a new transition. Unverified domains in another lifecycle
 // state are left untouched.
 func (s *PgStore) MarkCustomDomainDNSDrifted(ctx context.Context, domain string, checkedAt time.Time, reason string) (bool, error) {
-	var verified bool
-	var status string
-	err := s.pool.QueryRow(ctx, `
-		select verified_at is not null, cert_status
-		  from custom_domains
-		 where domain = $1`, domain).Scan(&verified, &status)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, ErrNotFound
+	if claim, bound := CustomDomainProbe(ctx); bound {
+		return s.markCustomDomainProbeDrifted(ctx, claim, domain, checkedAt, reason)
 	}
+	claim, err := s.DomainByName(ctx, domain)
 	if err != nil {
 		return false, err
 	}
-	if !verified && CustomDomainCertStatus(status) != CustomDomainCertDNSDrifted {
-		return false, nil
-	}
-	if !verified {
-		_, err = s.pool.Exec(ctx, `
-			update custom_domains
-			   set dns_last_checked_at = $2,
-			       cert_last_error = $3
-			 where domain = $1
-			   and verified_at is null
-			   and cert_status = 'dns_drifted'`,
-			domain, nullableTime(checkedAt), nullableStr(reason))
-		return false, err
-	}
-
-	tag, err := s.pool.Exec(ctx, `
-		update custom_domains
-		   set verified_at = null,
-		       cert_status = 'dns_drifted',
-		       cert_expires_at = null,
-		       cert_last_error = $2,
-		       dns_last_checked_at = $3,
-		       cert_failed_at = null,
-		       last_cert_issuance_failed_email_at = null,
-		       verification_next_check_at = now(),
-		       verification_attempts = 0,
-		       verification_expires_at = now() + interval '7 days'
-		 where domain = $1
-		   and verified_at is not null`,
-		domain, nullableStr(reason), nullableTime(checkedAt))
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() > 0, nil
+	return s.markCustomDomainProbeDrifted(ctx, claim, domain, checkedAt, reason)
 }
 
 // MarkCustomDomainDNSDrifted mirrors the Postgres transition under the
 // MemStore mutex so doctor tests exercise the same one-event-per-episode
 // contract as production.
-func (m *MemStore) MarkCustomDomainDNSDrifted(_ context.Context, domain string, checkedAt time.Time, reason string) (bool, error) {
+func (m *MemStore) MarkCustomDomainDNSDrifted(ctx context.Context, domain string, checkedAt time.Time, reason string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
 	if !ok {
 		return false, ErrNotFound
+	}
+	if !customDomainProbeMatches(ctx, d) {
+		return false, ErrStaleCustomDomainProbe
+	}
+	if d.DNSLastCheckedAt.After(checkedAt) {
+		return false, ErrStaleCustomDomainObservation
 	}
 	if !d.Verified() && d.CertStatus != CustomDomainCertDNSDrifted {
 		return false, nil
@@ -91,9 +56,11 @@ func (m *MemStore) MarkCustomDomainDNSDrifted(_ context.Context, domain string, 
 	d.DNSLastCheckedAt = checkedAt
 	d.CertFailedAt = time.Time{}
 	d.CertFailureEmailAt = time.Time{}
-	d.VerificationNextCheckAt = time.Now()
-	d.VerificationAttempts = 0
-	d.VerificationExpiresAt = d.VerificationNextCheckAt.Add(7 * 24 * time.Hour)
+	if transitioned {
+		d.VerificationNextCheckAt = time.Now()
+		d.VerificationAttempts = 0
+		d.VerificationExpiresAt = d.VerificationNextCheckAt.Add(7 * 24 * time.Hour)
+	}
 	m.domains[domain] = d
 	return transitioned, nil
 }

@@ -15,7 +15,9 @@ import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
 import type { AppHealthResponse } from '../models/AppHealthResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationalSummary } from '../models/AppOperationalSummary.js';
+import type { AppOperationPreview } from '../models/AppOperationPreview.js';
 import type { AppReleaseReview } from '../models/AppReleaseReview.js';
+import type { AppResourceInventoryResponse } from '../models/AppResourceInventoryResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
 import type { AppRoutesResponse } from '../models/AppRoutesResponse.js';
@@ -111,6 +113,8 @@ import type { IssueTeam } from '../models/IssueTeam.js';
 import type { IssueTrackerAutoSync } from '../models/IssueTrackerAutoSync.js';
 import type { IssueTrackerLinearConnection } from '../models/IssueTrackerLinearConnection.js';
 import type { IssueTrackerLink } from '../models/IssueTrackerLink.js';
+import type { LabelChange } from '../models/LabelChange.js';
+import type { LabelsResponse } from '../models/LabelsResponse.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
 import type { ListIssueSavedViewsResponse } from '../models/ListIssueSavedViewsResponse.js';
@@ -3189,6 +3193,48 @@ export class AppsService {
     });
   }
   /**
+   * Set and remove an app's labels.
+   * Preview (resource-labels capability). Sets and removes labels in one
+   * atomic write and returns every label the app carries after it. The
+   * write is idempotent. A result over 32 labels is refused with
+   * label_limit_exceeded; an invalid key or value with invalid_label_key
+   * or invalid_label_value; a key under gregale.dev/ with
+   * reserved_label_key. Emits a resource.labels.changed audit event.
+   * Requires apps:deploy or admin scope and MFA. While the capability is
+   * on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+   * and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+   * label selector such as team=billing,tier in (web,api),!canary (=,
+   * ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+   * through its app. An invalid selector is a 400
+   * invalid_label_selector, and a selector while the capability is off
+   * a 403 capability_not_released. These fields join the GA
+   * description of those routes when the capability does.
+   *
+   * @returns LabelsResponse The app's labels after the write.
+   * @returns Problem An invalid change, missing sign-in, deploy scope or MFA, an app this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static updateAppLabels({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: LabelChange,
+  }): CancelablePromise<LabelsResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/labels',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
    * Read recorded app health changes.
    * Requires apps:read or admin; no MFA required. Background collection
    * records default HTTP serving assessments independently of dashboard
@@ -3576,7 +3622,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Optional RFC3339 upper-bound timestamp for the historical window.
+     * Optional RFC3339 upper-bound timestamp for the historical window. It must be within the plan's telemetry retention, counted back from now.
      */
     until?: string,
     /**
@@ -3718,7 +3764,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Exclusive end timestamp; omitted means current server time.
+     * Exclusive end timestamp; omitted means current server time. It must be within the plan's telemetry retention, counted back from now.
      */
     until?: string,
     /**
@@ -4054,7 +4100,7 @@ export class AppsService {
   /**
    * Ingest OTLP JSON exception events
    * Accepts bounded OTLP trace exception events or exception log records using a deployment-bound issue token. Unrelated telemetry is ignored. Deterministic event IDs permit safe retry after partial delivery. Protobuf encoding is not supported.
-   * @returns any Exceptions accepted, including exact retries
+   * @returns any Exceptions accepted, including exact retries. Partial success reports permanently rejected logs or spans.
    * @throws ApiError
    */
   public static ingestIssueOtlp({
@@ -4071,7 +4117,19 @@ export class AppsService {
      */
     signal: 'traces' | 'logs',
     requestBody: Record<string, any>,
-  }): CancelablePromise<Record<string, any>> {
+  }): CancelablePromise<{
+    partialSuccess?: {
+      /**
+       * Decimal count of rejected log records.
+       */
+      rejectedLogRecords?: string;
+      /**
+       * Decimal count of rejected spans.
+       */
+      rejectedSpans?: string;
+      errorMessage?: string;
+    };
+  }> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issue-events/otlp/{signal}',
@@ -5830,6 +5888,54 @@ export class AppsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Permanently delete a standalone issue and its retained history.
+   * Split linked groups and remove derived branches first. A later occurrence may create a new issue.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteIssue({
+    slug,
+    issueId,
+    abandonUnconfirmedTickets = false,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the durable issue within this app.
+     */
+    issueId: string,
+    /**
+     * Explicitly abandon expired unconfirmed ticket dispatches. The provider may still have created a ticket, and deleting the issue removes its recovery receipt. Confirmed unattached tickets still block deletion.
+     */
+    abandonUnconfirmedTickets?: boolean,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issues/{issue_id}',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      query: {
+        'abandon_unconfirmed_tickets': abandonUnconfirmedTickets,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
@@ -11062,6 +11168,124 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a bounded page of app resource metadata.
+   * Requires apps:read and current application access. App-bound readers may
+   * inspect only their immutable app. This is metadata access: object data,
+   * database connections, credentials and lifecycle operations retain their
+   * own permissions. Counts and offsets are filtered by app, kind and exact
+   * scope in the native catalog before pagination. Resource capability flags
+   * still apply. Domains and crons are app-wide; omit environment for them.
+   * Pages are individual read snapshots; concurrent changes may move offsets.
+   * Metadata state does not establish runtime readiness or connectivity.
+   * No provider calls, probes, reservations or writes are performed.
+   *
+   * @returns AppResourceInventoryResponse Filtered resource metadata and explicit continuation evidence.
+   * @throws ApiError
+   */
+  public static getAppResourceInventory({
+    slug,
+    kind,
+    environment,
+    limit = 20,
+    offset,
+  }: {
+    /**
+     * Application whose resource references are requested.
+     */
+    slug: string,
+    /**
+     * One metadata collection within the selected application.
+     */
+    kind: 'domains' | 'crons' | 'buckets' | 'storage_bindings' | 'databases',
+    /**
+     * Exact named environment in the app project; omit for default-scope inventory.
+     */
+    environment?: string,
+    /**
+     * Maximum metadata entries in this backend page.
+     */
+    limit?: number,
+    /**
+     * Offset within the selected app, resource kind and scope only.
+     */
+    offset?: number,
+  }): CancelablePromise<AppResourceInventoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/resource-inventory',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'kind': kind,
+        'environment': environment,
+        'limit': limit,
+        'offset': offset,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview authorization for an application operation without writing intent.
+   * Requires application read or deployment scope and current application access.
+   * Evaluates the target operation's native scope, organization role and release
+   * policy. Authorization is a snapshot; admission remains unknown when exact
+   * request validation, quotas, approval or runtime capacity need apply-time checks.
+   * This endpoint creates no plan, approval, reservation or customer intent.
+   *
+   * @returns AppOperationPreview Native authorization snapshot and explicit admission limitations.
+   * @throws ApiError
+   */
+  public static getAppOperationPreview({
+    slug,
+    operation,
+    environment,
+  }: {
+    /**
+     * Application slug to inspect.
+     */
+    slug: string,
+    /**
+     * Native application operation whose current authorization is inspected.
+     */
+    operation: 'deploy' | 'restart' | 'scale' | 'env_change',
+    /**
+     * Named environment in the application's project; omit for default scope.
+     */
+    environment?: string,
+  }): CancelablePromise<AppOperationPreview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/operation-preview',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'operation': operation,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

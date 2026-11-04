@@ -7,8 +7,10 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -157,6 +159,104 @@ func (s *Service) RetargetRouteRules(ctx context.Context, accountID, oldSlug, ne
 		}
 	}
 	return len(rules), nil
+}
+
+// RenameEdit is the barrier edit for renaming an app from oldSlug to newSlug:
+// the hosts of the account's route rules naming oldSlug, and of the account's
+// rules written for oldSlug's platform hostname together with the hostname
+// they move to (ADR-091 amendments 2026-10-30 and 2026-11-02).
+func (s *Service) RenameEdit(accountID, oldSlug, newSlug string) ReferencedEdit {
+	route := s.RouteTargetRenameEdit(accountID, oldSlug)
+	return ReferencedEdit{Operation: route.Operation, Subject: route.Subject, Hosts: func(ctx context.Context) (map[string][]string, error) {
+		hosts, err := route.Hosts(ctx)
+		if err != nil {
+			return nil, err
+		}
+		moves, err := s.platformHostRules(ctx, accountID, oldSlug, newSlug)
+		if err != nil {
+			return nil, err
+		}
+		for _, move := range moves {
+			hosts[move.rule.AppID] = append(hosts[move.rule.AppID], move.rule.MatchHost, move.host)
+		}
+		return hosts, nil
+	}}
+}
+
+// RetargetPlatformHostRules moves the account's rules written for oldSlug's
+// platform hostname to newSlug's, inside the RenameEdit barrier (ADR-091
+// amendment 2026-11-02, review round 8). A rename moves the app to a new
+// hostname and frees the old one, so such a rule (an ip allowlist on
+// <slug>.<apps domain>, say) used to stop protecting the app without a word,
+// and a later app of the account given the old slug would have taken it. It
+// returns how many rules it moved.
+func (s *Service) RetargetPlatformHostRules(ctx context.Context, accountID, oldSlug, newSlug string) (int, error) {
+	moves, err := s.platformHostRules(ctx, accountID, oldSlug, newSlug)
+	if err != nil {
+		return 0, err
+	}
+	for i, move := range moves {
+		host := move.host
+		if _, err := s.Host.Store().UpdateEdgeRule(ctx, move.rule.ID, state.UpdateEdgeRuleParams{MatchHost: &host}); err != nil {
+			return i, fmt.Errorf("move edge rule %s to %s: %w", move.rule.ID, host, err)
+		}
+	}
+	return len(moves), nil
+}
+
+// RetargetAfterRename points the account's route rules naming oldSlug, and
+// its rules on oldSlug's platform hostname, at newSlug, inside the
+// RenameEdit barrier. Each step re-lists by the old slug, so a failed step
+// is retried once; what still fails is returned for the rename to report
+// (ADR-091 amendment 2026-11-03, review round 9): the app was renamed, and
+// those rules no longer cover it.
+func (s *Service) RetargetAfterRename(ctx context.Context, accountID, oldSlug, newSlug string) error {
+	steps := []struct {
+		what string
+		run  func() (int, error)
+	}{
+		{"route rules naming the old slug", func() (int, error) { return s.RetargetRouteRules(ctx, accountID, oldSlug, newSlug) }},
+		{"rules on the old platform hostname", func() (int, error) {
+			return s.RetargetPlatformHostRules(ctx, accountID, oldSlug, newSlug)
+		}},
+	}
+	var errs []error
+	for _, step := range steps {
+		_, err := step.run()
+		if err != nil {
+			_, err = step.run()
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", step.what, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+type platformHostMove struct {
+	rule state.EdgeRule
+	host string
+}
+
+// platformHostRules lists the account's rules whose match_host is oldSlug's
+// platform hostname under any apps domain, each with the same hostname for
+// newSlug.
+func (s *Service) platformHostRules(ctx context.Context, accountID, oldSlug, newSlug string) ([]platformHostMove, error) {
+	rules, err := s.Host.Store().ListEdgeRulesForAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	domains := hostidentity.Configured()
+	oldLabel, newLabel := strings.ToLower(oldSlug), strings.ToLower(newSlug)
+	var out []platformHostMove
+	for _, rule := range rules {
+		host := strings.ToLower(strings.TrimSpace(rule.MatchHost))
+		if canonical, ok := domains.CanonicalAppHost(host); !ok || canonical != oldLabel+"."+domains.Apps {
+			continue
+		}
+		out = append(out, platformHostMove{rule: rule, host: newLabel + strings.TrimPrefix(host, oldLabel)})
+	}
+	return out, nil
 }
 
 func (s *Service) routeRulesTargeting(ctx context.Context, accountID, slug string) ([]state.EdgeRule, error) {

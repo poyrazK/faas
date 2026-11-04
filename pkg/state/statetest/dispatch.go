@@ -27,7 +27,18 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"ListEdgeRulesForApp":                    true,
+	"ApplyConfigRestore":                     true,
+	"EvaluateAutomationFailurePolicies":      true,
+	"GetAutomationFailurePolicy":             true,
+	"DefaultCustomDomain":                    true,
+	"DefaultCustomDomains":                   true,
+	"DeploymentWorkerDrainStatus":            true,
+	"DeploymentWorkerDrainStatuses":          true,
+	"MCPTaskPromotionHold":                   true,
+	"MCPTaskPromotionHolds":                  true,
 	"DeleteAppPermanently":                   true,
+	"DeleteProjectIfNoStages":                true,
 	"ListApplicationStandardRebinds":         true,
 	"RecordApplicationStandardRebind":        true,
 	"RestoreApp":                             true,
@@ -66,6 +77,7 @@ var memDispatched = map[string]bool{
 	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
 	"ActivePrewarmFloor":                                      true,
+	"ActivePrewarmFloors":                                     true,
 	"ActiveProjectReleaseSet":                                 true,
 	"AdmitPublishedEventRecipient":                            true,
 	"AdmitScheduledWorkflow":                                  true,
@@ -103,6 +115,7 @@ var memDispatched = map[string]bool{
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
 	"ListAllAccounts":                                         true,
+	"ListReleaseFreezes":                                      true,
 	"MarkDunningStep":                                         true,
 	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
@@ -114,6 +127,7 @@ var memDispatched = map[string]bool{
 	"ListRouteHealthHistory":                                  true,
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
+	"ListInstancesByStatesOlderThan":                          true,
 	"IssueObjectMultipartURLCredential":                       true,
 	"JobRunAttachSession":                                     true,
 	"LatestParkedDeploymentForApp":                            true,
@@ -284,6 +298,42 @@ var memDispatched = map[string]bool{
 	"CountOpenAPIDocsByAccount":                     true,
 }
 
+func (s *Mem) ListEdgeRulesForApp(ctx context.Context, app string) ([]state.EdgeRule, error) {
+	if over, ok := s.over.(interface {
+		ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRule, error)
+	}); ok {
+		return over.ListEdgeRulesForApp(ctx, app)
+	}
+	return s.MemStore.ListEdgeRulesForApp(ctx, app)
+}
+
+func (s *Mem) ApplyConfigRestore(ctx context.Context, restore state.ConfigRestore) (state.ConfigRevision, error) {
+	if over, ok := s.over.(interface {
+		ApplyConfigRestore(context.Context, state.ConfigRestore) (state.ConfigRevision, error)
+	}); ok {
+		return over.ApplyConfigRestore(ctx, restore)
+	}
+	return s.MemStore.ApplyConfigRestore(ctx, restore)
+}
+
+func (s *Mem) EvaluateAutomationFailurePolicies(ctx context.Context, owner, after string, limit int, now time.Time) (string, error) {
+	if o, ok := s.over.(interface {
+		EvaluateAutomationFailurePolicies(context.Context, string, string, int, time.Time) (string, error)
+	}); ok {
+		return o.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+	}
+	return s.MemStore.EvaluateAutomationFailurePolicies(ctx, owner, after, limit, now)
+}
+
+func (s *Mem) GetAutomationFailurePolicy(ctx context.Context, appID, name string) (api.AutomationFailurePolicyResponse, error) {
+	if o, ok := s.over.(interface {
+		GetAutomationFailurePolicy(context.Context, string, string) (api.AutomationFailurePolicyResponse, error)
+	}); ok {
+		return o.GetAutomationFailurePolicy(ctx, appID, name)
+	}
+	return s.MemStore.GetAutomationFailurePolicy(ctx, appID, name)
+}
+
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
 	if over, ok := s.over.(interface {
 		AppTaskByID(context.Context, string, string, string) (state.AppTask, error)
@@ -300,6 +350,60 @@ func (s *Mem) RuntimeConfigReceiptRequired(ctx context.Context, appID, scope str
 		return o.RuntimeConfigReceiptRequired(ctx, appID, scope)
 	}
 	return s.MemStore.RuntimeConfigReceiptRequired(ctx, appID, scope)
+}
+
+func (s *Mem) DefaultCustomDomain(ctx context.Context, appID string) (string, error) {
+	if o, ok := s.over.(interface {
+		DefaultCustomDomain(context.Context, string) (string, error)
+	}); ok {
+		return o.DefaultCustomDomain(ctx, appID)
+	}
+	return s.MemStore.DefaultCustomDomain(ctx, appID)
+}
+
+func (s *Mem) DefaultCustomDomains(ctx context.Context, appIDs []string) (map[string]string, error) {
+	if o, ok := s.over.(interface {
+		DefaultCustomDomains(context.Context, []string) (map[string]string, error)
+	}); ok {
+		return o.DefaultCustomDomains(ctx, appIDs)
+	}
+	return s.MemStore.DefaultCustomDomains(ctx, appIDs)
+}
+
+func (s *Mem) DeploymentWorkerDrainStatus(ctx context.Context, id string) (*state.DeploymentWorkerDrainStatus, error) {
+	if o, ok := s.over.(interface {
+		DeploymentWorkerDrainStatus(context.Context, string) (*state.DeploymentWorkerDrainStatus, error)
+	}); ok {
+		return o.DeploymentWorkerDrainStatus(ctx, id)
+	}
+	return s.MemStore.DeploymentWorkerDrainStatus(ctx, id)
+}
+
+func (s *Mem) DeploymentWorkerDrainStatuses(ctx context.Context, ids []string) (map[string]*state.DeploymentWorkerDrainStatus, error) {
+	if o, ok := s.over.(interface {
+		DeploymentWorkerDrainStatuses(context.Context, []string) (map[string]*state.DeploymentWorkerDrainStatus, error)
+	}); ok {
+		return o.DeploymentWorkerDrainStatuses(ctx, ids)
+	}
+	return s.MemStore.DeploymentWorkerDrainStatuses(ctx, ids)
+}
+
+func (s *Mem) MCPTaskPromotionHold(ctx context.Context, id string) (*state.MCPTaskPromotionHold, error) {
+	if o, ok := s.over.(interface {
+		MCPTaskPromotionHold(context.Context, string) (*state.MCPTaskPromotionHold, error)
+	}); ok {
+		return o.MCPTaskPromotionHold(ctx, id)
+	}
+	return s.MemStore.MCPTaskPromotionHold(ctx, id)
+}
+
+func (s *Mem) MCPTaskPromotionHolds(ctx context.Context, ids []string) (map[string]*state.MCPTaskPromotionHold, error) {
+	if o, ok := s.over.(interface {
+		MCPTaskPromotionHolds(context.Context, []string) (map[string]*state.MCPTaskPromotionHold, error)
+	}); ok {
+		return o.MCPTaskPromotionHolds(ctx, ids)
+	}
+	return s.MemStore.MCPTaskPromotionHolds(ctx, ids)
 }
 
 func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
@@ -379,6 +483,15 @@ func (s *Mem) ActivePrewarmFloor(p0 context.Context, p1 string, p2 time.Time) (i
 		return o.ActivePrewarmFloor(p0, p1, p2)
 	}
 	return s.MemStore.ActivePrewarmFloor(p0, p1, p2)
+}
+
+func (s *Mem) ActivePrewarmFloors(p0 context.Context, p1 []string, p2 time.Time) (map[string]int, error) {
+	if o, ok := s.over.(interface {
+		ActivePrewarmFloors(context.Context, []string, time.Time) (map[string]int, error)
+	}); ok {
+		return o.ActivePrewarmFloors(p0, p1, p2)
+	}
+	return s.MemStore.ActivePrewarmFloors(p0, p1, p2)
 }
 
 func (s *Mem) ActiveProjectReleaseSet(p0 context.Context, p1 string, p2 string, p3 string) (state.ProjectReleaseSet, error) {
@@ -489,6 +602,13 @@ func (s *Mem) ListFinancialPriceSnapshots(p0 context.Context, p1 string, p2 time
 	return s.MemStore.ListFinancialPriceSnapshots(p0, p1, p2)
 }
 
+func (s *Mem) DeleteProjectIfNoStages(ctx context.Context, accountID, projectID string) error {
+	if o, ok := s.over.(state.CheckedProjectDeleteStore); ok {
+		return o.DeleteProjectIfNoStages(ctx, accountID, projectID)
+	}
+	return s.MemStore.DeleteProjectIfNoStages(ctx, accountID, projectID)
+}
+
 func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
 	if o, ok := s.over.(interface {
 		DeleteAppPermanently(context.Context, string) error
@@ -595,6 +715,15 @@ func (s *Mem) CreateCheckedRollback(p0 context.Context, p1 string, p2 string, p3
 		return o.CreateCheckedRollback(p0, p1, p2, p3, p4, p5)
 	}
 	return s.MemStore.CreateCheckedRollback(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) ListReleaseFreezes(ctx context.Context, owner state.ReleaseFreezeOwner, now time.Time) ([]state.ReleaseFreeze, error) {
+	if o, ok := s.over.(interface {
+		ListReleaseFreezes(context.Context, state.ReleaseFreezeOwner, time.Time) ([]state.ReleaseFreeze, error)
+	}); ok {
+		return o.ListReleaseFreezes(ctx, owner, now)
+	}
+	return s.MemStore.ListReleaseFreezes(ctx, owner, now)
 }
 
 func (s *Mem) CreateInstance(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string, p6 string) (state.Instance, error) {
@@ -820,6 +949,15 @@ func (s *Mem) InstanceByID(p0 context.Context, p1 string) (state.Instance, error
 		return o.InstanceByID(p0, p1)
 	}
 	return s.MemStore.InstanceByID(p0, p1)
+}
+
+func (s *Mem) ListInstancesByStatesOlderThan(p0 context.Context, p1 []state.State, p2 time.Time) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListInstancesByStatesOlderThan(context.Context, []state.State, time.Time) ([]state.Instance, error)
+	}); ok {
+		return o.ListInstancesByStatesOlderThan(p0, p1, p2)
+	}
+	return s.MemStore.ListInstancesByStatesOlderThan(p0, p1, p2)
 }
 
 func (s *Mem) IssueObjectMultipartURLCredential(p0 context.Context, p1 state.ObjectS3Credential, p2 state.ObjectMultipartUpload, p3 api.ObjectStoragePolicy) (state.ObjectS3Credential, error) {
@@ -1803,6 +1941,7 @@ func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]st
 
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
+	"DeploymentByID":                                                     true,
 	"MigrateInstanceOwnerWithRuntimeConfig":                              true,
 	"ResolveInstanceMigrationCommit":                                     true,
 	"ScenarioWebhookDeliveryBlocked":                                     true,
@@ -1943,6 +2082,15 @@ var pgDispatched = map[string]bool{
 
 	"WithPublicHostPolicySnapshot":  true,
 	"WithInvocationVersionSnapshot": true,
+}
+
+func (s *Pg) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		DeploymentByID(context.Context, string) (state.Deployment, error)
+	}); ok {
+		return o.DeploymentByID(ctx, id)
+	}
+	return s.PgStore.DeploymentByID(ctx, id)
 }
 
 func (s *Pg) AbandonProjectEnvironmentCloneConfigurationFence(p0 context.Context, p1 state.ProjectEnvironmentCloneLease) error {

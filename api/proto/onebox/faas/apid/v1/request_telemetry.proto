@@ -70,6 +70,42 @@ service RequestTelemetry {
   rpc RecordRequestIDJournalBatch(RecordRequestIDJournalBatchRequest) returns (RecordRequestIDJournalBatchResponse);
 }
 
+// RequestIDLookups lets apid resolve request IDs kept on compute nodes
+// (ADR-20261101085552). Served by apid beside RequestTelemetry, on the same
+// listener; an apid that predates it answers Unimplemented.
+service RequestIDLookups {
+  // Serve is held open by each gatewayd-internal that keeps the request-ID
+  // journal on its node. The gateway's first message names its node; apid then
+  // sends lookups down the stream and the gateway answers each one on it. The
+  // stream rides the gateway's existing connection to apid, so compute nodes
+  // take no new inbound port.
+  rpc Serve(stream RequestIDLookupAnswer) returns (stream RequestIDLookupQuestion);
+}
+
+// RequestIDLookupQuestion asks one node for a public request ID it served.
+message RequestIDLookupQuestion {
+  string question_id = 1;
+  string account_id = 2;
+  string app_id = 3;
+  string request_id = 4;
+  int64 received_from_unix_ms = 5;
+  int64 received_until_unix_ms = 6;
+}
+
+// RequestIDLookupAnswer answers one question. The stream's first message
+// carries only node and identifies the gateway.
+message RequestIDLookupAnswer {
+  string question_id = 1;
+  bool found = 2;
+  string request_id = 3;
+  string trace_id = 4;
+  int64 received_at_unix_ms = 5;
+  int64 expires_at_unix_ms = 6;
+  // error is set when this node could not read its journal.
+  string error = 7;
+  string node = 8;
+}
+
 message RecordRequestIDJournalRequest {
   string record_id = 1; // gateway-generated idempotency key for this HTTP attempt
   string account_id = 2;
@@ -322,12 +358,23 @@ message IncrementRequestTelemetryRequest {
   // ADR-1138: trace_id was inferred by Gregale (the calling instance sent no
   // traceparent and was serving exactly one request) rather than propagated.
   bool trace_inferred = 38;
+  // ADR-20261028110044 amendment 3: a 5xx the gateway returned because a
+  // Gregale dependency could not admit the request. Route evidence skips it.
+  bool platform_refusal = 39;
+  // ADR-20261028110044 amendment 5: the request named its deployment (a
+  // deployment preview or alias URL, or a revision pin); route evidence skips it.
+  bool deployment_pinned = 40;
+  // The response stayed open past its request budget (a WebSocket or declared
+  // stream); route evidence leaves its duration out of latency.
+  bool long_lived = 41;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the
-// server returns. outcome ∈ {inserted, rate_limited, db_error}.
-// `inserted` is a successful INSERT; `rate_limited` means the
-// per-account token bucket was empty (caller should NOT retry —
+// server returns. outcome ∈ {inserted, not_retained, rate_limited,
+// db_error}. `inserted` is a successful INSERT; `not_retained` means
+// the app's plan keeps no request telemetry and its usage is already
+// recorded (caller treats the row as delivered); `rate_limited` means
+// the per-account token bucket was empty (caller should NOT retry —
 // the customer's plan cap is exhausted); `db_error` is a transient
 // Postgres failure (caller may retry).
 message IncrementRequestTelemetryResponse {

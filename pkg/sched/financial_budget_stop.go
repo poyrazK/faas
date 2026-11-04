@@ -57,6 +57,13 @@ func (e *Engine) retireFinancialBudgetRuntime(ctx context.Context, ins state.Ins
 // A missed notification or restarted scheduler cannot lose the stop. New work
 // is refused immediately; existing work gets the configured drain interval.
 func (e *Engine) ReconcileFinancialBudgetStops(ctx context.Context, appID string) error {
+	return e.reconcileFinancialBudgetStops(ctx, appID, nil)
+}
+
+// reconcileFinancialBudgetStops is ReconcileFinancialBudgetStops with the
+// reaper tick's bulk read of the strict compute sweep's inputs, or nil to read
+// them per app.
+func (e *Engine) reconcileFinancialBudgetStops(ctx context.Context, appID string, pre *strictComputePreload) error {
 	store, ok := e.store.(state.FinancialBudgetStopStore)
 	if !ok {
 		return nil
@@ -68,13 +75,19 @@ func (e *Engine) ReconcileFinancialBudgetStops(ctx context.Context, appID string
 		return err
 	}
 	now := e.financialBudgetNow()
-	if err := e.reconcileStrictCompute(ctx, app, now); err != nil {
+	if err := e.reconcileStrictCompute(ctx, app, now, pre); err != nil {
 		return err
 	}
 	if app.PreviewOfSlug == "" {
 		return nil
 	}
-	stops, err := store.ActiveFinancialBudgetStops(ctx, app.AccountID, now)
+	// The stops of the subject that pays for the preview: its organization when
+	// that owns its resources (ADR-20261031211500).
+	payer, err := state.FinancialBudgetPayer(ctx, e.store, app)
+	if err != nil {
+		return err
+	}
+	stops, err := store.ActiveFinancialBudgetStops(ctx, payer, now)
 	if err != nil || len(stops) == 0 {
 		return err
 	}
@@ -100,7 +113,9 @@ func (e *Engine) reconcileFinancialBudgetStop(ctx context.Context, store state.F
 		if err != nil {
 			return err
 		}
-		if env.AccountID != app.AccountID || env.ProjectID != app.ProjectID {
+		// The environment was checked against the stop's subject when the
+		// policy was written; its account is only the member who created it.
+		if env.ProjectID != app.ProjectID {
 			return nil
 		}
 		environment = env.ID
@@ -167,7 +182,7 @@ func (e *Engine) reconcileFinancialBudgetStop(ctx context.Context, store state.F
 			target.State = "draining"
 		}
 	}
-	if err := store.RecordFinancialBudgetStopTarget(ctx, app.AccountID, stop.ID, target); err != nil && !errors.Is(err, state.ErrConflict) {
+	if err := store.RecordFinancialBudgetStopTarget(ctx, stop.AccountID, stop.ID, target); err != nil && !errors.Is(err, state.ErrConflict) {
 		failures = append(failures, err)
 	}
 	return errors.Join(failures...)

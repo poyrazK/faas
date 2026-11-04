@@ -17,10 +17,15 @@ const (
 )
 
 type ServiceOptions struct {
-	LeaseDuration       time.Duration
-	ProviderTimeout     time.Duration
-	PollInterval        time.Duration
+	LeaseDuration   time.Duration
+	ProviderTimeout time.Duration
+	PollInterval    time.Duration
+	// ProvisioningEnabled gates new databases.
 	ProvisioningEnabled func() bool
+	// OperationsEnabled gates work on databases that already exist: restore,
+	// resize and finishing an admitted reservation (ADR-20261103091657). Nil
+	// uses ProvisioningEnabled.
+	OperationsEnabled func() bool
 	// ProvisioningAllowed optionally narrows an enabled rollout to specific
 	// accounts. It is intended for staging canaries; deletion remains
 	// available regardless of this gate.
@@ -34,6 +39,9 @@ type ServiceOptions struct {
 	// It is evaluated immediately before the store's atomic reservation so
 	// plan entitlements remain race-safe while the service stays provider-neutral.
 	MaxDatabasesPerAccount func(context.Context, string) (int, error)
+	// FreePlan reports whether a usage subject is on the Free plan, for the
+	// fleet's paid reserve. Nil reserves nothing.
+	FreePlan func(context.Context, string) (bool, error)
 }
 
 type Service struct {
@@ -43,6 +51,7 @@ type Service struct {
 	providerTimeout        time.Duration
 	pollInterval           time.Duration
 	provisioningEnabled    func() bool
+	operationsEnabled      func() bool
 	provisioningAllowed    func(context.Context, string) bool
 	now                    func() time.Time
 	newID                  func() string
@@ -50,6 +59,7 @@ type Service struct {
 	admit                  func(context.Context, string) error
 	admitResize            func(context.Context, string, Spec) error
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
+	freePlan               func(context.Context, string) (bool, error)
 }
 
 // DefaultRegion returns the operator-configured placement used when a
@@ -76,6 +86,10 @@ type RestoreDatabaseRequest struct {
 	// source must still have this provider identity, but later desired spec
 	// edits cannot replace the captured target configuration.
 	SourceDefinition *RestoreSourceDefinition
+	// WithinLimit refuses the restore with ErrQuotaExceeded instead of
+	// giving it the restore slot: a database switch's copy becomes the
+	// app's database, and the slot's end would revoke its bindings.
+	WithinLimit bool
 }
 
 type RestoreSourceDefinition struct {
@@ -99,6 +113,9 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 	}
 	if options.ProvisioningEnabled == nil {
 		options.ProvisioningEnabled = func() bool { return false }
+	}
+	if options.OperationsEnabled == nil {
+		options.OperationsEnabled = options.ProvisioningEnabled
 	}
 	if options.ProvisioningAllowed == nil {
 		options.ProvisioningAllowed = func(context.Context, string) bool { return true }
@@ -127,6 +144,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		providerTimeout:        options.ProviderTimeout,
 		pollInterval:           options.PollInterval,
 		provisioningEnabled:    options.ProvisioningEnabled,
+		operationsEnabled:      options.OperationsEnabled,
 		provisioningAllowed:    options.ProvisioningAllowed,
 		now:                    options.Now,
 		newID:                  options.NewID,
@@ -134,6 +152,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		admit:                  options.Admit,
 		admitResize:            options.AdmitResize,
 		maxDatabasesPerAccount: options.MaxDatabasesPerAccount,
+		freePlan:               options.FreePlan,
 	}, nil
 }
 
@@ -215,7 +234,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 			return Database{}, err
 		}
 	}
-	if err := s.admitFleet(ctx, true); err != nil {
+	if err := s.admitFleet(ctx, PolicySubject(ctx, request.AccountID), true); err != nil {
 		return Database{}, err
 	}
 	now := s.now()
@@ -243,7 +262,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 	if err != nil {
 		return Database{}, quotaDetail(err, reservationLimit)
 	}
-	if database.Spec != request.Spec {
+	if database.Spec != request.Spec || database.Name != request.Name || reservedID != "" && database.ID != reservedID {
 		return Database{}, ErrConflict
 	}
 	if database.State == StateReady {
@@ -264,7 +283,9 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 // RestoreWithResult also reports whether this invocation reserved the target.
 // Callers must compensate only resources they created, never adopted restores.
 func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabaseRequest) (Database, bool, error) {
-	if !s.provisioningEnabled() {
+	// A restore copies a database that exists, so it is recovery, not a new
+	// database: the operations gate decides (ADR-20261103091657).
+	if !s.operationsEnabled() {
 		return Database{}, false, ErrProvisioningClosed
 	}
 	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() {
@@ -330,6 +351,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if err != nil {
 		return Database{}, false, err
 	}
+	if request.WithinLimit {
+		ctx = reserveWithinLimit(ctx)
+	}
 	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
 		AccountID:               request.AccountID,
@@ -371,7 +395,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 // the target with its owner and live source lineage. This grants no access to
 // an existing private database.
 func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string, definition RestoreSourceDefinition) (int, error) {
-	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
+	if !s.operationsEnabled() || !s.provisioningAllowed(ctx, accountID) {
 		return 0, ErrProvisioningClosed
 	}
 	if accountID == "" || definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.ProviderResourceID == "" ||
@@ -383,7 +407,7 @@ func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string,
 			return 0, err
 		}
 	}
-	if err := s.admitFleet(ctx, true); err != nil {
+	if err := s.admitFleet(ctx, PolicySubject(ctx, accountID), true); err != nil {
 		return 0, err
 	}
 	backend, err := s.registry.Resolve(definition.BackendID, definition.BackendFingerprint)
@@ -431,7 +455,8 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	case StateDeleting, StateDeleted:
 		return Database{}, ErrConflict
 	case StateProvisioning, StateFailed:
-		if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
+		// Admission already reserved it; a lapsed approval must not strand it.
+		if !s.operationsEnabled() || !s.provisioningAllowed(ctx, accountID) {
 			return Database{}, ErrUnavailable
 		}
 	default:
@@ -492,6 +517,8 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 				Spec: database.Spec, PointInTime: database.RestorePointInTime, IdempotencyKey: "restore-" + database.ID,
 				Verification: recorded,
 			})
+		} else if inspector, ok := backend.Provider.(ProvisionInspector); ok && database.RestoreSourceResourceID == "" {
+			observed, err = inspector.InspectProvision(providerContext, database.ProviderResourceID)
 		} else {
 			observed, err = backend.Provider.Inspect(providerContext, database.ProviderResourceID)
 		}
@@ -630,6 +657,9 @@ func (s *Service) delete(ctx context.Context, database Database) (Database, erro
 	database, err := s.store.ClaimDelete(ctx, accountID, databaseID, leaseToken, now, now.Add(s.leaseDuration))
 	if err != nil {
 		return Database{}, err
+	}
+	if kept, waiting, err := s.keepForRestoreCopies(ctx, database); waiting {
+		return kept, err
 	}
 	if database.ProviderResourceID == "" && !database.AccountingRequired {
 		// New reservations that never reached provider I/O have nothing to
@@ -815,7 +845,8 @@ func retryDelay(err error, attempt int32) time.Duration {
 // (production-us live test 2026-10-14; CLAUDE.md: limit errors carry the
 // limit and the observed value).
 func quotaDetail(err error, limit int) error {
-	if !errors.Is(err, ErrQuotaExceeded) {
+	// The restore slot refusal names the copy to purge itself.
+	if !errors.Is(err, ErrQuotaExceeded) || errors.Is(err, ErrRestoreSlotInUse) {
 		return err
 	}
 	return fmt.Errorf("%w: the account already has %d of %d databases (provisioning and restoring ones count); delete one or upgrade the plan", err, limit, limit)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -99,6 +100,20 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease
 			buildIDs[inputs[i].BuildID] = true
 		}
 	}
+	// Rebound Job edits and identities commit with their candidate graph.
+	previousJobs, previousIntents := m.jobs, m.appEnvironmentWorkloadIntents
+	m.jobs, m.appEnvironmentWorkloadIntents = maps.Clone(m.jobs), maps.Clone(m.appEnvironmentWorkloadIntents)
+	committed := false
+	defer func() {
+		if !committed {
+			m.jobs, m.appEnvironmentWorkloadIntents = previousJobs, previousIntents
+		}
+	}()
+	memory := m.environmentGitOps[lease.Source.ID]
+	snapshot, err = m.reconcileReleasedCandidateJobsLocked(memory.source, memory.revisions[memory.source.ApprovedRevisionID], inputs, snapshot)
+	if err != nil {
+		return nil, err
+	}
 	// Allocate identities before publication so graph validation cannot leave
 	// an in-memory candidate or build without its preparation cohort.
 	prospective := make([]EnvironmentWorkloadCandidate, 0, len(inputs))
@@ -114,7 +129,6 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease
 		}
 		prospective = append(prospective, EnvironmentWorkloadCandidate{DeploymentID: candidate.ID, AppID: candidate.AppID, Resource: frozen.Resource})
 	}
-	memory := m.environmentGitOps[lease.Source.ID]
 	graph, err := preparationGraph(snapshot, memory.revisions[memory.source.ApprovedRevisionID], memory.source.Generation, reviewed.Hash, prospective)
 	if err != nil {
 		return nil, err
@@ -181,6 +195,7 @@ func (m *MemStore) PrepareEnvironmentGitOpsCandidates(ctx context.Context, lease
 		graph.ID, graph.CreatedAt = newID(), time.Now().UTC()
 		memory.graphs[key] = clonePreparationGraph(graph)
 	}
+	committed = true
 	return out, nil
 }
 

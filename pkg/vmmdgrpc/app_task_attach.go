@@ -10,7 +10,6 @@ package vmmdgrpc
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
 	"math"
 	"sync"
@@ -19,6 +18,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -50,7 +50,7 @@ type appTaskAttachRegistry struct {
 }
 
 type pendingAppTaskAttach struct {
-	digest  [sha256.Size]byte
+	digest  []byte // stored digest: plain or keyed under the attach ring
 	claimed chan *appTaskAttachClient
 }
 
@@ -68,7 +68,7 @@ func (c *appTaskAttachClient) send(event *vmmdpb.AttachAppTaskEvent) error {
 }
 
 func (r *appTaskAttachRegistry) register(instance string, digest []byte) (*pendingAppTaskAttach, error) {
-	if len(digest) != sha256.Size {
+	if !validAttachDigest(digest) {
 		return nil, errAppTaskAttachTokenDenied
 	}
 	r.mu.Lock()
@@ -80,9 +80,15 @@ func (r *appTaskAttachRegistry) register(instance string, digest []byte) (*pendi
 		return nil, errAppTaskAttachDuplicate
 	}
 	entry := &pendingAppTaskAttach{claimed: make(chan *appTaskAttachClient, 1)}
-	copy(entry.digest[:], digest)
+	entry.digest = append([]byte(nil), digest...)
 	r.pending[instance] = entry
 	return entry, nil
+}
+
+// validAttachDigest accepts an attach token's SHA-256, or the keyed digest
+// apid stores it as under the attach ring (ADR 20261029202403 amendment 1).
+func validAttachDigest(digest []byte) bool {
+	return len(digest) == sha256.Size || credhash.Keyed(digest)
 }
 
 // unregister removes entry if it is still pending. false means a client
@@ -107,7 +113,7 @@ func (r *appTaskAttachRegistry) claim(instance, token string, client *appTaskAtt
 	if !ok {
 		return errAppTaskAttachNotPending
 	}
-	if subtle.ConstantTimeCompare(entry.digest[:], digest[:]) != 1 {
+	if !credhash.For(credhash.FamilyAttach).Matches(api.AttachTokenCredentialTag, digest[:], entry.digest) {
 		return errAppTaskAttachTokenDenied
 	}
 	delete(r.pending, instance)
@@ -247,7 +253,7 @@ func validateInteractiveAppTaskRequest(req *vmmdpb.ExecuteAppTaskRequest) *api.P
 	if req.GetInstance() == "" {
 		return invalid("instance is required")
 	}
-	if len(req.GetAttachTokenSha256()) != sha256.Size {
+	if !validAttachDigest(req.GetAttachTokenSha256()) {
 		return invalid("attach_token_sha256 must be a SHA-256 digest")
 	}
 	if req.GetTimeoutSeconds() < apptaskproto.MinTimeoutSeconds || req.GetTimeoutSeconds() > apptaskproto.MaxTimeoutSeconds {

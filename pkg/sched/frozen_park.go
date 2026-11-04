@@ -125,7 +125,9 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance, early bo
 	if e.warmCapturePending(ctx, app, ins, dep) {
 		return "no_snapshot", nil
 	}
-	if e.ledger.FrozenCountForNode(ins.NodeID) >= api.FrozenMaxPerNode {
+	// FrozenMaxPerNode caps the node, every owner's frozen VMs together
+	// (ADR 20261101091815).
+	if e.nodeFrozenCount(ins.NodeID) >= api.FrozenMaxPerNode {
 		return "node_full", nil
 	}
 	// A frozen VM stays resident; on a draining node the reaper's park

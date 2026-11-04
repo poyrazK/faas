@@ -23,6 +23,11 @@ func checkGatewayEgress(s ObjectUsageSnapshot, bucket string, bytes int64, at ti
 	if !u.Fresh || stale[bucket] {
 		return ErrObjectUsageStale
 	}
+	if bytes > 0 {
+		if err := storedOverPlanCeiling(s, u); err != nil {
+			return err
+		}
+	}
 	matched := false
 	for _, b := range s.Buckets {
 		if b.Bucket.ID == bucket && b.Bucket.State == "ready" {
