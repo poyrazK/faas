@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppCostsResponse } from '../models/AppCostsResponse.js';
 import type { BillingCancelResponse } from '../models/BillingCancelResponse.js';
 import type { BillingPortalResponse } from '../models/BillingPortalResponse.js';
 import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
@@ -125,6 +126,53 @@ export class BillingService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read retained usage costs attributed to one application.
+   * Requires usage:read and current application access. App-agent credentials may
+   * opt into usage:read for their bound app; account billing remains inaccessible.
+   * Uses the native billing subject and the canonical allocation of included
+   * usage. Excludes other applications, account totals, invoices, forecasts,
+   * and account-wide unpriced or nonbillable quantities. Sampling windows remain
+   * explicit; per-app quantity coverage and a complete bill estimate are unknown.
+   * All monetary amounts use integer millicents. This endpoint has no writes.
+   *
+   * @returns AppCostsResponse Application allocations and source-window coverage, without account financial details.
+   * @throws ApiError
+   */
+  public static getAppCosts({
+    slug,
+    month,
+  }: {
+    /**
+     * Application slug whose retained allocations are requested.
+     */
+    slug: string,
+    /**
+     * UTC month for this application's retained cost allocations; omit for the current month.
+     */
+    month?: string,
+  }): CancelablePromise<AppCostsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/costs',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'month': month,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

@@ -231,8 +231,13 @@ func TestParkedNeedsCanary(t *testing.T) {
 
 // releases is CanaryRequired's store: an app's policy and live deployments.
 type releases struct {
-	policy bool
-	live   map[string]bool // scope → a live deployment
+	policy    bool
+	live      map[string]bool // scope → a live deployment
+	decisions []state.ReleaseApproval
+}
+
+func (r releases) ListReleaseApprovals(context.Context, string) ([]state.ReleaseApproval, error) {
+	return r.decisions, nil
 }
 
 func (r releases) ReleaseApprovalPolicy(context.Context, string) (state.ReleaseApprovalPolicy, error) {
@@ -276,6 +281,71 @@ func TestCanaryRequired(t *testing.T) {
 			got, err := CanaryRequired(context.Background(), tc.store, app, tc.scope, tc.environment)
 			if err != nil || got != tc.want {
 				t.Fatalf("CanaryRequired(%q, %q) = %v, %v; want %v", tc.scope, tc.environment, got, err, tc.want)
+			}
+		})
+	}
+}
+
+// heldRelease is a production release reaching its release phase with a
+// release command (ADR-20261020085706 amendment 12).
+func heldRelease() state.Deployment {
+	return state.Deployment{ID: "dep", AppID: "app", Scope: api.DefaultEnvScope, Status: state.DeploySnapshotting,
+		ReleaseCommand: []string{"bin/migrate"}, CreatedAt: t0.Add(time.Hour), DeployedByUserID: "deployer"}
+}
+
+// A gated release waits for its approvals before its release command, from
+// its release phase for the policy's timeout. Releases that would not wait
+// in a canary run their command at once.
+func TestLoadReleaseCommandWait(t *testing.T) {
+	app := state.App{ID: "app", Slug: "shop"}
+	serving := releases{policy: true, live: map[string]bool{api.DefaultEnvScope: true}}
+	approve := func(who string) state.ReleaseApproval {
+		return state.ReleaseApproval{ApproverAccountID: who, Decision: state.ReleaseApprovalApprove, CreatedAt: t0.Add(2 * time.Hour)}
+	}
+	noCommand := heldRelease()
+	noCommand.ReleaseCommand = nil
+	staging := heldRelease()
+	staging.Scope = "staging"
+	live := heldRelease()
+	live.Status = state.DeployLive
+	held := heldRelease()
+	held.StageState = []byte(`{"current":"snapshot_prepare","current_started_at":"2026-10-20T11:00:00Z"}`)
+	for _, tc := range []struct {
+		name    string
+		store   releases
+		d       state.Deployment
+		now     time.Time
+		waits   bool
+		state   string
+		expires string
+	}{
+		{name: "waiting", store: serving, d: held, now: t0.Add(2 * time.Hour), waits: true,
+			state: api.ReleaseApprovalStateWaiting, expires: "2026-10-20T12:00:00Z"},
+		{name: "expired", store: serving, d: held, now: t0.Add(3 * time.Hour), waits: true,
+			state: api.ReleaseApprovalStateExpired, expires: "2026-10-20T12:00:00Z"},
+		{name: "approved", store: releases{policy: true, live: serving.live, decisions: []state.ReleaseApproval{approve("a"), approve("b")}},
+			d: held, now: t0.Add(3 * time.Hour), waits: true, state: api.ReleaseApprovalStateApproved},
+		{name: "rejected", store: releases{policy: true, live: serving.live, decisions: []state.ReleaseApproval{{ApproverAccountID: "a", Decision: state.ReleaseApprovalReject}}},
+			d: held, now: t0.Add(2 * time.Hour), waits: true, state: api.ReleaseApprovalStateRejected},
+		{name: "first release", store: releases{policy: true}, d: held, now: t0.Add(2 * time.Hour)},
+		{name: "no policy", store: releases{live: serving.live}, d: held, now: t0.Add(2 * time.Hour)},
+		{name: "no release command", store: serving, d: noCommand, now: t0.Add(2 * time.Hour)},
+		{name: "staging", store: serving, d: staging, now: t0.Add(2 * time.Hour)},
+		{name: "past its release phase", store: serving, d: live, now: t0.Add(2 * time.Hour)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wait, err := LoadReleaseCommandWait(context.Background(), tc.store, app, tc.d, tc.now)
+			if err != nil || wait.Waits != tc.waits {
+				t.Fatalf("LoadReleaseCommandWait = %+v, %v; want waits=%v", wait, err, tc.waits)
+			}
+			if !tc.waits {
+				return
+			}
+			if wait.Status.State != tc.state || (tc.expires != "" && wait.Status.ExpiresAt != tc.expires) {
+				t.Fatalf("status = %s expires %q; want %s expires %q", wait.Status.State, wait.Status.ExpiresAt, tc.state, tc.expires)
+			}
+			if wait.Pending() != (tc.state == api.ReleaseApprovalStateWaiting) {
+				t.Fatalf("Pending() = %v for %s", wait.Pending(), tc.state)
 			}
 		})
 	}

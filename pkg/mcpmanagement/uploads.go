@@ -83,7 +83,7 @@ func newUploadStore(root, resourceURL string) (*uploadStore, error) {
 		return nil, fmt.Errorf("create upload directory: %w", err)
 	}
 	return &uploadStore{root: root, base: resourceURL + "/uploads/", uploads: map[string]*sourceUpload{}, tokens: map[string]string{},
-		dirs: map[string]planDir{}, freeBytes: filesystemFreeBytes}, nil
+		dirs: map[string]planDir{}, freeBytes: defaultFreeBytes}, nil
 }
 
 func randomHex(n int) (string, error) {
@@ -439,6 +439,10 @@ func writeInlineFiles(dir string, files []inlineFile) error {
 	}
 	return nil
 }
+
+// defaultFreeBytes measures new stores' free space; tests replace it so
+// they do not depend on the machine's disk.
+var defaultFreeBytes = filesystemFreeBytes
 
 // filesystemFreeBytes is the space available to the bridge under dir.
 func filesystemFreeBytes(dir string) (int64, error) {

@@ -106,7 +106,12 @@ func (s *PgStore) createCheckedRollbackOnce(ctx context.Context, acct, app, targ
 		return api.RollbackOperation{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	r, err := s.createCheckedRollbackTx(ctx, tx, acct, app, target, current, reason, "")
+	var r api.RollbackOperation
+	if claim, ok := routeMonitorRollbackClaim(ctx); ok {
+		r, err = s.createMonitorRollbackTx(ctx, tx, acct, app, target, current, reason, claim)
+	} else {
+		r, err = s.createCheckedRollbackTx(ctx, tx, acct, app, target, current, reason, "")
+	}
 	if err != nil {
 		return r, err
 	}

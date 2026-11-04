@@ -19,7 +19,8 @@ func TestCodexRegressionTriageAcceptance(t *testing.T) {
 	if binary == "" {
 		t.Skip("set GREGALE_MCP_CODEX_BINARY for real-client acceptance")
 	}
-	f, b, _ := newTriageFixture(t)
+	f, b, options := newTriageFixture(t)
+	options.Toolsets = []string{ToolsetDiagnose}
 	f.mu.Lock()
 	f.lost = true
 	f.mu.Unlock()
@@ -44,7 +45,8 @@ func TestCodexRegressionTriageAcceptance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		server, err := NewServer(api.NewClient(b.URL, testToken), Options{APIBase: b.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "codex-triage"})
+		options.planStore, options.planNamespace = store, "codex-triage"
+		server, err := NewServer(api.NewClient(b.URL, testToken), options)
 		if err != nil {
 			_ = store.Close()
 			t.Fatal(err)

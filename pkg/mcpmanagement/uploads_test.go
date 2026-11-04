@@ -263,6 +263,12 @@ func TestUploadsBelongToTheirGrantAndAccount(t *testing.T) {
 	}
 }
 
+// The free-space floor is tested with an explicit stub; other tests must not
+// fail because the machine running them is short of disk.
+func init() {
+	defaultFreeBytes = func(string) (int64, error) { return 1 << 50, nil }
+}
+
 // Uploads and plan directories share one per-account budget of items and
 // bytes, the bridge has a total, and nothing is staged below the free-space
 // floor; the bridge-wide refusal names itself (bug hunt H92).

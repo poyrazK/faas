@@ -81,6 +81,9 @@ func (m *MemStore) CreateCheckedRollback(ctx context.Context, acct, app, target,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if claim, ok := routeMonitorRollbackClaim(ctx); ok {
+		return m.createMonitorRollbackLocked(ctx, acct, app, target, current, reason, claim)
+	}
 	return m.createCheckedRollbackLocked(ctx, acct, app, target, current, reason, "")
 }
 func (m *MemStore) createCheckedRollbackLocked(ctx context.Context, acct, app, target, current, reason, id string) (api.RollbackOperation, error) {

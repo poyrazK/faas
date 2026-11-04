@@ -5283,6 +5283,13 @@ type Limits struct {
 	// expectations per tier (Free's "first-week demo", Hobby's
 	// "last week", Pro's "this month", Scale's "this quarter").
 	LogArchiveRetentionDaysMax int
+	// LogBytesPerInstanceHour bounds the log line bytes one instance may
+	// write per UTC hour (ADR-20261104085150): Free 16 MiB, Hobby 64 MiB,
+	// Pro 256 MiB, Scale 1 GiB. Past it, vmmd drops the hour's remaining
+	// output after one notice line, so the live view, the archive and every
+	// drain carry a bounded stream. Logs have no separate charge, so this is
+	// what bounds their storage and delivery cost.
+	LogBytesPerInstanceHour int64
 
 	// AppErrorsRetentionDays (ADR-096 / customer-facing automatic
 	// error grouping) is the per-plan retention cap on
@@ -5914,6 +5921,7 @@ var planLimits = map[Plan]Limits{
 		// wake. The wider incident windows remain paid-tier benefits.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 1,
+		LogBytesPerInstanceHour:    16 << 20,
 		// ADR-096 error grouping. Free = 1-day retention, 50
 		// fingerprints, 25 request rows per fingerprint. Retention
 		// MUST be <= the one-day log-archive retention above.
@@ -6359,6 +6367,7 @@ var planLimits = map[Plan]Limits{
 		// S3 within the spec §4.1 latency budget.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 7,
+		LogBytesPerInstanceHour:    64 << 20,
 		// ADR-096 — Hobby = "last week" retention, 200 fingerprints,
 		// 100 request rows per fingerprint. Retention equals the
 		// log-archive retention.
@@ -6773,6 +6782,7 @@ var planLimits = map[Plan]Limits{
 		// rather than being a single shared cap.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 30,
+		LogBytesPerInstanceHour:    256 << 20,
 		// ADR-096 — Pro = "this month" retention, 1000 fingerprints,
 		// 500 request rows per fingerprint.
 		AppErrorsRetentionDays:                30,
@@ -7213,6 +7223,7 @@ var planLimits = map[Plan]Limits{
 		// generous at the top tier.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 90,
+		LogBytesPerInstanceHour:    1 << 30,
 		// ADR-096 — Scale = "this quarter" retention, 5000
 		// fingerprints, 1000 request rows per fingerprint.
 		AppErrorsRetentionDays:                90,
@@ -10827,6 +10838,24 @@ func (p Plan) LogArchiveEnabled() bool {
 	return l.LogArchiveEnabled
 }
 
+// LogBytesPerInstanceHour returns the plan's hourly log byte allowance per
+// instance (ADR-20261104085150); 0 for an unknown plan, which is unbounded.
+func (p Plan) LogBytesPerInstanceHour() int64 {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogBytesPerInstanceHour
+}
+
+// LogDrainBytesPerSecond and LogDrainBurstBytes bound what one log drain
+// delivers (ADR-20261104085150): a line past the budget is dropped and
+// counted, as a full outbox is.
+const (
+	LogDrainBytesPerSecond = 1 << 20
+	LogDrainBurstBytes     = 4 << 20
+)
+
 // LogArchiveRetentionDaysMax (issue #562) returns the
 // per-plan ceiling on FAAS_LOG_ARCHIVE_RETENTION_DAYS. Free's
 // ceiling is one day; the apid bgBefore closure uses
@@ -12847,6 +12876,31 @@ const (
 	// attempt keeps TrafficPublicHostReadTimeout; a failed attempt is retried
 	// once within this bound (ADR-20261027085556 amendment 2).
 	TrafficPublicHostColdReadTimeout = 2 * time.Second
+	// GatewayRouteMissTTL is how long a gateway answers a hostname the store
+	// said routes nowhere without reading it again. Every route invalidation
+	// (an app created or changed, a domain changed, missed notifications)
+	// forgets all remembered misses first, so a new app is never held behind
+	// one (ADR-20261103163954 §4).
+	GatewayRouteMissTTL = 30 * time.Second
+	// GatewayRouteMissMaxHosts bounds the remembered misses. A full set is
+	// dropped whole: a flood of distinct names is what fills it.
+	GatewayRouteMissMaxHosts = 10_000
+	// GatewayRouteKnownMaxHosts bounds the hostnames a gateway has seen
+	// route, which skip the new-host lookup budget. A full set is dropped
+	// whole.
+	GatewayRouteKnownMaxHosts = 100_000
+	// GatewayNewHostLookupsPerSecond and GatewayNewHostLookupBurst are each
+	// gateway's budget of store reads for hostnames it has never seen route.
+	// Normal traffic spends it only on a new app's first request and, after
+	// a restart, each host's first request, which the burst covers. A flood
+	// of random names under the apps wildcard spends this budget instead of
+	// control-plane Postgres reads. A read waits up to
+	// GatewayNewHostLookupMaxWait for budget; past that the request is
+	// answered 503 traffic_policy_unavailable with Retry-After, never 404
+	// (ADR-20261103163954 §4).
+	GatewayNewHostLookupsPerSecond = 25
+	GatewayNewHostLookupBurst      = 500
+	GatewayNewHostLookupMaxWait    = 100 * time.Millisecond
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
@@ -17324,6 +17378,14 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	}
 	return l.TenantHostnamesPerSurface
 }
+
+// App resource metadata pages are filtered by immutable app and scope before
+// counting or pagination. Offsets are bounded request selectors, not quotas.
+const (
+	AppResourceInventoryDefaultPage = 20
+	AppResourceInventoryMaxPage     = 100
+	AppResourceInventoryMaxOffset   = 1000000
+)
 
 // Domain doctor DNS probes are bounded independently of the inventory size.
 // The query ceiling accommodates the maximum DNS label depth plus aliases.

@@ -4226,6 +4226,8 @@ type AccountAbuseHoldActionResponse struct {
 // Store.UsageByHour in apid; included here so the dashboard can
 // render the meter in one fetch).
 type AccountResponse struct {
+	// KeyApp is present only for an app-bound agent principal.
+	KeyApp *AppAgentBinding `json:"key_app,omitempty"`
 	// AbuseHold is present while the account is on an ADR-361 abuse hold:
 	// nothing runs or deploys until an operator releases it.
 	AbuseHold     *AccountAbuseHold `json:"abuse_hold,omitempty"`
@@ -4390,11 +4392,19 @@ type ListDeployTokensResponse struct {
 }
 
 // CreateDeployTokenRequest controls a per-app deploy token mint. Scopes are
-// intentionally not caller-controlled in v1: the token is always limited to
-// deploy:write. ExpiresAt is optional and defaults to 90 days.
+// deploy:write unless Agent selects the narrow app-agent scope vocabulary.
+// ExpiresAt is optional and defaults to 90 days.
 type CreateDeployTokenRequest struct {
-	Label     string `json:"label,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"`
+	Agent     bool     `json:"agent,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
+	Label     string   `json:"label,omitempty"`
+	ExpiresAt string   `json:"expires_at,omitempty"`
+}
+
+// AppAgentBinding pins the credential's immutable app identity.
+type AppAgentBinding struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
 }
 
 // RotateDeployTokenRequest mirrors CreateDeployTokenRequest. An empty label

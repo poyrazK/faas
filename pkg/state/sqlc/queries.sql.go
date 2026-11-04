@@ -58513,11 +58513,11 @@ SELECT i.app_id::text AS app_id, i.declared_subscription_ids::text[] AS declared
  d.id::text AS deployment_id, d.status, d.scope, d.traffic_percent, d.traffic_percent_explicit,
  d.canary_total_steps, d.rollout_state,
  coalesce((SELECT n.id::text FROM deployments n WHERE n.app_id=d.app_id
- AND coalesce(nullif(n.scope,''),'default')='default'
+ AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default')
  AND NOT(n.traffic_percent_explicit AND n.traffic_percent=0 AND n.canary_total_steps=0)
  ORDER BY n.created_at DESC,n.id DESC LIMIT 1),'')::text AS latest_id,
  EXISTS(SELECT 1 FROM deployments n WHERE n.app_id=d.app_id AND n.id<>d.id
- AND n.status='live' AND coalesce(nullif(n.scope,''),'default')='default' AND n.traffic_percent>0) AS competing_traffic
+ AND n.status='live' AND coalesce(nullif(n.scope,''),'default')=coalesce(nullif(d.scope,''),'default') AND n.traffic_percent>0) AS competing_traffic
 FROM deployment_event_subscription_intents i JOIN deployments d ON d.id = i.deployment_id
 WHERE i.deployment_id = $1::uuid AND i.status = 'prepared'
 FOR UPDATE OF i

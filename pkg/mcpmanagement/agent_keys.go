@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -15,22 +16,23 @@ import (
 
 // A headless agent opens the hosted server with an API key that carries the
 // agent scope, sent as its bearer token (ADR-20261029085359). The key's scopes
-// pick its tools, as consent does for an OAuth grant; it reaches every app in
-// its account, as a local connection does. Every request re-verifies the key
+// pick its tools, as consent does for an OAuth grant. App-agent tokens pin
+// one immutable app; account keys retain account-wide reach. Every request re-verifies the key
 // with apid, so a revoked or expired key stops at its next request. A key
-// connection keeps nothing durable: its plans live in memory, and an idle one
-// is dropped like an idle grant's server.
+// connection journals completed receipts when the bridge has a state store.
 type keyConnection struct {
 	// id names the connection's uploads and audit lines; it is derived from
 	// the key's hash, never the key.
-	id         string
-	accountID  string
-	scopes     []string
-	client     *api.Client
-	server     *mcp.Server
-	management *management
-	inflight   int
-	lastUsed   time.Time
+	id            string
+	planNamespace string
+	allowedApps   map[string]string
+	accountID     string
+	scopes        []string
+	client        *api.Client
+	server        *mcp.Server
+	management    *management
+	inflight      int
+	lastUsed      time.Time
 }
 
 var errKeyConnectionCapacity = errors.New("agent key connection capacity reached")
@@ -67,7 +69,11 @@ func (r *remoteServer) serveAgentKey(w http.ResponseWriter, req *http.Request, n
 		oauthError(w, http.StatusForbidden, "insufficient_scope", "This API key is not an agent key. Create one for your agent with `gregale key create <name> --scopes agent,deploy:write` (add secrets:request, storage:manage or postgres:manage,postgres:read as needed), or connect with OAuth.")
 		return
 	}
-	server, release, err := r.holdKeyConnection(tokenHash(token), account.ID, account.KeyScopes, client)
+	if account.KeyApp != nil && (validateSegment(account.KeyApp.ID, "app_id") != nil || validateSegment(account.KeyApp.Slug, "app") != nil) {
+		r.challenge(w)
+		return
+	}
+	server, release, err := r.holdKeyConnection(tokenHash(token), account.ID, account.KeyScopes, client, account.KeyApp)
 	if errors.Is(err, errKeyConnectionsPerAccount) {
 		w.Header().Set("Retry-After", "60")
 		oauthError(w, http.StatusTooManyRequests, "too_many_requests",
@@ -84,11 +90,15 @@ func (r *remoteServer) serveAgentKey(w http.ResponseWriter, req *http.Request, n
 
 // holdKeyConnection returns the key's connection server, building it on first
 // use, and holds it for one request.
-func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string, client *api.Client) (*mcp.Server, func(), error) {
+func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string, client *api.Client, bindings ...*api.AppAgentBinding) (*mcp.Server, func(), error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var apps map[string]string
+	if len(bindings) > 0 && bindings[0] != nil {
+		apps = map[string]string{bindings[0].Slug: bindings[0].ID}
+	}
 	c := r.keyConns[hash]
-	if c != nil && (c.accountID != accountID || !slices.Equal(c.scopes, scopes)) {
+	if c != nil && (c.accountID != accountID || !slices.Equal(c.scopes, scopes) || !maps.Equal(c.allowedApps, apps)) {
 		// A request already holding the old server keeps its own reference.
 		c = nil
 	}
@@ -106,7 +116,7 @@ func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string
 		if len(r.keyConns) >= r.capacity() {
 			return nil, nil, errKeyConnectionCapacity
 		}
-		c = &keyConnection{id: "gmcp_key_" + hash[:24], accountID: accountID, scopes: slices.Clone(scopes), client: client}
+		c = &keyConnection{id: "gmcp_key_" + hash[:24], planNamespace: "agent-key/" + accountID + "/" + hash, accountID: accountID, scopes: slices.Clone(scopes), client: client, allowedApps: apps}
 		r.keyConns[hash] = c
 	}
 	if c.server == nil {
@@ -131,15 +141,15 @@ func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string
 }
 
 // keyOptions are a key connection's server options: the key's scopes stand in
-// for consent, and nothing is persisted.
+// for consent; journals are isolated by the account and full credential hash.
 func (r *remoteServer) keyOptions(c *keyConnection) Options {
 	var capabilities []string
-	for _, scope := range []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage} {
+	for _, scope := range []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage, api.ScopeEnvWrite, api.ScopeUsageRead} {
 		if slices.Contains(c.scopes, scope) {
 			capabilities = append(capabilities, scope)
 		}
 	}
-	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: r.opts.Toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, agentKey: true}
+	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: r.opts.Toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, agentKey: true, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
 }
 
 // dropIdleKeyConnectionsLocked forgets key connections (of accountID, or

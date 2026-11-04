@@ -770,6 +770,15 @@ type DNS struct {
 	// Mode is the DNS provider ("cloudflare", "manual", "nip_io").
 	// The validator rejects values outside the supported set.
 	Mode string `yaml:"mode"`
+	// OriginPull is how the control plane's Caddy treats Cloudflare's
+	// connections when Mode is "cloudflare" (ADR-20261103172551):
+	// "required" demands the zone's own origin-pull client certificate
+	// (install its CA and turn on zone-level Authenticated Origin Pulls
+	// first, docs/runbooks/EdgeDirectEntry.md); "any_zone" admits every
+	// Cloudflare zone, knowingly, while the certificate is rolled out. Empty
+	// renders neither, and the public_edge role refuses to deploy a site
+	// that admits Cloudflare.
+	OriginPull string `yaml:"origin_pull,omitempty"`
 }
 
 // PublicEdge is the public HTTPS edge contract beyond the platform zone.
@@ -1833,8 +1842,22 @@ func (d *DNS) validate() Errors {
 		errs = append(errs, Error{"dns.mode",
 			fmt.Sprintf("unsupported %q (allowed: cloudflare|manual|nip_io)", d.Mode)})
 	}
+	switch {
+	case d.OriginPull == "":
+	case !contains([]string{DNSOriginPullRequired, DNSOriginPullAnyZone}, d.OriginPull):
+		errs = append(errs, Error{"dns.origin_pull",
+			fmt.Sprintf("unsupported %q (allowed: %s|%s)", d.OriginPull, DNSOriginPullRequired, DNSOriginPullAnyZone)})
+	case d.Mode != "cloudflare":
+		errs = append(errs, Error{"dns.origin_pull", "applies only with dns.mode cloudflare"})
+	}
 	return errs
 }
+
+// dns.origin_pull values (ADR-20261103172551).
+const (
+	DNSOriginPullRequired = "required"
+	DNSOriginPullAnyZone  = "any_zone"
+)
 
 func (d *PrivateDNS) validate() Errors {
 	var errs Errors

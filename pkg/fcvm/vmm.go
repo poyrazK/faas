@@ -793,7 +793,7 @@ func (v *JailerVMM) registerRing(instance string) *logbuf.Ring {
 }
 
 func (v *JailerVMM) registerAppRing(instance, appID string) *logbuf.Ring {
-	return v.registerDeploymentRing(instance, appID, "")
+	return v.registerDeploymentRing(instance, appID, "", "")
 }
 
 // registerLeaseRing registers the lease's ring with the app and deployment
@@ -805,10 +805,12 @@ func (v *JailerVMM) registerLeaseRing(ctx context.Context, l Lease) *logbuf.Ring
 		return v.registerRing(l.Instance)
 	}
 	fields, _ := wire.FromContext(ctx)
-	return v.registerDeploymentRing(l.Instance, fields.AppID, fields.DeploymentID)
+	return v.registerDeploymentRing(l.Instance, fields.AppID, fields.DeploymentID, l.Plan)
 }
 
-func (v *JailerVMM) registerDeploymentRing(instance, appID, deploymentID string) *logbuf.Ring {
+// plan sets the ring's hourly log byte allowance (ADR-20261104085150); an
+// empty plan leaves it unbounded.
+func (v *JailerVMM) registerDeploymentRing(instance, appID, deploymentID string, plan api.Plan) *logbuf.Ring {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if stop := v.instanceLogStops[instance]; stop != nil {
@@ -819,6 +821,9 @@ func (v *JailerVMM) registerDeploymentRing(instance, appID, deploymentID string)
 		_ = old.Close()
 	}
 	r := logbuf.New(0) // 0 -> logbuf.DefaultMaxBytes (10 MiB)
+	if appID != "" {
+		r.SetHourlyByteAllowance(plan.LogBytesPerInstanceHour())
+	}
 	// Install the per-VMM slow-subscriber callback (issue
 	// #309 / tier-2 DX). The callback fires once per Write
 	// that hit at least one full subscriber channel — the

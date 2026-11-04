@@ -9,7 +9,17 @@ their rows because a cleanup step that must run first keeps failing:
 - object buckets (`CleanupExpiredAccountObjectBuckets`);
 - archived runtime logs (`log archive: ...`, see
   [FaasLogArchiveShipperDegraded](FaasLogArchiveShipperDegraded.md#account-erasure));
-- managed PostgreSQL databases (`managed postgres: ...`).
+- managed PostgreSQL databases (`managed postgres: ...`);
+- hosting sites (`hosting site cleanup deferred`): the sweep starts deleting
+  every active site, and the hosting reconciler purges each one after its
+  routes and releases retire;
+- the final delete itself (`grace: hard delete failed`). It refuses, by
+  reason, while rows another workflow owns remain (`account purge waits for N
+  hosting_site | environment_clone | managed_postgres_fence row(s)`), and it
+  counts toward the gauge (`apid_app_grace_failures_total{stage="account_purge_<reason>"}`).
+  Any other error there, such as a foreign key violation, is a purge defect:
+  the account purge needs a step for that table, and
+  `pkg/state/purgeguard` should have caught it.
 
 The account stays in `deleted_pending` and nothing else is lost, but the DPA
 (section 11) promises erasure within 30 days of the grace ending.

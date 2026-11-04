@@ -120,6 +120,10 @@ type Querier interface {
 	AppOpenMonitorIncident(ctx context.Context, db DBTX, arg AppOpenMonitorIncidentParams) (AppOpenMonitorIncidentRow, error)
 	AppQueueBindingConsumerInventory(ctx context.Context, db DBTX, arg AppQueueBindingConsumerInventoryParams) ([]AppQueueBindingConsumerInventoryRow, error)
 	AppReleaseSecretsPinned(ctx context.Context, db DBTX, arg AppReleaseSecretsPinnedParams) (bool, error)
+	// ADR-20261103222927: counts and offsets see only the immutable app/scope.
+	// Every projection is an explicit metadata allowlist. No credential payload,
+	// provider identity, physical bucket name or raw provider error is selected.
+	AppResourceInventory(ctx context.Context, db DBTX, arg AppResourceInventoryParams) (AppResourceInventoryRow, error)
 	AppRuntimeConfigChangedAtInScope(ctx context.Context, db DBTX, arg AppRuntimeConfigChangedAtInScopeParams) (pgtype.Timestamptz, error)
 	// ADR-1741: the app's runtime generation, which triggers bump in the
 	// writer's transaction for every change a wake depends on.
@@ -951,6 +955,7 @@ type Querier interface {
 	DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error
 	DeleteApp(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAppConfigGuardSecrets(ctx context.Context, db DBTX, guardID pgtype.UUID) error
+	DeleteAppConfigVariable(ctx context.Context, db DBTX, arg DeleteAppConfigVariableParams) error
 	DeleteAppErrorRequestsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error
 	// The retention purge also runs on app_error_requests
 	// independently — a customer's drill-down can age out without
@@ -1004,6 +1009,7 @@ type Querier interface {
 	DeleteDeploymentAlias(ctx context.Context, db DBTX, arg DeleteDeploymentAliasParams) (int64, error)
 	DeleteDeploymentHTTPcrons(ctx context.Context, db DBTX, arg DeleteDeploymentHTTPcronsParams) error
 	DeleteDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	DeleteEnvBatchVariable(ctx context.Context, db DBTX, arg DeleteEnvBatchVariableParams) error
 	DeleteEnvironmentExternalFieldOwner(ctx context.Context, db DBTX, arg DeleteEnvironmentExternalFieldOwnerParams) (int64, error)
 	DeleteEnvironmentGitOpsOverride(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsOverrideParams) (int64, error)
 	DeleteEnvironmentGitOpsPolicies(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsPoliciesParams) error
@@ -2896,6 +2902,7 @@ type Querier interface {
 	// Installation invalidates only cache eligibility, never source artifacts or
 	// environment intent. The existing stale trigger removes replica eligibility.
 	InvalidateApplicationStandardSnapshots(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	InvalidateEnvBatchSnapshots(ctx context.Context, db DBTX, arg InvalidateEnvBatchSnapshotsParams) error
 	InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx context.Context, db DBTX, arg InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams) error
 	InvalidateEnvironmentGitOpsRuntimeConfig(ctx context.Context, db DBTX, arg InvalidateEnvironmentGitOpsRuntimeConfigParams) (int64, error)
 	InvalidateOperatorRestartSnapshots(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]InvalidateOperatorRestartSnapshotsRow, error)
@@ -3974,7 +3981,7 @@ type Querier interface {
 	// that wake. Read within the trace's time window through events_kind_at_idx.
 	ListWakeThawsByWakeIDs(ctx context.Context, db DBTX, arg ListWakeThawsByWakeIDsParams) ([]ListWakeThawsByWakeIDsRow, error)
 	ListWarmPoolReconciliationAppIDs(ctx context.Context, db DBTX, nodeID string) ([]string, error)
-	ListWatchingAppConfigGuards(ctx context.Context, db DBTX, rowLimit int32) ([]AppConfigGuard, error)
+	ListWatchingAppConfigGuards(ctx context.Context, db DBTX, arg ListWatchingAppConfigGuardsParams) ([]AppConfigGuard, error)
 	ListWorkerRecoveryApps(ctx context.Context, db DBTX, arg ListWorkerRecoveryAppsParams) ([]pgtype.UUID, error)
 	ListWorkflowAutomationHealthFailedSteps(ctx context.Context, db DBTX, arg ListWorkflowAutomationHealthFailedStepsParams) ([]ListWorkflowAutomationHealthFailedStepsRow, error)
 	ListWorkflowAutomationHealthRecentRuns(ctx context.Context, db DBTX, arg ListWorkflowAutomationHealthRecentRunsParams) ([]ListWorkflowAutomationHealthRecentRunsRow, error)
@@ -4015,6 +4022,7 @@ type Querier interface {
 	// row so account/app foreign-key writers cannot form a reverse lock cycle.
 	// The parent is a resource namespace (#4882), locked after any account row.
 	LockAppConfigAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
+	LockAppConfigGuardForRestore(ctx context.Context, db DBTX, id pgtype.UUID) (AppConfigGuard, error)
 	// ADR-1451: config revisions and config guards.
 	// Serializes revision numbering and guard bookkeeping for one app scope.
 	LockAppConfigScope(ctx context.Context, db DBTX, arg LockAppConfigScopeParams) error
@@ -4143,6 +4151,7 @@ type Querier interface {
 	LockDevBridgeAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg LockDevBridgeReplaySessionParams) (string, error)
 	LockDueReadinessReminderNotifications(ctx context.Context, db DBTX, arg LockDueReadinessReminderNotificationsParams) ([]CustomerWorkflowReadinessNotification, error)
+	LockEnvBatchOwner(ctx context.Context, db DBTX, arg LockEnvBatchOwnerParams) (pgtype.UUID, error)
 	LockEnvironmentBudgetIdentity(ctx context.Context, db DBTX, arg LockEnvironmentBudgetIdentityParams) (LockEnvironmentBudgetIdentityRow, error)
 	LockEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, environmentID string) error
 	LockEnvironmentGitOpsCandidateApps(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]pgtype.UUID, error)
@@ -4682,6 +4691,8 @@ type Querier interface {
 	NotifyAlertServiceRollback(ctx context.Context, db DBTX, arg NotifyAlertServiceRollbackParams) error
 	NotifyApplicationStandardControlsChanged(ctx context.Context, db DBTX, appID string) error
 	NotifyCheckedRollbackCutover(ctx context.Context, db DBTX, arg NotifyCheckedRollbackCutoverParams) error
+	// Advisory cache invalidations become visible only with the complete restore.
+	NotifyConfigRestoreChange(ctx context.Context, db DBTX, arg NotifyConfigRestoreChangeParams) error
 	NotifyCustomerOperation(ctx context.Context, db DBTX, operationID string) error
 	NotifyOperatorParkSnapshot(ctx context.Context, db DBTX, payload string) error
 	NotifyRouteHealthRecovery(ctx context.Context, db DBTX, payload string) error
@@ -5419,6 +5430,7 @@ type Querier interface {
 	// ADR-570: the replay floor is each serving gateway's fresh, boot-scoped
 	// observation; a stale or missing gateway keeps the history it may replay.
 	PruneEdgeRuleReplayHistory(ctx context.Context, db DBTX, arg PruneEdgeRuleReplayHistoryParams) (int64, error)
+	PruneEnvBatchReceipts(ctx context.Context, db DBTX, arg PruneEnvBatchReceiptsParams) error
 	PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error
 	PruneEventExecutionLineageCases(ctx context.Context, db DBTX, arg PruneEventExecutionLineageCasesParams) (int64, error)
 	PruneEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PruneEventExecutionLineageRetriesParams) (int64, error)
@@ -5729,6 +5741,7 @@ type Querier interface {
 	ReadDeploymentTrafficScope(ctx context.Context, db DBTX, id pgtype.UUID) (ReadDeploymentTrafficScopeRow, error)
 	ReadDomainTrafficVerificationOwner(ctx context.Context, db DBTX, arg ReadDomainTrafficVerificationOwnerParams) (ReadDomainTrafficVerificationOwnerRow, error)
 	ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (ReadEdgeRuleTrafficAccountRow, error)
+	ReadEnvBatchReceipt(ctx context.Context, db DBTX, arg ReadEnvBatchReceiptParams) (ReadEnvBatchReceiptRow, error)
 	ReadEnvironmentBudgetIdentity(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetIdentityParams) (ReadEnvironmentBudgetIdentityRow, error)
 	ReadEnvironmentBudgetReceipt(ctx context.Context, db DBTX, arg ReadEnvironmentBudgetReceiptParams) (ReadEnvironmentBudgetReceiptRow, error)
 	ReadEnvironmentQueueAdmissionProject(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
@@ -6664,6 +6677,9 @@ type Querier interface {
 	ResetRuntimeUpgradePublicEdgeActivity(ctx context.Context, db DBTX) error
 	ResetRuntimeUpgradePublicEdgeGuards(ctx context.Context, db DBTX) error
 	ResetScenarioManagedInvocationBinding(ctx context.Context, db DBTX, id string) error
+	// The app traffic lock and expected-current comparison precede this write.
+	// Existing promotion checks and side effects run before the transaction commits.
+	ResetSynchronousRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	ResetWorkflowResumeStep(ctx context.Context, db DBTX, arg ResetWorkflowResumeStepParams) error
 	ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	// Records a new shape. Turning replication on names the standby node;
@@ -6690,6 +6706,8 @@ type Querier interface {
 	// fingerprint it was published with to the one its own observed workload
 	// class gives. Only the current wake's proof, and only from that fingerprint.
 	RestampRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg RestampRuntimeInstanceConfigProofParams) (int64, error)
+	RestoreAppConfigSecret(ctx context.Context, db DBTX, arg RestoreAppConfigSecretParams) (int64, error)
+	RestoreAppConfigVariable(ctx context.Context, db DBTX, arg RestoreAppConfigVariableParams) error
 	RestoreCanaryBaselineDefault(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RestoreDeploymentHTTPcrons(ctx context.Context, db DBTX, arg RestoreDeploymentHTTPcronsParams) (int64, error)
 	RestoreProfileGateStableTraffic(ctx context.Context, db DBTX, arg RestoreProfileGateStableTrafficParams) (int64, error)
@@ -7207,6 +7225,7 @@ type Querier interface {
 	StageProjectReleaseCommand(ctx context.Context, db DBTX, arg StageProjectReleaseCommandParams) error
 	StageProjectReleaseConfiguration(ctx context.Context, db DBTX, arg StageProjectReleaseConfigurationParams) error
 	StaleEdgeListenerNodes(ctx context.Context, db DBTX, staleAfter pgtype.Interval) ([]string, error)
+	StampConfigRestoreRuntimeChange(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	// The placement shares the fenced stamp (ADR-1195); an attempt keeps its first.
 	StampCustomerOperationExecutionAttempt(ctx context.Context, db DBTX, arg StampCustomerOperationExecutionAttemptParams) (int64, error)
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
@@ -7279,6 +7298,7 @@ type Querier interface {
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
 	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)
 	SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	SynchronousRollbackRequiresBindingCheck(ctx context.Context, db DBTX, arg SynchronousRollbackRequiresBindingCheckParams) (bool, error)
 	SyntheticCheckRunStats(ctx context.Context, db DBTX, arg SyntheticCheckRunStatsParams) (SyntheticCheckRunStatsRow, error)
 	TakeManagedPostgresRestoreSlot(ctx context.Context, db DBTX, arg TakeManagedPostgresRestoreSlotParams) (ManagedPostgresDatabase, error)
 	// A fork whose lease expired lost its scheduler. The caller takes the lease,
@@ -7790,6 +7810,8 @@ type Querier interface {
 	WriteDeploymentHostingFailureReceipt(ctx context.Context, db DBTX, arg WriteDeploymentHostingFailureReceiptParams) (int64, error)
 	WriteDeploymentHostingVerification(ctx context.Context, db DBTX, arg WriteDeploymentHostingVerificationParams) (int64, error)
 	WriteDeploymentPolicyState(ctx context.Context, db DBTX, arg WriteDeploymentPolicyStateParams) error
+	WriteEnvBatchReceipt(ctx context.Context, db DBTX, arg WriteEnvBatchReceiptParams) error
+	WriteEnvBatchVariable(ctx context.Context, db DBTX, arg WriteEnvBatchVariableParams) error
 	WriteEnvironmentBudgetReceipt(ctx context.Context, db DBTX, arg WriteEnvironmentBudgetReceiptParams) error
 	WriteEnvironmentGitNotificationState(ctx context.Context, db DBTX, arg WriteEnvironmentGitNotificationStateParams) error
 	WriteEnvironmentRouteBudgets(ctx context.Context, db DBTX, arg WriteEnvironmentRouteBudgetsParams) error

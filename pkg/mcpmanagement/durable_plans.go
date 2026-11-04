@@ -1,6 +1,7 @@
 package mcpmanagement
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -11,6 +12,11 @@ import (
 )
 
 type storedPlan struct {
+	Failure            *planFailure          `json:",omitempty"`
+	ConfigReceipt      *api.EnvBatchResponse `json:",omitempty"`
+	Provision          *nativeProvision      `json:",omitempty"`
+	OperationRequest   json.RawMessage       `json:",omitempty"`
+	LocalReceipt       json.RawMessage       `json:",omitempty"`
 	RegressionResult   *api.DebugRegressionReview
 	BudgetResult       *api.EnvironmentRouteBudgets
 	Plan               releasePlan
@@ -39,9 +45,27 @@ func (m *management) restorePlans() error {
 		if time.Now().After(p.ExpiresAt) {
 			continue
 		}
-		// Local deploy and env plans are memory-only (ADR-20261026141841).
-		if p.LocalSource != nil || p.EnvChange != nil || p.Provision != nil || p.Action == "local_deploy" || p.Action == "env_change" || strings.HasPrefix(p.Action, "provision_") {
-			return errors.New("stored local plan")
+		// Older bridges accidentally journaled temporary plans. Ignore these
+		// records: source files and variable values cannot survive a restart.
+		// A completed receipt, stripped of its temporary inputs, is restorable.
+		if temporaryPlan(&p) && len(record.LocalReceipt) == 0 && record.Provision == nil {
+			continue
+		}
+		if p.LocalSource != nil || p.EnvChange != nil || p.Provision != nil {
+			return errors.New("stored temporary plan inputs")
+		}
+		if record.Provision != nil {
+			if record.Provision.CancelRequested && record.Provision.Phase != "completed" {
+				record.Provision.Phase = "cancelled"
+			}
+			if problem := record.Provision.Problem; problem != nil {
+				problem.SchemaVersion = recoveryContractVersion
+				problem.Recovery = recoveryForError(*problem)
+			}
+			if !record.Provision.valid(&p) {
+				return errors.New("stored native provisioning binding mismatch")
+			}
+			p.Provision = &provisionPlan{Kind: record.Provision.Kind, Native: record.Provision, Resumable: true}
 		}
 		if id != p.ID || len(id) != 64 || p.APIBase != m.opts.APIBase || !m.appIDAllowed(p.AppID) || (p.Scope != api.DefaultEnvScope && (!api.ValidProjectEnvironmentSlug(p.Scope) || p.EnvironmentID == "" || p.ProjectID == "" || p.Project == "")) {
 			return errors.New("stored release plan binding mismatch")
@@ -70,6 +94,30 @@ func (m *management) restorePlans() error {
 			}
 		}
 		p.regressionResult = record.RegressionResult
+		if record.Failure != nil {
+			if record.Failure.Status != "refused" && record.Failure.Status != "partial" && record.Failure.Status != "outcome_unknown" {
+				return errors.New("stored operation outcome mismatch")
+			}
+			if record.Failure.Problem.SchemaVersion != recoveryContractVersion || record.Failure.Problem.Outcome != record.Failure.Status || (record.Failure.Status == "partial") != (record.ConfigReceipt != nil) {
+				return errors.New("stored operation receipt mismatch")
+			}
+			p.failure = record.Failure
+		}
+		if record.ConfigReceipt != nil {
+			if !validConfigCheckpoint(&p, record.ConfigReceipt) {
+				return errors.New("stored configuration checkpoint mismatch")
+			}
+			p.configReceipt = record.ConfigReceipt
+		}
+		if p.Operation != nil {
+			if !operationKinds[p.Operation.Kind] || p.Action != "operation_"+p.Operation.Kind || !json.Valid(record.OperationRequest) {
+				return errors.New("stored operation binding mismatch")
+			}
+			p.Operation.Request = record.OperationRequest
+		}
+		if len(record.LocalReceipt) > 0 {
+			p.localReceipt = record.LocalReceipt
+		}
 		p.budgetResult = record.BudgetResult
 		p.appHash, p.latestID, p.attempted = record.AppHash, record.LatestID, record.Attempted
 		p.review = record.Review
@@ -90,7 +138,35 @@ func (m *management) persistPlans() error {
 		if time.Now().After(p.ExpiresAt) {
 			continue
 		}
-		records[id] = storedPlan{RegressionResult: p.regressionResult, BudgetResult: p.budgetResult, Plan: *p, AppHash: p.appHash, LatestID: p.latestID, Attempted: p.attempted, Result: p.result, Promoted: p.promoted, PromotionAttempted: p.promotionAttempted, Review: p.review}
+		if temporaryPlan(p) && p.localReceipt == nil {
+			continue
+		}
+		plan := *p
+		plan.LocalSource, plan.EnvChange, plan.Provision = nil, nil, nil
+		var receipt json.RawMessage
+		if p.localReceipt != nil {
+			var err error
+			receipt, err = json.Marshal(p.localReceipt)
+			if err != nil {
+				return err
+			}
+		}
+		records[id] = storedPlan{Failure: p.failure, ConfigReceipt: p.configReceipt, LocalReceipt: receipt, RegressionResult: p.regressionResult, BudgetResult: p.budgetResult, Plan: plan, AppHash: p.appHash, LatestID: p.latestID, Attempted: p.attempted, Result: p.result, Promoted: p.promoted, PromotionAttempted: p.promotionAttempted, Review: p.review}
+		if p.Operation != nil {
+			r := records[id]
+			r.OperationRequest = p.Operation.Request
+			records[id] = r
+		}
+		if p.Provision != nil && p.Provision.Native != nil {
+			r := records[id]
+			r.Provision = p.Provision.Native
+			records[id] = r
+		}
 	}
 	return m.opts.planStore.update("plans/"+m.opts.planNamespace, records)
+}
+
+func temporaryPlan(p *releasePlan) bool {
+	durableProvision := p.Provision != nil && p.Provision.Native != nil
+	return p.LocalSource != nil || p.EnvChange != nil || p.Provision != nil && !durableProvision || p.Action == "local_deploy" || p.Action == "env_change" || strings.HasPrefix(p.Action, "provision_") && !durableProvision
 }

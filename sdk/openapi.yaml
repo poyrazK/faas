@@ -5507,7 +5507,7 @@ paths:
         customer's plan — a CI consumer can preview a fresh deploy the
         same way the CLI does.
 
-        Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+        Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
         endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
         Schema-break detection is text-only (handler / entrypoint
@@ -7230,6 +7230,52 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/env/batch:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - $ref: '#/components/parameters/ConfigGuardQuery'
+    post:
+      tags: [env]
+      operationId: applyEnvBatch
+      summary: Atomically set and delete non-secret variables in one scope.
+      description: |
+        Requires env:write. Compares expected_revision against configuration
+        history and live values, then commits all variables, one history revision,
+        snapshot invalidation and a value-free replay receipt in one transaction.
+        Use revision 0 only for an empty scope with no history. Reuse request_id with the exact
+        original body after an uncertain response; the original receipt is
+        returned even if later changes advanced the revision. Receipts are kept
+        for at least 24 hours. Reusing an ID with a changed body conflicts.
+        Revision conflicts require another review and a new request ID.
+        Running instances receive values on their next cold wake or fresh restart.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EnvBatchRequest'}
+      responses:
+        '200':
+          description: Durable transaction receipt; variable values are omitted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnvBatchResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/PlanLimitEnvVars'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: Configuration changed, request ID reused, or a field is managed by environment GitOps.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '413': {$ref: '#/components/responses/EnvValueTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503':
+          description: Transaction unavailable; retry the original request ID and body.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/apps/{slug}/config/revisions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -15699,6 +15745,114 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/resource-inventory:
+    get:
+      tags: [apps]
+      operationId: getAppResourceInventory
+      summary: Read a bounded page of app resource metadata.
+      description: |
+        Requires apps:read and current application access. App-bound readers may
+        inspect only their immutable app. This is metadata access: object data,
+        database connections, credentials and lifecycle operations retain their
+        own permissions. Counts and offsets are filtered by app, kind and exact
+        scope in the native catalog before pagination. Resource capability flags
+        still apply. Domains and crons are app-wide; omit environment for them.
+        Pages are individual read snapshots; concurrent changes may move offsets.
+        Metadata state does not establish runtime readiness or connectivity.
+        No provider calls, probes, reservations or writes are performed.
+      parameters:
+        - {name: slug, in: path, required: true, description: Application whose resource references are requested., schema: {type: string}}
+        - name: kind
+          in: query
+          required: true
+          description: One metadata collection within the selected application.
+          schema: {type: string, enum: [domains, crons, buckets, storage_bindings, databases]}
+        - name: environment
+          in: query
+          description: Exact named environment in the app project; omit for default-scope inventory.
+          schema: {type: string}
+        - name: limit
+          in: query
+          description: Maximum metadata entries in this backend page.
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        - name: offset
+          in: query
+          description: Offset within the selected app, resource kind and scope only.
+          schema: {type: integer, minimum: 0, maximum: 1000000, default: 0}
+      responses:
+        '200':
+          description: Filtered resource metadata and explicit continuation evidence.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppResourceInventoryResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/operation-preview:
+    get:
+      tags: [apps]
+      operationId: getAppOperationPreview
+      summary: Preview authorization for an application operation without writing intent.
+      description: |
+        Requires application read or deployment scope and current application access.
+        Evaluates the target operation's native scope, organization role and release
+        policy. Authorization is a snapshot; admission remains unknown when exact
+        request validation, quotas, approval or runtime capacity need apply-time checks.
+        This endpoint creates no plan, approval, reservation or customer intent.
+      parameters:
+        - {name: slug, in: path, required: true, description: Application slug to inspect., schema: {type: string}}
+        - name: operation
+          in: query
+          required: true
+          description: Native application operation whose current authorization is inspected.
+          schema: {type: string, enum: [deploy, restart, scale, env_change]}
+        - name: environment
+          in: query
+          description: Named environment in the application's project; omit for default scope.
+          schema: {type: string}
+      responses:
+        '200':
+          description: Native authorization snapshot and explicit admission limitations.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppOperationPreview'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/costs:
+    get:
+      tags: [billing]
+      operationId: getAppCosts
+      summary: Read retained usage costs attributed to one application.
+      description: |
+        Requires usage:read and current application access. App-agent credentials may
+        opt into usage:read for their bound app; account billing remains inaccessible.
+        Uses the native billing subject and the canonical allocation of included
+        usage. Excludes other applications, account totals, invoices, forecasts,
+        and account-wide unpriced or nonbillable quantities. Sampling windows remain
+        explicit; per-app quantity coverage and a complete bill estimate are unknown.
+        All monetary amounts use integer millicents. This endpoint has no writes.
+      parameters:
+        - {name: slug, in: path, required: true, description: Application slug whose retained allocations are requested., schema: {type: string}}
+        - name: month
+          in: query
+          description: UTC month for this application's retained cost allocations; omit for the current month.
+          schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}
+      responses:
+        '200':
+          description: Application allocations and source-window coverage, without account financial details.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppCostsResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/billing/costs:
     get:
       tags: [billing]
@@ -23089,6 +23243,125 @@ components:
         quantity: {type: integer, format: int64}
         net_millicents: {type: integer, format: int64}
         allocations: {type: array, items: {$ref: '#/components/schemas/FinancialAppCostAllocation'}}
+    AppResourceInventoryBinding:
+      type: object
+      description: Selected-app database linkage without provider identities or credential references.
+      required: [id, database_id, app_id, scope, access, state, environment_key, rotation_pending]
+      properties:
+        id: {type: string}
+        database_id: {type: string}
+        app_id: {type: string}
+        scope: {type: string}
+        access: {type: string}
+        state: {type: string}
+        environment_key: {type: string}
+        rotation_pending: {type: boolean}
+    AppResourceInventoryItem:
+      type: object
+      description: Allowlisted resource metadata; optional fields depend on the page kind.
+      required: [id, app_id, scope]
+      properties:
+        id: {type: string}
+        app_id: {type: string}
+        scope: {type: string}
+        name: {type: string}
+        domain: {type: string}
+        verified: {type: boolean}
+        cert_status: {type: string}
+        schedule: {type: string}
+        path: {type: string}
+        timezone: {type: string}
+        enabled: {type: boolean}
+        region: {type: string}
+        state: {type: string}
+        postgres_major: {type: integer}
+        bucket_id: {type: string}
+        bucket: {type: string}
+        prefix: {type: string}
+        rotation_pending: {type: boolean}
+        binding: {$ref: '#/components/schemas/AppResourceInventoryBinding'}
+    AppResourceInventoryResponse:
+      type: object
+      description: One native app and scope metadata page with a filtered total and optional next offset.
+      required: [schema_version, app_id, scope, kind, limit, offset, total, items, has_more, generated_at]
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        app_id: {type: string}
+        scope: {type: string}
+        project_id: {type: string}
+        environment_id: {type: string}
+        kind: {type: string, enum: [domains, crons, buckets, storage_bindings, databases]}
+        limit: {type: integer}
+        offset: {type: integer}
+        total: {type: integer, format: int64}
+        items: {type: array, items: {$ref: '#/components/schemas/AppResourceInventoryItem'}}
+        has_more: {type: boolean}
+        next_offset: {type: integer}
+        generated_at: {type: string, format: date-time}
+    AppOperationCheck:
+      type: object
+      description: One current native policy observation with a stable reason code.
+      required: [status, reason]
+      properties:
+        status: {type: string, enum: [allowed, blocked, unknown]}
+        reason: {type: string, description: Stable native policy reason code; no customer-provided text.}
+    AppOperationPreview:
+      type: object
+      description: Read-only operation authorization snapshot with separate admission limitations.
+      required: [schema_version, app_id, scope, operation, authorization, admission, required_scopes, checks, checked_at]
+      properties:
+        schema_version: {type: integer, enum: [1]}
+        app_id: {type: string}
+        scope: {type: string}
+        project_id: {type: string}
+        environment_id: {type: string}
+        operation: {type: string, enum: [deploy, restart, scale, env_change]}
+        authorization: {type: string, enum: [allowed, blocked, unknown]}
+        admission: {type: string, enum: [allowed, blocked, unknown]}
+        required_scopes: {type: array, items: {type: string}}
+        checks:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/AppOperationCheck'}
+        checked_at: {type: string, format: date-time}
+    AppCostCoverage:
+      type: object
+      description: Source sampling windows with per-app quantity coverage explicitly unknown.
+      required: [complete, fresh, expected_minutes, complete_minutes, quantity_coverage_known, reasons]
+      properties:
+        complete: {type: boolean}
+        fresh: {type: boolean}
+        expected_minutes: {type: integer, format: int64}
+        complete_minutes: {type: integer, format: int64}
+        quantity_coverage_known: {type: boolean, description: False; account-wide unpriced and nonbillable quantities are not exposed.}
+        reasons: {type: array, items: {type: string}}
+    AppCostMeter:
+      type: object
+      description: Exact retained quantity and cost allocations for one app and meter.
+      required: [meter, coverage, quantity, net_millicents, allocations]
+      properties:
+        meter: {type: string}
+        coverage: {$ref: '#/components/schemas/AppCostCoverage'}
+        unit: {type: string}
+        quantity: {type: integer, format: int64}
+        net_millicents: {type: integer, format: int64}
+        allocations: {type: array, items: {$ref: '#/components/schemas/FinancialAppCostAllocation'}}
+    AppCostsResponse:
+      type: object
+      description: Retained application usage costs with coverage limitations and no account financial totals.
+      required: [app_id, app_slug, currency, period_start, period_end, as_of, known_usage_millicents, meters, scope, scope_description, bill_estimate_available, missing_bill_components]
+      properties:
+        app_id: {type: string}
+        app_slug: {type: string}
+        currency: {type: string}
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        as_of: {type: string, format: date-time}
+        known_usage_millicents: {type: integer, format: int64}
+        meters: {type: array, items: {$ref: '#/components/schemas/AppCostMeter'}}
+        scope: {type: string}
+        scope_description: {type: string}
+        bill_estimate_available: {type: boolean}
+        missing_bill_components: {type: array, items: {type: string}}
     FinancialAppCostsResponse:
       type: object
       description: Retained usage costs directly attributed to one application; invoice and forecast amounts remain account scoped.
@@ -23494,6 +23767,7 @@ components:
       additionalProperties: false
       required: [name, region]
       properties:
+        request_id: {type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name."}
         name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
         region: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
         postgres_major: {type: integer, minimum: 12, maximum: 99, default: 16}
@@ -24161,8 +24435,16 @@ components:
         billing_address: {type: string, maxLength: 1000, description: "Free-form billing address used on future invoices."}
         tax_id: {type: string, maxLength: 128, description: "Customer tax/VAT identifier used on future invoices."}
         key_scopes: {type: array, items: {type: string}, description: "Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it."}
+        key_app: {$ref: '#/components/schemas/AppAgentBinding'}
         key_org: {$ref: '#/components/schemas/KeyOrg'}
         abuse_hold: {$ref: '#/components/schemas/AccountAbuseHold'}
+    AppAgentBinding:
+      type: object
+      description: "Immutable app binding of an app-scoped headless agent credential; absent for account keys."
+      required: [id, slug]
+      properties:
+        id: {type: string}
+        slug: {type: string}
     AccountAbuseHold:
       description: "Present while the account is on an abuse hold: outbound traffic from its workloads matched a scanning or abuse pattern, so nothing runs or deploys until an operator releases it."
       type: object
@@ -36330,8 +36612,9 @@ components:
       type: object
       required: [id, kind, prefix, scopes, created_at]
       properties:
+        app_id: {type: string, description: "Immutable app boundary of an app_agent connection."}
         id: {type: string, description: The agent's API key id.}
-        kind: {type: string, enum: [hosted_mcp, agent_key], description: "`hosted_mcp` for a browser sign-in through the hosted MCP server; `agent_key` for an API key with the `agent` scope."}
+        kind: {type: string, enum: [hosted_mcp, agent_key, app_agent], description: "`hosted_mcp` for a browser sign-in through the hosted MCP server; `agent_key` for an API key with the `agent` scope."}
         client_name: {type: string, description: "The client name a hosted sign-in's consent page showed."}
         client_site: {type: string, description: "The host the client was verified at: the site serving its metadata document, or its HTTPS redirect host. Empty for a local client."}
         label: {type: string, description: The key label.}
@@ -36455,9 +36738,14 @@ components:
           type: array
           items: {$ref: '#/components/schemas/DeployTokenResponse'}
     CreateDeployTokenRequest:
-      description: "Create a deploy token scoped to one app. The server always assigns deploy:write."
+      description: "Create an app-bound credential. Standard tokens receive deploy:write; agent=true permits a narrow MCP permission set while preserving the native app boundary."
       type: object
       properties:
+        agent: {type: boolean, description: "Mint an app-bound headless MCP credential. Omit for a standard deploy token."}
+        scopes:
+          type: array
+          description: "Requires agent=true. Agent and apps:read are included; omitted scopes also include deploy:write."
+          items: {type: string, enum: [agent, "apps:read", "deploy:write", "env:write", "secrets:request", "storage:manage", "usage:read"]}
         label: {type: string, maxLength: 100}
         expires_at: {type: string, format: date-time, description: "Optional future expiry; defaults to 90 days and is capped at 365 days."}
     RotateDeployTokenRequest:
@@ -37106,6 +37394,33 @@ components:
         window_ends_at: {type: string, format: date-time}
         closed_at: {type: string, format: date-time}
         decision: {$ref: '#/components/schemas/ConfigGuardDecision'}
+    EnvBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_revision]
+      description: At least one set or delete is required. Keys must be distinct across both collections; plan limits bound collection counts and value sizes.
+      properties:
+        request_id: {type: string, format: uuid}
+        expected_revision: {type: integer, format: int64, minimum: 0}
+        values:
+          type: object
+          additionalProperties: {type: string}
+          description: Non-secret variable values to set, omitted from receipts.
+        delete:
+          type: array
+          uniqueItems: true
+          items: {type: string}
+    EnvBatchResponse:
+      description: Durable value-free receipt of an atomic variable batch.
+      type: object
+      required: [request_id, app_id, scope, updated_keys, deleted_keys, config_change]
+      properties:
+        request_id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        scope: {type: string}
+        updated_keys: {type: array, items: {type: string}}
+        deleted_keys: {type: array, items: {type: string}}
+        config_change: {$ref: '#/components/schemas/ConfigChangeReceipt'}
     ConfigRevision:
       description: "One recorded config change, without values."
       type: object
@@ -37113,7 +37428,7 @@ components:
       properties:
         revision: {type: integer, format: int64}
         scope: {type: string}
-        source: {type: string, enum: [baseline, env.set, env.delete, secret.set, secret.delete, secret.rotate, config.rollback, config.guard_restore]}
+        source: {type: string, enum: [baseline, env.set, env.delete, env.batch, secret.set, secret.delete, secret.rotate, config.rollback, config.guard_restore]}
         key: {type: string}
         actor: {type: string}
         created_at: {type: string, format: date-time}

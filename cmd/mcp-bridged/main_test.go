@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"testing"
 
@@ -30,7 +29,7 @@ func TestConfigDefaultsToThePlatformAPIHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.resourceURL != "https://api.gregale.dev/mcp" || cfg.apiBase != "http://127.0.0.1:8081" || cfg.cliPath != "/opt/faas/current/bin/gregale" || !slices.Equal(cfg.toolsets, []string{"core", "provision"}) {
+	if cfg.resourceURL != "https://api.gregale.dev/mcp" || cfg.apiBase != "http://127.0.0.1:8081" || cfg.cliPath != "/opt/faas/current/bin/gregale" || len(cfg.toolsets) != 1 || cfg.toolsets[0] != "core" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	t.Setenv("FAAS_PLATFORM_DOMAIN", "gregale.io")

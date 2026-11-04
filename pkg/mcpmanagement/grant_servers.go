@@ -16,7 +16,7 @@ const idleServerTTL = 10 * time.Minute
 
 // grantOptions are the per-connection server options consent approved.
 func (r *remoteServer) grantOptions(g *oauthGrant, apps map[string]string, environments *EnvironmentConsent) Options {
-	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: r.opts.Toolsets, Capabilities: g.capabilities, LocalCLI: r.grantCLI(g.accountID, g.client.Token()), uploads: r.uploads, Org: g.org}
+	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: effectiveToolsets(g.toolsets, r.opts.Toolsets), Capabilities: g.capabilities, LocalCLI: r.grantCLI(g.accountID, g.client.Token()), uploads: r.uploads, Org: g.org}
 }
 
 // serverLocked returns an approved connection's MCP server, building it from
@@ -87,6 +87,18 @@ func (m *management) idle(now time.Time) bool {
 		return true
 	}
 	m.mu.Lock()
+	for _, p := range m.plans {
+		if now.Before(p.ExpiresAt) && (m.opts.planStore == nil || temporaryPlan(p) && p.localReceipt == nil) {
+			m.mu.Unlock()
+			return false
+		}
+	}
+	for _, p := range m.environmentPlans {
+		if now.Before(p.ExpiresAt) && m.opts.planStore == nil {
+			m.mu.Unlock()
+			return false
+		}
+	}
 	for _, req := range m.secretRequests {
 		if now.Before(req.expiresAt) {
 			m.mu.Unlock()

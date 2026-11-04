@@ -20,10 +20,10 @@ func TestAgentKeyConnectionsAreCappedPerAccount(t *testing.T) {
 	for i := range hostedKeyConnsPerAccount {
 		r.keyConns[tokenHash("alice-"+strconv.Itoa(i))] = &keyConnection{accountID: "alice", inflight: 1, lastUsed: time.Now()}
 	}
-	if _, _, err := r.holdKeyConnection(tokenHash("alice-new"), "alice", nil, client); !errors.Is(err, errKeyConnectionsPerAccount) {
+	if _, _, err := r.holdKeyConnection(tokenHash("alice-new"), "alice", nil, client, nil); !errors.Is(err, errKeyConnectionsPerAccount) {
 		t.Fatalf("alice past her share = %v, want errKeyConnectionsPerAccount", err)
 	}
-	if _, release, err := r.holdKeyConnection(tokenHash("bob-1"), "bob", nil, client); err != nil {
+	if _, release, err := r.holdKeyConnection(tokenHash("bob-1"), "bob", nil, client, nil); err != nil {
 		t.Fatalf("another account was limited: %v", err)
 	} else {
 		release()
@@ -40,7 +40,7 @@ func TestAgentKeyConnectionsAreCappedPerAccount(t *testing.T) {
 		}
 	}
 	r.mu.Unlock()
-	if _, release, err := r.holdKeyConnection(tokenHash("alice-new"), "alice", nil, client); err != nil {
+	if _, release, err := r.holdKeyConnection(tokenHash("alice-new"), "alice", nil, client, nil); err != nil {
 		t.Fatalf("alice with idle connections: %v", err)
 	} else {
 		release()

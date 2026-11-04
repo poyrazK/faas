@@ -3,11 +3,12 @@ package state
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const deployTokenSelectCols = `id, account_id, app_id, token_sha256, coalesce(label,''), scopes,
@@ -33,10 +34,8 @@ func (s *PgStore) CreateDeployToken(ctx context.Context, accountID, appID string
 	if len(scopes) == 0 {
 		scopes = []string{"deploy:write"}
 	}
-	for _, scope := range scopes {
-		if scope != "deploy:write" {
-			return DeployToken{}, fmt.Errorf("pgstore: unsupported deploy token scope %q", scope)
-		}
+	if err := api.ValidateDeployTokenScopes(scopes); err != nil {
+		return DeployToken{}, err
 	}
 	hash = storedCredential(credTagDeployToken, hash)
 	row := s.pool.QueryRow(ctx,

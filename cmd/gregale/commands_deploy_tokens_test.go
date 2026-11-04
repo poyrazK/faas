@@ -41,6 +41,15 @@ func TestDeployTokensReachEachRoute(t *testing.T) {
 			wantOut:    "fdt_secret",
 		},
 		{
+			name:       "app agent",
+			args:       []string{"deploy-tokens", "add", "--app", "web", "--agent", "--scopes", "deploy:write,env:write", "--label", "coding-agent"},
+			wantMethod: http.MethodPost,
+			wantPath:   "/v1/apps/web/deploy-tokens",
+			wantBody:   `{"agent":true,"scopes":["deploy:write","env:write"],"label":"coding-agent"}`,
+			reply:      api.DeployTokenResponse{ID: "agent-1", Plaintext: "fp_deploy_fake"},
+			wantOut:    "fp_deploy_fake",
+		},
+		{
 			name:       "rotate",
 			args:       []string{"deploy-tokens", "rotate", "dt-1", "--app", "web"},
 			wantMethod: http.MethodPost,

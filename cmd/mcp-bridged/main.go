@@ -71,7 +71,7 @@ func registerFlags(fs *flag.FlagSet) *flags {
 		stateKeyFile:  fs.String("state-key-file", "", "independent private file holding the 32-byte state key"),
 		cliPath:       fs.String("cli", "/opt/faas/current/bin/gregale", "gregale CLI the provisioning and deploy tools run"),
 		uploadDir:     fs.String("upload-dir", filepath.Join(os.TempDir(), "gregale-mcp-uploads"), "private directory for uploads; emptied on start"),
-		tools:         fs.String("tools", "core,provision", "toolsets to list, comma-separated"),
+		tools:         fs.String("tools", "core", "toolsets to list, comma-separated; authorization still follows connection consent"),
 		timeout:       fs.Duration("timeout", 30*time.Second, "per-tool API timeout (positive, at most 1m)"),
 		metricsListen: fs.String("metrics-listen", "127.0.0.1:9110", "loopback address for Prometheus metrics; empty disables them"),
 		adminSocket:   fs.String("admin-socket", "", "owner-only Unix socket for listing and revoking connections; its directory must be the service user's, mode 0700"),

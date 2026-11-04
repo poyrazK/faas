@@ -63,6 +63,8 @@ const (
 	corsPresetsFile                  = "cors_preset_dto.go"  // issue #975 #4 PR-B / ADR-129 — CORS preset DTOs
 	uploadSessionFile                = "upload_session.go"   // issue #1182 §P1 PR-1 — resumable upload session DTOs
 	managedPostgresFile              = "managed_postgres.go"
+	envBatchFile                     = "env_batch.go"        // ADR-20261103171917
+	agentInspectionFile              = "agent_inspection.go" // ADR-20261103211147
 	openapiContractFile              = "openapi_contract.go"
 	executionsFile                   = "executions.go"                  // ADR-171 — disposable one-shot execution DTOs
 	appTasksFile                     = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
@@ -1863,6 +1865,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", envBatchFile),
+		filepath.Join(root, "pkg", "api", agentInspectionFile),
+		filepath.Join(root, "pkg", "api", "app_resource_inventory.go"),
 		filepath.Join(root, "pkg", "api", "data_pipelines.go"),
 		filepath.Join(root, "pkg", "api", "data_connection_checks.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),

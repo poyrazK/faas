@@ -385,6 +385,7 @@ type MemStore struct {
 	// app_config_revisions, app_config_guards and app_config_guard_secrets
 	// (ADR-1451). Revisions are kept in revision order per scope.
 	configRevisions    map[configScopeKey][]ConfigRevision
+	envBatchReceipts   map[string]envBatchRecord
 	configGuards       map[string]ConfigGuard
 	configGuardSecrets map[string]map[string]ConfigGuardSecret
 	// releaseFreezes mirrors release_freezes (ADR-20261019071733).
@@ -10118,6 +10119,10 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 			return nil
 		}
 	}
+	d, err = m.rollbackTrafficTargetLocked(ctx, d)
+	if err != nil {
+		return err
+	}
 
 	if d.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
 		if !m.runtimeUpgradeTrafficAllowedLocked(d) &&
@@ -10152,11 +10157,11 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		return err
 	}
 	if d.Status != DeployLive && (d.TrafficPercent > 0 || !d.TrafficPercentExplicit && d.CanaryTotalSteps <= 0 && !IsServiceRollout(d)) {
-		if err := m.rejectUncheckedBindingReleaseLocked(d.AppID, d.Scope); err != nil {
+		if err := m.checkBindingReleaseTrafficLocked(ctx, map[string]int{d.ID: 100}); err != nil {
 			return err
 		}
 	}
-	before := d
+	before := m.deployments[id]
 	previousStatus := d.Status
 	defer func() {
 		if err == nil {
@@ -11177,6 +11182,12 @@ func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, t
 	target, ok := m.deployments[targetDeploymentID]
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
+	}
+	if current := expectedRollbackCurrent(ctx); current != "" {
+		r := api.RollbackOperation{AppID: appID, Scope: normalizedDeploymentScope(target.Scope), TargetDeploymentID: target.ID, CurrentDeploymentID: current}
+		if !rollbackPairValid(r, target, m.deployments[current], m.rollbackRowsLocked(r)) {
+			return Deployment{}, ErrCheckedRollbackChanged
+		}
 	}
 	if target.EnvironmentWorkloadManaged() || m.environmentGitOpsManagedForScopeLocked(target.AppID, target.Scope) {
 		return Deployment{}, ErrInvalidArgument
@@ -22519,6 +22530,10 @@ func (m *MemStore) UpsertAppSecretWithClassInScope(ctx context.Context, accountI
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.upsertAppSecretWithClassInScopeLocked(ctx, accountID, appID, scope, key, kid, valueHash, secretClass, ciphertext)
+}
+
+func (m *MemStore) upsertAppSecretWithClassInScopeLocked(ctx context.Context, accountID, appID, scope, key, kid, valueHash, secretClass string, ciphertext []byte) error {
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return err
 	}
@@ -22794,6 +22809,10 @@ func (m *MemStore) DeleteAppSecretInScope(ctx context.Context, accountID, appID,
 func (m *MemStore) DeleteAppSecretInScopeWithRevocation(ctx context.Context, accountID, appID, scope, key string) (AppSecretRevocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.deleteAppSecretInScopeWithRevocationLocked(ctx, accountID, appID, scope, key)
+}
+
+func (m *MemStore) deleteAppSecretInScopeWithRevocationLocked(ctx context.Context, accountID, appID, scope, key string) (AppSecretRevocation, error) {
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return AppSecretRevocation{}, err
 	}
@@ -23702,6 +23721,10 @@ func (m *MemStore) CountAppEnv(_ context.Context, accountID, appID string) (int,
 func (m *MemStore) UpsertAppEnvInScope(ctx context.Context, accountID, appID, scope, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.upsertAppEnvInScopeLocked(ctx, accountID, appID, scope, key, value)
+}
+
+func (m *MemStore) upsertAppEnvInScopeLocked(ctx context.Context, accountID, appID, scope, key, value string) error {
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return err
 	}
@@ -23731,6 +23754,10 @@ func (m *MemStore) UpsertAppEnvInScope(ctx context.Context, accountID, appID, sc
 func (m *MemStore) DeleteAppEnvInScope(ctx context.Context, accountID, appID, scope, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.deleteAppEnvInScopeLocked(ctx, accountID, appID, scope, key)
+}
+
+func (m *MemStore) deleteAppEnvInScopeLocked(ctx context.Context, accountID, appID, scope, key string) error {
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return err
 	}
