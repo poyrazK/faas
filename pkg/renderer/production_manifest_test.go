@@ -8,6 +8,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/manifest"
 )
 
+// The control plane's public_edge role refuses to deploy a site that admits
+// Cloudflare unless the manifest says how to treat its connections
+// (ADR-20261103172551), so an unset dns.origin_pull must fail here, not in
+// the next control-plane deploy.
+func TestGCPProductionManifestPicksOriginPull(t *testing.T) {
+	m, err := manifest.Load(filepath.Join("..", "..", "deploy", "manifest", "production", "gcp-live.template.yaml"))
+	if err != nil {
+		t.Fatalf("load production manifest: %v", err)
+	}
+	if m.DNS.Mode == "cloudflare" && m.DNS.OriginPull == "" {
+		t.Fatal("production manifest uses dns.mode cloudflare without dns.origin_pull (required or any_zone); the control-plane deploy would fail")
+	}
+}
+
 func TestGCPProductionManifestRendersPrivateComputeReadiness(t *testing.T) {
 	manifestPath := filepath.Join("..", "..", "deploy", "manifest", "production", "gcp-live.template.yaml")
 	m, err := manifest.Load(manifestPath)
