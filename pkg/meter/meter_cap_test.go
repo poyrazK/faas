@@ -39,6 +39,7 @@ func TestRunQuotaOnce_EgressCountsTowardOverageCap(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
 	acct := makeAccount(t, ctx, store, api.PlanHobby)
+	turnOnEgressOverage(t, store, acct.ID)
 	store.SetClockForTest(func() time.Time { return now })
 	store.SetOverageCapCentsForTest(acct.ID, 1)
 	const gib = int64(1 << 30)

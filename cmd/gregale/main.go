@@ -803,6 +803,10 @@ func run(args []string) (status int) {
 		// above the plan's included GB-h). schedd refuses new wakes
 		// once the cap is hit.
 		return cmdOverageCap(args[1:])
+	case "egress-overage":
+		// ADR-20261103131742 amendment 2: egress past the plan's monthly
+		// allowance is billed only with egress overage on.
+		return cmdEgressOverage(args[1:])
 	case "mail":
 		// Issue #246 acceptance item 6: operator dry-run for the
 		// outbound mail pipeline. `gregale mail dry-run` renders

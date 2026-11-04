@@ -71,7 +71,7 @@ func egressTestConfig(baseURL, mode string) Config {
 	cfg.EgressBillingFrom = "2026-09-01T00:00:00Z"
 	cfg.EgressUsageEventName = "egress_usage"
 	cfg.EgressMeterID = "meter-egress"
-	cfg.EgressMillicentsPerGiB = 2_000
+	cfg.EgressMillicentsPerGiB = api.EgressOverageMillicentsPerGiB
 	cfg.HobbyIncludedEgressGiB = 10
 	cfg.ProIncludedEgressGiB = 100
 	cfg.ScaleIncludedEgressGiB = 1_000
@@ -257,11 +257,11 @@ func TestPushMeterUsageRecordRequiresLiveAndUsesDistinctEvent(t *testing.T) {
 		t.Fatal("live Polar provider missing egress capability")
 	}
 	policy, ok := p.MeterUsagePolicy(api.PlanHobby, state.BillingMeterEgress)
-	if !ok || policy.Mode != billing.MeterDeliveryLive || policy.IncludedQuantity != 10*(1<<30) || policy.MillicentsPerUnit != 2_000 {
+	if !ok || policy.Mode != billing.MeterDeliveryLive || policy.IncludedQuantity != 10*(1<<30) || policy.MillicentsPerUnit != 3_000 {
 		t.Fatalf("egress policy = (%+v, %v)", policy, ok)
 	}
-	if cents := billing.MeterUsageCents(policy, 3*(1<<30)); cents != 6 {
-		t.Fatalf("three-GiB policy cost = %d cents, want 6", cents)
+	if cents := billing.MeterUsageCents(policy, 3*(1<<30)); cents != 9 {
+		t.Fatalf("three-GiB policy cost = %d cents, want 9 at $0.03 per GiB", cents)
 	}
 	acct := state.Account{ID: "acct-1", ProviderCustomerID: "polar-customer"}
 	hour := time.Date(2026, 9, 11, 10, 0, 0, 0, time.UTC)
@@ -350,7 +350,7 @@ func TestEnsurePlanProductsValidatesSeparateEgressCatalog(t *testing.T) {
 			case "scale-product":
 				fixed = 9900
 			}
-			product := strings.Replace(catalogProductJSON(id, fixed), `],"benefits"`, `,{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"2","meter_id":"meter-egress","cap_amount":null,"is_archived":false}],"benefits"`, 1)
+			product := strings.Replace(catalogProductJSON(id, fixed), `],"benefits"`, `,{"amount_type":"metered_unit","price_currency":"usd","unit_amount":"3","meter_id":"meter-egress","cap_amount":null,"is_archived":false}],"benefits"`, 1)
 			_, _ = io.WriteString(w, product)
 			return
 		}

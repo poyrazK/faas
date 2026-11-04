@@ -3829,6 +3829,11 @@ func (p *usageSummaryEgressProvider) MeterUsagePolicy(plan api.Plan, meter state
 func TestUsageSummary_LiveEgressIncludedInOverageCents(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	e.s.WithBillingProvider(&usageSummaryEgressProvider{mode: billing.MeterDeliveryLive})
+	// Egress past the allowance is overage only with egress overage on
+	// (ADR-20261103131742 amendment 2).
+	if err := e.store.SetEgressOverage(t.Context(), e.acct.ID, true, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
 	if err := e.store.AppendUsage(t.Context(), e.acct.ID, "app-egress", "instance-egress", now,
 		0, 0, 0, 0, 2*(1<<30), 0, 0, 0); err != nil {

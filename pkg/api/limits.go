@@ -7461,6 +7461,12 @@ const (
 	// GiB-month (ADR-1430). Requests and egress are free. The operator's
 	// object-storage rate card applies it.
 	ObjectStorageMillicentsPerGiBMonth int64 = 3_000
+	// EgressOverageMillicentsPerGiB is the published rate for application
+	// egress beyond a paid plan's MonthlyEgressGiB: $0.03 per GiB. Only a
+	// subject that turned egress overage on is billed it, under its spend cap;
+	// every other subject's apps stop at the allowance (ADR-20261103131742
+	// amendment 2).
+	EgressOverageMillicentsPerGiB int64 = 3_000
 	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
 	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
 	FinancialEgressMinimumCreditBytes = int64(4096)

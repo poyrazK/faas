@@ -72,6 +72,7 @@ func TestPushPendingEgressIncludesDeliveredGaps(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
 			acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+			turnOnEgressOverage(t, store, acct.ID)
 			start := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 			if tc.capCents >= 0 {
 				store.SetOverageCapCentsForTest(acct.ID, tc.capCents)

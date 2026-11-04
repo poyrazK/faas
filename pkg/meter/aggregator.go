@@ -43,17 +43,18 @@ func MonthlyEgressBytes(usages []state.Usage) int64 {
 	return total
 }
 
-// EgressCeilingBytes is the month's application egress ceiling for plan: the
-// plan's monthly egress while the provider does not bill egress live for it,
-// and none (zero) once it does, when egress above the allowance is overage
-// under the spend cap instead (ADR-20261103131742). Free egress is never
-// billed, so Free always has the ceiling.
-func EgressCeilingBytes(provider billing.Provider, plan api.Plan) int64 {
+// EgressCeilingBytes is the month's application egress ceiling for a subject
+// on plan: the plan's monthly egress, and none (zero) only when the subject
+// turned egress overage on and the provider bills egress live for the plan,
+// when egress above the allowance is overage under the spend cap instead
+// (ADR-20261103131742 amendment 2). Free egress is never billed, so Free
+// always has the ceiling.
+func EgressCeilingBytes(provider billing.Provider, plan api.Plan, overageOn bool) int64 {
 	limits, ok := api.LimitsFor(plan)
 	if !ok || limits.MonthlyEgressGiB <= 0 {
 		return 0
 	}
-	if policies, ok := provider.(billing.MeterUsagePolicyProvider); ok {
+	if policies, ok := provider.(billing.MeterUsagePolicyProvider); ok && overageOn {
 		if policy, configured := policies.MeterUsagePolicy(plan, state.BillingMeterEgress); configured && policy.Mode == billing.MeterDeliveryLive {
 			return 0
 		}

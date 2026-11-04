@@ -7303,11 +7303,40 @@ func egressUsageBytesForPolicy(ctx context.Context, store state.Store, provider 
 	var total int64
 	for _, row := range rows {
 		if row.NetTxBytes > math.MaxInt64-total {
-			return math.MaxInt64, nil
+			total = math.MaxInt64
+			break
 		}
 		total += row.NetTxBytes
 	}
+	if total <= policy.IncludedQuantity {
+		return total, nil
+	}
+	// Egress past the allowance is overage only for a subject that had
+	// egress overage on this month; any other subject's apps stopped at the
+	// allowance and the bytes sent before they stopped are not billed
+	// (ADR-20261103131742 amendment 2).
+	on, err := egressOverageOnDuring(ctx, store, acct.ID, start, end)
+	if err != nil {
+		return 0, err
+	}
+	if !on {
+		return policy.IncludedQuantity, nil
+	}
 	return total, nil
+}
+
+// egressOverageOnDuring reports whether subject had egress overage on at any
+// moment of [start, end). A store without the choices has it off.
+func egressOverageOnDuring(ctx context.Context, store state.Store, subjectID string, start, end time.Time) (bool, error) {
+	choices, ok := store.(state.EgressOverageStore)
+	if !ok {
+		return false, nil
+	}
+	made, err := choices.EgressOverageChoices(ctx, subjectID, start, end)
+	if err != nil {
+		return false, fmt.Errorf("read egress overage choices: %w", err)
+	}
+	return state.EgressOverageOnDuring(made, start, end), nil
 }
 
 func combinedOverageCents(provider billing.Provider, plan api.Plan, usedEgressBytes, computeCents int64) int64 {

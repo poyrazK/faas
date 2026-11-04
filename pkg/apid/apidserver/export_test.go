@@ -2148,3 +2148,9 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
+
+// NewLiveEgressProvider is a billing provider that bills egress live past a
+// one-GiB allowance at 2 cents per GiB (ADR-20261103131742 amendment 2).
+func NewLiveEgressProvider() billing.Provider {
+	return &usageSummaryEgressProvider{mode: billing.MeterDeliveryLive}
+}

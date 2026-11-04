@@ -118,6 +118,7 @@ touch them. The tables below map each earlier name.
 | `gregale operations` | `gregale job` |
 | `gregale orgs` | `gregale org` |
 | `gregale overage-cap` | `gregale billing spend-cap` |
+| `gregale egress-overage` | `gregale billing egress-overage` |
 | `gregale park` | `gregale app park` |
 | `gregale plan` | `gregale billing plan` |
 | `gregale platform-tenants` | `gregale api tenant` |

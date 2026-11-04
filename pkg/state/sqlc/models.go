@@ -4603,6 +4603,13 @@ type EgressFlowLog struct {
 	RemotePort int32
 }
 
+// Each time a paid billing subject turned egress overage on or off; the latest row is the current choice and no row means off. Written only by apid (ADR-20261103131742 amendment 2).
+type EgressOverageChoice struct {
+	SubjectID pgtype.UUID
+	ChangedAt pgtype.Timestamptz
+	Enabled   bool
+}
+
 type EgressPolicy struct {
 	ID                                 string
 	PublicIface                        string

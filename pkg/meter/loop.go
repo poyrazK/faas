@@ -70,10 +70,13 @@ type Loop struct {
 	// what pkg/alerts implements; meterd holds the concrete pointer
 	// so test doubles don't have to wrap the interface).
 	evaluator *alerts.Evaluator
-	now       func() time.Time
-	log       *slog.Logger
-	cfg       *Config
-	ops       *wire.OpsMetrics
+	// egressOverageOn is the last set of billing subjects read with egress
+	// overage on; a failed read keeps it (ADR-20261103131742 amendment 2).
+	egressOverageOn map[string]bool
+	now             func() time.Time
+	log             *slog.Logger
+	cfg             *Config
+	ops             *wire.OpsMetrics
 	// egress is the per-instance egress-byte reader (ADR-046,
 	// step 8). nil falls back to the legacy 3-arg Sampler so
 	// tests and consumers that have not been migrated to the
@@ -633,6 +636,7 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 		capCache = map[string]int64{}
 	}
 	now := l.now()
+	overageOn := l.egressOverageSubjects(ctx)
 	for _, acct := range accounts {
 		usages, err := MonthUsageForAccount(ctx, l.store, acct.ID, now)
 		if err != nil {
@@ -640,7 +644,7 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			continue
 		}
 		if capCents, ok := capCache[acct.ID]; ok && capCents >= 0 {
-			l.recordSpendCapHold(ctx, acct, now, capCents)
+			l.recordSpendCapHold(ctx, acct, now, capCents, overageOn[acct.ID])
 		}
 		used := MonthlyUsageGB(usages)
 		if acct.Plan != api.PlanFree {
@@ -649,7 +653,7 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 			used = l.freePeriodUsageGB(ctx, acct, now, used)
 		}
 		params := QuotaParams{Store: l.store, Notif: l.notif, Parker: l.parker, Mailer: l.mailer, Log: l.log, WarningRequested: l.quotaWarningRequested, WarningCommands: l.quotaWarningCommands,
-			EgressBytes: MonthlyEgressBytes(usages), EgressCeilingBytes: EgressCeilingBytes(l.pusher, acct.Plan)}
+			EgressBytes: MonthlyEgressBytes(usages), EgressCeilingBytes: EgressCeilingBytes(l.pusher, acct.Plan, overageOn[acct.ID])}
 		if _, err := params.Enforce(ctx, acct, used, now); err != nil {
 			// EnforceQuota already logged + skipped parked-instance failures;
 			// only status/structural errors reach here.
@@ -664,13 +668,13 @@ func (l *Loop) runQuotaOnce(ctx context.Context) {
 // recordSpendCapHold compares the account's combined billable overage this
 // UTC month with its cap and records or clears the hold schedd enforces
 // (ADR-20261026120843). A read failure keeps the previous hold.
-func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now time.Time, capCents int64) {
+func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now time.Time, capCents int64, egressOverageOn bool) {
 	monthCents, err := l.store.CurrentMonthOverageCents(ctx, acct.ID)
 	if err != nil {
 		l.log.Warn("meter: overage read failed", "account", acct.ID, "err", err)
 		return
 	}
-	meterCents, err := liveMeterOverageCents(ctx, l.store, l.pusher, acct, now, state.BillingMeterEgress)
+	meterCents, err := liveMeterOverageCents(ctx, l.store, l.pusher, acct, now, state.BillingMeterEgress, egressOverageOn)
 	if err != nil {
 		l.log.Warn("meter: secondary overage read failed", "account", acct.ID, "err", err)
 		return
@@ -730,7 +734,12 @@ func (l *Loop) sendSpendCapMail(ctx context.Context, acct state.Account, hold st
 	}
 }
 
-func liveMeterOverageCents(ctx context.Context, store state.Store, provider billing.Provider, acct state.Account, now time.Time, meter state.BillingMeter) (int64, error) {
+// liveMeterOverageCents is the month's live overage on meter for the spend
+// cap. Egress counts only for a subject that has had egress overage on this
+// month (overageOn says whether it is on now); for any other subject the apps
+// stopped at the allowance and the bytes sent before they stopped are not
+// billed (ADR-20261103131742 amendment 2).
+func liveMeterOverageCents(ctx context.Context, store state.Store, provider billing.Provider, acct state.Account, now time.Time, meter state.BillingMeter, overageOn bool) (int64, error) {
 	policyProvider, ok := provider.(billing.MeterUsagePolicyProvider)
 	if !ok {
 		return 0, nil
@@ -740,6 +749,12 @@ func liveMeterOverageCents(ctx context.Context, store state.Store, provider bill
 		return 0, nil
 	}
 	monthStart := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
+	if meter == state.BillingMeterEgress && !overageOn {
+		on, err := egressOverageOnDuring(ctx, store, acct.ID, monthStart, now.UTC())
+		if err != nil || !on {
+			return 0, err
+		}
+	}
 	start := monthStart
 	if policy.EffectiveFrom.After(start) {
 		start = policy.EffectiveFrom

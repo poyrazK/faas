@@ -332,6 +332,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"billing usage", "usage"},
 	{"billing invoices", "invoices"},
 	{"billing spend-cap", "overage-cap"},
+	{"billing egress-overage", "egress-overage"},
 	{"billing", "billing"},
 	{"feature list", "capabilities"},
 	{"feature join", "previews join"},

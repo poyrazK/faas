@@ -189,7 +189,7 @@ var cliRelatedCommands = [][]string{
 	{"crons", "triggers"},
 	{"env", "secrets"},
 	{"connect", "github"},
-	{"plan", "billing", "usage", "invoices", "overage-cap"},
+	{"plan", "billing", "usage", "invoices", "overage-cap", "egress-overage"},
 	{"preview", "previews"},
 }
 

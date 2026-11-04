@@ -22,6 +22,7 @@ func TestComputePushReservesEarlierLiveEgressAgainstCap(t *testing.T) {
 		ctx := context.Background()
 		store := state.NewMemStore()
 		acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+		turnOnEgressOverage(t, store, acct.ID)
 		store.SetOverageCapCentsForTest(acct.ID, 2)
 		start := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 		// Hour 0 has no compute overage but two cents of egress. Hour 1's
@@ -60,6 +61,7 @@ func TestEgressCapDoesNotRoundFractionalComputeDown(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	turnOnEgressOverage(t, store, acct.ID)
 	store.SetOverageCapCentsForTest(acct.ID, 1)
 	start := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 	// Half a cent of compute plus one cent of egress exceeds a one-cent cap.
@@ -84,6 +86,7 @@ func TestCombinedFractionalUsageCanExactlyFillCap(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	turnOnEgressOverage(t, store, acct.ID)
 	store.SetOverageCapCentsForTest(acct.ID, 1)
 	start := time.Date(2026, 9, 30, 23, 0, 0, 0, time.UTC)
 	// Each meter costs half a cent. Do not round each one up independently.

@@ -1540,6 +1540,8 @@ from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
 from .egress_flow_log_response import EgressFlowLogResponse
+from .egress_overage_request import EgressOverageRequest
+from .egress_overage_response import EgressOverageResponse
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_durable_entity_registry_body import EnableDurableEntityRegistryBody
@@ -7764,6 +7766,8 @@ __all__ = (
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",
     "EgressFlowLogResponse",
+    "EgressOverageRequest",
+    "EgressOverageResponse",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnableDurableEntityRegistryBody",

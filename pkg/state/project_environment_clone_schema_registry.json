@@ -5760,6 +5760,15 @@
     "kind": "operational"
   },
   {
+    "table": "egress_overage_choices",
+    "columns": [
+      "changed_at",
+      "enabled",
+      "subject_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "egress_policy",
     "columns": [
       "changed_at",

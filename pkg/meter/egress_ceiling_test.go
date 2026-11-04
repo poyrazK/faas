@@ -20,9 +20,10 @@ func (liveEgressPolicy) MeterUsagePolicy(api.Plan, state.BillingMeter) (billing.
 	return billing.MeterUsagePolicy{Mode: billing.MeterDeliveryLive}, true
 }
 
-// Egress no plan bills is capped at the plan's monthly egress: a Pro account
-// past 500 GiB stops like a Free account past its compute allowance, and the
-// next month lifts the stop. Once egress bills live there is no ceiling.
+// Egress a subject is not billed for is capped at the plan's monthly egress:
+// a Pro account past 500 GiB stops like a Free account past its compute
+// allowance, and the next month lifts the stop. Only a paid subject that
+// turned egress overage on, on a plan that bills egress live, has no ceiling.
 // adr: 20261103131742
 func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	t.Parallel()
@@ -35,9 +36,23 @@ func TestEgressCeilingStopsUnbilledEgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ceiling := meter.EgressCeilingBytes(nil, api.PlanPro)
-	if ceiling != 500<<30 || meter.EgressCeilingBytes(liveEgressPolicy{}, api.PlanPro) != 0 || meter.EgressCeilingBytes(nil, api.PlanFree) != 10<<30 {
-		t.Fatalf("ceilings: Pro %d, Pro billed live %d, Free %d", ceiling, meter.EgressCeilingBytes(liveEgressPolicy{}, api.PlanPro), meter.EgressCeilingBytes(nil, api.PlanFree))
+	ceiling := meter.EgressCeilingBytes(nil, api.PlanPro, false)
+	tests := []struct {
+		name      string
+		provider  billing.Provider
+		plan      api.Plan
+		overageOn bool
+		want      int64
+	}{
+		{"Pro, egress not billed", nil, api.PlanPro, true, 500 << 30},
+		{"Pro billed live, overage off", liveEgressPolicy{}, api.PlanPro, false, 500 << 30},
+		{"Pro billed live, overage on", liveEgressPolicy{}, api.PlanPro, true, 0},
+		{"Free", nil, api.PlanFree, false, 10 << 30},
+	}
+	for _, tt := range tests {
+		if got := meter.EgressCeilingBytes(tt.provider, tt.plan, tt.overageOn); got != tt.want {
+			t.Fatalf("%s: ceiling %d, want %d", tt.name, got, tt.want)
+		}
 	}
 	notif, parker := &fakeNotifier{}, &fakeParker{}
 	enforce := func(at time.Time) meter.QuotaAction {

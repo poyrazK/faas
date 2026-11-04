@@ -23,6 +23,8 @@ import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { EgressOverageRequest } from '../models/EgressOverageRequest.js';
+import type { EgressOverageResponse } from '../models/EgressOverageResponse.js';
 import type { Preview } from '../models/Preview.js';
 import type { PreviewList } from '../models/PreviewList.js';
 import type { PutBillingConnectionRequest } from '../models/PutBillingConnectionRequest.js';
@@ -1043,6 +1045,67 @@ export class AccountService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * Read the account's egress overage choice.
+   * Off by default: the account's apps stop at the plan's monthly egress
+   * until the month ends. With it on, egress past the allowance is billed
+   * per GiB and counts toward the spend cap. `billed` is false while
+   * Gregale does not bill egress for the plan; apps then stop at the
+   * allowance whatever the choice.
+   *
+   * @returns EgressOverageResponse The egress overage choice and its price.
+   * @throws ApiError
+   */
+  public static getEgressOverage(): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/egress-overage',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        500: `Could not read the choice.`,
+      },
+    });
+  }
+  /**
+   * Turn the account's egress overage on or off.
+   * Needs the admin scope and MFA; a dashboard session also needs a
+   * step-up within the last 5 minutes. A Free account cannot turn it on
+   * (403 `plan_egress_overage_not_allowed`). Every change is kept: an
+   * hour used while egress overage was on is billed even if it is turned
+   * off before that hour is delivered. Audit row
+   * `billing.egress_overage_changed` is emitted on every change.
+   *
+   * @returns EgressOverageResponse The choice after the change.
+   * @throws ApiError
+   */
+  public static setEgressOverage({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: EgressOverageRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<EgressOverageResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/egress-overage',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
       },
     });
   }

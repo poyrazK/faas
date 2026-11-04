@@ -1128,6 +1128,10 @@ type Querier interface {
 	// The customer's override wins over the default.
 	EffectiveOperationConcurrencyLimit(ctx context.Context, db DBTX, arg EffectiveOperationConcurrencyLimitParams) (int32, error)
 	EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg EffectiveWorkflowDefinitionsParams) ([]byte, error)
+	EgressOverageChoice(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
+	// The changes in [start, end) and the last change before start, oldest first.
+	EgressOverageChoices(ctx context.Context, db DBTX, arg EgressOverageChoicesParams) ([]EgressOverageChoicesRow, error)
+	EgressOverageEnabledSubjects(ctx context.Context, db DBTX) ([]string, error)
 	EnableReleaseSecretRekey(ctx context.Context, db DBTX) error
 	EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg EnqueueAppHealthNotificationParams) error
 	// A company project keeps its creator's account; the account's webhooks get
@@ -6267,6 +6271,8 @@ type Querier interface {
 	// The first acknowledgement wins; later instances applying the same
 	// generation do not move the recorded time and return no row.
 	RecordDevSourcePatchApplied(ctx context.Context, db DBTX, arg RecordDevSourcePatchAppliedParams) (RecordDevSourcePatchAppliedRow, error)
+	// ADR-20261103131742 amendment 2: egress overage choices per billing subject.
+	RecordEgressOverageChoice(ctx context.Context, db DBTX, arg RecordEgressOverageChoiceParams) error
 	RecordEnvironmentGitOpsEvent(ctx context.Context, db DBTX, arg RecordEnvironmentGitOpsEventParams) error
 	RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg RecordEnvironmentGitSourcePollParams) error
 	RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error)

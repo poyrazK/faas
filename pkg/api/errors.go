@@ -469,12 +469,16 @@ const (
 	// customer's bank asked to confirm (3-D Secure). Nothing was charged and
 	// the plan is unchanged (ADR-20261103131742 amendment 1).
 	CodePaymentAuthenticationRequired = "payment_authentication_required"
-	CodeInvalidAppCPU                 = "invalid_cpu_millicores"
-	CodeInvalidAppRAM                 = "invalid_ram_mb"
-	CodeInvalidCPURAMPair             = "invalid_cpu_ram_pair"
-	CodeInvalidResourceProfile        = "invalid_resource_profile"
-	CodeSourceTooLarge                = "source_too_large"
-	CodeSourceInvalid                 = "source_invalid"
+	// CodePlanEgressOverageNotAllowed refuses turning egress overage on for
+	// a Free subject: Free egress is never billed, so its apps stop at the
+	// plan's monthly egress (ADR-20261103131742 amendment 2).
+	CodePlanEgressOverageNotAllowed = "plan_egress_overage_not_allowed"
+	CodeInvalidAppCPU               = "invalid_cpu_millicores"
+	CodeInvalidAppRAM               = "invalid_ram_mb"
+	CodeInvalidCPURAMPair           = "invalid_cpu_ram_pair"
+	CodeInvalidResourceProfile      = "invalid_resource_profile"
+	CodeSourceTooLarge              = "source_too_large"
+	CodeSourceInvalid               = "source_invalid"
 	// CodeDevSourceBaseMissing is a retry signal, not a failed deploy:
 	// the node-local developer-source cache was absent, stale, or corrupt.
 	// The CLI responds by uploading a complete source snapshot.
@@ -2384,7 +2388,7 @@ func StatusForCode(code string) int {
 		return http.StatusUnprocessableEntity
 	case CodePayment, CodePaymentAuthenticationRequired, CodeWildcardDomainsNotAllowed, CodePlanPlatformTenantRequiredNotAllowed:
 		return http.StatusPaymentRequired
-	case CodePlanLimitSecrets:
+	case CodePlanLimitSecrets, CodePlanEgressOverageNotAllowed:
 		return http.StatusForbidden
 	case CodePlanTrafficSplitNotAllowed:
 		// 403 — issue #556. Free/Hobby trying to set a
@@ -5879,6 +5883,15 @@ func ErrJobRegistryCredentialNotFound(host, job string) *Problem {
 // the gate's "allowed" set by issue #462 / ADR-058 / PR-A — the
 // tier-up is as far as the gate goes, so Free is the remaining
 // locked tier.
+// ErrPlanEgressOverageNotAllowed refuses turning egress overage on for a
+// Free subject (ADR-20261103131742 amendment 2).
+func ErrPlanEgressOverageNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanEgressOverageNotAllowed,
+		"Plan doesn't allow egress overage",
+		fmt.Sprintf("the %s plan stops apps at its monthly egress; upgrade to Hobby, Pro or Scale to keep serving past it.", p)).
+		WithDocs(docsBase + "/billing#egress")
+}
+
 func ErrPlanMinInstancesNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanMinInstancesNotAllowed,
 		"Plan doesn't allow a min-instances floor",

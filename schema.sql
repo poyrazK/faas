@@ -37181,6 +37181,24 @@ ALTER TABLE public.egress_flow_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENT
 
 
 --
+-- Name: egress_overage_choices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.egress_overage_choices (
+    subject_id uuid NOT NULL,
+    changed_at timestamp with time zone NOT NULL,
+    enabled boolean NOT NULL
+);
+
+
+--
+-- Name: TABLE egress_overage_choices; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.egress_overage_choices IS 'Each time a paid billing subject turned egress overage on or off; the latest row is the current choice and no row means off. Written only by apid (ADR-20261103131742 amendment 2).';
+
+
+--
 -- Name: egress_policy; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61564,6 +61582,14 @@ ALTER TABLE ONLY public.edge_rules
 
 ALTER TABLE ONLY public.egress_flow_log
     ADD CONSTRAINT egress_flow_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: egress_overage_choices egress_overage_choices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.egress_overage_choices
+    ADD CONSTRAINT egress_overage_choices_pkey PRIMARY KEY (subject_id, changed_at);
 
 
 --
@@ -93273,6 +93299,14 @@ ALTER TABLE ONLY public.edge_rules
 
 ALTER TABLE ONLY public.edge_rules
     ADD CONSTRAINT edge_rules_cors_preset_id_fkey FOREIGN KEY (cors_preset_id) REFERENCES public.cors_presets(id) ON DELETE SET NULL;
+
+
+--
+-- Name: egress_overage_choices egress_overage_choices_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.egress_overage_choices
+    ADD CONSTRAINT egress_overage_choices_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

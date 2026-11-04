@@ -306,6 +306,7 @@ func TestPushPendingEgressLiveSubtractsMonthlyAllowance(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	turnOnEgressOverage(t, store, acct.ID)
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 	const gib = int64(1 << 30)
 	if err := store.AppendUsage(ctx, acct.ID, "app-a", "included", now.Add(-2*time.Hour+time.Minute), 0, 0, 0, 0, gib, 0, 0, 0); err != nil {
@@ -361,6 +362,7 @@ func TestPushPendingEgressLiveHonorsCombinedOverageCap(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	turnOnEgressOverage(t, store, acct.ID)
 	store.SetOverageCapCentsForTest(acct.ID, 1)
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 	const gib = int64(1 << 30)
@@ -387,6 +389,7 @@ func TestPushPendingEgressLiveNeverBackfillsBeforeActivation(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
 	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	turnOnEgressOverage(t, store, acct.ID)
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 	activation := now.Add(-time.Hour)
 	const gib = int64(1 << 30)

@@ -24,6 +24,7 @@ func TestPushPendingMidHourIdentityPreservesAllowance(t *testing.T) {
 				ctx := context.Background()
 				store := state.NewMemStore()
 				acct := makeAccount(t, ctx, store, api.PlanHobby)
+				turnOnEgressOverage(t, store, acct.ID)
 				hour := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 				activation := hour.Add(30 * time.Minute)
 				if err := store.UpdateAccountProviderCustomerID(ctx, acct.ID, "customer"); err != nil {
@@ -111,12 +112,17 @@ func (s *failingBoundaryStore) BillingIdentity(ctx context.Context, accountID, p
 	return s.Store.BillingIdentity(ctx, accountID, provider)
 }
 
+func (s *failingBoundaryStore) EgressOverageChoices(ctx context.Context, subjectID string, start, end time.Time) ([]state.EgressOverageChoice, error) {
+	return s.Store.(state.EgressOverageStore).EgressOverageChoices(ctx, subjectID, start, end)
+}
+
 func TestPushPendingRetriesFailedBoundaryRead(t *testing.T) {
 	for _, kind := range []state.BillingMeter{state.BillingMeterCompute, state.BillingMeterEgress} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
 			acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+			turnOnEgressOverage(t, store, acct.ID)
 			hour := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 			compute, egress := int64(api.PlanHobby.PlanIncludedGBHours()+1)*api.SecondsPerGBHour, int64(0)
 			var provider billing.Provider = &recordingOverage{}

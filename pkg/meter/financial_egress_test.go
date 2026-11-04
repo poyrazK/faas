@@ -29,6 +29,7 @@ func TestPushPendingFundedEgressDelivery(t *testing.T) {
 			ctx := t.Context()
 			store := state.NewMemStore()
 			acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+			turnOnEgressOverage(t, store, acct.ID)
 			app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "funded-egress-" + uuid.NewString()[:8], RAMMB: 128, MaxConcurrency: 2})
 			if err != nil {
 				t.Fatal(err)

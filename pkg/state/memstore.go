@@ -156,6 +156,9 @@ type MemStore struct {
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
+	// egressOverage is each billing subject's egress overage choices, oldest
+	// first (EgressOverageStore), created on first use.
+	egressOverage map[string][]EgressOverageChoice
 	// totpLastSteps is each account's last accepted TOTP step
 	// (AcceptTOTPStep), created on first use.
 	totpLastSteps                              map[string]int64

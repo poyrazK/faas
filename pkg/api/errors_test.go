@@ -407,6 +407,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 		CodeOrgFreeLimitExceeded,
 		CodeBillingEmailInUse, CodeBillingContactMember,
 		CodeBillingSubscriptionEnding, CodePaymentAuthenticationRequired,
+		CodePlanEgressOverageNotAllowed,
 	}
 	seen := make(map[string]bool)
 	for _, c := range codes {

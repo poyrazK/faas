@@ -5298,6 +5298,15 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"<cents>"},
 	},
 	{
+		Name:        "egress-overage",
+		DocSlug:     "billing",
+		Short:       "Keep apps serving past the plan's monthly egress, billed per GiB",
+		HelpNotes:   []string{"Off by default: apps stop at the plan's monthly egress until the month ends. On a paid plan, turn it on to keep serving at $0.03 per GiB, up to your spend cap."},
+		Examples:    []string{"gregale billing egress-overage", "gregale billing egress-overage on"},
+		Flags:       []cliFlag{{Name: "org", Short: "act for this organization", Value: "SLUG"}},
+		Positionals: []string{"[on|off]"},
+	},
+	{
 		Name:        "park",
 		DocSlug:     "park-wake",
 		Short:       "Stop all of an app's instances until its next request",

@@ -6068,6 +6068,59 @@ paths:
               example: {"id": "0123456789abcdef0123456789abcdef", "email": "alice@example.com", "plan": "pro", "status": "active"}
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+  /v1/account/egress-overage:
+    get:
+      tags: [account]
+      operationId: getEgressOverage
+      summary: Read the account's egress overage choice.
+      description: |
+        Off by default: the account's apps stop at the plan's monthly egress
+        until the month ends. With it on, egress past the allowance is billed
+        per GiB and counts toward the spend cap. `billed` is false while
+        Gregale does not bill egress for the plan; apps then stop at the
+        allowance whatever the choice.
+      responses:
+        '200':
+          description: The egress overage choice and its price.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+              example: {"enabled": false, "billed": true, "included_gib": 500, "millicents_per_gib": 3000}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500':
+          description: Could not read the choice.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    put:
+      tags: [account]
+      operationId: setEgressOverage
+      summary: Turn the account's egress overage on or off.
+      description: |
+        Needs the admin scope and MFA; a dashboard session also needs a
+        step-up within the last 5 minutes. A Free account cannot turn it on
+        (403 `plan_egress_overage_not_allowed`). Every change is kept: an
+        hour used while egress overage was on is billed even if it is turned
+        off before that hour is delivered. Audit row
+        `billing.egress_overage_changed` is emitted on every change.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EgressOverageRequest'}
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The choice after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /v1/apps/{slug}/rename:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -18556,6 +18609,52 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/egress-overage:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgEgressOverage
+      summary: Read the organization's egress overage choice.
+      description: "Requires current organization membership and usage:read. Off by default: the organization's apps stop at the plan's monthly egress until the month ends."
+      responses:
+        '200':
+          description: The egress overage choice and its price.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [orgs]
+      operationId: setOrgEgressOverage
+      summary: Turn the organization's egress overage on or off.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. With it on, the organization's egress past the
+        plan's allowance is billed per GiB under its spend cap. A Free
+        organization cannot turn it on (403 `plan_egress_overage_not_allowed`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EgressOverageRequest'}
+            example: {"enabled": true}
+      responses:
+        '200':
+          description: The choice after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EgressOverageResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{slug}/billing/costs:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -24216,6 +24315,26 @@ components:
           type: [integer, 'null']
           format: int64
           minimum: 0
+    EgressOverageRequest:
+      description: Turns egress overage on or off.
+      type: object
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
+    EgressOverageResponse:
+      description: |
+        A billing subject's egress overage choice. With it on, egress past the
+        plan's monthly allowance is billed at millicents_per_gib and counts
+        toward the spend cap; with it off, apps stop at the allowance until
+        the month ends. billed is false while Gregale does not bill egress for
+        the plan.
+      type: object
+      required: [enabled, billed, included_gib, millicents_per_gib]
+      properties:
+        enabled: {type: boolean}
+        billed: {type: boolean}
+        included_gib: {type: integer, format: int64, minimum: 0}
+        millicents_per_gib: {type: integer, format: int64, minimum: 0}
     OrgBillingEmailRequest:
       description: The email an organization bills to; invoices and the billing portal sign-in go to it.
       type: object

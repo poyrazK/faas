@@ -2145,6 +2145,11 @@ func (s *server) handler() http.Handler {
 	// also needs a recent step-up, as the dashboard and organization cap
 	// routes do (ADR-20261103131742 amendment 1).
 	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.raiseOverageCap))))))
+	// ADR-20261103131742 amendment 2: egress past the plan's allowance is
+	// billed only for a subject that turned egress overage on. Turning it on
+	// can raise the bill, so it is guarded like the spend cap.
+	mux.HandleFunc("GET /v1/account/egress-overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getEgressOverage))))
+	mux.HandleFunc("PUT /v1/account/egress-overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.putEgressOverage))))))
 	// IAM-5 (issue #189): per-account rotation grace-window
 	// override. Admin-only because the rotation primitive is
 	// admin-only (POST /v1/keys/{id}/rotate mirrors the same
@@ -4852,6 +4857,8 @@ func (s *server) handler() http.Handler {
 	// ADR-20261030093512: an organization billing subject has its own spend cap.
 	mux.HandleFunc("GET /v1/orgs/{slug}/overage-cap", s.orgBillingRoute(authz.OrgActionView, s.getOverageCap))
 	mux.HandleFunc("POST /v1/orgs/{slug}/overage-cap", s.orgBillingRoute(authz.OrgActionChangePlan, s.raiseOverageCap))
+	mux.HandleFunc("GET /v1/orgs/{slug}/egress-overage", s.orgBillingRoute(authz.OrgActionView, s.getEgressOverage))
+	mux.HandleFunc("PUT /v1/orgs/{slug}/egress-overage", s.orgBillingRoute(authz.OrgActionChangePlan, s.putEgressOverage))
 	// ADR-20261031211500: an organization that owns its resources pays for
 	// them, so it holds the costs and budgets for that usage.
 	mux.HandleFunc("GET /v1/orgs/{slug}/billing/costs", s.orgFinancialBudgetRoute(false, s.getFinancialCosts))
