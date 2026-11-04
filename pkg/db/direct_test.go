@@ -216,6 +216,7 @@ var sessionScopedAcquire = map[string]string{
 	"pkg/state/pgstore_edge_rule_batch_lock.go": "session pg_advisory_lock for all apps in an environment policy batch",
 	"pkg/state/traffic_policy_session.go":       "session locks precede the guarded repeatable-read transaction",
 	"pkg/state/snapshot_restore_pressure_pg.go": "session pg_advisory_lock for the fleet-wide restore-pressure lock, taken with its counts in one call (ADR-1741)",
+	"pkg/edgecert/serve.go":                     "LISTEN: gatewayd-public's certificate reload notices",
 }
 
 // pooledAcquireOK records Acquires that are deliberately on the ordinary
