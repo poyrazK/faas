@@ -335,6 +335,9 @@ func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep
 // adr: 20261027162741 — broker triggers run on lanes of their own.
 func (l *Loop) XRunTriggerTick(ctx context.Context) { l.runTriggerTick(ctx) }
 
+// XRunReaper runs one reaper tick.
+func (l *Loop) XRunReaper(ctx context.Context) { l.runReaper(ctx) }
+
 // XBrokerLanesHeld is how many broker trigger lanes the account holds.
 // adr: 20261101093015 — the lanes are shared between accounts.
 func (l *Loop) XBrokerLanesHeld(accountID string) int {

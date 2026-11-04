@@ -2713,6 +2713,15 @@ func (l *Loop) runReaper(ctx context.Context) {
 		if !mustPark {
 			continue
 		}
+		// An app with nothing live has nothing to park, so it takes no
+		// app_park slot. The pool runs four at once and drops the rest: on
+		// production-us (rc.319, 2026-11-04) nine parked apps with nothing
+		// live filled the slots in the same order every tick, and the same
+		// five were dropped every 10 s for hours. Without a preload the app
+		// parks as before.
+		if budgetPreload.nothingLive(app) {
+			continue
+		}
 		// ADR 20261103164725: whole-app parks run on the work pool, so a
 		// suspended or capped account with many apps no longer holds this
 		// tick's idle parks and memory-pressure eviction behind them.
