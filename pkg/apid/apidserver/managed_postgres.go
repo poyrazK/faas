@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"time"
 
 	"filippo.io/age"
@@ -13,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -43,6 +45,9 @@ type managedPostgresHooks struct {
 	RestoreSlotExpired func(context.Context, managedpostgres.Database)
 	// NotifyRestoreSlot queues a restore slot email (ADR-20261031123259).
 	NotifyRestoreSlot func(context.Context, managedpostgres.RestoreSlotNotice) error
+	// NotifyPlanExcess queues the email for a database suspended past its
+	// plan (ADR-20261102125208).
+	NotifyPlanExcess func(context.Context, managedpostgres.PlanExcessNotice) error
 }
 
 func (h *managedPostgresHooks) charges() billing.ManagedPostgresChargeSink {
@@ -64,6 +69,13 @@ func (h *managedPostgresHooks) notifyRestoreSlot() func(context.Context, managed
 		return nil
 	}
 	return h.NotifyRestoreSlot
+}
+
+func (h *managedPostgresHooks) notifyPlanExcess() func(context.Context, managedpostgres.PlanExcessNotice) error {
+	if h == nil {
+		return nil
+	}
+	return h.NotifyPlanExcess
 }
 
 func (h *managedPostgresHooks) overage() managedPostgresOverageGate {
@@ -88,7 +100,10 @@ func (h *managedPostgresHooks) notifyCap() func(context.Context, managedpostgres
 }
 
 func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
-	registry, err := managedpostgres.Load(getenv, managedPostgresFactories())
+	// An invalid value fails startup in loadManagedPostgresCapEnforcer; here
+	// it reads as not "on", which refuses Free databases.
+	capMode, _ := managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
+	registry, err := managedpostgres.Load(getenv, managedPostgresFactories(pool))
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -139,6 +154,9 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		}
 		return enabled
 	}
+	// Work on existing databases outlives a lapsed production approval
+	// (ADR-20261103091657).
+	operationsGate := managedpostgres.NewOperationsGate(registry, getenv, time.Now)
 	canaryAccountGate := managedpostgres.NewStagingCanaryAccountGate(getenv)
 	provisioningAllowed := func(ctx context.Context, accountID string) bool {
 		// Production releases accounts by the capability flag, staging by
@@ -154,6 +172,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	service, err := managedpostgres.NewService(registry, store, managedpostgres.ServiceOptions{
 		ProvisioningEnabled: provisioningGate,
+		OperationsEnabled:   operationsGate,
 		ProvisioningAllowed: provisioningAllowed,
 		MaxDatabasesPerAccount: func(ctx context.Context, accountID string) (int, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
@@ -170,6 +189,13 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			return limit, nil
 		},
+		FreePlan: func(ctx context.Context, subjectID string) (bool, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, subjectID)
+			if err != nil {
+				return false, err
+			}
+			return api.Plan(account.Plan) == api.PlanFree, nil
+		},
 		AdmitResize: func(ctx context.Context, accountID string, target managedpostgres.Spec) error {
 			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
 			if err != nil {
@@ -182,7 +208,8 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			return nil
 		},
 		Admit: func(ctx context.Context, accountID string) error {
-			if !registry.UsagePolicy().Enabled {
+			usagePolicy := registry.UsagePolicy().Enabled
+			if !usagePolicy && capMode == managedpostgres.CapEnforcementOn {
 				return nil
 			}
 			account, lookupErr := state.BillingResourceAccount(ctx, accountStore, accountID)
@@ -191,6 +218,18 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 					metrics.ObserveAdmission(lookupErr)
 				}
 				return lookupErr
+			}
+			// Every create and restore path admits here, so the Free-plan
+			// refusal the create route makes also covers Compose, dev,
+			// pipeline mirrors and restores (bug hunt 33 H1).
+			if managedPostgresFreeClosed(api.Plan(account.Plan), capMode) {
+				if metrics != nil {
+					metrics.ObserveAdmission(managedpostgres.ErrNotInPlan)
+				}
+				return managedpostgres.ErrNotInPlan
+			}
+			if !usagePolicy {
+				return nil
 			}
 			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
 			if !ok || limits.DatabasesMax <= 0 {
@@ -216,7 +255,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	fleet = service
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
-		IncludeProvisioning: provisioningGate,
+		IncludeProvisioning: operationsGate,
 		Observe: func(ob managedpostgres.ReconcileObservation) {
 			if metrics != nil {
 				metrics.ObserveReconcile(ob)
@@ -243,7 +282,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	secretSink.identities = hostCredentialIdentities
 	secretSink.probe = managedpostgres.VerifyCredentialSQL
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
-		ProvisioningEnabled: provisioningGate,
+		ProvisioningEnabled: operationsGate,
 		ProvisioningAllowed: provisioningAllowed,
 	})
 	if err != nil {
@@ -259,7 +298,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	reconciler.SetRestoreSlots(restoreSlots)
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
-		IncludeProvisioning: provisioningGate,
+		IncludeProvisioning: operationsGate,
 		Observe: func(ob managedpostgres.BindingReconcileObservation) {
 			if metrics != nil {
 				metrics.ObserveBindingReconcile(ob)
@@ -326,12 +365,18 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	if err != nil {
 		return nil, err
 	}
+	planExcessMode, err := managedpostgres.ParsePlanExcessEnforcementMode(getenv(managedpostgres.PlanExcessEnforcementEnv))
+	if err != nil {
+		return nil, err
+	}
 	options := managedpostgres.CapEnforcerOptions{
-		Mode:        mode,
-		StorageMode: storageMode,
-		Logger:      log,
-		Notify:      hooks.notifyCap(),
-		Ceiling:     managedPostgresCapLimits(store, accountStore, hooks.overage()),
+		Mode:             mode,
+		StorageMode:      storageMode,
+		PlanExcessMode:   planExcessMode,
+		Logger:           log,
+		Notify:           hooks.notifyCap(),
+		NotifyPlanExcess: hooks.notifyPlanExcess(),
+		Ceiling:          managedPostgresCapLimits(store, accountStore, hooks.overage()),
 	}
 	if mode == managedpostgres.CapEnforcementOn {
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
@@ -376,7 +421,8 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 		}
 		return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
 			Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
-			StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
+			StoragePool: managedPostgresStoragePool(limits, overageOn), StorageAllowance: limits.StorageLimitBytes,
+			Entitlement: limits, Inactive: !account.Active()}, nil
 	}
 }
 
@@ -409,9 +455,41 @@ func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.Us
 }
 
 // configureManagedPostgresCapMode records the compute cap enforcement mode for
-// the usage views. loadManagedPostgres already refused an invalid value.
+// the usage views, and whether databases past their plan are suspended
+// (ADR-20261102125208). loadManagedPostgres already refused an invalid value.
 func (s *server) configureManagedPostgresCapMode(getenv func(string) string) {
 	s.managedPostgresCapMode, _ = managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
+	planExcess, _ := managedpostgres.ParsePlanExcessEnforcementMode(getenv(managedpostgres.PlanExcessEnforcementEnv))
+	s.managedPostgresPlanExcessOn = s.managedPostgresCapMode == managedpostgres.CapEnforcementOn && planExcess == managedpostgres.CapEnforcementOn
+}
+
+// managedPostgresPlanExcess maps the databases the caller's plan no longer
+// includes to the reason, while the cap sweep suspends them; otherwise it is
+// empty, because nothing is suspended.
+func (s *server) managedPostgresPlanExcess(databases []managedpostgres.Database, plan api.Plan) map[string]string {
+	if !s.managedPostgresPlanExcessOn {
+		return nil
+	}
+	limits, ok := api.ManagedPostgresLimitsFor(plan)
+	if !ok {
+		return nil
+	}
+	return managedpostgres.PlanExcess(databases, limits)
+}
+
+// managedPostgresPlanExcessOf is one database's plan excess reason. Ranking
+// needs the caller's other databases; a failed read shows none rather than
+// failing the read of the database.
+func (s *server) managedPostgresPlanExcessOf(ctx context.Context, acct state.Account, databaseID string) string {
+	if !s.managedPostgresPlanExcessOn {
+		return ""
+	}
+	databases, err := s.managedPostgres.List(ctx, acct.ID)
+	if err != nil {
+		s.log.Warn("managed postgres plan excess: list databases", "account", acct.ID, "err", err)
+		return ""
+	}
+	return s.managedPostgresPlanExcess(databases, acct.Plan)[databaseID]
 }
 
 // managedPostgresStoredOverage reads a subject's overage choice when the
@@ -436,6 +514,35 @@ func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits, overage 
 		ceilings.MaxMonthlyStorageByteSeconds = limits.StorageLimitBytes * secondsPerBillingMonth
 	}
 	return ceilings
+}
+
+// upgrades and storageResizes are read per request: apid tests build the
+// handler first.
+func (s *server) upgrades() managedpg.Rollout       { return s.postgresUpgrades }
+func (s *server) storageResizes() managedpg.Rollout { return s.postgresStorage }
+
+// managedPostgresResize serves a resize route with the service as
+// configured when the request arrives.
+func (s *server) managedPostgresResize(serve func(managedpg.Resizes, http.ResponseWriter, *http.Request, state.Account)) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		rs := managedpg.Resizes{Storage: s.storageResizes, Problem: managedPostgresProblem, NotConfigured: managedPostgresNotConfiguredProblem, Audit: s.audit}
+		if s.managedPostgres != nil {
+			rs.Service = s.managedPostgres
+		}
+		serve(rs, w, r, acct)
+	}
+}
+
+// managedPostgresUpgrade serves a major-upgrade route with the service as
+// configured when the request arrives.
+func (s *server) managedPostgresUpgrade(serve func(managedpg.Upgrades, http.ResponseWriter, *http.Request, state.Account)) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		u := managedpg.Upgrades{Problem: managedPostgresProblem, NotConfigured: managedPostgresNotConfiguredProblem, Audit: s.audit}
+		if s.managedPostgres != nil {
+			u.Service = s.managedPostgres
+		}
+		serve(u, w, r, acct)
+	}
 }
 
 func (s *server) WithManagedPostgres(service *managedpostgres.Service, reconciler *managedpostgres.Reconciler, bindingService *managedpostgres.BindingService, bindingReconciler *managedpostgres.BindingReconciler, usageCollector *managedpostgres.UsageCollector, healthCollector *managedpostgres.HealthCollector) *server {

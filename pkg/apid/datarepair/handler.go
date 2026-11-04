@@ -60,6 +60,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /app.js", h.asset)
 	mux.HandleFunc("GET /app.css", h.asset)
 	mux.HandleFunc("GET /sources.js", h.asset)
+	mux.HandleFunc("GET /doctor.js", h.asset)
 	mux.HandleFunc("GET /history.js", h.asset)
 	mux.HandleFunc("GET /checks.js", h.asset)
 	mux.HandleFunc("GET /validation.js", h.asset)
@@ -156,8 +157,17 @@ func write(w http.ResponseWriter, p datarepair.Plan, err error) {
 		problem(w, err)
 		return
 	}
+	writePlanJSON(w, p)
+}
+
+// Plans contain both executable JSON and exact text for browser presentation.
+// HTML escaping can expand a bounded capture past the transport limit. These
+// application/json responses are rendered as text, never embedded into HTML.
+func writePlanJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(p)
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	_ = encoder.Encode(value)
 }
 
 func problem(w http.ResponseWriter, err error) {

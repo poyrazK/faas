@@ -63,6 +63,7 @@ func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, re
 	if revision < 1 || (database != "" && !validID(database)) {
 		return ConnectionCheck{}, ErrInvalid
 	}
+	database = canonicalID(database)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return ConnectionCheck{}, storeError(err)
@@ -143,6 +144,7 @@ func (s *Service) RequestCheck(ctx context.Context, account, id string, r api.Re
 		if !validID(r.DatabaseID) {
 			return api.DataConnectionCheck{}, ErrInvalid
 		}
+		r.DatabaseID = canonicalID(r.DatabaseID)
 		if s.ValidateTarget == nil {
 			return api.DataConnectionCheck{}, ErrUnavailable
 		}

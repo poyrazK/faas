@@ -54,8 +54,11 @@ func (q *Queries) NativeIssueTicketClaim(ctx context.Context, db DBTX, arg Nativ
 
 const nativeIssueTicketCount = `-- name: NativeIssueTicketCount :one
 SELECT count(*) FROM native_issue_ticket_receipts WHERE issue_id=$1
+AND (state IN ('dispatching','created') OR (state='ready' AND claim_id IS NULL))
 `
 
+// Completed links and explicit provider rejections remain as durable
+// idempotency evidence, but no longer occupy an unresolved-request slot.
 func (q *Queries) NativeIssueTicketCount(ctx context.Context, db DBTX, issueID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, nativeIssueTicketCount, issueID)
 	var count int64
@@ -177,7 +180,8 @@ func (q *Queries) NativeIssueTicketInsert(ctx context.Context, db DBTX, arg Nati
 
 const nativeIssueTicketLinked = `-- name: NativeIssueTicketLinked :one
 UPDATE native_issue_ticket_receipts SET state='linked',link_id=$1,updated_at=now()
-WHERE account_id=$2 AND request_id=$3 AND state='created' RETURNING account_id, request_id, app_id, issue_id, request_hash, state, claim_id, recover_after, ticket_url, provider_id, link_id, created_at, updated_at
+WHERE account_id=$2 AND request_id=$3
+AND (state='created' OR (state='linked' AND link_id=$1)) RETURNING account_id, request_id, app_id, issue_id, request_hash, state, claim_id, recover_after, ticket_url, provider_id, link_id, created_at, updated_at
 `
 
 type NativeIssueTicketLinkedParams struct {

@@ -141,5 +141,5 @@ func validateContextVerifyEndpoint() error {
 	if _, err := validateConfigAPIBase(apiBase()); err != nil {
 		return errors.New("API address must be http(s) without credentials, query parameters, or fragments; FAAS_API overrides profile settings")
 	}
-	return nil
+	return checkAPIBaseTransport(apiBase())
 }

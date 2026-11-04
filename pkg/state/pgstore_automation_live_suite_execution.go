@@ -105,7 +105,7 @@ func (s *PgStore) mutateManagedSuite(ctx context.Context, appID, name, id string
 	if err != nil {
 		return api.AutomationLiveSuite{}, err
 	}
-	if err := q.PruneAutomationLiveSuites(ctx, tx, sqlc.PruneAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name, Retained: api.AutomationLiveSuiteRetainedLimit, ProtectedSince: pgtypeTimestamptzFromTime(time.Now().Add(-api.AutomationLiveSuiteStartWindow))}); err != nil {
+	if err := q.PruneAutomationLiveSuites(ctx, tx, sqlc.PruneAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name, Retained: api.AutomationLiveSuiteRetainedLimit, ProtectedSince: pgtypeTimestamptzFromTime(time.Now().Add(-api.AutomationLiveSuiteProtectedWindow))}); err != nil {
 		return api.AutomationLiveSuite{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -115,7 +115,7 @@ func (s *PgStore) mutateManagedSuite(ctx context.Context, appID, name, id string
 }
 
 func liveSuiteRoomSQL(ctx context.Context, db sqlc.DBTX, appID, name string) error {
-	count, err := sqlc.New().CountProtectedAutomationLiveSuites(ctx, db, sqlc.CountProtectedAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name, ProtectedSince: pgtypeTimestamptzFromTime(time.Now().Add(-api.AutomationLiveSuiteStartWindow))})
+	count, err := sqlc.New().CountProtectedAutomationLiveSuites(ctx, db, sqlc.CountProtectedAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name, ProtectedSince: pgtypeTimestamptzFromTime(time.Now().Add(-api.AutomationLiveSuiteProtectedWindow))})
 	if err != nil {
 		return err
 	}

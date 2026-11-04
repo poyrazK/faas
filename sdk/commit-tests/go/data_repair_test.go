@@ -89,7 +89,7 @@ func TestDataRepairCaptureReadinessRestrictedWriter(t *testing.T) {
 	if _, err = db.ExecContext(ctx, string(schema)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.ExecContext(ctx, `CREATE TABLE public.products(id bigint PRIMARY KEY,category text);SELECT gregale_repair.enroll('public.products',ARRAY['category']);INSERT INTO public.products(id,category) VALUES(1,'old'),(2,'old')`); err != nil {
+	if _, err = db.ExecContext(ctx, `CREATE TABLE public.products(id bigint PRIMARY KEY,category text,stamp timestamptz DEFAULT '2026-11-03T10:00:00Z'::timestamptz);SELECT gregale_repair.enroll('public.products',ARRAY['category']);INSERT INTO public.products(id,category) VALUES(1,'old'),(2,'old')`); err != nil {
 		t.Fatal(err)
 	}
 	var role, database string
@@ -121,6 +121,7 @@ func TestDataRepairCaptureReadinessRestrictedWriter(t *testing.T) {
 			t.Fatal(err)
 		}
 		cfg.Database = database
+		cfg.RuntimeParams["TimeZone"] = "Europe/Istanbul"
 		pool := stdlib.OpenDB(*cfg, stdlib.OptionAfterConnect(func(ctx context.Context, conn *pgx.Conn) error {
 			if setting != "" {
 				if _, err := conn.Exec(ctx, setting); err != nil {
@@ -130,6 +131,7 @@ func TestDataRepairCaptureReadinessRestrictedWriter(t *testing.T) {
 			_, err := conn.Exec(ctx, "SET ROLE "+quoted)
 			return err
 		}))
+		pool.SetMaxOpenConns(1)
 		t.Cleanup(func() { _ = pool.Close() })
 		return pool
 	}
@@ -156,6 +158,10 @@ func TestDataRepairCaptureReadinessRestrictedWriter(t *testing.T) {
 		return r
 	}
 	check(application, "ready", "")
+	var zone string
+	if err := application.QueryRowContext(ctx, `SHOW TimeZone`).Scan(&zone); err != nil || zone != "Europe/Istanbul" {
+		t.Fatalf("readiness changed the writer timezone: %q %v", zone, err)
+	}
 	o.ReceiptProtocol = "customer"
 	check(application, "ready", "")
 	o.ReceiptProtocol = "managed"

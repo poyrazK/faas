@@ -122,3 +122,46 @@ func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
 	apidserver.MustSeedAppFor(t, (*e.Store()), foreign.ID, "foreign-preview-environment")
 	apidserver.AssertProblem(t, e.Do(t, http.MethodGet, "/v1/preview/foreign-preview-environment/environment", nil, nil), http.StatusNotFound, api.CodeNotFound)
 }
+
+// CI waited for its preview only with an account-wide key: a credential
+// bound to the production app reads that app's previews, and no other app's
+// (ADR-20261102203228).
+func TestGetPreviewEnvironmentStatus_AppBoundCredentialReadsItsPreviews(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := context.Background()
+	production := make(map[string]state.App)
+	for _, slug := range []string{"shop", "billing"} {
+		app, err := (*e.Store()).CreateAppIfUnderQuota(ctx, state.App{
+			AccountID: (*e.Acct()).ID, Slug: slug, Type: "stateless", Runtime: "node22",
+			RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 30, Status: state.AppActive,
+		}, api.Limits{DeployedApps: 10000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		production[slug] = app
+	}
+	for _, slug := range []string{"shop", "billing"} {
+		root := apidserver.SeedPreviewAppForTest(t, e, "pr-9-"+slug, slug, 9)
+		if err := (*e.Store()).PutPRPreviewSet(ctx, state.PRPreviewSet{InstallationID: 77, RepoFullName: "octo/" + slug, PRNumber: 9,
+			CommitSHA: strings.Repeat("a", 40), RootAppID: root.ID, MemberAppIDs: []string{root.ID}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plain, hash, err := api.GenerateDeployToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (*e.Store()).CreateDeployToken(ctx, (*e.Acct()).ID, production["shop"].ID, hash, "ci", []string{api.ScopeDeployWrite}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	(*e.Key()) = plain
+	if rec := e.Do(t, http.MethodGet, "/v1/preview/pr-9-shop/environment", nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("own app's preview environment = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := e.Do(t, http.MethodGet, "/v1/preview/pr-9-shop", nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("own app's preview = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := e.Do(t, http.MethodGet, "/v1/preview/pr-9-billing/environment", nil, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("another app's preview environment = %d, want 404: %s", rec.Code, rec.Body)
+	}
+}

@@ -361,9 +361,11 @@ Otherwise the request fails with 429 `quota_exhausted` with `limit_bytes` and
 `observed_bytes`, and an automatic capture is skipped with a reason. The
 store checks it in the queueing transaction under a per-account advisory lock,
 which also serializes the hourly quota across the account's apps; both
-manual and automatic captures pass the plan's limit in, since the plan of an
-organization's app is the organization's. No column or migration is added:
-the stored bytes are summed from `profile_capture_data`.
+manual and automatic captures pass the plan's limit in. (As shipped, apid and
+schedd read the plan and counted the pool by account rather than by an
+organization's app's owner; the round-2 amendment below corrects it.) No
+column or migration is added: the stored bytes are summed from
+`profile_capture_data`.
 
 ## Amendment: automatic captures beside manual ones (GA review, 2026-10-27)
 
@@ -458,6 +460,95 @@ them.
   process it verified; automatic deployment checks stop retrying a backend
   outage at the attempt limit, and a failing check stage no longer skips the
   canary and periodic checks.
+
+## Amendment: organizations, dashboard deletion (review round 2, 2026-10-30)
+
+A second review found these gaps:
+
+- **Organization apps.** Captures of an organization's app were judged by
+  the requesting member's plan in apid (schedd took the creating member's
+  until bug hunt 2026-10-28 B37), and their quotas and storage were counted
+  per member. A Free member of a Pro organization could not capture its apps;
+  each member had their own quota. Both now take the plan of the app's
+  resource owner
+  (`state.AppResourceAccount`, as imaged and wake admission do) and count the
+  hourly quotas, the storage limit and automatic rotation in the owner's pool:
+  the organization, or the account for a personal app. A capture row records
+  its pool in the capture document (`pool`); rows without one count in their
+  account's pool, so no migration is needed. The rows are stored under the
+  app's account, whichever member queued them, and every member the app is
+  shared with reads, compares, downloads and deletes the same captures.
+- **Dashboard.** The capture form and list sat only on the profiles page,
+  which belongs to `traffic-profiles` (internal), so accounts released
+  `profile-captures` alone could not reach them. They now have their own page,
+  `/dashboard/apps/{slug}/profiles/captures`, linked from the app page; a
+  capture page links back to it and has a delete button (session CSRF, the
+  same delete and audit as the API).
+- **OOM links.** An OOM kill linked to the newest heap capture of the
+  instance whatever its status. It now links only a capture still capturing or
+  ready: a failed capture has no heap profile to explain the kill.
+- **CLI wait.** `gregale debug capture` gave up two minutes after the window,
+  while a capture may stay queued for `ProfileCaptureQueuedTimeout` (10
+  minutes). It now waits the queued timeout, the window, the grace and two
+  minutes for the sweep.
+- **Go collector.** A control poll that failed just as a capture window ended
+  discarded the window, so the capture came back empty. The collector now
+  sends a capture window that ended within the capture grace; a continuous
+  window, or one frozen across a snapshot, is still discarded.
+
+## Amendment: collectors and fairness (review round 3, 2026-11-02)
+
+A third review found these gaps:
+
+- **Go collector.** The docs named `github.com/onebox-faas/faas/pkg/guestprofiling`,
+  which no module proxy can fetch: the platform module is not published and
+  needs the platform's Go release. The collector is now also the Go SDK's
+  `github.com/poyrazK/faas/sdk/go/preview/profiling`. The SDK takes only the
+  standard library, so its block and mutex windows subtract the baseline with
+  a small pprof reader of their own; behavior matches `pkg/guestprofiling`,
+  which stays for the platform's fixtures.
+- **Python heap captures and OOM.** A memory-pressure capture fires below 15%
+  free memory, and Python's heap capture traces every allocation
+  (`tracemalloc`) and copies all traces for each 2 s checkpoint: tracing could
+  cause the kill it was meant to explain. The collector now stops tracing,
+  without a snapshot, once the process has less than 16 MiB or 5% of its
+  memory left (the guest's `MemAvailable`, narrowed by its cgroup), takes a
+  snapshot only when four times the tracer's own memory plus 16 MiB is free,
+  and records 8 frames instead of 32 in captures with checkpoints.
+- **Fair capture workers.** Claims were first in, first out with manual
+  captures first and no per-customer bound, so one account capturing several
+  apps for 60 s could hold all four of a scheduler's workers while others'
+  captures timed out queued. A pool (account, or organization) now runs at
+  most `ProfileCaptureMaxRunningPerPool` (2) captures at once; its others wait.
+  Concurrent schedulers may each admit one past the cap.
+- **Continuous profiling for organizations.** vmmd stamped the creating
+  member's plan on uploads, and the profiles API, dashboard, investigations,
+  deployment checks and periodic checks used the signed-in account's plan.
+  All now use the app's resource owner's plan (ADR-819), and profiled counts
+  uploads per minute in the owner's pool (`Principal.pool`, omitted by an
+  older vmmd: the account's). The capture panel and banner follow too.
+- **Bridge port.** guest-init's profile bridge binds `127.0.0.1:9191` before
+  the app starts, for every deployment with captures released, so an app
+  listening on 9191 failed to bind after a redeploy. imaged stamps no
+  collectors for such an app, and guest-init neither starts the bridge nor
+  points collectors at it.
+- **Pool index.** Round 2's pool predicate,
+  `coalesce(capture->>'pool', account_id::text)`, could not use the
+  `(account_id, created_at)` index; a concurrent expression index
+  (`profile_captures_pool_created_idx`) serves it.
+- **Continuous windows cut by a capture.** Starting a capture changes the
+  collection epoch, and collectors discarded their open continuous window as
+  if the instance had been restored. A capture start now flushes it under its
+  own epoch, which the bridge accepts until the capture ends; a restore still
+  discards.
+- **Slow requests.** The gateway reported any request in flight for 10 s,
+  including slow uploads and downloads. A request whose body is still arriving
+  or whose response has started is moving, not stuck, and is not reported.
+- **Deleted apps.** A deleted app's captures kept their pool's storage until
+  they expired, and the API could no longer delete them. The expiry sweep
+  deletes them.
+- **`PYTHONPATH`.** The bootstrap appended an empty entry, which Python reads
+  as the working directory, when the image set none.
 
 ## Rejected alternatives
 

@@ -55,6 +55,12 @@ configure the same values on `apid` and `meterd`:
 | `FAAS_POLAR_PRO_INCLUDED_EGRESS_GIB` | Pro monthly allowance |
 | `FAAS_POLAR_SCALE_INCLUDED_EGRESS_GIB` | Scale monthly allowance |
 
+The three allowances default to each plan's `MonthlyEgressGiB` in
+`pkg/api/limits.go` (Hobby 100, Pro 500, Scale 2,000). While a plan's egress is
+not billed live, meterd stops a subject at that allowance until the month
+ends (`quota_exceeded_egress`, ADR-20261103131742); Free always stops at its
+10 GiB.
+
 Use `shadow` first. It calculates net calendar-month overage from canonical
 `usage_minutes.net_tx_bytes`, writes durable shadow receipts, and logs the
 would-be quantities without sending Polar events. The explicit billing-from
@@ -113,9 +119,18 @@ proration to invoice immediately (`proration_behavior: invoice`): with
 "prorate", a plan upgrade in the customer portal applies at once and its
 charge waits for the next renewal, which a cancellation may never reach.
 
+In Settings, Customer portal, turn off plan changes
+(`customer_portal_settings.subscription.update_plan`). A portal switch to a
+higher plan and back again cost little and skipped the downgrade check;
+subscribers upgrade through `gregale plan` and the dashboard instead, which
+change the subscription with `proration_behavior: invoice` (charged at once,
+applied only if the charge succeeds) and downgrade at the period end
+(ADR-20261103131742).
+
 `apid` validates the catalog at boot. `meterd` validates it before starting
-the usage loop. An organization that allows multiple subscriptions or does
-not invoice prorations immediately, a token that does not see exactly one
+the usage loop. An organization that allows multiple subscriptions, does
+not invoice prorations immediately or lets the portal change plans
+(ADR-20261103131742), a token that does not see exactly one
 organization, a missing product, archived resource, wrong recurring period,
 wrong fixed price, wrong meter, or meter-credit benefit prevents startup
 (ADR-20261029180000, ADR-20261031090658). Polar being
@@ -134,6 +149,11 @@ the customer portal (ADR-20261031090658).
 ## Runtime behavior
 
 - Polar checkout creates/reuses a customer using Gregale’s external account ID.
+  Polar keeps one customer per email: a checkout whose email belongs to a
+  deleted account's or organization's customer deletes that leftover and
+  creates its own; an email a live subject pays with answers 409
+  `billing_email_in_use`. `PUT /v1/orgs/{slug}/billing/email` moves an
+  organization's customer to its own address (ADR-20261103131742).
 - Customer portal sessions are created on demand for payment-method and
   subscription management.
 - Plan upgrades use hosted checkout when no subscription exists. Three

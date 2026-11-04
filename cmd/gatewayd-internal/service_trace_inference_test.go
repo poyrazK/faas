@@ -1,4 +1,4 @@
-// adr: 1138
+// adr: 1138, 20261102082606
 package main
 
 import (
@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/gateway"
 )
 
 type inflightTraceClient struct {
@@ -42,27 +43,31 @@ func TestServiceTraceInference(t *testing.T) {
 	const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 	localNode := newLocalNodeID(nil, "node-a")
 	localNode.id = "node-1"
-	client := &inflightTraceClient{resp: &vmmdpb.InflightRequestTraceResponse{Traceparent: traceparent}}
+	client := &inflightTraceClient{resp: &vmmdpb.InflightRequestTraceResponse{Traceparent: traceparent, DeadlineUnixMs: 1_793_000_000_000}}
 	clients := &inflightTraceClients{client: client, ok: true}
 	infer := newServiceTraceInference(clients, localNode, time.Second)
-	if got := infer(t.Context(), "10.100.0.7:41000"); got != traceparent || client.got != "10.100.0.7" || clients.node != "node-1" {
-		t.Fatalf("infer = %q (asked %q on %q)", got, client.got, clients.node)
+	if got := infer(t.Context(), "10.100.0.7:41000"); got.Traceparent != traceparent || !got.Deadline.Equal(time.UnixMilli(1_793_000_000_000)) || client.got != "10.100.0.7" || clients.node != "node-1" {
+		t.Fatalf("infer = %+v (asked %q on %q)", got, client.got, clients.node)
+	}
+	client.resp = &vmmdpb.InflightRequestTraceResponse{Traceparent: traceparent}
+	if got := infer(t.Context(), "10.100.0.7:41000"); !got.Deadline.IsZero() {
+		t.Fatalf("an older vmmd's answer has a deadline: %+v", got)
 	}
 	for _, remote := range []string{"", "not-an-address", "[fd00::7]:41000"} {
 		client.got = ""
-		if got := infer(t.Context(), remote); got != "" || client.got != "" {
-			t.Fatalf("remote %q = %q, asked %q", remote, got, client.got)
+		if got := infer(t.Context(), remote); got != (gateway.InferredCallerRequest{}) || client.got != "" {
+			t.Fatalf("remote %q = %+v, asked %q", remote, got, client.got)
 		}
 	}
 	for _, err := range []error{status.Error(codes.Unimplemented, "old vmmd"), errors.New("down")} {
 		client.err = err
-		if got := infer(t.Context(), "10.100.0.7:41000"); got != "" {
-			t.Fatalf("vmmd error %v = %q", err, got)
+		if got := infer(t.Context(), "10.100.0.7:41000"); got != (gateway.InferredCallerRequest{}) {
+			t.Fatalf("vmmd error %v = %+v", err, got)
 		}
 	}
 	client.err = nil
 	clients.ok = false
-	if got := infer(t.Context(), "10.100.0.7:41000"); got != "" {
-		t.Fatalf("no vmmd client = %q", got)
+	if got := infer(t.Context(), "10.100.0.7:41000"); got != (gateway.InferredCallerRequest{}) {
+		t.Fatalf("no vmmd client = %+v", got)
 	}
 }

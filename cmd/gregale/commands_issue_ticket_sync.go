@@ -71,7 +71,7 @@ func runIssueTicketSync(args []string, provider issuetracker.StatusProvider) int
 	issueUUID, e1 := uuid.Parse(*issue)
 	linkUUID, e2 := uuid.Parse(*linkID)
 	if len(pos) != 0 || *app == "" || e1 != nil || e2 != nil || issueUUID == uuid.Nil || linkUUID == uuid.Nil || (*direction != "push" && *direction != "pull") {
-		fmt.Fprintln(os.Stderr, usage)
+		PrintUsage(os.Stderr, usage, "issues")
 		return 1
 	}
 	for _, value := range []string{*deployment, *linearState} {

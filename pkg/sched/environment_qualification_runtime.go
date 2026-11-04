@@ -264,17 +264,16 @@ func (e *Engine) recordQualificationInstanceTransition(ctx context.Context, ins 
 // Contention must respect the execution/cleanup deadline without leaving a
 // waiter goroutine that could acquire the mutex after its caller has returned.
 func (e *Engine) lockQualificationApp(ctx context.Context, appID string) (func(), error) {
-	mu := e.appMutex(appID)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(err, context.Cause(ctx))
 		}
-		if mu.TryLock() {
+		if unlock, ok := e.tryLockApp(appID); ok {
 			if err := ctx.Err(); err != nil {
-				mu.Unlock()
+				unlock()
 				return nil, errors.Join(err, context.Cause(ctx))
 			}
-			return mu.Unlock, nil
+			return unlock, nil
 		}
 		timer := time.NewTimer(api.EnvironmentGitOpsQualificationRuntimeCheckInterval)
 		select {

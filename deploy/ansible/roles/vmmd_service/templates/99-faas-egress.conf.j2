@@ -16,6 +16,18 @@ Environment="FAAS_HOST_BRIDGE_CIDR={{ masquerade_cidr | default('10.100.0.0/16',
 {% endif %}
 Environment="FAAS_PRIVATE_INGRESS_CIDRS={{ faas_control_plane_allowed_cidrs | default([]) | join(',') }}"
 Environment="FAAS_PRIVATE_INGRESS_TCP_PORTS={{ faas_private_ingress_ports | join(',') }}"
+{% if faas_public_entry_addrs | default([]) %}
+# ADR-20261103163954: no proxy in front; keep 443 open to every source on the
+# entry addresses only across runtime rebuilds, as the boot policy does. vmmd
+# puts these ahead of the Cloudflare ranges below, which stay for a vmmd that
+# predates them: it keeps the node Cloudflare-only instead of open.
+Environment="FAAS_PUBLIC_ENTRY_ADDRS={{ faas_public_entry_addrs | join(',') }}"
+{% endif %}
+{% if (faas_cloudflare_origin_only | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+# ADR-20261102081618: keep 80/443 Cloudflare-only across runtime rebuilds, as
+# the boot policy does; the nftables role loaded the pinned ranges.
+Environment="FAAS_PUBLIC_INGRESS_CIDRS={{ ((faas_cloudflare_ipv4_cidrs | default([])) + (faas_cloudflare_ipv6_cidrs | default([]))) | join(',') }}"
+{% endif %}
 {% if faas_tenant_egress_iface | default('') %}
 # ADR-372: wake-time host policy routes tenant egress through the gateway tunnel.
 Environment="FAAS_TENANT_EGRESS_IFACE={{ faas_tenant_egress_iface }}"

@@ -12,9 +12,9 @@ ON CONFLICT(app_id) DO UPDATE SET revision=excluded.revision,rules=excluded.rule
 DELETE FROM issue_frequency_alert_receipts WHERE app_id=sqlc.arg(app_id) AND NOT (rule_key=ANY(sqlc.arg(keys)::text[]));
 
 -- name: IssueFrequencyCount :one
-SELECT count(*) FROM issue_events e
+SELECT COALESCE(sum(issue_window_weight(e.occurred_at,e.occurrence_count,e.http_time_buckets,sqlc.arg(since)::timestamptz,sqlc.arg(until)::timestamptz,false,true)),0)::bigint FROM issue_events e
 WHERE e.issue_id IN (SELECT sqlc.arg(issue_id)::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=sqlc.arg(issue_id))
-AND e.occurred_at > sqlc.arg(since) AND e.occurred_at <= sqlc.arg(until);
+AND e.occurred_at >= sqlc.arg(since)::timestamptz - interval '1 second' AND e.occurred_at <= sqlc.arg(until)::timestamptz + interval '1 second';
 
 -- name: IssueFrequencyLastAlert :one
 SELECT max(last_alert_at)::timestamptz AS last_alert_at FROM issue_frequency_alert_receipts r

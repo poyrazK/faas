@@ -100,6 +100,18 @@ func (c *Client) GetIssuePage(ctx context.Context, slug, id, since, eventCursor,
 	err := c.do(ctx, "GET", issueAppPath(slug)+"/issues/"+url.PathEscape(id)+"?"+q.Encode(), nil, &out)
 	return out, err
 }
+
+// DeleteIssue permanently deletes a standalone issue and its retained history.
+func (c *Client) DeleteIssue(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", issueAppPath(slug)+"/issues/"+url.PathEscape(id), nil, nil)
+}
+
+// DeleteIssueAbandonUnconfirmedTickets explicitly abandons expired uncertain
+// provider dispatches. A provider may still have created an external ticket.
+func (c *Client) DeleteIssueAbandonUnconfirmedTickets(ctx context.Context, slug, id string) error {
+	return c.do(ctx, "DELETE", issueAppPath(slug)+"/issues/"+url.PathEscape(id)+"?abandon_unconfirmed_tickets=true", nil, nil)
+}
+
 func (c *Client) ActOnIssue(ctx context.Context, slug, id string, in IssueActionRequest) (Issue, error) {
 	var out Issue
 	err := c.do(ctx, "POST", issueAppPath(slug)+"/issues/"+url.PathEscape(id)+"/actions", in, &out)

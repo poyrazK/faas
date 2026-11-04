@@ -41,6 +41,14 @@ The report includes step names, tools and assertion paths, without tool payloads
 credentials, logs or source contents. Save stdout as qualification evidence.
 A passing report qualifies only the scenario assertions, not the whole feature.
 
+Add a `gregale_verify_plan` read referencing the reviewed plan's `plan_id` to
+check post-write readiness. It may poll for `verification.status: verified`.
+Inspect its goal: service readiness includes native handoff and passive health,
+while worker verification establishes resident generation convergence only.
+Staged request deployments need a separate explicit promotion before serving
+verification can pass. Remote connections must select the required advanced
+toolsets during onboarding; local acceptance explicitly selects `all`.
+
 Use `service-source.json` and `worker-source.json` for commit-pinned native
 source activation. Supply an explicit matching `rollout_mode`, and check both
 `deployment.id` and `deployment.build_id` on same-plan replay.

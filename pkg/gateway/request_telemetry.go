@@ -86,6 +86,17 @@ type RequestTelemetryRow struct {
 	// TraceInferred marks a TraceID that Gregale inferred for a service call
 	// whose caller sent no traceparent (ADR-1138), not propagated context.
 	TraceInferred bool
+	// PlatformRefusal marks a 5xx the gateway returned because a Gregale
+	// dependency could not admit the request; route evidence skips it
+	// (ADR-20261028110044 amendment 3).
+	PlatformRefusal bool
+	// DeploymentPinned marks a request that named its deployment (a
+	// deployment preview or alias URL, or a revision pin); LongLived marks a
+	// response that stayed open past its request budget. Route evidence skips
+	// the first and leaves the second out of latency (ADR-20261028110044
+	// amendment 5).
+	DeploymentPinned bool
+	LongLived        bool
 	// ConsumerID is the stable API consumer identity resolved by the
 	// consumer-key middleware. It is empty for anonymous/legacy traffic.
 	// Credentials are deliberately never persisted in telemetry.

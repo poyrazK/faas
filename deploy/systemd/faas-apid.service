@@ -45,6 +45,7 @@ Environment=FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_ACCOUNT_RESTORED_OUTBOX_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_RESTORE_SLOT_OUTBOX_ENABLED=0
+Environment=FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_PLAN_EXCESS_OUTBOX_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_MFA_ENABLED_ALERT_OUTBOX_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_MFA_RECOVERY_ALERT_OUTBOX_ENABLED=0
@@ -59,6 +60,7 @@ Environment=FAAS_HOST_AGE_RECIPIENT_PATH=%d/faas_host_age_recipient
 Environment=FAAS_HOST_HMAC_KEY_PATH=%d/faas_host_hmac_key
 Environment=FAAS_LOG_ARCHIVE_CREDS_PATH=%d/faas_archive_creds
 Environment=FAAS_APID_ADVISORY_SOCK=/run/faas/apid.sock
+Environment=FAAS_APID_GITHUBD_BRIDGE_SOCK=/run/faas/apid-githubd.sock
 Environment=FAAS_STATUSPAGE_PATH=/etc/faas/statuspage/index.html
 Environment=FAAS_DPA_PATH=/etc/faas/dpa.md
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
@@ -102,7 +104,7 @@ ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
-ReadWritePaths=/srv/fc /var/lib/faas /var/log/faas /var/spool/faas
+ReadWritePaths=/srv/fc /var/lib/faas /var/log/faas /var/spool/faas /run/faas
 StateDirectory=faas-apid
 
 [Install]

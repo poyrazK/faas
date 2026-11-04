@@ -88,6 +88,12 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 		return nil
 	}
 	catalog, err := client.ListObjectBuckets(ctx, slug)
+	if readRefused(err) {
+		// Binding a bucket mints compute credentials, which takes
+		// storage:manage; a deploy token or a deploy:write key cannot
+		// (ADR-20261031162858 amendment 1).
+		return fmt.Errorf("gregale.yaml binds object-storage buckets to %q, which needs a credential with storage:manage; a deploy token or a deploy:write key cannot bind them: %w", slug, err)
+	}
 	if err != nil {
 		return fmt.Errorf("list object-storage buckets for %q: %w", slug, err)
 	}

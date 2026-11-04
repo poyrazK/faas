@@ -6,10 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 var (
@@ -64,16 +65,19 @@ type ProjectEnvironmentClonePostgresBinding struct {
 }
 
 type ProjectEnvironmentCloneObjectBucket struct {
-	ID                 string                                     `json:"id"`
-	Name               string                                     `json:"name"`
-	Region             string                                     `json:"region"`
-	BackendID          string                                     `json:"backend_id"`
-	BackendFingerprint string                                     `json:"backend_fingerprint"`
-	PhysicalName       string                                     `json:"physical_name"`
-	PublicRead         bool                                       `json:"public_read"`
-	ServeAt            string                                     `json:"serve_at"`
-	Credentials        []ProjectEnvironmentCloneObjectCredential  `json:"credentials"`
-	AccessGrants       []ProjectEnvironmentCloneObjectAccessGrant `json:"access_grants"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Region             string `json:"region"`
+	BackendID          string `json:"backend_id"`
+	BackendFingerprint string `json:"backend_fingerprint"`
+	PhysicalName       string `json:"physical_name"`
+	PublicRead         bool   `json:"public_read"`
+	ServeAt            string `json:"serve_at"`
+	// VersioningEnabled is true once versioning is on and propagated: the
+	// bucket's history can be read as of a clone's data point.
+	VersioningEnabled bool                                       `json:"versioning_enabled"`
+	Credentials       []ProjectEnvironmentCloneObjectCredential  `json:"credentials"`
+	AccessGrants      []ProjectEnvironmentCloneObjectAccessGrant `json:"access_grants"`
 }
 
 type ProjectEnvironmentCloneObjectCredential struct {
@@ -183,11 +187,11 @@ func normalizeCloneBindingDefinitions(appID, scope string, values projectCloneWo
 }
 
 var (
-	cloneBindingNameRE           = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	cloneBindingPublicPathRE     = regexp.MustCompile(`^/[A-Za-z0-9][A-Za-z0-9._~/-]*$`)
-	cloneBindingFingerprintRE    = regexp.MustCompile(`^[a-f0-9]{64}$`)
-	cloneBindingPrefixRE         = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,47}$`)
-	cloneBindingEnvironmentKeyRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,126}$`)
+	cloneBindingNameRE           = lazyregexp.New(`^[a-z][a-z0-9-]{0,62}$`)
+	cloneBindingPublicPathRE     = lazyregexp.New(`^/[A-Za-z0-9][A-Za-z0-9._~/-]*$`)
+	cloneBindingFingerprintRE    = lazyregexp.New(`^[a-f0-9]{64}$`)
+	cloneBindingPrefixRE         = lazyregexp.New(`^[A-Z][A-Z0-9_]{0,47}$`)
+	cloneBindingEnvironmentKeyRE = lazyregexp.New(`^[A-Z_][A-Z0-9_]{0,126}$`)
 )
 
 func validClonePostgresBinding(b ProjectEnvironmentClonePostgresBinding) bool {

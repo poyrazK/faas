@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
 // BindingVerificationPin is server-selected metadata atomically admitted with
@@ -65,7 +65,7 @@ func resolveBindingVerificationSelection(selections []BindingVerificationSelecti
 	return selection, nil
 }
 
-var bindingRevisionPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var bindingRevisionPattern = lazyregexp.New(`^[a-f0-9]{64}$`)
 
 func validateBindingVerificationPin(params CreateAppTaskParams) error {
 	pin := params.BindingVerification

@@ -502,20 +502,22 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	// ADR-1155: on-demand collectors reach only accounts profile-captures is
-	// released to, so the flag watcher runs only when captures are installed.
+	// released to; ADR-20261104141122: pool sizes only those
+	// postgres_pool_sizing is released to.
+	releases, err := startPlatformReleases(ctx, getenv, store, pool, log)
+	if err != nil {
+		return err
+	}
 	var profileCapturesReleased func(platformflags.Subject) bool
 	if getenv("FAAS_PROFILING_ON_DEMAND") == "1" {
-		released, err := startProfileCapturesRelease(ctx, getenv, store, pool, log)
-		if err != nil {
-			return err
-		}
-		profileCapturesReleased = released
+		profileCapturesReleased = releases.profileCaptures
 	}
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithValidatorArtifactCheck(validatorArtifacts.Check).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
 		WithProfilingOnDemand(getenv("FAAS_PROFILING_ON_DEMAND") == "1").
 		WithProfileCapturesRelease(profileCapturesReleased).
+		WithPostgresPoolSizingRelease(releases.postgresPoolSizing).
 		WithContinuousProfiling(getenv("FAAS_PROFILING_ENABLED") == "1").
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).

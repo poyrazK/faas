@@ -81,7 +81,10 @@ Add the displayed records at the domain's DNS provider:
 - Cloudflare hostname/certificate validation records once they appear.
 
 Gregale does no provider write until its own TXT and CNAME are both observed.
-The controller then creates the custom hostname once and durably binds its returned ID, requests a
+The controller retries read-only provider preflight failures. It durably records
+the single create attempt after those checks and immediately before the provider
+POST, then binds its returned ID. A failed or lost POST response still requires
+explicit recovery and is never retried automatically. It requests a
 DNS-TXT managed certificate, and creates a private Access application with
 the internal policy. Keep validation records for certificate renewal.
 

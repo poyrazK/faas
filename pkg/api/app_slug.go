@@ -1,11 +1,12 @@
 package api
 
 import (
-	"regexp"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
-var appSlugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+var appSlugRE = lazyregexp.New(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 
 var reservedAppSlugs = map[string]struct{}{
 	"account": {}, "admin": {}, "api": {}, "assets": {}, "billing": {},

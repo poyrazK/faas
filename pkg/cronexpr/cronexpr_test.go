@@ -6,6 +6,25 @@ import (
 	"time"
 )
 
+// A customer's timezone names a place: "Local" is the evaluating host's zone.
+// Parse keeps accepting it so a cron stored with it keeps firing.
+func TestNormalizeCustomerTimezoneRefusesLocal(t *testing.T) {
+	for _, tz := range []string{"Local", "local", " Local "} {
+		if _, err := NormalizeCustomerTimezone(tz); err == nil {
+			t.Errorf("NormalizeCustomerTimezone(%q) accepted it", tz)
+		}
+	}
+	if got, err := NormalizeCustomerTimezone("Europe/Istanbul"); err != nil || got != "Europe/Istanbul" {
+		t.Errorf("NormalizeCustomerTimezone(Europe/Istanbul) = %q, %v", got, err)
+	}
+	if got, err := NormalizeCustomerTimezone(""); err != nil || got != DefaultTimezone {
+		t.Errorf("NormalizeCustomerTimezone(\"\") = %q, %v; want %s", got, err, DefaultTimezone)
+	}
+	if _, err := Parse("0 9 * * *", "Local"); err != nil {
+		t.Errorf("Parse refused a stored Local cron: %v", err)
+	}
+}
+
 // TestParseRejectsSchedulesThatNeverFire: robfig accepts a day that never
 // occurs and answers Next with the zero time, which callers read as an
 // instant long past — the cron dispatcher fired it every tick and a

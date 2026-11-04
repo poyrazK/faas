@@ -1,8 +1,8 @@
 package api
 
-import "regexp"
+import "github.com/onebox-faas/faas/pkg/lazyregexp"
 
-var projectEnvironmentSlugRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$`)
+var projectEnvironmentSlugRE = lazyregexp.New(`^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$`)
 
 // ValidProjectEnvironmentSlug is the public contract for durable project
 // environment names. Environment names are deliberately shorter than project

@@ -132,7 +132,9 @@ POST /v1/apps/{app}/upload-routes
 ```
 
 Clients then `POST /uploads/avatar` on your app's hostname with an API key that
-has `storage:write`. Send an `Idempotency-Key` header so retries cannot store a
+has `storage:write`. The route itself authorizes writes to its bucket, so the key
+needs no bucket grant; each key's uploads land under its own key ID below the
+route's prefix. Send an `Idempotency-Key` header so retries cannot store a
 file twice; `GET /uploads/avatar/receipts/{id}` reports an upload's status.
 
 ## Use an S3 SDK
@@ -193,9 +195,18 @@ What the endpoint does not support:
 - A single request or upload part can be at most 64 MiB; larger objects need a
   multipart upload. SDK upload helpers such as `upload_file` do this for you.
 - Creating or deleting buckets, ACLs and SigV4A requests return `NotImplemented`.
-  Manage buckets with the CLI or API.
+  Manage buckets with the CLI or API. An upload that sends `x-amz-acl: private`
+  or `bucket-owner-full-control`, as many upload libraries do by default, is
+  accepted: objects are always private to the bucket's credentials.
 - Browser form uploads (presigned POST) are not supported; use a signed PUT URL.
 - Keys containing `/./` or `/../` segments cannot be used.
+
+The endpoint runs a few of an account's uploads and upload parts at a time.
+Others wait up to 15 seconds for a turn, then answer `503 SlowDown`. S3
+transfer managers send several parts at once (the AWS CLI and boto3 send 10),
+so set yours to 4: `aws configure set default.s3.max_concurrent_requests 4`,
+`TransferConfig(max_concurrency=4)` in boto3, or `queueSize: 4` (the default)
+for `Upload` in `@aws-sdk/lib-storage`.
 
 ## Give your app access
 
@@ -314,12 +325,17 @@ enabled for your account, your own enrolled keys. See the
 
 - Tag objects with `gregale bucket tags`, or with S3 tagging calls.
 - `CopyObject` copies within a bucket. To copy from another of your buckets, give
-  the S3 credential a copy-source grant on it (`gregale bucket copy-source`).
+  the S3 credential a copy-source grant on it (`gregale bucket copy-source`) and
+  name the source by its bucket ID, as `x-amz-copy-source: <source-bucket-id>/<key>`;
+  a source named by its bucket name answers `NoSuchKey`.
 - Conditional writes (`If-None-Match: *`, `If-Match`) work on single uploads.
 - Where your bucket's storage supports them, multipart uploads can carry CRC32,
   CRC32C, CRC64NVME, SHA1 or SHA256 checksums, validated on every part, and
   completing a multipart upload can be conditional. Otherwise the endpoint
-  answers `NotImplemented`.
+  answers `NotImplemented`. Recent AWS CLI and SDK releases add a checksum to
+  every multipart upload by default; where your storage lacks them, set
+  `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` (or
+  `request_checksum_calculation = when_required` in `~/.aws/config`).
 
 ## Events and notifications
 
@@ -332,6 +348,9 @@ or queue with the bucket's notification configuration:
 ```sh
 gregale bucket notifications set my-api BUCKET_ID notifications.json
 ```
+
+Notifications and compute triggers run app code, so they need a paid plan;
+Free answers `402`, like other triggers.
 
 ## Browser access (CORS)
 
@@ -382,9 +401,13 @@ what you used.
 | CORS rules per bucket | 100 |
 | Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
+| Uploads and upload parts in progress through `s3.gregale.dev` | A few per account; more wait up to 15 seconds for a turn, then answer `503 SlowDown` |
+| Stored data | Free stops at 1 GiB, Hobby at 20 GiB, Pro at 250 GiB and Scale at 1,000 GiB. A lower spend cap lowers it to the included storage plus what the cap buys at $0.03 per GiB-month; a $0 cap stops at the included storage. Need more? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused; while you store more than it, downloads answer `402` until you delete objects. Listing, `HEAD` and deletes keep working, and nothing is deleted for you. A downgrade is refused while your data does not fit the new plan |
+| Objects per account, counting retained versions | 1,000,000 on every plan |
 | Egress each month | 10 times your plan's included storage: Free 10 GiB, Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB ([plans](plans.md#object-storage)). Public objects served from the CDN's cache do not count. At the limit, every request except deletes is refused until the month ends |
 
-Your plan and account also cap stored bytes, requests and egress each month.
+The platform also caps stored bytes, requests and egress per account; the
+current values are in `GET /v1/account/object-storage-usage` under `policy`.
 
 ## Deleting data and accounts
 

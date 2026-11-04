@@ -168,3 +168,67 @@ func TestRenderAPIError_PrintsBillingHandoffURLs(t *testing.T) {
 		})
 	}
 }
+
+// TestCmdPlan_CurrentPlanKeepsTheSubscription: asking for the current plan
+// keeps a subscription scheduled to end, and the CLI says so instead of
+// "Plan changed" (ADR-20261103131742 amendment 1).
+func TestCmdPlan_CurrentPlanKeepsTheSubscription(t *testing.T) {
+	for _, tc := range []struct{ status, want string }{
+		{"scheduled_change_undone", "Kept the pro subscription"},
+		{"", "Already on pro"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			srv := httptest.NewServer(&multiSink{
+				onAccount: func(string) (int, any) {
+					return http.StatusOK, api.AccountResponse{Email: "a@b.c", Plan: "pro"}
+				},
+				onPlan: func([]byte) (int, any) {
+					return http.StatusOK, api.AccountResponse{Email: "a@b.c", Plan: "pro", PlanChangeStatus: tc.status}
+				},
+			})
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			stdout, restore := captureStdout(t)
+			defer restore()
+			if code := cmdPlan([]string{"pro"}); code != 0 {
+				t.Errorf("cmdPlan(pro) = %d, want 0", code)
+			}
+			if !strings.Contains(stdout.String(), tc.want) {
+				t.Errorf("stdout %q, want %q", stdout.String(), tc.want)
+			}
+		})
+	}
+}
+
+// TestCmdPlan_PortalHandoffSaysWhatToDo: an upgrade the bank must confirm
+// opens the portal, prints the server's explanation and the retry command,
+// and no longer claims the plan switches by itself.
+func TestCmdPlan_PortalHandoffSaysWhatToDo(t *testing.T) {
+	const portalURL = "https://polar.example/portal/session-2"
+	prob := api.ErrPaymentAuthenticationRequired(api.PlanScale)
+	prob.BillingPortalURL = portalURL
+	srv := httptest.NewServer(planCheckoutSink(*prob))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	rec := withRecorder(t)
+	stdout, restore := captureStdout(t)
+	defer restore()
+	stderr, restoreErr := captureStderr(t)
+
+	code := cmdPlan([]string{"scale"})
+	restoreErr()
+	if code != 0 {
+		t.Errorf("cmdPlan(scale) = %d, want 0 on portal hand-off", code)
+	}
+	if len(rec.urls) != 1 || rec.urls[0] != portalURL {
+		t.Errorf("browser urls = %v, want [%s]", rec.urls, portalURL)
+	}
+	if !strings.Contains(stderr.String(), "nothing was charged") || !strings.Contains(stdout.String(), "gregale billing plan scale") {
+		t.Errorf("stderr %q / stdout %q, want the explanation and the retry command", stderr.String(), stdout.String())
+	}
+	if strings.Contains(stdout.String(), "switches to scale as soon as") {
+		t.Errorf("stdout claims the plan switches by itself: %q", stdout.String())
+	}
+}

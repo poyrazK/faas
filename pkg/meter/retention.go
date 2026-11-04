@@ -221,9 +221,14 @@ const RequestTelemetryRetentionInterval = 1 * time.Hour
 //
 // The CASE uses acct.plan as a TEXT (the column type) so the
 // planner can short-circuit on the join key.
+//
+// request_telemetry is partitioned by month, and a ctid is unique only
+// within one partition. Matching on ctid alone deleted, for every expired
+// row, the rows at the same position in every other partition, retained or
+// not and whoever's they were. The pair (tableoid, ctid) names one row.
 const retentionRequestTelemetryPlanAwareBatchSQL = `DELETE FROM public.request_telemetry
-                                                   WHERE ctid IN (
-                                                       SELECT rt.ctid FROM public.request_telemetry rt
+                                                   WHERE (tableoid, ctid) IN (
+                                                       SELECT rt.tableoid, rt.ctid FROM public.request_telemetry rt
                                                        LEFT JOIN public.app_resource_accounts ac ON ac.app_id = rt.app_id
                                                        WHERE rt.received_at < now() - (CASE ac.plan
                                                            WHEN 'free'  THEN interval '0 days'
@@ -259,6 +264,43 @@ func RetentionOnceRequestTelemetry(ctx context.Context, db retentionExecer) (int
 		tag, err := db.Exec(ctx, retentionRequestTelemetryPlanAwareBatchSQL, RetentionBatchSize)
 		if err != nil {
 			return total, fmt.Errorf("request telemetry retention delete (batch %d, deleted so far %d): %w", i, total, err)
+		}
+		total += tag
+		if tag < RetentionBatchSize {
+			return total, nil
+		}
+	}
+	return total, ErrRetentionBatchCap
+}
+
+// retentionRequestAnalyticsMinutesBatchSQL sweeps analytics rollups on the
+// raw telemetry's plan ladder (ADR-20261103113952), so the analytics window
+// clamp is the same whichever store answers. request_analytics_minutes is
+// not partitioned, so ctid is unique; a partitioned table needs
+// (tableoid, ctid), as the request_telemetry sweep above uses.
+const retentionRequestAnalyticsMinutesBatchSQL = `DELETE FROM public.request_analytics_minutes
+                                                  WHERE ctid IN (
+                                                      SELECT m.ctid FROM public.request_analytics_minutes m
+                                                      LEFT JOIN public.app_resource_accounts ac ON ac.app_id = m.app_id
+                                                      WHERE m.bucket_start < now() - (CASE ac.plan
+                                                          WHEN 'free'  THEN interval '0 days'
+                                                          WHEN 'hobby' THEN interval '3 days'
+                                                          WHEN 'pro'   THEN interval '7 days'
+                                                          WHEN 'scale' THEN interval '14 days'
+                                                          ELSE              interval '1 day'
+                                                      END)
+                                                      ORDER BY m.bucket_start
+                                                      LIMIT $1
+                                                  )`
+
+// RetentionOnceRequestAnalyticsMinutes runs one bounded sweep of the
+// analytics rollups, in batches like RetentionOnceRequestTelemetry.
+func RetentionOnceRequestAnalyticsMinutes(ctx context.Context, db retentionExecer) (int64, error) {
+	var total int64
+	for i := 0; i < MaxRetentionBatches; i++ {
+		tag, err := db.Exec(ctx, retentionRequestAnalyticsMinutesBatchSQL, RetentionBatchSize)
+		if err != nil {
+			return total, fmt.Errorf("request analytics rollup retention delete (batch %d, deleted so far %d): %w", i, total, err)
 		}
 		total += tag
 		if tag < RetentionBatchSize {
@@ -422,6 +464,21 @@ func RetentionLoopRequestTelemetry(ctx context.Context, db retentionExecer, inte
 			default:
 				if log != nil {
 					log.Error("request ID journal retention failed", "err", journalErr)
+				}
+			}
+			rollupRows, rollupErr := RetentionOnceRequestAnalyticsMinutes(ctx, db)
+			switch {
+			case rollupErr == nil:
+				if rollupRows > 0 && log != nil {
+					log.Info("request analytics rollup retention tick ok", "rows_deleted", rollupRows)
+				}
+			case errors.Is(rollupErr, ErrRetentionBatchCap):
+				if log != nil {
+					log.Warn("request analytics rollup retention hit batch cap; will resume next tick", "rows_deleted", rollupRows, "err", rollupErr)
+				}
+			default:
+				if log != nil {
+					log.Error("request analytics rollup retention failed", "err", rollupErr)
 				}
 			}
 		}

@@ -8,9 +8,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -39,11 +41,16 @@ func cmdDeployTokens(args []string) int {
 }
 
 // parseDeployTokenFlags parses --app plus the label/expiry flags a mint takes.
-func parseDeployTokenFlags(name, usage string, args []string, minting bool, positionals int) (slug, label, expires string, rest []string, ok bool) {
-	flags, positional := splitArgsForFlags(args)
+func parseDeployTokenFlags(name, usage string, args []string, minting bool, positionals int, agentRequest ...*api.CreateDeployTokenRequest) (slug, label, expires string, rest []string, ok bool) {
+	flags, positional := splitArgsForFlags(args, "agent")
 	fs := newFlagSet(name, flag.ContinueOnError)
 	app := fs.String("app", "", "app the token deploys")
 	var labelFlag, expiresFlag *string
+	var agentScopes *string
+	if len(agentRequest) > 0 {
+		fs.BoolVar(&agentRequest[0].Agent, "agent", false, "mint an app-bound headless MCP credential")
+		agentScopes = fs.String("scopes", "", "comma-separated app-agent scopes (requires --agent)")
+	}
 	if minting {
 		labelFlag = fs.String("label", "", "label shown in the list, for example the CI system")
 		expiresFlag = fs.String("expires-at", "", "expiry as an RFC3339 time (default 90 days)")
@@ -62,6 +69,15 @@ func parseDeployTokenFlags(name, usage string, args []string, minting bool, posi
 				printErr("Invalid --expires-at", fmt.Errorf("want an RFC3339 time such as 2027-01-31T00:00:00Z: %w", err))
 				return "", "", "", nil, false
 			}
+		}
+	}
+	if agentScopes != nil && *agentScopes != "" {
+		for _, scope := range strings.Split(*agentScopes, ",") {
+			agentRequest[0].Scopes = append(agentRequest[0].Scopes, strings.TrimSpace(scope))
+		}
+		if !agentRequest[0].Agent {
+			printErr("Invalid scopes", errors.New("--scopes requires --agent"))
+			return "", "", "", nil, false
 		}
 	}
 	return *app, label, expires, positional, true
@@ -94,8 +110,9 @@ func cmdDeployTokensList(args []string) int {
 }
 
 func cmdDeployTokensAdd(args []string) int {
-	const usage = "usage: gregale app deploy-token create --app SLUG [--label LABEL] [--expires-at RFC3339]"
-	slug, label, expires, _, ok := parseDeployTokenFlags("deploy-tokens add", usage, args, true, 0)
+	const usage = "usage: gregale app deploy-token create --app SLUG [--agent] [--scopes SCOPES] [--label LABEL] [--expires-at RFC3339]"
+	req := api.CreateDeployTokenRequest{}
+	slug, label, expires, _, ok := parseDeployTokenFlags("deploy-tokens add", usage, args, true, 0, &req)
 	if !ok {
 		return 1
 	}
@@ -103,7 +120,8 @@ func cmdDeployTokensAdd(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	token, err := client.CreateDeployToken(context.Background(), slug, api.CreateDeployTokenRequest{Label: label, ExpiresAt: expires})
+	req.Label, req.ExpiresAt = label, expires
+	token, err := client.CreateDeployToken(context.Background(), slug, req)
 	if err != nil {
 		return printErr("Could not create deploy token", err)
 	}

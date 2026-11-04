@@ -105,8 +105,9 @@ The platform must not depend on Cloudflare for customer domains.
   other site blocks appended to the Caddyfile (for example
   `s3.gregale.dev`) become directly reachable. The provider firewall must
   admit 80/443 from everywhere for the control plane, which the public-beta
-  GCP audit (`deploy/gcp/public-beta-policy.json`) forbids; a deployment
-  that enables this ADR must update that policy deliberately.
+  GCP audit (`deploy/gcp/public-beta-policy.json`) forbids by default. The
+  production policy declares the dedicated control-plane exception described
+  in amendment 3.
 - Certificates live in Caddy's storage on the single control-plane edge.
   More than one edge needs shared Caddy storage before it can serve customer
   domains; until then a second edge would race the first for ACME orders.
@@ -134,6 +135,9 @@ The platform must not depend on Cloudflare for customer domains.
 - **DNS-01 with the operator's DNS token.** Cannot write to a customer zone.
 
 ## Amendment 1: shared new-host budgets and a retry backoff (2026-10-31)
+
+Amendment 4 extends the shared budgets to exact hosts and supersedes the
+ask-count retry backoff described here.
 
 Bug hunt 32 (M7) found the per-wildcard budget open to griefing and to
 evasion. Anyone can send 40 random server names below a customer's wildcard
@@ -204,3 +208,145 @@ the names below it that may hold certificates.
   whoever squatted an unverified wildcard could set a list, and after the
   zone's owner took the claim over, only the squatter's names would get
   certificates. The admission ledger stays, as it does on delete.
+
+## Amendment 3: DNS diagnostics and production ingress (2026-11-03)
+
+The GCP production template enables on-demand TLS with `edge.gregale.dev`.
+Its DNS-only A/AAAA records must exist before rollout; operators supply the
+reserved public addresses for apex-domain instructions. GCP's access policy
+and convergence script retain the Cloudflare origin rules and add two named
+public TCP/80,443 rules with a dedicated tag on the control plane alone. The
+audit rejects other public origin rules, extra ports or targets, and the tag
+on any other instance. Caddy keeps the platform-host Cloudflare boundary.
+
+With a dedicated target configured, an owned platform apex is no longer an
+acceptable CNAME shortcut: it may be proxied and cannot complete customer
+ACME validation. Address lookup timeouts are inconclusive and never revoke
+verification. The doctor stores successful routing and conflicting IPv6
+results independently. Its CAA check queries real CAA RRsets through the
+system resolvers, follows aliases and parent inheritance, and evaluates
+Let's Encrypt authorization for concrete-host certificates. DNS errors remain
+pending rather than being interpreted as permission to issue.
+
+## Amendment 4: claim fencing and shared exact-domain admission (2026-11-03)
+
+A wildcard allowlist mutation carries the authorized app and challenge token
+into the storage transaction. Under the domain row lock, storage rejects a
+mutation if either has changed. Both replace and clear use this fence, so an
+in-flight request from a previous claimant cannot change a replacement claim.
+
+Exact domains now use the same durable known-host set and admission ledger as
+wildcard leaves. All new hosts share the existing limits in `pkg/api/limits.go`:
+40 per registered domain per week, 200 per owner per week, and 150 across the
+fleet per three hours. The remaining shared ACME account capacity provides
+headroom for renewals and retries. Previously admitted names stay free, including
+after a gateway restart. The `wildcard_domain` column retains its legacy name;
+for an exact claim it holds the hostname itself.
+
+Apply migrations `20261103232750043` through `20261103232750064` before deploying
+the edge changes. The first adds broader checks without validation, the second
+validates them without blocking writers, and the third removes the old checks.
+A fourth migration, after the DDL transaction commits, seeds known-host rows for
+existing verified exact claims without charging the new-host ledger, preserving
+their certificate loads during rollout.
+The broader checks and runtime admissions remain compatible with the old edge
+on rollback.
+
+Repeated permission grants are not evidence of failed issuance: Caddy asks before
+loading a valid stored certificate too. The ask-count backoff is removed. The
+permission API does not observe ACME outcomes; actual issuance attempts and
+failures remain Caddy's responsibility and are diagnosed from its ACME logs.
+New-host admission caps remain enforced for both claim types.
+
+When a CNAME lookup returns definite absence, the doctor checks A and AAAA before
+classifying routing. Missing routing records revoke verification; a transient
+lookup error keeps the result pending. Organization domain inventories include
+other members' apps, then apply current app permissions and credential scopes;
+creator-owned accounting inventories retain their original scope.
+
+## Amendment 5: claim-bound probes and issuer restrictions (2026-11-03)
+
+The doctor captures the custom-domain claim before querying DNS. Its cached
+observation reads, observation writes, certificate-state updates, drift
+revocation and certificate-failure email cooldown all require that domain,
+app and challenge token still match. A transfer clears the old claim's legacy
+doctor observation. An obsolete HTTP doctor request returns `404`; its probe
+cannot change the replacement claim or read its cached diagnostics. Tenant
+surface observations retain their existing surface anchor.
+
+Certificate-failure notices use the app's current tenant. A shared organization's
+active owners and admins receive the notice; a personal app's owner receives it.
+The app creator's other organizations and former memberships supply no recipients.
+
+CAA authorization evaluates `validationmethods` against HTTP-01/TLS-ALPN-01 in
+on-demand mode and DNS-01 in legacy mode. Separate `issue` records remain
+alternatives. An applicable `accounturi` or unknown issuer-specific restriction
+keeps permission pending until confirmed against the edge's ACME account;
+matching the issuer name alone does not confirm authorization.
+
+## Amendment 6: complete claim checks and notification retries (2026-11-03)
+
+The dashboard binds each cached observation read to the domain, app and token
+it listed. On-demand TLS admission carries that same claim identity into
+storage, including known-host reads. A replacement claim rejects the old
+request. New-host admission locks the claim, then reads its current allowlist
+at a fresh snapshot; allowlist writers use the same row lock. Revoked names
+remain denied even when previously admitted, while the doctor probe remains
+allowed. The legacy wildcard issuer also binds every result write to the
+claim it loaded before contacting the CA.
+
+Certificate probes validate the complete DNS answer set, then try its numeric
+addresses within one bounded budget. Each remaining address gets a share of
+the remaining connection time, so an unavailable first route leaves time for
+another address. Connections never resolve the name again, and TLS still
+verifies the original hostname and certificate chain.
+
+A failed certificate-alert send releases only its own claim's notification
+attempt, identified by the recorded timestamp. Other workers' attempts and
+replacement claims retain their cooldowns. Accepted sends retain the existing
+24-hour cooldown. Provider idempotency keys hash the claim identity and exact
+delivery payload, so retries stay stable across midnight, while transfers and
+recipient changes cannot reuse another notification's key.
+
+CAA diagnostics follow the requested certificate: on-demand wildcard claims
+still use concrete-host `issue` policy at the probe name; legacy DNS-01 wildcard
+certificates query the zone name and use `issuewild` when present, falling back
+to `issue` only when it is absent. Remediation names the applicable property.
+
+## Amendment 7 (2026-11-03): retain request authorization and observation order
+
+Per-domain API authorization captures the domain, app and challenge before
+route-specific handlers run. Reloads reject a different claim, including moves
+between two companies whose apps share a creator. Default selection, retry and
+removal repeat the captured claim predicate when writing. Allowlist reads use
+the same claim predicate as allowlist writes, so a previous owner cannot read a
+replacement owner's hostnames.
+
+Challenge-bound verification publishes its pending certificate state in the
+same transaction as verification. A TXT miss only records its check time while
+the claim remains unverified; it cannot clear a certificate issued by another
+worker. Certificate observations bound to a claim ignore results older than the
+last stored check. Internal, unbound repair writes retain their existing behavior.
+Memory-store default-domain reads also check that the current domain still
+belongs to the selected app, matching PostgreSQL.
+
+Public tenant-hostname reservations check both live wildcard reservations and
+foreign verified exact custom domains inside publication, including bulk
+onboarding, dry runs, and reconciliation. Exact-domain handoffs within one
+account or shared organization remain possible. A tenant's suspension affects a
+hostname only after that hostname is verified; an unproved reservation cannot
+suppress another tenant's existing custom-domain route or cached route.
+
+DNS drift observations also obey the last stored DNS check time. Superseded
+results stop before revoking verification, publishing observations, or emitting
+drift events. A superseded synchronous doctor refresh is retryable rather than
+reported as a missing domain. Known certificate expiry makes domain readiness
+false and a cached doctor report unhealthy, even when issuance status remains
+`issued` or renewal has started.
+
+Domain responses expose `verification_expires_at` and `verification_expired`.
+An expired, unverified claim has terminal `verification_expired` conditions and
+omits its obsolete TXT proof. Resuming `gregale domains setup` for the same app
+and environment recreates the claim and prints fresh instructions. If the lease
+expires while setup waits, setup stops with the resume command. This preserves
+the hard lease: verification and retry do not extend an expired claim.

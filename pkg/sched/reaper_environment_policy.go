@@ -59,6 +59,7 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 	}
 	policies := make(map[string]reaperDeploymentPolicy)
 	floors := make(map[string]int)
+	deployments := l.reaperDeployments(ctx, snapshot)
 	for i := range snapshot {
 		row := &snapshot[i]
 		app := byApp[row.AppID]
@@ -66,7 +67,11 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 			policy, cached := policies[row.DeploymentID]
 			if !cached {
 				policy.app = app
-				policy.deployment, policy.err = store.DeploymentByID(ctx, row.DeploymentID)
+				if d, ok := deployments[row.DeploymentID]; ok {
+					policy.deployment = d
+				} else {
+					policy.deployment, policy.err = store.DeploymentByID(ctx, row.DeploymentID)
+				}
 				if policy.err == nil && policy.deployment.AppID != app.ID {
 					policy.err = state.ErrConflict
 				}
@@ -79,20 +84,17 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 				if resolve {
 					policy.app, policy.err = state.ResolveAppForDeployment(ctx, store, app, policy.deployment)
 				}
-				if resolve && policy.err == nil {
-					var owner state.RuntimeAppValuesSnapshot
-					owner, policy.err = store.RuntimeAppValuesForDeployment(ctx, app.AccountID, app.ID, row.DeploymentID)
-					if policy.err == nil && (owner.AccountID != app.AccountID || owner.AppID != app.ID || owner.DeploymentID != row.DeploymentID || owner.Scope != policy.scope || api.ValidateScope(owner.Scope) != nil) {
-						policy.err = state.ErrConflict
-					}
-					policy.environmentID = owner.EnvironmentID
-				}
+				// The scaling state resolves the deployment's runtime owner with
+				// the same query shape as RuntimeAppValuesForDeployment, which
+				// this used to read too, with every sealed secret, only for the
+				// scope and environment (ADR 20261102205122).
 				if resolve && policy.err == nil {
 					var scaling state.RuntimeScalingState
 					scaling, policy.err = l.engine.runtimeScalingStateForDeployment(ctx, policy.app, policy.deployment)
-					if policy.err == nil && scaling.EnvironmentID != policy.environmentID {
+					if policy.err == nil && (scaling.AccountID != app.AccountID || scaling.AppID != app.ID || scaling.DeploymentID != row.DeploymentID || scaling.Scope != policy.scope || api.ValidateScope(scaling.Scope) != nil) {
 						policy.err = state.ErrConflict
 					}
+					policy.environmentID = scaling.EnvironmentID
 					policy.app.LastScaleInAt, policy.app.LastScaleOutAt = scaling.LastScaleInAt, scaling.LastScaleOutAt
 				}
 				policies[row.DeploymentID] = policy
@@ -147,4 +149,31 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 		}
 	}
 	return productionFloors
+}
+
+// reaperDeployments reads the tick's deployments in one query when the store
+// can (ADR 20261102205122). A deployment missing from the result, or every
+// one after a failed read, is read on its own as before.
+func (l *Loop) reaperDeployments(ctx context.Context, snapshot []InstanceInfo) map[string]state.Deployment {
+	reader, ok := l.engine.Store().(state.DeploymentsByIDsReader)
+	if !ok {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(snapshot))
+	ids := make([]string, 0, len(snapshot))
+	for _, row := range snapshot {
+		if _, dup := seen[row.DeploymentID]; row.DeploymentID != "" && !dup {
+			seen[row.DeploymentID] = struct{}{}
+			ids = append(ids, row.DeploymentID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	deployments, err := reader.DeploymentsByIDs(ctx, ids)
+	if err != nil {
+		l.log.Warn("reaper: bulk deployment read; reading each", "err", err)
+		return nil
+	}
+	return deployments
 }

@@ -72,6 +72,22 @@ func TestStampProfilingFollowsInstallationFlags(t *testing.T) {
 // on-demand captures: collectors reach only deployments of accounts the
 // profile-captures preview is released to, decided for the app's account,
 // plan and organization.
+// TestStampProfilingLeavesTheBridgePortToTheApp pins that an app listening on
+// guest-init's profile bridge port gets no collectors, continuous or
+// on-demand: the bridge binds first and would take the app's port.
+func TestStampProfilingLeavesTheBridgePortToTheApp(t *testing.T) {
+	h := (&Handler{}).WithProfilingOnDemand(true).WithContinuousProfiling(true)
+	in := api.AppManifest{Port: api.ProfileBridgePort(), Profiling: &api.ProfilingConfig{Enabled: true}}
+	got := h.stampProfiling(in, state.App{}, state.Account{Plan: api.PlanPro})
+	if got.ProfilingOnDemand || got.Profiling == nil || got.Profiling.Enabled {
+		t.Fatalf("collectors stamped for an app on the bridge port: on_demand=%v profiling=%+v", got.ProfilingOnDemand, got.Profiling)
+	}
+	in.Port = 8080
+	if got := h.stampProfiling(in, state.App{}, state.Account{Plan: api.PlanPro}); !got.ProfilingOnDemand || !got.Profiling.Enabled {
+		t.Fatal("collectors withheld from an app on another port")
+	}
+}
+
 func TestStampProfilingFollowsCapabilityRelease(t *testing.T) {
 	var asked []platformflags.Subject
 	h := (&Handler{}).WithProfilingOnDemand(true).WithProfileCapturesRelease(func(s platformflags.Subject) bool {

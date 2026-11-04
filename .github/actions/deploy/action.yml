@@ -59,7 +59,7 @@ inputs:
     required: false
     default: "1200"
   rollout:
-    description: "Production rollout mode: standard or safe (balanced health-gated rollout; Pro/Scale only)"
+    description: "Production rollout mode: standard or safe (balanced health-gated rollout; available on every plan)"
     required: false
     default: "standard"
   # Issue #977 / ADR-116: deployment annotations surface. The CLI

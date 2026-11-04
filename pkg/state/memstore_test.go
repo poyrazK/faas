@@ -5056,6 +5056,14 @@ func memstoreSeedLiveSibling(t *testing.T, m *MemStore, ctx context.Context, pri
 	}
 	m.mu.Lock()
 	prior := m.deployments[priorDepID]
+	if deploymentServing(prior) {
+		// The demoted row served: record it as the
+		// deployment_serving_ended_at trigger does.
+		if m.deploymentServingEndedAt == nil {
+			m.deploymentServingEndedAt = map[string]time.Time{}
+		}
+		m.deploymentServingEndedAt[priorDepID] = time.Now().UTC()
+	}
 	prior.Status = DeployLive
 	prior.TrafficPercent = 0
 	m.deployments[priorDepID] = prior

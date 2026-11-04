@@ -121,7 +121,7 @@ Create a bucket with `public: true` and a stable `serve_at` path, for example
 is ready, `GET` and `HEAD` requests to
 `https://<app>.<apps-domain>/assets/<key>` are served directly by
 `gatewayd-public`; a route hit never wakes or proxies to the app. Responses
-use `Cache-Control: public, max-age=300, must-revalidate` and do not require a
+use `Cache-Control: public, max-age=300, must-revalidate, no-transform` and do not require a
 Gregale or S3 signed URL. Caches revalidate every five minutes, so deleting or
 replacing an object takes it down everywhere within that time. Anonymous reads
 may use at most 75% of the account's monthly request and egress ceilings, so
@@ -553,7 +553,10 @@ concurrent writes to the same part return 409. Different parts remain concurrent
 Successful verified transfers settle their token. Failed or uncertain transfers
 block finalization for a conservative 36-minute window (30-minute transfer
 context, 60-second internal URL, five-minute grace). Expiry alone releases no
-capacity. Completion checks the part revision and absence of in-flight writes,
+capacity. An abort settles an uncertain attempt once its window has ended and
+the native abort is verified (no parts or `NoSuchUpload`), so an upload a
+client abandoned mid-part finishes aborting instead of retrying forever
+(ADR-20261104151650); completion still waits for proof. Completion checks the part revision and absence of in-flight writes,
 then atomically persists its size, exact part list, and final-object grant.
 
 Conditional completion also persists its immutable condition in a distinct
@@ -591,7 +594,10 @@ Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication,
 ACLs, and bucket create/delete through the S3 protocol remain explicit
-`NotImplemented` gaps. Browser form uploads (presigned POST with a policy
+`NotImplemented` gaps, except that a write's `x-amz-acl: private` or
+`bucket-owner-full-control` is accepted and ignored. Every s3-gatewayd response
+carries `Cloudflare-CDN-Cache-Control: no-store`, so Cloudflare never keeps a
+private response; the cache-bypass rule below is still needed for HEAD requests. Browser form uploads (presigned POST with a policy
 document) are not supported: the gateway treats them as anonymous requests and
 answers 403 `SignatureDoesNotMatch`, so browsers should upload with a presigned
 PUT URL instead. Keys containing `/./` or `/../` path segments cannot be used
@@ -889,43 +895,105 @@ destination credential. The API reports `copy_sources_per_credential` with
 Removing a grant frees one slot; narrowing or replacing its prefix uses the
 existing slot. Each literal UTF-8 prefix is limited to 1024 bytes.
 
-Example safety values **only**, not approved pricing or plan allowances:
+Use `gateway_safety_v1` for managed storage. The published rate card prices
+storage only, and Gregale meters stored bytes itself in this mode
+([ADR 20261024132844](../adr/20261024132844-gateway-metered-object-storage-billing.md)).
+It is also the only mode in which s3-gatewayd admits reads from cached
+decisions and batches their counts
+([ADR 20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md)).
+The other mode, provider reports (no `accounting_mode`), has some costs:
+
+- a bucket can be provisioned only on backends with a fresh
+  `usage_reports_path`;
+- every GET takes the locking admission path, with control-plane
+  transactions;
+- the request and egress meters it adds price nothing, because the published
+  rate card makes them free.
+
+Gateway safety needs:
+
+- `public_endpoint`;
+- the `proxied` transfer profile;
+- a `gateway_metering_since` that is not in the future;
+- `max_monthly_cost_millicents: 0`.
+
+Only buckets created after `gateway_metering_since` qualify (ADR-627), and an
+account with an older bucket, even one deleted this month, has every read and
+write of every bucket refused as stale. Never move it later on a deployment
+that already has buckets, and turn the mode on before the first customer
+bucket. Production has run this mode since `2026-10-12T08:41:00Z`, before its
+first bucket.
+
+Each plan has its own stored-bytes ceiling (ADR-20261101214152): Free 1 GiB,
+Hobby 20 GiB, Pro 250 GiB, Scale 1,000 GiB. A spend cap below what that
+storage costs lowers it. Support raises one paid account's ceiling with
+`gregalectl accounts object-storage-ceiling --account-id ID --gib N --reason
+R --yes`, and `--plan` returns it to the plan's; the cap still applies, and
+`max_account_bytes` still bounds every account. Paid plans set no request or
+authorization ceilings of their own, so size those values, and
+`max_account_bytes` for the largest grant support may give. `max_account_keys` is at most one
+million (`api.MaxObjectStorageAccountKeys`), because a bucket is metered by
+listing it whole.
+
+apid enforces the tighter of the safety policy and the plan, so a policy
+below what the plans sell holds every account below its plan. With
+`FAAS_ENVIRONMENT=production`, apid refuses new buckets and withdraws object
+storage from capabilities until `max_account_bytes` and `max_bucket_bytes`
+reach the largest plan ceiling (1,000 GiB), `max_monthly_egress_bytes` the
+largest plan egress (2,000 GiB) and `max_account_keys` one million; every
+environment logs the shortfall at startup (`object storage safety policy
+sells plans less than they promise`). CD sets `FAAS_ENVIRONMENT=production`
+for apid in every `production*` environment (the control-plane role's
+`faas_environment`, staged by `scripts/ci/faas_environment_vars.sh`); before
+2026-11-03 no deploy set it, so the refusal never ran. A support grant above
+`max_account_bytes` is refused, because it would not take effect.
+
+A provider that refuses the installation's credentials withdraws object
+storage for an hour; after that the next bucket operation tries the provider
+again and restores it or renews the hour.
+
+Example safety values, sized for the plans (production-us runs these since
+2026-11-02); they are not plan allowances:
 
 ```json
 "accounting": {
-  "max_account_bytes": 10737418240,
-  "max_bucket_bytes": 5368709120,
-  "max_account_keys": 100000,
-  "max_monthly_cost_millicents": 500000,
-  "max_monthly_requests": 1000000,
-  "max_monthly_egress_bytes": 10737418240,
-  "max_monthly_authorizations": 100000,
+  "accounting_mode": "gateway_safety_v1",
+  "gateway_metering_since": "2026-11-01T00:00:00Z",
+  "max_account_bytes": 1099511627776,
+  "max_bucket_bytes": 1099511627776,
+  "max_account_keys": 1000000,
+  "max_monthly_cost_millicents": 0,
+  "max_monthly_requests": 10000000,
+  "max_monthly_egress_bytes": 2147483648000,
+  "max_monthly_authorizations": 1000000,
   "max_report_age_seconds": 7200
 }
 ```
 
-Costs use EUR millicents: 1000 millicents = 1 cent. These are ceilings on
-reported upstream cost, not customer invoice rates. Every limit must be
-positive; zero is not an unlimited setting. Report freshness must be 60–86400
+In provider-report mode, `max_monthly_cost_millicents` must instead be a
+positive ceiling on reported upstream cost, in EUR millicents (1000 millicents
+= 1 cent), not a customer invoice rate. Every other limit must be positive;
+zero is not an unlimited setting. Report freshness must be 60–86400
 seconds and the key ceiling at most one million. OVH access-log-backed
 reporting requires at least 7200 seconds to allow for the provider's normal
 one-hour delivery lag and the five-minute export interval.
 
-An optional `pricing` object can add a provider-neutral customer rate card
-without changing the safety policy:
+An optional `pricing` object turns on customer charges without changing the
+safety policy. It must be the published rate card, ADR-1430's: storage at
+$0.03 per GiB-month (`api.ObjectStorageMillicentsPerGiBMonth`) beyond each
+plan's included storage, with request and egress prices at zero. apid refuses
+to start with any other `pricing` (`api.PublishedObjectStoragePricing`), so a
+mistyped price or currency cannot reach invoices:
 
 ```json
 "pricing": {
   "currency": "USD",
-  "storage_millicents_per_gib_month": 15000,
-  "requests_millicents_per_million": 500,
-  "egress_millicents_per_gib": 90000
+  "storage_millicents_per_gib_month": 3000,
+  "requests_millicents_per_million": 0,
+  "egress_millicents_per_gib": 0
 }
 ```
 
-The published rate card is ADR-1430's: storage at $0.03 per GiB-month
-(`storage_millicents_per_gib_month: 3000`, `api.ObjectStorageMillicentsPerGiBMonth`)
-beyond each plan's included storage, with request and egress prices at zero.
 [`docs/plans.md`](../plans.md) lists the included storage per plan.
 
 `gateway_safety_v1` has no provider usage reports, so Gregale meters stored
@@ -1264,6 +1332,15 @@ Third-party writers without the tracked capability retain conservative
 admissions and the previous failure-receipt behavior. Historical/direct signed
 uploads, copies and uncertain writes still cannot be force-refunded.
 
+Known GCS limitation: GCS returns a generation for every object, even in a
+bucket without versioning, and accounting reads any native version ID as
+retained versions. A GCS bucket's first tracked write therefore moves it to
+`all_versions` accounting, after which ADR-540 declines direct signed PUTs,
+untracked gateway writes and multipart completion with 409. S3 backends (OVH)
+return no version ID for an unversioned bucket and are unaffected. Object
+storage moves to OVH before customer launch, so this is not fixed on GCS
+(production journey 2026-11-03).
+
 The route policy is provider-neutral. It uses the registry's optional streaming
 writer, so switching an immutable bucket placement between OVH, R2, AWS, GCS,
 or another compatible backend does not change the customer endpoint. The
@@ -1434,10 +1511,10 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   - **Pricing and budget cutoffs.** ADR-1430 prices storage. At the spend cap,
     storage keeps serving within plan limits and is billed only up to the cap
     ([ADR 20261020160000](../adr/20261020160000-object-storage-in-budgets.md));
-    budgets count the uncapped estimate. Free stops at 1 GiB. Paid plans have
-    no stored-bytes ceiling of their own, so the operator's
-    `max_account_bytes` bounds the storage above a customer's cap that nobody
-    pays for. Set it with that cost in mind.
+    budgets count the uncapped estimate. Each plan has a stored-bytes ceiling
+    (ADR-20261101214152), so the storage above a customer's cap that nobody
+    pays for is at most the plan's ceiling, or a support grant, less what the
+    cap covers.
   - **Account deletion.** Deleting an account, or 21 days of non-payment,
     starts the 30-day grace. Suspension, pending deletion and an abuse hold
     stop every data path at once: S3 credentials, signed URLs, upload grants

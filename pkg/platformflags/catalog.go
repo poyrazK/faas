@@ -55,6 +55,16 @@ const (
 	RealtimeAccess     = "realtime_access"
 	RealtimeOccupancy  = "realtime_occupancy"
 	StrictBudgets      = "strict_budgets"
+	// AppHealthWorkers assesses worker pools in app health
+	// (ADR-20261102091500) for the accounts it releases.
+	AppHealthWorkers = "app_health_workers"
+	// AppHealthMemory warns in app health when an app's guests ran short of
+	// memory (ADR-20261102124306) for the accounts it releases.
+	AppHealthMemory = "app_health_memory"
+	// PostgresPoolSizing stamps GREGALE_POSTGRES_POOL_MAX, the pool size an
+	// instance can use, on the deployments imaged builds for the accounts it
+	// releases (ADR-20261104141122).
+	PostgresPoolSizing = "postgres_pool_sizing"
 
 	// QuietPauseUnbilled releases unbilled quiet pause (ADR-20261023171905)
 	// to accounts where meterd's quiet_pause_unbilled mode is on.
@@ -324,6 +334,33 @@ var catalog = []Spec{
 			"its routes answer an unregistered route to accounts outside the flag after authentication.",
 		ADR:       "ADR-20261020170649",
 		Consumers: []string{"apid", "gatewayd-internal"},
+	},
+	{
+		Key:         AppHealthWorkers,
+		Label:       "Worker health",
+		Description: "Assess worker pools in app health (running replicas against the pool minimum, backlog age, recent dead letters) for the accounts it releases. Off, a worker's health reads unsupported, as before.",
+		ADR:         "ADR-20261102091500",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-03-31",
+	},
+	{
+		Key:         AppHealthMemory,
+		Label:       "Memory-pressure health",
+		Description: "Warn in app health when an app's guests ran short of memory in the last day (available memory at 15% or less), before an OOM kill, for the accounts it releases. Off, app health has no memory check, as before.",
+		ADR:         "ADR-20261102124306",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-03-31",
+	},
+	{
+		Key:         PostgresPoolSizing,
+		Label:       "Postgres pool sizing",
+		Description: "Stamp GREGALE_POSTGRES_POOL_MAX (the instance's per-instance concurrency, at most 10) on the deployments imaged builds for the accounts it releases; the SDKs' PostgresPoolBinding hands it to the pool factory as the default size. Off, deployments build as before.",
+		ADR:         "ADR-20261104141122",
+		Consumers:   []string{"imaged"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
+		RetireBy:    "2027-03-31",
 	},
 	{
 		Key:         StrictBudgets,

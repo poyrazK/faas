@@ -72,6 +72,11 @@ faas_compute_allowed_ports:
   - 9091
   - 9093
   - 50053
+# ADR-1027: control-plane ingress from database nodes. pgproxyd reads role
+# verifiers from PostgreSQL and wakes databases through schedd; the
+# manifest generator renders both lists from the database hosts.
+faas_database_allowed_cidrs: []
+faas_database_allowed_ports: [5432]
 # Control-plane ingress to compute services. The manifest generator sets
 # these only on compute-only hosts; an empty list keeps the one-box policy.
 faas_control_plane_allowed_cidrs: []
@@ -129,6 +134,22 @@ faas_cloudflare_ipv6_cidrs: []
 # every source even on a Cloudflare origin. The platform site keeps answering
 # Cloudflare only at Caddy (public_edge role).
 faas_custom_domain_tls: false
+# ADR-20261103163954: a compute edge with no proxy in front. Its public entry
+# addresses take TCP/443 from every source and nothing else; sshd stays on the
+# node's other addresses behind the provider firewall. Takes precedence over
+# faas_cloudflare_origin_only and faas_custom_domain_tls. Write each address in
+# canonical form (vmmd renders the same policy and refuses any other).
+faas_public_entry_addrs: []
+# ADR-20261103163954 §4: kernel settings for a node with public entry
+# addresses. A spoofed SYN flood leaves one conntrack entry per SYN in
+# SYN_RECV, and that table is shared with tenant NAT: at the default 60 s a
+# few thousand SYNs a second fill it and the node's tenants lose new
+# outbound connections. A legitimate handshake leaves SYN_RECV within a round
+# trip (a retransmit refreshes it). Applied only while
+# faas_public_entry_addrs is set.
+faas_public_entry_conntrack_max: 1048576
+faas_public_entry_conntrack_syn_recv_timeout: 10
+faas_public_entry_tcp_max_syn_backlog: 8192
 
 # UDP public app ports use the same explicit IPv4 source list as udpd.
 faas_udpd_enabled: false
@@ -140,3 +161,9 @@ faas_udpd_allowed_cidrs: []
 # service HTTPS listener (gatewayd_service_proxy_https_listen) is staged.
 faas_service_tcp_enabled: false
 faas_service_tcp_https_enabled: false
+
+# ADR-1027 managed-database route: guests reach pgproxyd at 198.18.0.1:5432
+# through the gatewayd-internal forwarder on the bridge (:10083). Mirrors
+# vmmd's database_route_enabled so a reboot keeps the boot-time ruleset
+# identical to the runtime render.
+faas_database_route_enabled: false

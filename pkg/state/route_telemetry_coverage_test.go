@@ -83,8 +83,10 @@ func TestProductionRouteMonitorUnavailableWhileGatewayLostTelemetry(t *testing.T
 	pool, s, a, app, _, candidate := productionMonitorPG(t)
 	productionMonitorTraffic(t, pool, a, app, candidate.ID, "POST", "/checkout", 500, 100, 600, false)
 	productionMonitorExec(t, pool, `INSERT INTO compute_nodes(name,target_url,vpcpus,mem_mb,max_concurrency,admission_ceiling_mb) VALUES('coverage-gw','unix:///run/test.sock',2,1024,10,512)`)
+	// One timestamp: three clock_timestamp() calls can put healthy_since a
+	// microsecond after received_at, which the table's CHECK refuses.
 	productionMonitorExec(t, pool, `INSERT INTO request_telemetry_coverage(node_name,boot_id,sequence,enabled,sampling_basis_points,dropped_total,pending_count,source_at,received_at,healthy_since)
-		VALUES('coverage-gw',gen_random_uuid(),1,true,10000,0,0,clock_timestamp(),clock_timestamp(),clock_timestamp())`)
+		VALUES('coverage-gw',gen_random_uuid(),1,true,10000,0,0,statement_timestamp(),statement_timestamp(),statement_timestamp())`)
 	r, err := s.GetRouteMonitorReport(t.Context(), a.ID, app.ID)
 	if err != nil || r.Status != "unknown" || r.Reason != "telemetry_unavailable" {
 		t.Fatalf("monitor on lost telemetry: status %s reason %s err %v", r.Status, r.Reason, err)

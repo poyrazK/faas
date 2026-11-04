@@ -174,7 +174,7 @@ func (s *Service) providerRefusingCredentials() bool {
 			backends = append(backends, backend.ID)
 		}
 	}
-	return s.health.anyFailing(backends)
+	return s.health.anyFailing(backends, time.Now())
 }
 
 // BucketView deliberately excludes operator placement, credentials and leases.
@@ -400,6 +400,11 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 			}
 			return old, nil
 		}
+	}
+	// The reservation enforces the limit under its lock; checking here first
+	// names the limit instead of a bare conflict.
+	if live := liveBucketCount(items); live >= s.Host.ObjectStorage().MaxBucketsPerApp {
+		return state.ObjectBucket{}, &state.ObjectStorageLimitError{Kind: "max_buckets_per_app", Limit: int64(s.Host.ObjectStorage().MaxBucketsPerApp), Observed: int64(live) + 1, Cause: state.ErrConflict}
 	}
 	if req.Region == "" {
 		req.Region = s.Host.ObjectStorage().DefaultRegion
@@ -780,4 +785,16 @@ func (s *Service) DeleteBucketAccessGrant(w http.ResponseWriter, r *http.Request
 		"app_id": bucket.AppID, "bucket_id": bucket.ID, "key_id": keyID,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// liveBucketCount counts the buckets toward max_buckets_per_app, as the
+// reservation does: every bucket not yet deleted.
+func liveBucketCount(items []state.ObjectBucket) int {
+	n := 0
+	for _, b := range items {
+		if b.State != "deleted" {
+			n++
+		}
+	}
+	return n
 }

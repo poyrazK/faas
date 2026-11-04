@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	gitopsapi "github.com/onebox-faas/faas/pkg/apid/gitops"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	gitopsdiagnostics "github.com/onebox-faas/faas/pkg/environmentgitops/diagnostics"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -47,6 +48,10 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 		return data, errors.New("environment Git source unavailable")
 	}
 	runs, err := s.store.(state.EnvironmentGitOpsStore).ListEnvironmentGitOpsRuns(r.Context(), acct.ID, source.ID, 20)
+	if err != nil {
+		return data, err
+	}
+	runs, err = gitopsapi.RedactRuns(runs)
 	if err != nil {
 		return data, err
 	}
@@ -92,6 +97,7 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 		if err != nil {
 			return data, err
 		}
+		plan = gitopsapi.RedactPlan(plan)
 		data.Adoption = &plan
 	}
 	return data, nil

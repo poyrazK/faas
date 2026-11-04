@@ -34,10 +34,12 @@ func verificationSourceStorage(ctx context.Context, source receiptSQL, relations
 	return result, nil
 }
 func physicalVerificationID(intent string, storage []string) string {
+	// Invalidate ranges proved with a different row encoding, while retaining
+	// the logical intent identity used by approvals and cancellation.
 	encoded, _ := json.Marshal(struct {
-		Intent  string
-		Storage []string
-	}{intent, storage})
+		Intent, Encoding string
+		Storage          []string
+	}{intent, "nullable-text-v1", storage})
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
 }

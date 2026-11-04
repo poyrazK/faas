@@ -20,6 +20,8 @@ func (h *Handler) Workspace(ctx context.Context, account, connection string) (da
 		return data, nil
 	}
 	data.Enabled = h.Service.Available(ctx, account)
+	data.ReadersEnabled = h.Service.Allowed != nil && h.Service.Allowed(ctx, account)
+	data.VerificationCancelEnabled = data.ReadersEnabled
 	data.DataAPIEnabled = h.Service.PlanDataAPI != nil && h.Service.PrepareDataAPI != nil && h.Service.DeployDataAPI != nil && h.Service.DataAPIState != nil
 	data.SetupEnabled = h.Service.PlanMirror != nil && h.Service.EnsureMirror != nil && h.Service.MirrorState != nil
 	if setupStore, ok := h.Service.Store.(datapipeline.SetupStore); ok {
@@ -52,7 +54,7 @@ func (h *Handler) Workspace(ctx context.Context, account, connection string) (da
 		if p.State != "deleted" {
 			data.Readers = append(data.Readers, readersView(p))
 		}
-		if p.VerificationProgress != nil {
+		if p.VerificationProgress != nil && p.VerificationProgress.ID != "" {
 			data.Verifications = append(data.Verifications, verificationView(p))
 		}
 		if p.SchemaChange != nil && (p.SchemaChange.ID != "" || p.SchemaChange.Cancellation != nil) {

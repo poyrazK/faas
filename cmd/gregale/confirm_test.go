@@ -105,15 +105,16 @@ func TestRequireTyped_PromptShape(t *testing.T) {
 	}
 }
 
-// production-us hunt #4: piped (non-terminal) stdin names the --quiet bypass
-// so a script waiting on the prompt says why in its log.
+// production-us hunt #4: piped (non-terminal) stdin names the bypass so a
+// script waiting on the prompt says why in its log. Every confirming command
+// accepts --yes (CLI audit 2026-10-31), so the hint names it.
 func TestRequireTyped_NonTerminalNamesTheBypass(t *testing.T) {
 	main.PipeStdin(t, "delete edge rule\n")
 	rd, restore := main.CaptureStderr(t)
 	got := main.RequireTyped("delete edge rule")
 	restore()
-	if !got || !strings.Contains(rd.String(), "pass --quiet to skip this confirmation") {
-		t.Fatalf("requireTyped = %v, stderr %q; want piped input accepted and the --quiet hint shown", got, rd.String())
+	if !got || !strings.Contains(rd.String(), "pass --yes to skip this confirmation") {
+		t.Fatalf("requireTyped = %v, stderr %q; want piped input accepted and the --yes hint shown", got, rd.String())
 	}
 }
 

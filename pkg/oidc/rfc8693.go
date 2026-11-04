@@ -90,10 +90,20 @@ func parseRFC8693Request(w http.ResponseWriter, r *http.Request) (ExchangeReques
 	if len(form["audience"]) != 1 || strings.TrimSpace(form.Get("audience")) == "" {
 		return ExchangeRequest{}, newRFC8693InputError("invalid_target", "exactly one audience is required by the Gregale token-exchange profile")
 	}
+	// The one resource this profile knows names the app a deploy bearer is
+	// for (ADR-20261101100000): a trust policy Gregale created binds its
+	// bearers to one app.
+	app := ""
 	for _, resource := range form["resource"] {
-		if strings.TrimSpace(resource) != "" {
-			return ExchangeRequest{}, newRFC8693InputError("invalid_target", "resource is not supported; use audience")
+		resource = strings.TrimSpace(resource)
+		if resource == "" {
+			continue
 		}
+		slug, ok := strings.CutPrefix(resource, appResourcePrefix)
+		if !ok || slug == "" || app != "" {
+			return ExchangeRequest{}, newRFC8693InputError("invalid_target", "the only supported resource is one "+appResourcePrefix+"<app> naming the app to deploy; use audience for the token audience")
+		}
+		app = slug
 	}
 	if len(form["actor_token"]) > 0 || len(form["actor_token_type"]) > 0 {
 		return ExchangeRequest{}, newRFC8693InputError("invalid_request", "actor_token delegation is not supported")
@@ -119,8 +129,13 @@ func parseRFC8693Request(w http.ResponseWriter, r *http.Request) (ExchangeReques
 		Provider: "oidc",
 		Token:    subjectToken,
 		Audience: strings.TrimSpace(form.Get("audience")),
+		App:      app,
 	}, nil
 }
+
+// appResourcePrefix is the RFC 8693 resource form of the app a deploy
+// bearer is exchanged for.
+const appResourcePrefix = "urn:gregale:app:"
 
 func writeRFC8693Error(w http.ResponseWriter, status int, code, description string) {
 	w.Header().Set("Cache-Control", "no-store")

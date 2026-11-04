@@ -167,3 +167,30 @@ production held three freezes, all lifted, so none needed converting.
 ## Amendment 5 (2026-11-01): overriding a company's freeze needs the right to lift it
 
 Any principal allowed to deploy could override, which amendment 4 kept. For a company organization that let a developer, or any member's CI key, ship past a freeze an owner or admin set for the whole company, with nobody but the audit log told. An override of a company organization's freeze now needs what lifting it needs: an owner or admin, or the member who created the window, with a signed-in session or an admin-scoped key (lifting needs the admin scope since ADR-20261020085706 amendment 5). Others get `403 release_freeze_override_not_allowed`. An account's own freezes keep the open, audited override: one person both sets and overrides them.
+
+## Amendment 6 (2026-11-01): an after-rollback freeze ends when its rollback fails
+
+An after-rollback freeze starts when Gregale requests the automatic rollback. If that rollback does not restore the previous release (ADR-1445 amendment 4), the release it meant to replace still serves and a fix has to ship; the freeze, which only an owner or admin may lift in a company (amendment 5), held it. Gregale now lifts the after-rollback freezes that name the release when its automatic rollback fails, audited as `release.freeze_lifted` by `gregale`.
+
+## Amendment 7 (2026-11-02): a scheduled release overrides a company's freeze on the same terms
+
+Amendment 5 held an immediate release's override of a company freeze to the right to lift it. A scheduled release took its override through a separate check, which only asked for a reason. `release_at` may be up to a minute in the past and the scheduled-release worker checks every 15 seconds, so a member's deploy key could deploy with `release_at` set to now and `override_freeze` set, and ship past an owner's freeze seconds later. Scheduling a release (a deploy with `release_at`, or `PUT /v1/deployments/{id}/schedule`) whose time falls in a company freeze now needs the same right as an immediate override: `403 release_freeze_override_not_allowed` otherwise.
+
+## Amendment 8 (2026-11-03): a scheduled release is built during the freeze it is created in
+
+A scheduled release was checked against freezes only at `release_at`, but it is built, and its release command (a migration) runs, as soon as it is deployed; only its traffic waits. A release scheduled during a freeze for after it so changed the production database during the freeze with no override and no audit (release review 2026-11-03). A deploy with `release_at` is now also checked against the freezes active when it is made, exactly as an immediate release: refused with `409 release_frozen` unless overridden, with the override held to amendment 5 and audited. Rescheduling a release that is already built (`PUT /v1/deployments/{id}/schedule`) is unchanged.
+
+## Amendment 9 (2026-11-03): release graphs and protected environments meet the release guards
+
+Two paths gave a release traffic with none of the guards (release review 2026-11-03):
+
+- **Release graph activation.** `release-sets/activate` and `release-sets/rollback` made a project release graph serve with only binding qualification: a member staged without traffic could ship during the break-glass pause or a freeze, past its app's approval policy, into a protected environment. A member that does not serve yet now meets exactly what `traffic` or promote would give it (the pause, the freezes that began after it was deployed, the app's approvals), and activating a graph in a protected environment other than production is refused. Members already serving, and a deactivation's fallback, are not new releases.
+- **Protected environments.** A protected environment takes releases through an approved project plan or environment promotion, but a single-app deploy into one (by `environment`, raw `scope`, or a GitHub push to its scope) needed no approval. Such a deploy is now refused (`409 project_environment_approval_required`) unless it stages the release without traffic, and that staged release cannot take traffic by hand (`traffic`, promote, rollback to it). Production keeps its direct releases, as for its routes (ADR-233): freezes, approval policies and the default rollout hold them.
+
+## Amendment 10 (2026-11-03): publishing a release set meets the same guards
+
+Amendment 9 held `release-sets/activate` and `release-sets/rollback` to the release guards, but `POST .../release-sets` publishes a project release set too, active at once, and it still accepted members staged without traffic with no pause, freeze, approval or protected-environment check (release review 2026-11-03). Publishing a set now holds its members exactly as an activation does.
+
+## Amendment 11 (2026-11-03): configuration of protected environments
+
+A protected environment takes changes through an approved project plan or environment promotion, but env var, secret value and project environment configuration writes into one were not checked, and the runtime reads them on the next wake, so they took effect like a release (release review 2026-11-03). Setting or deleting an env var, setting a secret value, and replacing the project environment configuration in a protected environment other than production are now refused (`409 project_environment_approval_required`). Deleting or rotating a secret stays open for incident response, and production keeps direct config writes, which the config guard (ADR-1451) undoes, as amendment 9 left its releases.

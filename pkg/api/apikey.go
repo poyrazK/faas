@@ -416,6 +416,12 @@ const (
 	// deploy:write so a CI key cannot silently take over a source-control
 	// connection.
 	ScopeGithubManage = "github:manage"
+	// ScopePreviewsRead reads the PR preview status of one app and nothing
+	// else. Only an OIDC exchange issues it (capability preview-read), bound
+	// to that app, so pull request CI can wait for its preview without a
+	// stored key (ADR-20261102203228). It is not in validScopes: no API key
+	// carries it.
+	ScopePreviewsRead = "previews:read"
 	// Reserved for synthetic principals backed by platform_tenant_access_tokens.
 	// They are deliberately excluded from validScopes and cannot be minted as
 	// account-wide API-key scopes.
@@ -551,6 +557,12 @@ var (
 	// deployment it just created without receiving account-wide apps:read.
 	ScopesDeploymentReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite}
 
+	// ScopesPreviewStatusReadSurface: read a PR preview's status
+	// (GET /v1/preview/{slug} and its environment). deploy:write is admitted
+	// as for deployment reads, and previews:read is the preview-read OIDC
+	// bearer's only scope (ADR-20261102203228).
+	ScopesPreviewStatusReadSurface = []string{ScopeAdmin, ScopeAppsRead, ScopeDeployWrite, ScopePreviewsRead}
+
 	// ScopesDeployTargetReadSurface: read the app a deploy targets
 	// (GET /v1/apps/{slug}). Every CLI deploy reads its app first, so
 	// deploy:write is admitted for the same reason as above: a deploy
@@ -578,6 +590,12 @@ var (
 	// Granted by admin or secrets:read.
 	ScopesAppForkSecretsSurface = []string{ScopeAdmin, ScopeSecretsRead}
 
+	// ScopesAIContentReadSurface: GET
+	// /v1/outbound/integrations/{integration}/ai-requests/{request}/content
+	// (ADR 20261027132936). Captured prompts and answers can hold personal
+	// data, so reading them is granted by admin or secrets:read.
+	ScopesAIContentReadSurface = []string{ScopeAdmin, ScopeSecretsRead}
+
 	// ScopesEnvWriteSurface: PUT/DELETE on /v1/apps/{slug}/env/{key}
 	// (issue #395 / ADR-045). Granted by admin or env:write.
 	// NOT MFA-gated because env vars are explicitly non-sensitive
@@ -601,6 +619,13 @@ var (
 	// runtime telemetry on the same trust model as env vars, and the
 	// pusher is typically unattended automation that cannot satisfy MFA.
 	ScopesMetricsWriteSurface = []string{ScopeAdmin, ScopeMetricsWrite}
+
+	// ScopesTracesWriteSurface: POST /v1/otel/v1/traces, the customer
+	// OTLP trace ingest (ADR-127 PR-D). Pushed spans are telemetry on
+	// metrics:write's trust model; deploy:write stays accepted for keys
+	// minted before ingest checked scopes, as on the events and queue
+	// producer routes. A read-only key cannot write traces.
+	ScopesTracesWriteSurface = []string{ScopeAdmin, ScopeDeployWrite, ScopeMetricsWrite}
 
 	// Delayed-task routes retain deploy:write/apps:read compatibility while
 	// allowing unattended schedulers to use a purpose-built credential.

@@ -113,7 +113,7 @@ func (a *testCountingAuthnAuditor) countByKind(kind string) int {
 func mintTestToken(t *testing.T, pub ed25519.PublicKey, priv ed25519.PrivateKey, svcName string, ttlSec int) string {
 	t.Helper()
 	kid := internalsvc.KidFromPub(pub)
-	tok, err := internalsvc.Mint(svcName, time.Duration(ttlSec)*time.Second, nil, priv, kid)
+	tok, err := internalsvc.Mint(svcName, time.Duration(ttlSec)*time.Second, map[string]any{"app_id": "app-1"}, priv, kid)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}

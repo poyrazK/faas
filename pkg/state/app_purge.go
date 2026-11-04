@@ -23,6 +23,14 @@ const (
 	// AppPurgeBlockedMultipartWrite: a dispatched, unsettled part write,
 	// which ADR-590 retains until it settles.
 	AppPurgeBlockedMultipartWrite = "multipart_write"
+	// AppPurgeBlockedExclusiveWork: an exclusive work operation still holds a
+	// live claim (running with an unexpired lease). Its worker may still write
+	// effects, so the purge waits for the claim to end.
+	AppPurgeBlockedExclusiveWork = "exclusive_work"
+	// AppPurgeBlockedEnvironmentClone: an environment clone still fences or
+	// targets one of the app's buckets. The clone workflow releases those
+	// rows; deleting them here would orphan its provider copies.
+	AppPurgeBlockedEnvironmentClone = "environment_clone"
 	// AppPurgeBlockedForeignKey: a row the purge does not remove still
 	// references the app (or a row the purge deletes), so a DELETE failed.
 	AppPurgeBlockedForeignKey = "foreign_key"

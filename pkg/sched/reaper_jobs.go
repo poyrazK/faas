@@ -158,7 +158,65 @@ func (e *Engine) JobReaperTick(ctx context.Context) (int, error) {
 	cfg := StuckJobReaperConfig{}.withDefaults()
 	reaped, reapErr := e.ReapStuckJobTasks(ctx, cfg)
 	reconciled, reconcileErr := e.ReconcileOrphanedJobInstances(ctx, cfg.BatchSize)
-	return reaped + reconciled, errors.Join(reapErr, reconcileErr)
+	stopped, stopErr := e.StopInactiveAccountJobRuns(ctx)
+	return reaped + reconciled + stopped, errors.Join(reapErr, reconcileErr, stopErr)
+}
+
+// StopInactiveAccountJobRuns cancels the running job runs of accounts that
+// may not run workloads: suspended, abuse-held or pending deletion
+// (ADR-1162 amendment 2026-11-03 (2)). Dispatch already starts no task for
+// them; their running tasks ran on to their timeout while their apps were
+// parked. Queued runs stay queued, so reactivation resumes them. A run at the
+// spend cap is not stopped: its tasks finish within the plan's task timeout.
+func (e *Engine) StopInactiveAccountJobRuns(ctx context.Context) (int, error) {
+	instances, err := e.store.ListJobInstances(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("sched: inactive job sweep: list: %w", err)
+	}
+	inactive := map[string]bool{}
+	cancelled := map[string]bool{}
+	stopped := 0
+	var errs []error
+	for _, ins := range instances {
+		if ins.JobID == "" {
+			continue
+		}
+		job, err := e.store.JobGetByID(ctx, ins.JobID)
+		if err != nil {
+			continue
+		}
+		held, seen := inactive[job.AccountID]
+		if !seen {
+			account, err := e.store.AccountByID(ctx, job.AccountID)
+			held = err == nil && !account.Active()
+			inactive[job.AccountID] = held
+		}
+		if !held {
+			continue
+		}
+		runs, err := e.store.JobRunListByJob(ctx, job.ID, scheduledJobRunLookback, 0)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("job %s: list runs: %w", job.ID, err))
+			continue
+		}
+		for _, run := range runs {
+			if run.AggregateStatus != "running" || cancelled[run.ID] {
+				continue
+			}
+			cancelled[run.ID] = true
+			if _, err := e.CancelJob(ctx, job.AccountID, run.ID); err != nil && !errors.Is(err, ErrJobRunTerminal) {
+				errs = append(errs, fmt.Errorf("run %s: cancel: %w", run.ID, err))
+				continue
+			}
+			if err := e.ReconcileCancelledJobRun(ctx, run.ID); err != nil {
+				errs = append(errs, fmt.Errorf("run %s: stop: %w", run.ID, err))
+				continue
+			}
+			stopped++
+			e.log.Info("sched: stopped a job run of an inactive account", "run_id", run.ID, "job_id", job.ID)
+		}
+	}
+	return stopped, errors.Join(errs...)
 }
 
 // ReconcileOrphanedJobInstances retries the durable half of terminal job

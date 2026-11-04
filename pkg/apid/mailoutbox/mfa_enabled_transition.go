@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5"
@@ -79,6 +80,9 @@ func (s *Service) ConfirmMFAEnrollmentWithAlert(ctx context.Context, id, email, 
 	}
 	defer rollback(ctx, tx)
 	defer clear(account.MfaSecretEncrypted)
+	if account.MfaEnrolledAt.Valid {
+		return ErrMFAEnrollmentAlreadyEnabled
+	}
 	if len(account.MfaSecretEncrypted) == 0 {
 		return ErrMFAEnrollmentUnavailable
 	}
@@ -88,16 +92,9 @@ func (s *Service) ConfirmMFAEnrollmentWithAlert(ctx context.Context, id, email, 
 	}
 	defer clear(envelope)
 	secret := envelope["MFA_SECRET"]
-	if !auth.VerifyCode(secret, code) {
+	step, valid := auth.VerifyCodeStep(secret, code, time.Now())
+	if !valid {
 		return ErrMFAEnrollmentInvalidCode
-	}
-	if account.MfaEnrolledAt.Valid {
-		// Already-confirmed accounts still prove possession before session clearance.
-		// Do not backfill an old enrollment or rewrite its timestamp on repeat calls.
-		if !s.mfaEnabledAlertEnabled() {
-			return internalmail.ErrDisabled
-		}
-		return nil
 	}
 	recovery, err := s.recovery(ctx, tx)
 	if err != nil {
@@ -106,7 +103,7 @@ func (s *Service) ConfirmMFAEnrollmentWithAlert(ctx context.Context, id, email, 
 	if recovery.Held {
 		return internalmail.ErrRecoveryHeld
 	}
-	at, err := s.queries.ConfirmMFAEnabledEnrollment(ctx, tx, account.ID)
+	at, err := s.queries.ConfirmMFAEnabledEnrollment(ctx, tx, q.ConfirmMFAEnabledEnrollmentParams{ID: account.ID, Step: step})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrMFAEnrollmentUnavailable
 	}

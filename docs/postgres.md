@@ -31,6 +31,24 @@ Operators: see the [operator guide](managed-postgres.md).
 - A database runs in a single zone. Gregale makes no high-availability
   promise for it; point-in-time restore and the 7-day undo of a delete are the
   recovery paths.
+- A plan downgrade waits until your databases fit the new plan: the refusal
+  lists the databases to delete and the ones to move to a class the plan
+  includes. A database whose delete is scheduled no longer counts.
+- A plan can also drop without that check, for example when a subscription
+  ends. Databases the new plan no longer includes are then suspended, never
+  deleted:
+  - your oldest databases are kept, up to the plan's database limit;
+  - a newer one shows `plan_excess: database_limit`;
+  - one in a class the plan does not include shows
+    `plan_excess: service_class`.
+
+  `get`, `list` and the dashboard show it, and you get an email. Its data,
+  credentials and app bindings are kept, but it does not start until you
+  upgrade, delete a database, or resize it to an included class. The next
+  usage sweep, within minutes, resumes it.
+- When the platform is near capacity, new databases on the Free plan pause
+  first (`503 managed_postgres_new_databases_paused`); paid plans can still
+  create them.
 
 ## Create a database
 
@@ -150,8 +168,9 @@ restore can target now. The earliest is the later of the database's creation
 and the start of its restore window.
 
 Attach the restored database under its own environment key when you want an
-app to read it. A source cannot be deleted while a database restored from it
-exists.
+app to read it. A source you delete while a database restored from it exists
+is kept until that copy is gone; see
+[Delete, recover and purge](#delete-recover-and-purge).
 
 The restored database counts toward your plan's database limit. When the
 account is at its limit, one restore may still go one database past it, on
@@ -168,9 +187,13 @@ every plan:
   delete is scheduled.
 - A second restore past the limit while a copy holds the slot returns
   `403 managed_postgres_restore_slot_in_use`. Purge the copy to restore again.
-- A copy cannot replace its source: the source cannot be deleted while the
-  copy exists. To keep restored rows on a one-database plan, copy them back
-  into the source, then purge the copy.
+- A copy can replace its source on a one-database plan: detach the source's
+  apps and purge it. The source no longer counts, so the copy becomes an
+  ordinary database. The source is kept, with its name and storage, until the
+  copy is deleted.
+- A [rollback that restores the database](deploys.md#rollbacks-that-restore-the-database)
+  never uses the slot: its copy becomes the app's database, so the account
+  needs room for it inside the limit.
 
 ## Change the compute class
 
@@ -229,7 +252,19 @@ days before it erases it.
 Until it is purged, a deleted database:
 - still counts toward your plan's database limit;
 - keeps its name, so creating another database with that name returns 409;
-- uses nothing from your compute allowance or storage pool.
+- uses nothing from your compute allowance or storage pool, unless it has a
+  restored copy (below).
+
+A database you restored a copy from, for example the original database after
+a rollback that restored it, can be deleted while the copy lives. The copy is
+stored inside the original, so:
+- the 7 days to recover it run as usual, and its usage keeps counting, because
+  it includes the copy's;
+- after that, or at once with `--purge`, it stays in `deleting`, with
+  `last_error_code` `restore_copies_remain`. It no longer counts toward your
+  database limit, and can no longer be recovered;
+- it is deleted for good once you delete its copies. Until then its name stays
+  taken, and the storage it holds stays in your storage pool.
 
 Undelete applies the same plan check as create. A database your current plan
 no longer allows, for example after a downgrade, cannot be recovered.

@@ -716,6 +716,8 @@ jobs:
       SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
       SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
       SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
+      SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
+      SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
       SEAL_DOMAIN_CONTROL_AGE_KEY: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_KEY }}
       SEAL_DOMAIN_CONTROL_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_RECIPIENT }}
       SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY }}
@@ -1063,11 +1065,12 @@ jobs:
           # seal-domain identities (runtime, build, edge, control) held as SEAL_DOMAIN_*
           # secrets and proves them before the node is activated.
           scripts/ci/seal_domain_vars.sh compute "$ARTIFACT_DIR/seal-domains" "$ARTIFACT_DIR/ansible-vars.yml"
-          # ADR-831 amendment 17: every gateway signs browser challenges with
-          # the GATEWAYD_EDGE_CHALLENGE_KEY secret. A release cut before the
-          # staging script cannot take it; deploying one (a rollback) leaves
-          # each gateway on its own session key, which FaasEdgeChallengeKeyMismatch
-          # reports.
+          # ADR-831 amendment 17 and ADR-20261102191500: the
+          # GATEWAYD_EDGE_CHALLENGE_KEY secret is the gateway fleet key every
+          # gateway signs challenges and deadlines with; the staging script
+          # fails the deploy without it. A release cut before the script
+          # cannot take it; deploying one (a rollback) leaves each gateway on
+          # its own key, which FaasEdgeChallengeKeyMismatch reports.
           if [[ -f scripts/ci/edge_challenge_key_vars.sh ]]; then
             bash scripts/ci/edge_challenge_key_vars.sh "$ARTIFACT_DIR/ansible-vars.yml"
           elif [[ -n "${GATEWAYD_EDGE_CHALLENGE_KEY:-}" ]]; then

@@ -55,6 +55,27 @@ func TestPostgresStoreRestoreSlot(t *testing.T) {
 	}
 }
 
+// A reservation that must fit inside the limit (a database switch's copy)
+// is refused at the limit instead of taking the slot.
+func TestPostgresStoreRestoreWithinTheLimit(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	at := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	source := postgresReadyDatabase(t, store, accountID, "within-source", at)
+	input := postgresTestDatabase(accountID, "within-copy", at.Add(time.Minute))
+	input.RestoreSourceDatabaseID, input.RestoreSourceResourceID, input.RestorePointInTime = source.ID, databaseDataResource(source), at
+
+	if _, _, err := store.Reserve(reserveWithinLimit(ctx), input, 1); !errors.Is(err, ErrQuotaExceeded) || errors.Is(err, ErrRestoreSlotInUse) {
+		t.Fatalf("restore within a full limit = %v, want the plain quota refusal", err)
+	}
+	if holders, err := store.RestoreSlots(ctx, 100); err != nil || len(holders) != 0 {
+		t.Fatalf("RestoreSlots after the refusal = %+v, %v", holders, err)
+	}
+	copied, created, err := store.Reserve(reserveWithinLimit(ctx), input, 2)
+	if err != nil || !created || !copied.RestoreSlotUntil.IsZero() {
+		t.Fatalf("restore with room = %+v, created %v, %v", copied, created, err)
+	}
+}
+
 func TestPostgresStoreRestoreSlotNotices(t *testing.T) {
 	store, _, ctx, accountID := postgresStoreFixture(t)
 	at := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
@@ -95,5 +116,37 @@ func TestPostgresStoreRestoreSlotNotices(t *testing.T) {
 	}
 	if notices, err := store.UnmailedRestoreSlotNotices(ctx, now, now, 10); err != nil || len(notices) != 0 {
 		t.Fatalf("notices older than since = %+v, %v", notices, err)
+	}
+}
+
+// ADR-20261102125208 step 3: a suspended database's notice is recorded once,
+// listed until mailed, and dropped once the database is back in the plan.
+func TestPostgresStorePlanExcessNotices(t *testing.T) {
+	store, _, ctx, accountID := postgresStoreFixture(t)
+	at := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	kept := postgresReadyDatabase(t, store, accountID, "plan-kept", at)
+	over := postgresReadyDatabase(t, store, accountID, "plan-over", at.Add(time.Minute))
+	ids := []string{kept.ID, over.ID}
+	for i, want := range []int{1, 0} {
+		if n, err := store.SyncPlanExcessNotices(ctx, ids, map[string]string{over.ID: PlanExcessDatabaseLimit}, at.Add(time.Hour)); err != nil || n != want {
+			t.Fatalf("sync %d = %d, %v; want %d", i, n, err, want)
+		}
+	}
+	notices, err := store.UnmailedPlanExcessNotices(ctx, at, 10)
+	if err != nil || len(notices) != 1 || notices[0].DatabaseID != over.ID || notices[0].AccountID != accountID ||
+		notices[0].DatabaseName != "plan-over" || notices[0].Reason != PlanExcessDatabaseLimit || !notices[0].RecordedAt.Equal(at.Add(time.Hour)) {
+		t.Fatalf("unmailed = %+v, %v", notices, err)
+	}
+	if notices, err := store.UnmailedPlanExcessNotices(ctx, at.Add(time.Hour), 10); err != nil || len(notices) != 0 {
+		t.Fatalf("notices older than since = %+v, %v", notices, err)
+	}
+	if _, err := store.SyncPlanExcessNotices(ctx, ids, map[string]string{over.ID: "storage"}, at); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown reason = %v; want ErrInvalid", err)
+	}
+	if _, err := store.SyncPlanExcessNotices(ctx, ids, nil, at.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if notices, err := store.UnmailedPlanExcessNotices(ctx, at, 10); err != nil || len(notices) != 0 {
+		t.Fatalf("after lifting = %+v, %v; want none", notices, err)
 	}
 }

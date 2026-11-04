@@ -139,6 +139,9 @@ type workloadSeed struct {
 	schedule  string
 	schedules []CronSchedule
 	ports     []int
+	// portsLoopback marks Compose ports that are all bound to a loopback
+	// address: the service listens but is not published (ADR-20261102192943).
+	portsLoopback bool
 	// internalPorts are compose expose: listeners (ADR-576); nil = undeclared.
 	internalPorts []api.WorkloadPort
 	envKeys       []string // KEYS only

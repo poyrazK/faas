@@ -37,6 +37,16 @@ func applyRolloutFlag(rollout string, explicit map[string]bool, safe *bool, cana
 	return nil
 }
 
+// safeFlagName is how a refusal names the safe rollout: as --rollout safe
+// when the person typed that, not as the deprecated --safe it maps onto
+// (Hunt 31 H31-1).
+func safeFlagName(explicit map[string]bool) string {
+	if explicit["rollout"] {
+		return "--rollout safe"
+	}
+	return "--safe"
+}
+
 // followRolloutByDefault reports whether deploy follows a canary rollout to
 // its end (ADR-1450): only for a person at a terminal, never in CI or JSON.
 func followRolloutByDefault() bool {

@@ -12711,8 +12711,23 @@ paths:
         Switch the account between `free`, `hobby`, `pro`, and `scale`. The
         local account moves to a paid tier only after the configured billing
         provider confirms payment. If a new subscription is required, the
-        `payment_required` response includes `checkout_url`; if an existing
-        subscription must be changed, it includes `billing_portal_url`.
+        `payment_required` response includes `checkout_url`. An existing
+        subscription changes in place: an upgrade is charged the prorated
+        difference now and answers 202 until the provider confirms it; a
+        declined charge answers 402 with `billing_portal_url` to update the
+        payment method, and the plan stays. A downgrade answers 202 and takes
+        effect at the end of the billing period. A billing email that already
+        pays for another account or organization answers 409
+        `billing_email_in_use`.
+
+        Asking for the plan the account already pays for keeps its
+        subscription: a scheduled cancellation or downgrade is undone and the
+        200 carries `plan_change_status: scheduled_change_undone`. A
+        subscription scheduled to end changes no plan, so an upgrade or
+        downgrade then answers 409 `billing_subscription_ending` until it is
+        kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+        answers 402 `payment_authentication_required` with
+        `billing_portal_url`; nothing is charged and the plan stays.
       requestBody:
         required: true
         description: "Plan change payload."
@@ -12930,6 +12945,9 @@ paths:
         cookie without the mfa_pending flag; future dashboard logins
         will require a TOTP verification because enrollment is the
         customer's explicit opt-in.
+        If the account has a password, current_password is also required
+        to authorize this new factor. An unconfirmed setup secret cannot
+        be used for session verification or recovery.
       requestBody:
         required: true
         content:
@@ -12943,12 +12961,17 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MFAConfirmResponse' }
         '401':
-          description: Invalid TOTP code.
+          description: Invalid TOTP code or missing/incorrect current password.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '404':
           description: No in-flight enrollment. Call /enroll first.
+        '409':
+          description: MFA is already enrolled; use /verify for a subsequent challenge.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/account/mfa/verify:
     post:
@@ -12977,6 +13000,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: MFA setup is incomplete; finish /confirm first.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/account/mfa/recover:
     post:
@@ -12984,10 +13012,10 @@ paths:
       operationId: mfaRecover
       summary: Burn a recovery code to regain access.
       description: |
-        Use when the customer's TOTP device is lost. Removes
-        one matching SHA-256 hash from the stored set; if the
-        customer burns the last code, /recover still works but
-        /disable via recovery_code no longer does.
+        Use when an enrolled customer's TOTP device is lost. Removes
+        one matching recovery-code hash from the stored set. The last
+        code is reserved for disabling MFA via recovery_code instead.
+        Pending setup material does not authorize recovery.
       requestBody:
         required: true
         content:
@@ -13002,6 +13030,11 @@ paths:
               schema: { $ref: '#/components/schemas/MFARecoverResponse' }
         '401':
           description: No matching recovery code.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: MFA setup is incomplete, or only the last recovery code remains.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -13332,9 +13365,11 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        Consumes a 24-hour, single-use verification token and marks the
-        account email verified. This endpoint does not create a session;
-        the returned HTML page prompts the customer to sign in again.
+        A browser (Accept text/html) gets an HTML page whose button posts the
+        token back, and nothing is consumed, so a mail scanner that prefetches
+        the link cannot use up the token. Any other client consumes the
+        24-hour, single-use token here and the account email is marked
+        verified. No session is created.
       parameters:
         - in: query
           name: token
@@ -13343,12 +13378,41 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: The confirmation page, or for a non-browser client the verified-email page.
           content:
             text/html:
               schema: { type: string }
         '410':
           description: Verification link expired, invalid, or already used.
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [auth]
+      operationId: confirmEmailVerification
+      summary: Confirm an email verification from its confirmation page.
+      description: |
+        The confirmation page's form posts the token here. It is consumed and
+        the account email marked verified; the HTML answer asks the customer
+        to sign in again rather than creating a session.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: The verification token from the confirmation page's form.
+      responses:
+        '200':
+          description: Email verified; HTML sign-in prompt.
+          content:
+            text/html:
+              schema: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '410':
+          description: The posted token is expired, unknown, or was already used.
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/reset:
@@ -16790,6 +16854,34 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/runtime/data-api/events:
+    post:
+      tags: [managed_postgres]
+      operationId: publishDataAPIChangeEvents
+      summary: Publish recorded Data API row changes
+      description: Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
+      x-internal: true
+      security:
+        - dataAPIEventsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DataAPIChangeEventBatch' }
+      responses:
+        '200':
+          description: Per-event outcomes in input order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DataAPIChangeEventBatchResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413':
+          description: The publication exceeds 1 MiB.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/operations/{id}/control:
     get:
@@ -22496,7 +22588,7 @@ paths:
           in: query
           required: false
           schema: { type: string, format: date-time }
-          description: "Optional RFC3339 upper-bound timestamp for the historical window."
+          description: "Optional RFC3339 upper-bound timestamp for the historical window. It must be within the plan's telemetry retention, counted back from now."
         - name: group_by
           in: query
           required: false
@@ -22628,7 +22720,7 @@ paths:
           in: query
           required: false
           schema: { type: string, format: date-time }
-          description: "Exclusive end timestamp; omitted means current server time."
+          description: "Exclusive end timestamp; omitted means current server time. It must be within the plan's telemetry retention, counted back from now."
         - name: route
           in: query
           required: false
@@ -22934,10 +23026,19 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         '200':
-          description: Exceptions accepted, including exact retries
+          description: Exceptions accepted, including exact retries. Partial success reports permanently rejected logs or spans.
           content:
             application/json:
-              schema: { type: object, additionalProperties: false }
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  partialSuccess:
+                    type: object
+                    properties:
+                      rejectedLogRecords: { type: string, description: Decimal count of rejected log records. }
+                      rejectedSpans: { type: string, description: Decimal count of rejected spans. }
+                      errorMessage: { type: string }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanFeatureGated' }
@@ -24069,6 +24170,26 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteIssue
+      summary: Permanently delete a standalone issue and its retained history.
+      description: Split linked groups and remove derived branches first. A later occurrence may create a new issue.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: abandon_unconfirmed_tickets
+          in: query
+          description: Explicitly abandon expired unconfirmed ticket dispatches. The provider may still have created a ticket, and deleting the issue removes its recovery receipt. Confirmed unattached tickets still block deletion.
+          schema: { type: boolean, default: false }
+      responses:
+        '204': { description: Issue and its dependent history deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
   /v1/apps/{slug}/issues/{issue_id}/split-preview:
     parameters:
@@ -28302,7 +28423,7 @@ paths:
         customer's plan — a CI consumer can preview a fresh deploy the
         same way the CLI does.
 
-        Auth: bearer-key with `apps:read` (or admin). NO MFA on this
+        Auth: bearer-key with `apps:read` or `deploy:write` (or admin). NO MFA on this
         endpoint, mirroring GET /v1/apps/{slug}/metrics.
 
         Schema-break detection is text-only (handler / entrypoint
@@ -28975,7 +29096,8 @@ paths:
 
         Once current-month overage meets/exceeds the cap, the scheduler refuses
         new wakes with `code: admission_refused` (HTTP 402). The cap is
-        account-self-scoped (admin scope required) and the response
+        account-self-scoped (admin scope required; a dashboard session also
+        needs a step-up within the last 5 minutes) and the response
         is the post-update account state. Audit row
         `overage.cap_changed` is emitted on every successful call.
       requestBody:
@@ -29086,12 +29208,19 @@ paths:
       summary: List repositories visible to the account's GitHub App installation.
       description: |
         Bearer API-key surface for customer automation. Requires the
-        dedicated `github:manage` scope. The account's durable GitHub App
-        installation is resolved server-side, so callers do not need to
-        copy or provide an installation id. Installation credentials are
-        never returned.
+        dedicated `github:manage` scope. `installation_id` names one of
+        the account's connected installations; without it the account's
+        only installation is used, and an account with several gets a 409
+        `github_installation_required` naming them. Installation
+        credentials are never returned.
       security:
         - bearerAuth: [github:manage]
+      parameters:
+        - name: installation_id
+          in: query
+          required: false
+          description: A GitHub App installation connected to the account.
+          schema: { type: integer, format: int64, minimum: 1 }
       responses:
         '200':
           description: Repositories currently visible to the account's GitHub App installation.
@@ -29100,10 +29229,16 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/RepoResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
           description: The account has not completed GitHub App installation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The account has several connected installations and none was named.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -29173,6 +29308,9 @@ paths:
         calls. A missing policy row resolves to the safe defaults for a new
         project. Legacy allow_marked compatibility rows are migrated to deny;
         customers can explicitly opt back in when production calls are safe.
+        An app without a project reports the defaults with an empty
+        `project_id` and its own `production_trigger` and
+        `preview_enabled`.
       security:
         - bearerAuth: [github:manage]
       responses:
@@ -29196,7 +29334,9 @@ paths:
         trailing `/**` directory patterns. `preview_service_policy=deny`
         rejects preview calls to production dependencies before discovery or
         wake-up; `allow_marked` preserves the marked-call compatibility mode.
-        Mutations require MFA.
+        An app without a project can set only `production_trigger` and
+        `preview_enabled`, once it is bound to a repository; other fields
+        answer 409 `project_required`. Mutations require MFA.
       security:
         - bearerAuth: [github:manage]
       requestBody:
@@ -31113,6 +31253,53 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/env/batch:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/EnvScope'
+      - $ref: '#/components/parameters/ConfigGuardQuery'
+    post:
+      tags: [env]
+      operationId: applyEnvBatch
+      summary: Atomically set and delete non-secret variables in one scope.
+      description: |
+        Requires env:write. Compares expected_revision against configuration
+        history and live values, then commits all variables, one history revision,
+        snapshot invalidation and a value-free replay receipt in one transaction.
+        Use revision 0 only for an empty scope with no history. Reuse request_id with the exact
+        original body after an uncertain response; the original receipt is
+        returned even if later changes advanced the revision. Receipts are kept
+        for at least 24 hours. Reusing an ID with a changed body conflicts.
+        Revision conflicts require another review and a new request ID.
+        Running instances receive values on their next cold wake or fresh restart.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnvBatchRequest' }
+      responses:
+        '200':
+          description: Durable transaction receipt; variable values are omitted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvBatchResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanLimitEnvVars' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Configuration changed, request ID reused, or a field is managed by environment GitOps.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/EnvValueTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Transaction unavailable; retry the original request ID and body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/config/revisions:
     parameters:
@@ -35270,9 +35457,13 @@ paths:
       tags: [workflows]
       operationId: injectPlatformTenantSelfWorkflowEvent
       summary: Deliver an external event to this tenant's waiting workflow run.
-      description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404.
+      description: Requires platform_tenant:invocations:manage. The authenticated tenant identity and active tenant-to-app link are checked at the durable write. Foreign, unbound, inactive-link, and missing runs return the same 404. A matching retained event may be retried after the run finishes; reusing its key with different content conflicts.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: Preserve this key and event content when retrying a retained tenant workflow event.
       requestBody:
         required: true
         content:
@@ -35289,7 +35480,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '409':
-          description: "code: workflow_not_running — only active runs accept events."
+          description: "code: workflow_not_running for a new event on an inactive tenant run, or conflict when a retained event key has different content."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -35791,6 +35982,13 @@ paths:
       tags: [workflows]
       operationId: injectWorkflowEvent
       summary: Deliver an external event to a waiting workflow run.
+      description: A matching retained event may be retried after the run finishes. Reusing an event key with different content conflicts.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string }
+          description: Reuse the same key and event content to retry while the event is retained.
       requestBody:
         required: true
         content:
@@ -35806,7 +36004,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/WorkflowRunNotFound' }
         '409':
-          description: "code: workflow_not_running — only running or awaiting_event runs accept events."
+          description: "code: workflow_not_running for a new event on an inactive run, or conflict when a retained event key has different content."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -41039,6 +41237,19 @@ paths:
       tags: [edge_rules]
       operationId: listEdgeRulesForApp
       summary: List every edge rule bound to one app.
+      parameters:
+        - name: covering
+          in: query
+          required: false
+          description: |
+            When true, also return the rules written on the account's other
+            apps with the same owner whose host pattern (anything but `@app`)
+            can cover this app's hosts. The gateway applies those to this
+            app's hosts too. Each rule carries its own `app_id`; the ETag
+            stays this app's rule set.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Edge rules for this app, ordered by priority ASC.
@@ -52971,6 +53182,104 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/agent-connections:
+    get:
+      tags: [keys]
+      operationId: listAgentConnections
+      summary: List the agents connected to the account.
+      description: |
+        The account's connected agents, newest first:
+        hosted MCP sign-ins, whose `mcp-login` keys the hosted MCP server
+        holds, and API keys with the `agent` scope. Only keys that still work
+        are listed. A hosted sign-in shows the client name its consent page
+        showed and the site the client was verified at, when known.
+      responses:
+        '200':
+          description: The connected agents.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConnectionsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/revoke_all:
+    post:
+      tags: [keys]
+      operationId: revokeAllAgentConnections
+      summary: Revoke every agent connected to the account.
+      description: |
+        Revokes the API key of every connected agent; each must sign in
+        again. Needs an admin credential. Audits `key.revoked` with reason
+        `agent_disconnected` for each key and `agent_connections.revoke_all`
+        with the count.
+      responses:
+        '200':
+          description: How many connections were revoked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConnectionsRevokeAllResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/self:
+    put:
+      tags: [keys]
+      operationId: nameAgentClient
+      summary: Name the client of the calling hosted MCP key.
+      description: |
+        Called by the hosted MCP server after a browser sign-in, with the
+        connection's own `mcp-login` key. Any other credential is refused.
+        The first name wins.
+      x-internal: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentClientRequest' }
+      responses:
+        '204': { description: No body. The client is named. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [keys]
+      operationId: disconnectAgent
+      summary: Revoke the calling hosted MCP key.
+      description: |
+        Called by the hosted MCP server when a connection ends (consent
+        denied, or the connection revoked or expired), with that connection's
+        own `mcp-login` key. Any other credential is refused.
+      x-internal: true
+      responses:
+        '204': { description: No body. The key is revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The connected agent's API key id.
+        schema: { type: string }
+    delete:
+      tags: [keys]
+      operationId: revokeAgentConnection
+      summary: Revoke one connected agent.
+      description: |
+        Revokes the agent's API key; the agent must sign in again. Needs an
+        admin credential. Revoking it again succeeds; an id that is not one of
+        the account's connected agents is 404.
+      responses:
+        '204': { description: No body. The agent's key is revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/keys/{id}/rotate:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -53032,6 +53341,115 @@ paths:
   # collapse to 404 (matches the DeleteAPIKeyReturning IDOR-safe pattern).
   # operationIds match the Go SDK method names 1:1 so the
   # cmd/sdk-coverage gate compiles cleanly.
+
+  /v1/orgs/{slug}/agent-connections:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [orgs, keys]
+      operationId: listOrgAgentConnections
+      summary: List the agents acting in an organization.
+      description: |
+        Hosted MCP connections bound to the organization and its API keys
+        with the `agent` scope that still work, newest first, with the
+        member who connected each. Owners and admins only.
+      responses:
+        '200':
+          description: The organization's connected agents.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConnectionsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/revoke_all:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [orgs, keys]
+      operationId: revokeAllOrgAgentConnections
+      summary: Revoke every agent acting in an organization.
+      description: |
+        Revokes the API key of every agent acting in the organization; each
+        must sign in again. Owners and admins only. Each revocation is
+        recorded in the organization's activity.
+      responses:
+        '200':
+          description: How many of the organization's connections were revoked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConnectionsRevokeAllResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The API key id of an agent acting in the organization.
+        schema: { type: string }
+    delete:
+      tags: [orgs, keys]
+      operationId: revokeOrgAgentConnection
+      summary: Revoke one agent acting in an organization.
+      description: |
+        Revokes the agent's API key; the agent must sign in again. Owners and
+        admins only. An id that is not one of the organization's agents is
+        404.
+      responses:
+        '204': { description: No body. The agent's organization key is revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [orgs]
+      operationId: getOrgAgentPolicy
+      summary: Show whether agents may act in an organization.
+      description: |
+        An organization that never set a policy allows agents with every
+        capability. Every member may read it.
+      responses:
+        '200':
+          description: The organization's agent policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgAgentPolicyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [orgs]
+      operationId: setOrgAgentPolicy
+      summary: Set whether agents may act in an organization.
+      description: |
+        Owners and admins only. Agents connecting to the organization get
+        only the capabilities the policy allows. Connections the new policy
+        no longer allows are revoked in the same request, and `revoked`
+        counts them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrgAgentPolicyRequest' }
+      responses:
+        '200':
+          description: The policy as saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgAgentPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/orgs/{slug}/keys:
     parameters:
@@ -54069,6 +54487,114 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/resource-inventory:
+    get:
+      tags: [apps]
+      operationId: getAppResourceInventory
+      summary: Read a bounded page of app resource metadata.
+      description: |
+        Requires apps:read and current application access. App-bound readers may
+        inspect only their immutable app. This is metadata access: object data,
+        database connections, credentials and lifecycle operations retain their
+        own permissions. Counts and offsets are filtered by app, kind and exact
+        scope in the native catalog before pagination. Resource capability flags
+        still apply. Domains and crons are app-wide; omit environment for them.
+        Pages are individual read snapshots; concurrent changes may move offsets.
+        Metadata state does not establish runtime readiness or connectivity.
+        No provider calls, probes, reservations or writes are performed.
+      parameters:
+        - { name: slug, in: path, required: true, description: Application whose resource references are requested., schema: { type: string } }
+        - name: kind
+          in: query
+          required: true
+          description: One metadata collection within the selected application.
+          schema: { type: string, enum: [domains, crons, buckets, storage_bindings, databases] }
+        - name: environment
+          in: query
+          description: Exact named environment in the app project; omit for default-scope inventory.
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: Maximum metadata entries in this backend page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          description: Offset within the selected app, resource kind and scope only.
+          schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 }
+      responses:
+        '200':
+          description: Filtered resource metadata and explicit continuation evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppResourceInventoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/operation-preview:
+    get:
+      tags: [apps]
+      operationId: getAppOperationPreview
+      summary: Preview authorization for an application operation without writing intent.
+      description: |
+        Requires application read or deployment scope and current application access.
+        Evaluates the target operation's native scope, organization role and release
+        policy. Authorization is a snapshot; admission remains unknown when exact
+        request validation, quotas, approval or runtime capacity need apply-time checks.
+        This endpoint creates no plan, approval, reservation or customer intent.
+      parameters:
+        - { name: slug, in: path, required: true, description: Application slug to inspect., schema: { type: string } }
+        - name: operation
+          in: query
+          required: true
+          description: Native application operation whose current authorization is inspected.
+          schema: { type: string, enum: [deploy, restart, scale, env_change] }
+        - name: environment
+          in: query
+          description: Named environment in the application's project; omit for default scope.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Native authorization snapshot and explicit admission limitations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppOperationPreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/costs:
+    get:
+      tags: [billing]
+      operationId: getAppCosts
+      summary: Read retained usage costs attributed to one application.
+      description: |
+        Requires usage:read and current application access. App-agent credentials may
+        opt into usage:read for their bound app; account billing remains inaccessible.
+        Uses the native billing subject and the canonical allocation of included
+        usage. Excludes other applications, account totals, invoices, forecasts,
+        and account-wide unpriced or nonbillable quantities. Sampling windows remain
+        explicit; per-app quantity coverage and a complete bill estimate are unknown.
+        All monetary amounts use integer millicents. This endpoint has no writes.
+      parameters:
+        - { name: slug, in: path, required: true, description: Application slug whose retained allocations are requested., schema: { type: string } }
+        - name: month
+          in: query
+          description: UTC month for this application's retained cost allocations; omit for the current month.
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+      responses:
+        '200':
+          description: Application allocations and source-window coverage, without account financial details.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppCostsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/billing/costs:
     get:
       tags: [billing]
@@ -54475,7 +55001,10 @@ paths:
       description: |
         Returns a provider-independent deployment and account billing
         projection. This customer endpoint requires usage:read and never
-        calls an operator catalog surface.
+        calls an operator catalog surface. A scheduled cancellation
+        (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+        `scheduled_plan_at`) is reported before it applies; asking for the
+        current plan with PATCH /v1/account/plan undoes it.
       responses:
         '200':
           description: Current deployment billing mode and customer attachment status.
@@ -54498,7 +55027,10 @@ paths:
         download receipts, cancel). When the active provider exposes
         customer sessions, the server creates a short-lived authenticated
         portal URL. Otherwise it renders the operator's
-        `FAAS_BILLING_PORTAL_URL` template.
+        `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+        that can cancel the subscription and replace the card, so the route
+        takes an admin credential, MFA, a verified email and, for a dashboard
+        session, a step-up within the last 5 minutes.
 
         The response also carries a `payment_method` block — the card-on-file summary (brand, last-4, expiry).
         The CLI's `faas billing payment-method` renders from this
@@ -57495,7 +58027,10 @@ paths:
         Owner-only (`org.remove_members`). Stamps `removed_at` on
         the row (the row stays for audit; live-cap count drops).
         Self-removal is rejected at the boundary; the last-owner
-        invariant surfaces as 409 `org_last_owner`.
+        invariant surfaces as 409 `org_last_owner`. The member whose email
+        the organization bills to cannot be removed while the organization
+        has a billing customer (409 `billing_contact_member`); set another
+        billing email with `PUT /v1/orgs/{slug}/billing/email` first.
       responses:
         '204': { description: Member removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -64118,7 +64653,13 @@ paths:
         Requires the organization owner, admin credential scope, verified email,
         MFA and recent step-up. Paid entitlements activate only after provider
         confirmation. Existing personal subscriptions are never reassigned.
-        A payment-required response carries checkout_url or billing_portal_url.
+        A payment-required response carries checkout_url, or billing_portal_url
+        when the upgrade charge of an existing subscription is declined. The
+        first checkout bills the acting owner's email until
+        `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+        Asking for the organization's current plan keeps its subscription,
+        undoing a scheduled cancellation or downgrade; while a cancellation is
+        scheduled any other plan answers 409 `billing_subscription_ending`.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -64194,6 +64735,283 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{slug}/billing/costs:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgFinancialCosts
+      summary: Read the organization's attributable usage costs.
+      description: |
+        Requires current organization membership, usage:read and session MFA.
+        An organization that owns its resources pays for its apps, so their
+        usage evidence is recorded under it rather than under the members who
+        created them. Same report as GET /v1/billing/costs, for the organization.
+      parameters:
+        - name: month
+          in: query
+          description: UTC usage month of the organization's report; defaults to the current month.
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+      responses:
+        '200':
+          description: Organization-owned cost breakdown, coverage, forecasts, and separate invoice facts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialCostsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{slug}/billing/budgets:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgFinancialBudgets
+      summary: List the organization's budget policies.
+      description: Requires current organization membership, usage:read and session MFA. Deleted policies are omitted. Drafts do not enforce limits.
+      responses:
+        '200':
+          description: Organization-owned policies, bounded to 128.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [orgs]
+      operationId: createOrgFinancialBudget
+      summary: Save an organization budget policy.
+      description: |
+        Requires the organization owner or billing role, admin scope, session MFA
+        and an Idempotency-Key (1..255 bytes). A budget covers what the
+        organization pays for: its apps, projects and environments, and its
+        whole account scope. The organization must own its resources. Monitored
+        notify and compute-only stop_previews policies can activate; alerts go
+        to the organization's billing contact. Strict policies return 422
+        financial_budget_activation_unavailable.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Stable identity of this organization budget creation, required for retries.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateFinancialBudgetRequest' }
+      responses:
+        '201':
+          description: Saved policy with revision 1; retries retain its identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Invalid organization policy count, or a strict or unsupported activation; nothing was written.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{slug}/billing/budgets/preview:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    post:
+      tags: [orgs]
+      operationId: previewOrgFinancialBudget
+      summary: Preview an organization budget and its workload consequences without writes.
+      description: Requires current organization membership, usage:read and session MFA. Same preview as POST /v1/billing/budgets/preview, over the apps the organization pays for. No policies, holds or decisions are written.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FinancialBudgetPreviewRequest' }
+      responses:
+        '200':
+          description: The organization's financial observation, affected workloads and readiness.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{slug}/billing/budgets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - name: id
+        in: path
+        required: true
+        description: Stable identity of an organization-owned budget policy.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [orgs]
+      operationId: getOrgFinancialBudget
+      summary: Read an organization budget, including its deletion tombstone.
+      description: Requires current organization membership, usage:read and session MFA. Foreign or missing policies return 404.
+      responses:
+        '200':
+          description: The organization budget's saved intent and enforcement readiness.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [orgs]
+      operationId: updateOrgFinancialBudget
+      summary: Replace an organization budget at its expected revision.
+      description: Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision must match the current policy; stale edits return 409. Strict policies return 422 financial_budget_activation_unavailable.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry key for replacing this organization budget at its expected revision.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateFinancialBudgetRequest' }
+      responses:
+        '200':
+          description: Updated policy and incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Strict or unsupported activation for an organization; its current revision is kept.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [orgs]
+      operationId: deleteOrgFinancialBudget
+      summary: Tombstone an organization budget while retaining its revision history.
+      description: Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision prevents stale deletion.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry identity for tombstoning this organization budget.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteFinancialBudgetRequest' }
+      responses:
+        '200':
+          description: The organization budget's tombstone at its next revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{slug}/billing/budgets/{id}/revisions:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgFinancialBudgetRevisions
+      summary: Page through an organization budget's immutable revisions.
+      description: Requires current organization membership, usage:read and session MFA. Use next_revision as after_revision for continuation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Organization budget whose immutable revision audit is listed.
+          schema: { type: string, format: uuid }
+        - name: after_revision
+          in: query
+          description: Exclusive cursor over the organization budget's revisions; pass the last next_revision.
+          schema: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991, default: 0 }
+        - name: limit
+          in: query
+          description: Maximum organization budget revisions returned in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: The organization budget's revisions, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/orgs/{slug}/billing/email:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    put:
+      tags: [orgs]
+      operationId: setOrgBillingEmail
+      summary: Set the email the organization bills to.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. The billing provider sends this address the
+        organization's invoices and signs it in to the organization's billing
+        portal, so use an address the organization controls rather than a
+        member's. The first organization checkout bills the member who starts
+        it until this is set. When the organization already has a billing
+        customer, the customer moves to the new email first and nothing changes
+        if the provider refuses. The provider keeps one customer per email: an
+        email another Gregale account or organization already pays with is
+        refused with 409 `billing_email_in_use`. While a member's email is the
+        billing email, that member cannot be removed (409
+        `billing_contact_member`).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrgBillingEmailRequest' }
+            example: {"billing_email": "billing@example.com"}
+      responses:
+        '200':
+          description: The organization's billing email after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgBillingEmailResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: The billing provider could not move the customer (`billing_email_change_failed`); the billing email is unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/orgs/{organization}/projects:
     parameters:
@@ -67573,6 +68391,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
+    dataAPIEventsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived Gregale workload identity for audience gregale:data-api:events, naming the publishing app and its live instance. Customer API keys cannot publish change events.
     operationsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -79744,6 +80567,7 @@ components:
         server_errors: { type: integer, format: int64, minimum: 0 }
         error_rate: { type: number, minimum: 0, maximum: 1 }
         p95_latency_ms: { type: number, minimum: 0, description: 'Weighted p95 estimate in milliseconds from collapsed telemetry representatives. Omitted when latency is not selected or evidence is unavailable; zero is a valid observation.' }
+        latency_requests: { type: integer, format: int64, minimum: 0, description: 'Requests the p95 ranked, to which the latency minimum applies. The canary guard ranks only requests that did not cold boot, and no reader ranks a long-lived response such as a WebSocket or an event stream. Omitted when every request was ranked.' }
         unauthenticated: { type: integer, format: int64, minimum: 0, description: 'Synthetic probe responses rejected by customer auth gates (401/403). Only present in synthetic_windows; a window where at least half of either side was rejected is unknown (probe_unauthenticated).' }
     RouteHealthWindowEvidence:
       type: object
@@ -81030,6 +81854,125 @@ components:
         quantity: { type: integer, format: int64 }
         net_millicents: { type: integer, format: int64 }
         allocations: { type: array, items: { $ref: '#/components/schemas/FinancialAppCostAllocation' } }
+    AppResourceInventoryBinding:
+      type: object
+      description: Selected-app database linkage without provider identities or credential references.
+      required: [id, database_id, app_id, scope, access, state, environment_key, rotation_pending]
+      properties:
+        id: { type: string }
+        database_id: { type: string }
+        app_id: { type: string }
+        scope: { type: string }
+        access: { type: string }
+        state: { type: string }
+        environment_key: { type: string }
+        rotation_pending: { type: boolean }
+    AppResourceInventoryItem:
+      type: object
+      description: Allowlisted resource metadata; optional fields depend on the page kind.
+      required: [id, app_id, scope]
+      properties:
+        id: { type: string }
+        app_id: { type: string }
+        scope: { type: string }
+        name: { type: string }
+        domain: { type: string }
+        verified: { type: boolean }
+        cert_status: { type: string }
+        schedule: { type: string }
+        path: { type: string }
+        timezone: { type: string }
+        enabled: { type: boolean }
+        region: { type: string }
+        state: { type: string }
+        postgres_major: { type: integer }
+        bucket_id: { type: string }
+        bucket: { type: string }
+        prefix: { type: string }
+        rotation_pending: { type: boolean }
+        binding: { $ref: '#/components/schemas/AppResourceInventoryBinding' }
+    AppResourceInventoryResponse:
+      type: object
+      description: One native app and scope metadata page with a filtered total and optional next offset.
+      required: [schema_version, app_id, scope, kind, limit, offset, total, items, has_more, generated_at]
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        app_id: { type: string }
+        scope: { type: string }
+        project_id: { type: string }
+        environment_id: { type: string }
+        kind: { type: string, enum: [domains, crons, buckets, storage_bindings, databases] }
+        limit: { type: integer }
+        offset: { type: integer }
+        total: { type: integer, format: int64 }
+        items: { type: array, items: { $ref: '#/components/schemas/AppResourceInventoryItem' } }
+        has_more: { type: boolean }
+        next_offset: { type: integer }
+        generated_at: { type: string, format: date-time }
+    AppOperationCheck:
+      type: object
+      description: One current native policy observation with a stable reason code.
+      required: [status, reason]
+      properties:
+        status: { type: string, enum: [allowed, blocked, unknown] }
+        reason: { type: string, description: Stable native policy reason code; no customer-provided text. }
+    AppOperationPreview:
+      type: object
+      description: Read-only operation authorization snapshot with separate admission limitations.
+      required: [schema_version, app_id, scope, operation, authorization, admission, required_scopes, checks, checked_at]
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        app_id: { type: string }
+        scope: { type: string }
+        project_id: { type: string }
+        environment_id: { type: string }
+        operation: { type: string, enum: [deploy, restart, scale, env_change] }
+        authorization: { type: string, enum: [allowed, blocked, unknown] }
+        admission: { type: string, enum: [allowed, blocked, unknown] }
+        required_scopes: { type: array, items: { type: string } }
+        checks:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/AppOperationCheck' }
+        checked_at: { type: string, format: date-time }
+    AppCostCoverage:
+      type: object
+      description: Source sampling windows with per-app quantity coverage explicitly unknown.
+      required: [complete, fresh, expected_minutes, complete_minutes, quantity_coverage_known, reasons]
+      properties:
+        complete: { type: boolean }
+        fresh: { type: boolean }
+        expected_minutes: { type: integer, format: int64 }
+        complete_minutes: { type: integer, format: int64 }
+        quantity_coverage_known: { type: boolean, description: False; account-wide unpriced and nonbillable quantities are not exposed. }
+        reasons: { type: array, items: { type: string } }
+    AppCostMeter:
+      type: object
+      description: Exact retained quantity and cost allocations for one app and meter.
+      required: [meter, coverage, quantity, net_millicents, allocations]
+      properties:
+        meter: { type: string }
+        coverage: { $ref: '#/components/schemas/AppCostCoverage' }
+        unit: { type: string }
+        quantity: { type: integer, format: int64 }
+        net_millicents: { type: integer, format: int64 }
+        allocations: { type: array, items: { $ref: '#/components/schemas/FinancialAppCostAllocation' } }
+    AppCostsResponse:
+      type: object
+      description: Retained application usage costs with coverage limitations and no account financial totals.
+      required: [app_id, app_slug, currency, period_start, period_end, as_of, known_usage_millicents, meters, scope, scope_description, bill_estimate_available, missing_bill_components]
+      properties:
+        app_id: { type: string }
+        app_slug: { type: string }
+        currency: { type: string }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        known_usage_millicents: { type: integer, format: int64 }
+        meters: { type: array, items: { $ref: '#/components/schemas/AppCostMeter' } }
+        scope: { type: string }
+        scope_description: { type: string }
+        bill_estimate_available: { type: boolean }
+        missing_bill_components: { type: array, items: { type: string } }
     FinancialAppCostsResponse:
       type: object
       description: Retained usage costs directly attributed to one application; invoice and forecast amounts remain account scoped.
@@ -83365,6 +84308,10 @@ components:
           type: string
           format: date-time
           description: "Set while a restored database is one past the plan's database limit. It becomes an ordinary database once the account has room; otherwise its delete is scheduled at this time."
+        plan_excess:
+          type: string
+          enum: [database_limit, service_class]
+          description: "Set while the plan no longer includes this database, for example after a subscription ended, and it is suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept), service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or resizing to an included class resumes it."
         restore_range:
           $ref: '#/components/schemas/ManagedPostgresRestoreRange'
     ManagedPostgresRestoreRange:
@@ -83628,6 +84575,7 @@ components:
       additionalProperties: false
       required: [name, region]
       properties:
+        request_id: { type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name." }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         region: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         postgres_major: { type: integer, minimum: 12, maximum: 99, default: 16 }
@@ -83827,6 +84775,32 @@ components:
       required: [month_to_date]
       properties:
         month_to_date: { $ref: '#/components/schemas/DataAPIUsageMonthToDate' }
+    DataAPIChangeEvent:
+      description: One recorded row change. The id is the change's UUID in the database; the platform derives the producer key data-api.change.ID from it.
+      type: object
+      additionalProperties: false
+      required: [id, type, data]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' }
+        type: { type: string, maxLength: 256, pattern: '^[!-~]+\.(inserted|updated|deleted)$', description: SCHEMA.TABLE.inserted, .updated or .deleted. }
+        time: { type: string, format: date-time, description: When the change was recorded. }
+        data: { description: The change, at most 64 KiB of JSON. }
+    DataAPIChangeEventBatch:
+      description: A runtime's private publication of recorded changes, in recorded order.
+      type: object
+      additionalProperties: false
+      required: [version, events]
+      properties:
+        version: { type: integer, enum: [1] }
+        events: { type: array, minItems: 1, maxItems: 100, items: { $ref: '#/components/schemas/DataAPIChangeEvent' } }
+    DataAPIChangeEventBatchResponse:
+      description: Per-event outcomes in input order, with the app source the events published under.
+      type: object
+      additionalProperties: false
+      required: [source, results]
+      properties:
+        source: { type: string, description: The app's producer source, app.APP_UUID. }
+        results: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/PublishEventBatchResult' } }
     DataAPIUsageBucket:
       description: One hour or UTC day of an owner usage view.
       allOf:
@@ -85452,8 +86426,16 @@ components:
         health: { type: string, enum: [not_connected, unknown, healthy, degraded] }
         connected: { type: boolean }
         installation_id: { type: integer, format: int64 }
-        github_login: { type: string }
-        default_branch: { type: string }
+        github_login:
+          type: string
+          description: The GitHub user or organization the App is installed on.
+        default_branch:
+          type: string
+          deprecated: true
+          description: |
+            Empty for newer connections: an installation has no default
+            branch, and a bind without a branch takes the repository's
+            default branch. Older connections report the `main` they stored.
         repo_full_name: { type: string }
         production_branch: { type: string }
         deploy_branches:
@@ -85477,6 +86459,22 @@ components:
             synced_at: { type: string, format: date-time }
         activity:
           $ref: '#/components/schemas/GitHubInstallActivity'
+        installations:
+          type: array
+          description: |
+            The account's connected installations when it has more than
+            one. An unbound app then reports no `installation_id`; a bind or
+            repository listing names one of these.
+          items:
+            $ref: '#/components/schemas/GitHubInstallationSummary'
+
+    GitHubInstallationSummary:
+      description: One GitHub App installation connected to the account.
+      type: object
+      required: [installation_id]
+      properties:
+        installation_id: { type: integer, format: int64 }
+        github_login: { type: string }
 
     GitHubInstallActivity:
       description: |
@@ -85506,6 +86504,14 @@ components:
         received_at: { type: string, format: date-time }
         processed_at: { type: [string, "null"], format: date-time }
         updated_at: { type: string, format: date-time }
+        skip_reason:
+          type: string
+          description: >-
+            Why a processed event deployed nothing: actions_trigger (production
+            deploys come from a GitHub Actions workflow), branch_not_deployed,
+            superseded (a newer commit reached the branch first), not_enabled,
+            tag_not_branch_head, no_binding, skip_marker, invalid_release_tag,
+            release_tag_moved or ignored. Absent when the event did its work.
 
     GitHubCheckActivity:
       description: Redacted Check Run synchronization activity for the bound GitHub app.
@@ -85613,7 +86619,18 @@ components:
         billing_address: { type: string, maxLength: 1000, description: "Free-form billing address used on future invoices." }
         tax_id: { type: string, maxLength: 128, description: "Customer tax/VAT identifier used on future invoices." }
         key_scopes: { type: array, items: { type: string }, description: "Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it." }
+        key_app: { $ref: '#/components/schemas/AppAgentBinding' }
+        key_org: { $ref: '#/components/schemas/KeyOrg' }
+        key_projects: { type: array, items: { type: string }, description: "Slugs of the projects the authenticating key is limited to; absent when the key reaches every project." }
         abuse_hold: { $ref: '#/components/schemas/AccountAbuseHold' }
+
+    AppAgentBinding:
+      type: object
+      description: "Immutable app binding of an app-scoped headless agent credential; absent for account keys."
+      required: [id, slug]
+      properties:
+        id: { type: string }
+        slug: { type: string }
 
     AccountAbuseHold:
       description: "Present while the account is on an abuse hold: outbound traffic from its workloads matched a scanning or abuse pattern, so nothing runs or deploys until an operator releases it."
@@ -85715,6 +86732,25 @@ components:
           format: int64
           minimum: 0
 
+    OrgBillingEmailRequest:
+      description: The email an organization bills to; invoices and the billing portal sign-in go to it.
+      type: object
+      required: [billing_email]
+      properties:
+        billing_email:
+          type: string
+          format: email
+          maxLength: 254
+
+    OrgBillingEmailResponse:
+      description: The email an organization bills to.
+      type: object
+      required: [billing_email]
+      properties:
+        billing_email:
+          type: string
+          format: email
+
     AccountRateLimitsResponse:
       description: Account-wide operation rate limits.
       type: object
@@ -85760,7 +86796,8 @@ components:
         api_keys: { type: array, items: { $ref: '#/components/schemas/APIKeyExportResponse' } }
         app_secrets: { type: array, items: { $ref: '#/components/schemas/AppSecretExportResponse' } }
         edge_rules: { type: array, items: { $ref: '#/components/schemas/EdgeRuleResponse' }, description: "Edge rules on the exported apps." }
-        edge_rule_lists: { type: array, items: { $ref: '#/components/schemas/EdgeRuleListResponse' }, description: "The account's edge rule lists, with their items." }
+        edge_rule_lists: { type: array, items: { $ref: '#/components/schemas/EdgeRuleListResponse' }, description: "The account's personal edge rule lists, with their items. An organization's lists are not part of a member's export." }
+        cors_presets: { type: array, items: { $ref: '#/components/schemas/CorsPresetResponse' }, description: "The account's CORS presets: account-wide ones and those scoped to the exported apps." }
         audit_trail:
           type: array
           items: { $ref: '#/components/schemas/GdprAuditExportResponse' }
@@ -94572,7 +95609,7 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/ReleaseGateResult' }
           description: "The release gates judged with this decision."
-        rollback_skipped: { type: string, description: "Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix." }
+        rollback_skipped: { type: string, description: "Post-release decisions only: why an automatic rollback did not take the release off: the problem code that refused it, such as rollback_crosses_release, or rollback_failed when it ran and did not restore the previous release. The regression was found; the release keeps serving until someone rolls back or ships a fix." }
         decided_at: { type: string, format: date-time }
 
     RolloutDecisionSample:
@@ -95068,6 +96105,18 @@ components:
         customer_configured: { type: boolean }
         subscription_configured: { type: boolean }
         usage_reconciliation_enabled: { type: boolean }
+        subscription_ends_at:
+          type: string
+          format: date-time
+          description: When a scheduled cancellation ends the subscription instead of renewing it; the plan then returns to Free. Absent when none is scheduled.
+        scheduled_plan:
+          type: string
+          enum: [free, hobby, pro, scale]
+          description: The plan a scheduled downgrade moves to at scheduled_plan_at. Absent when none is scheduled.
+        scheduled_plan_at:
+          type: string
+          format: date-time
+          description: When the scheduled downgrade applies.
 
     BillingPortalResponse:
       description: |
@@ -103754,6 +104803,8 @@ components:
         challenge_token: { type: [string, "null"] }
         verified: { type: boolean }
         verified_at: { type: [string, "null"], format: date-time }
+        verification_expires_at: { type: string, format: date-time, description: "Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof." }
+        verification_expired: { type: boolean, description: "True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS instructions are omitted; resume domain setup to recreate the claim." }
         txt_record: { type: [string, "null"] }
         default: { type: boolean, description: "True when this domain is the app's default. Set via `gregale domains set-default`." }
         cert_not_after: { type: [string, "null"], format: date-time, description: "Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the cert expiry renders against this field." }
@@ -104080,6 +105131,8 @@ components:
         retry_backoff_seconds: { type: [integer, "null"], minimum: 1, maximum: 3600, description: "Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed attempt." }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
+        clear_schedule_policy: { type: boolean, description: "Remove the cron's schedule policy. An omitted schedule_policy keeps it; cannot be sent with schedule_policy." }
+        clear_failure_rules: { type: boolean, description: "Remove the cron's failure rules. An omitted failure_rules keeps them; cannot be sent with failure_rules." }
 
     SchedulePolicy:
       description: >-
@@ -105080,7 +106133,8 @@ components:
 
     TriggerMetricsResponse:
       description: |
-        Aggregated counters per state for one trigger. NOT a Prometheus
+        Aggregated counters per state for one trigger, and the scheduler's
+        last observation of its broker consumer. NOT a Prometheus
         scrape — /v1/metrics is the Prometheus surface.
       type: object
       required:
@@ -105093,6 +106147,40 @@ components:
         succeeded_count: { type: integer }
         retry_count: { type: integer }
         dead_letter_count: { type: integer }
+        count_limit:
+          type: integer
+          description: Where each count stops; a count equal to it means at least that many.
+        consumer: { $ref: '#/components/schemas/TriggerConsumerStatus' }
+
+    TriggerConsumerStatus:
+      description: |
+        The scheduler's last observation of a trigger's broker consumer.
+        Absent until the trigger's first poll.
+      type: object
+      required: [liveness]
+      properties:
+        liveness:
+          type: string
+          enum: [healthy, degraded, stale, not_observed, unknown]
+          description: |
+            `degraded`: the last poll failed (see last_error). `stale`: no
+            poll for 30 s (the trigger is disabled, its app cannot run, or
+            no scheduler polls it).
+        last_poll_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        last_error_at: { type: string, format: date-time }
+        last_error: { type: string }
+        lag_messages:
+          type: integer
+          format: int64
+          description: |
+            The broker's backlog for the consumer. Kafka: high watermark
+            less the group's committed offset, summed over partitions.
+            NATS JetStream: the consumer's pending messages. Redis Streams:
+            the group's lag.
+        lag_age_seconds:
+          type: number
+          description: Age of the oldest record the last poll returned.
 
     CreateTriggerBatchRequest:
       description: |
@@ -110825,6 +111913,86 @@ components:
 
     # ─── API keys ─────────────────────────────────────────────────────────
 
+    AgentConnectionResponse:
+      description: "One agent connected to the account. `id` is the API key the agent uses; revoking the connection revokes that key."
+      type: object
+      required: [id, kind, prefix, scopes, created_at]
+      properties:
+        app_id: { type: string, description: "Immutable app boundary of an app_agent connection." }
+        id: { type: string, description: The agent's API key id. }
+        kind: { type: string, enum: [hosted_mcp, agent_key, app_agent], description: "`hosted_mcp` for a browser sign-in through the hosted MCP server; `agent_key` for an API key with the `agent` scope." }
+        client_name: { type: string, description: "The client name a hosted sign-in's consent page showed." }
+        client_site: { type: string, description: "The host the client was verified at: the site serving its metadata document, or its HTTPS redirect host. Empty for a local client." }
+        label: { type: string, description: The key label. }
+        prefix: { type: string, description: The key's display prefix. }
+        scopes: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        org_id: { type: string, format: uuid, description: The organization the agent acts in. }
+        member: { type: string, description: "Email of the member who connected the agent, in an organization's list." }
+        projects: { type: array, items: { type: string }, description: "Slugs of the projects the agent is limited to; absent when it reaches every project." }
+      example: {id: "3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19", kind: hosted_mcp, client_name: Claude, client_site: claude.ai, label: mcp-login, prefix: "fp_live_ab12cd34", scopes: ["apps:read"], created_at: "2026-10-30T11:25:00Z", last_used_at: "2026-10-30T12:05:00Z", expires_at: "2026-11-06T12:05:00Z"}
+
+    AgentConnectionsResponse:
+      description: The agents connected to the account, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AgentConnectionResponse' }
+
+    AgentConnectionsRevokeAllResponse:
+      description: The result of revoking every connected agent.
+      type: object
+      required: [revoked]
+      properties:
+        revoked: { type: integer, minimum: 0, description: The number of agent keys revoked. }
+
+    AgentClientRequest:
+      description: The client a hosted MCP connection's key belongs to, named once by the hosted MCP server.
+      type: object
+      required: [client_name]
+      additionalProperties: false
+      properties:
+        client_name: { type: string, minLength: 1, maxLength: 80, description: "Printable client name, without control characters or surrounding spaces." }
+        client_site: { type: string, maxLength: 253, description: Lower-case host name the client was verified at. }
+
+    OrgAgentPolicyRequest:
+      description: Whether agents may act in the organization, and the capabilities they may get.
+      type: object
+      required: [agents_allowed, allowed_scopes]
+      additionalProperties: false
+      properties:
+        agents_allowed: { type: boolean, description: Whether hosted MCP connections and agent keys may act in the organization. }
+        allowed_scopes:
+          type: array
+          description: Capabilities agents may get beyond inspection; empty for read-only.
+          items: { type: string, enum: [deploy:write, secrets:request, storage:manage, postgres:manage] }
+
+    OrgAgentPolicyResponse:
+      description: An organization's agent policy.
+      type: object
+      required: [agents_allowed, allowed_scopes]
+      properties:
+        agents_allowed: { type: boolean, description: Whether agents may act in the organization. }
+        allowed_scopes:
+          type: array
+          description: The capabilities agents may carry beyond inspection.
+          items: { type: string }
+        updated_at: { type: string, format: date-time, description: When the policy last changed; absent for an organization that never set one. }
+        revoked: { type: integer, minimum: 0, description: Agent connections a change revoked because the new policy no longer allows them. }
+
+    KeyOrg:
+      description: The shared organization an API key acts in.
+      type: object
+      required: [id, slug, name]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+
     APIKeyResponse:
       description: "API key metadata: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, request count. **Plaintext is returned only on POST**. `org_id` is the org the key was minted against; legacy account-scoped responses stamp `org_id = caller's personal org`. See `org.create_api_key` / `org.revoke_api_key` for the new org-scoped verbs."
       type: object
@@ -110853,6 +112021,7 @@ components:
         plaintext:
           type: [string, "null"]
           description: PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again.
+        projects: { type: array, items: { type: string }, description: "Project slugs the key was limited to, on the create response of a limited agent key." }
       example: {id: "0123456789abcdef0123456789abcdef", org_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c", prefix: "fp_live_ab12cd34", label: "ci-deploy", scopes: [apps:read, deploy:write], created_at: "2026-08-02T11:25:00Z", expires_at: "2027-08-02T11:25:00Z", status: "active", last_used_at: "2026-07-25T13:25:00Z"}
 
     DeployTokenResponse:
@@ -110887,9 +112056,14 @@ components:
           items: { $ref: '#/components/schemas/DeployTokenResponse' }
 
     CreateDeployTokenRequest:
-      description: "Create a deploy token scoped to one app. The server always assigns deploy:write."
+      description: "Create an app-bound credential. Standard tokens receive deploy:write; agent=true permits a narrow MCP permission set while preserving the native app boundary."
       type: object
       properties:
+        agent: { type: boolean, description: "Mint an app-bound headless MCP credential. Omit for a standard deploy token." }
+        scopes:
+          type: array
+          description: "Requires agent=true. Agent and apps:read are included; omitted scopes also include deploy:write."
+          items: { type: string, enum: [agent, "apps:read", "deploy:write", "env:write", "secrets:request", "storage:manage", "usage:read"] }
         label: { type: string, maxLength: 100 }
         expires_at: { type: string, format: date-time, description: "Optional future expiry; defaults to 90 days and is capped at 365 days." }
 
@@ -110920,6 +112094,7 @@ components:
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
+        projects: { type: array, maxItems: 100, items: { type: string }, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project." }
 
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
@@ -110947,6 +112122,7 @@ components:
           items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
+        projects: { type: array, maxItems: 100, items: { type: string }, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project." }
 
     ListOrgAPIKeysResponse:
       description: "GET /v1/orgs/{slug}/keys body. Returns every key minted against the org (active + grace + revoked). Newest first; matches the legacy `GET /v1/keys` ordering."
@@ -111619,6 +112795,34 @@ components:
         window_ends_at: { type: string, format: date-time }
         closed_at: { type: string, format: date-time }
         decision: { $ref: '#/components/schemas/ConfigGuardDecision' }
+    EnvBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_revision]
+      description: At least one set or delete is required. Keys must be distinct across both collections; plan limits bound collection counts and value sizes.
+      properties:
+        request_id: { type: string, format: uuid }
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        values:
+          type: object
+          additionalProperties: { type: string }
+          description: Non-secret variable values to set, omitted from receipts.
+        delete:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+    EnvBatchResponse:
+      description: Durable value-free receipt of an atomic variable batch.
+      type: object
+      required: [request_id, app_id, scope, updated_keys, deleted_keys, config_change]
+      properties:
+        request_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        updated_keys: { type: array, items: { type: string } }
+        deleted_keys: { type: array, items: { type: string } }
+        config_change: { $ref: '#/components/schemas/ConfigChangeReceipt' }
+
     ConfigRevision:
       description: "One recorded config change, without values."
       type: object
@@ -111626,7 +112830,7 @@ components:
       properties:
         revision: { type: integer, format: int64 }
         scope: { type: string }
-        source: { type: string, enum: [baseline, env.set, env.delete, secret.set, secret.delete, secret.rotate, config.rollback, config.guard_restore] }
+        source: { type: string, enum: [baseline, env.set, env.delete, env.batch, secret.set, secret.delete, secret.rotate, config.rollback, config.guard_restore] }
         key: { type: string }
         actor: { type: string }
         created_at: { type: string, format: date-time }
@@ -111782,7 +112986,7 @@ components:
         timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "Default 1440." }
         approvers: { type: string, enum: [admin, developer], description: "Default admin." }
         allow_self_approval: { type: boolean, description: "Default false; always true for an app outside an organization." }
-        notify_channels: { type: array, maxItems: 5, uniqueItems: true, items: { type: string }, description: "Names of Slack or email notification channels; PagerDuty channels are refused. Slack messages link to the approval page." }
+        notify_channels: { type: array, maxItems: 5, uniqueItems: true, items: { type: string }, description: "Names of Slack or email notification channels; at least one is needed, so the approvers learn a release waits, and PagerDuty channels are refused. Slack messages link to the approval page." }
     DecideReleaseApprovalRequest:
       description: "One person's decision on a release. A rejection needs a comment."
       type: object
@@ -112641,7 +113845,7 @@ components:
       properties:
         code:
           type: string
-          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection]
+          enum: [workload, deployment, latest_deployment, readiness, traffic_readiness, maintenance, requests, collection, replicas, queue, backlog, dead_letters, memory]
         status:
           type: string
           enum: [pass, warning, fail, unknown, not_applicable]
@@ -112650,7 +113854,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string
@@ -114479,6 +115683,24 @@ components:
         deployment_costs:
           $ref: '#/components/schemas/RequestAnalyticsDeploymentCostBreakdown'
         as_of: { type: string, format: date-time, description: "RFC3339Nano UTC assembly timestamp." }
+        telemetry_complete:
+          type: boolean
+          description: |
+            True when every gateway delivered this window's request telemetry, so the totals include every request.
+            Judged up to two minutes before `as_of`, because the newest minutes are still arriving. Absent when it could not be judged.
+        telemetry_gaps:
+          type: array
+          description: "Why requests in this window may be missing from the totals. Empty or absent when the window is complete."
+          items: { $ref: '#/components/schemas/RequestAnalyticsTelemetryGap' }
+
+    RequestAnalyticsTelemetryGap:
+      type: string
+      description: |
+        One reason request analytics may be missing requests: a gateway with no or a stale delivery report
+        (`telemetry_coverage_missing`, `telemetry_coverage_stale`), telemetry switched off or sampled
+        (`telemetry_disabled`, `telemetry_sampled`), requests still waiting to be delivered
+        (`telemetry_ingestion_pending`), or requests lost or a gateway restarted during the window (`telemetry_window_incomplete`).
+      enum: [telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
 
     RequestAnalyticsTimeseriesPoint:
       type: object
@@ -114529,6 +115751,13 @@ components:
           type: array
           items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesSeries' }
         as_of: { type: string, format: date-time, description: "UTC time when the series response was assembled." }
+        telemetry_complete:
+          type: boolean
+          description: "Same as on the analytics overview: true when every gateway delivered the series window, judged up to two minutes before `as_of`."
+        telemetry_gaps:
+          type: array
+          description: "Why requests in the series window may be missing. Empty or absent when the window is complete."
+          items: { $ref: '#/components/schemas/RequestAnalyticsTelemetryGap' }
 
     AppSLOResponse:
       description: |
@@ -114792,6 +116021,10 @@ components:
         included_gb_hours: { type: integer, format: int64 }
         overage_gb_hours: { type: number }
         overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.' }
+        quiet_paused_gb_hours:
+          type: number
+          description: 'GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero.'
+          x-since: "2026-10"
         used_cpu_hours:
           type: number
           description: 'Per-month CPU-hours (informational; not billed).'
@@ -117358,7 +118591,7 @@ components:
             the plaintext never reappears.
 
     MFAConfirmRequest:
-      description: Body for /confirm — a single 6-digit TOTP code.
+      description: Body for /confirm — a TOTP code and the existing password, if set.
       type: object
       required: [totp]
       properties:
@@ -117366,6 +118599,10 @@ components:
           type: string
           pattern: '^[0-9]{6}$'
           description: 6-digit rotating code from the authenticator app.
+        current_password:
+          type: string
+          format: password
+          description: Required when the account already has a password; authorizes the new factor.
         csrf_token:
           type: string
           description: |
@@ -121846,8 +123083,8 @@ components:
         webhook_id: "fedcba9876543210fedcba9876543210"
         app_id: "8b1f5e5d273e5a18ae0058fceba4fe6c"
         account_id: "8b1f5e5d-273e-5a18-ae00-58fceba4fe6c"
-        event: "cron.fired"
-        payload: {"cron_name": "nightly-rollup"}
+        event: "app.parked"
+        payload: {"reason": "idle_timeout_300s"}
         attempt: 0
         status: "pending"
         next_attempt_at: "2026-08-06T10:00:00Z"
@@ -123926,6 +125163,7 @@ components:
         identified_customers: { type: integer }
         observed_events: { type: integer }
         unattributed_events: { type: integer }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP records with unknown folded weights; observed event counts are lower bounds. }
 
     IssueGroupingFrame:
       description: "Canonical file and function used in identity, with a zero-based index into selected cause frames when cause_index is present, otherwise occurrence frames. Line numbers are excluded."
@@ -123962,6 +125200,8 @@ components:
           properties:
             id: { type: string, format: uuid }
             original_issue_id: { type: string, format: uuid, readOnly: true, description: Original fingerprint provenance retained through occurrence-level splits and manual merges. }
+            occurrence_count: { type: integer, format: int64, minimum: 1, readOnly: true, description: Number of failures represented by this record; customer identity applies to the sampled request only. }
+            occurrence_count_exact: { type: boolean, readOnly: true, description: False when an older writer did not preserve the folded HTTP weight. }
             deployment_id: { type: string, format: uuid }
             received_at: { type: string, format: date-time }
             verified_consumer_id: { type: string, format: uuid }
@@ -124004,6 +125244,7 @@ components:
         identified_customers: { type: integer }
         observed_events: { type: integer }
         unattributed_events: { type: integer }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP batches in this impact window have unknown folded weights; observed events are a lower bound. }
         coverage: { type: string }
 
     IssueLifecycleAlertPolicy:
@@ -124204,6 +125445,7 @@ components:
         title: { type: string, maxLength: 256 }
         description: { type: string, maxLength: 16384 }
         recovery_url: { type: string, format: uri, maxLength: 512 }
+        original_app_slug: { type: string, maxLength: 512, description: Original slug for recovering a legacy receipt after an app rename. }
     NativeIssueTicketResult:
       type: object
       description: Durable GitHub ticket evidence and Gregale attachment state for a native creation operation.
@@ -124248,6 +125490,7 @@ components:
         description: { type: string, maxLength: 16384, description: Optional description bounded to 16 KiB; no telemetry is copied automatically. }
         recover: { type: boolean, default: false, description: Explicitly recover an unconfirmed dispatch by its stable request UUID after the dispatch lease expires. }
         recovery_url: { type: string, maxLength: 512, description: Optional known Linear issue URL that also requests recovery and must match the UUID lookup. }
+        original_app_slug: { type: string, maxLength: 512, description: Slug used when recovering a legacy Linear receipt created before the app was renamed. }
     IssueTrackerLinearConnection:
       type: object
       description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.
@@ -124567,6 +125810,7 @@ components:
         regressed_issue_groups: { type: integer, format: int64, minimum: 0 }
         identified_customers: { type: integer, format: int64, minimum: 0 }
         unattributed_events: { type: integer, format: int64, minimum: 0 }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP batches in this release have unknown folded weights; release event counts are lower bounds. }
     IssueReleaseComparison:
       description: "Baseline and candidate deployment health with newly observed, recurring and resolved issue groups."
       type: object
