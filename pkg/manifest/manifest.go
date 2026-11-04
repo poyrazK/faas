@@ -833,6 +833,45 @@ type PublicEdgeDNS struct {
 	// (ADR-20261103163954 §4). A record for the exact name wins over the
 	// wildcard.
 	Proxied []string `yaml:"proxied,omitempty"`
+	// Certificate is the apps domains' publicly trusted certificate, which
+	// edgednsd orders with the DNS-01 challenge in ZoneID and the compute
+	// edges serve (ADR-20261103163954 §3).
+	Certificate *PublicEdgeCertificate `yaml:"certificate,omitempty"`
+}
+
+// PublicEdgeCertificate is the certificate edgednsd keeps for the apps
+// domains (ADR-20261103163954 §3). Each cell's edge-tls seal domain must be
+// staged first: edgednsd seals the key to its recipient, and the edges open
+// it with its identity.
+type PublicEdgeCertificate struct {
+	// Names are the certificate's names, e.g. "*.gregale.dev".
+	Names []string `yaml:"names"`
+	// CA is letsencrypt-staging, the default, until the path is proven,
+	// then letsencrypt.
+	CA string `yaml:"ca,omitempty"`
+	// Serve is the CA whose stored certificate the compute edges serve in
+	// place of their certificate files: empty (the default) serves none.
+	// It moves separately from CA, after edgednsd has stored a certificate
+	// from it: an edge without one is not ready, so switching both at once
+	// would take every edge out of DNS until the new order lands.
+	Serve string `yaml:"serve,omitempty"`
+}
+
+// The CAs a public_edge.dns.certificate comes from.
+const (
+	EdgeCertificateCAStaging    = "letsencrypt-staging"
+	EdgeCertificateCAProduction = "letsencrypt"
+	// edgeCertificateNamesMax is api.EdgeCertificateNamesMax, which the
+	// edgednsd unit refuses past.
+	edgeCertificateNamesMax = 10
+)
+
+// CAOrDefault is the certificate's CA, staging when unset.
+func (c PublicEdgeCertificate) CAOrDefault() string {
+	if c.CA == "" {
+		return EdgeCertificateCAStaging
+	}
+	return c.CA
 }
 
 // Public edge entries (ADR-20261102081618).
@@ -972,6 +1011,7 @@ func (e PublicEdge) validateDNS(hosts []Host) Errors {
 		}
 		seen[name] = true
 	}
+	errs = append(errs, e.DNS.Certificate.validate()...)
 	addressed := 0
 	for i, h := range hosts {
 		if h.PublicIPv4 == "" {
@@ -987,6 +1027,32 @@ func (e PublicEdge) validateDNS(hosts []Host) Errors {
 	// validateEntryAddrs requires instead.
 	if addressed == 0 && !e.NoFront() {
 		errs = append(errs, Error{"public_edge.dns", "needs a compute-only host with public_ipv4"})
+	}
+	return errs
+}
+
+// validate checks public_edge.dns.certificate; nil is valid.
+func (c *PublicEdgeCertificate) validate() Errors {
+	if c == nil {
+		return nil
+	}
+	var errs Errors
+	if len(c.Names) == 0 || len(c.Names) > edgeCertificateNamesMax {
+		errs = append(errs, Error{"public_edge.dns.certificate.names", fmt.Sprintf("needs 1 to %d names", edgeCertificateNamesMax)})
+	}
+	seen := map[string]bool{}
+	for i, name := range c.Names {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "" || seen[lower] || !strings.Contains(strings.TrimPrefix(lower, "*."), ".") || strings.Contains(strings.TrimPrefix(lower, "*."), "*") {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.names[%d]", i), fmt.Sprintf("%q is empty, listed twice, or not a host name or *. wildcard", name)})
+		}
+		seen[lower] = true
+	}
+	if !contains([]string{"", EdgeCertificateCAStaging, EdgeCertificateCAProduction}, c.CA) {
+		errs = append(errs, Error{"public_edge.dns.certificate.ca", fmt.Sprintf("unsupported %q (allowed: %s|%s)", c.CA, EdgeCertificateCAStaging, EdgeCertificateCAProduction)})
+	}
+	if !contains([]string{"", EdgeCertificateCAStaging, EdgeCertificateCAProduction}, c.Serve) {
+		errs = append(errs, Error{"public_edge.dns.certificate.serve", fmt.Sprintf("unsupported %q (allowed: empty, %s or %s)", c.Serve, EdgeCertificateCAStaging, EdgeCertificateCAProduction)})
 	}
 	return errs
 }
