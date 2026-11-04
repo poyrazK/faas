@@ -13368,6 +13368,10 @@ func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
 	return min(l.PerInstanceConcurrency(requestedPerInstanceConcurrency), PostgresPoolMaxPerInstance)
 }
 
+// PostgresPoolMaxAccepted is the largest GREGALE_POSTGRES_POOL_MAX the SDKs
+// and the binding check accept; a larger value is ignored as unset.
+const PostgresPoolMaxAccepted = 1000
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after

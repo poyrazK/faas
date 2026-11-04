@@ -41,6 +41,13 @@ The binding hands it to your factory as the pool configuration's `max`
 unset when the variable is absent or outside 1–1000, and a size you set in
 the factory always wins.
 
+`gregale app binding verify <app> --postgres <KEY>` reports that total on a
+`Connections` line once the canary passes. Where the database has a qualified
+connection allocation, the line says whether the total fits in it; a total
+above it is a warning (lower `GREGALE_POSTGRES_POOL_MAX` or the app's
+`max_concurrency`), and it never fails the verification. The allocation is
+shared with the database's other consumers.
+
 ## Node
 
 Import the server-only `@gregale/sdk-node/postgres/runtime` entrypoint. It adds no

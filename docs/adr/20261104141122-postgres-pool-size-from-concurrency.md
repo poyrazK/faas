@@ -89,7 +89,26 @@ may be present.
    connections on production apps.
 3. Release to every account; the starters drop their hard-coded pool sizes.
 4. `gregale app binding verify --postgres` reports the app's connection total
-   against the database's qualified connection allocation, where one exists.
+   against the database's qualified connection allocation, where one exists
+   (amendment 1).
+
+## Amendment 1 (2026-11-04): step 4
+
+- The canary guest reports the deployment's `GREGALE_POSTGRES_POOL_MAX` as the
+  report's `pool_max` (read as the SDKs read it; absent when unset). Older
+  guests omit the key and the CLI says the pool size is not checked.
+- After a passing canary the CLI adds a `connections` result: the total is
+  `(max_concurrency + RolloutConcurrencyGrant) × pool_max`. It reads the
+  database's connection budget and compares the total with
+  `capacity.usable_connections` only when the capacity is `verified` and the
+  budget passes the checks the CLI already applies to Data API connection
+  budgets; otherwise it reports the total alone (`not_checked`).
+- Above the allocation is `warning`, within it `passed`. Neither changes the
+  exit code: the allocation is shared with the database's other consumers and
+  the total is a ceiling, not observed sessions. The CLI discards any
+  `connections` value the guest writes.
+- `--all` and the server-side verification runs are unchanged; the comparison
+  is only on `--postgres`.
 
 ## Alternatives considered
 
