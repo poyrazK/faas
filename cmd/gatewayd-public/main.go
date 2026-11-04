@@ -69,6 +69,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 	"github.com/onebox-faas/faas/pkg/oauthmetadata"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
@@ -718,6 +719,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// edge never saw name an app spend a budget (ADR-20261103163954 §4).
 	hostLookups := objectstorage.NewHostLookupBudget("gatewayd_public_object")
 	opsMetrics.Registry().MustRegister(hostLookups.Collectors()...)
+	// Every app slug and verified custom domain skips that budget, so after
+	// a restart random names cannot starve real apps this edge has not yet
+	// served.
+	knownHosts := knownhosts.New(domains.Apps)
+	hostLookups.Preload(knownHosts)
+	go knownhosts.Run(runtimeCtx, knownHosts, pgStore, log)
 	if edgeMode == edgeModeCompute {
 		// Upload routes go to the control plane's edge: only apid resolves
 		// their keys. Public bucket reads are served here once the node holds

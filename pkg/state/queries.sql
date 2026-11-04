@@ -1352,6 +1352,16 @@ returning domain, app_id, challenge_token, verified_at, environment_id;
 select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where domain = $1;
 
+-- name: KnownRouteAppSlugs :many
+-- Every app slug, preloaded by the gateway and edge so a real app's host never
+-- spends the new-host lookup budget (ADR-20261103163954 §4). A listed name
+-- only skips that budget; routing still reads and checks the row.
+select slug from apps limit $1;
+
+-- name: KnownRouteCustomDomains :many
+-- Every verified custom domain, for the same preload as KnownRouteAppSlugs.
+select domain::text from custom_domains where verified_at is not null limit $1;
+
 -- name: ListDomainsForApp :many
 select domain, app_id, challenge_token, verified_at, environment_id
 from custom_domains where app_id = $1 order by domain;

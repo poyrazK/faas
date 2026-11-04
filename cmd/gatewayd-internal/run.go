@@ -79,6 +79,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -1857,6 +1858,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// gateway_tenant_surface_cert_total counter ticks
 		// from boot.
 		WithCertIssuer(gateCertIssuer(tenantSurfacesFlag.Load, certIssuerFor(pgStore, nil, true, dnsTokenLookupFromEnv, log)))
+	// Every app slug and verified custom domain skips the new-host lookup
+	// budget, so after a restart random names cannot starve real apps this
+	// gateway has not yet served (ADR-20261103163954 §4).
+	knownHosts := knownhosts.New(appsDomain)
+	backend.PreloadKnownHosts(knownHosts)
+	go knownhosts.Run(ctx, knownHosts, pgStore, log)
 
 	// Phase 2 / Gate A: gate the resolveSched legacy fallback on the
 	// active fleet. Single-box posture (only default-local active)

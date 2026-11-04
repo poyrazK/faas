@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 	"github.com/onebox-faas/faas/pkg/publicrouting"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"golang.org/x/sync/singleflight"
@@ -946,6 +947,12 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		staleTargets:    map[string]time.Time{},
 		smokeChallenges: map[string][]deploymentSmokeChallenge{},
 	}
+}
+
+// PreloadKnownHosts lets every host in known skip the new-host lookup
+// budget (ADR-20261103163954 §4). Call it before the backend serves.
+func (b *PGBackend) PreloadKnownHosts(known *knownhosts.Set) {
+	b.misses.preloaded = known
 }
 
 func smokeChallengeKey(appID, deploymentID string) string { return appID + "\x00" + deploymentID }
