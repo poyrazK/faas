@@ -274,6 +274,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	aiGatewayOn := func() bool { return aiGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway) }
+	if err := registerAIGatewayReadiness(ops.Registry(), aiGatewayOn, shutdownRelay != nil); err != nil {
+		return err
+	}
+	if aiGatewayOn() && shutdownRelay == nil {
+		log.Warn("outbound AI gateway is on but the app relay is off; deployed apps cannot reach it until relay_listen and the workload-identity JWKS are set (ADR-989)")
+	}
 	readyProbe := &wire.ReadyzProbe{}
 	pgSignal, stopPGSignal := wire.NewPGPingSignal(ctx, pool, 5*time.Second)
 	readyProbe.RegisterSignal(pgSignal, stopPGSignal)

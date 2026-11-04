@@ -31,6 +31,10 @@ type Host interface {
 // Service is the AI gateway surface.
 type Service struct {
 	Host Host
+	// ContentReadable reports whether a reader may read captured answers;
+	// nil means the content route's scopes (ADR 20261027132936
+	// amendment 1). Tests replace it.
+	ContentReadable func(*http.Request) bool
 }
 
 func problem(w http.ResponseWriter, status int, code, detail string) {

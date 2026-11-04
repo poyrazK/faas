@@ -2441,6 +2441,12 @@ const (
 	OutboundAICallMaxSeconds       = 1800
 	OutboundAIStreamIdleSeconds    = 600
 	OutboundAILeaseRenewMinSeconds = 15
+	// OutboundAIPublicHeaderTimeoutSeconds caps the wait for response
+	// headers of a call through the AI gateway's public host, which runs
+	// behind Cloudflare's 100-second wait for an origin's response, so the
+	// caller gets the gateway's 504 instead of Cloudflare's 524 (ADR
+	// 20261027132936 amendment 1). Longer answers stream.
+	OutboundAIPublicHeaderTimeoutSeconds = 90
 	// OutboundAIAccessTokenLookupsMax bounds the database lookups of
 	// uncached access tokens that run at once (ADR 20261027132936).
 	OutboundAIAccessTokenLookupsMax = 8

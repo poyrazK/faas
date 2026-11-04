@@ -101,6 +101,10 @@ type OutboundAIEvaluation struct {
 	StartedAt          *time.Time                       `json:"started_at"`
 	FinishedAt         *time.Time                       `json:"finished_at"`
 	Items              []OutboundAIEvaluationItem       `json:"items,omitempty"`
+	// ContentWithheld reports that the items' output texts were left out:
+	// reading them needs admin or secrets:read (ADR 20261027132936
+	// amendment 1).
+	ContentWithheld bool `json:"content_withheld,omitempty"`
 }
 
 // OutboundAIEvaluationItem is one sample: a captured call of the first

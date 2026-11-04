@@ -3514,6 +3514,20 @@ groups:
           description: "More than a tenth of settled AI calls cost zero for 1h because their model has no price, so usage reports undercount and cost caps refuse those models. Refresh the built-in price catalog, or check whether one account calls an unlisted model."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
 
+      # ADR 20261027132936 amendment 1: the flag alone serves no app; apps
+      # reach the gateway only through the app relay (ADR-989).
+      - alert: FaasAIGatewayEnabledWithoutAppRelay
+        expr: (max(outbound_ai_gateway_enabled) == 1) and on() (max(outbound_ai_app_relay_ready) == 0)
+        for: 10m
+        labels:
+          severity: warn
+          component: outboundd
+          family: ai_gateway
+        annotations:
+          summary: "The AI gateway is on but apps cannot reach it"
+          description: "The ai_gateway platform flag is on while no outboundd serves the app relay, so deployed apps get no GREGALE_OUTBOUND_URL path to the gateway. Set faas_outboundd_relay_listen and the vmmd relay switches after the workload-identity key is installed, or turn the flag off."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
       # A rollout should converge to one daemon release. This catches a
       # partial deploy where systemd is healthy and readiness is green, but
       # different hosts (or different daemons on one host) are serving

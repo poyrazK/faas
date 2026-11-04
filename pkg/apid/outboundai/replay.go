@@ -56,7 +56,7 @@ func (s *Service) CreateReplay(w http.ResponseWriter, r *http.Request, acct stat
 		problem(w, http.StatusServiceUnavailable, "outbound_ai_unavailable", "The AI replay could not be recorded")
 	default:
 		w.Header().Set("Cache-Control", "no-store")
-		httpkit.WriteJSON(w, http.StatusAccepted, replayResponse(created))
+		httpkit.WriteJSON(w, http.StatusAccepted, replayResponse(created, s.contentReadable(r)))
 	}
 }
 
@@ -81,11 +81,13 @@ func (s *Service) GetReplay(w http.ResponseWriter, r *http.Request, acct state.A
 		// requestVisible wrote the problem.
 	default:
 		w.Header().Set("Cache-Control", "no-store")
-		httpkit.WriteJSON(w, http.StatusOK, replayResponse(replay))
+		httpkit.WriteJSON(w, http.StatusOK, replayResponse(replay, s.contentReadable(r)))
 	}
 }
 
-func replayResponse(replay state.OutboundAIReplay) api.OutboundAIReplay {
+// replayResponse renders a replay; without content it withholds the
+// captured and replayed answers (ADR 20261027132936 amendment 1).
+func replayResponse(replay state.OutboundAIReplay, content bool) api.OutboundAIReplay {
 	out := api.OutboundAIReplay{
 		ID: replay.ID, IntegrationID: replay.IntegrationID, RequestID: replay.LogID, State: replay.State,
 		ErrorCode: optionalString(replay.ErrorCode), CreatedAt: replay.CreatedAt, FinishedAt: replay.FinishedAt,
@@ -96,7 +98,11 @@ func replayResponse(replay state.OutboundAIReplay) api.OutboundAIReplay {
 			DurationMS: replay.Source.DurationMS, TimeToFirstByteMS: copyInt64(replay.Source.TTFBMS),
 			OutputText: optionalString(replay.SourceOutputText),
 		},
-		Results: make([]api.OutboundAIReplayResult, 0, len(replay.Results)),
+		Results:         make([]api.OutboundAIReplayResult, 0, len(replay.Results)),
+		ContentWithheld: !content,
+	}
+	if !content {
+		out.Source.OutputText = nil
 	}
 	for _, target := range replay.Targets {
 		out.Targets = append(out.Targets, api.OutboundAIReplayTarget{IntegrationID: target.IntegrationID, Model: target.Model})
@@ -112,6 +118,9 @@ func replayResponse(replay state.OutboundAIReplay) api.OutboundAIReplay {
 		if result.Status != nil {
 			status := *result.Status
 			item.Status = &status
+		}
+		if !content {
+			item.OutputText, item.Response = "", api.OutboundAIContentBody{}
 		}
 		out.Results = append(out.Results, item)
 	}

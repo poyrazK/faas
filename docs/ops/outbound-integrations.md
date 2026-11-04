@@ -284,9 +284,12 @@ path and query. It returns `429 application/problem+json` with `Retry-After`
 when the rate or concurrency budget is exhausted; inspect
 `X-Gregale-Outbound-Rejection` for `rate_limit` versus `concurrency_limit`.
 By default, Gregale makes one upstream attempt. A configured `max_retries`
-(0–2) enables retries only for bodyless `GET` and `HEAD` requests, and only
-for network timeouts/resets or provider `408`, `425`, `429`, `502`, `503`, and
-`504` responses. Other methods and requests with bodies are never retried.
+(0–2) enables retries for bodyless `GET` and `HEAD` requests, on network
+timeouts/resets or provider `408`, `425`, `429`, `502`, `503`, and `504`
+responses. A buffered AI `POST` (ADR-990) is also retried, but only when the
+provider cannot have run it: a request that failed before it was sent, or a
+`425`, `429`, `502` or `503` answer (ADR 20261027132936 amendment 1). Other
+methods and requests with bodies are never retried.
 Exponential backoff starts at 100 ms. Automatic retries honor a valid provider
 `Retry-After` only when it fits within the one-second retry window; longer
 delays are never shortened into an early retry, and the current provider
@@ -393,6 +396,22 @@ status codes.
 >
 > The rollout steps, alerts and rollback are in the
 > [AI gateway runbook](../runbooks/FaasAIGateway.md).
+>
+> **Before turning the flag on (ADR 20261027132936 amendment 1).** Deployed
+> apps reach the gateway only through the [app relay](#app-relay), so turning
+> on the flag alone serves no app.
+>
+> 1. Install the workload-identity key on the control plane.
+> 2. Set `faas_outboundd_relay_listen` for the control plane.
+> 3. Set `faas_vmmd_outbound_relay_target` and
+>    `faas_vmmd_outbound_relay_tls_managed` for compute nodes, then converge.
+> 4. Check that `outbound_ai_app_relay_ready` is 1 on every `outboundd`.
+>
+> `FaasAIGatewayEnabledWithoutAppRelay` warns while the flag is on and the
+> relay is off. The public host for access tokens
+> (`faas_ai_gateway_public_enabled`) is optional; calls through it wait at
+> most `OutboundAIPublicHeaderTimeoutSeconds` (90 s) for headers, under
+> Cloudflare's 100-second limit.
 
 An integration in front of an LLM provider can declare `ai_provider`. Use
 `openai` for OpenAI and any provider that speaks its wire format, or

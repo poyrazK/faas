@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
@@ -51,6 +52,53 @@ func (s *Service) visibleCallers(r *http.Request, acct state.Account, callers []
 		visible[caller] = len(apps) == 1
 	}
 	return visible, nil
+}
+
+// contentReadable reports whether the reader may read captured prompts and
+// answers: the content route's admin or secrets:read scopes. Replays and
+// evaluations carry answer text, so they withhold it from other readers
+// (ADR 20261027132936 amendment 1).
+func (s *Service) contentReadable(r *http.Request) bool {
+	if s.ContentReadable != nil {
+		return s.ContentReadable(r)
+	}
+	return authmw.HasScope(r, api.ScopesAIContentReadSurface...)
+}
+
+// visibleEvaluationItems drops the samples of calls whose app the reader may
+// no longer see, as the request log does. A sample whose call has left the
+// log keeps no caller and stays with the account.
+func (s *Service) visibleEvaluationItems(r *http.Request, acct state.Account, items []state.OutboundAIEvaluationItem) ([]state.OutboundAIEvaluationItem, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	store, ok := s.Host.Store().(state.OutboundAIRequestCallersStore)
+	if !ok {
+		return nil, errors.New("outbound AI request callers are unavailable")
+	}
+	logIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		logIDs = append(logIDs, item.LogID)
+	}
+	byLog, err := store.OutboundAIRequestCallers(r.Context(), acct.ID, logIDs)
+	if err != nil {
+		return nil, err
+	}
+	callers := make([]string, 0, len(byLog))
+	for _, caller := range byLog {
+		callers = append(callers, caller)
+	}
+	visible, err := s.visibleCallers(r, acct, callers)
+	if err != nil {
+		return nil, err
+	}
+	kept := make([]state.OutboundAIEvaluationItem, 0, len(items))
+	for _, item := range items {
+		if caller, logged := byLog[item.LogID]; !logged || visible[caller] {
+			kept = append(kept, item)
+		}
+	}
+	return kept, nil
 }
 
 // requestVisible checks one logged call before a handler reads, rates or

@@ -150,7 +150,17 @@ on Pro and 300 s on Scale. Once a streamed answer starts, it may run for up
 to 30 minutes, as long as the provider sends something at least every 10
 minutes. A non-streamed answer has to arrive within the timeout, so stream
 long answers. `gregale ai request-policy <id>` shows and sets the timeout,
-rate and concurrency.
+rate and concurrency. Calls from outside Gregale with an access token wait at
+most 90 s for headers, whatever the timeout, because the public host sits
+behind a proxy that gives up at 100 s.
+
+A realtime (WebSocket) session holds one of the integration's concurrent
+calls for as long as it stays open.
+
+With retries on (`max_retries`), the gateway retries an AI call only when the
+provider cannot have run it: a connection that failed before the request was
+sent, or a `425`, `429`, `502` or `503` answer. A call the provider received
+is never sent twice.
 
 A call the provider received but never answered, because the timeout ran out
 or your app went away, counts toward your caps at its reservation: the
@@ -351,7 +361,9 @@ catalog, used for budgets and reports.
 - Calls for one integration share its admission state, so very high call rates
   are better spread across integrations.
 - Captured content is redacted and kept for 3 days; turn capture on only for
-  traffic you may store. Reading it needs an API key with `secrets:read`.
+  traffic you may store. Reading it needs an API key with `secrets:read`;
+  replays and evaluations leave out answer texts for other keys and say so
+  with `content_withheld`.
 - The response cache keys a call by its body and headers, leaving out
   per-call telemetry such as `traceparent`, `baggage` and `user-agent`.
 - A moderation check costs one call of the check integration before each

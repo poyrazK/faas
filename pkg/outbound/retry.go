@@ -6,8 +6,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -86,6 +88,20 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	return delay, true
 }
 
+// billableAIRetryableStatus narrows the retried statuses of a billable AI
+// call to those a provider answers before it runs the call: rate limits,
+// too-early and unavailable gateways. A 408 or 504 may follow a generation
+// the provider already ran and charged for, which the gateway would count
+// only once (ADR 20261027132936 amendment 1).
+func billableAIRetryableStatus(status int) bool {
+	switch status {
+	case http.StatusTooEarly, http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 func outboundRetryDelay(retryAfter string, retryNumber int, now time.Time) time.Duration {
 	var delay time.Duration
 	if parsed, ok := retryAfterDelay(retryAfter, now); ok {
@@ -156,7 +172,7 @@ func outboundCircuitOutcome(resp *http.Response, err error) CircuitBreakerOutcom
 
 func (h *Handler) doWithRetries(
 	ctx context.Context, client *http.Client, req *http.Request, integrationID, metricIntegrationID string, policyRevision int64,
-	maxRetries, retryBudgetPerMinute int, keys *credentialRing,
+	maxRetries, retryBudgetPerMinute int, keys *credentialRing, billableAI bool,
 ) (*http.Response, int, error) {
 	if maxRetries < 0 {
 		maxRetries = 0
@@ -170,13 +186,26 @@ func (h *Handler) doWithRetries(
 	for {
 		attempts++
 		started := time.Now()
+		var wrote atomic.Bool
+		if billableAI {
+			// ADR 20261027132936 amendment 1: a billable AI call the
+			// provider received is not sent again after a failure, since
+			// the provider may have run it.
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+				WroteRequest: func(info httptrace.WroteRequestInfo) {
+					if info.Err == nil {
+						wrote.Store(true)
+					}
+				},
+			}))
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
 			h.Metrics.ObserveUpstreamError(metricIntegrationID, time.Since(started))
-			if !canRetry || retries >= maxRetries || !retryableUpstreamError(err) {
+			if !canRetry || retries >= maxRetries || !retryableUpstreamError(err) || wrote.Load() {
 				return nil, attempts, err
 			}
 			if waitErr := waitForOutboundRetry(ctx, outboundRetryDelay("", retries, time.Now())); waitErr != nil {
@@ -209,7 +238,8 @@ func (h *Handler) doWithRetries(
 			if resp.StatusCode == http.StatusTooManyRequests && hasRetryAfter && providerDelay > 0 {
 				h.recordProviderCooldown(ctx, integrationID, metricIntegrationID, policyRevision, providerDelay)
 			}
-			if !canRetry || retries >= maxRetries || !retryableStatus(resp.StatusCode) {
+			if !canRetry || retries >= maxRetries || !retryableStatus(resp.StatusCode) ||
+				(billableAI && !billableAIRetryableStatus(resp.StatusCode)) {
 				return resp, attempts, nil
 			}
 			// Do not retry earlier than a provider's requested delay. Short waits

@@ -46,3 +46,28 @@
   - A call running longer than its renewal span adds one lease write per renewal.
   - A non-streamed answer still has to arrive within the request timeout (60 s on Hobby, 120 s on Pro, 300 s on Scale); a longer one should stream.
   - API keys with only `apps:read` can no longer read captured content.
+
+## Amendment 1 (2026-11-04): second review
+
+A second end-to-end review found:
+
+- **Content through replays and evaluations.** Captured content moved to `secrets:read`, but a replay returned the captured answer and each replayed response, and an evaluation returned its samples' answer texts, at the read scope.
+- **Evaluation visibility.** The request log, traces and replays withhold calls of apps the reader may no longer see; an evaluation's samples did not.
+- **Realtime concurrency.** A WebSocket session held its admission lease only for the request timeout, then stopped counting toward `max_in_flight` while it ran for up to an hour.
+- **Retried AI calls.** With `max_retries` set, a buffered AI `POST` was sent again after a reset or EOF that followed the request, and after `408` or `504`. The provider may have run and charged the first attempt; the gateway counted only the last.
+- **Public host timeouts.** The public host for access tokens runs behind Cloudflare, which waits at most 100 s for an origin's response; non-streamed calls on Pro and Scale may wait 120 s and 300 s.
+- **Relay off in production.** Apps reach the gateway only through the app relay (ADR-989), which production has not configured. Turning on the flag alone would serve no app, and nothing said so.
+
+Decision:
+
+1. Replays and evaluations leave out answer texts and response bodies unless the reader has `admin` or `secrets:read`, the content route's scopes, and report `content_withheld`. Evaluations drop the samples of calls whose app the reader may not see, by a batch read of the calls' callers; a sample whose call has left the log stays.
+2. A realtime session renews its upgrade lease, like a long call, until it closes.
+3. A billable AI call is retried only when the provider cannot have run it: the request failed before it was written, or the provider answered `425`, `429`, `502` or `503`.
+4. A call through the public host waits at most `OutboundAIPublicHeaderTimeoutSeconds` (90 s) for headers, so its caller gets the gateway's `504` rather than Cloudflare's `524`. Longer answers stream.
+5. `outboundd` exports `outbound_ai_gateway_enabled` and `outbound_ai_app_relay_ready` and logs a warning at startup when the flag is on without the relay. `FaasAIGatewayEnabledWithoutAppRelay` warns after 10 minutes. The operator guide lists the relay steps that must come before the flag. Enabling the relay in production stays an operator step: it needs the workload-identity key.
+
+Consequences:
+
+- Keys with only read scopes see replay and evaluation numbers but not answers.
+- A long realtime session adds one lease write per renewal span.
+- A billable call that fails after it was sent is not retried; the app sees the error.

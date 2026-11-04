@@ -821,6 +821,10 @@ type OutboundAIReplay struct {
 	Targets       []OutboundAIReplayTarget `json:"targets"`
 	Source        OutboundAIReplaySource   `json:"source"`
 	Results       []OutboundAIReplayResult `json:"results"`
+	// ContentWithheld reports that the source's and results' answers were
+	// left out: reading them needs admin or secrets:read (ADR
+	// 20261027132936 amendment 1).
+	ContentWithheld bool `json:"content_withheld,omitempty"`
 }
 
 // ErrOutboundAIReplayLimit is the problem for an integration that reached

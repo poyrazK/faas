@@ -539,6 +539,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if requestTimeout <= 0 {
 		requestTimeout = integration.RequestTimeout
 	}
+	if _, public := accessTokenFromContext(r.Context()); public {
+		requestTimeout = publicHeaderTimeout(requestTimeout)
+	}
 	// ADR 20261027132936: a billable AI call's request timeout bounds the
 	// wait for its response headers; its answer may take longer.
 	var aiCall *aiCallContext
@@ -667,7 +670,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if realtime != realtimeNone {
 		// The upgrade itself was admitted like a call, with no reservation;
-		// each response is admitted with its own (ADR 20261019072722).
+		// each response is admitted with its own (ADR 20261019072722). The
+		// session holds its in-flight slot until it ends, so its lease is
+		// renewed (ADR 20261027132936 amendment 1).
+		defer h.renewAILease(integration.ID, decision.LeaseID, requestTimeout)()
 		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, instanceID: callerInstance, metricID: metricIntegrationID,
 			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags, traceID: aiTrace,
 			model: realtimeURLModel(r.URL.Query()), live: livePath(integration.AIProvider, path)}, upstreamReq)
@@ -780,7 +786,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		resp, attempts, err = h.doWithRetries(dependencyCtx, client, upstreamReq, integration.ID, metricIntegrationID,
-			integration.PolicyRevision, maxRetries, decision.RetryBudgetPerMinute, keys)
+			integration.PolicyRevision, maxRetries, decision.RetryBudgetPerMinute, keys, aiCall != nil)
 		if breaker != nil {
 			outcome := outboundCircuitOutcome(resp, err)
 			if outcome != CircuitOutcomeNeutral {
@@ -914,6 +920,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
 		panic(http.ErrAbortHandler)
 	}
+}
+
+// publicHeaderTimeout caps the header wait of a call through the public
+// host, whose proxy stops waiting for an origin's response at 100 seconds
+// (ADR 20261027132936 amendment 1).
+func publicHeaderTimeout(requestTimeout time.Duration) time.Duration {
+	publicCap := api.OutboundAIPublicHeaderTimeoutSeconds * time.Second
+	if requestTimeout <= 0 || requestTimeout > publicCap {
+		return publicCap
+	}
+	return requestTimeout
 }
 
 // callerAppID returns the calling app and, when a verified workload
