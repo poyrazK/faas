@@ -3,6 +3,7 @@
 package sched
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -60,10 +61,49 @@ func (e *Engine) SetGuestVCPUFromCPUApps(entries []string) error {
 }
 
 // guestVCPUs is the guest vCPU count app boots and books with: the plan's,
-// or for a listed app one per 1,000 sustained millicores.
-func (e *Engine) guestVCPUs(app state.App, planVCPUs int) int {
+// or for a listed app one per core of its CPU ceiling (appCPUMillicores).
+func (e *Engine) guestVCPUs(app state.App, limits api.Limits) int {
 	if !e.guestVCPUApps.Load().includes(app.ID) {
-		return planVCPUs
+		return limits.VCPU
 	}
-	return api.GuestVCPUsForCPUMillicores(effectiveAppCPUMillicores(app))
+	return api.GuestVCPUsForCPUMillicores(e.appCPUMillicores(app, limits))
+}
+
+// appCPUMillicores is the sustained CPU ceiling (cpu.max) app boots, books
+// and is policed with. A listed app on the app default gets its plan's burst
+// ceiling: one core on Free, Hobby and Pro, two on Scale. An app that chose
+// less than a core keeps its choice (ADR-20261101160231 decision 1). Every
+// other app keeps its configured value.
+func (e *Engine) appCPUMillicores(app state.App, limits api.Limits) int {
+	return listedAppCPUMillicores(e.guestVCPUApps.Load().includes(app.ID), effectiveAppCPUMillicores(app), limits)
+}
+
+// listedAppCPUMillicores maps an app's configured CPU to its ceiling.
+func listedAppCPUMillicores(listed bool, configured int, limits api.Limits) int {
+	if !listed || configured < api.DefaultAppCPUMillicores || limits.RAMMB <= 0 {
+		return configured
+	}
+	return max(configured, api.AppCPUCeilingMillicoresForPlanRAM(limits.RAMMB))
+}
+
+// policyAppCPUMillicores maps a live CPU policy's configured value to the
+// ceiling the app's instances boot with, so the policy push and the wake
+// agree. Only a listed app needs its account's plan.
+func (e *Engine) policyAppCPUMillicores(ctx context.Context, appID string, configured int) (int, error) {
+	if !e.guestVCPUApps.Load().includes(appID) || configured < api.DefaultAppCPUMillicores {
+		return configured, nil
+	}
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return 0, fmt.Errorf("sched: app CPU policy: read app %s: %w", appID, err)
+	}
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
+	if err != nil {
+		return 0, fmt.Errorf("sched: app CPU policy: read account of app %s: %w", appID, err)
+	}
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		return 0, fmt.Errorf("sched: app CPU policy: app %s has unknown plan %q", appID, acct.Plan)
+	}
+	return listedAppCPUMillicores(true, configured, limits), nil
 }

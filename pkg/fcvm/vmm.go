@@ -1867,7 +1867,7 @@ func (v *JailerVMM) UpdateCPULimit(ctx context.Context, l Lease, cpuMillicores i
 	if l.IsBuilder || !l.Plan.Valid() {
 		return fmt.Errorf("vmm: update CPU limit: invalid app lease for instance %s", l.Instance)
 	}
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAppCPUCeilingMillicores(l.Plan, cpuMillicores) {
 		return fmt.Errorf("vmm: update CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 
@@ -3444,7 +3444,7 @@ func (v *JailerVMM) UpdateAppWorkloadCPULimit(ctx context.Context, l Lease, cpuM
 	if v == nil || l.Instance == "" || v.chrootBase == "" {
 		return fmt.Errorf("vmm: update guest app CPU limit: invalid VMM or instance")
 	}
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAppCPUCeilingMillicores(l.Plan, cpuMillicores) {
 		return fmt.Errorf("vmm: update guest app CPU limit: invalid cpu_millicores %d", cpuMillicores)
 	}
 	body, err := json.Marshal(runtimepolicyproto.AppCPULimitUpdate{CPUMillicores: cpuMillicores})

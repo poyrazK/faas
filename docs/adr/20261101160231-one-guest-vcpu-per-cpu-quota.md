@@ -155,8 +155,21 @@
   4. vmmd accepts a 2,000-millicore ceiling. It ships a release before
      schedd sends one, because an older vmmd rejects an unknown
      `cpu_millicores` value.
+     `api.ValidAppCPUCeilingMillicores` is what vmmd's cgroup writes,
+     `UpdateAppCPULimit` and guest-init accept: the customer shapes, or whole
+     cores up to the plan's ceiling. Customers still choose only 250, 500 or
+     1,000 (`api.ValidAppCPUMillicores`) until launch.
   5. schedd: listed apps book the baseline and get the ceiling (Scale: two
-     cores, two vCPUs).
+     cores, two vCPUs). It lands in two parts:
+     - **5a, the ceiling.** A listed app on the default 1,000 m boots,
+       books and is policed with its plan's ceiling, and its vCPUs follow
+       it; the live CPU-policy push maps the configured value the same way,
+       so it does not pull a running instance back to one core. Bookings
+       already floor at 1,000 m, so Scale books its 2,000 m baseline here.
+     - **5b, the baseline.** Bookings in `pkg/state` and the admission SQL
+       functions stop flooring at 1,000 m for listed apps, so Free books
+       250 m and Hobby 500 m. The startup boost keeps booking one core while
+       it lasts.
   6. Production A/B on one node: two identical apps each for Go and Node, one
      of each listed, plus one CPU-bound app and one Scale app. Run the
      300 → 600 req/s step test. Compare cgroup CPU per request, p50/p99

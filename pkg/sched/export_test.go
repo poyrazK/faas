@@ -1087,7 +1087,13 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 }
 
 // GuestVCPUs exposes guestVCPUs (ADR-20261101160231).
-func (e *Engine) GuestVCPUs(app state.App, planVCPUs int) int { return e.guestVCPUs(app, planVCPUs) }
+func (e *Engine) GuestVCPUs(app state.App, limits api.Limits) int { return e.guestVCPUs(app, limits) }
+
+// AppCPUMillicores exposes appCPUMillicores (ADR-20261101160231).
+func (e *Engine) AppCPUMillicores(app state.App, limits api.Limits) int {
+	return e.appCPUMillicores(app, limits)
+}
+
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
 func (r *Engine) ReportNodeMemory(ctx context.Context, now time.Time) {

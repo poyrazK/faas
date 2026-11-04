@@ -7222,7 +7222,7 @@ func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision 
 	if revision <= 0 {
 		return fmt.Errorf("fcvm: UpdateAppCPULimit: invalid revision %d", revision)
 	}
-	if !api.ValidAppCPUMillicores(cpuMillicores) {
+	if !api.ValidAnyAppCPUCeilingMillicores(cpuMillicores) {
 		return fmt.Errorf("fcvm: UpdateAppCPULimit: invalid cpu_millicores %d", cpuMillicores)
 	}
 	_, ok := m.vmm.(LiveAppCPULimitUpdater)
