@@ -3099,6 +3099,8 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: subList, Short: "List an app's deploy tokens", Flags: []cliFlag{{Name: "app", Short: "app the tokens deploy", Value: "SLUG", Req: true}}},
 			{Name: subAdd, Short: "Mint a deploy token (shown once)", Examples: []string{"gregale app deploy-token create --app my-api --label github-actions"}, Flags: []cliFlag{
+				{Name: "agent", Short: "mint an app-bound headless MCP credential", Bool: true},
+				{Name: "scopes", Short: "comma-separated app-agent scopes (requires --agent)", Value: "SCOPES"},
 				{Name: "app", Short: "app the token deploys", Value: "SLUG", Req: true},
 				{Name: "label", Short: "label shown in the list, for example the CI system", Value: "LABEL"},
 				{Name: "expires-at", Short: "expiry as an RFC3339 time (default 90 days)", Value: "RFC3339"},

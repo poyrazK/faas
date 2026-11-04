@@ -1067,6 +1067,16 @@ type AppEnv struct {
 	Scope     string
 }
 
+type AppEnvBatchReceipt struct {
+	AppID         pgtype.UUID
+	Scope         string
+	RequestID     pgtype.UUID
+	AccountID     pgtype.UUID
+	RequestSha256 []byte
+	Receipt       []byte
+	CreatedAt     pgtype.Timestamptz
+}
+
 type AppEnvironmentRouteBudget struct {
 	AccountID     pgtype.UUID
 	AppID         pgtype.UUID

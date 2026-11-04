@@ -12,6 +12,7 @@ const (
 	AgentConnectionHostedMCP = "hosted_mcp"
 	// AgentConnectionAgentKey is an API key with the agent scope.
 	AgentConnectionAgentKey = "agent_key"
+	AgentConnectionAppAgent = "app_agent"
 	// AgentClientNameMax bounds an agent client's name, in characters.
 	AgentClientNameMax = 80
 )
@@ -19,6 +20,7 @@ const (
 // AgentConnectionResponse is one agent connected to the account. ID is the
 // API key the agent uses; revoking the connection revokes that key.
 type AgentConnectionResponse struct {
+	AppID      string   `json:"app_id,omitempty"`
 	ID         string   `json:"id"`
 	Kind       string   `json:"kind"`
 	ClientName string   `json:"client_name,omitempty"`

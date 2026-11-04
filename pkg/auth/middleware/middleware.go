@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1684,6 +1685,11 @@ func IsUploadSessionPath(path string) bool {
 // /v1/apps/{slug} routes, the upload routes and its app's deployment reads,
 // and nothing else. It answers the request and reports true when it refuses.
 func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Request, key state.APIKey, title string) bool {
+	// App agents inspect their own minimal principal and platform capabilities
+	// before connecting to MCP. This grants no account inventory or mutations.
+	if slices.Contains(key.Scopes, api.ScopeAgent) && r.Method == http.MethodGet && (r.URL.Path == "/v1/account" || r.URL.Path == "/v1/capabilities") {
+		return false
+	}
 	// The resumable upload routes are the CLI's default source
 	// deploy path. They name their app in the request body or the
 	// stored session, so the app binding is enforced where the

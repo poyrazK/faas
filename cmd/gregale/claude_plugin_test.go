@@ -217,6 +217,7 @@ func managementToolNames(t *testing.T) map[string]bool {
 	}
 	server, err := mcpmanagement.NewServer(api.NewClient(base, "test-token"), mcpmanagement.Options{
 		APIBase: base, Token: "test-token", Version: "test", AllowWrites: true, LocalCLI: noCLI,
+		Toolsets: []string{mcpmanagement.ToolsetAll},
 	})
 	if err != nil {
 		t.Fatal(err)

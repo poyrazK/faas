@@ -17336,6 +17336,14 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	return l.TenantHostnamesPerSurface
 }
 
+// App resource metadata pages are filtered by immutable app and scope before
+// counting or pagination. Offsets are bounded request selectors, not quotas.
+const (
+	AppResourceInventoryDefaultPage = 20
+	AppResourceInventoryMaxPage     = 100
+	AppResourceInventoryMaxOffset   = 1000000
+)
+
 // Domain doctor DNS probes are bounded independently of the inventory size.
 // The query ceiling accommodates the maximum DNS label depth plus aliases.
 const (
