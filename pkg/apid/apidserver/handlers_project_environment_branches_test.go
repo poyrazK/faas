@@ -58,7 +58,7 @@ func TestEnvironmentBranchPublishesParentBuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, body := range []string{`{"slug":"pr-7","ttl":"5m"}`, `{"slug":"pr-7","egress":"simulated"}`, `{"slug":"production"}`, `{"slug":"Not A Slug"}`} {
+	for _, body := range []string{`{"slug":"pr-7","ttl":"5m"}`, `{"slug":"pr-7","egress":"bogus"}`, `{"slug":"production"}`, `{"slug":"Not A Slug"}`} {
 		req, rec := environmentBranchRequest(http.MethodPost, "production", body)
 		srv.createProjectEnvironmentBranch(rec, req, acct)
 		if rec.Code != http.StatusBadRequest {

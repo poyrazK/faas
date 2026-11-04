@@ -15,6 +15,13 @@ func (c *Client) CreateProjectEnvironmentBranch(ctx context.Context, projectSlug
 	return out, c.do(ctx, http.MethodPost, path, req, &out)
 }
 
+// SeedDevSessionFromEnvironmentBranch deploys a simulated branch's workload
+// into the developer session of a rehearsal run (ADR-20261031193635 slice 6b).
+func (c *Client) SeedDevSessionFromEnvironmentBranch(ctx context.Context, project string, req SeedDevSessionFromEnvironmentBranchRequest) (SeedDevSessionFromEnvironmentBranchResponse, error) {
+	var out SeedDevSessionFromEnvironmentBranchResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/dev/sessions/"+url.PathEscape(project)+"/seed", req, &out)
+}
+
 // ListProjectEnvironmentBranches lists the direct branches of environmentSlug.
 func (c *Client) ListProjectEnvironmentBranches(ctx context.Context, projectSlug, environmentSlug string) (ProjectEnvironmentBranchListResponse, error) {
 	var out ProjectEnvironmentBranchListResponse
@@ -31,6 +38,10 @@ const (
 	// EnvironmentBranchEgressContained keeps a branch's guests to the
 	// platform services of their branch (ADR-20261031193635 section 7).
 	EnvironmentBranchEgressContained = "contained"
+	// EnvironmentBranchEgressSimulated is contained, and the branch can seed
+	// rehearsal twins whose side effects are simulated and recorded
+	// (ADR-20261031193635 slice 6b).
+	EnvironmentBranchEgressSimulated = "simulated"
 	// EnvironmentBranchContainmentEnv is apid's operator gate for contained
 	// branches: set it to 1 only once every serving vmmd, schedd and
 	// gatewayd-internal enforces the contained profile.
@@ -51,6 +62,9 @@ const (
 	// object storage yet; its overlay buckets are served by the public S3
 	// gateway, which contained guests do not reach.
 	CodeEnvironmentBranchContainedObjects = "environment_branch_contained_objects_unsupported"
+	// CodeEnvironmentBranchNotSimulated: only a simulated branch seeds a
+	// rehearsal twin.
+	CodeEnvironmentBranchNotSimulated = "environment_branch_not_simulated"
 	// CodeEnvironmentBranchHasBranches: delete the branches of an
 	// environment before the environment itself.
 	CodeEnvironmentBranchHasBranches = "environment_has_branches"
@@ -62,8 +76,28 @@ type CreateProjectEnvironmentBranchRequest struct {
 	Slug string `json:"slug"`
 	// TTL is a duration such as "24h". Empty takes the default.
 	TTL string `json:"ttl,omitempty"`
-	// Egress is "live" (the default). Contained and simulated egress come later.
+	// Egress is "live" (the default), "contained" or "simulated".
 	Egress string `json:"egress,omitempty"`
+}
+
+// SeedDevSessionFromEnvironmentBranchRequest is POST
+// /v1/dev/sessions/{project}/seed: it deploys one workload of a simulated
+// environment branch into the developer session of WorkspaceID (a rehearsal
+// run member), reusing the branch's build (ADR-20261031193635 slice 6b).
+type SeedDevSessionFromEnvironmentBranchRequest struct {
+	WorkspaceID string `json:"workspace_id"`
+	// Project, Environment and Workload name the branch workload.
+	Project     string `json:"project"`
+	Environment string `json:"environment"`
+	Workload    string `json:"workload"`
+}
+
+// SeedDevSessionFromEnvironmentBranchResponse names the member's deployment,
+// which goes live after one boot.
+type SeedDevSessionFromEnvironmentBranchResponse struct {
+	AppSlug      string `json:"app_slug"`
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
 }
 
 // ProjectEnvironmentBranchResponse describes a branch and the workloads it

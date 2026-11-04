@@ -133,6 +133,7 @@ type contractTestStore interface {
 	state.EnvironmentBranchDeploymentReader
 	state.EnvironmentBranchCaptureStore
 	state.EnvironmentBranchEgressStore
+	state.EnvironmentBranchSeedStore
 	state.ProjectEnvironmentPromotionFeatureFlagStore
 	state.ProjectEnvironmentPromotionReleaseSetStore
 	state.ProjectEnvironmentPromotionWorkloadSpecStore

@@ -264,6 +264,9 @@ func (s *PgStore) CreateDeploymentForEnvironmentBranch(ctx context.Context, acco
 // created for the app.
 func prepareBranchDeploymentTx(ctx context.Context, tx pgx.Tx, d Deployment) (Deployment, *Deployment, string, error) {
 	input := d.branchInput
+	if input.Seed != nil {
+		return prepareSeedDeploymentTx(ctx, tx, d)
+	}
 	var environmentID, parentSlug string
 	err := tx.QueryRow(ctx, `
 		select b.environment_id::text, p.slug
@@ -313,6 +316,31 @@ func prepareBranchDeploymentTx(ctx context.Context, tx pgx.Tx, d Deployment) (De
 // lineage on the inserted row and moves it to snapshotting, where schedd's
 // prime activates it without a boot.
 func attachBranchDeploymentTx(ctx context.Context, tx pgx.Tx, input projectEnvironmentBranchDeploymentInput, sourceID string, d Deployment, created *Deployment) error {
+	if input.Seed != nil {
+		return attachSeedDeploymentTx(ctx, tx, input, sourceID, d, created)
+	}
+	if err := copyBranchDeploymentArtifactTx(ctx, tx, sourceID, d, created); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
+		insert into project_environment_branch_deployments (deployment_id, environment_id, app_id, source_deployment_id)
+		select $1, b.environment_id, $2, $3
+		  from project_environment_branches b
+		  join project_environments e on e.id = b.environment_id
+		 where e.account_id = $4 and e.project_id = $5 and e.slug = $6
+	`, created.ID, created.AppID, sourceID, input.AccountID, input.ProjectID, input.Slug)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return stageBranchDeploymentTx(ctx, tx, created)
+}
+
+// copyBranchDeploymentArtifactTx stamps a source deployment's artifact,
+// sidecar layers and reload signals on a deployment that reuses it.
+func copyBranchDeploymentArtifactTx(ctx context.Context, tx pgx.Tx, sourceID string, d Deployment, created *Deployment) error {
 	q := new(sqlc.Queries)
 	if err := q.SetProjectEnvironmentCloneDeploymentArtifact(ctx, tx, sqlc.SetProjectEnvironmentCloneDeploymentArtifactParams{
 		DeploymentID: mustPgUUID(created.ID), RootfsPath: d.RootfsPath, RootfsKey: d.RootfsKey, RootfsBytes: d.RootfsBytes,
@@ -346,19 +374,12 @@ func attachBranchDeploymentTx(ctx context.Context, tx pgx.Tx, input projectEnvir
 			return mapErr(err)
 		}
 	}
-	tag, err := tx.Exec(ctx, `
-		insert into project_environment_branch_deployments (deployment_id, environment_id, app_id, source_deployment_id)
-		select $1, b.environment_id, $2, $3
-		  from project_environment_branches b
-		  join project_environments e on e.id = b.environment_id
-		 where e.account_id = $4 and e.project_id = $5 and e.slug = $6
-	`, created.ID, created.AppID, sourceID, input.AccountID, input.ProjectID, input.Slug)
-	if err != nil {
-		return mapErr(err)
-	}
-	if tag.RowsAffected() != 1 {
-		return ErrConflict
-	}
+	return nil
+}
+
+// stageBranchDeploymentTx moves a copied-artifact deployment to
+// snapshotting, where schedd's prime picks it up.
+func stageBranchDeploymentTx(ctx context.Context, tx pgx.Tx, created *Deployment) error {
 	activated, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `
 		update deployments
 		   set status = 'snapshotting',

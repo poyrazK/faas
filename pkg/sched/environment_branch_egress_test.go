@@ -67,3 +67,48 @@ func TestContainedBranchWakeRequiresTheContainedProfile(t *testing.T) {
 		}
 	}
 }
+
+// Slice 6b: a rehearsal member seeded from a simulated branch has no branch
+// lineage, so its prime boots it (under the run's policy) instead of the
+// branch's boot-free activation.
+func TestPrimeSeededRehearsalMemberBoots(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	app, _ := seedEnvironmentBranch(t, store, api.ExecutionModeRequest, false)
+	limits := api.MustLimitsFor(api.PlanPro)
+	if _, _, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
+		AccountID: app.AccountID, ProjectID: app.ProjectID, ParentSlug: "production", Slug: "sim-1",
+		ExpiresAt: time.Now().Add(time.Hour), EgressMode: state.EnvironmentBranchEgressSimulated,
+		MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
+	}, limits); err != nil {
+		t.Fatal(err)
+	}
+	branchDep, err := store.CreateDeploymentForEnvironmentBranch(ctx, app.AccountID, app.ProjectID, "sim-1", app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, branchDep.ID); err != nil {
+		t.Fatal(err)
+	}
+	member, err := store.CreateApp(ctx, state.App{AccountID: app.AccountID, Slug: "dev-web-twin", Status: state.AppActive,
+		Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60, PreviewOfSlug: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := store.SeedScenarioMemberFromEnvironmentBranch(ctx, state.EnvironmentBranchSeed{
+		AccountID: app.AccountID, ProjectID: app.ProjectID, Branch: "sim-1", Workload: "web", MemberAppID: member.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &sched.FakeVMM{}
+	engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+	if err := engine.Prime(ctx, member.ID, seeded.ID); err != nil {
+		t.Fatalf("Prime(seeded member): %v", err)
+	}
+	if *vmm.ColdBoots() != 1 {
+		t.Fatalf("seeded member cold boots = %d; want 1", *vmm.ColdBoots())
+	}
+	if got := vmm.LastColdBootSpec(); got.AppID != member.ID {
+		t.Fatalf("seeded member booted app %q, want the twin %q", got.AppID, member.ID)
+	}
+}

@@ -19,6 +19,11 @@ func TestPgEnvironmentBranchCaptures(t *testing.T) {
 	environmentBranchCaptures(t, s)
 }
 
+func TestPgEnvironmentBranchSeed(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	environmentBranchSeed(t, s)
+}
+
 func TestPgEnvironmentBranchEgress(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	environmentBranchEgress(t, s)

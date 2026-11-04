@@ -2198,6 +2198,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/dev/test-runs/{run_id}/chaos/matches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.getScenarioTestChaosMatches))))
 	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteScenarioTest))))
 	mux.HandleFunc("POST /v1/dev/sessions/{project}/syncs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recordDevSync)))))
+	mux.HandleFunc("POST /v1/dev/sessions/{project}/seed", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.seedDevSessionFromEnvironmentBranch)))))
 	mux.HandleFunc("GET /v1/dev/sessions/{project}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDevSyncHistory))))
 	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getApp))))
 	// App-owned raw TCP listeners. The public port is stable and the

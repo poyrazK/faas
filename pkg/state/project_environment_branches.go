@@ -207,6 +207,9 @@ type EnvironmentBranchDeploymentReader interface {
 
 type projectEnvironmentBranchDeploymentInput struct {
 	AccountID, ProjectID, Slug string
+	// Seed, when set, seeds a rehearsal member from the branch workload
+	// instead of creating the branch's own deployment (slice 6b).
+	Seed *EnvironmentBranchSeed
 }
 
 type projectEnvironmentBranchDeployment struct {
@@ -455,6 +458,9 @@ func (m *MemStore) CreateDeploymentForEnvironmentBranch(ctx context.Context, acc
 // second call for the same app returns the deployment already created.
 func (m *MemStore) prepareBranchDeploymentLocked(d Deployment) (Deployment, *Deployment, string, error) {
 	input := d.branchInput
+	if input.Seed != nil {
+		return m.prepareSeedDeploymentLocked(d)
+	}
 	branch, err := m.projectEnvironmentBranchBySlugLocked(input.AccountID, input.ProjectID, input.Slug)
 	if err != nil {
 		return Deployment{}, nil, "", err
@@ -484,10 +490,24 @@ func (m *MemStore) prepareBranchDeploymentLocked(d Deployment) (Deployment, *Dep
 }
 
 func (m *MemStore) attachBranchDeploymentLocked(input projectEnvironmentBranchDeploymentInput, sourceID string, created Deployment) {
+	if input.Seed != nil {
+		m.attachSeedDeploymentLocked(input, sourceID, created)
+		return
+	}
 	branch, err := m.projectEnvironmentBranchBySlugLocked(input.AccountID, input.ProjectID, input.Slug)
 	if err != nil {
 		return // validated under the same lock in prepareBranchDeploymentLocked
 	}
+	m.copyBranchDeploymentLayersLocked(sourceID, created.ID)
+	m.projectEnvironmentBranchDeployments[created.ID] = projectEnvironmentBranchDeployment{
+		DeploymentID: created.ID, EnvironmentID: branch.EnvironmentID, AppID: created.AppID,
+		SourceDeploymentID: sourceID, CreatedAt: time.Now().UTC(),
+	}
+}
+
+// copyBranchDeploymentLayersLocked copies a source deployment's sidecar
+// layers and reload signals onto a deployment that reuses its artifact.
+func (m *MemStore) copyBranchDeploymentLayersLocked(sourceID, createdID string) {
 	now := time.Now().UTC()
 	var layers []DeploymentSidecarLayer
 	for _, layer := range m.deploymentSidecarLayers {
@@ -496,9 +516,9 @@ func (m *MemStore) attachBranchDeploymentLocked(input projectEnvironmentBranchDe
 		}
 	}
 	for _, layer := range layers {
-		layer.DeploymentID = created.ID
+		layer.DeploymentID = createdID
 		layer.CreatedAt, layer.UpdatedAt = now, now
-		m.deploymentSidecarLayers[created.ID+"\x00"+layer.SidecarName] = layer
+		m.deploymentSidecarLayers[createdID+"\x00"+layer.SidecarName] = layer
 	}
 	prefix := sourceID + "\x00"
 	signals := map[string]string{}
@@ -508,11 +528,7 @@ func (m *MemStore) attachBranchDeploymentLocked(input projectEnvironmentBranchDe
 		}
 	}
 	for name, signal := range signals {
-		m.sidecarSecretReloadSignals[created.ID+"\x00"+name] = signal
-	}
-	m.projectEnvironmentBranchDeployments[created.ID] = projectEnvironmentBranchDeployment{
-		DeploymentID: created.ID, EnvironmentID: branch.EnvironmentID, AppID: created.AppID,
-		SourceDeploymentID: sourceID, CreatedAt: now,
+		m.sidecarSecretReloadSignals[createdID+"\x00"+name] = signal
 	}
 }
 

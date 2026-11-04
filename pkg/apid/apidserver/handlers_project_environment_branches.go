@@ -303,19 +303,23 @@ func environmentHasBranchesProblem(slug string) *api.Problem {
 		"delete the branches of "+slug+" before deleting it")
 }
 
-// environmentBranchEgressProblem admits live egress, and contained egress
-// once the operator gate is on (ADR-20261031193635 slice 6a). Simulated
-// egress needs the rehearsal simulation broker and is not available yet.
+// environmentBranchEgressProblem admits live egress, contained egress once
+// the operator gate is on (slice 6a), and simulated egress once rehearsal
+// containment and simulation are on too (slice 6b): its twins rehearse
+// through them.
 func (s *server) environmentBranchEgressProblem(egress string) *api.Problem {
 	switch {
 	case egress == api.EnvironmentBranchEgressLive:
 		return nil
-	case egress == api.EnvironmentBranchEgressContained && s.environmentBranchContainmentEnabled:
-		return nil
-	case egress == api.EnvironmentBranchEgressContained:
+	case egress != api.EnvironmentBranchEgressContained && egress != api.EnvironmentBranchEgressSimulated:
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid environment branch egress",
+			"egress must be live, contained or simulated")
+	case !s.environmentBranchContainmentEnabled:
 		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchUnavailable, "Contained environment branches are unavailable",
-			"contained egress is not enabled on this platform; create the branch with live egress")
+			egress+" egress is not enabled on this platform; create the branch with live egress")
+	case egress == api.EnvironmentBranchEgressSimulated && !(s.rehearsalNetworkEnabled && s.rehearsalSimulationEnabled):
+		return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchUnavailable, "Simulated environment branches are unavailable",
+			"simulated egress needs rehearsal containment and action simulation, which are not enabled on this platform")
 	}
-	return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid environment branch egress",
-		"egress must be live or contained; simulated egress is not available yet")
+	return nil
 }
