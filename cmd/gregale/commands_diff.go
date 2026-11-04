@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -247,6 +248,12 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 
 	// 1. Baseline snapshot.
 	baseline, baselineErr := buildBaseline(ctx, client, opts.Slug)
+	// A deploy token has deploy:write but not the apps:read the env and
+	// edge-rule reads need; apid's diff admits it and compares the same
+	// baseline (rc.318 field report).
+	if isScopeRefusal(baselineErr) {
+		return runServerDiff(ctx, client, opts)
+	}
 	if baselineErr != nil && !opts.Lenient {
 		return printErr("Could not read baseline", baselineErr)
 	}
@@ -569,6 +576,13 @@ func accountCronCount(ctx context.Context, client *api.Client, excludeSlug strin
 		return 0
 	}
 	return len(rows)
+}
+
+// isScopeRefusal matches the 403 a credential without the route's scope
+// gets.
+func isScopeRefusal(err error) bool {
+	var ae *api.APIError
+	return errors.As(err, &ae) && ae.Problem.Status == http.StatusForbidden && ae.Problem.Code == api.CodeForbidden
 }
 
 // isNotFound matches the apid handler's 404 shape — used so a
