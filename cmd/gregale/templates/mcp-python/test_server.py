@@ -45,6 +45,10 @@ class MCPStarterTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as failure:
             urlopen(Request(self.base+"/healthz",headers={"Origin":"https://untrusted.example"}),timeout=3)
         self.assertEqual(failure.exception.code,403)
+    def test_health_names_serving_instance(self):
+        # Instances restored from one snapshot share their boot env.
+        with urlopen(Request(self.base+"/healthz",headers={"X-Faas-Instance-Id":"inst-restored"}),timeout=3) as response:
+            self.assertEqual(json.load(response)["instance_id"],"inst-restored")
     def test_draining_rejects_new_work(self):
         self.http.draining.set()
         with self.assertRaises(HTTPError) as failure:urlopen(self.base+"/healthz",timeout=3)
