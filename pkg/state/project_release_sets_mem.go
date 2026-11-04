@@ -176,6 +176,9 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 			return ProjectReleaseSet{}, err
 		}
 	}
+	if err := m.checkProjectRollbackReleasesLocked(projectID, environment, previousID, members, false); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	if previousID != "" {
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
@@ -245,6 +248,9 @@ func (m *MemStore) deactivateProjectReleaseSet(ctx context.Context, accountID, p
 		return ProjectReleaseSet{}, ErrConflict
 	}
 	if err := m.validateProjectReleaseFallbackLocked(projectID, environment, expectedFallback); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := m.checkProjectRollbackReleasesLocked(projectID, environment, activeID, expectedFallback, true); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	checked, _ := ctx.Value(checkedReleaseDeactivationKey{}).(bool)
@@ -409,6 +415,12 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 			return ProjectReleaseSet{}, err
 		}
 	}
+	if !allowGitOpsReplacement {
+		if err := m.checkProjectRollbackReleasesLocked(projectID, environment, previousID, members, false); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+
 	if previousID != "" {
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false

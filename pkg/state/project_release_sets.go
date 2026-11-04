@@ -276,6 +276,12 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 			return ProjectReleaseSet{}, err
 		}
 	}
+	if !allowGitOpsReplacement {
+		if err := checkProjectRollbackReleasesTx(ctx, tx, accountID, projectID, environment, activeID, members, false); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+
 	// A member may already have reached 0% when this graph is replaced.
 	if err := applyReleaseAdditionsDB(ctx, tx); err != nil {
 		return ProjectReleaseSet{}, err
@@ -441,6 +447,10 @@ func (s *PgStore) deactivateProjectReleaseSet(ctx context.Context, accountID, pr
 			return ProjectReleaseSet{}, checkedGraphWriteError(err)
 		}
 	}
+	if err := checkProjectRollbackReleasesTx(ctx, tx, accountID, projectID, environment, activeID, expectedFallback, true); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+
 	if _, err := tx.Exec(ctx, `insert into deployment_revision_pins (deployment_id, app_id, expires_at)
 		select rm.deployment_id, rm.app_id, now() + (rs.ttl_seconds * interval '1 second')
 		  from project_release_sets rs
@@ -755,6 +765,9 @@ func (s *PgStore) publishProjectReleaseSetTx(ctx context.Context, tx pgx.Tx, acc
 		if err := releaseMemberDeployment(ctx, tx, appRow.id, depID, environment); err != nil {
 			return ProjectReleaseSet{}, err
 		}
+	}
+	if err := checkProjectRollbackReleasesTx(ctx, tx, accountID, projectID, environment, activeID, members, false); err != nil {
+		return ProjectReleaseSet{}, err
 	}
 	// A member may already have reached 0% when this graph is replaced.
 	// Its direct revision deadline began at the deployment cutover, which

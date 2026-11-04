@@ -1098,6 +1098,13 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 		return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
 			fmt.Errorf("%w: active target release graph changed after promotion", state.ErrConflict))
 	}
+	restoring := fallbackMembers
+	if previousGraph != nil {
+		restoring = previousGraph.Members
+	}
+	if err := promotionapi.CheckRollbackContracts(ctx, s.store, promotion.ToEnvironment, active.Members, restoring); err != nil {
+		return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion, err)
+	}
 	if previousGraph != nil {
 		if err := s.durable.CheckProjectValidatorMembers(ctx, previousGraph.Members); err != nil {
 			return err
@@ -1119,7 +1126,7 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 		}
 		if err != nil {
 			return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
-				fmt.Errorf("%w: could not atomically restore previous release graph", state.ErrConflict))
+				fmt.Errorf("could not atomically restore previous release graph: %w", err))
 		}
 		promotion, err = s.store.UpdateProjectEnvironmentPromotionReleaseSets(ctx, acct.ID, promotion.ID, "", restored.ID)
 		if err != nil {
@@ -1129,7 +1136,7 @@ func (s *server) applyProjectEnvironmentPromotionGraphRollback(ctx context.Conte
 		if err := publisher.DeactivateProjectReleaseSetIfActive(ctx, acct.ID, promotion.ProjectID,
 			promotion.ToEnvironment, promotion.TargetReleaseSetID, fallbackMembers); err != nil {
 			return s.recordProjectEnvironmentPromotionGraphRollbackFailure(ctx, acct, promotion,
-				fmt.Errorf("%w: target route changed; refusing to remove the promoted graph", state.ErrConflict))
+				fmt.Errorf("could not remove the promoted graph: %w", err))
 		}
 	}
 	return s.completeProjectEnvironmentPromotionGraphRollback(ctx, acct, promotion, workloads)

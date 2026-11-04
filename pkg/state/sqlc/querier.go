@@ -284,6 +284,7 @@ type Querier interface {
 	// follow-up SELECT. Returns ErrNotFound when the instance row is
 	// missing (pgx.ErrNoRows maps to state.ErrNotFound in pgstore).
 	BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpInstanceTailCountParams) (int32, error)
+	BumpReleaseHistoryAdmission(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	// A queued fork has no instance yet and is cancelled directly. A restoring or
 	// running fork only records the request; schedd destroys the instance and
 	// writes the terminal status under its lease.
@@ -3244,6 +3245,7 @@ type Querier interface {
 	// reclaim its own generation before the replay proceeds.
 	KeyedWorkLaneHead(ctx context.Context, db DBTX, arg KeyedWorkLaneHeadParams) (KeyedWorkLaneHeadRow, error)
 	KnownCustomDomainTLSHost(ctx context.Context, db DBTX, arg KnownCustomDomainTLSHostParams) (bool, error)
+	LastGraphMemberServingEnd(ctx context.Context, db DBTX, arg LastGraphMemberServingEndParams) (pgtype.Timestamptz, error)
 	LatchAutomationFailurePause(ctx context.Context, db DBTX, arg LatchAutomationFailurePauseParams) error
 	LatestAppConfigGuard(ctx context.Context, db DBTX, arg LatestAppConfigGuardParams) (AppConfigGuard, error)
 	LatestAppConfigRevision(ctx context.Context, db DBTX, arg LatestAppConfigRevisionParams) (AppConfigRevision, error)
@@ -6785,6 +6787,7 @@ type Querier interface {
 	// coalesce(revoked_at, now()) makes the call idempotent on already
 	// revoked rows (returns 0 rows).
 	RevokeSession(ctx context.Context, db DBTX, arg RevokeSessionParams) (pgtype.UUID, error)
+	RollbackReleaseRunsAfter(ctx context.Context, db DBTX, arg RollbackReleaseRunsAfterParams) ([]RollbackReleaseRunsAfterRow, error)
 	// ADR-221: claiming and counting share one statement/transaction. SKIP LOCKED
 	// permits concurrent workers without counting the same result twice.
 	RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMirrorResultsParams) (int64, error)

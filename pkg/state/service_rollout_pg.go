@@ -289,6 +289,9 @@ func (s *PgStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Depl
 	if !found || (target.ServiceRolloutHandoff.PredecessorDeploymentID != "" && target.ServiceRolloutHandoff.PredecessorDeploymentID != previous.id) {
 		return target, ErrServiceRolloutInvalid
 	}
+	if err := checkUnreviewedRollbackTx(ctx, tx, target.AppID, target.Scope, previous.id); err != nil {
+		return target, err
+	}
 	target, err = s.prepareServiceBinding(ctx, tx, target, ServiceRolloutActionAbort, previous.id, previous.id, target.ServiceRolloutHandoff.Reason)
 	if err != nil {
 		return target, err
@@ -371,6 +374,9 @@ func (s *PgStore) AbortServiceRollout(ctx context.Context, id, reason string) (D
 		return Deployment{}, err
 	}
 	previous, _ := previousServiceRolloutRow(target, rows)
+	if err := checkUnreviewedRollbackTx(ctx, tx, target.AppID, target.Scope, previous.id); err != nil {
+		return target, err
+	}
 	target, err = s.prepareServiceBinding(ctx, tx, target, ServiceRolloutActionAbort, previous.id, previous.id, reason)
 	if err != nil {
 		return target, err

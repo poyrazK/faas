@@ -24,6 +24,9 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	if target.AppID != operation.AppID {
 		return "failed", "rollback_deployment_changed", nil, nil
 	}
+	if state.CheckedRollbackCompleted(operation, target) {
+		return "complete", "", nil, nil
+	}
 	if target.Status == state.DeployFailed || target.Status == state.DeployCancelled || target.Status == state.DeploySuperseded {
 		return "failed", "rollback_readiness_failed", nil, nil
 	}

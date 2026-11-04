@@ -3608,6 +3608,16 @@ func (q *Queries) BumpInstanceTailCount(ctx context.Context, db DBTX, arg BumpIn
 	return tail_count, err
 }
 
+const bumpReleaseHistoryAdmission = `-- name: BumpReleaseHistoryAdmission :exec
+INSERT INTO workflow_code_admission_guard(app_id) VALUES($1::uuid)
+ON CONFLICT(app_id) DO UPDATE SET generation=workflow_code_admission_guard.generation+1
+`
+
+func (q *Queries) BumpReleaseHistoryAdmission(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, bumpReleaseHistoryAdmission, appID)
+	return err
+}
+
 const cancelAppFork = `-- name: CancelAppFork :one
 UPDATE app_forks
 SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
@@ -41528,6 +41538,35 @@ func (q *Queries) KnownCustomDomainTLSHost(ctx context.Context, db DBTX, arg Kno
 	var known bool
 	err := row.Scan(&known)
 	return known, err
+}
+
+const lastGraphMemberServingEnd = `-- name: LastGraphMemberServingEnd :one
+SELECT max(r.expires_at - r.ttl_seconds * interval '1 second')::timestamptz AS ended_at
+FROM project_release_sets r JOIN project_release_members m ON m.release_id=r.id
+WHERE r.project_id=$1::uuid AND r.environment_slug=$2::text
+ AND NOT r.active AND m.app_id=$3::uuid AND m.deployment_id=$4::uuid
+ -- Unpromoted canaries retain until a future deadline; that is not a serving end.
+ AND NOT EXISTS (SELECT 1 FROM project_release_canaries c WHERE c.project_id=r.project_id
+   AND c.policy->>'candidate_release_id'=r.id::text AND c.policy->>'percent'<>'100')
+`
+
+type LastGraphMemberServingEndParams struct {
+	ProjectID    pgtype.UUID
+	Scope        string
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) LastGraphMemberServingEnd(ctx context.Context, db DBTX, arg LastGraphMemberServingEndParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, lastGraphMemberServingEnd,
+		arg.ProjectID,
+		arg.Scope,
+		arg.AppID,
+		arg.DeploymentID,
+	)
+	var ended_at pgtype.Timestamptz
+	err := row.Scan(&ended_at)
+	return ended_at, err
 }
 
 const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
@@ -99615,6 +99654,52 @@ func (q *Queries) RevokeSession(ctx context.Context, db DBTX, arg RevokeSessionP
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const rollbackReleaseRunsAfter = `-- name: RollbackReleaseRunsAfter :many
+SELECT deployment_id::text AS deployment_id, started_at
+FROM app_tasks WHERE app_id=$1::uuid AND kind='release'
+ AND deployment_id<>$2::uuid
+ AND coalesce(nullif(deployment_scope,''),'default')=$3::text
+ AND started_at>$4::timestamptz
+ORDER BY started_at,id
+`
+
+type RollbackReleaseRunsAfterParams struct {
+	AppID    pgtype.UUID
+	TargetID pgtype.UUID
+	Scope    string
+	Since    pgtype.Timestamptz
+}
+
+type RollbackReleaseRunsAfterRow struct {
+	DeploymentID string
+	StartedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) RollbackReleaseRunsAfter(ctx context.Context, db DBTX, arg RollbackReleaseRunsAfterParams) ([]RollbackReleaseRunsAfterRow, error) {
+	rows, err := db.Query(ctx, rollbackReleaseRunsAfter,
+		arg.AppID,
+		arg.TargetID,
+		arg.Scope,
+		arg.Since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RollbackReleaseRunsAfterRow{}
+	for rows.Next() {
+		var i RollbackReleaseRunsAfterRow
+		if err := rows.Scan(&i.DeploymentID, &i.StartedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const rollupMirrorResults = `-- name: RollupMirrorResults :execrows

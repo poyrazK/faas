@@ -209,6 +209,9 @@ func (m *MemStore) BeginServiceRolloutAbort(ctx context.Context, id string) (Dep
 	if !found || (target.ServiceRolloutHandoff.PredecessorDeploymentID != "" && target.ServiceRolloutHandoff.PredecessorDeploymentID != previous.id) {
 		return target, ErrServiceRolloutInvalid
 	}
+	if err := m.checkUnreviewedRollbackLocked(target.AppID, target.Scope, previous.id); err != nil {
+		return target, err
+	}
 	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionAbort, previous.id, previous.id, target.ServiceRolloutHandoff.Reason)
 	if err != nil {
 		return target, err
@@ -274,6 +277,9 @@ func (m *MemStore) AbortServiceRollout(ctx context.Context, id, reason string) (
 	}
 	before := target
 	previous, _ := previousMemServiceRolloutRow(target, rows)
+	if err := m.checkUnreviewedRollbackLocked(target.AppID, target.Scope, previous.id); err != nil {
+		return target, err
+	}
 	target, err = m.prepareServiceBindingLocked(ctx, target, ServiceRolloutActionAbort, previous.id, previous.id, reason)
 	if err != nil {
 		return target, err

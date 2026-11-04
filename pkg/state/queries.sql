@@ -28312,3 +28312,24 @@ ORDER BY requested_at,id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: LockRollbackOutcomeTarget :one
 SELECT status,rollout_completed_at FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid FOR UPDATE;
+
+-- name: LastGraphMemberServingEnd :one
+SELECT max(r.expires_at - r.ttl_seconds * interval '1 second')::timestamptz AS ended_at
+FROM project_release_sets r JOIN project_release_members m ON m.release_id=r.id
+WHERE r.project_id=sqlc.arg(project_id)::uuid AND r.environment_slug=sqlc.arg(scope)::text
+ AND NOT r.active AND m.app_id=sqlc.arg(app_id)::uuid AND m.deployment_id=sqlc.arg(deployment_id)::uuid
+ -- Unpromoted canaries retain until a future deadline; that is not a serving end.
+ AND NOT EXISTS (SELECT 1 FROM project_release_canaries c WHERE c.project_id=r.project_id
+   AND c.policy->>'candidate_release_id'=r.id::text AND c.policy->>'percent'<>'100');
+
+-- name: RollbackReleaseRunsAfter :many
+SELECT deployment_id::text AS deployment_id, started_at
+FROM app_tasks WHERE app_id=sqlc.arg(app_id)::uuid AND kind='release'
+ AND deployment_id<>sqlc.arg(target_id)::uuid
+ AND coalesce(nullif(deployment_scope,''),'default')=sqlc.arg(scope)::text
+ AND started_at>sqlc.arg(since)::timestamptz
+ORDER BY started_at,id;
+
+-- name: BumpReleaseHistoryAdmission :exec
+INSERT INTO workflow_code_admission_guard(app_id) VALUES(sqlc.arg(app_id)::uuid)
+ON CONFLICT(app_id) DO UPDATE SET generation=workflow_code_admission_guard.generation+1;

@@ -324,9 +324,12 @@ func (s *PgStore) UpdateCheckedRollback(ctx context.Context, snapshot api.Rollba
 	if err != nil {
 		return err
 	}
-	h := d.ServiceRolloutHandoff
-	if status == "complete" && (r.Status != "routing" || d.Status != DeployLive || d.TrafficPercent != 100 || d.RolloutState != "complete" || h.Phase != "complete" || h.Action != "promote" || h.PredecessorDeploymentID != r.CurrentDeploymentID || h.BindingsCheck == nil || h.BindingsCheck.RequestID != r.ID || h.BindingsCheck.AuditID != r.AuditID) {
+	done := CheckedRollbackCompleted(r, d)
+	if status == "complete" && !done {
 		return ErrCheckedRollbackChanged
+	}
+	if status == "failed" && done {
+		status, code, blockers = "complete", "", nil
 	}
 	if status == "failed" && d.TrafficPercent == 0 {
 		if err = q.FailCheckedRollbackTarget(ctx, tx, mustPgUUID(d.ID)); err != nil {
@@ -334,6 +337,9 @@ func (s *PgStore) UpdateCheckedRollback(ctx context.Context, snapshot api.Rollba
 		}
 	}
 	r = blockedRollback(r, status, code, blockers)
+	if status == "complete" && d.ServiceRolloutHandoff.CompletedAt != nil {
+		r.CompletedAt = d.ServiceRolloutHandoff.CompletedAt
+	}
 	if err = saveCheckedRollback(ctx, tx, r); err != nil {
 		return err
 	}

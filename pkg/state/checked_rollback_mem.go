@@ -235,14 +235,23 @@ func (m *MemStore) UpdateCheckedRollback(_ context.Context, snapshot api.Rollbac
 		return ErrCheckedRollbackChanged
 	}
 	d := m.deployments[r.TargetDeploymentID]
-	if status == "complete" && (r.Status != "routing" || d.Status != DeployLive || d.TrafficPercent != 100 || d.RolloutState != "complete" || d.ServiceRolloutHandoff.Phase != "complete" || d.ServiceRolloutHandoff.Action != "promote" || d.ServiceRolloutHandoff.PredecessorDeploymentID != r.CurrentDeploymentID || d.ServiceRolloutHandoff.BindingsCheck == nil || d.ServiceRolloutHandoff.BindingsCheck.RequestID != r.ID || d.ServiceRolloutHandoff.BindingsCheck.AuditID != r.AuditID) {
+	done := CheckedRollbackCompleted(r, d)
+	if status == "complete" && !done {
 		return ErrCheckedRollbackChanged
+	}
+	if status == "failed" && done {
+		status, code, blockers = "complete", "", nil
 	}
 	if status == "failed" && d.TrafficPercent == 0 {
 		d.Status = DeploySuperseded
 		d.RolloutState = "pending"
 		m.putDeploymentLocked(d.ID, d)
 	}
-	m.checkedRollbacks[r.ID] = blockedRollback(r, status, code, blockers)
+	r = blockedRollback(r, status, code, blockers)
+	if status == "complete" && d.ServiceRolloutHandoff.CompletedAt != nil {
+		doneAt := *d.ServiceRolloutHandoff.CompletedAt
+		r.CompletedAt = &doneAt
+	}
+	m.checkedRollbacks[r.ID] = r
 	return nil
 }

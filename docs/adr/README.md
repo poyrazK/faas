@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261104160000: Guard graph and service rollback publication](20261104160000-graph-and-service-rollback-safety.md) — accepted; graph contracts and migration serving windows, atomic service-abort release guards, and durable checked completion after replacement.
+
 - [ADR-20261104140000: Fence rollback execution and reconcile outcomes](20261104140000-rollback-execution-fences-and-outcomes.md) — accepted; database-switch code writes validate leases, plain rollback reviews are preparation-bound, project rollback retains contract checks, and outcome sweeps reconcile fairly.
 
 - [ADR-20261104110000: Retain rollback release and contract evidence](20261104110000-rollback-release-and-contract-evidence.md) — accepted; checked cutover validates acknowledged release runs, contract gates cover production scopes and serving baselines, and historical contracts survive readiness.

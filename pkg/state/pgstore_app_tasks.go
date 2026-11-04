@@ -830,6 +830,11 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 	if err != nil {
 		return AppTask{}, err
 	}
+	if current.Kind == AppTaskKindRelease {
+		if err := sqlc.New().BumpReleaseHistoryAdmission(ctx, tx, mustPgUUID(current.AppID)); err != nil {
+			return AppTask{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppTask{}, mapErr(err)
 	}
