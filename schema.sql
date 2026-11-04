@@ -27185,6 +27185,32 @@ END $$;
 
 
 --
+-- Name: serialize_app_config_value_write(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.serialize_app_config_value_write() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target record;
+BEGIN
+ FOR target IN
+  SELECT DISTINCT app_id,scope FROM (
+   SELECT CASE WHEN TG_OP='INSERT' THEN NULL ELSE OLD.app_id END app_id,
+          CASE WHEN TG_OP='INSERT' THEN NULL ELSE OLD.scope END scope
+   UNION ALL
+   SELECT CASE WHEN TG_OP='DELETE' THEN NULL ELSE NEW.app_id END,
+          CASE WHEN TG_OP='DELETE' THEN NULL ELSE NEW.scope END
+  ) affected WHERE app_id IS NOT NULL ORDER BY app_id,scope
+ LOOP
+  PERFORM pg_advisory_xact_lock(hashtextextended('app_config:'||target.app_id::text||':'||target.scope,0));
+  PERFORM pg_advisory_xact_lock(hashtextextended('app_config:'||target.app_id::text||':__env_quota__',0));
+ END LOOP;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: serialize_clone_value_publication(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -30433,6 +30459,25 @@ COMMENT ON TABLE public.api_key_agent_clients IS 'ADR-20261030133644 agent clien
 
 
 --
+-- Name: api_key_project_limits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_key_project_limits (
+    key_id uuid NOT NULL,
+    project_ids uuid[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_key_project_limits_project_ids_check CHECK (((cardinality(project_ids) >= 1) AND (cardinality(project_ids) <= 100)))
+);
+
+
+--
+-- Name: TABLE api_key_project_limits; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_key_project_limits IS 'ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.';
+
+
+--
 -- Name: api_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -30644,14 +30689,14 @@ CREATE TABLE public.app_config_revisions (
     restored_revision bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT app_config_revisions_actor_check CHECK ((octet_length(actor) <= 256)),
-    CONSTRAINT app_config_revisions_check CHECK (((source = ANY (ARRAY['baseline'::text, 'config.rollback'::text, 'config.guard_restore'::text])) = (config_key = ''::text))),
+    CONSTRAINT app_config_revisions_batch_key_chk CHECK (((source = ANY (ARRAY['baseline'::text, 'env.batch'::text, 'config.rollback'::text, 'config.guard_restore'::text])) = (config_key = ''::text))),
+    CONSTRAINT app_config_revisions_batch_source_chk CHECK ((source = ANY (ARRAY['baseline'::text, 'env.set'::text, 'env.delete'::text, 'env.batch'::text, 'secret.set'::text, 'secret.delete'::text, 'secret.rotate'::text, 'config.rollback'::text, 'config.guard_restore'::text]))),
     CONSTRAINT app_config_revisions_check1 CHECK (((source = ANY (ARRAY['config.rollback'::text, 'config.guard_restore'::text])) = (restored_revision IS NOT NULL))),
     CONSTRAINT app_config_revisions_config_key_check CHECK (((config_key = ''::text) OR ((config_key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(config_key) <= 128)))),
     CONSTRAINT app_config_revisions_restored_revision_check CHECK (((restored_revision IS NULL) OR (restored_revision >= 1))),
     CONSTRAINT app_config_revisions_revision_check CHECK ((revision >= 1)),
     CONSTRAINT app_config_revisions_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT app_config_revisions_secrets_check CHECK ((jsonb_typeof(secrets) = 'object'::text)),
-    CONSTRAINT app_config_revisions_source_check CHECK ((source = ANY (ARRAY['baseline'::text, 'env.set'::text, 'env.delete'::text, 'secret.set'::text, 'secret.delete'::text, 'secret.rotate'::text, 'config.rollback'::text, 'config.guard_restore'::text]))),
     CONSTRAINT app_config_revisions_variables_check CHECK ((jsonb_typeof(variables) = 'object'::text))
 );
 
@@ -30728,6 +30773,24 @@ CREATE TABLE public.app_egress_policy_node_status (
     CONSTRAINT app_egress_policy_node_status_applied_revision_check CHECK ((applied_revision >= 0)),
     CONSTRAINT app_egress_policy_node_status_attempted_revision_check CHECK ((attempted_revision >= 0)),
     CONSTRAINT app_egress_policy_node_status_check CHECK ((attempted_revision >= applied_revision))
+);
+
+
+--
+-- Name: app_env_batch_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_env_batch_receipts (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    request_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    request_sha256 bytea NOT NULL,
+    receipt jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_env_batch_receipts_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
+    CONSTRAINT app_env_batch_receipts_request_sha256_check CHECK ((octet_length(request_sha256) = 32)),
+    CONSTRAINT app_env_batch_receipts_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))
 );
 
 
@@ -33781,6 +33844,7 @@ CREATE TABLE public.cli_auth_codes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     device_hash bytea,
     org_id uuid,
+    project_ids uuid[],
     CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
 );
 
@@ -35831,10 +35895,10 @@ CREATE TABLE public.deploy_tokens (
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
     rotated_from_id uuid,
+    CONSTRAINT deploy_tokens_agent_usage_scopes_chk CHECK (((cardinality(scopes) > 0) AND (((NOT ('agent'::text = ANY (scopes))) AND (scopes <@ ARRAY['deploy:write'::text])) OR (('agent'::text = ANY (scopes)) AND ('apps:read'::text = ANY (scopes)) AND (scopes <@ ARRAY['agent'::text, 'apps:read'::text, 'deploy:write'::text, 'env:write'::text, 'secrets:request'::text, 'storage:manage'::text, 'usage:read'::text]))))),
     CONSTRAINT deploy_tokens_expiry_chk CHECK ((expires_at > created_at)),
     CONSTRAINT deploy_tokens_hash_credhash_chk CHECK ((octet_length(token_sha256) = ANY (ARRAY[32, 33]))),
     CONSTRAINT deploy_tokens_label_len_chk CHECK ((length(label) <= 100)),
-    CONSTRAINT deploy_tokens_scopes_chk CHECK (((scopes <@ ARRAY['deploy:write'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT deploy_tokens_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
 );
 
@@ -37142,6 +37206,58 @@ CREATE TABLE public.edge_rules (
     CONSTRAINT edge_rules_name_chk CHECK (((name IS NULL) OR ((length(btrim(name)) >= 1) AND (length(btrim(name)) <= 100)))),
     CONSTRAINT edge_rules_priority_check CHECK (((priority >= 0) AND (priority <= 10000))),
     CONSTRAINT edge_rules_validate_mode_check CHECK ((validate_mode = ANY (ARRAY['observe'::text, 'warn'::text, 'block'::text])))
+);
+
+
+--
+-- Name: edge_tls_certificates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_tls_certificates (
+    id bigint NOT NULL,
+    names text[] NOT NULL,
+    ca text NOT NULL,
+    account_uri text NOT NULL,
+    serial text NOT NULL,
+    sha256 text NOT NULL,
+    chain_pem text NOT NULL,
+    key_sealed bytea NOT NULL,
+    key_kid text NOT NULL,
+    not_before timestamp with time zone NOT NULL,
+    not_after timestamp with time zone NOT NULL,
+    issued_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_tls_certificates_account_uri_check CHECK (((account_uri ~ '^https://'::text) AND (octet_length(account_uri) <= 512))),
+    CONSTRAINT edge_tls_certificates_ca_check CHECK ((ca = ANY (ARRAY['letsencrypt'::text, 'letsencrypt-staging'::text]))),
+    CONSTRAINT edge_tls_certificates_chain_pem_check CHECK (((octet_length(chain_pem) >= 1) AND (octet_length(chain_pem) <= 65536))),
+    CONSTRAINT edge_tls_certificates_check CHECK ((isfinite(not_after) AND (not_after > not_before))),
+    CONSTRAINT edge_tls_certificates_issued_at_check CHECK (isfinite(issued_at)),
+    CONSTRAINT edge_tls_certificates_key_kid_check CHECK (((octet_length(key_kid) >= 1) AND (octet_length(key_kid) <= 256))),
+    CONSTRAINT edge_tls_certificates_key_sealed_check CHECK (((octet_length(key_sealed) >= 1) AND (octet_length(key_sealed) <= 65536))),
+    CONSTRAINT edge_tls_certificates_names_check CHECK (((cardinality(names) >= 1) AND (cardinality(names) <= 10))),
+    CONSTRAINT edge_tls_certificates_not_before_check CHECK (isfinite(not_before)),
+    CONSTRAINT edge_tls_certificates_serial_check CHECK ((serial ~ '^[0-9a-f]{1,64}$'::text)),
+    CONSTRAINT edge_tls_certificates_sha256_check CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: TABLE edge_tls_certificates; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.edge_tls_certificates IS 'ADR-20261103163954 the apps domains'' certificates; edgednsd is the only writer, the key is sealed to the edge-tls seal domain.';
+
+
+--
+-- Name: edge_tls_certificates_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.edge_tls_certificates ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.edge_tls_certificates_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -54127,6 +54243,8 @@ CREATE TABLE public.request_telemetry (
     content_outcome text DEFAULT ''::text NOT NULL,
     trace_inferred boolean DEFAULT false NOT NULL,
     platform_refusal boolean DEFAULT false NOT NULL,
+    deployment_pinned boolean DEFAULT false NOT NULL,
+    long_lived boolean DEFAULT false NOT NULL,
     CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'stale'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
@@ -54190,6 +54308,8 @@ CREATE TABLE public.request_telemetry_202611 (
     content_outcome text DEFAULT ''::text NOT NULL,
     trace_inferred boolean DEFAULT false NOT NULL,
     platform_refusal boolean DEFAULT false NOT NULL,
+    deployment_pinned boolean DEFAULT false NOT NULL,
+    long_lived boolean DEFAULT false NOT NULL,
     CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'stale'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
@@ -54252,6 +54372,8 @@ CREATE TABLE public.request_telemetry_202612 (
     content_outcome text DEFAULT ''::text NOT NULL,
     trace_inferred boolean DEFAULT false NOT NULL,
     platform_refusal boolean DEFAULT false NOT NULL,
+    deployment_pinned boolean DEFAULT false NOT NULL,
+    long_lived boolean DEFAULT false NOT NULL,
     CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'stale'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
@@ -54314,6 +54436,8 @@ CREATE TABLE public.request_telemetry_202701 (
     content_outcome text DEFAULT ''::text NOT NULL,
     trace_inferred boolean DEFAULT false NOT NULL,
     platform_refusal boolean DEFAULT false NOT NULL,
+    deployment_pinned boolean DEFAULT false NOT NULL,
+    long_lived boolean DEFAULT false NOT NULL,
     CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'stale'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
@@ -54424,6 +54548,8 @@ CREATE TABLE public.request_telemetry_default (
     content_outcome text DEFAULT ''::text NOT NULL,
     trace_inferred boolean DEFAULT false NOT NULL,
     platform_refusal boolean DEFAULT false NOT NULL,
+    deployment_pinned boolean DEFAULT false NOT NULL,
+    long_lived boolean DEFAULT false NOT NULL,
     CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text, 'stale'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
@@ -58401,6 +58527,14 @@ ALTER TABLE ONLY public.api_key_agent_clients
 
 
 --
+-- Name: api_key_project_limits api_key_project_limits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_project_limits
+    ADD CONSTRAINT api_key_project_limits_pkey PRIMARY KEY (key_id);
+
+
+--
 -- Name: api_keys api_keys_key_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -58526,6 +58660,14 @@ ALTER TABLE ONLY public.app_egress_circuits
 
 ALTER TABLE ONLY public.app_egress_policy_node_status
     ADD CONSTRAINT app_egress_policy_node_status_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: app_env_batch_receipts app_env_batch_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_env_batch_receipts
+    ADD CONSTRAINT app_env_batch_receipts_pkey PRIMARY KEY (app_id, scope, request_id);
 
 
 --
@@ -61574,6 +61716,22 @@ ALTER TABLE ONLY public.edge_rule_set_versions
 
 ALTER TABLE ONLY public.edge_rules
     ADD CONSTRAINT edge_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edge_tls_certificates edge_tls_certificates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_tls_certificates
+    ADD CONSTRAINT edge_tls_certificates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edge_tls_certificates edge_tls_certificates_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_tls_certificates
+    ADD CONSTRAINT edge_tls_certificates_sha256_key UNIQUE (sha256);
 
 
 --
@@ -71190,6 +71348,13 @@ CREATE INDEX app_egress_policy_node_status_observed_idx ON public.app_egress_pol
 
 
 --
+-- Name: app_env_batch_receipts_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_env_batch_receipts_created_idx ON public.app_env_batch_receipts USING btree (created_at);
+
+
+--
 -- Name: app_environment_workload_intents_job_id_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -73900,6 +74065,13 @@ CREATE INDEX edge_rules_match_host_pattern_idx ON public.edge_rules USING btree 
 --
 
 CREATE INDEX edge_rules_route_match_host_scope_idx ON public.edge_rules USING btree (match_host_scope) WHERE (enabled AND (kind = 'route'::text));
+
+
+--
+-- Name: edge_tls_certificates_names_not_after; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_tls_certificates_names_not_after ON public.edge_tls_certificates USING btree (names, not_after DESC);
 
 
 --
@@ -82587,6 +82759,20 @@ CREATE TRIGGER artifact_scan_private_guard BEFORE INSERT OR DELETE OR UPDATE ON 
 
 
 --
+-- Name: app_envs atomic_config_value_write; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER atomic_config_value_write BEFORE INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.serialize_app_config_value_write();
+
+
+--
+-- Name: app_secrets atomic_config_value_write; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER atomic_config_value_write BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.serialize_app_config_value_write();
+
+
+--
 -- Name: deployment_openapi_docs automatic_route_check_capture_changed; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -89158,6 +89344,14 @@ ALTER TABLE ONLY public.api_key_agent_clients
 
 
 --
+-- Name: api_key_project_limits api_key_project_limits_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_project_limits
+    ADD CONSTRAINT api_key_project_limits_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_keys api_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -89355,6 +89549,22 @@ ALTER TABLE ONLY public.app_egress_policy_node_status
 
 ALTER TABLE ONLY public.app_egress_policy_node_status
     ADD CONSTRAINT app_egress_policy_node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_env_batch_receipts app_env_batch_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_env_batch_receipts
+    ADD CONSTRAINT app_env_batch_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_env_batch_receipts app_env_batch_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_env_batch_receipts
+    ADD CONSTRAINT app_env_batch_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

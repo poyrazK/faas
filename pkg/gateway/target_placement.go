@@ -106,7 +106,15 @@ func (b *PGBackend) ReconcileTargetPlacements(ctx context.Context) error {
 		if err != nil || !validPlacementSnapshot(captured.app, snapshot) {
 			status.Succeeded = false
 			status.Unavailable++
-			markPlacementUnavailable(picker)
+			// An answer that cannot prove absence (missing, partial,
+			// mismatched or truncated) refuses routing now. A read that
+			// failed (a control-plane database stall past the one-second
+			// deadline) says nothing about the targets: they keep routing
+			// until their 30-second lease from the last verified read runs
+			// out (ADR-570 amendment 2026-11-03).
+			if err == nil {
+				markPlacementUnavailable(picker)
+			}
 			continue
 		}
 		status.Removed += b.applyPlacementSnapshotLocked(picker, snapshot, now)

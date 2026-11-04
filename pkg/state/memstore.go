@@ -388,6 +388,7 @@ type MemStore struct {
 	// app_config_revisions, app_config_guards and app_config_guard_secrets
 	// (ADR-1451). Revisions are kept in revision order per scope.
 	configRevisions    map[configScopeKey][]ConfigRevision
+	envBatchReceipts   map[string]envBatchRecord
 	configGuards       map[string]ConfigGuard
 	configGuardSecrets map[string]map[string]ConfigGuardSecret
 	// releaseFreezes mirrors release_freezes (ADR-20261019071733).
@@ -1383,6 +1384,7 @@ type MemStore struct {
 	// Store (this interface) so the sqlc vs memstore parity holds.
 	orgs             map[string]Org
 	orgAgentPolicies map[string]OrgAgentPolicy // ADR-20261101225122
+	keyProjectLimits map[string][]string       // ADR-20261104085712
 	orgsBySlug       map[string]string         // lower(slug) -> id
 	memberships      map[orgAccountKey]OrgMembership
 	invitations      map[string]OrgInvitation // hex(hash) -> OrgInvitation
@@ -25916,6 +25918,10 @@ func (m *MemStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRu
 	}
 	if p.Action != nil {
 		r.Action = *p.Action
+	}
+	// The preset column follows the pgstore update (ADR-129 D1).
+	if p.CorsPresetID != nil {
+		r.CorsPresetID = *p.CorsPresetID
 	}
 	// ValidateMode nil-skip mirrors the pgstore coalesce pattern.
 	// The wire layer (cmd/apid/handlers_edge_rules.go) coerces

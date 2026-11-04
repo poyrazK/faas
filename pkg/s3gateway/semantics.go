@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 )
@@ -21,6 +22,14 @@ func presignConditionalPut(ctx context.Context, p objectstorage.Provider, bucket
 	}
 	return signer.PresignConditionalPut(ctx, bucket, r, c)
 }
+
+// checksumMode is the request's x-amz-checksum-mode in upper case. S3 matches
+// the value case-insensitively, and the AWS CRT transfer client (the AWS CLI's
+// default for `aws s3 cp`) sends "enabled".
+func checksumMode(r *http.Request) string {
+	return strings.ToUpper(headerOrQueryValue(r, "x-amz-checksum-mode"))
+}
+
 func presignChecksumRead(ctx context.Context, p objectstorage.Provider, bucket, method, key, mode string) (objectstorage.SignedRequest, error) {
 	if mode == "ENABLED" {
 		if signer, ok := p.(objectstorage.ObjectChecksumReadPresigner); ok {
@@ -49,7 +58,7 @@ func isCleanupRequest(r *http.Request, q url.Values, hasBucket, hasKey bool) boo
 	return hasKey && r.Method == http.MethodDelete && (len(q) == 0 || q.Get("uploadId") != "" && queryKeysOnly(q, "uploadId")) || !hasKey && r.Method == http.MethodPost && q.Has("delete") && queryKeysOnly(q, "delete")
 }
 func (h *Handler) validateRequestSemantics(w http.ResponseWriter, r *http.Request, req requestContext, hasKey bool, q url.Values) bool {
-	mode := headerOrQueryValue(r, "x-amz-checksum-mode")
+	mode := checksumMode(r)
 	readQuery := len(q) == 0 || q.Has("versionId") && queryKeysOnly(q, "versionId")
 	if mode != "" && (mode != "ENABLED" || !hasKey || (r.Method != http.MethodGet && r.Method != http.MethodHead) || !readQuery) {
 		h.unsupported(w, r, req.requestID)

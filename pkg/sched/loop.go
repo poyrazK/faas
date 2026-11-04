@@ -4578,6 +4578,12 @@ func (l *Loop) stopPriorScheduledRuns(ctx context.Context, job state.Job) error 
 	return nil
 }
 
+// EnforcementDispatch runs one of the stats tick's per-instance actions on
+// the work pool (ADR 20261104143005). Wire it to the instance-stats poller.
+func (l *Loop) EnforcementDispatch(key string, fn func()) {
+	l.submitWork(workInstanceEnforcement, key, fn)
+}
+
 // runJobsReaperTick is one iteration of the stuck-job reaper.
 // Same gate + warn-and-continue contract as runJobsDispatchTick.
 func (l *Loop) runJobsReaperTick(ctx context.Context) {

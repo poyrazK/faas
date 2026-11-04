@@ -22,6 +22,7 @@ type contractTestStore interface {
 	state.AccountAbuseHoldStore
 	state.AgentClientStore
 	state.OrgAgentStore
+	state.KeyProjectLimitStore
 	state.AppWorkPolicyStore
 	state.ObjectStorageCeilingGrantStore
 	state.EgressOverageStore

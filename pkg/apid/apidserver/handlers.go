@@ -52,12 +52,25 @@ func retryPolicyDTOFromJSON(raw json.RawMessage) *api.RetryPolicyDTO {
 }
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if p, ok := principalFrom(r); ok && p.Key != nil && p.Key.AppID != "" {
+		app, err := s.store.AppByID(r.Context(), p.Key.AppID)
+		if err != nil || app.AccountID != acct.ID {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Forbidden", "app-bound principal is no longer available"))
+			return
+		}
+		limits := s.accountResponse(r.Context(), acct, r).Limits
+		writeJSON(w, http.StatusOK, api.AccountResponse{ID: acct.ID, Plan: string(acct.Plan), Status: string(acct.Status), Limits: limits, KeyScopes: p.Key.Scopes, KeyApp: &api.AppAgentBinding{ID: app.ID, Slug: app.Slug}})
+		return
+	}
 	resp := s.accountResponse(r.Context(), acct, r)
 	// A key learns its own scopes; the hosted MCP server lists an agent
 	// key's tools from them (ADR-20261029085359). Sessions have none.
 	if p, ok := principalFrom(r); ok && p.Key != nil {
 		resp.KeyScopes = p.Key.Scopes
 		resp.KeyOrg = s.keyOrg(r.Context(), p.Key.OrgID)
+		if p.Key.ProjectLimited {
+			resp.KeyProjects = s.projectSlugsByID(r.Context(), p.Key.ProjectIDs)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -1,22 +1,32 @@
 from typing import Literal
 
 AppHealthCheckCode = Literal[
+    "backlog",
     "collection",
+    "dead_letters",
     "deployment",
     "latest_deployment",
     "maintenance",
+    "memory",
+    "queue",
     "readiness",
+    "replicas",
     "requests",
     "traffic_readiness",
     "workload",
 ]
 
 APP_HEALTH_CHECK_CODE_VALUES: set[AppHealthCheckCode] = {
+    "backlog",
     "collection",
+    "dead_letters",
     "deployment",
     "latest_deployment",
     "maintenance",
+    "memory",
+    "queue",
     "readiness",
+    "replicas",
     "requests",
     "traffic_readiness",
     "workload",

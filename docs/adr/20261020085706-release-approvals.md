@@ -271,3 +271,17 @@ A release's release command (`release:` in a Procfile, `release.command`) runs r
 - **What approvers see.** The approval page already shows the release command and its diff (ADR-20261021101117). The `requested` notice sent by imaged carries no review link and no change summary, since imaged knows neither the console host nor the release diff. The page is reachable from the dashboard and from `pending`.
 
 Not changed: environment promotions run their migrations behind the protected environment's approval, which already stands in for the apps' policies (amendments 2 and 9). Graph-mode releases (held as environment workloads) are left to their environment coordinator, unchanged.
+
+## Amendment 13 (2026-11-04): a waiting release cannot stall the sweeps, run an outpaced migration, or skip a pause or freeze
+
+Amendment 12 left three gaps (release review 2026-11-04):
+
+- **Sweeps reached only the oldest batch.** imaged's resume sweep listed the oldest 64 deployments in their release phase platform-wide, then filtered them. imaged's stale sweep (64) and apid's deployment watchdog (100) skipped waiting releases after the batch was fetched. One account's waiting releases (up to 7 days each) could fill a batch, so approved releases elsewhere never resumed and expired, and stuck deployments were never cleaned up. Now:
+  - imaged pages through every candidate in both sweeps;
+  - the watchdog's query leaves out a release that may be waiting: `snapshotting` with a release command, no release task, and an app with an approval policy. imaged closes such a release at the policy's timeout.
+- **An outpaced release ran its migration.** The promotion fence (`MarkDeploymentLiveIfLatest`) supersedes a release that a newer revision overtook, but only at go-live, after its release command has run. Approving a release that waited while a newer one shipped ran the older migration against the newer schema. imaged now applies the fence's test (`SupersedeOutpacedRelease`) before admitting any release command:
+  - it covers latest-revision kinds with no release task yet, and never a prepared rollback;
+  - when a newer revision of the app and scope exists, the release is superseded and its command never runs.
+- **The pause and freezes were checked only at creation.** An approved release resuming later now rechecks them, as a scheduled release does when it starts:
+  - **Break-glass pause** (ADR-20261022140000): it waits until the pause is lifted, because its command runs with production secrets. imaged follows `platform_release_pause_enabled` with a runtime-config watcher, and its stale sweep leaves the release alone meanwhile.
+  - **Freeze:** a freeze that was not in force when the release was deployed (created since, or whose window opened since) fails the release with `release_frozen` before its command runs. A freeze in force at deploy time was overridden then and still does not stop it.

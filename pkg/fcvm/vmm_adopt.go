@@ -112,7 +112,7 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 	if l.IsBuilder {
 		ring = v.registerRing(l.Instance) // build output is never the app's (ADR-746)
 	} else {
-		ring = v.registerDeploymentRing(l.Instance, owner.AppID, owner.DeploymentID)
+		ring = v.registerDeploymentRing(l.Instance, owner.AppID, owner.DeploymentID, l.Plan)
 	}
 	if ring != nil {
 		// Lines written while no vmmd ran stay in the file; the ring carries

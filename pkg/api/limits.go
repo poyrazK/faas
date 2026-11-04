@@ -3683,6 +3683,19 @@ const (
 	// a public object without revalidating, so a delete or overwrite takes
 	// effect within minutes rather than a year (H9-S144).
 	PublicObjectReadMaxAgeSeconds = 300
+	// PublicReadNewHostLookupsPerSecond and PublicReadNewHostLookupBurst are
+	// each edge's budget of public-read host lookups (store reads) for
+	// hostnames it has never seen name an app. The matcher runs in front of
+	// every GET and HEAD, so a flood of random names under the apps wildcard
+	// spends this budget instead of control-plane Postgres reads; past it the
+	// request is answered 503 traffic_policy_unavailable with Retry-After.
+	// Normal traffic spends it only on a host's first request after a
+	// restart, which the burst covers. PublicReadKnownHostsMax bounds the
+	// hostnames that skip the budget; a full set is dropped whole
+	// (ADR-20261103163954 §4).
+	PublicReadNewHostLookupsPerSecond = 25
+	PublicReadNewHostLookupBurst      = 500
+	PublicReadKnownHostsMax           = 100_000
 )
 
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
@@ -5274,6 +5287,13 @@ type Limits struct {
 	// expectations per tier (Free's "first-week demo", Hobby's
 	// "last week", Pro's "this month", Scale's "this quarter").
 	LogArchiveRetentionDaysMax int
+	// LogBytesPerInstanceHour bounds the log line bytes one instance may
+	// write per UTC hour (ADR-20261104085150): Free 16 MiB, Hobby 64 MiB,
+	// Pro 256 MiB, Scale 1 GiB. Past it, vmmd drops the hour's remaining
+	// output after one notice line, so the live view, the archive and every
+	// drain carry a bounded stream. Logs have no separate charge, so this is
+	// what bounds their storage and delivery cost.
+	LogBytesPerInstanceHour int64
 
 	// AppErrorsRetentionDays (ADR-096 / customer-facing automatic
 	// error grouping) is the per-plan retention cap on
@@ -5906,6 +5926,7 @@ var planLimits = map[Plan]Limits{
 		// wake. The wider incident windows remain paid-tier benefits.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 1,
+		LogBytesPerInstanceHour:    16 << 20,
 		// ADR-096 error grouping. Free = 1-day retention, 50
 		// fingerprints, 25 request rows per fingerprint. Retention
 		// MUST be <= the one-day log-archive retention above.
@@ -6352,6 +6373,7 @@ var planLimits = map[Plan]Limits{
 		// S3 within the spec §4.1 latency budget.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 7,
+		LogBytesPerInstanceHour:    64 << 20,
 		// ADR-096 — Hobby = "last week" retention, 200 fingerprints,
 		// 100 request rows per fingerprint. Retention equals the
 		// log-archive retention.
@@ -6767,6 +6789,7 @@ var planLimits = map[Plan]Limits{
 		// rather than being a single shared cap.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 30,
+		LogBytesPerInstanceHour:    256 << 20,
 		// ADR-096 — Pro = "this month" retention, 1000 fingerprints,
 		// 500 request rows per fingerprint.
 		AppErrorsRetentionDays:                30,
@@ -7208,6 +7231,7 @@ var planLimits = map[Plan]Limits{
 		// generous at the top tier.
 		LogArchiveEnabled:          true,
 		LogArchiveRetentionDaysMax: 90,
+		LogBytesPerInstanceHour:    1 << 30,
 		// ADR-096 — Scale = "this quarter" retention, 5000
 		// fingerprints, 1000 request rows per fingerprint.
 		AppErrorsRetentionDays:                90,
@@ -10828,6 +10852,24 @@ func (p Plan) LogArchiveEnabled() bool {
 	return l.LogArchiveEnabled
 }
 
+// LogBytesPerInstanceHour returns the plan's hourly log byte allowance per
+// instance (ADR-20261104085150); 0 for an unknown plan, which is unbounded.
+func (p Plan) LogBytesPerInstanceHour() int64 {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.LogBytesPerInstanceHour
+}
+
+// LogDrainBytesPerSecond and LogDrainBurstBytes bound what one log drain
+// delivers (ADR-20261104085150): a line past the budget is dropped and
+// counted, as a full outbox is.
+const (
+	LogDrainBytesPerSecond = 1 << 20
+	LogDrainBurstBytes     = 4 << 20
+)
+
 // LogArchiveRetentionDaysMax (issue #562) returns the
 // per-plan ceiling on FAAS_LOG_ARCHIVE_RETENTION_DAYS. Free's
 // ceiling is one day; the apid bgBefore closure uses
@@ -13324,6 +13366,27 @@ func FunctionExecutionLeaseDuration(plan Plan, foreground time.Duration) time.Du
 // per worker.
 const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
 
+// PostgresPoolMaxEnv tells an app how many database connections one of its
+// instances can use (ADR-20261104141122). imaged stamps it at build time for
+// accounts the postgres_pool_sizing flag releases; the SDKs'
+// PostgresPoolBinding hands it to the pool factory as the default size.
+const PostgresPoolMaxEnv = "GREGALE_POSTGRES_POOL_MAX"
+
+// PostgresPoolMaxPerInstance caps the stamped pool size at the pg.Pool
+// default, so no instance's pool grows past what most apps run with today.
+const PostgresPoolMaxPerInstance = 10
+
+// PostgresPoolMax is the pool size one instance of an app needs: its
+// per-instance concurrency, at most PostgresPoolMaxPerInstance. Zero for an
+// unknown plan.
+func (l Limits) PostgresPoolMax(requestedPerInstanceConcurrency int) int {
+	return min(l.PerInstanceConcurrency(requestedPerInstanceConcurrency), PostgresPoolMaxPerInstance)
+}
+
+// PostgresPoolMaxAccepted is the largest GREGALE_POSTGRES_POOL_MAX the SDKs
+// and the binding check accept; a larger value is ignored as unset.
+const PostgresPoolMaxAccepted = 1000
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after
@@ -14738,6 +14801,9 @@ const (
 	// AppHealthMemoryPressureWindow bounds an app's memory-pressure rollup:
 	// app health counts the guest's reports within it (ADR-20261102124306).
 	AppHealthMemoryPressureWindow = 24 * time.Hour
+	// MemoryRightSizeStepMB rounds app health's suggested ram_mb for an app
+	// under memory pressure (ADR-20261102124306 step 3).
+	MemoryRightSizeStepMB = 64
 	// AppHealthCollectorQuietInterval spaces observations of a quiet app: an
 	// unchanged assessment with no instances, no required capacity and no
 	// requests in the metrics window (ADR-734 amendment 1). It plus a lost
@@ -17326,8 +17392,23 @@ const (
 	EdgeClientRequestsPerSecondPerAddr = 500
 	EdgeClientRequestsBurstPerAddr     = 1000
 	EdgeClientTrackedAddrsMax          = 200_000
-	EdgeTLSHandshakesInFlightPerCPU    = 128
-	EdgeTLSHandshakeTimeout            = 10 * time.Second
+	// EdgeHostRequestsPerSecond and EdgeHostRequestsBurst are a node's
+	// ceiling for one hostname, checked at the edge before the request is
+	// forwarded, routed or wakes anything (ADR-20261103163954 §4): every
+	// node takes every app host, so a flood on one app reaches every edge.
+	// They sit at twice the highest plan's per-app RateLimitRPS and
+	// RateLimitBurst, so the gateway's plan limit answers an app first;
+	// this ceiling bounds what one host costs an edge where no plan limit
+	// applies, such as public bucket reads served before the gateway. At
+	// most EdgeHostTrackedMax hostnames are tracked. The Host header is the
+	// client's to choose, so a hostname the full table cannot track passes
+	// instead of sharing one bucket that a flood of random names would drain
+	// for every tenant (hunt 38); the per-address limit still bounds it.
+	EdgeHostRequestsPerSecond       = 1000
+	EdgeHostRequestsBurst           = 4000
+	EdgeHostTrackedMax              = 100_000
+	EdgeTLSHandshakesInFlightPerCPU = 128
+	EdgeTLSHandshakeTimeout         = 10 * time.Second
 	// A request body must bring EdgeClientBodyMinBytesPerWindow bytes in
 	// every EdgeClientBodyRateWindow (about 3 kbit/s), or its read fails:
 	// the public server's read timeout is the whole request envelope.
@@ -17341,6 +17422,72 @@ const (
 	EdgeControlPlaneForwardsInFlightMax = 256
 )
 
+// The host firewall's backstop for a compute edge's public entry address
+// (ADR-20261103163954 §4). The edge refuses a client past its own
+// per-address limits only after the kernel has accepted the connection; the
+// firewall drops a source's new connections to the entry address's 443 before
+// userspace sees them once it holds PublicEntryConnsPerSourceMax connections
+// or opens them faster than PublicEntryNewConnsPerSecondPerSource (burst
+// PublicEntryNewConnsBurstPerSource). Each is twice the edge's own limit, so
+// a client the edge would serve never meets it. The firewall tracks at most
+// PublicEntryTrackedSourcesMax sources per limit; past that a new source is
+// not limited by the kernel, only by the edge.
+const (
+	PublicEntryConnsPerSourceMax          = 2 * EdgeClientOpenConnsPerAddrMax
+	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
+	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
+	PublicEntryTrackedSourcesMax          = 65536
+	// PublicBlockListRefreshInterval is how often vmmd re-reads the
+	// operator's block list (/etc/faas/public-block-list) and adds its
+	// entries to the firewall's block sets: an edit takes effect within
+	// it, and so does an entry a reload by another hand flushed.
+	PublicBlockListRefreshInterval = 30 * time.Second
+)
+
+// Edge certificates (ADR-20261103163954 §3). edgednsd obtains the apps
+// domains' certificate from Let's Encrypt with DNS-01 and renews it
+// EdgeCertificateRenewBefore its expiry, checking every
+// EdgeCertificateCheckInterval. A failed order is retried after
+// EdgeCertificateRetryMin, doubling to EdgeCertificateRetryMax: Let's
+// Encrypt allows 5 failed validations per account, hostname and hour, and 5
+// certificates for the same names in 7 days, so a fault must not turn into a
+// loop. One order solves at most EdgeCertificateOrderTimeout, which covers
+// DNS propagation, and names at most EdgeCertificateNamesMax names. A
+// certificate's row is kept EdgeCertificateKeepAfterExpiry past its expiry,
+// so the Certificate Transparency watch can tell ours from anyone else's.
+const (
+	EdgeCertificateRenewBefore     = 30 * 24 * time.Hour
+	EdgeCertificateCheckInterval   = time.Hour
+	EdgeCertificateRetryMin        = time.Hour
+	EdgeCertificateRetryMax        = 12 * time.Hour
+	EdgeCertificateOrderTimeout    = 10 * time.Minute
+	EdgeCertificateNamesMax        = 10
+	EdgeCertificateKeepAfterExpiry = 90 * 24 * time.Hour
+	// A compute edge reloads the certificates on each pg_notify and at
+	// least every EdgeCertificateReloadInterval, which covers a notice
+	// missed while its LISTEN connection was down; it reconnects after
+	// EdgeCertificateListenRetry.
+	EdgeCertificateReloadInterval = 10 * time.Minute
+	EdgeCertificateListenRetry    = 5 * time.Second
+	// edgednsd's Certificate Transparency watch reads the apps domain's
+	// unexpired issuances from Cert Spotter every
+	// EdgeCertificateTransparencyInterval: without an API key Cert Spotter
+	// allows a few subdomain queries a day, and Let's Encrypt logs a
+	// certificate before it issues it, so a few hours is still well ahead of
+	// any use of one. A read takes at most
+	// EdgeCertificateTransparencyPagesMax pages, each within
+	// EdgeCertificateTransparencyTimeout and at most
+	// EdgeCertificateTransparencyPageBytesMax long.
+	EdgeCertificateTransparencyInterval     = 6 * time.Hour
+	EdgeCertificateTransparencyTimeout      = 30 * time.Second
+	EdgeCertificateTransparencyPagesMax     = 20
+	EdgeCertificateTransparencyPageBytesMax = 8 << 20
+	// EdgeCertificateTransparencyAllowNamesMax caps the names the watch
+	// accepts on certificates edgednsd did not issue (the CDN's, a hosted
+	// site's).
+	EdgeCertificateTransparencyAllowNamesMax = 32
+)
+
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
 // surface. A Limits value built without the field (zero) falls back to the
 // verified cap rather than refusing every pending hostname.
@@ -17350,6 +17497,14 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	}
 	return l.TenantHostnamesPerSurface
 }
+
+// App resource metadata pages are filtered by immutable app and scope before
+// counting or pagination. Offsets are bounded request selectors, not quotas.
+const (
+	AppResourceInventoryDefaultPage = 20
+	AppResourceInventoryMaxPage     = 100
+	AppResourceInventoryMaxOffset   = 1000000
+)
 
 // Domain doctor DNS probes are bounded independently of the inventory size.
 // The query ceiling accommodates the maximum DNS label depth plus aliases.

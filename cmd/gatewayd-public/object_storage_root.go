@@ -21,8 +21,8 @@ import (
 // Upload keys are resolved by apid (credentials, ADR 20261029202403): their
 // stored hashes are keyed by a secret only apid holds.
 func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.UploadAuthenticator, registry *objectstorage.Registry, reads *objectstorage.ReadAdmitter,
-	enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
-	publicHandler, err := publicObjectReads(store, registry, reads, nil, enabled, domains, next, log)
+	hostLookups *objectstorage.HostLookupBudget, enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
+	publicHandler, err := publicObjectReads(store, registry, reads, nil, hostLookups, enabled, domains, next, log)
 	if err != nil {
 		return nil, err
 	}
@@ -40,12 +40,13 @@ func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.U
 }
 
 // publicObjectReads serves public bucket reads on app hostnames in front of
-// next. transfers paces their bodies; nil leaves them unpaced.
+// next. transfers paces their bodies; nil leaves them unpaced. hostLookups
+// bounds host lookups for names never seen naming an app.
 func publicObjectReads(store *state.EdgeStore, registry *objectstorage.Registry, reads *objectstorage.ReadAdmitter, transfers *objectstorage.TransferLimiter,
-	enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
+	hostLookups *objectstorage.HostLookupBudget, enabled func() bool, domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
 	h, err := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
 		Store: store, Registry: registry, RequestMetrics: store, Accounting: store, ReadAdmitter: reads,
-		Transfers: transfers, Enabled: enabled, AppsDomain: domains.Apps, Next: next, Log: log,
+		Transfers: transfers, HostLookups: hostLookups, Enabled: enabled, AppsDomain: domains.Apps, Next: next, Log: log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("gatewayd-public: public object storage handler: %w", err)

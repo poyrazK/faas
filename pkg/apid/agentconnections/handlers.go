@@ -39,6 +39,8 @@ type Deps struct {
 // labelled that way, as for TouchKeyLastUsed.
 func Kind(k state.APIKey) string {
 	switch {
+	case k.AppID != "" && slices.Contains(k.Scopes, api.ScopeAgent):
+		return api.AgentConnectionAppAgent
 	case k.Label == api.MCPLoginKeyLabel && !slices.Contains(k.Scopes, api.ScopeAdmin):
 		return api.AgentConnectionHostedMCP
 	case slices.Contains(k.Scopes, api.ScopeAgent):
@@ -57,6 +59,11 @@ func connected(ctx context.Context, store state.Store, accountID string) ([]stat
 	if err != nil {
 		return nil, err
 	}
+	appKeys, err := appAgentKeys(ctx, store, accountID)
+	if err != nil {
+		return nil, err
+	}
+	keys = append(keys, appKeys...)
 	now := time.Now()
 	out := keys[:0:0]
 	for _, k := range keys {
@@ -86,14 +93,39 @@ func List(d Deps) httpkit.AccountHandler {
 		prefixes := d.Prefixes(r.Context(), keys)
 		out := api.AgentConnectionsResponse{Items: make([]api.AgentConnectionResponse, 0, len(keys))}
 		for _, k := range keys {
-			out.Items = append(out.Items, response(k, clients[k.ID], prefixes[k.ID]))
+			item := response(k, clients[k.ID], prefixes[k.ID])
+			item.Projects = d.projects(r.Context(), k.ID)
+			out.Items = append(out.Items, item)
 		}
 		httpkit.WriteJSON(w, http.StatusOK, out)
 	}
 }
 
+// projects names the projects a connection's key is limited to, or nil when
+// it reaches every project (ADR-20261104085712).
+func (d Deps) projects(ctx context.Context, keyID string) []string {
+	limits, ok := d.Store.(state.KeyProjectLimitStore)
+	if !ok {
+		return nil
+	}
+	ids, limited, err := limits.APIKeyProjectLimit(ctx, keyID)
+	if err != nil || !limited {
+		return nil
+	}
+	out := []string{}
+	for _, id := range ids {
+		if project, err := d.Store.ProjectByID(ctx, id); err == nil {
+			out = append(out, project.Slug)
+		}
+	}
+	return out
+}
+
 func response(k state.APIKey, client state.AgentClient, prefix string) api.AgentConnectionResponse {
-	out := api.AgentConnectionResponse{ID: k.ID, Kind: Kind(k), ClientName: client.Name, ClientSite: client.Site, Label: k.Label, Prefix: prefix, Scopes: k.Scopes, CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339), OrgID: k.OrgID}
+	if k.AppID != "" {
+		prefix = api.DeployTokenPrefix
+	}
+	out := api.AgentConnectionResponse{ID: k.ID, AppID: k.AppID, Kind: Kind(k), ClientName: client.Name, ClientSite: client.Site, Label: k.Label, Prefix: prefix, Scopes: k.Scopes, CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339), OrgID: k.OrgID}
 	if k.LastUsedAt != nil {
 		out.LastUsedAt = k.LastUsedAt.UTC().Format(time.RFC3339)
 	}
@@ -108,12 +140,25 @@ func response(k state.APIKey, client state.AgentClient, prefix string) api.Agent
 func Revoke(d Deps) httpkit.AccountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		k, err := d.Store.GetAPIKey(r.Context(), acct.ID, r.PathValue("id"))
+		if errors.Is(err, state.ErrNotFound) {
+			var keys []state.APIKey
+			keys, err = appAgentKeys(r.Context(), d.Store, acct.ID)
+			if err == nil {
+				err = state.ErrNotFound
+				for _, key := range keys {
+					if key.ID == r.PathValue("id") {
+						k, err = key, nil
+						break
+					}
+				}
+			}
+		}
 		if errors.Is(err, state.ErrNotFound) || (err == nil && Kind(k) == "") {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Agent connection not found", "no connected agent with this id belongs to this account"))
 			return
 		}
 		if err == nil {
-			err = d.Revoke(r, acct, k.ID)
+			err = revokeConnection(d, r, acct, k)
 		}
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not revoke agent connection"))
@@ -129,7 +174,7 @@ func RevokeAll(d Deps) httpkit.AccountHandler {
 		keys, err := connected(r.Context(), d.Store, acct.ID)
 		revoked := 0
 		for i := 0; err == nil && i < len(keys); i++ {
-			if err = d.Revoke(r, acct, keys[i].ID); err == nil {
+			if err = revokeConnection(d, r, acct, keys[i]); err == nil {
 				revoked++
 			}
 		}
@@ -142,6 +187,45 @@ func RevokeAll(d Deps) httpkit.AccountHandler {
 		}
 		httpkit.WriteJSON(w, http.StatusOK, api.AgentConnectionsRevokeAllResponse{Revoked: revoked})
 	}
+}
+
+func appAgentKeys(ctx context.Context, store state.Store, account string) ([]state.APIKey, error) {
+	tokens, ok := store.(state.DeployTokenStore)
+	if !ok {
+		return nil, nil
+	}
+	apps, err := store.ListApps(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	out := []state.APIKey{}
+	for _, app := range apps {
+		rows, err := tokens.ListDeployTokensForApp(ctx, account, app.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range rows {
+			if slices.Contains(t.Scopes, api.ScopeAgent) {
+				out = append(out, state.APIKey{ID: t.ID, AccountID: t.AccountID, AppID: t.AppID, Label: t.Label, Scopes: t.Scopes, Status: t.Status, CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt, LastUsedAt: t.LastUsedAt})
+			}
+		}
+	}
+	return out, nil
+}
+
+func revokeConnection(d Deps, r *http.Request, account state.Account, key state.APIKey) error {
+	if key.AppID == "" {
+		return d.Revoke(r, account, key.ID)
+	}
+	store, ok := d.Store.(state.DeployTokenStore)
+	if !ok {
+		return state.ErrNotFound
+	}
+	_, err := store.RevokeDeployToken(r.Context(), account.ID, key.AppID, key.ID)
+	if err == nil {
+		d.Audit(r.Context(), "deploy_token.revoked", account.ID, map[string]any{"app_id": key.AppID, "token_id": key.ID, "reason": "agent_disconnected"})
+	}
+	return err
 }
 
 // hostName is a lower-case DNS host name.

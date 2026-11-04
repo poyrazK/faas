@@ -132,8 +132,10 @@ func TestTargetHydrationPostgresCurrentReadSourcesTimeoutRecovery(t *testing.T) 
 		t.Fatal(err)
 	}
 	for path, b := range backends {
-		if err := read(b, path); err == nil || b.Pick(app.ID).OK || b.CapacityCount(app.ID) != 1 {
-			t.Fatalf("current hydration outage failed open: path=%s err=%v capacity=%d pick=%+v", path, err, b.CapacityCount(app.ID), b.Pick(app.ID))
+		// A failed read keeps the leased target routable (ADR-570 amendment
+		// 2026-11-03); the read itself must still report the outage.
+		if err := read(b, path); err == nil || !b.Pick(app.ID).OK || b.CapacityCount(app.ID) != 1 {
+			t.Fatalf("current hydration outage dropped the leased target or hid the failed read: path=%s err=%v capacity=%d pick=%+v", path, err, b.CapacityCount(app.ID), b.Pick(app.ID))
 		}
 	}
 	if err := tx.Rollback(ctx); err != nil {

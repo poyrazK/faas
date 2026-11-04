@@ -28,7 +28,7 @@ func TestJailerVMM_LogObserversCompose(t *testing.T) {
 	v.WithLogCommitCallback(commit("counter"))
 	v.WithInstanceLogObserver(instance("ledger"))
 
-	ring := v.registerDeploymentRing("i-1", "app", "dep")
+	ring := v.registerDeploymentRing("i-1", "app", "dep", "")
 	if _, err := ring.Write("stderr", []byte("[error] boom\n")); err != nil {
 		t.Fatalf("write: %v", err)
 	}

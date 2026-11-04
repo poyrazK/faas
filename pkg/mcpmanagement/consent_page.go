@@ -6,7 +6,7 @@ import (
 )
 
 // consentCapabilityChoices are the optional scopes chosen before sign-in.
-const consentCapabilityChoices = `<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent cannot read their values through Gregale, but code it deploys can</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`
+const consentCapabilityChoices = `<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="env:write"> Changing non-secret configuration and restoring configuration revisions</label><br><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent cannot read their values through Gregale, but code it deploys can</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`
 
 // connectionLifetime states how long an approved connection lasts: a browser
 // sign-in's slides while used (ADR-20261028205920), a pasted key's does not.
@@ -36,6 +36,18 @@ func consentPage(v consentView) string {
 	w(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect to Gregale</title></head>
 <body><main><h1>Connect to Gregale</h1><p>Client: <strong>`, e(v.Client), `</strong></p>`)
+	if v.Account == "" && v.LoginURL == "" {
+		w(`<label>Agent tools <select name="toolsets" form="gregale-connect">`)
+		for _, choice := range []struct{ value, label string }{{"core", "Core tools (default)"}, {"core,release,provision,operate", "Deploy and operate"}, {"core,diagnose,operate", "Diagnose and recover"}, {"all", "All available tools"}} {
+			if _, err := connectionToolsets(choice.value, v.MaximumToolsets); err == nil {
+				w(`<option value="`, e(choice.value), `">`, e(choice.label), `</option>`)
+			}
+		}
+		w(`</select></label>`)
+		if v.Native {
+			w(`<label><input type="checkbox" name="capability" value="usage:read" form="gregale-connect"> Read usage and billing costs</label>`)
+		}
+	}
 	if v.ClientHost != "" {
 		w(`<p>Published by <strong>`, e(v.ClientHost), `</strong></p>`)
 	}
@@ -46,17 +58,20 @@ func consentPage(v consentView) string {
 		if v.Org != "" {
 			w(`<p>Acting in the organization <strong>`, e(v.Org), `</strong>, within your role there.</p>`)
 		}
+		if len(v.Projects) > 0 {
+			w(`<p>Limited to the projects <strong>`, e(strings.Join(v.Projects, ", ")), `</strong>; other apps are out of reach.</p>`)
+		}
 		w(`<p>This client can inspect apps, deployments, logs, metrics, health and routes in this account. App logs may contain private data.</p>`)
 		if len(v.Capabilities) > 0 {
-			w(`<p>With write access it may also:</p><ul>`)
+			w(`<p>Additional permissions:</p><ul>`)
 			for _, capability := range v.Capabilities {
 				w(`<li>`, e(capability), `</li>`)
 			}
 			w(`</ul>`)
 		}
-		w("\n", `<form method="post" action="`, e(v.ConsentAction), `">`, hidden, "\n")
+		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden, "\n")
 		if v.Writes {
-			w(`<p><label><input type="checkbox" name="allow_writes" value="yes" required> Also allow reviewed deployments, production promotion, and checked rollback. These actions can change traffic and incur costs.</label></p>`)
+			w(`<p><label><input type="checkbox" name="allow_writes" value="yes" required> Also allow reviewed deployments, production promotion, checked rollback, restarts, scaling, and domain/cron changes. These actions can change traffic and incur costs.</label></p>`)
 		}
 		w("\n", `<fieldset><legend>Apps this agent may access</legend><label><input type="radio" name="app_access" value="all" required> All apps in this account, including future apps</label><br><label><input type="radio" name="app_access" value="selected" required> Only selected apps</label>`)
 		for _, app := range v.Apps {
@@ -92,7 +107,7 @@ func consentPage(v consentView) string {
 	case v.Native && v.SameTab && v.LoginURL == "":
 		// The hosted bridge sends the browser to sign-in and back here.
 		w(`<p>Continue to Gregale to sign in, or to create an account with GitHub, Google or email. You come back here to review the agent's access.</p>`, "\n")
-		w("\n", `<form method="post" action="`, e(v.ConsentAction), `">`, hidden)
+		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden)
 		if v.Writes {
 			w(consentCapabilityChoices)
 		}
@@ -102,7 +117,7 @@ func consentPage(v consentView) string {
 		if v.LoginURL != "" {
 			w(`<p><a href="`, e(v.LoginURL), `" target="_blank" rel="noopener noreferrer">Sign in to Gregale</a></p>`)
 		}
-		w("\n", `<form method="post" action="`, e(v.ConsentAction), `">`, hidden)
+		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden)
 		if v.Writes && v.LoginURL == "" {
 			w(consentCapabilityChoices)
 		}
@@ -113,7 +128,7 @@ func consentPage(v consentView) string {
 		w(`<button name="decision" value="`, decision, `" type="submit">`, label, `</button><button name="decision" value="deny" type="submit">Cancel</button></form>`)
 	default:
 		w(`<p>Enter a Gregale API key for the account you want to connect. Use a dedicated key with the smallest needed API scopes. The next screen identifies the account before you approve access.</p>`, "\n",
-			`<form method="post" action="`, e(v.ConsentAction), `" autocomplete="off">`, hidden, "\n",
+			`<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `" autocomplete="off">`, hidden, "\n",
 			`<p><label>Gregale API key <input name="api_key" type="password" required autocomplete="off" maxlength="4096"></label></p>`, "\n",
 			`<button name="decision" value="verify" type="submit">Review account</button> <button name="decision" value="deny" type="submit" formnovalidate>Cancel</button></form>`)
 	}

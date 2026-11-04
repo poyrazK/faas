@@ -32,13 +32,18 @@ agent asks you to connect again. Revoke it any time with
 [See and revoke connected agents](#see-and-revoke-connected-agents)). An
 account can have 10 connections at a time.
 
-The hosted server lists the `core` and `provision` toolsets. A connection
-sees only the tools its consent covers:
+The hosted server starts with the focused `core` catalog. When connecting through
+browser sign-in or an API key, select additional toolsets or explicitly choose
+`all`. This choice survives reconnects and never expands the server operator's
+configured toolsets. Selecting tools does not grant permissions. Tool execution
+still follows connection consent, including separate per-app diagnostic access:
 
 | Consent | Tools |
 |---|---|
 | Inspection | Apps, deployments, logs, metrics, health, error groups |
-| Write access | Deploys, promotion, rollback, custom domains, crons |
+| Write access | Deploys, promotion, rollback, restart, scaling, custom domains and crons |
+| Non-secret configuration | Variable changes and configuration rollback (`env:write`) |
+| Usage and costs | App-attributed cost reads (`usage:read`), including on a read-only connection |
 | Ask me for secrets | `gregale_request_secret`, `gregale_get_secret_request` |
 | Buckets | `gregale_plan_bucket` |
 | PostgreSQL | `gregale_plan_postgres` |
@@ -53,8 +58,9 @@ A cloud agent deploys code it wrote in one of three ways:
 - **GitHub:** `gregale_plan_source_deploy` deploys a commit from a connected
   repository.
 
-Then call `gregale_apply_upload_deploy` with the `plan_id`. Like a local
-deploy:
+For uploads and inline files, call `gregale_apply_upload_deploy` with the
+`plan_id`. Git source plans use `gregale_apply_deploy`, or the native workload
+apply tool for a service/worker. Like a local deploy:
 - a new app goes live;
 - a serving app is staged at 0% until `gregale_promote_deployment`.
 
@@ -86,8 +92,30 @@ consent screen:
 
 The key reaches every app in its account. Agent keys expire after 90 days by
 default; rotate them like any key. Revoking the key ends the agent's access at
-its next request. Release plans made with a key are kept in memory, so after a
-server restart the agent plans again.
+its next request. The hosted journal preserves completed receipts and resumable release plans
+for the same key across bridge restarts. Pending upload files are temporary;
+after a restart, inspect deployments and resources before uploading or planning
+again. `gregale_get_plan` recovers an unexpired receipt without repeating a write.
+
+### Limit a headless agent to one app
+
+Create an app-bound credential instead of an account-wide key:
+
+```sh
+gregale app deploy-token create --app my-api --agent \
+  --label coding-agent --scopes deploy:write,env:write
+```
+
+Use its one-time plaintext as the hosted MCP bearer token. The native API
+pins it to that app's immutable ID, so it also refuses other apps and account
+inventory outside MCP. `agent` and `apps:read` are added automatically;
+`env:write`, `secrets:request`, `storage:manage` and `usage:read` are optional app-safe scopes.
+For inspection only, request `--scopes apps:read`. It cannot create a new app or
+use project-registry operations. Use OAuth's selected app/environment consent
+for named-environment delegation. Ordinary deploy tokens still cannot open MCP.
+
+App-bound agents appear in `gregale mcp connection list` with kind `app_agent`
+and can be revoked there or through `gregale app deploy-token delete`.
 
 ### See and revoke connected agents
 
@@ -161,6 +189,27 @@ The API is `GET`/`PUT /v1/orgs/{slug}/agent-policy` and
 `/v1/orgs/{slug}/agent-connections`, with `DELETE .../{id}` and
 `POST .../revoke_all`.
 
+### Limit an agent to projects
+
+A connection can reach only some projects of the account or organization it
+acts in. On the approval page, tick the projects under **Limit the agent to
+projects**; leave every box clear to give it all of them. A headless agent
+key takes the same limit:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --projects api,web
+gregale org keys add --org acme --label ci-agent --scopes agent --projects api
+```
+
+A limited agent reaches the apps of those projects, including apps added to
+them later, and the projects themselves. Every other app and project answers
+as if it did not exist, account-wide routes answer 403, and the app and
+project lists show only what the limit allows. Databases belong to the
+account or organization rather than a project, so a limited agent cannot
+manage them. The limit is fixed when the agent connects; to change it,
+connect again. `gregale mcp connection list` and `GET /v1/account`
+(`key_projects`) name a connection's projects.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes
@@ -203,13 +252,23 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 
 | Toolset | Tools |
 |---|---|
-| `core` | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback (20 tools, about a fifth of the catalog) |
+| `core` (default) | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, secret requests, promote and rollback (bounded deployment and inspection catalog) |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
 | `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
-| `provision` | Local connections: custom domains, buckets, managed PostgreSQL and crons (ADR-20261026174727) |
-| `all` | Every tool (the default) |
+| `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
+| `operate` | Configuration metadata/history/rollback, restart status, scaling, plan receipts and app costs |
+| `all` | Every tool allowed by the server operator (explicit opt-in) |
 
 For example, `gregale mcp serve --transport stdio --tools core,diagnose`.
+Use `--tools all` to retain the full catalog. The local CLI and hosted bridge
+both default to `core`; hosted connections also select their catalog during
+onboarding. Existing connections without a saved selection use `core` when the
+operator permits it, or the operator's narrower selection. An explicitly empty
+selection stays empty.
+Plan receipt and verification tools accompany `core`, `release`, `provision`
+and `operate`. Core also includes `gregale_get_restart` for configuration
+changes that request a restart.
+The resource-change apply tool also accompanies `provision`.
 Write tools still need `--allow-writes`. Resources and prompts are always
 listed.
 
@@ -224,7 +283,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 
 | Tool | Behavior |
 |---|---|
-| `gregale_preflight` | Read-only app/environment consent, release-review/health/operations compatibility and durable-state checks. Unknown capabilities require native review/admission. |
+| `gregale_preflight` | Read-only consent, native operation authorization, release-review/health/operations compatibility and durable-state checks. `operation` is `deploy` (default), `restart`, `scale` or `env_change`; admission is checked separately. |
 | `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
 | `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. `selector` (preview) keeps the apps whose labels match a Kubernetes selector such as `team=billing,tier in (web,api)`. |
 | `gregale_get_app` | One app's status, URLs, deployment availability, resource settings and, with the resource-labels preview, labels. |
@@ -1786,15 +1845,15 @@ deploy a project directory with the local tools below; mutable image tags keep
 their CLI release workflow.
 Image and reviewed source service/worker rollouts use the native workflow below. Apps with multiple serving
 releases require explicit traffic-split review in the CLI. Secret values are
-never accepted, and other configuration mutations are not exposed.
+never accepted; non-secret configuration changes use the reviewed tools below.
 
 ## Deploy a local project and set variables
 
-On a local stdio connection, the server can deploy a project directory and set
-non-secret variables. It runs the same `gregale` binary as a subprocess with
-`--non-interactive --json` and the connection's credential, so each step does
-exactly what the matching CLI command does (ADR-20261026141841). These four
-tools are absent from remote OAuth connections.
+On a local stdio connection, directory deployment runs the same `gregale` binary
+as a subprocess with `--non-interactive --json` and the connection's credential
+(ADR-20261026141841). The two local-directory deployment tools are absent from
+remote OAuth connections. Non-secret configuration tools use the native API
+and work on both transports.
 
 1. Call `gregale_plan_local_deploy` with the absolute `path` of the project
    directory, the `app` slug and a `reason`. The plan:
@@ -1818,21 +1877,24 @@ tools are absent from remote OAuth connections.
 3. To create an app before its first deploy, for example to set variables
    first, plan with `create_only: true`.
 
-To set variables, call `gregale_plan_env_change` with the `app`, up to 50
-`values` (keys match `^[A-Z][A-Z0-9_]*$`, values hold no newlines), a
-`reason`, and optional `restart`.
-- The plan runs `gregale env push --dry-run --secret-scan strict` on the
-  default scope and pins the newest config revision.
-- A value that looks like a credential refuses the plan. The agent should
-  request it with `gregale_request_secret` (below) and never handle a secret
-  value.
-- `gregale_apply_env_change` applies the plan only if no other config change
-  landed since planning. The config guard judges the change as it does any
-  push.
+To set non-secret variables, call `gregale_plan_env_change` with `app`,
+`values`, `reason` and optional `project`/`environment`. This works locally and
+on a hosted connection with write access and `env:write` consent. Apply with
+`gregale_apply_env_change`. The API credential needs `env:write`, rather than
+secret-write access. Plans hide values, refuse sensitive names and detected
+credentials, and check the observed configuration revision before writing.
+All variables, one history revision, snapshot invalidation and a value-free
+receipt commit in one native transaction. A concurrent change refuses the entire
+batch. After an uncertain response, retry the same plan ID to recover the
+original receipt; do not create another plan for that attempt. `restart: true`
+also requests a fresh restart of the default app; a named scope cannot request
+an app-wide restart.
 
-The credential needs `deploy:write` to create and deploy apps. It needs
-`secrets:write` to set variables, because `env push` stores them through the
-secrets API.
+Revision zero is accepted only for an empty scope with no history. If a legacy
+writer has stored a value before recording its revision, wait for its history
+before replanning. On an older nonempty scope without history, the first batch
+records its current baseline and refuses the variable changes. Review that
+new revision and create a new plan; no manual variable write is needed.
 
 ## Ask the user for a secret
 
@@ -1882,7 +1944,8 @@ and its `plan_id`.
 - **Buckets and databases.** Each binds the resource to the app's default
   scope as sealed variables: `GREGALE_S3_<NAME>_*` for a bucket and
   `DATABASE_URL` for a database. Receipts name the variables and never contain
-  their values. Restart or redeploy the app to pick them up. A database can
+  their values. Plan a fresh restart with `gregale_plan_restart`, then apply it with
+  `gregale_apply_operation`, or redeploy the app to pick them up. A database can
   take up to ten minutes and is billed.
 - **Crons.** The plan reports `duplicate_of` if the app already has a cron
   with the same schedule and path.
@@ -1890,6 +1953,164 @@ and its `plan_id`.
 Object storage and managed PostgreSQL are preview capabilities; when one is
 off for the account, apply returns the API's error. Jobs and `gregale run`
 stay in the CLI.
+
+## Configure, inspect and recover
+
+Add `operate` locally, or select an operations profile during hosted sign-in.
+All writes still require connection write access; protected named targets use
+their native approval workflow.
+
+| Tool | Behavior |
+|---|---|
+| `gregale_get_config` | Variable names, latest revision and guard; no values |
+| `gregale_list_config_history` | Bounded revision metadata and guard decisions |
+| `gregale_plan_config_rollback` | Restore variables from an exact revision; sealed secret values are not restored |
+| `gregale_plan_restart`, `gregale_get_restart` | Review a default-app cold restart; inspect durable native processing by `wake_id`, then check app health |
+| `gregale_plan_scale` | Review RAM, CPU, concurrency or warm-instance changes; native quotas and named-workload revision checks apply |
+| `gregale_apply_operation` | Apply one reviewed restart, scale, config rollback or resource-lifecycle plan |
+| `gregale_get_plan`, `gregale_list_plans` | Recover unexpired plan status and completed receipts without repeating writes |
+| `gregale_get_costs` | Native app-attributed costs for an optional UTC `month` (`YYYY-MM`); requires `usage:read`, including for app-bound credentials. No local CLI is required. |
+
+Cost reads use `GET /v1/apps/{slug}/costs` and preserve exact integer
+millicents. They include only retained compute and interface-egress allocations
+attributed to the selected immutable app ID. They exclude account totals,
+invoices, forecasts and other apps. Sampling-window coverage remains visible;
+per-app quantity coverage is unknown, and the result is not a bill estimate.
+An app-bound credential needs explicit `usage:read`; this grants no access to
+`/v1/billing/costs`. An older control plane without the native app endpoint
+returns an unavailable read; the bridge does not fall back to account billing.
+
+The `provision` toolset also includes `gregale_list_domains`,
+`gregale_list_crons`, `gregale_list_buckets`, `gregale_get_storage_bindings`
+and `gregale_list_databases`. These metadata reads require `apps:read`, including
+for app-bound read-only credentials. Native filtering and pagination select only
+the immutable app and exact scope, without account-wide domain/database walks.
+Continue using `next_offset`; `pagination.has_more` explicitly marks the end.
+Storage binding pages count bindings, rather than buckets. Each page is a fresh
+snapshot, so concurrent changes can move offsets. Domain and cron inventory is
+app-wide and requires default-scope access.
+
+Metadata includes dependency names, linkage IDs, configuration references and
+catalog state. It grants no object reads, SQL connections, credentials or lifecycle
+access. Native resource capability flags still apply. An older server without
+`GET /v1/apps/{slug}/resource-inventory` returns an unavailable read; the bridge
+does not fall back to account inventory. Counts exclude other apps and scopes.
+
+For local read-only inspection with an app-bound token in `FAAS_TOKEN`:
+
+```sh
+gregale mcp serve --tools core,provision
+```
+
+Native pages default to 20 entries, cap at 100 and accept offsets up to 1,000,000.
+The inventory tools validate backend identities and continuations before exposing
+the page. Command payloads, domain challenges and credential/provider material
+are excluded; catalog state does not prove connectivity or runtime readiness.
+
+Use `gregale_plan_cron_change` to update or delete an exact cron, or
+`gregale_plan_domain_removal` to detach a domain. Apply with
+`gregale_apply_operation`; changed resource ownership/configuration refuses
+the old plan. Native policies remain authoritative.
+
+For long provisioning, pass `async: true` to `gregale_apply_provision`. It
+returns a `plan_id` immediately. Poll `gregale_get_provision`, or request
+cancellation with `gregale_cancel_provision`. Cancellation does not undo a
+resource already created. The bridge bounds workers, preserves OAuth authorization
+expiry and cancels work on OAuth revocation or shutdown. Native API calls also
+recheck headless credentials.
+
+When the bridge has a persistent state store, provisioning uses native APIs and
+journals its reviewed inputs, reserved database identity, resource and binding
+IDs, phase and sanitized failure. These operations can resume for 24 hours from
+the first apply, including after a process restart. Polling is read-only; an
+interrupted operation returns a `next` call to `gregale_apply_provision` with
+the same `plan_id`. Resume explicitly with that ID. Cancellation is retained
+after restart and does not delete resources; another explicit apply resumes
+the approved intent under current authorization. Completed receipts are kept
+for 24 hours after completion.
+
+Ephemeral local connections use the existing CLI flow and retain unfinished
+plans only in memory. Inspect resource inventory before replanning after that
+connection is lost. Source uploads retain their separate temporary-input
+lifecycle.
+
+Tool output schemas require stable plan, receipt and identity fields while
+allowing additive native evidence. Errors and plan/status receipts include
+`schema_version: 1` and a structured `recovery` object. Agents should follow
+`recovery.action` rather than infer a retry from problem prose:
+
+| Action | Agent behavior |
+|---|---|
+| `none` | No recovery is needed. |
+| `inspect` | Read the indicated receipt or inspect current state before deciding. |
+| `retry_read` | Repeat the read with the original inputs. |
+| `retry_same_plan` | Apply the original `plan_id`; do not create a replacement plan. |
+| `replan` | Obtain a new review with the indicated planning tool. |
+| `request_access` | Restore current authorization or the required capability before continuing. |
+
+When supplied, `tool` and `arguments` identify a listed tool and value-free
+selectors such as `plan_id`. `reuse_original_inputs` tells the agent to reuse
+its own inputs without echoing configuration values in the error. Honor
+`after_seconds` before retrying or polling. A `toolsets` suggestion means the
+needed tool is outside the selected catalog; select that toolset on a new
+connection before calling it.
+
+A `refused` receipt means the native operation rejected the first attempt;
+repeated application of that plan does not write again. A `partial` configuration
+receipt records the committed revision and changed keys when an optional restart
+failed, so the same plan can finish without writing configuration twice.
+`outcome_unknown` retains uncertainty after an interrupted or ambiguous request.
+Only operations with a safe recovery path recommend `retry_same_plan`. These
+outcomes and checkpoints survive bridge restarts. Cancelled provisioning is not
+automatically resumed. Large integer telemetry is preserved exactly in both text
+and structured output.
+
+Mutation completion and runtime verification are separate. Apply results and
+plan receipts include `verification` with a goal, value-free checks and exact
+resource IDs. When `verification.next` is present, call the indicated
+`gregale_verify_plan` with the original `plan_id`, respecting `after_seconds`.
+The tool performs one bounded set of passive reads; it does not repeat writes,
+wake an app or promote a staged deployment.
+
+| Verification status | Meaning |
+|---|---|
+| `required` | A receipt identifies a runtime outcome that still needs observation. |
+| `pending` | The native restart or rollout is still progressing. |
+| `verified` | The stated goal was established at `checked_at`. |
+| `failed` | Native processing, deployment or fresh health evidence reports failure. |
+| `blocked` | A prerequisite such as explicit promotion or an unchanged configuration revision is missing. |
+| `unknown` | The available evidence does not establish the goal. |
+| `not_required` | The stated goal, such as a committed change without a requested restart, needs no additional runtime check. |
+
+Restart verification follows the exact `wake_id`, then requires fresh passive
+health evaluated at or after restart processing completed. Configuration must
+still match the native batch revision before and after health inspection.
+This establishes processing and app health, not variable values loaded by a
+particular replacement instance or public reachability. Deployment verification
+uses exact rollout and health attribution; zero traffic is blocked until explicit
+promotion. Worker verification covers resident generation convergence only.
+
+Targets are reconstructed from journaled receipts across reconnects and bridge
+restarts. Each verification reads again and reports its own observation time;
+`get_plan` describes the obligation rather than caching healthy status. Current
+consent and immutable app/environment identity are checked around inspection.
+Revocation during a read withholds its result. Unsupported postconditions,
+including aggregate environment promotions, service abort reverse handoff and
+provider binding activation in running apps, remain `unknown` with the
+`manual_review` goal.
+
+MCP-owned app, deployment, plan and resource inventory tools include `pagination`
+with `mode`, `has_more`, and the matching `next_offset` or `next_before` when
+more native results remain. An empty filtered deployment page may still have
+more results; preserve its cursor. Existing fields remain available and native
+diagnostic projections retain their own pagination contracts.
+`gregale_list_plans` defaults to 20 receipts and accepts `limit` (1–100) and
+`offset`; use its returned continuation to inspect larger journals.
+
+Run `make test-mcp-agent-workflows` to evaluate discovery, schema conformance,
+conflict replanning, lost-response recovery, partial configuration recovery,
+post-write verification and authorization revocation. These evaluations use a deterministic MCP
+client and native API fixtures; they do not measure a language model's reasoning.
 
 ## Reviewed Git source deployments
 
@@ -2036,9 +2257,14 @@ bound to their registered identity; release promotion does not copy them.
 Registered project environments use Gregale's guarded promotion workflow. These
 tools reuse existing immutable source releases. Direct image staging also accepts
 an explicit project/environment. `gregale_preflight` accepts the same app and
-optional project/environment selection. It reports each read compatibility and consent
-check independently; unknown results do not grant write permission. It creates no
-plans or source reviews. Store status describes an open encrypted journal, not a
+optional project/environment selection and `operation`. Its native preview
+reports current scope and organization role authorization separately from local
+write consent. A passed `api_write_authorization` check is an observation for
+that operation, not permission to exceed connection consent. Account standing,
+route availability and environment restrictions are separate admission checks;
+exact request validation and quota admission remain unknown until apply. An
+older, stale or incompatible native preview leaves authorization unknown.
+Preflight creates no plans, reservations, source reviews or approval requests. Store status describes an open encrypted journal, not a
 restart qualification or a guarantee that future writes will succeed.
 The tool catalog has 49 read/planning tools, or
 58 with writes.

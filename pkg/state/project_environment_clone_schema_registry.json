@@ -55,6 +55,15 @@
     "kind": "operational"
   },
   {
+    "table": "api_key_project_limits",
+    "columns": [
+      "created_at",
+      "key_id",
+      "project_ids"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "financial_budget_alert_channel_deliveries",
     "columns": [
       "account_id",
@@ -1238,6 +1247,19 @@
       "owner": "environment",
       "column": "environment_id"
     }
+  },
+  {
+    "table": "app_env_batch_receipts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "receipt",
+      "request_id",
+      "request_sha256",
+      "scope"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_envs",
@@ -3558,6 +3580,7 @@
       "device_hash",
       "expires_at",
       "org_id",
+      "project_ids",
       "status",
       "token_hash"
     ],
@@ -5684,6 +5707,24 @@
       "owner": "account",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "edge_tls_certificates",
+    "columns": [
+      "account_uri",
+      "ca",
+      "chain_pem",
+      "id",
+      "issued_at",
+      "key_kid",
+      "key_sealed",
+      "names",
+      "not_after",
+      "not_before",
+      "serial",
+      "sha256"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "edge_crawler_ip_ranges",
@@ -17289,6 +17330,7 @@
       "country",
       "deployment_created_at",
       "deployment_id",
+      "deployment_pinned",
       "deployment_tag",
       "flag_evidence",
       "guest_cpu_time_ms",
@@ -17302,6 +17344,7 @@
       "image_digest",
       "instance_id",
       "latency_ms",
+      "long_lived",
       "method",
       "node_id",
       "platform_refusal",

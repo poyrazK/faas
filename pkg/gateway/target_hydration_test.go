@@ -88,7 +88,11 @@ func TestTargetHydrationIncompleteReadRetainsCapacityAndRefusesTraffic(t *testin
 				case "at capacity":
 					_, _, _, err = b.recordAdmission(t.Context(), target.AppID, target.DeploymentID, "", "", "", "", 0, true, 0)
 				}
-				if err == nil || (reason == "store error" && !errors.Is(err, failure)) || reads != 1 || legacyReads != 0 || b.CapacityCount(target.AppID) != 1 || b.Pick(target.AppID).OK {
+				// A failed read keeps the leased target routable (ADR-570
+				// amendment 2026-11-03); an incomplete answer refuses it.
+				// Neither removes capacity or falls back to the legacy reader.
+				wantRoutable := reason == "store error"
+				if err == nil || (reason == "store error" && !errors.Is(err, failure)) || reads != 1 || legacyReads != 0 || b.CapacityCount(target.AppID) != 1 || b.Pick(target.AppID).OK != wantRoutable {
 					t.Fatalf("incomplete placement routed or removed capacity: reads=%d legacy=%d capacity=%d pick=%+v err=%v", reads, legacyReads, b.CapacityCount(target.AppID), b.Pick(target.AppID), err)
 				}
 			})

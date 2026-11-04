@@ -4937,6 +4937,11 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	bindIP := clientIPFromRequest(r)
 	bindUA := logsanitize.Field(r.UserAgent())
 	org, perr := s.store.OrgByPersonalAccount(r.Context(), acct.ID)
+	projects, prob := s.keyProjects(r.Context(), acct, org.ID, scopes, req.Projects)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	var k state.APIKey
 	switch {
 	case perr == nil:
@@ -4960,6 +4965,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not create key"))
+		return
+	}
+	if prob := s.limitKeyToProjects(r.Context(), acct, k, projects); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
@@ -5010,6 +5019,9 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		resp.ExpiresAt = k.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 	resp.Plaintext = plaintext
+	if len(projects) > 0 {
+		resp.Projects = projectSlugs(projects)
+	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
