@@ -3594,15 +3594,16 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if ready.ExecutionMode != mode {
 			return fmt.Errorf("imaged: deployment_ready mode mismatch: payload=%q app=%q", ready.ExecutionMode, mode)
 		}
-		if ready.NoSnapshotReason == "rehearsal_cold_start" {
+		switch ready.NoSnapshotReason {
+		case "rehearsal_cold_start":
 			if err := h.validateColdStartActivation(ctx, app, dep, *ready); err != nil {
 				return err
 			}
-		} else if ready.NoSnapshotReason == state.EnvironmentBranchActivationReason {
+		case state.EnvironmentBranchActivationReason:
 			if err := h.validateEnvironmentBranchActivation(ctx, dep, *ready, mode); err != nil {
 				return err
 			}
-		} else {
+		default:
 			switch mode {
 			case api.ExecutionModeWorker:
 				if ready.NoSnapshotReason != "" {
