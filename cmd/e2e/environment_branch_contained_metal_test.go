@@ -89,7 +89,7 @@ func TestEnvironmentBranchContainedEgressMetal(t *testing.T) {
 	probeURL := gatewayAppURL(h, slug) + "probe"
 
 	// Control: production's guest reaches the public address.
-	body, status := doGetWithHost(t, client, probeURL, slug+".apps.test.example", 60*time.Second)
+	body, _, status := branchGet(t, client, probeURL, slug+".apps.test.example", key)
 	if status != http.StatusOK {
 		t.Fatalf("production probe: status=%d body=%q", status, body)
 	}
