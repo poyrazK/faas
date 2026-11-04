@@ -73,7 +73,15 @@ export type DeploymentResponse = {
   cache_key_sha256?: string;
   image_digest: string;
   kind: string;
-  status: string;
+  /**
+   * Deployment lifecycle status. `pending`, `building`, `imaging` and
+   * `snapshotting` are in flight; `live` is serving traffic;
+   * `superseded` shipped and was replaced by a newer deployment;
+   * `failed` and `cancelled` are terminal exits (cancel is the
+   * user-driven retract of a non-live row, ADR-124).
+   *
+   */
+  status: 'pending' | 'building' | 'imaging' | 'snapshotting' | 'live' | 'failed' | 'superseded' | 'cancelled';
   error?: string | null;
   error_code?: string | null;
   /**
