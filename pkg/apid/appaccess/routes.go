@@ -198,6 +198,9 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/outbound-bindings":                       authz.OrgActionReadApp,
 	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":      authz.OrgActionManageAppSecurity,
 
+	// Standalone issue deletion complements the Issues feature route inventory.
+	"DELETE /v1/apps/{slug}/issues/{issue_id}": authz.OrgActionDeployApp,
+
 	// Metrics and request analytics are aggregates the app page already
 	// shows every member who can read the app. Unreviewed, they answered
 	// only the app's creator, and only while an owner or admin.

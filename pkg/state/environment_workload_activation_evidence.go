@@ -167,7 +167,9 @@ func graphActivationEvidenceWithReleaseTargets(graph EnvironmentWorkloadGraph, c
 	if nonJobCandidates > 0 && evidence.RestoresRecorded != nonJobCandidates {
 		evidence.BlockingReasons = append(evidence.BlockingReasons, "environment_restore_evidence_missing")
 	}
-	if nonJobCandidates > 0 && evidence.GuestConfigAcknowledgementsRecorded != nonJobCandidates {
+	// Both restored workloads and one-shot Jobs acknowledge their delivered
+	// configuration. A Job receipt cannot replace a missing restored receipt.
+	if evidence.GuestConfigAcknowledgementsRecorded != evidence.Candidates {
 		evidence.BlockingReasons = append(evidence.BlockingReasons, "environment_guest_config_acknowledgement_missing")
 	}
 	if nonJobCandidates > 0 && evidence.FrameworkReadyAcknowledgementsRecorded != nonJobCandidates {

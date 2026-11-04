@@ -610,6 +610,7 @@ from .billing_status_response import BillingStatusResponse
 from .billing_status_response_account_status import BillingStatusResponseAccountStatus
 from .billing_status_response_mode import BillingStatusResponseMode
 from .billing_status_response_plan import BillingStatusResponsePlan
+from .billing_status_response_scheduled_plan import BillingStatusResponseScheduledPlan
 from .binding_adoption_counts import BindingAdoptionCounts
 from .binding_application_ack_target import BindingApplicationAckTarget
 from .binding_application_ack_target_application_ack import BindingApplicationAckTargetApplicationAck
@@ -2273,6 +2274,7 @@ from .incident_update import IncidentUpdate
 from .incidents_response import IncidentsResponse
 from .ingest_issue_otlp_body import IngestIssueOTLPBody
 from .ingest_issue_otlp_response_200 import IngestIssueOTLPResponse200
+from .ingest_issue_otlp_response_200_partial_success import IngestIssueOTLPResponse200PartialSuccess
 from .ingest_issue_otlp_signal import IngestIssueOTLPSignal
 from .inject_scenario_test_chaos_request import InjectScenarioTestChaosRequest
 from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
@@ -6885,6 +6887,7 @@ __all__ = (
     "BillingStatusResponseAccountStatus",
     "BillingStatusResponseMode",
     "BillingStatusResponsePlan",
+    "BillingStatusResponseScheduledPlan",
     "BindingAdoptionCounts",
     "BindingApplicationAckTarget",
     "BindingApplicationAckTargetApplicationAck",
@@ -8478,6 +8481,7 @@ __all__ = (
     "IncidentUpdate",
     "IngestIssueOTLPBody",
     "IngestIssueOTLPResponse200",
+    "IngestIssueOTLPResponse200PartialSuccess",
     "IngestIssueOTLPSignal",
     "InjectScenarioTestChaosRequest",
     "InjectScenarioTestChaosResponse",

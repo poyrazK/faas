@@ -194,7 +194,12 @@ func standardProjectOnboarding(t *testing.T, store standardProjectBoundaryStore)
 	})
 	t.Run("restoration installs retained pins before build", func(t *testing.T) {
 		removed := standardProjectApply(t, e, standardProjectSource(t, "standards-api"))
-		standardProjectBuilds(t, e, removed, 0)
+		// Convention Dockerfiles receive the repository context. Removing a
+		// sibling changes that context, so the surviving service must rebuild.
+		standardProjectBuilds(t, e, removed, 1)
+		if removed.Builds[0].AppID != ids["standards-api"] {
+			t.Fatal("removing a sibling rebuilt the wrong service")
+		}
 		worker, err := e.store.AppByID(t.Context(), ids["standards-worker"])
 		if err != nil || worker.Status != state.AppDeleted {
 			t.Fatalf("remove workload: %+v %v", worker, err)
@@ -212,8 +217,13 @@ func standardProjectOnboarding(t *testing.T, store standardProjectBoundaryStore)
 		}
 		restoredSource := standardProjectSourceWithMarkers(t, map[string]string{"standards-worker": "restored"}, "standards-api", "standards-worker")
 		restored := standardProjectApply(t, e, restoredSource)
-		standardProjectBuilds(t, e, restored, 1)
-		if restored.Builds[0].AppID != worker.ID {
+		// Restoring the sibling changes the repository context for both apps.
+		standardProjectBuilds(t, e, restored, 2)
+		foundWorker := false
+		for _, build := range restored.Builds {
+			foundWorker = foundWorker || build.AppID == worker.ID
+		}
+		if !foundWorker {
 			t.Fatal("restored service changed identity")
 		}
 		standardProjectInstalled(t, e, worker.ID, 2)

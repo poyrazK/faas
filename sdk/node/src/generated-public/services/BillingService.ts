@@ -693,7 +693,10 @@ export class BillingService {
    * Get the authenticated customer's billing status.
    * Returns a provider-independent deployment and account billing
    * projection. This customer endpoint requires usage:read and never
-   * calls an operator catalog surface.
+   * calls an operator catalog surface. A scheduled cancellation
+   * (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+   * `scheduled_plan_at`) is reported before it applies; asking for the
+   * current plan with PATCH /v1/account/plan undoes it.
    *
    * @returns BillingStatusResponse Current deployment billing mode and customer attachment status.
    * @throws ApiError
@@ -720,7 +723,10 @@ export class BillingService {
    * download receipts, cancel). When the active provider exposes
    * customer sessions, the server creates a short-lived authenticated
    * portal URL. Otherwise it renders the operator's
-   * `FAAS_BILLING_PORTAL_URL` template.
+   * `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+   * that can cancel the subscription and replace the card, so the route
+   * takes an admin credential, MFA, a verified email and, for a dashboard
+   * session, a step-up within the last 5 minutes.
    *
    * The response also carries a `payment_method` block — the card-on-file summary (brand, last-4, expiry).
    * The CLI's `faas billing payment-method` renders from this

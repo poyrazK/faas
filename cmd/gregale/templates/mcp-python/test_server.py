@@ -104,4 +104,78 @@ class MCPCORSTests(unittest.TestCase):
             self.assertEqual(response.headers["Access-Control-Allow-Origin"],"https://trusted.example")
             self.assertEqual(response.headers["Access-Control-Expose-Headers"],"WWW-Authenticate, MCP-Protocol-Version, Streaming-Status")
 
-if __name__=="__main__":unittest.main()
+
+
+class MCPProtocolHeaderTests(unittest.TestCase):
+    setUp = MCPStarterTests.setUp
+    tearDown = MCPStarterTests.tearDown
+
+    def post(self, message, version="2026-07-28", extra=()):
+        connection = http.client.HTTPConnection("127.0.0.1", self.http.server_address[1], timeout=3)
+        body = json.dumps(message).encode()
+        try:
+            connection.putrequest("POST", "/mcp")
+            for name, value in [("Content-Type", "application/json"), ("Content-Length", str(len(body))), ("MCP-Protocol-Version", version), *extra]:
+                connection.putheader(name, value)
+            connection.endheaders(body)
+            response = connection.getresponse()
+            return response.status, response.read()
+        finally:
+            connection.close()
+
+    def test_legacy_setting_controls_negotiation_discovery_and_notifications(self):
+        for legacy in (False, True):
+            self.config["legacy"] = legacy
+            for version in ("2026-07-28", "2025-11-25"):
+                status, _ = self.post({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":version}}, version, [("MCP-Method", "initialize")])
+                self.assertEqual(status, 200 if legacy or version=="2026-07-28" else 400)
+            status, _ = self.post({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":"2025-11-25"}}, extra=[("MCP-Method", "initialize")])
+            self.assertEqual(status, 200 if legacy else 400)
+            status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"server/discover"}, extra=[("MCP-Method", "server/discover")])
+            self.assertEqual(status, 200)
+            self.assertEqual("2025-11-25" in json.loads(body)["result"]["supportedVersions"], legacy)
+            status, _ = self.post({"jsonrpc":"2.0", "method":"notifications/initialized"}, "2025-11-25")
+            self.assertEqual(status, 202 if legacy else 400)
+
+    def test_resource_routing_accepts_encoded_uri(self):
+        status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"resources/read", "params":{"uri":"greeting://welcome"}},
+            extra=[("MCP-Method", "resources/read"), ("MCP-Name", "=?base64?Z3JlZXRpbmc6Ly93ZWxjb21l?=")])
+        self.assertEqual(status, 200, body)
+
+    def test_invalid_headers_never_execute_tool(self):
+        from server import MCP_CATALOG
+        calls = []
+        self.config["auth"]["tool_scopes"]["header_probe"] = []
+        self.http.authenticator = Authenticator(self.config)
+        MCP_CATALOG.register("tool", {"name":"header_probe", "inputSchema":{"type":"object", "properties":{"region":{"type":"string", "x-mcp-header":"region"}}}},
+                             lambda args, caller: calls.append(args) or {"content":[]})
+        self.addCleanup(lambda: MCP_CATALOG.remove("tool", "header_probe"))
+        for method, name, value, meta, duplicate, wanted in [
+            ("tools/call", "header_probe", "us-east", "2026-07-28", False, 200),
+            ("", "header_probe", "us-east", "2026-07-28", False, 400),
+            ("tools/list", "header_probe", "us-east", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "us-east", "2026-07-28", True, 400),
+            ("tools/call", "", "us-east", "2026-07-28", False, 400),
+            ("tools/call", "greet", "us-east", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "eu-west", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "=?base64?!!!?=", "2026-07-28", False, 400),
+            ("tools/call", "header_probe", "=?base64?dXMtZWFzdA==?=", "2026-07-28", False, 200),
+            ("tools/call", "header_probe", "us-east", "2025-11-25", False, 400),
+        ]:
+            with self.subTest(method=method, name=name, value=value, meta=meta, duplicate=duplicate):
+                extra = [(key, item) for key, item in [("MCP-Method",method), ("MCP-Name",name), ("MCP-Param-Region",value)] if item]
+                if duplicate:
+                    extra.append(("MCP-Method",method))
+                before = len(calls)
+                status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"tools/call", "params":{"name":"header_probe", "arguments":{"region":"us-east"}, "_meta":{"io.modelcontextprotocol/protocolVersion":meta}}}, extra=extra)
+                self.assertEqual(status, wanted, body)
+                self.assertEqual(len(calls), before + (wanted==200))
+                if wanted==400:
+                    self.assertEqual(json.loads(body)["error"]["code"], -32020)
+        status, _ = self.post({"jsonrpc":"2.0", "method":"notifications/initialized"})
+        self.assertEqual(status, 202)
+
+
+if __name__ == "__main__":
+    unittest.main()

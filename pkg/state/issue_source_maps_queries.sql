@@ -1,3 +1,7 @@
+-- name: IssueReadSourceMapStatus :one
+SELECT manifest_sha256, (canonical_manifest IS NOT NULL)::boolean AS ready
+FROM issue_source_map_artifacts WHERE app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id);
+
 -- name: IssueReadSourceMaps :one
 SELECT * FROM issue_source_map_artifacts WHERE app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id);
 

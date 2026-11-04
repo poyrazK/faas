@@ -26,9 +26,14 @@ var errDomainProviderMissing = errors.New("hosting domain provider object missin
 type DomainProvider interface {
 	ID() string
 	Target() string
-	Ensure(context.Context, api.HostingDomain, bool) (api.HostingDomainDetails, bool, error)
+	Ensure(context.Context, api.HostingDomain, DomainCreateFence) (api.HostingDomainDetails, bool, error)
 	Remove(context.Context, api.HostingDomain) error
 }
+
+// DomainCreateFence durably records an impending provider create. Providers
+// call it after read-only preflight and immediately before their creation
+// request. A nil fence forbids creation; a failed fence must prevent the POST.
+type DomainCreateFence func(context.Context) (api.HostingDomainDetails, error)
 
 type CloudflareDomains struct {
 	account, zone, policy, token, target, id string
@@ -261,7 +266,7 @@ func (p *CloudflareDomains) accessApp(ctx context.Context, d api.HostingDomain) 
 	return app, nil
 }
 
-func (p *CloudflareDomains) Ensure(ctx context.Context, d api.HostingDomain, allowCreate bool) (api.HostingDomainDetails, bool, error) {
+func (p *CloudflareDomains) Ensure(ctx context.Context, d api.HostingDomain, beginCreate DomainCreateFence) (api.HostingDomainDetails, bool, error) {
 	details := d.Details
 	if err := p.validateZone(ctx, true); err != nil {
 		return details, false, err
@@ -271,10 +276,9 @@ func (p *CloudflareDomains) Ensure(ctx context.Context, d api.HostingDomain, all
 		return details, false, err
 	}
 	if host == nil {
-		if !allowCreate || details.ProviderID != "" {
+		if beginCreate == nil || details.CreateStartedAt != nil || details.ProviderID != "" {
 			return details, false, ErrDomainProviderConflict
 		}
-		// The reconciler has durably recorded this single create attempt before I/O.
 		// Existing matches are conflicts, never candidates for implicit adoption.
 		var existing []cfDomainHostname
 		pages, listErr := p.request(ctx, "GET", p.hostPath()+"?hostname="+url.QueryEscape(d.Hostname)+"&per_page=50", nil, &existing)
@@ -282,6 +286,13 @@ func (p *CloudflareDomains) Ensure(ctx context.Context, d api.HostingDomain, all
 			return details, false, listErr
 		}
 		if pages > 1 || len(existing) != 0 {
+			return details, false, ErrDomainProviderConflict
+		}
+		details, err = beginCreate(ctx)
+		if err != nil {
+			return d.Details, false, err
+		}
+		if details.CreateStartedAt == nil || details.ProviderID != "" {
 			return details, false, ErrDomainProviderConflict
 		}
 		host = &cfDomainHostname{}

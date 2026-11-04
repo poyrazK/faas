@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -262,6 +263,11 @@ func (r *staticEgressIPRecording) SetStaticEgressIPAliases(entries []StaticEgres
 // TestWatchStaticEgressIPBundleReload_StartupLoad — the
 // watcher fires the startup load before the SIGHUP loop.
 func TestWatchStaticEgressIPBundleReload_StartupLoad(t *testing.T) {
+	previous := *netns.ActiveHostPolicyForRender()
+	policy := previous
+	policy.StaticEgressRules = []netns.StaticEgressRule{{PerVMHostIP: netip.MustParseAddr("10.100.0.2"), CustomerIP: netip.MustParseAddr("203.0.113.42"), AppID: "shop"}}
+	netns.SwapActiveHostPolicy(policy)
+	t.Cleanup(func() { netns.SwapActiveHostPolicy(previous) })
 	dir := t.TempDir()
 	path := filepath.Join(dir, "static_egress_ips.toml")
 	content := "[[entries]]\naccount_id = \"11111111-1111-1111-1111-111111111111\"\napp_id = \"shop\"\nip = \"203.0.113.42\"\n"
@@ -273,6 +279,9 @@ func TestWatchStaticEgressIPBundleReload_StartupLoad(t *testing.T) {
 	defer cancel()
 	hupCh := make(chan os.Signal, 1)
 	watchStaticEgressIPBundleReload(ctx, target, state.NewMemStore(), path, silentStaticIPLogger(), hupCh)
+	if rules := netns.ActiveHostPolicyForRender().StaticEgressRules; len(rules) != 1 || rules[0].PerVMHostIP != policy.StaticEgressRules[0].PerVMHostIP {
+		t.Fatalf("bundle reload overwrote a live lease with a source-less SNAT rule: %v", rules)
+	}
 	if target.calls != 1 {
 		t.Errorf("startup calls = %d, want 1", target.calls)
 	}

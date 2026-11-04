@@ -31,9 +31,22 @@ and enabled notification trigger. Runtime accounts need data grants and SELECT
 on the marker, not schema CREATE or table ownership. Observer read-only checks
 continue to apply.
 
+Go and Python enforce the shared namespace and owner running limits with the
+same execution advisory lock as Node; expired leases cannot be renewed. They
+honor persisted retry due times and configured attempt budgets. Handler errors
+remain terminal unless Go returns an error wrapping `ErrRetryableMCPTask` or
+Python raises `RetryableTaskError`. Migration apply adds `next_attempt_at`
+without replacing existing rows; startup checks require that column.
+
+All starters hash the same canonical JSON array of resource, subject and client
+ID for new Tasks. Read and caller-write authorization also accepts the earlier
+Go identity with duplicated JSON quotes, preserving retained work and caller
+isolation. Outstanding admission counts both forms for the caller.
+
 ## Consequences
 
 Existing Go/Python queues must run apply before upgrading these starters.
+Upgrade all workers before relying on shared capacity and retry enforcement.
 Bind migration credentials only to an operator process and use a dedicated
 schema with the same search_path for all accounts. Browser origin permission
 never grants bearer authorization. Portable contract checks do not replace

@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ OrgActivityAccessMutationStore = (*PgStore)(nil)
@@ -91,19 +91,15 @@ func (s *PgStore) ConsumeOrgInvitationWithActivity(ctx context.Context, hash []b
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgInvitationInvalid
 	}
 
-	var planSlug string
-	if err := tx.QueryRow(ctx, `select plan from orgs where id = $1`, inv.OrgID).Scan(&planSlug); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return OrgMembership{}, OrgInvitation{}, 0, 0, ErrNotFound
-		}
-		return OrgMembership{}, OrgInvitation{}, 0, 0, fmt.Errorf("state: consume org invitation activity plan: %w", err)
+	limit, err := lockOrgInvitationLimit(ctx, tx, inv.OrgID)
+	if err != nil {
+		return OrgMembership{}, OrgInvitation{}, 0, 0, err
 	}
-	var activeMembers int
-	if err := tx.QueryRow(ctx, `select count(*) from org_memberships where org_id = $1 and removed_at is null`, inv.OrgID).Scan(&activeMembers); err != nil {
+	activeMembers, err := sqlc.New().CountActiveOrgMembers(ctx, tx, mustPgUUID(inv.OrgID))
+	if err != nil {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, fmt.Errorf("state: consume org invitation activity count: %w", err)
 	}
-	limits, _ := api.LimitsFor(api.Plan(planSlug))
-	if limit := limits.OrgMembersMax; limit > 0 && activeMembers >= limit {
+	if activeMembers >= int64(limit) {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgMemberCapExceeded
 	}
 
@@ -128,9 +124,18 @@ func (s *PgStore) ConsumeOrgInvitationWithActivity(ctx context.Context, hash []b
 	member, err := scanOrgMembership(tx.QueryRow(ctx, `
 		insert into org_memberships (org_id, account_id, role, invited_by_account_id)
 		values ($1, $2, $3, $4)
+		on conflict (org_id, account_id) do update
+		   set role = excluded.role,
+		       invited_by_account_id = excluded.invited_by_account_id,
+		       joined_at = now(),
+		       removed_at = null
+		 where org_memberships.removed_at is not null
 		returning org_id, account_id, role, invited_by_account_id, joined_at, removed_at
 	`, inv.OrgID, accepting.ID, string(inv.Role), inviter))
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgAlreadyMember
+		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 			return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgAlreadyMember

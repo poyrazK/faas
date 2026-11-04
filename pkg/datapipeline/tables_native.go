@@ -42,7 +42,7 @@ func publishAddedTables(ctx context.Context, p Pipeline, source *pgxpool.Pool, p
 	}
 	names := make([]string, len(plan.AddedTables))
 	for i, name := range plan.AddedTables {
-		names[i] = tableIdent(name)
+		names[i] = "ONLY " + tableIdent(name)
 	}
 	if _, err = tx.Exec(ctx, "ALTER PUBLICATION "+ident(pipelineName(p))+" ADD TABLE "+strings.Join(names, ",")); err != nil {
 		return err

@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -316,6 +317,14 @@ func (e *Engine) privateNetworkProjection(ctx context.Context, app state.App) pr
 	if network.Status != "" && network.Status != api.PrivateNetworkStatusReady {
 		return privateNetworkProjection{}
 	}
+	allowed, err := privatenetwork.MergePolicyCIDRs(network.AllowedCIDRs, attachment.AllowedCIDRs, attachment.CIDRs)
+	if err != nil {
+		if e.log != nil {
+			e.log.Warn("sched: private network policy invalid; keeping attachment disconnected", "app_id", app.ID, "err", err)
+		}
+		return privateNetworkProjection{}
+	}
+	projection.AllowedCIDRs = prefixesToCIDRStrings(allowed)
 	address, err := privateStore.AllocatePrivateNetworkAddress(ctx, app.AccountID, attachment.NetworkID, "app", app.ID)
 	if err != nil {
 		if e.log != nil {
@@ -4044,7 +4053,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// their old netns — the app_changed pg_notify path
 		// fires UpdateStaticEgressIP gRPC to patch them
 		// (pkg/sched/egress_drift.go).
-		StaticEgressIP: deploymentStaticEgressIP(app, dep),
+		StaticEgressIP:       deploymentStaticEgressIP(app, dep),
+		StaticEgressExcluded: !state.ProductionDeploymentScope(dep.Scope),
 		// Issue #460 / ADR-053 (PR-C): per-deployment runtime port
 		// resolved from the explicit override or persisted source
 		// profile. The host-facing readiness port stays on 8080;
@@ -6121,7 +6131,8 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
-		StaticEgressIP: deploymentStaticEgressIP(app, dep),
+		StaticEgressIP:       deploymentStaticEgressIP(app, dep),
+		StaticEgressExcluded: !state.ProductionDeploymentScope(dep.Scope),
 		// Issue #460 / ADR-053 (PR-C): effective deployment runtime
 		// port. 0 = legacy 8080 (vmmd wire default).
 		Port: deploymentRuntimePort(dep),

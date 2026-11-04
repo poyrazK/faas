@@ -16,6 +16,13 @@ func setupRow(r sqlc.DataPipelineSetup) (Setup, error) {
 	if json.Unmarshal(r.Request, &result.Request) != nil || json.Unmarshal(r.MirrorPlan, &result.MirrorPlan) != nil || json.Unmarshal(r.DataApiPlan, &result.DataAPIPlan) != nil {
 		return Setup{}, ErrUnavailable
 	}
+	result.Request = normalizeSetupIDs(result.Request)
+	// Earlier workers saved an invalid generated name for digit-led slugs.
+	// Such a name could never provision a database. Keep its reserved database
+	// ID and recognize only that exact legacy derivation when retrying it.
+	if result.Request.DatabaseID == "" && len(result.Request.Name) > 0 && len(result.ID) >= 8 && result.MirrorName == result.Request.Name+"-mirror-"+result.ID[:8] {
+		result.MirrorName = setupMirrorName(result.Request.Name, result.ID)
+	}
 	return result, nil
 }
 func (s *PostgresStore) SetupByName(ctx context.Context, account, name string) (Setup, error) {
@@ -51,6 +58,7 @@ func (s *PostgresStore) Setups(ctx context.Context, account string) ([]Setup, er
 	return items, nil
 }
 func (s *PostgresStore) EnqueueSetup(ctx context.Context, job Setup) (Setup, error) {
+	job.Request = normalizeSetupIDs(job.Request)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Setup{}, storeError(err)

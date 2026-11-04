@@ -54,6 +54,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -122,6 +123,9 @@ type PendingHostnameRow = pendingHostnameRow
 type PgHandlerEnv = pgHandlerEnv
 type PlanCron = planCron
 type PlanTokenWire = planTokenWire
+
+var CachedProjectApplyFields = cachedProjectApplyFields
+
 type ProjectEnvironmentBindingClone = projectEnvironmentBindingClone
 type PrometheusTargetGroup = prometheusTargetGroup
 type PromoteFeatureFlagRolloutRequest = promoteFeatureFlagRolloutRequest
@@ -267,6 +271,8 @@ const UploadSessionOpenCap = uploadSessionOpenCap
 const VmmdMetricsDiscoveryPath = vmmdMetricsDiscoveryPath
 
 // Package-level vars
+var ProjectDashboardDomainsForTest = (*server).projectDashboardDomains
+var SendCertIssuanceFailedEmailForTest = (*server).sendCertIssuanceFailedEmail
 var AppsDomainFunc = &appsDomainFunc
 var BuildPlanCacheOnce = &buildPlanCacheOnce
 var CapsDecl = &capsDecl
@@ -1924,6 +1930,11 @@ func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, int
 	return b.prepareWorkloadCandidates(ctx, lease, plan)
 }
 
+// EnvironmentGitOpsBackendForTest exercises the production worker adapters.
+func (s *server) EnvironmentGitOpsBackendForTest(intent state.EnvironmentGitOpsIntentStore, effects state.EnvironmentGitOpsEffectStore) environmentgitops.Backend {
+	return &environmentGitOpsBackend{server: s, intent: intent, effects: effects}
+}
+
 // DashboardWidgetAppForTest resolves a dashboard widget's app as the
 // dashboards host does (ADR-20261022173833).
 func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Account, slug string) (state.App, bool) {
@@ -2083,6 +2094,11 @@ func OIDCAccountLookup(store state.Store, repos oidcrepo.RepoLookup) oidc.Accoun
 	return newOIDCAccountLookup(store, repos)
 }
 
+// WriteIssueErrorForTest exercises the public issue quota response mapping.
+func WriteIssueErrorForTest(w http.ResponseWriter, err error) {
+	writeIssueError(w, err)
+}
+
 // Inline security alerts (bug hunt H99).
 func (r *server) AlertPasswordChangedInline(ctx context.Context, acct state.Account, method string) {
 	r.alertPasswordChangedInline(ctx, acct, method)
@@ -2104,6 +2120,16 @@ func ResolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gre
 var MintMCPAuthCodeForTest = mintMCPAuthCode
 var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
 var MCPCodeScopesForTest = mcpCodeScopes
+
+var ALookupFunc = &aLookupFunc
+var AAAALookupFunc = &aaaaLookupFunc
+var CAALookupFunc = &caaLookupFunc
+var OwnedDomainsFunc = &ownedDomainsFunc
+var CheckPointsToGregale = checkPointsToGregale
+
+func (s *server) RunDoctorForDomain(ctx context.Context, log *slog.Logger, domain string) error {
+	return s.runDoctorForDomain(ctx, log, domain)
+}
 
 // WaitPasswordResetMail waits for forgot-password work started off the
 // request path (H86).

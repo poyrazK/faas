@@ -44,11 +44,15 @@ func (s *server) applyPasswordReset(ctx context.Context, hash []byte, phc string
 	}
 	// Compatibility for links minted by the existing inline flow. New durable
 	// reset hashes live only in password_reset_tokens, never login_tokens.
-	id, err := s.store.ConsumeLoginToken(ctx, hash)
-	if err != nil {
+	resetter, ok := s.store.(state.LegacyPasswordResetStore)
+	if !ok {
+		return "", api.ErrCapacity("password reset store unavailable")
+	}
+	id, err := resetter.ResetLegacyPassword(ctx, hash, phc)
+	if errors.Is(err, state.ErrNotFound) {
 		return "", api.ErrResetTokenInvalid()
 	}
-	if err := s.store.SetAccountPassword(ctx, id, phc); err != nil {
+	if err != nil {
 		s.log.Error("reset.set_password")
 		return "", api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to set password")
 	}

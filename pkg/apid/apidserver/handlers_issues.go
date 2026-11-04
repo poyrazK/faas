@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -64,6 +65,7 @@ func (s *server) registerIssueRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-ownership-rules", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueOwnershipRules)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/issue-ownership-rules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueOwnershipRules))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssue)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/issues/{issue_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssue))))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/split-rules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createIssueSplitRule)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.undoIssueSplitRule)))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateIssueSplitRule)))))
@@ -103,8 +105,11 @@ func writeIssueError(w http.ResponseWriter, err error) {
 	var limit *state.IssueLimitError
 	if errors.As(err, &limit) {
 		status, code := 409, "issue_quota_exceeded"
-		if limit.Rate {
-			status, code = 429, "issue_rate_limited"
+		if limit.Rate || limit.Resource == "events" {
+			status = 429
+			if limit.Rate {
+				code = "issue_rate_limited"
+			}
 			w.Header().Set("Retry-After", "60")
 		}
 		p := api.NewProblem(status, code, "Issue limit exceeded", "issue reporting limit reached")
@@ -125,11 +130,14 @@ func writeIssueError(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrIssueSourceMapsConflict):
 		api.WriteProblem(w, api.NewProblem(409, "issue_source_maps_conflict", "Conflict", "source-map manifest is immutable for this deployment"))
 	case errors.Is(err, state.ErrIssueSourceMapsUnavailable):
-		api.WriteProblem(w, api.NewProblem(409, "issue_source_maps_unavailable", "Source maps unavailable", "publish this deployment's source-map artifacts before requesting symbolication"))
+		w.Header().Set("Retry-After", "60")
+		api.WriteProblem(w, api.NewProblem(503, "issue_source_maps_unavailable", "Source maps unavailable", "publish or restore this deployment's source-map artifacts before retrying"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(404, api.CodeNotFound, "Not found", "issue resource not found"))
 	case errors.Is(err, state.ErrIssueGroupingConflict):
 		api.WriteProblem(w, api.NewProblem(409, "issue_grouping_conflict", "Conflict", "issue membership changed or is incompatible with the requested regrouping"))
+	case errors.Is(err, state.ErrIssueTicketPending):
+		api.WriteProblem(w, api.NewProblem(409, "issue_ticket_pending", "Ticket creation pending", "complete or recover the native ticket before deleting the issue"))
 	case errors.Is(err, state.ErrIssueEventConflict):
 		api.WriteProblem(w, api.NewProblem(409, "issue_event_conflict", "Conflict", "event_id was already used with a different payload"))
 	case errors.Is(err, state.ErrIssueQuota):
@@ -471,6 +479,61 @@ func (s *server) getIssue(w http.ResponseWriter, r *http.Request, acct state.Acc
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// deleteIssue permanently removes a standalone issue and its retained history.
+func (s *server) deleteIssue(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	if _, ok := s.issueStore(w, acct); !ok {
+		return
+	}
+	if _, err := uuid.Parse(r.PathValue("issue_id")); err != nil {
+		writeIssueError(w, state.ErrNotFound)
+		return
+	}
+	store, ok := s.store.(interface {
+		DeleteIssue(context.Context, string, string) error
+	})
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("issue deletion is unavailable"))
+		return
+	}
+	abandon := false
+	if raw := r.URL.Query().Get("abandon_unconfirmed_tickets"); raw != "" {
+		var err error
+		abandon, err = strconv.ParseBool(raw)
+		if err != nil {
+			api.WriteProblem(w, api.ErrValidation("abandon_unconfirmed_tickets must be a boolean"))
+			return
+		}
+	}
+	var abandoned []string
+	var err error
+	if abandon {
+		withOptions, ok := s.store.(interface {
+			DeleteIssueWithOptions(context.Context, string, string, bool) ([]string, error)
+		})
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("explicit ticket abandonment is unavailable"))
+			return
+		}
+		abandoned, err = withOptions.DeleteIssueWithOptions(r.Context(), app.ID, r.PathValue("issue_id"), true)
+	} else {
+		err = store.DeleteIssue(r.Context(), app.ID, r.PathValue("issue_id"))
+	}
+	if err != nil {
+		writeIssueError(w, err)
+		return
+	}
+	if s.audit != nil {
+		actor := actorAccount(r, acct)
+		s.audit.Emit(r.Context(), "issue.deleted", &actor.ID, map[string]any{"app_id": app.ID, "issue_id": r.PathValue("issue_id"), "abandoned_ticket_request_ids": abandoned})
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func issueWindow(r *http.Request, plan api.Plan) (time.Time, time.Time, error) {
 	until := time.Now().UTC()
 	since := until.Add(-24 * time.Hour)
@@ -594,6 +657,6 @@ func (s *server) lookupIssueCredential(r *http.Request, st state.IssueStore, has
 	if app.ID != c.AppID || app.AccountID != c.AccountID {
 		return c, state.Account{}, state.ErrNotFound
 	}
-	acct, err := s.store.AccountByID(r.Context(), c.AccountID)
+	acct, err := state.AppResourceAccount(r.Context(), s.store, app)
 	return c, acct, err
 }

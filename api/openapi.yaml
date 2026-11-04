@@ -12719,6 +12719,15 @@ paths:
         effect at the end of the billing period. A billing email that already
         pays for another account or organization answers 409
         `billing_email_in_use`.
+
+        Asking for the plan the account already pays for keeps its
+        subscription: a scheduled cancellation or downgrade is undone and the
+        200 carries `plan_change_status: scheduled_change_undone`. A
+        subscription scheduled to end changes no plan, so an upgrade or
+        downgrade then answers 409 `billing_subscription_ending` until it is
+        kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+        answers 402 `payment_authentication_required` with
+        `billing_portal_url`; nothing is charged and the plan stays.
       requestBody:
         required: true
         description: "Plan change payload."
@@ -12936,6 +12945,9 @@ paths:
         cookie without the mfa_pending flag; future dashboard logins
         will require a TOTP verification because enrollment is the
         customer's explicit opt-in.
+        If the account has a password, current_password is also required
+        to authorize this new factor. An unconfirmed setup secret cannot
+        be used for session verification or recovery.
       requestBody:
         required: true
         content:
@@ -12949,12 +12961,17 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MFAConfirmResponse' }
         '401':
-          description: Invalid TOTP code.
+          description: Invalid TOTP code or missing/incorrect current password.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '404':
           description: No in-flight enrollment. Call /enroll first.
+        '409':
+          description: MFA is already enrolled; use /verify for a subsequent challenge.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/account/mfa/verify:
     post:
@@ -12983,6 +13000,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: MFA setup is incomplete; finish /confirm first.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/account/mfa/recover:
     post:
@@ -12990,10 +13012,10 @@ paths:
       operationId: mfaRecover
       summary: Burn a recovery code to regain access.
       description: |
-        Use when the customer's TOTP device is lost. Removes
-        one matching SHA-256 hash from the stored set; if the
-        customer burns the last code, /recover still works but
-        /disable via recovery_code no longer does.
+        Use when an enrolled customer's TOTP device is lost. Removes
+        one matching recovery-code hash from the stored set. The last
+        code is reserved for disabling MFA via recovery_code instead.
+        Pending setup material does not authorize recovery.
       requestBody:
         required: true
         content:
@@ -13008,6 +13030,11 @@ paths:
               schema: { $ref: '#/components/schemas/MFARecoverResponse' }
         '401':
           description: No matching recovery code.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: MFA setup is incomplete, or only the last recovery code remains.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -22999,10 +23026,19 @@ paths:
             schema: { type: object, additionalProperties: true }
       responses:
         '200':
-          description: Exceptions accepted, including exact retries
+          description: Exceptions accepted, including exact retries. Partial success reports permanently rejected logs or spans.
           content:
             application/json:
-              schema: { type: object, additionalProperties: false }
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  partialSuccess:
+                    type: object
+                    properties:
+                      rejectedLogRecords: { type: string, description: Decimal count of rejected log records. }
+                      rejectedSpans: { type: string, description: Decimal count of rejected spans. }
+                      errorMessage: { type: string }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanFeatureGated' }
@@ -24134,6 +24170,26 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteIssue
+      summary: Permanently delete a standalone issue and its retained history.
+      description: Split linked groups and remove derived branches first. A later occurrence may create a new issue.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: abandon_unconfirmed_tickets
+          in: query
+          description: Explicitly abandon expired unconfirmed ticket dispatches. The provider may still have created a ticket, and deleting the issue removes its recovery receipt. Confirmed unattached tickets still block deletion.
+          schema: { type: boolean, default: false }
+      responses:
+        '204': { description: Issue and its dependent history deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
   /v1/apps/{slug}/issues/{issue_id}/split-preview:
     parameters:
@@ -29037,7 +29093,8 @@ paths:
 
         Once current-month overage meets/exceeds the cap, the scheduler refuses
         new wakes with `code: admission_refused` (HTTP 402). The cap is
-        account-self-scoped (admin scope required) and the response
+        account-self-scoped (admin scope required; a dashboard session also
+        needs a step-up within the last 5 minutes) and the response
         is the post-update account state. Audit row
         `overage.cap_changed` is emitted on every successful call.
       requestBody:
@@ -54941,7 +54998,10 @@ paths:
       description: |
         Returns a provider-independent deployment and account billing
         projection. This customer endpoint requires usage:read and never
-        calls an operator catalog surface.
+        calls an operator catalog surface. A scheduled cancellation
+        (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+        `scheduled_plan_at`) is reported before it applies; asking for the
+        current plan with PATCH /v1/account/plan undoes it.
       responses:
         '200':
           description: Current deployment billing mode and customer attachment status.
@@ -54964,7 +55024,10 @@ paths:
         download receipts, cancel). When the active provider exposes
         customer sessions, the server creates a short-lived authenticated
         portal URL. Otherwise it renders the operator's
-        `FAAS_BILLING_PORTAL_URL` template.
+        `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+        that can cancel the subscription and replace the card, so the route
+        takes an admin credential, MFA, a verified email and, for a dashboard
+        session, a step-up within the last 5 minutes.
 
         The response also carries a `payment_method` block — the card-on-file summary (brand, last-4, expiry).
         The CLI's `faas billing payment-method` renders from this
@@ -64591,6 +64654,9 @@ paths:
         when the upgrade charge of an existing subscription is declined. The
         first checkout bills the acting owner's email until
         `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+        Asking for the organization's current plan keeps its subscription,
+        undoing a scheduled cancellation or downgrade; while a cancellation is
+        scheduled any other plan answers 409 `billing_subscription_ending`.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -96030,6 +96096,18 @@ components:
         customer_configured: { type: boolean }
         subscription_configured: { type: boolean }
         usage_reconciliation_enabled: { type: boolean }
+        subscription_ends_at:
+          type: string
+          format: date-time
+          description: When a scheduled cancellation ends the subscription instead of renewing it; the plan then returns to Free. Absent when none is scheduled.
+        scheduled_plan:
+          type: string
+          enum: [free, hobby, pro, scale]
+          description: The plan a scheduled downgrade moves to at scheduled_plan_at. Absent when none is scheduled.
+        scheduled_plan_at:
+          type: string
+          format: date-time
+          description: When the scheduled downgrade applies.
 
     BillingPortalResponse:
       description: |
@@ -104716,6 +104794,8 @@ components:
         challenge_token: { type: [string, "null"] }
         verified: { type: boolean }
         verified_at: { type: [string, "null"], format: date-time }
+        verification_expires_at: { type: string, format: date-time, description: "Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof." }
+        verification_expired: { type: boolean, description: "True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS instructions are omitted; resume domain setup to recreate the claim." }
         txt_record: { type: [string, "null"] }
         default: { type: boolean, description: "True when this domain is the app's default. Set via `gregale domains set-default`." }
         cert_not_after: { type: [string, "null"], format: date-time, description: "Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the cert expiry renders against this field." }
@@ -118498,7 +118578,7 @@ components:
             the plaintext never reappears.
 
     MFAConfirmRequest:
-      description: Body for /confirm — a single 6-digit TOTP code.
+      description: Body for /confirm — a TOTP code and the existing password, if set.
       type: object
       required: [totp]
       properties:
@@ -118506,6 +118586,10 @@ components:
           type: string
           pattern: '^[0-9]{6}$'
           description: 6-digit rotating code from the authenticator app.
+        current_password:
+          type: string
+          format: password
+          description: Required when the account already has a password; authorizes the new factor.
         csrf_token:
           type: string
           description: |
@@ -125066,6 +125150,7 @@ components:
         identified_customers: { type: integer }
         observed_events: { type: integer }
         unattributed_events: { type: integer }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP records with unknown folded weights; observed event counts are lower bounds. }
 
     IssueGroupingFrame:
       description: "Canonical file and function used in identity, with a zero-based index into selected cause frames when cause_index is present, otherwise occurrence frames. Line numbers are excluded."
@@ -125102,6 +125187,8 @@ components:
           properties:
             id: { type: string, format: uuid }
             original_issue_id: { type: string, format: uuid, readOnly: true, description: Original fingerprint provenance retained through occurrence-level splits and manual merges. }
+            occurrence_count: { type: integer, format: int64, minimum: 1, readOnly: true, description: Number of failures represented by this record; customer identity applies to the sampled request only. }
+            occurrence_count_exact: { type: boolean, readOnly: true, description: False when an older writer did not preserve the folded HTTP weight. }
             deployment_id: { type: string, format: uuid }
             received_at: { type: string, format: date-time }
             verified_consumer_id: { type: string, format: uuid }
@@ -125144,6 +125231,7 @@ components:
         identified_customers: { type: integer }
         observed_events: { type: integer }
         unattributed_events: { type: integer }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP batches in this impact window have unknown folded weights; observed events are a lower bound. }
         coverage: { type: string }
 
     IssueLifecycleAlertPolicy:
@@ -125344,6 +125432,7 @@ components:
         title: { type: string, maxLength: 256 }
         description: { type: string, maxLength: 16384 }
         recovery_url: { type: string, format: uri, maxLength: 512 }
+        original_app_slug: { type: string, maxLength: 512, description: Original slug for recovering a legacy receipt after an app rename. }
     NativeIssueTicketResult:
       type: object
       description: Durable GitHub ticket evidence and Gregale attachment state for a native creation operation.
@@ -125388,6 +125477,7 @@ components:
         description: { type: string, maxLength: 16384, description: Optional description bounded to 16 KiB; no telemetry is copied automatically. }
         recover: { type: boolean, default: false, description: Explicitly recover an unconfirmed dispatch by its stable request UUID after the dispatch lease expires. }
         recovery_url: { type: string, maxLength: 512, description: Optional known Linear issue URL that also requests recovery and must match the UUID lookup. }
+        original_app_slug: { type: string, maxLength: 512, description: Slug used when recovering a legacy Linear receipt created before the app was renamed. }
     IssueTrackerLinearConnection:
       type: object
       description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.
@@ -125707,6 +125797,7 @@ components:
         regressed_issue_groups: { type: integer, format: int64, minimum: 0 }
         identified_customers: { type: integer, format: int64, minimum: 0 }
         unattributed_events: { type: integer, format: int64, minimum: 0 }
+        unknown_http_batches: { type: integer, format: int64, minimum: 0, description: Legacy HTTP batches in this release have unknown folded weights; release event counts are lower bounds. }
     IssueReleaseComparison:
       description: "Baseline and candidate deployment health with newly observed, recurring and resolved issue groups."
       type: object

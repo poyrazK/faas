@@ -68,6 +68,64 @@ func roomyTLSAdmission(wildcard, host string, now time.Time) state.CustomDomainT
 	}
 }
 
+// Exact apex claims and wildcard leaves consume the same registered-domain,
+// owner and fleet budgets. Known hosts remain free when any cap is full.
+func TestCustomDomainTLSExactAndWildcardShareAdmissionBudgets(t *testing.T) {
+	for name, open := range tlsHostStores() {
+		for _, cap := range []struct {
+			name string
+			want state.CustomDomainTLSVerdict
+		}{
+			{"registered", state.TLSHostRegisteredDomainFull},
+			{"owner", state.TLSHostOwnerFull},
+			{"fleet", state.TLSHostFleetFull},
+		} {
+			t.Run(name+"/"+cap.name, func(t *testing.T) {
+				s, ctx := open(t)
+				app := tlsHostApp(t, ctx, s, "")
+				zone := "tls-" + uuid.NewString()[:8] + ".com"
+				wildcard, exact := "*.sub."+zone, zone
+				verifiedTLSWildcard(t, ctx, s, wildcard, app)
+				verifiedTLSWildcard(t, ctx, s, exact, app)
+				verifiedTLSWildcard(t, ctx, s, "next."+zone, app)
+				now := time.Now().UTC()
+				admit := func(domain, host string) state.CustomDomainTLSVerdict {
+					t.Helper()
+					a := roomyTLSAdmission(domain, host, now)
+					switch cap.name {
+					case "registered":
+						a.PerRegisteredDomain = 2
+					case "owner":
+						a.PerOwner = 2
+					case "fleet":
+						a.FleetLimit = 2
+					}
+					v, err := s.AdmitCustomDomainTLSHost(ctx, a)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return v
+				}
+				if admit(exact, exact) != state.TLSHostAdmitted || admit(wildcard, "first.sub."+zone) != state.TLSHostAdmitted {
+					t.Fatal("exact and wildcard hosts within the budget were refused")
+				}
+				if got := admit("next."+zone, "next."+zone); got != cap.want {
+					t.Fatalf("exact host past shared cap = %v, want %v", got, cap.want)
+				}
+				if got := admit(wildcard, "second.sub."+zone); got != cap.want {
+					t.Fatalf("wildcard host past shared cap = %v, want %v", got, cap.want)
+				}
+				for range 4 {
+					now = now.Add(time.Minute)
+					if admit(exact, exact) != state.TLSHostAdmitted || admit(wildcard, "first.sub."+zone) != state.TLSHostAdmitted {
+						t.Fatal("full budgets denied a reload or renewal")
+					}
+				}
+			})
+		}
+	}
+}
+
 // TestCustomDomainTLSHostAdmission pins ADR-520's wildcard issuance budget on
 // both stores: known hosts are free, new hosts are capped per rolling window,
 // unverified or deleted wildcards admit nothing, and deleting a wildcard does

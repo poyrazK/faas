@@ -27,6 +27,11 @@ func TestTableCancellationIDBindsExactRetirementAndRetention(t *testing.T) {
 	p := Pipeline{SchemaApproval: strings.Repeat("a", 64), DataPipeline: api.DataPipeline{ID: uuid.NewString(), Generation: 2}}
 	c := TableCancellation{Table: "customers", RequestID: uuid.NewString(), Retention: "retain_private", TableOID: 1, SourceTableOID: 2, SubscriptionOID: 3, PublicationOID: 4}
 	id := tableCancellationID(p, c)
+	retry := c
+	retry.RefreshRetry = 1
+	if tableCancellationID(p, retry) != id {
+		t.Fatal("refresh retry invalidated approved retirement identity")
+	}
 	for _, mutate := range []func(*Pipeline, *TableCancellation){
 		func(p *Pipeline, _ *TableCancellation) { p.Generation++ }, func(p *Pipeline, _ *TableCancellation) { p.SchemaApproval = strings.Repeat("b", 64) },
 		func(_ *Pipeline, c *TableCancellation) { c.Table = "orders" }, func(_ *Pipeline, c *TableCancellation) { c.RequestID = uuid.NewString() },

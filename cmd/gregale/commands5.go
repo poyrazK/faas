@@ -1291,7 +1291,18 @@ func cmdPlan(args []string) int {
 			(ae.Problem.CheckoutURL != "" || ae.Problem.BillingPortalURL != "") {
 			return renderPlanCheckoutHandoff(ae, target)
 		}
+		if errors.As(err, &ae) && ae.Problem.Code == api.CodeBillingSubscriptionEnding && !jsonOutput && acct.Plan != "" {
+			PrintWarn(osStderr, "Keep the subscription first: gregale billing plan %s", acct.Plan)
+		}
 		return printErr("Plan change failed", err)
+	}
+	if updated.PlanChangeStatus == "scheduled_change_undone" {
+		PrintOK(osStdout, "Kept the %s subscription: its scheduled cancellation or plan change was undone", updated.Plan)
+		return 0
+	}
+	if string(target) == acct.Plan && updated.Plan == acct.Plan {
+		PrintOK(osStdout, "Already on %s; nothing was scheduled to change", target)
+		return 0
 	}
 	if updated.PlanChangeStatus == "pending_provider_confirmation" {
 		if updated.EffectiveAt != nil {

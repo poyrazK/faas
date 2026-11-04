@@ -36,6 +36,7 @@ var memDispatched = map[string]bool{
 	"MCPTaskPromotionHold":                   true,
 	"MCPTaskPromotionHolds":                  true,
 	"DeleteAppPermanently":                   true,
+	"DeleteProjectIfNoStages":                true,
 	"ListApplicationStandardRebinds":         true,
 	"RecordApplicationStandardRebind":        true,
 	"RestoreApp":                             true,
@@ -578,6 +579,13 @@ func (s *Mem) ListFinancialPriceSnapshots(p0 context.Context, p1 string, p2 time
 		return o.ListFinancialPriceSnapshots(p0, p1, p2)
 	}
 	return s.MemStore.ListFinancialPriceSnapshots(p0, p1, p2)
+}
+
+func (s *Mem) DeleteProjectIfNoStages(ctx context.Context, accountID, projectID string) error {
+	if o, ok := s.over.(state.CheckedProjectDeleteStore); ok {
+		return o.DeleteProjectIfNoStages(ctx, accountID, projectID)
+	}
+	return s.MemStore.DeleteProjectIfNoStages(ctx, accountID, projectID)
 }
 
 func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
@@ -1903,6 +1911,7 @@ func (s *Mem) InstanceListByNodeForRecovery(p0 context.Context, p1 string) ([]st
 
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
+	"DeploymentByID":                                                     true,
 	"MigrateInstanceOwnerWithRuntimeConfig":                              true,
 	"ResolveInstanceMigrationCommit":                                     true,
 	"ScenarioWebhookDeliveryBlocked":                                     true,
@@ -2043,6 +2052,15 @@ var pgDispatched = map[string]bool{
 
 	"WithPublicHostPolicySnapshot":  true,
 	"WithInvocationVersionSnapshot": true,
+}
+
+func (s *Pg) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		DeploymentByID(context.Context, string) (state.Deployment, error)
+	}); ok {
+		return o.DeploymentByID(ctx, id)
+	}
+	return s.PgStore.DeploymentByID(ctx, id)
 }
 
 func (s *Pg) AbandonProjectEnvironmentCloneConfigurationFence(p0 context.Context, p1 state.ProjectEnvironmentCloneLease) error {

@@ -51,8 +51,16 @@ BEGIN
  PERFORM pg_advisory_xact_lock_shared(hashtextextended(operation_scope::text,161018));
  SELECT * INTO e FROM gregale_repair.check_enrollment((SELECT enrollment_id FROM gregale_repair.enrollments WHERE relation=target));
  IF e.enrollment_id IS NULL THEN RAISE EXCEPTION 'repair_table_not_enrolled' USING ERRCODE='22023'; END IF;
- INSERT INTO gregale_repair.operations(id,scope,release,enrollment_id,schema_fingerprint,transaction_id,repair_of)
- VALUES(operation,operation_scope,release_version,e.enrollment_id,e.fingerprint,pg_current_xact_id()::text,source_operation);
+ -- PostgreSQL may truncate storage in place after a create/rewrite in this
+ -- transaction. Capture requires preexisting storage so every later TRUNCATE
+ -- changes the filenode checked at finalization and deferred COMMIT.
+ -- age() uses PostgreSQL's wraparound-aware xid ordering and also catches
+ -- younger subtransaction xids from an earlier create/rewrite in a savepoint.
+ IF EXISTS(SELECT 1 FROM pg_class WHERE oid=e.relation AND age(xmin)<=age(pg_current_xact_id()::xid)) THEN
+  RAISE EXCEPTION 'repair_capture_requires_existing_relation' USING ERRCODE='22023';
+ END IF;
+ INSERT INTO gregale_repair.operations(id,scope,release,enrollment_id,schema_fingerprint,transaction_id,repair_of,capture_relation_filenode,type_fingerprint,capture_type_state,capture_contract_version)
+ VALUES(operation,operation_scope,release_version,e.enrollment_id,e.fingerprint,pg_current_xact_id()::text,source_operation,pg_relation_filenode(e.relation),e.type_fingerprint,gregale_repair.type_fingerprint(e.relation,true),3);
  PERFORM set_config('gregale.repair_operation',operation::text,true);
 END $$;
 
@@ -66,10 +74,10 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION gregale_repair.create_plan(operation uuid, expected_scope jsonb, checks_digest text, requested_plan uuid DEFAULT NULL) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET jit = 'off' AS $$
 DECLARE op gregale_repair.operations; e gregale_repair.enrollments; c gregale_repair.changes; current_row jsonb;
- items jsonb:='[]'; item jsonb; inverse jsonb; expected jsonb; observed jsonb; reason text; state text;
- observed_bytes bigint; observed_total bigint:=0; omitted boolean;
+ items jsonb:='[]'; item jsonb; inverse jsonb; expected jsonb; observed jsonb; reason text; state text; fields text;
+ observed_bytes bigint; observed_total bigint:=0; omitted boolean; values_match boolean;
  plan uuid:=coalesce(requested_plan,gen_random_uuid()); doc jsonb; prior gregale_repair.plans;
 BEGIN
  IF checks_digest IS NULL OR checks_digest !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'repair_invalid_checks' USING ERRCODE='22023'; END IF;
@@ -86,13 +94,16 @@ BEGIN
  IF op.payload_purged_at IS NOT NULL THEN RAISE EXCEPTION 'repair_payload_purged' USING ERRCODE='55000'; END IF;
  e:=gregale_repair.check_enrollment(op.enrollment_id);
  IF op.schema_fingerprint<>e.fingerprint THEN RAISE EXCEPTION 'repair_schema_changed' USING ERRCODE='40001'; END IF;
+ IF __UNPROVEN_OPERATION__ THEN RAISE EXCEPTION 'repair_legacy_capture_unproven' USING ERRCODE='22023'; END IF;
  FOR c IN SELECT * FROM gregale_repair.changes WHERE operation_id=operation ORDER BY row_identity LOOP
-  SELECT jsonb_object_agg(k,v),jsonb_object_agg(k,c.after_values->k) INTO inverse,expected FROM jsonb_each(c.before_values) kv(k,v) WHERE v IS DISTINCT FROM c.after_values->k;
+ SELECT jsonb_object_agg(k,v),jsonb_object_agg(k,c.after_values->k) INTO inverse,expected FROM jsonb_each(c.before_values) kv(k,v) WHERE v::text IS DISTINCT FROM (c.after_values->k)::text;
   IF inverse IS NULL THEN CONTINUE; END IF;
-  EXECUTE format('SELECT to_jsonb(t) FROM %s t WHERE gregale_row_identity=$1',e.relation) INTO current_row USING c.row_identity;
+  SELECT string_agg(format('%L,t.%I',k,k),',' ORDER BY k) INTO fields FROM jsonb_object_keys(expected) k;
+  EXECUTE format('SELECT jsonb_build_object(''gregale_row_version'',t.gregale_row_version::text,%s),gregale_repair.values_match(t.*,$2) FROM %s t WHERE t.gregale_row_identity=$1',fields,e.relation)
+   INTO current_row,values_match USING c.row_identity,expected;
   reason:=CASE WHEN current_row IS NULL THEN 'record_missing'
    WHEN (current_row->>'gregale_row_version')::bigint<>c.after_version THEN 'record_version_changed'
-   WHEN NOT current_row @> expected THEN 'recorded_values_changed' ELSE 'matches_recorded_write' END;
+   WHEN values_match IS DISTINCT FROM true THEN 'recorded_values_changed' ELSE 'matches_recorded_write' END;
   state:=CASE WHEN reason='record_missing' THEN 'unavailable' WHEN reason='matches_recorded_write' THEN 'candidate' ELSE 'conflict' END;
   -- Observations contain only fields changed by the recorded operation, not
   -- unrelated columns. They are immutable review context, never an apply patch.
@@ -105,7 +116,7 @@ BEGIN
    'observed_version',current_row->>'gregale_row_version','observed_values',observed,'observation_omitted',omitted);
   items:=items||jsonb_build_array(item);
  END LOOP;
- doc:=jsonb_build_object('source_operation_id',operation,'source_release',op.release,'scope',op.scope,'enrollment_id',e.enrollment_id,'table',e.qualified_name,'schema_fingerprint',e.fingerprint,'checks_sha256',checks_digest,'items',items,
+ doc:=jsonb_build_object('value_contract_version',2,'source_operation_id',operation,'source_release',op.release,'scope',op.scope,'enrollment_id',e.enrollment_id,'table',e.qualified_name,'schema_fingerprint',e.fingerprint,'checks_sha256',checks_digest,'items',items,
   'candidates',(SELECT count(*) FROM jsonb_array_elements(items) i WHERE i->>'status'='candidate'),'conflicts',(SELECT count(*) FROM jsonb_array_elements(items) i WHERE i->>'status'='conflict'),'unavailable',(SELECT count(*) FROM jsonb_array_elements(items) i WHERE i->>'status'='unavailable'));
  INSERT INTO gregale_repair.plans(id,source_operation_id,scope,document,digest,expires_at) VALUES(plan,operation,op.scope,doc,encode(sha256(convert_to(doc::text,'UTF8')),'hex'),clock_timestamp()+make_interval(secs=>__PLAN_TTL__));
  RETURN gregale_repair.get_plan(plan,expected_scope);
@@ -142,8 +153,8 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION gregale_repair.apply_plan(plan uuid, expected_scope jsonb, expected_digest text, repair_operation uuid, repair_release text) RETURNS jsonb
-LANGUAGE plpgsql SET search_path = pg_catalog AS $$
-DECLARE p gregale_repair.plans; e gregale_repair.enrollments; item jsonb; current_row jsonb; assignments text; affected bigint; total int:=0;
+LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET jit = 'off' AS $$
+DECLARE p gregale_repair.plans; e gregale_repair.enrollments; item jsonb; current_row jsonb; assignments text; fields text; affected bigint; total int:=0; values_match boolean;
 BEGIN
  PERFORM pg_advisory_xact_lock_shared(hashtextextended(expected_scope::text,161018));
  SELECT * INTO STRICT p FROM gregale_repair.plans WHERE id=plan AND scope=expected_scope FOR UPDATE;
@@ -160,14 +171,17 @@ BEGIN
  END IF;
  e:=gregale_repair.check_enrollment((p.document->>'enrollment_id')::uuid);
  IF e.fingerprint<>p.document->>'schema_fingerprint' THEN RAISE EXCEPTION 'repair_schema_changed' USING ERRCODE='40001'; END IF;
+ IF __UNPROVEN_PLAN__ THEN RAISE EXCEPTION 'repair_legacy_capture_unproven' USING ERRCODE='22023'; END IF;
  PERFORM gregale_repair.begin_operation(repair_operation,expected_scope,repair_release,e.relation,p.source_operation_id);
  FOR item IN SELECT i FROM jsonb_array_elements(p.document->'items') i WHERE i->>'status'='candidate' ORDER BY i->>'row_identity' LOOP
-  EXECUTE format('SELECT to_jsonb(t) FROM %s t WHERE gregale_row_identity=$1 FOR UPDATE',e.relation) INTO current_row USING (item->>'row_identity')::uuid;
-  IF current_row IS NULL OR current_row->>'gregale_row_version'<>item->>'expected_version' OR NOT current_row @> (item->'after') THEN
+  SELECT string_agg(format('%L,t.%I',k,k),',' ORDER BY k) INTO fields FROM jsonb_object_keys(item->'after') k;
+  EXECUTE format('SELECT jsonb_build_object(''gregale_row_version'',t.gregale_row_version::text,%s),gregale_repair.values_match(t.*,$2) FROM %s t WHERE t.gregale_row_identity=$1 FOR UPDATE',fields,e.relation)
+   INTO current_row,values_match USING (item->>'row_identity')::uuid,item->'after';
+  IF current_row IS NULL OR current_row->>'gregale_row_version'<>item->>'expected_version' OR values_match IS DISTINCT FROM true THEN
    RAISE EXCEPTION 'repair_row_conflict' USING ERRCODE='40001';
   END IF;
-  SELECT string_agg(format('%I=(jsonb_populate_record(NULL::%s,$1)).%I',k,e.relation,k),',' ORDER BY k) INTO assignments FROM jsonb_object_keys(item->'before') k;
-  EXECUTE format('UPDATE %s SET %s WHERE gregale_row_identity=$2 AND gregale_row_version=$3',e.relation,assignments) USING item->'before',(item->>'row_identity')::uuid,(item->>'expected_version')::bigint;
+  SELECT string_agg(format('%I=(jsonb_populate_record(t.*,$1)).%I',k,k),',' ORDER BY k) INTO assignments FROM jsonb_object_keys(item->'before') k;
+  EXECUTE format('UPDATE %s t SET %s WHERE gregale_row_identity=$2 AND gregale_row_version=$3',e.relation,assignments) USING item->'before',(item->>'row_identity')::uuid,(item->>'expected_version')::bigint;
   GET DIAGNOSTICS affected=ROW_COUNT;
   IF affected<>1 THEN RAISE EXCEPTION 'repair_row_conflict' USING ERRCODE='40001'; END IF;
   total:=total+1;

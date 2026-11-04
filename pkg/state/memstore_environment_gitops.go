@@ -314,8 +314,17 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 				return fmt.Errorf("%w: GitOps runtime effect is still pending", ErrConflict)
 			}
 		}
-		if !gitOpsRuntimeReady(m.gitOpsRuntimeTargetsLocked(memory)) {
+		targets, err := m.gitOpsRuntimeTargetsLocked(memory)
+		if err != nil {
+			return err
+		}
+		if !gitOpsRuntimeReady(targets) {
 			return fmt.Errorf("%w: GitOps runtime targets are not fresh", ErrConflict)
+		}
+		for _, target := range m.gitOpsRuntimeTargetsInScopeLocked(memory) {
+			if !target.Fresh() {
+				return fmt.Errorf("%w: GitOps runtime scope is not fresh", ErrConflict)
+			}
 		}
 	}
 	completed := now.UTC()

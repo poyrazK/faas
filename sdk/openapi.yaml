@@ -1215,6 +1215,15 @@ paths:
         effect at the end of the billing period. A billing email that already
         pays for another account or organization answers 409
         `billing_email_in_use`.
+
+        Asking for the plan the account already pays for keeps its
+        subscription: a scheduled cancellation or downgrade is undone and the
+        200 carries `plan_change_status: scheduled_change_undone`. A
+        subscription scheduled to end changes no plan, so an upgrade or
+        downgrade then answers 409 `billing_subscription_ending` until it is
+        kept. An upgrade whose charge the bank asks to confirm (3-D Secure)
+        answers 402 `payment_authentication_required` with
+        `billing_portal_url`; nothing is charged and the plan stays.
       requestBody:
         required: true
         description: "Plan change payload."
@@ -1366,6 +1375,9 @@ paths:
         cookie without the mfa_pending flag; future dashboard logins
         will require a TOTP verification because enrollment is the
         customer's explicit opt-in.
+        If the account has a password, current_password is also required
+        to authorize this new factor. An unconfirmed setup secret cannot
+        be used for session verification or recovery.
       requestBody:
         required: true
         content:
@@ -1379,12 +1391,17 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/MFAConfirmResponse'}
         '401':
-          description: Invalid TOTP code.
+          description: Invalid TOTP code or missing/incorrect current password.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '404':
           description: No in-flight enrollment. Call /enroll first.
+        '409':
+          description: MFA is already enrolled; use /verify for a subsequent challenge.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/account/mfa/verify:
     post:
       tags: [mfa]
@@ -1412,16 +1429,21 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+        '409':
+          description: MFA setup is incomplete; finish /confirm first.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/account/mfa/recover:
     post:
       tags: [mfa]
       operationId: mfaRecover
       summary: Burn a recovery code to regain access.
       description: |
-        Use when the customer's TOTP device is lost. Removes
-        one matching SHA-256 hash from the stored set; if the
-        customer burns the last code, /recover still works but
-        /disable via recovery_code no longer does.
+        Use when an enrolled customer's TOTP device is lost. Removes
+        one matching recovery-code hash from the stored set. The last
+        code is reserved for disabling MFA via recovery_code instead.
+        Pending setup material does not authorize recovery.
       requestBody:
         required: true
         content:
@@ -1436,6 +1458,11 @@ paths:
               schema: {$ref: '#/components/schemas/MFARecoverResponse'}
         '401':
           description: No matching recovery code.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '409':
+          description: MFA setup is incomplete, or only the last recovery code remains.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -6020,7 +6047,8 @@ paths:
 
         Once current-month overage meets/exceeds the cap, the scheduler refuses
         new wakes with `code: admission_refused` (HTTP 402). The cap is
-        account-self-scoped (admin scope required) and the response
+        account-self-scoped (admin scope required; a dashboard session also
+        needs a step-up within the last 5 minutes) and the response
         is the post-update account state. Audit row
         `overage.cap_changed` is emitted on every successful call.
       requestBody:
@@ -16230,7 +16258,10 @@ paths:
       description: |
         Returns a provider-independent deployment and account billing
         projection. This customer endpoint requires usage:read and never
-        calls an operator catalog surface.
+        calls an operator catalog surface. A scheduled cancellation
+        (`subscription_ends_at`) or downgrade (`scheduled_plan`,
+        `scheduled_plan_at`) is reported before it applies; asking for the
+        current plan with PATCH /v1/account/plan undoes it.
       responses:
         '200':
           description: Current deployment billing mode and customer attachment status.
@@ -16252,7 +16283,10 @@ paths:
         download receipts, cancel). When the active provider exposes
         customer sessions, the server creates a short-lived authenticated
         portal URL. Otherwise it renders the operator's
-        `FAAS_BILLING_PORTAL_URL` template.
+        `FAAS_BILLING_PORTAL_URL` template. The URL is a signed-in session
+        that can cancel the subscription and replace the card, so the route
+        takes an admin credential, MFA, a verified email and, for a dashboard
+        session, a step-up within the last 5 minutes.
 
         The response also carries a `payment_method` block — the card-on-file summary (brand, last-4, expiry).
         The CLI's `faas billing payment-method` renders from this
@@ -18599,6 +18633,9 @@ paths:
         when the upgrade charge of an existing subscription is declined. The
         first checkout bills the acting owner's email until
         `PUT /v1/orgs/{slug}/billing/email` sets the organization's own.
+        Asking for the organization's current plan keeps its subscription,
+        undoing a scheduled cancellation or downgrade; while a cancellation is
+        scheduled any other plan answers 409 `billing_subscription_ending`.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -28745,6 +28782,18 @@ components:
         customer_configured: {type: boolean}
         subscription_configured: {type: boolean}
         usage_reconciliation_enabled: {type: boolean}
+        subscription_ends_at:
+          type: string
+          format: date-time
+          description: When a scheduled cancellation ends the subscription instead of renewing it; the plan then returns to Free. Absent when none is scheduled.
+        scheduled_plan:
+          type: string
+          enum: [free, hobby, pro, scale]
+          description: The plan a scheduled downgrade moves to at scheduled_plan_at. Absent when none is scheduled.
+        scheduled_plan_at:
+          type: string
+          format: date-time
+          description: When the scheduled downgrade applies.
     BillingPortalResponse:
       description: |
         Provider-authenticated or operator-configured billing portal URL plus the
@@ -31969,6 +32018,8 @@ components:
         challenge_token: {type: [string, "null"]}
         verified: {type: boolean}
         verified_at: {type: [string, "null"], format: date-time}
+        verification_expires_at: {type: string, format: date-time, description: "Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof."}
+        verification_expired: {type: boolean, description: "True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS instructions are omitted; resume domain setup to recreate the claim."}
         txt_record: {type: [string, "null"]}
         default: {type: boolean, description: "True when this domain is the app's default. Set via `gregale domains set-default`."}
         cert_not_after: {type: [string, "null"], format: date-time, description: "Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the cert expiry renders against this field."}
@@ -40327,7 +40378,7 @@ components:
             step. Each code is hashed (SHA-256) before storage;
             the plaintext never reappears.
     MFAConfirmRequest:
-      description: Body for /confirm — a single 6-digit TOTP code.
+      description: Body for /confirm — a TOTP code and the existing password, if set.
       type: object
       required: [totp]
       properties:
@@ -40335,6 +40386,10 @@ components:
           type: string
           pattern: '^[0-9]{6}$'
           description: 6-digit rotating code from the authenticator app.
+        current_password:
+          type: string
+          format: password
+          description: Required when the account already has a password; authorizes the new factor.
         csrf_token:
           type: string
           description: |

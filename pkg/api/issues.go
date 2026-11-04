@@ -92,6 +92,9 @@ type IssueImpactSummary struct {
 	IdentifiedCustomers int64 `json:"identified_customers"`
 	ObservedEvents      int64 `json:"observed_events"`
 	UnattributedEvents  int64 `json:"unattributed_events"`
+	// UnknownHTTPBatches is the number of legacy HTTP records whose original
+	// folded weight was not stored. ObservedEvents is then a lower bound.
+	UnknownHTTPBatches int64 `json:"unknown_http_batches,omitempty"`
 }
 
 // IssueImpactAlertPolicy configures one app-level alert for the first point in
@@ -168,8 +171,10 @@ func NormalizeIssueOwnershipRules(rules []IssueOwnershipRule) ([]IssueOwnershipR
 }
 
 type IssueOccurrence struct {
-	ID              string `json:"id"`
-	OriginalIssueID string `json:"original_issue_id,omitempty"`
+	ID                   string `json:"id"`
+	OriginalIssueID      string `json:"original_issue_id,omitempty"`
+	OccurrenceCount      int64  `json:"occurrence_count"`
+	OccurrenceCountExact bool   `json:"occurrence_count_exact"`
 	IssueEvent
 	DeploymentID             string                    `json:"deployment_id"`
 	ReceivedAt               time.Time                 `json:"received_at"`
@@ -228,6 +233,7 @@ type IssueImpact struct {
 	IdentifiedCustomers int64     `json:"identified_customers"`
 	ObservedEvents      int64     `json:"observed_events"`
 	UnattributedEvents  int64     `json:"unattributed_events"`
+	UnknownHTTPBatches  int64     `json:"unknown_http_batches,omitempty"`
 	Coverage            string    `json:"coverage"`
 }
 

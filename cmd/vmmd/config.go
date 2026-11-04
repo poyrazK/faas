@@ -479,6 +479,7 @@ type ComputeNodeConfig struct {
 	// VXLAN seam. It is disabled by default until the operator has provisioned
 	// a shared encrypted overlay for every node in the region.
 	PrivateNetworkTransportEnabled bool `toml:"private_network_transport_enabled"`
+	PrivateNetworkTransportMTU     int  `toml:"private_network_transport_mtu"`
 	// ServiceTCPEnabled turns on private TCP service addressing (ADR-576):
 	// every new netns admits guest TCP to api.ServiceAddressCIDR, the runtime
 	// host policy DNATs it onto the tenant-bridge service listeners, and the
@@ -888,6 +889,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.DatabaseRouteEnabled = parsed
 	}
+	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_MTU"); v != "" {
+		mtu, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("vmmd: invalid private transport MTU: %w", err)
+		}
+		c.ComputeNode.PrivateNetworkTransportMTU = mtu
+	}
 	if v := os.Getenv("FAAS_PRIVATE_NETWORK_TRANSPORT_INTERFACE"); v != "" {
 		c.ComputeNode.PrivateNetworkTransportInterface = v
 	}
@@ -1164,6 +1172,9 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: [compute_node].tenant_egress_iface %q invalid: %w", iface, err)
 		}
 		c.ComputeNode.TenantEgressIface = iface
+	}
+	if mtu := c.ComputeNode.PrivateNetworkTransportMTU; mtu != 0 && (mtu < 576 || mtu > 1500) {
+		return nil, fmt.Errorf("vmmd: private_network_transport_mtu must be between 576 and 1500")
 	}
 	if iface := strings.TrimSpace(c.ComputeNode.PrivateNetworkTransportInterface); iface != "" {
 		if err := validatePublicIface(iface); err != nil {
