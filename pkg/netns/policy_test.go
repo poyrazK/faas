@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // TestHostPolicyRenderHasFlushAndShebang — the file is exec'd directly by
@@ -1102,6 +1104,57 @@ func TestHostPolicyPublicEntryAddrsTakeOnly443(t *testing.T) {
 		if strings.Contains(input, broad) {
 			t.Fatalf("input chain still has %q:\n%s", broad, input)
 		}
+	}
+}
+
+// The kernel drops a source's new connections to an entry address past twice
+// the edge's own per-address limits, before the 443 accept, so a flood is shed
+// before userspace (ADR-20261103163954 §4). Each family gets its own sets, and
+// a policy with no entry address declares none.
+func TestHostPolicyPublicEntryAddrsLimitEachSource(t *testing.T) {
+	p := DefaultHostPolicy
+	p.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("2001:db8::10")}
+	out := p.Render()
+	for _, family := range []struct{ suffix, keyType, nft, addr string }{
+		{"v4", "ipv4_addr", "ip", "203.0.113.10"},
+		{"v6", "ipv6_addr", "ip6", "2001:db8::10"},
+	} {
+		for _, set := range []string{
+			fmt.Sprintf("set public_entry_rate_%s {\n    type %s\n    size %d\n    flags dynamic,timeout\n    timeout 1m\n  }", family.suffix, family.keyType, api.PublicEntryTrackedSourcesMax),
+			fmt.Sprintf("set public_entry_conns_%s {\n    type %s\n    size %d\n    flags dynamic\n  }", family.suffix, family.keyType, api.PublicEntryTrackedSourcesMax),
+		} {
+			if !strings.Contains(out, set) {
+				t.Fatalf("policy lacks %q:\n%s", set, out)
+			}
+		}
+		at := 0
+		for _, rule := range []string{
+			fmt.Sprintf("%s daddr %s tcp dport 443 ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop",
+				family.nft, family.addr, family.suffix, family.nft, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource),
+			fmt.Sprintf("%s daddr %s tcp dport 443 ct state new add @public_entry_conns_%s { %s saddr ct count over %d } counter drop",
+				family.nft, family.addr, family.suffix, family.nft, api.PublicEntryConnsPerSourceMax),
+			fmt.Sprintf(`%s daddr %s tcp dport 443 accept comment "public entry"`, family.nft, family.addr),
+		} {
+			i := strings.Index(out[at:], rule)
+			if i < 0 {
+				t.Fatalf("policy lacks %q after offset %d, in order:\n%s", rule, at, out)
+			}
+			at += i + len(rule)
+		}
+	}
+	if api.PublicEntryConnsPerSourceMax <= api.EdgeClientOpenConnsPerAddrMax ||
+		api.PublicEntryNewConnsPerSecondPerSource <= api.EdgeClientNewConnsPerSecondPerAddr ||
+		api.PublicEntryNewConnsBurstPerSource <= api.EdgeClientNewConnsBurstPerAddr {
+		t.Fatal("the kernel backstop must sit above the edge's own per-address limits")
+	}
+
+	v4only := DefaultHostPolicy
+	v4only.PublicEntryAddrs = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
+	if out := v4only.Render(); strings.Contains(out, "public_entry_rate_v6") || !strings.Contains(out, "public_entry_rate_v4") {
+		t.Fatalf("an IPv4-only entry declares the wrong sets:\n%s", out)
+	}
+	if out := DefaultHostPolicy.Render(); strings.Contains(out, "public_entry_") {
+		t.Fatalf("a policy with no entry address declares entry sets:\n%s", out)
 	}
 }
 

@@ -140,6 +140,16 @@ faas_custom_domain_tls: false
 # faas_cloudflare_origin_only and faas_custom_domain_tls. Write each address in
 # canonical form (vmmd renders the same policy and refuses any other).
 faas_public_entry_addrs: []
+# ADR-20261103163954 §4: kernel settings for a node with public entry
+# addresses. A spoofed SYN flood leaves one conntrack entry per SYN in
+# SYN_RECV, and that table is shared with tenant NAT: at the default 60 s a
+# few thousand SYNs a second fill it and the node's tenants lose new
+# outbound connections. A legitimate handshake leaves SYN_RECV within a round
+# trip (a retransmit refreshes it). Applied only while
+# faas_public_entry_addrs is set.
+faas_public_entry_conntrack_max: 1048576
+faas_public_entry_conntrack_syn_recv_timeout: 10
+faas_public_entry_tcp_max_syn_backlog: 8192
 
 # UDP public app ports use the same explicit IPv4 source list as udpd.
 faas_udpd_enabled: false

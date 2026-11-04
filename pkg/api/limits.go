@@ -17326,6 +17326,23 @@ const (
 	EdgeControlPlaneForwardsInFlightMax = 256
 )
 
+// The host firewall's backstop for a compute edge's public entry address
+// (ADR-20261103163954 §4). The edge refuses a client past its own
+// per-address limits only after the kernel has accepted the connection; the
+// firewall drops a source's new connections to the entry address's 443 before
+// userspace sees them once it holds PublicEntryConnsPerSourceMax connections
+// or opens them faster than PublicEntryNewConnsPerSecondPerSource (burst
+// PublicEntryNewConnsBurstPerSource). Each is twice the edge's own limit, so
+// a client the edge would serve never meets it. The firewall tracks at most
+// PublicEntryTrackedSourcesMax sources per limit; past that a new source is
+// not limited by the kernel, only by the edge.
+const (
+	PublicEntryConnsPerSourceMax          = 2 * EdgeClientOpenConnsPerAddrMax
+	PublicEntryNewConnsPerSecondPerSource = 2 * EdgeClientNewConnsPerSecondPerAddr
+	PublicEntryNewConnsBurstPerSource     = 2 * EdgeClientNewConnsBurstPerAddr
+	PublicEntryTrackedSourcesMax          = 65536
+)
+
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
 // surface. A Limits value built without the field (zero) falls back to the
 // verified cap rather than refusing every pending hostname.

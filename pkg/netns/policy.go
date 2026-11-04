@@ -29,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // StaticEgressRoutingMark is set only on bridged traffic from live pinned
@@ -674,6 +676,9 @@ func (h HostPolicy) Render() string {
 	for _, e := range h.DenySet.Entries {
 		fmt.Fprintf(&b, "  counter %s {}\n", e.CounterName)
 	}
+	for _, family := range publicEntryFamilies(h.PublicEntryAddrs) {
+		writePublicEntrySets(&b, family)
+	}
 	if h.TenantEgressIface != "" && len(h.StaticEgressRules) > 0 {
 		b.WriteString("  chain static_egress_route {\n")
 		b.WriteString("    type filter hook prerouting priority mangle; policy accept;\n")
@@ -711,7 +716,7 @@ func (h HostPolicy) Render() string {
 		// The drops come before sshd's accept, so the entry addresses carry
 		// 443 and nothing else.
 		for _, a := range h.PublicEntryAddrs {
-			fmt.Fprintf(&b, "    %s daddr %s tcp dport 443 accept comment %q\n", addrFamily(a), a, "public entry")
+			writePublicEntryAccept(&b, a)
 		}
 		for _, a := range h.PublicEntryAddrs {
 			fmt.Fprintf(&b, "    %s daddr %s drop comment %q\n", addrFamily(a), a, "public entry carries 443 only")
@@ -921,6 +926,59 @@ func (h HostPolicy) Render() string {
 // joinInts renders a port slice as comma-joined digits: "25,465,587". The
 // nftables tcp-dport set syntax is `{ 25,465,587 } drop`.
 // addrFamily is the nftables address family keyword for a.
+// publicEntryFamilies lists the address families of addrs, IPv4 first, each
+// once.
+func publicEntryFamilies(addrs []netip.Addr) []string {
+	var has4, has6 bool
+	for _, a := range addrs {
+		has4 = has4 || a.Is4()
+		has6 = has6 || a.Is6()
+	}
+	var out []string
+	if has4 {
+		out = append(out, "ip")
+	}
+	if has6 {
+		out = append(out, "ip6")
+	}
+	return out
+}
+
+// publicEntrySetSuffix names a family's public-entry sets.
+func publicEntrySetSuffix(family string) string {
+	if family == "ip" {
+		return "v4"
+	}
+	return "v6"
+}
+
+// writePublicEntrySets declares the sources the firewall counts on the
+// public entry addresses of one family (ADR-20261103163954 §4): their new
+// connections per second, and their open connections.
+func writePublicEntrySets(b *strings.Builder, family string) {
+	suffix, keyType := publicEntrySetSuffix(family), "ipv4_addr"
+	if family == "ip6" {
+		keyType = "ipv6_addr"
+	}
+	fmt.Fprintf(b, "  set public_entry_rate_%s {\n    type %s\n    size %d\n    flags dynamic,timeout\n    timeout 1m\n  }\n",
+		suffix, keyType, api.PublicEntryTrackedSourcesMax)
+	fmt.Fprintf(b, "  set public_entry_conns_%s {\n    type %s\n    size %d\n    flags dynamic\n  }\n",
+		suffix, keyType, api.PublicEntryTrackedSourcesMax)
+}
+
+// writePublicEntryAccept admits 443 on a public entry address, after dropping
+// a source's new connections past the kernel backstop: the edge's own
+// per-address limits act only on connections the kernel already accepted.
+func writePublicEntryAccept(b *strings.Builder, a netip.Addr) {
+	family := addrFamily(a)
+	suffix := publicEntrySetSuffix(family)
+	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 ct state new add @public_entry_rate_%s { %s saddr limit rate over %d/second burst %d packets } counter drop comment %q\n",
+		family, a, suffix, family, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource, "public entry new connections per source")
+	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 ct state new add @public_entry_conns_%s { %s saddr ct count over %d } counter drop comment %q\n",
+		family, a, suffix, family, api.PublicEntryConnsPerSourceMax, "public entry connections per source")
+	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 accept comment %q\n", family, a, "public entry")
+}
+
 func addrFamily(a netip.Addr) string {
 	if a.Is4() {
 		return "ip"
