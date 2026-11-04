@@ -55504,7 +55504,7 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Invoice was imported from history without a verifiable historical Gregale plan; credit proration is not available.
+          description: Invoice was imported from history without a verifiable historical Gregale plan, so credit proration is not available; or the billing provider applies account credit as a discount on the next order (Polar, ADR-20261104212028), so credit is never drawn against a paid invoice.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
