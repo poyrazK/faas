@@ -26,8 +26,9 @@
   - Role changes reach the control plane on the next platform rollout, in the
     same order as compute nodes: converge, then activate.
   - Variable-only changes converge too, because the operator variables are a
-    contract input. Compute's contract does not include its variables; this ADR
-    does not change that.
+    contract input. *Amended 2026-10-04:* the compute contract now includes
+    the compute operator variables (`COMPUTE_ANSIBLE_VARS_B64`) the same way;
+    a rollout without a vars file keeps the previous hash.
   - The compute contract now also covers `tasks/`, `vars/` and
     `group_vars/compute_nodes`, which roles read but the hash skipped. The first
     compute rollout after this change runs full convergence once.
