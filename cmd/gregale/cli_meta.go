@@ -770,7 +770,7 @@ var cliCommands = []cliCommand{
 				{Name: "set", Short: "Replace the complete tag set", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<URL-encoded-tags>", "[version-id|null]"}},
 				{Name: "clear", Short: "Remove all object tags", Positionals: []string{"<app>", "<bucket-id>", "<key>", "[version-id|null]"}},
 			}}, {Name: "deletions", Short: "Create or inspect durable object deletions", Subcommands: []cliSub{
-				{Name: "start", Short: "Delete current data or an owned version with a retry identity", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<request-id>", "[version-id|null]"}},
+				{Name: "start", Short: "Delete current data or an owned version; reuse the request UUID to retry", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<request-uuid>", "[version-id|null]"}},
 				{Name: "status", Short: "Show a persisted deletion receipt", Positionals: []string{"<app>", "<bucket-id>", "<request-id>"}},
 			}}, {Name: "version-delete", Short: "Permanently delete an owned immutable version or marker", Positionals: []string{"<app>", "<bucket-id>", "<key>", "<version-id>"}},
 			{Name: "notifications", Short: "Manage bucket event notifications", Subcommands: []cliSub{
