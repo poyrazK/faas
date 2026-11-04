@@ -212,6 +212,35 @@ queue, so a spoofed SYN flood, which per-source limits cannot stop, does not
 fill the conntrack table that tenant NAT shares. Watch
 `node_nf_conntrack_entries` against `node_nf_conntrack_entries_limit`.
 
+### Block a source on the entry addresses (ADR-20261103163954 §2)
+
+On a node with entry addresses, vmmd keeps `public_block_v4/v6`, sets the
+firewall checks before anything else on those addresses, so a blocked
+source's open connections stop too. List each range with an expiry in
+`/etc/faas/public-block-list` on every compute node, one per line:
+
+```text
+# <prefix in canonical form> <expiry, RFC 3339> [reason]
+192.0.2.0/24 2026-11-04T18:00:00Z SYN flood, ticket 123
+2001:db8:1234::/48 2026-11-05T00:00:00Z
+```
+
+vmmd re-reads the file every 30 s (`PublicBlockListRefreshInterval`) and
+after every ruleset reload, which would otherwise flush the sets; a
+malformed line is skipped and logged (`journalctl -u faas-vmmd | grep 'public
+block list'`). An entry lasts at most 90 days. Check:
+
+```bash
+sudo nft list set inet faas public_block_v4
+sudo nft list chain inet faas input | grep 'block list'
+```
+
+To unblock before the expiry, delete the line and the element:
+`sudo nft delete element inet faas public_block_v4 { 192.0.2.0/24 }`.
+Lengthening an entry's expiry takes effect when the old one lapses (at most
+30 s later). A hand-made `nft` rule does not survive vmmd's next reload; use
+the file.
+
 ## Nothing in front (ADR-20261103163954), pilot
 
 Clients reach the pilot host straight at the compute nodes, with DNS-only
