@@ -1233,6 +1233,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/github/repos":                                                                       "ListGitHubRepositories",
 	"DELETE /v1/keys/{id}":                                                                       "DeleteKey",
 	"GET /v1/agent-connections":                                                                  "ListAgentConnections",
+	"GET /v1/agent-approvals":                                                                    "ListAgentApprovals",
+	"GET /v1/agent-approvals/{id}":                                                               "GetAgentApproval",
 	"DELETE /v1/agent-connections/{id}":                                                          "RevokeAgentConnection",
 	"POST /v1/agent-connections/revoke_all":                                                      "RevokeAllAgentConnections",
 	"PUT /v1/agent-connections/self":                                                             "NameAgentClient",

@@ -811,6 +811,7 @@ func cmdOrgsKeysAdd(args []string) int {
 	label := fs.String("label", "", "key label (required)")
 	scopesCSV := fs.String("scopes", "", "comma-separated scopes (default: [admin])")
 	projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
+	approvalsCSV := fs.String("approvals", "", "kinds of action an agent key must have a person approve: delete,production,credentials,billing, all or none (default all)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -819,7 +820,7 @@ func cmdOrgsKeysAdd(args []string) int {
 	}
 	projects := splitList(*projectsCSV)
 	if *slug == "" || *label == "" || flagWasSet(fs, "projects") && len(projects) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...] [--projects slug,...]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...] [--projects slug,...] [--approvals category,...|none]", "orgs")
 		return 1
 	}
 	var scopes []string
@@ -835,7 +836,11 @@ func cmdOrgsKeysAdd(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	k, err := client.CreateOrgAPIKey(context.Background(), *slug, *label, scopes, projects...)
+	approvals, err := approvalsFlag(fs, *approvalsCSV)
+	if err != nil {
+		return printErr("Invalid approvals", err)
+	}
+	k, err := client.CreateOrgAPIKeyWith(context.Background(), *slug, api.CreateOrgAPIKeyRequest{Label: *label, Scopes: scopes, Projects: projects, ApprovalCategories: approvals})
 	if err != nil {
 		return printErr("Could not create org API key", err)
 	}

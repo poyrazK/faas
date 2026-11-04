@@ -141,7 +141,8 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		reviewURL = m.ApprovalReviewURL(request.ID)
 	}
 	problem := api.NewProblem(http.StatusPreconditionRequired, api.CodeApprovalRequired, "Approval required",
-		"this "+rule.Category+" request needs a person's approval: ask them to open "+reviewURL+", then repeat the same request")
+		"this "+rule.Category+" request needs a person's approval: ask them to open "+reviewURL+", then repeat the same request").
+		WithHint("Show the person the review link and wait; after they approve, repeat exactly the same request once.")
 	problem.AgentApproval = &api.AgentApprovalPendingInfo{ID: request.ID, Category: rule.Category, ReviewURL: reviewURL, ExpiresAt: request.ExpiresAt.UTC().Format(time.RFC3339)}
 	if m.Log != nil {
 		m.Log.Info("agent_approval.required", "key_id", key.ID, "account_id", acct.ID, "category", rule.Category, "approval_id", request.ID)

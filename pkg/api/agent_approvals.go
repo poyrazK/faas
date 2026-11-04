@@ -93,6 +93,19 @@ type AgentApprovalsResponse struct {
 	Items []AgentApprovalResponse `json:"items"`
 }
 
+// CreateKeyWith mints a personal key from a full request, including its
+// approval categories.
+func (c *Client) CreateKeyWith(ctx context.Context, req CreateKeyRequest) (APIKeyResponse, error) {
+	var out APIKeyResponse
+	return out, c.do(ctx, "POST", "/v1/keys", req, &out)
+}
+
+// CreateOrgAPIKeyWith mints an organization key from a full request.
+func (c *Client) CreateOrgAPIKeyWith(ctx context.Context, slug string, req CreateOrgAPIKeyRequest) (APIKeyResponse, error) {
+	var out APIKeyResponse
+	return out, c.do(ctx, "POST", "/v1/orgs/"+url.PathEscape(slug)+"/keys", req, &out)
+}
+
 // GetAgentApproval reads one approval request: an agent its own, a person one
 // they may decide.
 func (c *Client) GetAgentApproval(ctx context.Context, id string) (AgentApprovalResponse, error) {

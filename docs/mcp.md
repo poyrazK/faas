@@ -210,6 +210,44 @@ manage them. The limit is fixed when the agent connects; to change it,
 connect again. `gregale mcp connection list` and `GET /v1/account`
 (`key_projects`) name a connection's projects.
 
+### Approve an agent's risky actions
+
+An agent connection asks a person before it does something hard to undo
+or that reaches production traffic. Gregale checks this for every client
+of the agent's key: the hosted MCP server, the CLI and direct API calls.
+
+| Kind | What needs approval |
+|---|---|
+| `delete` | Deleting anything: apps, databases, buckets, domains, secrets, keys |
+| `production` | Deploying, rolling back, restarting or moving traffic of a production app (previews and `gregale dev` environments are free) |
+| `credentials` | Minting or rotating API keys, deploy tokens, secrets and signing secrets |
+| `billing` | Plan, subscription, payment and budget changes |
+
+By default an agent needs approval for all four. When it asks, Gregale
+answers `428 approval_required` with a review link. Open the link while
+signed in. Approve or deny the request there; then the agent repeats the
+same request, and the approval lets it through once. A request expires
+after 30 minutes. The member who connected the agent can decide, and so can
+the organization's owners and admins. No API key can approve a request.
+
+Choose the kinds when you create an agent key, or `none` to let it act
+alone:
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billing
+gregale key create sandbox-agent --scopes agent,deploy:write --approvals none
+```
+
+An organization can require approvals for every agent acting in it,
+whatever each connection chose:
+
+```sh
+gregale org agent policy set --org acme --agents allow --approvals delete,production
+```
+
+`gregale mcp connection list` shows each connection's approvals, and
+`GET /v1/agent-approvals` lists the requests waiting for you.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes

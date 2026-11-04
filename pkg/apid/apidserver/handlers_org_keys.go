@@ -168,6 +168,11 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	approvals, approvalsSet, prob := keyApprovalCategories(scopes, req.ApprovalCategories)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	plaintext, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
@@ -207,6 +212,10 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.setKeyApprovalCategories(r.Context(), acct, k, approvals, approvalsSet); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	s.recordKeyDisplayPrefix(r.Context(), k.ID, plaintext)
 	_ = s.notif.Notify(r.Context(), db.NotifyKeyChanged, `{"kind":"created","org":"`+mem.OrgID+`"}`)
 	s.log.Info("api key created", "key", k.ID, "account", acct.ID, "org", mem.OrgID)
@@ -226,6 +235,9 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	resp.Plaintext = plaintext
 	if len(projects) > 0 {
 		resp.Projects = projectSlugs(projects)
+	}
+	if approvalsSet {
+		resp.ApprovalCategories = approvals
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }

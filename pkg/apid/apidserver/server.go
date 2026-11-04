@@ -1643,6 +1643,9 @@ func newServerWithDeps(
 	s.oidcHandler = s.buildOIDCHandler()
 	s.durable.Host = durableHost{s}
 	s.object.Host = objectHost{s}
+	// ADR-20261104140058: a person decides an agent's approval request on the
+	// session-authenticated /cli-auth surface.
+	s.authMw.ApprovalReviewURL = s.agentApprovalReviewURL
 	s.authMw.HostingAutomationEnabled = func() bool { return (hostingHost{s}).HostingEnabled() && (hostingHost{s}).HostingAutomationEnabled() }
 	s.hosting.Host = hostingHost{s}
 	s.hosting.OIDCVerifier = oidc.NewVerifier(s.log)
@@ -4326,6 +4329,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/agent-connections/self", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.Disconnect(agentConnections))))
 	mux.HandleFunc("DELETE /v1/agent-connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.Revoke(agentConnections)))))
 	mux.HandleFunc("POST /v1/agent-connections/revoke_all", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(agentconnections.RevokeAll(agentConnections)))))
+	// ADR-20261104140058: an agent polls its approval requests; a person lists
+	// the ones they may decide. Deciding happens only on the review page.
+	mux.HandleFunc("GET /v1/agent-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.ListApprovals(agentConnections))))
+	mux.HandleFunc("GET /v1/agent-approvals/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(agentconnections.GetApproval(agentConnections))))
 
 	// Per-app deploy tokens. These credentials are minted by an
 	// administrator, carry only deploy:write, and are accepted by
